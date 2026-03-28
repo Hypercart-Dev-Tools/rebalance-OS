@@ -1,4 +1,4 @@
-# Obsidian-RAG-GitHub-Tracker
+# rebalance OS
 
 ## Project Overview
 
