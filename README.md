@@ -1,5 +1,3 @@
-![rebalance](https://github.com/user-attachments/assets/c77f8362-bd1d-4447-b68d-c3b1bb408d9b)# rebalance OS 
-
 > Your workday OS
 
 **Status: Coming soon — active development. Star to follow along.**
