@@ -26,7 +26,7 @@ AI assistants could help — but they can't see your Obsidian vault, your GitHub
 
 ## What it does
 
-**obsidian-rag** is a local-first morning briefing engine that ingests your Obsidian vault, GitHub activity, and calendar into a queryable SQLite database — then lets any MCP-compatible LLM (Claude, Copilot, Cursor, Continue) answer questions about your own work, flag over-investment in specific projects, and surface what actually needs your attention today.
+**rebalance OS** is a local-first morning briefing engine that ingests your Obsidian vault, GitHub activity, and calendar into a queryable SQLite database — then lets any MCP-compatible LLM (Claude, Copilot, Cursor, Continue) answer questions about your own work, flag over-investment in specific projects, and surface what actually needs your attention today.
 
 ---
 
@@ -59,7 +59,7 @@ Data sources
                                │
                                ▼
                      MCP server (Python)
-                     obsidian-rag tools:
+                     rebalance OS tools:
                        query_notes
                        github_balance
                        todays_agenda
