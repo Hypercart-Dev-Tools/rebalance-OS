@@ -1,6 +1,6 @@
 # rebalance OS 
 
-> Your daily operating OS
+> Your daily workday OS
 
 **Status: Coming soon — active development. Star to follow along.**
 
