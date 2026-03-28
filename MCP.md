@@ -1,8 +1,8 @@
-# rebalance MCP — Source of Truth
+# rebalance OS — MCP.md
 
-This file is the canonical reference for the rebalance MCP server: layer roles, live tool surface, planned tools, server configuration, and host adapter setup.
+> Canonical reference for the rebalance MCP server: layer roles, live and planned tool surface, server configuration, and host adapter setup.
 
-- For project execution decisions, see [PROJECT.md](./PROJECT.md).
+- For project execution decisions and onboarding sequence, see [PROJECT.md](./PROJECT.md).
 - For marketing overview, see [README.md](./README.md).
 
 ---
@@ -37,17 +37,13 @@ The MCP server speaks standard JSON-RPC — no host-specific logic inside it. An
 python -m rebalance.mcp_server
 ```
 
-Or if installed via `pip install -e .`:
-
-```bash
-# server is invoked by the host adapter; not run directly by the user
-```
+The server is launched by the host adapter as a subprocess — not run directly by the user during normal operation.
 
 ### Environment variables
 
 | Variable | Default | Description |
 |---|---|---|
-| `REBALANCE_DB` | `rebalance.db` (cwd) | Absolute or relative path to the SQLite database |
+| `REBALANCE_DB` | `rebalance.db` (cwd) | Absolute path to the SQLite database. Always set this explicitly in adapter configs. |
 
 ### Transport
 
@@ -71,7 +67,9 @@ Returns projects from the `project_registry` table.
 
 ### `github_balance`
 
-Shows GitHub commit/PR/issue activity per project over a rolling window. Requires a prior `rebalance github-scan` run to populate the `github_activity` table.
+Shows GitHub commit/PR/issue activity per project over a rolling window.
+
+**Prerequisite:** run `rebalance github-scan` via CLI first to populate the `github_activity` table. See [PROJECT.md — Step 6](./PROJECT.md) for setup.
 
 | Param | Type | Default | Description |
 |---|---|---|---|
@@ -81,14 +79,30 @@ Shows GitHub commit/PR/issue activity per project over a rolling window. Require
 
 ---
 
-## Planned Tool Surface
+## Planned Tool Surface — Onboarding
+
+These tools move onboarding out of the CLI and into any MCP-capable host, so an agent can drive the setup flow conversationally. See [PROJECT.md — Onboarding User Story](./PROJECT.md) for the sequence and UX rationale.
+
+| Tool | Description | Params | Returns | Depends on |
+|---|---|---|---|---|
+| `onboarding_status` | Returns completion state of each onboarding step | `vault_path: str` | `{steps: [{name, complete, detail}]}` | Config module, filesystem (checks registry/sync artifacts at vault_path), SQLite DB path resolved from `REBALANCE_DB` env var (same as all other server tools) |
+| `setup_github_token` | Accepts a GitHub PAT, validates against `/user`, stores in config | `token: str` | `{valid, login, scopes}` | Config module, GitHub API |
+| `run_preflight` | Discovers project candidates from vault titles + GitHub activity (read-only, no registry writes) | `vault_path: str` | `{most_likely_active_projects, semi_active_projects, dormant_projects, potential_projects}` — each a list of candidate objects | GitHub scanner, vault file scan |
+| `confirm_projects` | Accepts curated project list with metadata, writes canonical registry, runs `pull` sync | `projects: list[{name, summary, repos, priority_tier, tags}]`, `vault_path: str` | `{registry_path, project_count, sync_ok}` | Registry sync |
+
+Design principle: the MCP server stays stateless and host-agnostic. Onboarding logic lives in tools, not in host-specific code. Any MCP client — VS Code today, desktop apps tomorrow — drives the same sequence by calling these tools.
+
+---
+
+## Planned Tool Surface — Retrieval & Briefing
 
 | Tool | Description | Depends on |
 |---|---|---|
-| `query_notes` | Semantic search over chunked vault notes via sqlite-vec | Note ingester + embedder |
-| `search_vault` | Full-text keyword search over vault files | Note ingester |
-| `todays_agenda` | Today's calendar events via `gcalcli` | gcalcli integration |
+| `query_notes` | Semantic search over chunked vault notes via sqlite-vec | Note ingester + embedder (PROJECT.md steps 4–5) |
+| `search_vault` | Full-text keyword search over vault files | Note ingester (PROJECT.md step 4) |
+| `todays_agenda` | Today's calendar events via `gcalcli` | gcalcli integration (PROJECT.md step 7) |
 | `morning_brief` | Assembled daily briefing from all sources | All of the above |
+| `query_github_context` | Semantic search over embedded PR/issue bodies | github_embed_queue pipeline (PROJECT.md step 10, phase 2) |
 
 ---
 
@@ -96,7 +110,7 @@ Shows GitHub commit/PR/issue activity per project over a rolling window. Require
 
 Adapters are thin config files — no custom code. Each host reads the config and launches `python -m rebalance.mcp_server` as a subprocess over stdio.
 
-> Set `REBALANCE_DB` to the **absolute path** of your SQLite database in every adapter config below.
+> **Always set `REBALANCE_DB` to the absolute path of your SQLite database.** Relative paths will break when the host adapter launches the server from a different working directory.
 
 ---
 
@@ -111,20 +125,21 @@ Config file: `~/Library/Application Support/Claude/claude_desktop_config.json`
       "command": "python",
       "args": ["-m", "rebalance.mcp_server"],
       "env": {
-        "REBALANCE_DB": "/Users/noelsaw/Documents/Obsidian Vault/rebalance.db"
+        "REBALANCE_DB": "/Users/you/path/to/rebalance.db"
       }
     }
   }
 }
 ```
 
-If using a virtualenv, replace `"python"` with the full path to the venv interpreter, e.g. `"/Users/noelsaw/.venv/rebalance/bin/python"`.
+If using a virtualenv, replace `"python"` with the full path to the venv interpreter:
+`"/Users/you/.venv/rebalance/bin/python"`
 
 ---
 
 ### Cursor
 
-Config file: `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project-scoped)
+Config file: `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project-scoped, recommended)
 
 ```json
 {
@@ -133,7 +148,7 @@ Config file: `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project-scoped
       "command": "python",
       "args": ["-m", "rebalance.mcp_server"],
       "env": {
-        "REBALANCE_DB": "/Users/noelsaw/Documents/Obsidian Vault/rebalance.db"
+        "REBALANCE_DB": "/Users/you/path/to/rebalance.db"
       }
     }
   }
@@ -144,7 +159,7 @@ Config file: `~/.cursor/mcp.json` (global) or `.cursor/mcp.json` (project-scoped
 
 ### VS Code (GitHub Copilot / MCP extension)
 
-Config via workspace `.vscode/mcp.json` or user settings under `mcp.servers`:
+Config via workspace `.vscode/mcp.json` (recommended for beta) or user settings under `mcp.servers`:
 
 ```json
 {
@@ -154,12 +169,14 @@ Config via workspace `.vscode/mcp.json` or user settings under `mcp.servers`:
       "command": "python",
       "args": ["-m", "rebalance.mcp_server"],
       "env": {
-        "REBALANCE_DB": "/Users/noelsaw/Documents/Obsidian Vault/rebalance.db"
+        "REBALANCE_DB": "/Users/you/path/to/rebalance.db"
       }
     }
   }
 }
 ```
+
+**Beta plan:** a `.vscode/mcp.json` will be checked into the repo so beta users get the server registered automatically on workspace open. The config will use `${workspaceFolder}/rebalance.db` if VS Code supports variable expansion, otherwise the README will instruct users to set the absolute path.
 
 ---
 
@@ -175,7 +192,7 @@ In `~/.continue/config.json` under `"mcpServers"`:
       "command": "python",
       "args": ["-m", "rebalance.mcp_server"],
       "env": {
-        "REBALANCE_DB": "/Users/noelsaw/Documents/Obsidian Vault/rebalance.db"
+        "REBALANCE_DB": "/Users/you/path/to/rebalance.db"
       }
     }
   ]
@@ -186,10 +203,20 @@ In `~/.continue/config.json` under `"mcpServers"`:
 
 ## Server Registry
 
-Entry in `~/bin/servers.md`:
+A human-readable reference for all running MCP servers on this machine. Store at `~/bin/servers.md` or equivalent. Useful when debugging which server is registered in which host adapter.
 
 ```
-rebalance   python -m rebalance.mcp_server   REBALANCE_DB=/path/to/rebalance.db
+rebalance   python -m rebalance.mcp_server   REBALANCE_DB=/absolute/path/to/rebalance.db
 ```
 
-Tools: `list_projects`, `github_balance` (live) · `query_notes`, `search_vault`, `todays_agenda`, `morning_brief` (planned)
+Live tools: `list_projects`, `github_balance`
+Planned (onboarding): `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
+Planned (retrieval): `query_notes`, `search_vault`, `todays_agenda`, `morning_brief`, `query_github_context`
+
+---
+
+## License
+
+Copyright 2025 Hypercart DBA Neochrome, Inc.
+
+Licensed under the **Apache License, Version 2.0**. See [APACHE-LICENSE-2.0.txt](./APACHE-LICENSE-2.0.txt) or https://www.apache.org/licenses/LICENSE-2.0.

@@ -18,7 +18,7 @@ def _fetch_projects(database_path: Path, status: str | None = None) -> list[dict
     conn = sqlite3.connect(database_path)
     conn.row_factory = sqlite3.Row
     try:
-        query = "SELECT name, status, summary, value_level, priority_tier, risk_level, repos FROM project_registry"
+        query = "SELECT name, status, summary, value_level, priority_tier, risk_level, repos_json FROM project_registry"
         params: tuple[Any, ...] = ()
         if status:
             query += " WHERE status = ?"
@@ -29,13 +29,15 @@ def _fetch_projects(database_path: Path, status: str | None = None) -> list[dict
         result = []
         for row in rows:
             d = dict(row)
-            # repos is stored as JSON array string; decode for callers
-            raw_repos = d.get("repos")
+            # repos_json is stored as JSON array string; decode and rename for callers
+            raw_repos = d.pop("repos_json", None)
             if isinstance(raw_repos, str):
                 try:
                     d["repos"] = json.loads(raw_repos)
                 except (json.JSONDecodeError, ValueError):
                     d["repos"] = []
+            else:
+                d["repos"] = []
             result.append(d)
         return result
     finally:

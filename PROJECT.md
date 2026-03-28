@@ -110,57 +110,50 @@ Sparse, short GitHub text creates noisy embeddings that degrade retrieval qualit
 
 **Goal for beta:** validate the onboarding flow, project registry bootstrap, and morning briefing pipeline with minimum friction. Signal over noise at every step.
 
+**Key design decision:** onboarding is driven by MCP tools, not by CLI prompts or host-specific logic. The MCP server exposes four onboarding tools — any agent (VS Code, desktop app, or future host) calls them in sequence. This keeps the server stateless and host-agnostic, and means the transition from VS Code to desktop apps requires zero server changes.
+
+Tool specifications (params, return shapes, dependencies): see [MCP.md — Planned Tool Surface — Onboarding](./MCP.md).
+
 ### Onboarding sequence
 
-1. User opens the project in VS Code and asks the coding agent to review `README.md`, then start the MCP server.
+The host agent (not the server) drives this flow by calling MCP tools:
 
-2. MCP server checks for first-run state on startup:
-   - Missing local config file, or
-   - Blank template config, or
-   - Missing canonical registry file, or
-   - GitHub token present but failing live validation.
+1. **Check state** — Agent calls `onboarding_status`. If all steps complete, skip onboarding. If any step is incomplete, agent walks the user through remaining steps in order.
 
-3. If first-run state detected, MCP layer asks: "Ready to set up rebalance?" On approval, onboarding begins.
+2. **GitHub PAT** (first because it's the fastest high-signal bootstrap):
+   - Agent asks user for a PAT with `repo:read` scope.
+   - Agent calls `setup_github_token` with the PAT.
+   - Tool validates against GitHub `/user` endpoint, confirms minimum scope, stores in `temp/rbos.config` (gitignored, repo root — see Secrets Strategy).
+   - If validation fails: tool returns error detail, agent prompts replacement.
 
-4. **Step 1 — GitHub PAT** (first because it's the fastest high-signal bootstrap):
-   - Request PAT with `repo:read` scope.
-   - Store in `temp/rbos.config` (gitignored, repo root — see Secrets Strategy).
-   - Validate immediately against GitHub `/user` endpoint.
-   - Confirm minimum required scope before proceeding.
-   - If validation fails: treat token as invalid, prompt replacement. A token present in config is not sufficient — it must pass live validation.
+3. **Project discovery:**
+   - Agent calls `run_preflight` with the vault path.
+   - Tool scans GitHub activity and vault note titles, returns candidates in four segments (names match `Registry` model in code):
+     - `most_likely_active_projects`: GitHub activity in last 14 days
+     - `semi_active_projects`: activity 15–30 days ago
+     - `dormant_projects`: activity 31+ days ago
+     - `potential_projects`: vault notes with no GitHub signal
+   - Agent presents candidates conversationally with friendly labels. User removes false positives, merges duplicates.
 
-5. **Step 2 — GitHub activity discovery:**
-   - Scan recent GitHub activity and pre-populate project candidates into three segments:
-     - `most_likely_active`: activity in last 7 days
-     - `semi_active`: activity in days 8–14
-     - `less_active`: activity in days 15–30
-   - Present using friendly labels in the UI regardless of internal storage key names.
+4. **Metadata capture and registry write:**
+   - For each retained candidate, agent collects: 2–3 sentence summary, repos, priority tier, tags. Full custom fields are optional — capture on a second pass. Keep this step fast: more fields = more abandonment.
+   - Agent calls `confirm_projects` with the curated list.
+   - Tool writes canonical registry to `Projects/00-project-registry.md`, runs `pull` sync to materialize `projects.yaml` and SQLite `project_registry`, creates missing vault folders (`Projects/`, `Daily Notes/`) if needed.
 
-6. **Step 3 — Vault candidate merge:**
-   - Merge GitHub-derived candidates with vault-derived candidates from note page titles.
-   - Present unified candidate list for keep/remove review.
-   - User removes false positives, merges duplicate project names.
+5. **Smoke test:**
+   - Agent calls `list_projects` to confirm the registry round-tripped into SQLite.
+   - Agent calls `onboarding_status` to display complete vs pending checklist.
+   - Note: `github_balance` requires a separate `rebalance github-scan` run (it reads from `github_activity`, not the registry). The agent can prompt the user to run this after onboarding completes, but it is not part of the onboarding loop itself.
 
-7. **Step 4 — Minimal metadata capture:**
-   - For each retained candidate, collect only: 2–3 sentence summary, repos, priority tier, tags.
-   - Full custom fields (scores, qualitative fields) are optional at this stage — capture on a second pass.
-   - Keep this step fast. More fields = more abandonment.
+6. **Optional: Google Calendar setup:**
+   - Offer gcalcli OAuth2 setup after registry bootstrap is confirmed working.
+   - Not before — calendar is lower priority than project registry for beta validation.
 
-8. **Step 5 — Registry write and sync:**
-   - Write canonical registry to `Projects/00-project-registry.md` in vault.
-   - Run `pull` sync to materialize `projects.yaml` and SQLite `project_registry`.
-   - Confirm vault root and create missing folders (`Projects/`, `Daily Notes/`) if needed.
+**Resumability:** `onboarding_status(vault_path)` is the resumability mechanism. It checks: config file exists, GitHub token present and valid, registry file exists at vault_path, `projects.yaml` and SQLite projections are in sync (DB path resolved from `REBALANCE_DB` env var, same as all server tools). Each tool call advances state independently. If the user stops mid-flow, the next `onboarding_status` call tells the agent exactly where to resume.
 
-9. **Step 6 — Smoke test:**
-   - MCP server restarts with populated registry.
-   - Run one example project query to confirm end-to-end.
-   - Display first-run checklist with complete vs pending status.
+**CLI escape hatch:** `rebalance ingest preflight` and `rebalance config set-github-token` remain available for power users who prefer terminal workflows.
 
-10. **Step 7 — Optional: Google Calendar setup:**
-    - Offer gcalcli OAuth2 setup after registry bootstrap is confirmed working.
-    - Not before — calendar is lower priority than project registry for beta validation.
-
-**Resumability requirement:** onboarding must be resumable. If the user stops after any step, the next MCP startup resumes from the first incomplete step rather than restarting.
+**Refactor note:** the current `run_preflight()` function is monolithic — it discovers, prompts via `questionary`, writes the registry, and returns only counts. The MCP tools require a split: `run_preflight` (read-only, returns candidates) and `confirm_projects` (write-only, persists registry). Step 3 below includes this refactor. After the split, both CLI and MCP tools call the same discover/confirm functions.
 
 **Beta scope note:** naming convention alignment (repo names → vault project names), full custom field capture, and UI polish are deferred to v1.1. Beta testers are technical enough to handle minor rough edges.
 
@@ -211,14 +204,14 @@ active_projects:
       attention_percent_7d: 0
       last_activity_at: null
 
-most_likely_active: []
-semi_active: []
-less_active: []
+most_likely_active_projects: []
+semi_active_projects: []
+dormant_projects: []
 potential_projects: []
 archived_projects: []
 ```
 
-Note: `most_likely_active`, `semi_active`, and `less_active` are top-level registry sections — not nested inside individual project entries.
+Note: `most_likely_active_projects`, `semi_active_projects`, `dormant_projects`, and `potential_projects` are top-level registry sections — not nested inside individual project entries.
 
 `projects.yaml` projection shape:
 
@@ -353,13 +346,17 @@ Build order is sequenced for independent testability — each step works standal
 - `project_registry` table is the join target for GitHub scanner and briefing assembler
 - Smoke test: `rebalance ingest sync --mode check --vault /path/to/vault`
 
-**Step 3 — Onboarding preflight (0.5 days)**
-- GitHub PAT prompt, validation against `/user`, scope check
-- Activity scan → three candidate segments (`most_likely_active`, `semi_active`, `less_active`)
-- Vault title scan → merge with GitHub candidates
-- Interactive keep/remove pass with `questionary`
-- Minimal metadata capture (summary, repos, priority tier, tags only)
-- Write canonical registry and run initial `pull` sync
+**Step 3 — Onboarding MCP tools (1.5 days)**
+- **Refactor `run_preflight()`**: split the current monolithic function into two layers:
+  - `discover_candidates(vault_path, registry_path, github_token?)` — pure, read-only, returns segmented candidates (`most_likely_active_projects`, `semi_active_projects`, `dormant_projects`, `potential_projects`)
+  - `confirm_and_write(projects, vault_path, registry_path)` — write-only, persists registry and runs `pull` sync
+  - CLI `rebalance ingest preflight` re-wired to call discover → questionary prompts → confirm
+- Implement four MCP tools — see [MCP.md — Onboarding tools](./MCP.md) for param/return specs:
+  - `onboarding_status(vault_path)` — checks config, token, registry, sync artifacts
+  - `setup_github_token(token)` — validates against `/user`, stores in config
+  - `run_preflight(vault_path)` — calls `discover_candidates`, returns structured candidates
+  - `confirm_projects(projects, vault_path)` — calls `confirm_and_write`, returns sync result
+- Ship `.vscode/mcp.json` in repo for beta workspace setup
 
 **Step 4 — Note ingester (2 days)**
 *Highest value, lowest risk — pure file I/O, no models needed.*
@@ -477,20 +474,27 @@ Licensed under the **Apache License, Version 2.0**. You may use, reproduce, modi
 
 ## Next Actions
 
-- [ ] Create canonical registry `Projects/00-project-registry.md` in vault
-- [x] Implement ingest sync modes: `pull`, `push`, `check`
-- [x] Implement GitHub activity discovery + preflight integration (repo candidates, activity segments)
-- [x] Config system for GitHub PAT (`temp/rbos.config`, gitignored, repo root)
-- [ ] **Next:** Test GitHub preflight discovery with user PAT
-- [ ] Run preflight to populate candidates from vault titles + GitHub repos
-- [ ] Promote curated candidates into active projects; materialize `projects.yaml`
+### Done
 - [x] Scaffold `rebalance/` package structure
+- [x] Implement ingest sync modes: `pull`, `push`, `check`
+- [x] Config system for GitHub PAT (`temp/rbos.config`, gitignored, repo root)
+- [x] Implement GitHub activity discovery + preflight integration (repo candidates, activity segments)
 - [x] Implement `rebalance github-scan` CLI
 - [x] Implement `github_balance` MCP tool
-- [ ] Install and authenticate gcalcli: `pip install gcalcli && gcalcli list`
+
+### Up next — Onboarding MCP tools (Step 3)
+- [ ] Implement `onboarding_status` MCP tool (per-step completion state)
+- [ ] Implement `setup_github_token` MCP tool (validate + store PAT)
+- [ ] Implement `run_preflight` MCP tool (vault + GitHub discovery, returns candidates)
+- [ ] Implement `confirm_projects` MCP tool (write registry, run sync)
+- [ ] Ship `.vscode/mcp.json` in repo for beta workspace setup
+- [ ] Test full onboarding loop via MCP tools (VS Code agent-driven)
+
+### Remaining — Build phase
+- [ ] Create canonical registry `Projects/00-project-registry.md` in vault
 - [ ] Smoke test: `pip install -e .` → `rebalance ingest sync --mode check --vault /path/to/vault`
 - [ ] Prototype note ingester: `python ingest.py /path/to/vault`
 - [ ] Decide: Qwen3-Embedding or OpenAI embeddings (align with LTVera if applicable)
+- [ ] Install and authenticate gcalcli: `pip install gcalcli && gcalcli list`
 - [ ] Wire `morning_brief.py` + launchd plist
-- [ ] Wire MCP host to vault and Daily Notes
 - [ ] Phase 2: implement `github_embed_queue` selective embedding pipeline

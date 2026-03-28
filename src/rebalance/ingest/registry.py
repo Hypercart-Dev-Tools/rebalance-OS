@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import re
 import sqlite3
 from pathlib import Path
@@ -87,7 +88,10 @@ Canonical project list for rebalance ingest and scoring.
 
 Sections:
 - `active_projects`: currently tracked and scored
-- `potential_projects`: candidates discovered by preflight
+- `most_likely_active_projects`: GitHub activity last 14 days
+- `semi_active_projects`: GitHub activity 15-30 days ago
+- `dormant_projects`: GitHub activity 31+ days ago
+- `potential_projects`: candidates with no activity signals (vault-only discoveries)
 - `archived_projects`: historical records
 
 ```yaml
@@ -166,9 +170,9 @@ def sync_db(database_path: Path, projection: dict[str, Any]) -> int:
                     project.get("value_level"),
                     project.get("priority_tier"),
                     project.get("risk_level"),
-                    yaml.safe_dump(project.get("repos", []), sort_keys=False),
-                    yaml.safe_dump(project.get("tags", []), sort_keys=False),
-                    yaml.safe_dump(project.get("custom_fields", {}), sort_keys=False),
+                    json.dumps(project.get("repos", [])),
+                    json.dumps(project.get("tags", [])),
+                    json.dumps(project.get("custom_fields", {})),
                 ),
             )
         conn.commit()
