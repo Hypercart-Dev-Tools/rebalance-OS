@@ -232,6 +232,27 @@ def _summarize_by_repo(events: list[dict[str, Any]]) -> dict[str, RepoActivity]:
 # Public API
 # ---------------------------------------------------------------------------
 
+def validate_github_token(token: str) -> dict[str, Any]:
+    """
+    Validate a GitHub PAT against /user and return login + scopes.
+
+    Returns:
+        {"valid": True, "login": "...", "scopes": ["repo", ...]}
+        or {"valid": False, "login": "", "scopes": [], "error": "..."}
+    """
+    req = urllib.request.Request(f"{GITHUB_API}/user", headers=_headers(token))
+    try:
+        with urllib.request.urlopen(req) as resp:
+            data = json.loads(resp.read().decode())
+            scopes_header = resp.headers.get("X-OAuth-Scopes", "")
+            scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
+            return {"valid": True, "login": data.get("login", ""), "scopes": scopes}
+    except urllib.error.HTTPError as exc:
+        if exc.code in (401, 403):
+            return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {exc.code}"}
+        return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {exc.code}"}
+
+
 def scan_github(token: str, days: int = 14) -> GitHubScanResult:
     """
     Authenticate, fetch events, and return aggregated per-repo activity.

@@ -8,7 +8,9 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from rebalance.ingest.github_scan import get_github_balance
+from rebalance.ingest.config import get_github_token, set_github_token, get_config_path
+from rebalance.ingest.github_scan import get_github_balance, validate_github_token
+from rebalance.ingest.preflight import discover_candidates, confirm_and_write
 
 
 def _fetch_projects(database_path: Path, status: str | None = None) -> list[dict[str, Any]]:
@@ -74,6 +76,145 @@ def create_server(database_path: Path) -> FastMCP:
             project_repos=project_repos,
             since_days=since_days,
         )
+
+    # ------------------------------------------------------------------
+    # Onboarding tools
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    def onboarding_status(vault_path: str) -> dict[str, Any]:
+        """
+        Check which onboarding steps are complete.
+
+        Returns a list of steps with completion status so the host agent
+        knows where to resume.  DB path is resolved from REBALANCE_DB
+        (same as all server tools).
+        """
+        vp = Path(vault_path).expanduser().resolve()
+        registry_path = vp / "Projects" / "00-project-registry.md"
+        projects_yaml_path = vp / "projects.yaml"
+
+        steps: list[dict[str, Any]] = []
+
+        # Step 1: Config file exists
+        config_path = get_config_path()
+        steps.append({
+            "name": "config_exists",
+            "complete": config_path.exists(),
+            "detail": str(config_path),
+        })
+
+        # Step 2: GitHub token present
+        token = get_github_token()
+        steps.append({
+            "name": "github_token_set",
+            "complete": token is not None,
+            "detail": "Token is configured" if token else "No token found",
+        })
+
+        # Step 3: Registry file exists
+        steps.append({
+            "name": "registry_exists",
+            "complete": registry_path.exists(),
+            "detail": str(registry_path),
+        })
+
+        # Step 4: projects.yaml projection exists
+        steps.append({
+            "name": "projection_exists",
+            "complete": projects_yaml_path.exists(),
+            "detail": str(projects_yaml_path),
+        })
+
+        # Step 5: SQLite DB has project_registry rows
+        db_has_rows = False
+        if database_path.exists():
+            try:
+                conn = sqlite3.connect(database_path)
+                count = conn.execute(
+                    "SELECT COUNT(*) FROM project_registry"
+                ).fetchone()[0]
+                db_has_rows = count > 0
+                conn.close()
+            except Exception:
+                pass
+        steps.append({
+            "name": "db_synced",
+            "complete": db_has_rows,
+            "detail": str(database_path),
+        })
+
+        return {"steps": steps}
+
+    @mcp.tool()
+    def setup_github_token(token: str) -> dict[str, Any]:
+        """
+        Validate a GitHub PAT against the /user endpoint and store it.
+
+        Returns validation result with login and scopes.  If invalid,
+        the token is not stored.
+        """
+        result = validate_github_token(token)
+        if result["valid"]:
+            set_github_token(token)
+        return result
+
+    @mcp.tool()
+    def run_preflight(vault_path: str) -> dict[str, Any]:
+        """
+        Discover project candidates from vault note titles and GitHub
+        activity.  Read-only — does not write to the registry.
+
+        Returns candidates segmented by activity recency.  The host agent
+        presents these to the user, then sends the curated list to
+        confirm_projects.
+        """
+        vp = Path(vault_path).expanduser().resolve()
+        registry_path = vp / "Projects" / "00-project-registry.md"
+        token = get_github_token()
+
+        discovery = discover_candidates(
+            vault_path=vp,
+            registry_path=registry_path,
+            github_token=token,
+        )
+
+        return {
+            "most_likely_active_projects": discovery.most_likely_active_projects,
+            "semi_active_projects": discovery.semi_active_projects,
+            "dormant_projects": discovery.dormant_projects,
+            "potential_projects": discovery.potential_projects,
+            "scanned_files": discovery.scanned_files,
+            "github_error": discovery.github_error,
+        }
+
+    @mcp.tool()
+    def confirm_projects(projects: list[dict[str, Any]], vault_path: str) -> dict[str, Any]:
+        """
+        Write confirmed projects to the canonical registry and run pull
+        sync to materialize projects.yaml and the SQLite project_registry
+        table.  Creates standard vault directories if missing.
+
+        Pass the curated project list from run_preflight (with any
+        user-edited fields like summary, priority_tier, tags).
+        """
+        vp = Path(vault_path).expanduser().resolve()
+        registry_path = vp / "Projects" / "00-project-registry.md"
+        projects_yaml_path = vp / "projects.yaml"
+
+        result = confirm_and_write(
+            projects=projects,
+            vault_path=vp,
+            registry_path=registry_path,
+            projects_yaml_path=projects_yaml_path,
+            database_path=database_path,
+        )
+
+        return {
+            "registry_path": result.registry_path,
+            "project_count": result.project_count,
+            "sync_ok": result.sync_ok,
+        }
 
     return mcp
 
