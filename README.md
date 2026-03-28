@@ -1,6 +1,6 @@
-# obsidian-rag
+# rebalance OS 
 
-> Your second brain, finally paying rent.
+> Your daily operating OS
 
 **Status: Coming soon — active development. Star to follow along.**
 
