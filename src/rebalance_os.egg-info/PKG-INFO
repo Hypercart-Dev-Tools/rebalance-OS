@@ -1,3 +1,15 @@
+Metadata-Version: 2.4
+Name: rebalance-os
+Version: 0.1.0
+Summary: Local-first workday operating system with MCP tools and Obsidian ingest
+Requires-Python: >=3.12
+Description-Content-Type: text/markdown
+Requires-Dist: typer>=0.12.0
+Requires-Dist: pydantic>=2.8.0
+Requires-Dist: PyYAML>=6.0.1
+Requires-Dist: questionary>=2.0.1
+Requires-Dist: mcp>=1.0.0
+
 > Your workday OS
 
 **Status: Coming soon — active development. Star to follow along.**

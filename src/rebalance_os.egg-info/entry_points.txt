@@ -1,0 +1,2 @@
+[console_scripts]
+rebalance = rebalance.cli:app

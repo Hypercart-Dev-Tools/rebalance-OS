@@ -11,7 +11,7 @@ Execution source of truth: this `PROJECT.md` file. `README.md` is marketing-faci
 ## Assumptions
 
 - **Obsidian Vault**: Local folder with clean MD files; frontmatter, headings, tags, and links are well-structured for parsing. Vault size <10k notes to keep embedding feasible on macOS hardware.
-- **Local Setup**: macOS with MLX/Ollama for Qwen3-Embedding and Qwen LLM (e.g., Qwen3-7B); Python 3.12+ with sqlite-vec extension; GitHub PAT with repo:read scope.
+- **Local Setup**: macOS with `mlx-embeddings` (local fork at `WP-DB-Toolkit/mlx-embeddings`) for Qwen3 embeddings via Apple Silicon MLX; optional Ollama/LM Studio for local LLM synthesis; Python 3.12+ with sqlite-vec extension; GitHub PAT with repo:read scope.
 - **GitHub Usage**: 5-6 active repos; PAT stored securely (e.g., keychain or env var); activity tracked via API (commits, PRs, issues last 30-90 days).
 - **Google Calendar**: `gcalcli` installed and OAuth2-authenticated; today's agenda pulled via CLI subprocess call.
 - **Project Registry Source**: A canonical Markdown registry file in the Obsidian vault (for example, `Projects/00-project-registry.md`) is human-editable source of truth for project metadata.
@@ -33,12 +33,12 @@ Obsidian Vault (.md files)    ← recursive scan/parse/chunk
 SQLite DB:
   - files, chunks, keywords, links, embeddings (sqlite-vec)
   - github_activity (commits, time_spent proxy via commit count/PR velocity)
-  - project_registry (from projects.yaml seed)
+  - project_registry (from canonical registry projection)
     ↓
 morning_brief.py (scheduler, runs daily at set time)
   ├── gcalcli agenda today         → today's meetings + locations + attendees
   ├── github_scan.py               → repo balance, over-investment flags
-  └── obsidian_rag query           → relevant notes, project status
+  └── rebalance query              → relevant notes, project status
     ↓
 Daily Briefing MD (written to vault/Daily Notes/YYYY-MM-DD.md)
     ↓
@@ -48,7 +48,7 @@ Any MCP host/agent (reads via local tool calls/filesystem access)
 ### Runtime Orchestration
 
 ```
-Any IDE/agent workflow          -> builds obsidian_rag/ package
+Any IDE/agent workflow          -> builds rebalance package
 Scheduler (macOS-first)         -> launchd on macOS, Task Scheduler on Windows, cron on Linux
 Any MCP-capable host/agent      -> reads briefing + calls MCP tools conversationally
 Local LLM runtime (optional)    -> Ollama or LM Studio for on-device inference
@@ -58,11 +58,7 @@ Build can happen in any IDE or coding agent. Daily use happens through any MCP-c
 
 ### MCP Layer Clarification
 
-- **MCP Server (rebalance)**: Owns tool interfaces and business logic over JSON-RPC.
-- **Host / Client Adapter**: The MCP-enabled app that calls server tools on behalf of the user session.
-- **Local Runtime (optional)**: On-device model runtime for embeddings and/or synthesis (for example, Ollama or LM Studio).
-
-Operationally: **Host/Adapter ↔ MCP Server ↔ SQLite/filesystem/APIs**, with **Local Runtime** invoked when inference is needed.
+See **[MCP.md](./MCP.md)** — canonical SOT for layer roles, live and planned tool surface, server configuration, and all host adapter configs (Claude Desktop, Cursor, VS Code, Continue).
 
 ### Project Registry Model
 
@@ -79,7 +75,6 @@ Conflict policy:
 
 ## Key Features
 
-- **Project Registry**: Seed file (`projects.yaml`) defines all projects with value, priority, risk, and repo mappings. Ingested first; used to weight retrieval and contextualize GitHub imbalance alerts.
 - **Project Registry**: Canonical in-vault Markdown registry for transparency and instant editability, synced into `projects.yaml` + SQLite projections.
 - **Note Ingestion**: Recursive scan; chunk by headings; extract keywords/tags deterministically.
 - **Semantic Query**: Embed queries; top-K retrieval; LLM synthesis.
@@ -114,35 +109,33 @@ Store custom fields under `custom_fields.quantitative` and `custom_fields.qualit
 
 Example canonical Markdown section:
 
-```md
-## Active Projects
-
-### LTVera
-
 ```yaml
-status: active
-summary: >
-  2-3 sentence project summary goes here.
-repos: [ltv-era]
-obsidian_folder: Projects/LTVera
-tags: ["#project-ltv-era"]
-custom_fields:
-  quantitative:
-    priority_tier: 1
-    value_score: 9
-    risk_score: 7
-    weekly_hours_target: 8
-    confidence_score: 6
-  qualitative:
-    strategic_reason: "Core revenue and retention upside"
-    failure_mode: "Model quality under sparse order histories"
-    momentum_state: "warm"
-    stakeholder_context: "Used in client strategy updates"
-    notes_quality: "high"
-computed:
-  attention_percent_7d: 0
-  last_activity_at: null
-```
+active_projects:
+  - name: LTVera
+    status: active
+    summary: >
+      2-3 sentence project summary goes here.
+    repos: [ltv-era]
+    obsidian_folder: Projects/LTVera
+    tags: ["#project-ltv-era"]
+    custom_fields:
+      quantitative:
+        priority_tier: 1
+        value_score: 9
+        risk_score: 7
+        weekly_hours_target: 8
+        confidence_score: 6
+      qualitative:
+        strategic_reason: "Core revenue and retention upside"
+        failure_mode: "Model quality under sparse order histories"
+        momentum_state: "warm"
+        stakeholder_context: "Used in client strategy updates"
+        notes_quality: "high"
+    computed:
+      attention_percent_7d: 0
+      last_activity_at: null
+potential_projects: []
+archived_projects: []
 ```
 
 `projects.yaml` projection shape:
@@ -230,7 +223,7 @@ def get_github_balance():
     ...
 
 def get_rag_summary():
-    # queries SQLite via obsidian_rag, returns top project notes
+    # queries SQLite via rebalance, returns top project notes
     ...
 
 def write_briefing():
@@ -275,11 +268,9 @@ Build order is sequenced for independent testability — each step works standal
 1. **Setup (1 day)**
   - Install deps: `sqlite-vec`, `ollama` + Qwen3-Embedding, `requests`, `keyring`, `gcalcli`, `pyyaml`, `typer`, `pydantic`, `questionary`
    - Create DB schema including `project_registry` table
-   - Scaffold `obsidian_rag/` package structure
-  - Keep this file in repo root and treat it as execution source of truth
+   - Scaffold `rebalance/` package structure
+   - Keep this file in repo root and treat it as execution source of truth
 
-2. **Project Registry Ingest + Sync (0.5 days)** — *Do this before any other ingestion.*
-  - Parse canonical Markdown registry; populate `project_registry` table
   - Implement `pull`, `push`, and `check` sync commands
   - Materialize `projects.yaml` projection
   - This table is referenced by the GitHub scanner and briefing assembler
@@ -312,13 +303,12 @@ Build order is sequenced for independent testability — each step works standal
 
 8. **Querier (2 days)**
    - Embed input → ANN search → prompt Qwen LLM with context + GitHub metrics
-  - CLI: `rebalance query "..."` and `rebalance github-balance`
+   - CLI: `rebalance query "..."` and `rebalance github-balance`
 
 9. **Morning Briefing Assembler (1 day)**
    - `morning_brief.py` pulls calendar + GitHub + RAG; writes Daily Notes MD
    - launchd plist for 7am daily run
-   - Add manual trigger alias for on-demand runs: `alias brief='python ~/obsidian_rag/morning_brief.py'`
-  - Wire your MCP host of choice to vault and Daily Notes tooling/access
+   - Add manual trigger alias for on-demand runs: `alias brief='python -m rebalance.morning_brief'`
 
 ### Phase 2: Daily Use (Any MCP Host + Local Tools)
 
@@ -337,22 +327,45 @@ Once built, your MCP host becomes the conversational interface to the already-as
 | Project Registry | `Projects/00-project-registry.md` + PyYAML | Human-editable canonical source + machine projection |
 | CLI | `typer`, `questionary` | Interactive ingest, preflight review, and sync flows |
 | DB | SQLite + `sqlite-vec` | Local, fast vector search, no server |
-| Embeddings | Qwen3-Embedding (Ollama/MLX) | High-quality, local, macOS-optimized |
+| Embeddings | `mlx-embeddings` (local fork, Qwen3-Embedding-4bit, Apple Silicon MLX) | Field-tested on WP-DB-Toolkit; same model already in use; avoids Ollama dependency for embeddings |
 | LLM runtime | Ollama or LM Studio | Local model serving for on-device inference |
 | GitHub API | `requests` + PAT | Simple activity aggregation |
 | Calendar | `gcalcli` + Google Calendar API | Mature Python CLI; OAuth2; TSV output for easy parsing |
 | Chunking/Keywords | NLTK/spaCy (light) | Deterministic pass for frequency analysis |
-| PAT/Secret Storage | `keyring` | Secure; avoids env var exposure |
+| PAT/Secret Storage | Plaintext JSON in `temp/rbos.config` (gitignored, MVP) | Local-only, low-risk scope (read-only repo). Upgrade to `keyring` when multi-user or sharing vault. See Secrets Strategy below. |
 | Scheduler | launchd (macOS), Task Scheduler (Windows), cron (Linux) | macOS-first with practical cross-platform fallback |
+
+## Secrets Strategy
+
+**Phase 0 (MVP) — Plaintext in gitignored config file**
+
+- Config stored at `temp/rbos.config` (JSON, plaintext)
+- Directory (`temp/`) is listed in `.gitignore` — never committed
+- Suitable for single-user, local-only use
+- PAT scope: read-only repos (`repo:read`), so compromise impact is low
+- CLI commands for management:
+  - `rebalance config set-github-token <PAT>` — store PAT
+  - `rebalance config get-github-token` — check config (masked output)
+  - `rebalance config show-config-path` — show location
+
+**Phase 1+ (if multi-user or compliance required)**
+
+- Upgrade to `keyring` library (native OS credential storage)
+- `config.py` already has the abstraction in place; just swap the backend
+- `keyring` uses: Keychain (macOS), Credential Manager (Windows), Pass (Linux)
+
+**Why not env vars?** They're visible in `ps` output and shell history. Plaintext file (gitignored) is safer for MVP because it's not in memory/history, and we upgrade later anyway.
+
+**Why not encrypted?** Encryption key has to live somewhere — usually env var or keyring. Simpler to just use keyring directly for Phase 1.
 
 ## Risks & Mitigations
 
 | Risk | Mitigation |
 |------|------------|
+| `temp/rbos.config` exposure | Never commit (gitignored). Rotate PAT if exposed. Keyring upgrade in Phase 1. |
 | Embed drift between model versions | Store model version in DB; re-embed on version change |
 | Large vault OOM on embedding | Chunk aggressively; lazy/batched embedding |
-| PAT exposure | Use `keyring`; rotate quarterly |
-| Over-investment false positives | Weight by `priority_tier` from `projects.yaml` seed |
+| Over-investment false positives | Weight by `priority_tier` from canonical registry/projection |
 | Dual embedding model overhead | Standardize on one model before building embedder |
 | Registry drift between Markdown and projection | Enforce sync modes (`pull`, `push`, `check`) and run `check` in daily workflow |
 | gcalcli OAuth token expiry | Token refresh is automatic; re-auth needed only after long gaps |
@@ -367,16 +380,19 @@ Licensed under the **Apache License, Version 2.0**. You may use, reproduce, modi
 ## Next Actions
 
 - [ ] Create canonical registry `Projects/00-project-registry.md` in vault
-- [ ] Implement ingest sync modes: `pull`, `push`, `check`
-- [ ] Run preflight to populate `Potential Projects` from vault titles
+- [x] Implement ingest sync modes: `pull`, `push`, `check`
+- [x] Implement GitHub activity discovery + preflight integration (repo candidates, activity scores)
+- [x] Config system for GitHub PAT (plaintext in gitignored temp/rbos.config, MVP)
+- [ ] **Next:** Test GitHub preflight discovery with user PAT
+- [ ] Run preflight to populate `Potential Projects` from vault titles + GitHub repos
 - [ ] Promote curated candidates into active projects and materialize `projects.yaml`
-- [ ] Create `obsidian_rag/` repo and keep this file in root as execution source of truth
-- [ ] Scaffold package structure in your IDE/agent workflow of choice
+- [x] Scaffold package structure in your IDE/agent workflow of choice
+- [x] Implement `rebalance github-scan` CLI — PAT auth, events pagination, per-repo aggregation, SQLite persistence
+- [x] Implement `github_balance(since_days)` MCP tool — joins `project_registry.repos` with `github_activity`
 - [ ] Install and authenticate `gcalcli`: `pip install gcalcli && gcalcli list`
-- [ ] Prototype registry ingest: `rebalance ingest sync --mode pull`
+- [ ] Install deps and smoke test: `pip install -e .` → `rebalance ingest sync --mode check --vault ...`
 - [ ] Prototype note ingester: `python ingest.py /path/to/vault`
 - [ ] Decide: Qwen3-Embedding or OpenAI embeddings (align with LTVera if applicable)
-- [ ] Test GitHub scan on active repos (AI-DDTK, etc.)
 - [ ] Wire `morning_brief.py` + launchd plist
 - [ ] Wire MCP host of choice to vault and Daily Notes tooling/access
 - [ ] Query examples:
