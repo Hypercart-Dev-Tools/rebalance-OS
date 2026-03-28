@@ -26,7 +26,7 @@ AI assistants could help — but they can't see your Obsidian vault, your GitHub
 
 ## What it does
 
-**rebalance OS** is a local-first morning briefing engine that ingests your Obsidian vault, GitHub activity, and calendar into a queryable SQLite database — then lets any MCP-compatible LLM (Claude, Copilot, Cursor, Continue) answer questions about your own work, flag over-investment in specific projects, and surface what actually needs your attention today.
+**rebalance OS** is a local-first morning briefing engine that ingests your Obsidian vault, GitHub activity, and calendar into a queryable SQLite database — then lets any MCP-capable host or agent (ChatGPT, Gemini, Claude, Copilot, Cursor, Continue, and others where MCP is supported) answer questions about your own work, flag over-investment in specific projects, and surface what actually needs your attention today.
 
 ---
 
@@ -53,25 +53,34 @@ Ask "What's my day look like?" and get today's meetings, yesterday's commit acti
 ```
 Data sources
   Google Calendar  ──┐
-  GitHub activity  ──┤──▶  cron (daily)  ──▶  SQLite + sqlite-vec
-  Obsidian vault   ──┤         │                (chunks, embeddings,
-  Slack [soon]     ──┘         │                 github_activity)
-                               │
-                               ▼
-                     MCP server (Python)
-                     rebalance OS tools:
-                       query_notes
-                       github_balance
-                       todays_agenda
-                       search_vault
-                               │
-              ┌────────────────┼────────────────┐
-              ▼                ▼                ▼
-       Claude Desktop     VS Code agent      Cursor
-       (MCP native)    (Copilot/Continue)  (MCP compatible)
+  GitHub activity  ──┤──▶  scheduler (daily) ──▶ SQLite + sqlite-vec
+  Obsidian vault   ──┤      (launchd on macOS,   (chunks, embeddings,
+  Slack [soon]     ──┘       Task Scheduler on    github_activity)
+                              Windows, cron on Linux)
+                                     │
+                                     ▼
+                           MCP server (Python)
+                           rebalance tools:
+                             query_notes
+                             github_balance
+                             todays_agenda
+                             search_vault
+                                     │
+             ┌───────────────────────┼────────────────────────┐
+             ▼                       ▼                        ▼
+      ChatGPT/Gemini           Claude/Copilot          Cursor/Continue
+      (where MCP works)       (MCP clients)             (MCP clients)
 ```
 
 The MCP server speaks standard JSON-RPC — no LLM-specific logic inside it. Any MCP-compatible client works without modification.
+
+### MCP Layer Clarification
+
+- **MCP Server (this project)**: Exposes tools (`query_notes`, `github_balance`, `todays_agenda`, `search_vault`) over JSON-RPC.
+- **Host / Client Adapter**: The app that connects to the MCP server and brokers tool calls for the user model (for example: Claude, Copilot, Cursor, Continue, ChatGPT/Gemini where MCP is supported).
+- **Local Runtime (optional)**: The on-device model server used for generation/embeddings (for example: Ollama or LM Studio).
+
+Think of the flow as: **Host/Adapter ↔ MCP Server ↔ Local Data/Tools**, with an optional **Local Runtime** used when model inference is performed on-device.
 
 ---
 
@@ -79,7 +88,7 @@ The MCP server speaks standard JSON-RPC — no LLM-specific logic inside it. Any
 
 Obsidian stores everything as plain `.md` files. No proprietary database, no sync lock-in, no API needed — just a folder on your disk. That makes ingestion a simple recursive file scan: parse frontmatter, chunk by headings, extract tags and wikilinks, embed, and index. The entire vault becomes a queryable vector store in a single SQLite file.
 
-Local LLMs — specifically Qwen3 via Ollama — close the loop. Your notes, commits, and calendar events never leave your machine. There's no API key to manage for inference, no usage bill, and no terms-of-service risk with client data. The model runs on-device (optimized for Apple Silicon via MLX), retrieves context from the local vector store, and answers in seconds.
+Local LLMs — such as Qwen3 via Ollama or LM Studio-compatible models — close the loop. Your vault content can stay local and be queried without sending note content to a hosted LLM by default. GitHub and Google Calendar data are pulled from their APIs, then cached and queried locally. The model runs on-device (optimized for Apple Silicon via MLX), retrieves context from the local vector store, and answers in seconds.
 
 The result is an AI assistant that actually knows your work — because it's reading the same files you are.
 
@@ -92,11 +101,11 @@ The result is an AI assistant that actually knows your work — because it's rea
 | Notes | Obsidian (plain `.md`) |
 | Vector DB | SQLite + `sqlite-vec` |
 | Embeddings | Qwen3-Embedding via Ollama |
-| LLM | Qwen3-7B via Ollama (Apple Silicon optimized) |
+| LLM runtime | Ollama or LM Studio (local-first) |
 | Calendar | `gcalcli` → Google Calendar API |
 | GitHub | GitHub REST API + PAT |
 | MCP server | Python `mcp` SDK (stdio + SSE) |
-| LLM clients | Claude Desktop, VS Code, Cursor, any MCP host |
+| LLM clients | Any MCP host (Claude, Copilot, Cursor, Continue, and others where MCP is supported) |
 
 ---
 
@@ -122,7 +131,7 @@ Licensed under the **Apache License, Version 2.0**.
 
 You may use, reproduce, modify, and distribute this software and its documentation under the terms of the Apache 2.0 License. Attribution is required — any redistribution must retain the above copyright notice.
 
-See [LICENSE](./LICENSE) for the full license text, or visit https://www.apache.org/licenses/LICENSE-2.0.
+See [APACHE-LICENSE-2.0.txt](./APACHE-LICENSE-2.0.txt) for the full license text, or visit https://www.apache.org/licenses/LICENSE-2.0.
 
 ---
 

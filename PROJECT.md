@@ -2,9 +2,9 @@
 
 ## Project Overview
 
-This project builds a local RAG (Retrieval-Augmented Generation) pipeline that ingests your Obsidian Markdown vault into SQLite, adds Qwen embeddings for semantic search, and enables querying via a local Qwen LLM. It extends to GitHub activity scanning via Personal Access Token (PAT) to detect over-investment in specific projects by comparing commit activity, PRs, and issues across repos. It also integrates Google Calendar via `gcalcli` to surface today's meetings as part of a unified morning briefing.
+This project builds a local RAG (Retrieval-Augmented Generation) pipeline that ingests your Obsidian Markdown vault into SQLite, adds Qwen embeddings for semantic search, and enables querying via a local Qwen LLM runtime. It extends to GitHub activity scanning via Personal Access Token (PAT) to detect over-investment in specific projects by comparing commit activity, PRs, and issues across repos. It also integrates Google Calendar via `gcalcli` to surface today's meetings as part of a unified morning briefing.
 
-The goal is a unified "second brain" that surfaces notes, tracks progress, flags project imbalances, and delivers a structured daily briefing — assembled automatically each morning and readable via Claude Desktop.
+The goal is a unified "second brain" that surfaces notes, tracks progress, flags project imbalances, and delivers a structured daily briefing assembled automatically each morning and readable via any MCP-capable host.
 
 ## Assumptions
 
@@ -29,25 +29,34 @@ SQLite DB:
   - github_activity (commits, time_spent proxy via commit count/PR velocity)
   - project_registry (from projects.yaml seed)
     ↓
-morning_brief.py (launchd, runs daily at set time)
+morning_brief.py (scheduler, runs daily at set time)
   ├── gcalcli agenda today         → today's meetings + locations + attendees
   ├── github_scan.py               → repo balance, over-investment flags
   └── obsidian_rag query           → relevant notes, project status
     ↓
 Daily Briefing MD (written to vault/Daily Notes/YYYY-MM-DD.md)
     ↓
-Claude Desktop (reads via filesystem MCP, on demand)
+Any MCP host/agent (reads via local tool calls/filesystem access)
 ```
 
 ### Runtime Orchestration
 
 ```
-Claude Code (VS Code)     →  builds obsidian_rag/ package
-launchd (macOS, daily)    →  runs morning_brief.py at set time
-Claude Desktop + MCP      →  reads briefing MD and answers queries conversationally
+Any IDE/agent workflow          -> builds obsidian_rag/ package
+Scheduler (macOS-first)         -> launchd on macOS, Task Scheduler on Windows, cron on Linux
+Any MCP-capable host/agent      -> reads briefing + calls MCP tools conversationally
+Local LLM runtime (optional)    -> Ollama or LM Studio for on-device inference
 ```
 
-Claude Code in VS Code handles **building**. Claude Desktop handles **daily use** — it reads the already-assembled briefing and answers queries against the SQLite DB via filesystem MCP. It does not run the briefing script itself; the script runs on schedule whether Claude Desktop is open or not.
+Build can happen in any IDE or coding agent. Daily use happens through any MCP-capable host that can call local tools. The briefing script runs on schedule regardless of whether an MCP host is open.
+
+### MCP Layer Clarification
+
+- **MCP Server (rebalance)**: Owns tool interfaces and business logic over JSON-RPC.
+- **Host / Client Adapter**: The MCP-enabled app that calls server tools on behalf of the user session.
+- **Local Runtime (optional)**: On-device model runtime for embeddings and/or synthesis (for example, Ollama or LM Studio).
+
+Operationally: **Host/Adapter ↔ MCP Server ↔ SQLite/filesystem/APIs**, with **Local Runtime** invoked when inference is needed.
 
 ## Key Features
 
@@ -58,7 +67,7 @@ Claude Code in VS Code handles **building**. Claude Desktop handles **daily use*
 - **Calendar Integration**: `gcalcli agenda today tomorrow` pulled each morning; meeting titles, times, locations, and attendees included in briefing context.
 - **Morning Briefing**: Single assembled MD file written to `vault/Daily Notes/YYYY-MM-DD.md`; includes calendar, GitHub balance, and RAG-surfaced project notes.
 - **Alerts**: "Over-investing in AI-DDTK (Tier 3 exploratory): 65% of commits this week."
-- **CLI Interface**: `rebalance OS query "WP vector plugin status"` or `rebalance OS github-balance`.
+- **CLI Interface**: `rebalance query "WP vector plugin status"` or `rebalance github-balance`.
 
 ## Project Seed Schema
 
@@ -115,7 +124,7 @@ projects:
 
 ## Morning Briefing Script
 
-`morning_brief.py` is a single Python script run by launchd each morning. It assembles a structured MD file in your vault's Daily Notes folder. Claude Desktop reads this on demand via filesystem MCP — no real-time dependency on Claude Desktop being open.
+`morning_brief.py` is a single Python script run by a scheduler each morning. It assembles a structured MD file in your vault's Daily Notes folder. Any MCP host can read this on demand via local filesystem access and/or tool calls.
 
 ```python
 # morning_brief.py — simplified sketch
@@ -160,9 +169,9 @@ if __name__ == "__main__":
     write_briefing()
 ```
 
-**launchd plist** (preferred over cron on macOS):
+**launchd plist** (preferred on macOS):
 ```xml
-<!-- ~/Library/LaunchAgents/com.rebalance OS.morning-brief.plist -->
+<!-- ~/Library/LaunchAgents/com.rebalance-os.morning-brief.plist -->
 <key>StartCalendarInterval</key>
 <dict>
   <key>Hour</key><integer>7</integer>
@@ -170,17 +179,22 @@ if __name__ == "__main__":
 </dict>
 ```
 
+**Cross-platform fallback:**
+- macOS: launchd (default)
+- Windows: Task Scheduler
+- Linux: cron
+
 ## Implementation Steps
 
 Build order is sequenced for independent testability — each step works standalone before the next depends on it.
 
-### Phase 1: Build (Claude Code / VS Code Agent)
+### Phase 1: Build (Any IDE / Coding Agent)
 
 1. **Setup (1 day)**
    - Install deps: `sqlite-vec`, `ollama` + Qwen3-Embedding, `requests`, `keyring`, `gcalcli`, `pyyaml`
    - Create DB schema including `project_registry` table
    - Scaffold `obsidian_rag/` package structure
-   - Copy this file to repo root as `AGENTS.md` so Claude Code uses it as ground truth
+  - Keep this file in repo root and treat it as execution source of truth
 
 2. **Project Seed Ingester (0.5 days)** — *Do this before any other ingestion.*
    - Parse `projects.yaml`; populate `project_registry` table
@@ -209,19 +223,19 @@ Build order is sequenced for independent testability — each step works standal
 
 7. **Querier (2 days)**
    - Embed input → ANN search → prompt Qwen LLM with context + GitHub metrics
-   - CLI: `rebalance OS query "..."` and `rebalance OS github-balance`
+  - CLI: `rebalance query "..."` and `rebalance github-balance`
 
 8. **Morning Briefing Assembler (1 day)**
    - `morning_brief.py` pulls calendar + GitHub + RAG; writes Daily Notes MD
    - launchd plist for 7am daily run
    - Add manual trigger alias for on-demand runs: `alias brief='python ~/obsidian_rag/morning_brief.py'`
-   - Wire Claude Desktop filesystem MCP to vault and Daily Notes folder
+  - Wire your MCP host of choice to vault and Daily Notes tooling/access
 
-### Phase 2: Daily Use (Claude Desktop + MCP)
+### Phase 2: Daily Use (Any MCP Host + Local Tools)
 
-Once built, Claude Desktop becomes the conversational interface to the already-assembled output:
+Once built, your MCP host becomes the conversational interface to the already-assembled output:
 
-- **Morning**: Open Claude Desktop → "Summarize my day" → reads today's briefing MD
+- **Morning**: Open MCP host → "Summarize my day" → reads today's briefing MD
 - **Ad hoc queries**: "What did I decide about the LTVera embedding pipeline?"
 - **Balance check**: "Am I over-investing anywhere this week?"
 - **Meeting prep**: "What Obsidian notes are relevant to my 10am call?"
@@ -234,12 +248,12 @@ Once built, Claude Desktop becomes the conversational interface to the already-a
 | Project Seed | `projects.yaml` + PyYAML | Structured prior knowledge; human-editable |
 | DB | SQLite + `sqlite-vec` | Local, fast vector search, no server |
 | Embeddings | Qwen3-Embedding (Ollama/MLX) | High-quality, local, macOS-optimized |
-| LLM | Qwen3-7B (Ollama) | Matches embedding model; strong reasoning |
+| LLM runtime | Ollama or LM Studio | Local model serving for on-device inference |
 | GitHub API | `requests` + PAT | Simple activity aggregation |
 | Calendar | `gcalcli` + Google Calendar API | Mature Python CLI; OAuth2; TSV output for easy parsing |
 | Chunking/Keywords | NLTK/spaCy (light) | Deterministic pass for frequency analysis |
 | PAT/Secret Storage | `keyring` | Secure; avoids env var exposure |
-| Scheduler | launchd (macOS) | Preferred over cron on macOS; reliable wake/missed-run handling |
+| Scheduler | launchd (macOS), Task Scheduler (Windows), cron (Linux) | macOS-first with practical cross-platform fallback |
 
 ## Risks & Mitigations
 
@@ -252,26 +266,26 @@ Once built, Claude Desktop becomes the conversational interface to the already-a
 | Dual embedding model overhead | Standardize on one model before building embedder |
 | Stale project seed | Review `projects.yaml` monthly; treat as a living document |
 | gcalcli OAuth token expiry | Token refresh is automatic; re-auth needed only after long gaps |
-| Briefing runs while machine is asleep | launchd handles missed runs on wake; manual alias as fallback |
+| Briefing runs while machine is asleep | launchd handles missed runs on wake; fallback schedulers may need explicit catch-up logic |
 
 ## License
 
 Copyright 2025 Hypercart DBA Neochrome, Inc.
 
-Licensed under the **Apache License, Version 2.0**. You may use, reproduce, modify, and distribute this software and its documentation under the terms of the Apache 2.0 License. Attribution is required — any redistribution must retain the above copyright notice. See [LICENSE](./LICENSE) or https://www.apache.org/licenses/LICENSE-2.0.
+Licensed under the **Apache License, Version 2.0**. You may use, reproduce, modify, and distribute this software and its documentation under the terms of the Apache 2.0 License. Attribution is required — any redistribution must retain the above copyright notice. See [APACHE-LICENSE-2.0.txt](./APACHE-LICENSE-2.0.txt) or https://www.apache.org/licenses/LICENSE-2.0.
 
 ## Next Actions
 
 - [ ] Draft `projects.yaml` with all active projects (name, value, priority, risk, repos) — **do this first**
-- [ ] Create `obsidian_rag/` repo; copy this file to root as `AGENTS.md`
-- [ ] Scaffold package structure with Claude Code
+- [ ] Create `obsidian_rag/` repo and keep this file in root as execution source of truth
+- [ ] Scaffold package structure in your IDE/agent workflow of choice
 - [ ] Install and authenticate `gcalcli`: `pip install gcalcli && gcalcli list`
 - [ ] Prototype seed ingester: `python ingest_seed.py projects.yaml`
 - [ ] Prototype note ingester: `python ingest.py /path/to/vault`
 - [ ] Decide: Qwen3-Embedding or OpenAI embeddings (align with LTVera if applicable)
 - [ ] Test GitHub scan on active repos (AI-DDTK, etc.)
 - [ ] Wire `morning_brief.py` + launchd plist
-- [ ] Wire Claude Desktop filesystem MCP to vault and Daily Notes folder
+- [ ] Wire MCP host of choice to vault and Daily Notes tooling/access
 - [ ] Query examples:
   - `"Summarize my day"`
   - `"Am I over-investing in any Tier 3 projects this week?"`
