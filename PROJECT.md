@@ -58,7 +58,7 @@ Claude Code in VS Code handles **building**. Claude Desktop handles **daily use*
 - **Calendar Integration**: `gcalcli agenda today tomorrow` pulled each morning; meeting titles, times, locations, and attendees included in briefing context.
 - **Morning Briefing**: Single assembled MD file written to `vault/Daily Notes/YYYY-MM-DD.md`; includes calendar, GitHub balance, and RAG-surfaced project notes.
 - **Alerts**: "Over-investing in AI-DDTK (Tier 3 exploratory): 65% of commits this week."
-- **CLI Interface**: `obsidian-rag query "WP vector plugin status"` or `obsidian-rag github-balance`.
+- **CLI Interface**: `rebalance OS query "WP vector plugin status"` or `rebalance OS github-balance`.
 
 ## Project Seed Schema
 
@@ -162,7 +162,7 @@ if __name__ == "__main__":
 
 **launchd plist** (preferred over cron on macOS):
 ```xml
-<!-- ~/Library/LaunchAgents/com.obsidian-rag.morning-brief.plist -->
+<!-- ~/Library/LaunchAgents/com.rebalance OS.morning-brief.plist -->
 <key>StartCalendarInterval</key>
 <dict>
   <key>Hour</key><integer>7</integer>
@@ -209,7 +209,7 @@ Build order is sequenced for independent testability — each step works standal
 
 7. **Querier (2 days)**
    - Embed input → ANN search → prompt Qwen LLM with context + GitHub metrics
-   - CLI: `obsidian-rag query "..."` and `obsidian-rag github-balance`
+   - CLI: `rebalance OS query "..."` and `rebalance OS github-balance`
 
 8. **Morning Briefing Assembler (1 day)**
    - `morning_brief.py` pulls calendar + GitHub + RAG; writes Daily Notes MD
