@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from datetime import datetime, timezone
 
 import questionary
 
@@ -36,10 +37,41 @@ def _scan_titles(vault_path: Path, registry_path: Path) -> tuple[list[str], int]
 
 def _existing_names(registry: Registry) -> set[str]:
     names: set[str] = set()
-    for group in (registry.active_projects, registry.potential_projects, registry.archived_projects):
+    for group in (
+        registry.active_projects,
+        registry.potential_projects,
+        registry.most_likely_active_projects,
+        registry.semi_active_projects,
+        registry.dormant_projects,
+        registry.archived_projects,
+    ):
         for project in group:
             names.add(project.name.strip().casefold())
     return names
+
+
+def _calculate_days_since_activity(last_activity_at: str | None) -> int:
+    """
+    Calculate days since last activity date (ISO 8601).
+    Return 999 if no activity date provided (safe for comparison).
+    """
+    if not last_activity_at:
+        return 999
+    try:
+        # Parse ISO 8601 date string (e.g., "2026-03-15T12:30:45Z" or "2026-03-15")
+        if "T" in last_activity_at:
+            activity_dt = datetime.fromisoformat(last_activity_at.replace("Z", "+00:00"))
+        else:
+            activity_dt = datetime.fromisoformat(last_activity_at)
+        
+        # Calculate days since then
+        now = datetime.now(timezone.utc)
+        if activity_dt.tzinfo is None:
+            activity_dt = activity_dt.replace(tzinfo=timezone.utc)
+        delta = now - activity_dt
+        return delta.days
+    except (ValueError, TypeError):
+        return 999
 
 
 def _prompt_project_details(project: Project, non_interactive: bool) -> Project:
@@ -132,6 +164,7 @@ def run_preflight(
                         status="potential",
                         summary=f"Recent activity: {repo_cand.commit_count} commits, {repo_cand.activity_score} total events (last {github_days} days).",
                         repos=[repo_cand.repo_full_name],
+                        last_activity_at=repo_cand.last_active_at,  # Capture GitHub activity date for segmentation
                     )
                     discovered.append(project)
                     existing.add(key)
@@ -158,7 +191,18 @@ def run_preflight(
     for project in candidates:
         curated.append(_prompt_project_details(project=project, non_interactive=non_interactive))
 
-    registry.potential_projects.extend(curated)
+    # Segment curated projects by activity date into appropriate registry sections
+    for project in curated:
+        days_since = _calculate_days_since_activity(project.last_activity_at)
+        if days_since <= 14:
+            registry.most_likely_active_projects.append(project)
+        elif days_since <= 30:
+            registry.semi_active_projects.append(project)
+        elif days_since < 999:  # Has activity data but >30 days old
+            registry.dormant_projects.append(project)
+        else:  # No activity data (vault-only projects)
+            registry.potential_projects.append(project)
+
     save_registry(registry_path=registry_path, registry=registry)
 
     return PreflightResult(

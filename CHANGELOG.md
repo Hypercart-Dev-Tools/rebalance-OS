@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-03-28 (onboarding sequence)
+
+- Expanded [PROJECT.md](PROJECT.md) with a reusable `Onboarding User Story Sequence` for first-run VS Code + AI agent setup.
+- Defined first-run detection rules for missing/blank config, missing registry, and invalid stored GitHub PAT.
+- Documented target onboarding bootstrap flow:
+  - review README
+  - start MCP server/services
+  - detect new user
+  - request GitHub PAT
+  - validate PAT via live GitHub auth
+  - pre-populate registry from GitHub activity into 7-day / 8-14 day / 15-30 day buckets
+  - merge with vault-discovered candidates
+  - write canonical registry and sync projections
+- Added recommended follow-on onboarding steps: vault path confirmation, minimal metadata capture, optional calendar setup, resumable onboarding state, and startup smoke test.
+
+## 2026-03-28 (activity segmentation)
+
+- Implemented activity-based candidate segmentation in preflight generation:
+  - Updated `run_preflight()` in `src/rebalance/ingest/preflight.py` to route curated projects into:
+    - `most_likely_active_projects` (activity in last 14 days)
+    - `semi_active_projects` (activity 15-30 days ago)
+    - `dormant_projects` (activity 31+ days ago)
+    - `potential_projects` (no activity signal available)
+  - GitHub-derived candidates now persist `last_activity_at` from scanner output to support bucketing.
+  - Added `_calculate_days_since_activity()` helper for ISO date parsing and resilient fallback behavior.
+- Updated default registry section descriptions in `src/rebalance/ingest/registry.py` to document the new segmented buckets.
+
 ## 2026-03-29 (continued, part 2)
 
 - **Tested GitHub & vault preflight discovery**:

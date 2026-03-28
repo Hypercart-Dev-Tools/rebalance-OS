@@ -21,10 +21,16 @@ class Project(BaseModel):
     risk_level: str | None = None
     custom_fields: dict[str, Any] = Field(default_factory=dict)
     computed: dict[str, Any] = Field(default_factory=dict)
+    last_activity_at: str | None = None  # ISO 8601; used for activity-based filtering
 
 
 class Registry(BaseModel):
     active_projects: list[Project] = Field(default_factory=list)
+    # Activity-based potential project segmentation
+    most_likely_active_projects: list[Project] = Field(default_factory=list)  # Activity in last 14 days
+    semi_active_projects: list[Project] = Field(default_factory=list)  # Activity 15-30 days ago
+    dormant_projects: list[Project] = Field(default_factory=list)  # Activity 31+ days ago
+    # Legacy fallback for projects without detectable activity
     potential_projects: list[Project] = Field(default_factory=list)
     archived_projects: list[Project] = Field(default_factory=list)
 
@@ -41,7 +47,10 @@ Canonical project list for rebalance ingest and scoring.
 
 Sections:
 - `active_projects`: currently tracked and scored
-- `potential_projects`: candidates discovered by preflight
+- `most_likely_active_projects`: GitHub activity last 14 days
+- `semi_active_projects`: GitHub activity 15-30 days ago
+- `dormant_projects`: GitHub activity 31+ days ago
+- `potential_projects`: candidates with no activity signals (vault-only discoveries)
 - `archived_projects`: historical records
 
 ```yaml
