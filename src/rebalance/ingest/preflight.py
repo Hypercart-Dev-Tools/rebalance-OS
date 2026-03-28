@@ -124,6 +124,40 @@ def _segment_project(project_dict: dict[str, Any]) -> str:
         return "potential_projects"
 
 
+def _classify_repo_bands(bands: list[str]) -> str:
+    """
+    Classify a GitHub repo candidate into a registry segment based on which
+    time bands have activity.
+
+    Band definitions:
+      A = last 7 days
+      B = 8-14 days ago
+      C = 15-30 days ago
+
+    Rules (in priority order):
+      A+B (with or without C) → most_likely_active  (consistent recent activity)
+      A only                  → most_likely_active  (hot sprint)
+      A+C (no B)              → semi_active         (gap in the middle)
+      B+C or B only           → semi_active         (cooling off, nothing recent)
+      C only                  → dormant
+      none                    → potential
+    """
+    s = set(bands)
+    has_a = "A" in s
+    has_b = "B" in s
+    has_c = "C" in s
+
+    if has_a and has_b:
+        return "most_likely_active_projects"
+    if has_a and not has_b:
+        return "semi_active_projects" if has_c else "most_likely_active_projects"
+    if has_b:
+        return "semi_active_projects"
+    if has_c:
+        return "dormant_projects"
+    return "potential_projects"
+
+
 def _prompt_project_details(project: Project, non_interactive: bool) -> Project:
     if non_interactive:
         if not project.summary:
@@ -178,7 +212,7 @@ def discover_candidates(
     vault_path: Path,
     registry_path: Path,
     github_token: str | None = None,
-    github_days: int = 14,
+    github_days: int = 30,
 ) -> DiscoveryResult:
     """
     Discover project candidates from vault titles and GitHub activity.
@@ -212,21 +246,28 @@ def discover_candidates(
                             status="potential",
                             summary=(
                                 f"Recent activity: {repo_cand.commit_count} commits, "
-                                f"{repo_cand.activity_score} total events (last {github_days} days)."
+                                f"{repo_cand.activity_score} total events (last {github_days} days). "
+                                f"Active bands: {', '.join(repo_cand.bands) or 'none'}."
                             ),
                             repos=[repo_cand.repo_full_name],
                             last_activity_at=repo_cand.last_active_at,
+                            tags=repo_cand.bands,  # store bands as tags for downstream use
                         )
                     )
                     existing.add(key)
         except Exception as e:
             github_error = str(e)
 
-    # Segment candidates
+    # Segment candidates — GitHub repos use band-based classification, vault-only use recency.
+    # GitHub repos have band letters (A/B/C) stored in their tags field.
     result = DiscoveryResult(scanned_files=scanned, github_error=github_error)
     for project in discovered:
         d = project.model_dump(mode="json")
-        segment = _segment_project(d)
+        bands: list[str] = [t for t in (d.get("tags") or []) if t in ("A", "B", "C")]
+        if bands:
+            segment = _classify_repo_bands(bands)
+        else:
+            segment = _segment_project(d)
         getattr(result, segment).append(d)
 
     return result
@@ -297,7 +338,7 @@ def run_preflight(
     registry_path: Path,
     non_interactive: bool = False,
     github_token: str | None = None,
-    github_days: int = 14,
+    github_days: int = 30,
 ) -> PreflightResult:
     """
     CLI-oriented preflight: discover candidates, prompt user, write registry.

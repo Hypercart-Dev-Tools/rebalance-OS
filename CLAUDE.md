@@ -26,7 +26,7 @@ Drive this sequence using MCP tool calls:
    - If `github_error` is set, inform the user that GitHub discovery failed and only vault candidates are shown.
    - Ask the user which to keep, remove, or merge. For each kept project, collect: short summary (2-3 sentences) and priority tier (1-5). Tags and repos are optional.
 
-4. **Confirm:** Call `confirm_projects(projects, vault_path)` with the curated list. Each project dict should include at minimum: `name`, `summary`, `repos` (list of strings), `priority_tier` (int), `tags` (list of strings).
+4. **Confirm:** Call `confirm_projects(projects, vault_path)` with the curated list. Each project dict **must** include `status: "active"` so it lands in `active_projects` and syncs to SQLite (projects without this status are routed to activity-based segments which are not yet projected to the DB). Full minimum shape: `{name, status: "active", summary, repos: [], priority_tier: int, tags: []}`.
 
 5. **Verify:** Call `list_projects()` to confirm projects are queryable. Show the user a summary.
 

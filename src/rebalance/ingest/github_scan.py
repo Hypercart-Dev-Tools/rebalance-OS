@@ -43,6 +43,7 @@ class RepoActivity:
     issue_comments: int = 0
     reviews: int = 0
     last_active_at: str | None = None  # ISO 8601
+    active_bands: set[str] = field(default_factory=set)  # A=0-7d, B=8-14d, C=15-30d
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -107,6 +108,30 @@ def _event_day_key(created_at: str) -> str:
     return created_at[:10]
 
 
+def _compute_band_cutoffs(now: datetime) -> tuple[str, str, str]:
+    """Return (cutoff_7d, cutoff_14d, cutoff_30d) as YYYY-MM-DD strings."""
+    fmt = "%Y-%m-%d"
+    return (
+        (now - timedelta(days=7)).strftime(fmt),
+        (now - timedelta(days=14)).strftime(fmt),
+        (now - timedelta(days=30)).strftime(fmt),
+    )
+
+
+def _band_for_event(event_day: str, cutoff_7d: str, cutoff_14d: str) -> str:
+    """
+    Classify an event into a time band.
+      A = last 7 days
+      B = 8-14 days ago
+      C = 15-30 days ago (events older than 30d are already filtered by _fetch_events)
+    """
+    if event_day >= cutoff_7d:
+        return "A"
+    if event_day >= cutoff_14d:
+        return "B"
+    return "C"
+
+
 def _extract_commit_title(message: Any) -> str | None:
     """First non-empty line of a commit message (mirrors gitdaily extractCommitTitle)."""
     if not isinstance(message, str):
@@ -127,7 +152,7 @@ def _get_login(token: str) -> str:
     return login
 
 
-def _fetch_events(login: str, token: str, days: int = 14) -> list[dict[str, Any]]:
+def _fetch_events(login: str, token: str, days: int = 30) -> list[dict[str, Any]]:
     """
     Fetch paginated user events up to MAX_EVENT_PAGES.
     Stops early once events older than `days` days are encountered.
@@ -175,10 +200,17 @@ def _fetch_events(login: str, token: str, days: int = 14) -> list[dict[str, Any]
 # Event aggregation
 # ---------------------------------------------------------------------------
 
-def _summarize_by_repo(events: list[dict[str, Any]]) -> dict[str, RepoActivity]:
+def _summarize_by_repo(
+    events: list[dict[str, Any]],
+    cutoff_7d: str | None = None,
+    cutoff_14d: str | None = None,
+) -> dict[str, RepoActivity]:
     """
     Aggregate raw GitHub events into per-repo activity counters.
     Event type mapping mirrors gitdaily getEventTypeLabel() + activity-mappers.ts.
+
+    If cutoff_7d and cutoff_14d are provided, each event is classified into a
+    time band (A/B/C) and recorded in RepoActivity.active_bands.
     """
     activity: dict[str, RepoActivity] = {}
 
@@ -196,6 +228,11 @@ def _summarize_by_repo(events: list[dict[str, Any]]) -> dict[str, RepoActivity]:
         # Update last_active_at (events are newest-first from GitHub API)
         if created_at and (r.last_active_at is None or created_at > r.last_active_at):
             r.last_active_at = created_at
+
+        # Track which time band this event falls in
+        if created_at and cutoff_7d and cutoff_14d:
+            day_key = _event_day_key(created_at)
+            r.active_bands.add(_band_for_event(day_key, cutoff_7d, cutoff_14d))
 
         if event_type == "PushEvent":
             r.pushes += 1
@@ -253,20 +290,23 @@ def validate_github_token(token: str) -> dict[str, Any]:
         return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {exc.code}"}
 
 
-def scan_github(token: str, days: int = 14) -> GitHubScanResult:
+def scan_github(token: str, days: int = 30) -> GitHubScanResult:
     """
     Authenticate, fetch events, and return aggregated per-repo activity.
 
     Args:
         token: GitHub Personal Access Token (read:user + repo scopes).
-        days:  How many calendar days to look back (max ~14 due to GitHub API limits).
+        days:  How many calendar days to look back. Defaults to 30 to support
+               A/B/C band classification (0-7d, 8-14d, 15-30d).
 
     Returns:
         GitHubScanResult with per-repo activity breakdown.
     """
     login = _get_login(token)
+    now = datetime.now(timezone.utc)
+    cutoff_7d, cutoff_14d, _ = _compute_band_cutoffs(now)
     events = _fetch_events(login, token, days=days)
-    repo_activity = _summarize_by_repo(events)
+    repo_activity = _summarize_by_repo(events, cutoff_7d=cutoff_7d, cutoff_14d=cutoff_14d)
 
     return GitHubScanResult(
         login=login,
@@ -443,18 +483,19 @@ class RepoCandidate:
     last_active_at: str | None
     activity_score: int  # Total events in scan window
     commit_count: int
+    bands: list[str] = field(default_factory=list)  # e.g. ["A", "B", "C"]
 
 
 def discover_repos_from_activity(
     token: str,
-    days: int = 14,
+    days: int = 30,
 ) -> list[RepoCandidate]:
     """
     Scan GitHub activity for the past N days and return discovered repositories
     as candidates for the project registry.
 
-    Used during preflight to surface "hey, you touched these repos recently"
-    as project intake signals.
+    Defaults to 30 days to support A/B/C band classification:
+      A = last 7 days, B = 8-14 days ago, C = 15-30 days ago.
 
     Returns:
         List of RepoCandidate sorted by activity_score (descending).
@@ -479,6 +520,7 @@ def discover_repos_from_activity(
                 last_active_at=activity.last_active_at,
                 activity_score=score,
                 commit_count=activity.commits,
+                bands=sorted(activity.active_bands),
             )
         )
 
