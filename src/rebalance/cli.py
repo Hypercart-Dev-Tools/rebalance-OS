@@ -73,7 +73,7 @@ def ingest_sync(
 @app.command("github-scan")
 def github_scan(
     token: str = typer.Option(..., envvar="GITHUB_TOKEN", help="GitHub Personal Access Token"),
-    days: int = typer.Option(14, help="Number of days to look back (max ~14 due to GitHub API limits)"),
+    days: int = typer.Option(30, help="Number of days to look back (supports 30-day A/B/C band classification)"),
     database: Path = typer.Option(
         Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
     ),

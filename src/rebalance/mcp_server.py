@@ -62,7 +62,7 @@ def create_server(database_path: Path) -> FastMCP:
         return _fetch_projects(database_path=database_path, status=normalized or None)
 
     @mcp.tool()
-    def github_balance(since_days: int = 14) -> list[dict[str, Any]]:
+    def github_balance(since_days: int = 30) -> list[dict[str, Any]]:
         """
         Show GitHub activity balance across active projects.
 

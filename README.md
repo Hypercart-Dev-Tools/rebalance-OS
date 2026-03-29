@@ -55,16 +55,17 @@ Data sources
   Google Calendar  ──┐
   GitHub activity  ──┤──▶  scheduler (daily) ──▶ SQLite + sqlite-vec
   Obsidian vault   ──┤      (launchd on macOS,   (chunks, embeddings,
-  Slack [soon]     ──┘       Task Scheduler on    github_activity)
-                              Windows, cron on Linux)
+  Slack [planned]  ──┤       Task Scheduler on    github_activity,
+  Email [planned]  ──┘       Windows, cron on     calendar_events)
+                              Linux)
                                      │
                                      ▼
                            MCP server (Python)
                            rebalance tools:
+                             ask
                              query_notes
-                             github_balance
-                             todays_agenda
                              search_vault
+                             github_balance
                                      │
              ┌───────────────────────┼────────────────────────┐
              ▼                       ▼                        ▼
@@ -107,16 +108,19 @@ The result is an AI assistant that actually knows your work — because it's rea
 
 - [x] Architecture and design
 - [x] Project registry + MCP onboarding tools
-- [x] GitHub activity scanner + balance analysis
+- [x] GitHub activity scanner + 30-day A/B/C band classification
 - [x] Obsidian vault ingester (parse, chunk, keywords, links)
 - [x] Qwen3 embedding pipeline (sqlite-vec, semantic search)
 - [x] Google Calendar integration (OAuth2, 1-year retention)
 - [x] `ask` tool — multi-source natural language query with local LLM synthesis
 - [x] Temporal context (day-of-week, work/off/vacation awareness)
-- [ ] Morning briefing assembler + daily scheduler
+- [x] Daily scheduler scripts (launchd plist, install helper)
+- [ ] Morning briefing assembler
 - [ ] Project weight system (neglect score, momentum decay, avoidance ratio)
+- [ ] Email integration (Gmail API, starred/important threads only, forward-only)
 - [ ] Slack integration via Sleuth bolt app
-- [ ] GitHub PR/issue body embedding (phase 2)
+- [ ] GitHub PR/issue body selective embedding (phase 2)
+- [ ] Email → project auto-correlation (alias map + co-occurrence)
 
 ## Getting Started
 
