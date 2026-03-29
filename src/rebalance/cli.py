@@ -91,6 +91,186 @@ def github_scan(
     )
 
 
+@ingest_app.command("notes")
+def ingest_notes(
+    vault: Path = typer.Option(..., exists=True, file_okay=False, dir_okay=True, help="Path to Obsidian vault"),
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    exclude: list[str] = typer.Option(
+        [".obsidian/*", ".trash/*", "node_modules/*", ".git/*", ".venv/*", "*/.venv/*"],
+        help="Glob patterns to exclude",
+    ),
+    dry_run: bool = typer.Option(False, help="Show what would be ingested without writing"),
+) -> None:
+    """Ingest Obsidian vault notes into SQLite (parse, chunk, extract keywords/links)."""
+    from rebalance.ingest.note_ingester import ingest_vault
+
+    db_path = database.expanduser().resolve()
+    result = ingest_vault(
+        vault_path=vault,
+        database_path=db_path,
+        exclude_patterns=exclude,
+        dry_run=dry_run,
+    )
+    typer.echo(
+        f"Ingest {'(dry-run) ' if dry_run else ''}complete: "
+        f"total={result.total_files}, new={result.new_files}, "
+        f"updated={result.updated_files}, unchanged={result.unchanged_files}, "
+        f"deleted={result.deleted_files}, chunks={result.total_chunks}, "
+        f"keywords={result.total_keywords}, links={result.total_links} "
+        f"({result.elapsed_seconds}s)"
+    )
+
+
+@ingest_app.command("embed")
+def ingest_embed(
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="HuggingFace model name"),
+    batch_size: int = typer.Option(32, help="Batch size for embedding (lower = less memory)"),
+    force: bool = typer.Option(False, help="Force re-embed all chunks (use after model change)"),
+) -> None:
+    """Generate embeddings for ingested chunks via mlx-embeddings."""
+    from rebalance.ingest.embedder import embed_chunks
+
+    db_path = database.expanduser().resolve()
+    typer.echo(f"Embedding chunks with {model} (batch_size={batch_size})...")
+    result = embed_chunks(
+        database_path=db_path,
+        model_name=model,
+        batch_size=batch_size,
+        force_reembed=force,
+    )
+    typer.echo(
+        f"Embed complete: embedded={result.embedded_chunks}, "
+        f"skipped={result.skipped_unchanged}, total_chunks={result.total_chunks}, "
+        f"model={result.model_name}, dim={result.embedding_dim} "
+        f"({result.elapsed_seconds}s)"
+    )
+
+
+@app.command("query")
+def query_cmd(
+    text: str = typer.Argument(..., help="Natural language query"),
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    top_k: int = typer.Option(10, help="Number of results to return"),
+    model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
+) -> None:
+    """Semantic search over vault notes."""
+    from rebalance.ingest.embedder import query_similar
+
+    db_path = database.expanduser().resolve()
+    results = query_similar(database_path=db_path, query_text=text, model_name=model, top_k=top_k)
+    if not results:
+        typer.echo("No results found. Run `rebalance ingest notes` and `rebalance ingest embed` first.")
+        return
+    for i, r in enumerate(results, 1):
+        heading = f" > {r['heading']}" if r["heading"] else ""
+        typer.echo(f"{i}. [{r['similarity_score']:.3f}] {r['title']}{heading}")
+        typer.echo(f"   {r['file_path']}")
+        typer.echo(f"   {r['body_preview'][:120]}...")
+        typer.echo()
+
+
+@app.command("search")
+def search_cmd(
+    keyword: str = typer.Argument(..., help="Keyword to search"),
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    limit: int = typer.Option(20, help="Max results"),
+) -> None:
+    """Full-text keyword search over vault files and chunks."""
+    from rebalance.ingest.note_ingester import search_by_keyword
+
+    db_path = database.expanduser().resolve()
+    results = search_by_keyword(database_path=db_path, keyword=keyword, limit=limit)
+    if not results:
+        typer.echo(f"No results for '{keyword}'. Run `rebalance ingest notes` first.")
+        return
+    for i, r in enumerate(results, 1):
+        heading = f" > {r['heading']}" if r["heading"] else ""
+        typer.echo(f"{i}. [{r['keyword_score']:.3f}] {r['title']}{heading}")
+        typer.echo(f"   {r['file_path']}")
+        typer.echo()
+
+
+@app.command("ask")
+def ask_cmd(
+    text: str = typer.Argument(..., help="Natural language question"),
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    days: int = typer.Option(7, help="Activity window in days"),
+    no_llm: bool = typer.Option(False, help="Skip local LLM synthesis, return raw context only"),
+    chat_model: str = typer.Option("Qwen/Qwen3-0.6B", help="Chat model for synthesis"),
+) -> None:
+    """Ask a natural language question across all data sources."""
+    from rebalance.ingest.querier import ask as querier_ask
+
+    db_path = database.expanduser().resolve()
+    typer.echo(f"Gathering context...")
+    result = querier_ask(
+        query=text,
+        database_path=db_path,
+        chat_model=chat_model,
+        since_days=days,
+        skip_synthesis=no_llm,
+    )
+
+    if result.temporal_context:
+        today = result.temporal_context.get("today", {})
+        tomorrow = result.temporal_context.get("tomorrow", {})
+        typer.echo(f"\n--- Schedule ---")
+        typer.echo(f"  Today:    {today.get('day_name', '')} — {today.get('day_type', '')}")
+        typer.echo(f"  Tomorrow: {tomorrow.get('day_name', '')} — {tomorrow.get('day_type', '')}")
+
+    if result.synthesis:
+        typer.echo(f"\n--- Synthesis ({result.model_used}, {result.elapsed_seconds}s) ---\n")
+        typer.echo(result.synthesis)
+    else:
+        typer.echo(f"\n--- Raw context ({result.elapsed_seconds}s) ---\n")
+
+    if result.github_context:
+        typer.echo("\n--- GitHub Activity ---")
+        for g in result.github_context:
+            if g.get("is_idle"):
+                typer.echo(f"  {g['project_name']:25s}  IDLE")
+            else:
+                typer.echo(f"  {g['project_name']:25s}  {g['total_commits']:3d} commits  {g['prs_opened']} PRs  {g['issues_opened']} issues")
+
+    if result.calendar_context:
+        upcoming = result.calendar_context.get("upcoming", [])
+        if upcoming:
+            typer.echo("\n--- Upcoming Calendar ---")
+            for e in upcoming[:10]:
+                t = e["start_time"][:16].replace("T", " ")
+                loc = f"  @ {e['location']}" if e.get("location") else ""
+                typer.echo(f"  {t}  {e['summary']}{loc}")
+
+    if result.vault_activity:
+        typer.echo("\n--- Recent Vault Notes ---")
+        for v in result.vault_activity[:10]:
+            typer.echo(f"  {v['last_modified'][:10]}  {v['title']}")
+
+
+@app.command("calendar-sync")
+def calendar_sync_cmd(
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    days_back: int = typer.Option(30, help="Days back to fetch (use 365 for initial backfill)"),
+    days_forward: int = typer.Option(7, help="Days forward to fetch"),
+) -> None:
+    """Sync Google Calendar events to SQLite for historical queries."""
+    from rebalance.ingest.calendar import sync_calendar
+
+    db_path = database.expanduser().resolve()
+    typer.echo(f"Syncing calendar ({days_back} days back, {days_forward} days forward)...")
+    result = sync_calendar(
+        database_path=db_path,
+        days_back=days_back,
+        days_forward=days_forward,
+    )
+    typer.echo(
+        f"Calendar sync complete: fetched={result.events_fetched}, "
+        f"stored={result.events_stored}, window={result.window_start}..{result.window_end} "
+        f"({result.elapsed_seconds}s)"
+    )
+
+
 @app.command("version")
 def version() -> None:
     """Print rebalance CLI version."""

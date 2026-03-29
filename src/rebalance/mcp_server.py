@@ -216,6 +216,67 @@ def create_server(database_path: Path) -> FastMCP:
             "sync_ok": result.sync_ok,
         }
 
+    # ------------------------------------------------------------------
+    # Retrieval tools
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    def query_notes(query: str, top_k: int = 10) -> list[dict[str, Any]]:
+        """
+        Semantic search over chunked vault notes via sqlite-vec.
+
+        Embeds the query using the same model used for indexing, then
+        runs ANN search to find the most similar chunks.
+        Requires: `rebalance ingest notes` + `rebalance ingest embed`.
+        """
+        from rebalance.ingest.embedder import query_similar
+        return query_similar(database_path=database_path, query_text=query, top_k=top_k)
+
+    @mcp.tool()
+    def search_vault(keyword: str, limit: int = 20) -> list[dict[str, Any]]:
+        """
+        Full-text keyword search over vault files via TF-IDF index.
+
+        Searches the keywords table and returns ranked results.
+        Requires: `rebalance ingest notes`.
+        """
+        from rebalance.ingest.note_ingester import search_by_keyword
+        return search_by_keyword(database_path=database_path, keyword=keyword, limit=limit)
+
+    @mcp.tool()
+    def ask(query: str, since_days: int = 7, skip_synthesis: bool = False) -> dict[str, Any]:
+        """
+        General-purpose natural language query across all data sources.
+
+        Gathers context from vault embeddings, GitHub activity, project
+        registry, and recent vault modifications. Optionally synthesizes
+        a first-pass answer via a local Qwen LLM.
+
+        Returns both the synthesis and raw context so the host agent can
+        review, adapt, and present a refined answer.
+
+        Set skip_synthesis=True to get raw context only (faster, no model load).
+        """
+        from rebalance.ingest.querier import ask as querier_ask
+        result = querier_ask(
+            query=query,
+            database_path=database_path,
+            since_days=since_days,
+            skip_synthesis=skip_synthesis,
+        )
+        return {
+            "query": result.query,
+            "synthesis": result.synthesis,
+            "vault_context": result.vault_context,
+            "github_context": result.github_context,
+            "project_context": result.project_context,
+            "vault_activity": result.vault_activity,
+            "calendar_context": result.calendar_context,
+            "temporal_context": result.temporal_context,
+            "model_used": result.model_used,
+            "elapsed_seconds": result.elapsed_seconds,
+        }
+
     return mcp
 
 

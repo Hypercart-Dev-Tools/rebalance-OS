@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "rebalance": {
+      "command": ".venv/bin/python",
+      "args": ["-m", "rebalance.mcp_server"],
+      "env": {
+        "REBALANCE_DB": "rebalance.db"
+      }
+    }
+  }
+}

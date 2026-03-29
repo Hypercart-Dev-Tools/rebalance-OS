@@ -1,0 +1,71 @@
+{
+  "mcpb_version": "0.1",
+  "name": "rebalance-os",
+  "display_name": "rebalance OS",
+  "version": "0.4.0",
+  "description": "Your workday OS — surfaces what matters, flags project imbalances, and answers questions about your own work using your Obsidian vault, GitHub activity, and Google Calendar. All local, all on your data.",
+  "long_description": "rebalance OS ingests your Obsidian vault, GitHub activity, and Google Calendar into a local SQLite database, then lets you ask natural language questions about your own work. It flags over-investment in low-priority projects, surfaces neglected high-priority work, and assembles context for meetings — all running locally on Apple Silicon via MLX.",
+  "author": {
+    "name": "Hypercart DBA Neochrome, Inc."
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Hypercart-Dev-Tools/rebalance-OS"
+  },
+  "documentation": "https://github.com/Hypercart-Dev-Tools/rebalance-OS/blob/main/README.md",
+  "server": {
+    "type": "python",
+    "entry_point": "server/mcp_server.py",
+    "mcp_config": {
+      "command": "python",
+      "args": ["${__dirname}/server/mcp_server.py"],
+      "env": {
+        "REBALANCE_DB": "${user_config.database_path}",
+        "REBALANCE_VAULT": "${user_config.vault_path}"
+      },
+      "platforms": {
+        "win32": {
+          "command": "python.exe"
+        }
+      }
+    }
+  },
+  "user_config": {
+    "vault_path": {
+      "type": "directory",
+      "title": "Obsidian Vault Path",
+      "description": "The folder where your Obsidian vault lives (contains your .md files)",
+      "required": true
+    },
+    "database_path": {
+      "type": "string",
+      "title": "Database Path",
+      "description": "Where to store the rebalance SQLite database",
+      "default": "${HOME}/.rebalance/rebalance.db"
+    },
+    "github_token": {
+      "type": "string",
+      "title": "GitHub Personal Access Token",
+      "description": "A GitHub PAT with repo:read scope. Create one at github.com/settings/tokens",
+      "sensitive": true,
+      "required": false
+    }
+  },
+  "tools": [
+    {"name": "ask", "description": "Ask any question about your work — combines vault notes, GitHub activity, calendar, and project registry"},
+    {"name": "query_notes", "description": "Semantic search over your Obsidian vault notes"},
+    {"name": "search_vault", "description": "Keyword search over vault files"},
+    {"name": "github_balance", "description": "GitHub activity per project with over/under-investment flags"},
+    {"name": "list_projects", "description": "List your tracked projects with priority tiers"},
+    {"name": "onboarding_status", "description": "Check which setup steps are complete"},
+    {"name": "setup_github_token", "description": "Validate and store a GitHub PAT"},
+    {"name": "run_preflight", "description": "Discover project candidates from vault and GitHub"},
+    {"name": "confirm_projects", "description": "Write confirmed projects to the registry"}
+  ],
+  "compatibility": {
+    "platforms": ["darwin"],
+    "runtimes": {
+      "python": ">=3.12"
+    }
+  }
+}

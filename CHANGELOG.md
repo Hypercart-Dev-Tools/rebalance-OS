@@ -1,5 +1,46 @@
 # Changelog
 
+## [0.4.0] - 2026-03-29 — Google Calendar integration
+
+- Added `calendar.py` — Google Calendar API collector that fetches events and persists to `calendar_events` SQLite table with 1-year retention.
+- OAuth2 flow via `google-auth-oauthlib` with token stored at `~/.config/gcalcli/oauth`. Auto-refresh on expiry.
+- Added `rebalance calendar-sync` CLI command with configurable `--days-back` (default 30, use 365 for initial backfill) and `--days-forward`.
+- Wired calendar context into `ask` tool: upcoming events (next 2 days) + recent events (last 7 days) included in both prompt and raw context.
+- Updated PROJECT.md: P2 Google Calendar now marked Active with full access setup docs, vectorization status noted on all signal sources.
+- Updated ARCHITECTURE.md: signal sources table now includes Vectorized column, calendar added to storage layer and module map.
+
+## [0.3.0] - 2026-03-29 — `ask` tool + multi-source query engine
+
+- Added `querier.py` — general-purpose natural language query engine that gathers context from all data sources (project registry, GitHub activity, vault embeddings, vault file modification dates) and optionally synthesizes a first-pass answer via local Qwen3-0.6B LLM (mlx-lm).
+- Added `ask` MCP tool — host agents call this with any natural language question and get back both a local LLM synthesis and raw structured context for review/refinement.
+- Added `rebalance ask` CLI command with `--no-llm` flag for raw context only.
+- Two-layer LLM architecture: local Qwen3 does fast on-device synthesis, host agent (Claude, Copilot, etc.) reviews and refines.
+- Added `ARCHITECTURE.md` — documents data flow, signal pipeline pattern, two-layer LLM design, and how to add new data sources.
+
+## [0.2.0] - 2026-03-29 — Vault ingestion + embeddings pipeline
+
+- Added `db.py` — shared database layer with sqlite-vec extension loading, WAL mode, and schema creation for all vault/embedding tables.
+- Added `md_parser.py` — pure markdown parsing: YAML frontmatter extraction, wikilink/embed detection, #tag extraction, heading-based chunking.
+- Added `note_ingester.py` — vault walker with SHA-256 hash-based delta detection, TF-IDF keyword extraction (pure Python, no sklearn), and wikilink/embed tracking.
+- Added `embedder.py` — batch embedding via mlx-embeddings (Qwen3-Embedding-0.6B, 1024-dim), sqlite-vec storage, model version tracking for automatic re-embed on model change, ANN similarity search.
+- Added CLI commands: `rebalance ingest notes`, `rebalance ingest embed`, `rebalance query`, `rebalance search`.
+- Added MCP tools: `query_notes` (semantic search), `search_vault` (keyword search).
+- Fixed frontmatter serialization: `date` objects from YAML now serialize to ISO strings via custom JSON encoder.
+- Fixed sqlite-vec KNN query: uses `e.k = ?` constraint required by vec0 virtual tables.
+- Added `.venv/*` to default ingest exclude patterns to prevent indexing Python package metadata.
+- Added `sqlite-vec` to core dependencies, `mlx-embeddings` as optional `[embeddings]` extra in pyproject.toml.
+
+## [0.1.1] - 2026-03-28 — Onboarding MCP tools + schema fixes
+
+- Added 4 onboarding MCP tools: `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects` — enables agent-driven onboarding through any MCP host.
+- Refactored `preflight.py`: split monolithic `run_preflight()` into `discover_candidates()` (read-only) + `confirm_and_write()` (write + sync). CLI re-wired to call both.
+- Added `validate_github_token()` in `github_scan.py` — validates PAT against GitHub `/user` endpoint and captures OAuth scopes.
+- Fixed schema mismatch between MCP server and registry: server now queries `repos_json` column (not `repos`) and decodes as JSON (not YAML).
+- Fixed registry `sync_db()` to write JSON (not YAML) into `_json` columns.
+- Shipped `.vscode/mcp.json` for automatic MCP server registration on workspace open.
+- Added `CLAUDE.md` with agent onboarding instructions so any MCP host can drive first-run setup.
+- Updated PROJECT.md and MCP.md: aligned onboarding sequence to MCP-driven flow, standardized segment naming to match code (`*_projects` suffix), fixed `REBALANCE_DB` documentation, added refactor notes.
+
 ## 2026-03-28 (onboarding sequence)
 
 - Expanded [PROJECT.md](PROJECT.md) with a reusable `Onboarding User Story Sequence` for first-run VS Code + AI agent setup.

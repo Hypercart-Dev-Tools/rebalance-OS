@@ -94,38 +94,140 @@ The result is an AI assistant that actually knows your work — because it's rea
 |---|---|
 | Notes | Obsidian (plain `.md`) |
 | Vector DB | SQLite + `sqlite-vec` |
-| Embeddings | Qwen3-Embedding via Ollama |
-| LLM runtime | Ollama or LM Studio (local-first) |
-| Calendar | `gcalcli` → Google Calendar API |
+| Embeddings | Qwen3-Embedding-0.6B via `mlx-embeddings` (Apple Silicon MLX) |
+| LLM synthesis | Qwen3-0.6B via `mlx-lm` (on-device, Layer 1) |
+| Calendar | Google Calendar API (direct client, OAuth2) |
 | GitHub | GitHub REST API + PAT |
-| MCP server | Python `mcp` SDK (stdio + SSE) |
-| LLM clients | Any MCP host (Claude, Copilot, Cursor, Continue, and others where MCP is supported) |
+| MCP server | Python `mcp` SDK (FastMCP, stdio) |
+| LLM clients | Any MCP host (Claude Code, Copilot, Cursor, Continue, Claude Desktop, and others) |
 
 ---
 
 ## Roadmap
 
 - [x] Architecture and design
-- [x] Initial ingest + MCP scaffold (CLI, registry sync, preflight candidate flow, `list_projects` tool)
-- [ ] Obsidian ingester (`ingest.py`)
-- [ ] SQLite schema + sqlite-vec setup
-- [ ] Qwen3 embedding pipeline
-- [ ] GitHub activity scanner
-- [ ] gcalcli calendar adapter
-- [ ] MCP server with core tools
-- [ ] Morning briefing CLI
+- [x] Project registry + MCP onboarding tools
+- [x] GitHub activity scanner + balance analysis
+- [x] Obsidian vault ingester (parse, chunk, keywords, links)
+- [x] Qwen3 embedding pipeline (sqlite-vec, semantic search)
+- [x] Google Calendar integration (OAuth2, 1-year retention)
+- [x] `ask` tool — multi-source natural language query with local LLM synthesis
+- [x] Temporal context (day-of-week, work/off/vacation awareness)
+- [ ] Morning briefing assembler + daily scheduler
+- [ ] Project weight system (neglect score, momentum decay, avoidance ratio)
 - [ ] Slack integration via Sleuth bolt app
+- [ ] GitHub PR/issue body embedding (phase 2)
 
-## Dev bootstrap
+## Getting Started
+
+### Prerequisites
+
+- macOS with Apple Silicon (M1+) — required for mlx-embeddings
+- Python 3.12+
+- An Obsidian vault (local folder with `.md` files)
+- A GitHub Personal Access Token with `repo:read` scope ([create one here](https://github.com/settings/tokens))
+- Claude Code (CLI or VS Code extension)
+
+### Step 1 — Clone and install
 
 ```bash
-pip install -e .
-rebalance ingest preflight --vault /path/to/vault
-rebalance ingest sync --mode pull --vault /path/to/vault
-python -m rebalance.mcp_server
+git clone https://github.com/Hypercart-Dev-Tools/rebalance-OS.git
+cd rebalance-OS
+python3 -m venv .venv
+.venv/bin/pip install -e ".[embeddings]"
 ```
 
-Registry source file: `Projects/00-project-registry.md` in your vault.
+### Step 2 — Ingest your vault
+
+```bash
+# Parse all .md files, chunk by headings, extract keywords and links
+.venv/bin/rebalance ingest notes --vault /path/to/your/vault --database rebalance.db
+
+# Generate semantic embeddings (downloads Qwen3-Embedding-0.6B on first run, ~1min)
+.venv/bin/rebalance ingest embed --database rebalance.db
+```
+
+### Step 3 — Connect GitHub
+
+```bash
+# Store your PAT
+.venv/bin/rebalance config set-github-token ghp_your_token_here
+
+# Scan recent activity (commits, PRs, issues across all your repos)
+.venv/bin/rebalance github-scan --token ghp_your_token_here --database rebalance.db
+```
+
+### Step 4 — Connect Google Calendar (optional)
+
+Follow the OAuth setup in [PROJECT.md — P2 Google Calendar](./PROJECT.md) to create credentials, then:
+
+```bash
+# Backfill 1 year of events
+.venv/bin/rebalance calendar-sync --database rebalance.db --days-back 365
+```
+
+### Step 5 — Start using with Claude Code
+
+The `.mcp.json` at the project root auto-registers the MCP server. Open the project in Claude Code:
+
+```bash
+cd rebalance-OS
+claude
+```
+
+Then ask:
+
+```
+"What should I focus on today?"
+"Am I over-investing in any projects this week?"
+"What meetings do I have tomorrow and what should I prep?"
+"What did I decide about the embedding pipeline?"
+```
+
+Claude Code calls the `ask` tool behind the scenes — it gathers your project registry, GitHub activity, vault notes, and calendar events, synthesizes a first-pass answer via a local Qwen3 model, then Claude reviews and presents a refined answer.
+
+### Claude Desktop App (extension)
+
+rebalance OS ships as a Claude Desktop Extension (`.mcpb`). No terminal needed.
+
+1. **Build the extension** (developers only):
+   ```bash
+   npx @anthropic-ai/mcpb pack
+   ```
+2. **Install:** Drag the `.mcpb` file into Claude Desktop → Settings → Extensions
+3. **Configure:** Claude Desktop will prompt for:
+   - **Obsidian Vault Path** — your vault folder
+   - **GitHub PAT** (optional) — stored in OS keychain, never in plaintext
+   - **Database Path** — defaults to `~/.rebalance/rebalance.db`
+4. **Use:** Open Claude Desktop and ask questions. The extension's MCP tools are available immediately.
+
+See [manifest.json](./manifest.json) for the full extension spec.
+
+> **Note:** The extension packaging step (`mcpb pack`) requires bundling all Python dependencies into the archive. This is not yet automated — a build script that copies `src/rebalance/` + `lib/` into the extension structure is a next step. For now, use Claude Code or the manual MCP config for daily use.
+
+### Other MCP hosts
+
+The server works with any MCP-compatible client. Config files are provided for:
+
+- **Claude Code** — `.mcp.json` (auto-loaded on `cd rebalance-OS && claude`)
+- **VS Code (Copilot/Continue)** — `.vscode/mcp.json` (auto-loaded on workspace open)
+- **Claude Desktop** — extension (`.mcpb`) or manual config in [MCP.md](./MCP.md)
+- **Cursor** — see [MCP.md](./MCP.md) for config snippet
+
+### CLI reference
+
+All tools are also available as CLI commands:
+
+```bash
+rebalance ask "What should I work on today?" --database rebalance.db
+rebalance ask "What should I work on today?" --database rebalance.db --no-llm  # raw context only
+rebalance query "embedding pipeline" --database rebalance.db                   # semantic search
+rebalance search "binoid" --database rebalance.db                              # keyword search
+rebalance ingest notes --vault /path/to/vault --database rebalance.db          # re-ingest (delta)
+rebalance ingest embed --database rebalance.db                                 # embed new chunks
+rebalance github-scan --token ghp_... --database rebalance.db                  # refresh GitHub data
+rebalance calendar-sync --database rebalance.db                                # refresh calendar
+```
 
 ---
 
