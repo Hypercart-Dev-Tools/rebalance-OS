@@ -79,7 +79,46 @@ Shows GitHub commit/PR/issue activity per project over a rolling window.
 
 ---
 
-## Planned Tool Surface — Onboarding
+### `ask`
+
+General-purpose natural language query across all data sources. Gathers context from vault embeddings, GitHub activity, project registry, calendar events, and recent vault modifications. Optionally synthesizes a first-pass answer via a local Qwen3 LLM.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `query` | `str` | *(required)* | Natural language question |
+| `since_days` | `int` | `7` | Rolling window for GitHub and vault activity |
+| `skip_synthesis` | `bool` | `false` | Return raw context only (faster, no model load) |
+
+**Returns:** `{synthesis, vault_context, github_context, project_context, vault_activity, calendar_context, temporal_context, model_used, elapsed_seconds}`
+
+---
+
+### `query_notes`
+
+Semantic search over chunked vault notes via sqlite-vec embeddings.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `query` | `str` | *(required)* | Search query |
+| `top_k` | `int` | `8` | Number of results |
+
+**Returns:** List of matching chunks with similarity scores.
+
+---
+
+### `search_vault`
+
+Full-text keyword search over vault files.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `query` | `str` | *(required)* | Keyword(s) to search |
+
+**Returns:** List of matching files with context snippets.
+
+---
+
+## Live Tool Surface — Onboarding
 
 These tools move onboarding out of the CLI and into any MCP-capable host, so an agent can drive the setup flow conversationally. See [PROJECT.md — Onboarding User Story](./PROJECT.md) for the sequence and UX rationale.
 
@@ -90,17 +129,15 @@ These tools move onboarding out of the CLI and into any MCP-capable host, so an 
 | `run_preflight` | Discovers project candidates from vault titles + GitHub activity (read-only, no registry writes) | `vault_path: str` | `{most_likely_active_projects, semi_active_projects, dormant_projects, potential_projects}` — each a list of candidate objects | GitHub scanner, vault file scan |
 | `confirm_projects` | Accepts curated project list with metadata, writes canonical registry, runs `pull` sync | `projects: list[{name, summary, repos, priority_tier, tags}]`, `vault_path: str` | `{registry_path, project_count, sync_ok}` | Registry sync |
 
-Design principle: the MCP server stays stateless and host-agnostic. Onboarding logic lives in tools, not in host-specific code. Any MCP client — VS Code today, desktop apps tomorrow — drives the same sequence by calling these tools.
+Design principle: the MCP server stays stateless and host-agnostic. Onboarding logic lives in tools, not in host-specific code. Any MCP client — VS Code, Claude Desktop, Cursor, and others — drives the same sequence by calling these tools.
 
 ---
 
-## Planned Tool Surface — Retrieval & Briefing
+## Planned Tool Surface
 
 | Tool | Description | Depends on |
 |---|---|---|
-| `query_notes` | Semantic search over chunked vault notes via sqlite-vec | Note ingester + embedder (PROJECT.md steps 4–5) |
-| `search_vault` | Full-text keyword search over vault files | Note ingester (PROJECT.md step 4) |
-| `todays_agenda` | Today's calendar events via `gcalcli` | gcalcli integration (PROJECT.md step 7) |
+| `todays_agenda` | Today's calendar events (dedicated tool) | Google Calendar sync |
 | `morning_brief` | Assembled daily briefing from all sources | All of the above |
 | `query_github_context` | Semantic search over embedded PR/issue bodies | github_embed_queue pipeline (PROJECT.md step 10, phase 2) |
 
@@ -116,24 +153,46 @@ Adapters are thin config files — no custom code. Each host reads the config an
 
 ### Claude Desktop
 
-Config file: `~/Library/Application Support/Claude/claude_desktop_config.json`
+#### Step-by-step manual setup
 
-```json
-{
-  "mcpServers": {
-    "rebalance": {
-      "command": "python",
-      "args": ["-m", "rebalance.mcp_server"],
-      "env": {
-        "REBALANCE_DB": "/Users/you/path/to/rebalance.db"
-      }
-    }
-  }
-}
-```
+1. **Open the config file.**
+   Menu bar: **Claude → Settings → Developer → Edit Config**.
+   This opens `~/Library/Application Support/Claude/claude_desktop_config.json`.
+   If the file is empty or missing, start with `{}`.
 
-If using a virtualenv, replace `"python"` with the full path to the venv interpreter:
-`"/Users/you/.venv/rebalance/bin/python"`
+2. **Add the rebalance server.** Paste the following into the file (adjust paths to match your machine):
+
+   ```json
+   {
+     "mcpServers": {
+       "rebalance": {
+         "command": "/absolute/path/to/rebalance-OS/.venv/bin/python",
+         "args": ["-m", "rebalance.mcp_server"],
+         "env": {
+           "REBALANCE_DB": "/absolute/path/to/rebalance-OS/rebalance.db"
+         }
+       }
+     }
+   }
+   ```
+
+   > **Important:** Use absolute paths for both `command` and `REBALANCE_DB`. Claude Desktop launches the server from its own working directory, so relative paths will not resolve.
+
+   If you already have other MCP servers configured, add `"rebalance": { ... }` inside the existing `"mcpServers"` object — don't replace the whole file.
+
+3. **Restart Claude Desktop.** Quit and reopen the app. The rebalance tools should appear in the tool picker (hammer icon) when starting a new conversation.
+
+4. **Verify.** In a new conversation, ask:
+   *"What should I work on today?"*
+   Claude should call the `ask` tool and return your project context, GitHub activity, and calendar events.
+
+#### Troubleshooting
+
+| Symptom | Fix |
+|---|---|
+| Server not listed in tool picker | Check that the JSON is valid (no trailing commas). Restart Claude Desktop. |
+| "command not found" or "No module named rebalance" | Ensure `command` points to the venv Python, not the system Python. Run the path in Terminal to verify. |
+| Empty results from `ask` | Run `rebalance ingest notes` and `rebalance ingest embed` first to populate the database. |
 
 ---
 
@@ -209,9 +268,8 @@ A human-readable reference for all running MCP servers on this machine. Store at
 rebalance   python -m rebalance.mcp_server   REBALANCE_DB=/absolute/path/to/rebalance.db
 ```
 
-Live tools: `list_projects`, `github_balance`
-Planned (onboarding): `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
-Planned (retrieval): `query_notes`, `search_vault`, `todays_agenda`, `morning_brief`, `query_github_context`
+Live tools: `ask`, `list_projects`, `github_balance`, `query_notes`, `search_vault`, `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
+Planned: `todays_agenda`, `morning_brief`, `query_github_context`
 
 ---
 

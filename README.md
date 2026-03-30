@@ -190,24 +190,35 @@ Then ask:
 
 Claude Code calls the `ask` tool behind the scenes — it gathers your project registry, GitHub activity, vault notes, and calendar events, synthesizes a first-pass answer via a local Qwen3 model, then Claude reviews and presents a refined answer.
 
-### Claude Desktop App (extension)
+### Claude Desktop App
 
-rebalance OS ships as a Claude Desktop Extension (`.mcpb`). No terminal needed.
+#### Manual config (recommended for now)
 
-1. **Build the extension** (developers only):
-   ```bash
-   npx @anthropic-ai/mcpb pack
+1. Open **Claude → Settings → Developer → Edit Config** to open `~/Library/Application Support/Claude/claude_desktop_config.json`.
+2. Add the rebalance server (use absolute paths):
+
+   ```json
+   {
+     "mcpServers": {
+       "rebalance": {
+         "command": "/absolute/path/to/rebalance-OS/.venv/bin/python",
+         "args": ["-m", "rebalance.mcp_server"],
+         "env": {
+           "REBALANCE_DB": "/absolute/path/to/rebalance-OS/rebalance.db"
+         }
+       }
+     }
+   }
    ```
-2. **Install:** Drag the `.mcpb` file into Claude Desktop → Settings → Extensions
-3. **Configure:** Claude Desktop will prompt for:
-   - **Obsidian Vault Path** — your vault folder
-   - **GitHub PAT** (optional) — stored in OS keychain, never in plaintext
-   - **Database Path** — defaults to `~/.rebalance/rebalance.db`
-4. **Use:** Open Claude Desktop and ask questions. The extension's MCP tools are available immediately.
 
-See [manifest.json](./manifest.json) for the full extension spec.
+3. Quit and reopen Claude Desktop. The rebalance tools appear in the tool picker (hammer icon).
+4. Ask *"What should I work on today?"* to verify.
 
-> **Note:** The extension packaging step (`mcpb pack`) requires bundling all Python dependencies into the archive. This is not yet automated — a build script that copies `src/rebalance/` + `lib/` into the extension structure is a next step. For now, use Claude Code or the manual MCP config for daily use.
+For detailed setup, troubleshooting, and other MCP hosts, see [MCP.md — Claude Desktop](./MCP.md#claude-desktop).
+
+#### Extension (`.mcpb`) — coming soon
+
+rebalance OS will also ship as a Claude Desktop Extension. The extension packaging step (`mcpb pack`) requires bundling all Python dependencies into the archive. This is not yet automated — use the manual config above for daily use. See [manifest.json](./manifest.json) for the extension spec.
 
 ### Other MCP hosts
 
@@ -215,7 +226,7 @@ The server works with any MCP-compatible client. Config files are provided for:
 
 - **Claude Code** — `.mcp.json` (auto-loaded on `cd rebalance-OS && claude`)
 - **VS Code (Copilot/Continue)** — `.vscode/mcp.json` (auto-loaded on workspace open)
-- **Claude Desktop** — extension (`.mcpb`) or manual config in [MCP.md](./MCP.md)
+- **Claude Desktop** — manual config (see above) or extension (`.mcpb`, coming soon)
 - **Cursor** — see [MCP.md](./MCP.md) for config snippet
 
 ### CLI reference

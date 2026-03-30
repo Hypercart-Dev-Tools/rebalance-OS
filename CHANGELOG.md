@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1] - 2026-03-30 — Claude Desktop manual config + MCP.md tool surface update
+
+- Added step-by-step Claude Desktop manual setup instructions to MCP.md (config path, absolute paths, troubleshooting table).
+- Updated README.md: Claude Desktop section now leads with manual config (recommended) and moves `.mcpb` extension to "coming soon".
+- Updated MCP.md tool surface: `ask`, `query_notes`, `search_vault`, and all onboarding tools (`onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`) moved from Planned to Live.
+- Reduced Planned tool surface to `todays_agenda`, `morning_brief`, and `query_github_context`.
+
 ## [0.4.0] - 2026-03-29 — Google Calendar integration
 
 - Added `calendar.py` — Google Calendar API collector that fetches events and persists to `calendar_events` SQLite table with 1-year retention.

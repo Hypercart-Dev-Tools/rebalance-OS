@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__rebalance__onboarding_status",
+      "mcp__rebalance__ask"
+    ]
+  }
+}
