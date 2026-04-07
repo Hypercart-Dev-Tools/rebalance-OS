@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.6] - 2026-04-07
+
+### Fixed
+
+- `rebalance calendar-sync` now reads `calendar_id` from `temp/calendar_config.json` instead of defaulting to `"primary"`. Previously, syncing always pulled from the user's personal calendar unless `--calendar-id` was passed explicitly, even when the config file pointed to a shared team calendar. The `--calendar-id` CLI flag still overrides when provided.
+
+### Changed
+
+- Updated `GOOGLE_CALENDAR.md` with Prerequisites, Team Quick Setup, and Claude Code Setup sections for smoother developer onboarding.
+
 ## [0.5.5] - 2026-04-07
 
 ### Added

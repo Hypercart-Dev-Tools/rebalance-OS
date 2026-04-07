@@ -251,12 +251,17 @@ def ask_cmd(
 @app.command("calendar-sync")
 def calendar_sync_cmd(
     database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
-    calendar_id: str = typer.Option("primary", help="Calendar ID or email (default: primary)"),
+    calendar_id: str = typer.Option("", help="Calendar ID or email (default: from config, then 'primary')"),
     days_back: int = typer.Option(30, help="Days back to fetch (use 365 for initial backfill)"),
     days_forward: int = typer.Option(7, help="Days forward to fetch"),
 ) -> None:
     """Sync Google Calendar events to SQLite for historical queries."""
     from rebalance.ingest.calendar import sync_calendar
+    from rebalance.ingest.calendar_config import CalendarConfig
+
+    if not calendar_id:
+        config = CalendarConfig.load()
+        calendar_id = config.calendar_id
 
     db_path = database.expanduser().resolve()
     typer.echo(f"Syncing calendar '{calendar_id}' ({days_back} days back, {days_forward} days forward)...")
