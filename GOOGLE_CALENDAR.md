@@ -5,18 +5,21 @@ Generate daily and weekly timesheet reports from your Google Calendar.
 ## Table of Contents
 
 1. [Quick Start](#quick-start)
-2. [First-Time Setup](#first-time-setup)
+2. [Prerequisites](#prerequisites)
+3. [First-Time Setup](#first-time-setup)
    - [Step 1: Authorize your device](#step-1-authorize-your-device)
    - [Step 2: Configure your calendar](#step-2-configure-your-calendar)
    - [Step 3: Sync and verify](#step-3-sync-and-verify)
-3. [Project Definitions](#project-definitions)
+4. [Team Quick Setup](#team-quick-setup)
+5. [Claude Code Setup](#claude-code-setup)
+6. [Project Definitions](#project-definitions)
    - [Canonical Source of Truth](#canonical-source-of-truth)
    - [Minimum Project Definition](#minimum-project-definition)
    - [Sync Project Definitions Into the Same Database](#sync-project-definitions-into-the-same-database)
-4. [Running Reports](#running-reports)
-5. [Customizing Your Config](#customizing-your-config)
-6. [Keeping Events Up to Date](#keeping-events-up-to-date)
-7. [Troubleshooting](#troubleshooting)
+7. [Running Reports](#running-reports)
+8. [Customizing Your Config](#customizing-your-config)
+9. [Keeping Events Up to Date](#keeping-events-up-to-date)
+10. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -29,6 +32,40 @@ rebalance calendar-sync --days-back 30    # Pull latest events
 rebalance calendar-daily-report           # Today's timesheet
 rebalance calendar-weekly-report          # This week's timesheet
 ```
+
+---
+
+## Prerequisites
+
+Before running any setup or report commands, make sure your local environment is ready.
+
+**Python 3.12+** is required (`pyproject.toml` specifies `requires-python = ">=3.12"`).
+
+```bash
+python3 --version   # Must be 3.12 or higher
+```
+
+**Create a virtual environment and install the project:**
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate       # macOS / Linux
+pip install -e .
+```
+
+**Install Google Calendar dependencies** (not bundled in the core package):
+
+```bash
+pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+```
+
+After this, `rebalance` should be available on your PATH (inside the venv):
+
+```bash
+rebalance --help
+```
+
+> If you see `command not found: rebalance`, make sure your virtual environment is activated (`source .venv/bin/activate`).
 
 ---
 
@@ -95,6 +132,60 @@ rebalance calendar-daily-report
 ```
 
 You should see a formatted timesheet for today. If you do, you're all set.
+
+---
+
+## Team Quick Setup
+
+If a teammate has already configured the shared calendar and sent you a pre-filled `temp/calendar_config.json`, you can skip Step 2 entirely. This is the fastest path for developers joining a team that already uses calendar reports.
+
+1. Complete [Prerequisites](#prerequisites) (venv, pip install).
+2. Run [Step 1: Authorize your device](#step-1-authorize-your-device) to connect your own Google account.
+3. Create the `temp/` folder and place the config file your teammate sent you inside it:
+   ```bash
+   mkdir -p temp
+   # Copy or move the file your teammate sent into temp/calendar_config.json
+   ```
+4. Sync and verify:
+   ```bash
+   rebalance calendar-sync --days-back 30
+   rebalance calendar-daily-report
+   ```
+
+That's it. The config already contains the shared `calendar_id`, projects, and timezone — you only needed to authorize your own Google account so the API can read events on your behalf.
+
+> **Why does each person need to authorize?** The repo includes the OAuth Desktop app client configuration (shared and non-sensitive), but each developer must grant consent for their own Google account. The resulting token is saved locally at `~/.config/gcalcli/oauth` and is never committed to the repo.
+
+---
+
+## Claude Code Setup
+
+If you are using Claude Code (Anthropic's CLI or VS Code extension), you can let it drive the setup and reporting for you. Open this file in a VS Code editor pane, select the entire document, and use one of the prompts below.
+
+**First-time setup prompt:**
+
+> Please scan the document and run the local Google Calendar timesheet setup including authorization.
+
+Claude Code will:
+
+1. Check that prerequisites are met (Python version, venv, dependencies).
+2. Run `python scripts/setup_calendar_oauth.py --test` to open the browser consent flow.
+3. Confirm that `temp/calendar_config.json` exists (either from a teammate or by copying the example).
+4. Run `rebalance calendar-sync --days-back 30` to pull events.
+5. Run a report to verify everything works.
+
+**Running reports prompt:**
+
+> Run the report for last week.
+
+Claude Code will run `rebalance calendar-weekly-report` (and/or `calendar-daily-report`) with the appropriate `--date` flag.
+
+**Important notes for Claude Code:**
+
+- If `temp/calendar_config.json` already exists, do **not** overwrite it — the user or their teammate has already configured it.
+- If `temp/calendar_config.json` does not exist, copy from the example: `cp calendar_config.example.json temp/calendar_config.json` and ask the user to fill in their `calendar_id` and `timezone`.
+- Always run commands inside the project's virtual environment. If `rebalance` is not found, activate with `source .venv/bin/activate` first.
+- The Google API packages (`google-api-python-client`, `google-auth-oauthlib`, `google-auth-httplib2`) must be installed in the venv before running the OAuth script.
 
 ---
 
@@ -195,7 +286,7 @@ rebalance ingest sync \
 Repo-local fallback:
 
 ```bash
-PYTHONPATH=src python3.11 -m rebalance.cli ingest sync \
+PYTHONPATH=src python3 -m rebalance.cli ingest sync \
   --mode pull \
   --vault /absolute/path/to/your/vault \
   --database /absolute/path/to/rebalance.db
@@ -299,7 +390,7 @@ To automate it on macOS or Linux, add it to your crontab (`crontab -e`):
 | Times look wrong | Update `timezone` in `temp/calendar_config.json` to your local timezone |
 | Project names still look heuristic (`Cr`, `Ai`, `Smart`) | Sync your canonical registry into the same SQLite database so `project_registry` is available to the calendar report |
 | I do not use Obsidian | Add `projects` directly to `temp/calendar_config.json`; the report will use that fallback automatically |
-| Need to re-authorize | Re-run Step 2 — your previous token may have expired |
+| Need to re-authorize | Re-run Step 1 — your previous token may have expired |
 
 **Common questions**
 
