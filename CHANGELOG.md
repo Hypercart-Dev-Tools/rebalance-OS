@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.2] - 2026-04-07 — Calendar config setup simplification
+
+- Added `calendar_config.example.json` to repo root — template with instructions for new users.
+- Added `CALENDAR_CONFIG_SETUP.md` — quick setup guide (4 steps: create temp folder, copy example, edit config, verify).
+- Removed `temp/calendar_config.json.template` — now using example file from repo root instead.
+- Updated README.md Step 4c — clearer instructions with code example for config setup.
+- Verified `.gitignore` already includes `/temp` folder — user config stays private.
+
 ## [0.5.1] - 2026-04-07 — Calendar setup portability & documentation
 
 - Added `CALENDAR_PORTABILITY_AUDIT.md` — comprehensive audit of setup and configuration portability; confirms zero hardcoded user data.

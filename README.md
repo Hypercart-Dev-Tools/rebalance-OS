@@ -182,10 +182,18 @@ This saves your OAuth token locally at `~/.config/gcalcli/oauth` (never in the r
 
 **4c. Create your config**
 
-Copy `temp/calendar_config.json.template` to `temp/calendar_config.json` and edit:
+Quick setup (see [CALENDAR_CONFIG_SETUP.md](./CALENDAR_CONFIG_SETUP.md) for details):
+
+```bash
+mkdir -p temp
+cp calendar_config.example.json temp/calendar_config.json
+nano temp/calendar_config.json  # Edit with your preferences
+```
+
+Fields to customize:
 - `calendar_id` — your calendar ID (or "primary" for main calendar)
-- `exclude_keywords` — events to filter out from reports
-- `timezone` — your local timezone (e.g., "America/New_York")
+- `exclude_keywords` — events to filter out from reports (e.g., "Lunch", "Break")
+- `timezone` — your local timezone (e.g., "America/New_York", "America/Los_Angeles")
 
 **4d. Sync calendar events**
 

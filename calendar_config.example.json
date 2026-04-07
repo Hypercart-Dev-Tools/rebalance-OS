@@ -1,0 +1,10 @@
+{
+  "calendar_id": "primary",
+  "exclude_keywords": [
+    "Lunch",
+    "Break",
+    "Admin",
+    "Standup"
+  ],
+  "timezone": "America/New_York"
+}
