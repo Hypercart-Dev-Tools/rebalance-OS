@@ -8,3 +8,5 @@ rebalance.db
 build/
 dist/
 *.mcpb
+~/bin/servers.md
+test_report_output.txt
