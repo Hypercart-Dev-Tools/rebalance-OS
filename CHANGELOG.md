@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.5.1] - 2026-04-07 — Calendar setup portability & documentation
+
+- Added `CALENDAR_PORTABILITY_AUDIT.md` — comprehensive audit of setup and configuration portability; confirms zero hardcoded user data.
+- Added `CALENDAR_NEW_USER_SETUP.md` — step-by-step guide for new users (OAuth setup, config, testing, scheduling).
+- Added `temp/calendar_config.json.template` — template for user configuration (copy and edit).
+- Enhanced `scripts/setup_calendar_oauth.py` — now lists all available calendars with IDs, and provides next-step instructions.
+- Updated `README.md` Step 4 — detailed Google OAuth app creation and calendar setup for new users.
+- Confirmed portability: ✅ All user data outside repo, ✅ No hardcoded credentials, ✅ OAuth per-user, ✅ Config per-user, ✅ Tokens system-native.
+
+## [0.5.0] - 2026-04-07 — Calendar daily & weekly reports with project aggregator
+
+- Added `calendar_config.py` — single gitignored config file per device for calendar selection, exclude keywords, and timezone.
+- Added `daily_report.py` — generates markdown daily reports with event filtering, project aggregator grouping, and time totals.
+- Added `weekly_report.py` — combines daily reports into Sun-Sat format with daily summaries and weekly overview.
+- Added `rebalance calendar-daily-report` and `rebalance calendar-weekly-report` CLI commands.
+- Project aggregator groups similar events by keyword, counts, and sums durations (e.g., "Binoid": 4 events, 7h 15m).
+- Exclude keywords (e.g., "Lunch", "Check Slack") filter events from reports but keep them in database.
+- Timezone-aware report times (configurable in temp/calendar_config.json, defaults to America/Los_Angeles).
+- All reports generated in clean markdown format suitable for Obsidian, email, or archival.
+- Updated `db.py` to gracefully handle systems without sqlite-vec extension support (system Python).
+- Added CALENDAR_REPORTS.md documentation with usage, config, and examples.
+
+## [0.4.2] - 2026-04-07 — Google Calendar multi-calendar + daily totals
+
+- Extended `calendar.py` to support reading from any calendar (not just primary): `sync_calendar(calendar_id=...)` parameter.
+- Added `DailyEventTotal` dataclass — aggregates event count and duration by day with helper methods (total_hours, __str__).
+- Added `get_daily_totals(database_path, days_back, days_forward)` — calculates combined daily event metrics from calendar_events table.
+- Added `rebalance calendar-daily-totals` CLI command — displays daily event summary (count, duration) with aggregate stats (total events, avg events/day, avg hours/day).
+- Updated `calendar-sync` command to accept `--calendar-id` parameter (email or group ID).
+- Updated PROJECT.md: documented calendar parameter, daily totals command, and updated access setup to use new `setup_calendar_oauth.py` script.
+- Added `scripts/setup_calendar_oauth.py` — automated OAuth2 setup script that generates and stores token in `~/.config/gcalcli/oauth`.
+
 ## [0.4.1] - 2026-03-30 — Claude Desktop manual config + MCP.md tool surface update
 
 - Added step-by-step Claude Desktop manual setup instructions to MCP.md (config path, absolute paths, troubleshooting table).

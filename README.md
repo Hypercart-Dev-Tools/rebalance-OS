@@ -163,12 +163,42 @@ python3 -m venv .venv
 
 ### Step 4 — Connect Google Calendar (optional)
 
-Follow the OAuth setup in [PROJECT.md — P2 Google Calendar](./PROJECT.md) to create credentials, then:
+**4a. Create Google OAuth app (first time only)**
+
+1. Go to [Google Cloud Console](https://console.cloud.google.com/)
+2. Create a new project (or use existing)
+3. Enable the Google Calendar API (APIs & Services → Library → search "Google Calendar API" → Enable)
+4. Create OAuth 2.0 credentials (APIs & Services → Credentials → Create → OAuth client ID → Desktop app)
+5. Download the credentials JSON file
+
+**4b. Authorize this device**
 
 ```bash
-# Backfill 1 year of events
-.venv/bin/rebalance calendar-sync --database rebalance.db --days-back 365
+# Run the OAuth setup script (opens browser for consent)
+python scripts/setup_calendar_oauth.py --client-secret /path/to/client_secret.json
 ```
+
+This saves your OAuth token locally at `~/.config/gcalcli/oauth` (never in the repo).
+
+**4c. Create your config**
+
+Copy `temp/calendar_config.json.template` to `temp/calendar_config.json` and edit:
+- `calendar_id` — your calendar ID (or "primary" for main calendar)
+- `exclude_keywords` — events to filter out from reports
+- `timezone` — your local timezone (e.g., "America/New_York")
+
+**4d. Sync calendar events**
+
+```bash
+# Backfill 1 year of events (one-time)
+.venv/bin/rebalance calendar-sync --days-back 365
+
+# Generate reports
+.venv/bin/rebalance calendar-daily-report --date 2026-04-06
+.venv/bin/rebalance calendar-weekly-report
+```
+
+For more details, see [CALENDAR_SETUP_GUIDE.md](./CALENDAR_SETUP_GUIDE.md) and [CALENDAR_REPORTS.md](./CALENDAR_REPORTS.md).
 
 ### Step 5 — Start using with Claude Code
 

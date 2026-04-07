@@ -251,6 +251,7 @@ def ask_cmd(
 @app.command("calendar-sync")
 def calendar_sync_cmd(
     database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    calendar_id: str = typer.Option("primary", help="Calendar ID or email (default: primary)"),
     days_back: int = typer.Option(30, help="Days back to fetch (use 365 for initial backfill)"),
     days_forward: int = typer.Option(7, help="Days forward to fetch"),
 ) -> None:
@@ -258,9 +259,10 @@ def calendar_sync_cmd(
     from rebalance.ingest.calendar import sync_calendar
 
     db_path = database.expanduser().resolve()
-    typer.echo(f"Syncing calendar ({days_back} days back, {days_forward} days forward)...")
+    typer.echo(f"Syncing calendar '{calendar_id}' ({days_back} days back, {days_forward} days forward)...")
     result = sync_calendar(
         database_path=db_path,
+        calendar_id=calendar_id,
         days_back=days_back,
         days_forward=days_forward,
     )
@@ -269,6 +271,84 @@ def calendar_sync_cmd(
         f"stored={result.events_stored}, window={result.window_start}..{result.window_end} "
         f"({result.elapsed_seconds}s)"
     )
+
+
+@app.command("calendar-daily-totals")
+def calendar_daily_totals_cmd(
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    days_back: int = typer.Option(30, help="Days back to show"),
+    days_forward: int = typer.Option(0, help="Days forward to show"),
+) -> None:
+    """Show combined daily event totals (count + duration) for calendar events."""
+    from rebalance.ingest.calendar import get_daily_totals
+
+    db_path = database.expanduser().resolve()
+    totals = get_daily_totals(database_path=db_path, days_back=days_back, days_forward=days_forward)
+
+    if not totals:
+        typer.echo("No events found.")
+        return
+
+    typer.echo(f"\n📅 Daily Event Totals (last {days_back} days):\n")
+    for total in totals:
+        typer.echo(f"  {total}")
+
+    # Summary stats
+    total_events = sum(t.event_count for t in totals)
+    total_minutes = sum(t.total_minutes for t in totals)
+    avg_events_per_day = total_events / len(totals) if totals else 0
+    avg_hours_per_day = total_minutes / 60 / len(totals) if totals else 0
+
+    typer.echo(f"\n📊 Summary:")
+    typer.echo(f"  Days analyzed: {len(totals)}")
+    typer.echo(f"  Total events: {total_events}")
+    typer.echo(f"  Total hours: {total_minutes / 60:.1f}h")
+    typer.echo(f"  Avg events/day: {avg_events_per_day:.1f}")
+    typer.echo(f"  Avg hours/day: {avg_hours_per_day:.1f}h\n")
+
+
+@app.command("calendar-daily-report")
+def calendar_daily_report_cmd(
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    date_str: str = typer.Option(None, "--date", help="Date to report on (YYYY-MM-DD, default: today)"),
+) -> None:
+    """Generate daily calendar report with project aggregator (exclude keywords configured in temp/calendar_config.json)."""
+    from datetime import date
+    from rebalance.ingest.daily_report import generate_daily_report
+    from rebalance.ingest.calendar_config import CalendarConfig
+
+    db_path = database.expanduser().resolve()
+    config = CalendarConfig.load()
+
+    if date_str:
+        target_date = date.fromisoformat(date_str)
+    else:
+        target_date = date.today()
+
+    report = generate_daily_report(db_path, target_date, config)
+    typer.echo(report)
+
+
+@app.command("calendar-weekly-report")
+def calendar_weekly_report_cmd(
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    date_str: str = typer.Option(None, "--date", help="Date in target week (YYYY-MM-DD, default: today)"),
+) -> None:
+    """Generate weekly calendar report (Sun-Sat) with daily summaries and project aggregator."""
+    from datetime import date
+    from rebalance.ingest.weekly_report import generate_weekly_report
+    from rebalance.ingest.calendar_config import CalendarConfig
+
+    db_path = database.expanduser().resolve()
+    config = CalendarConfig.load()
+
+    if date_str:
+        target_date = date.fromisoformat(date_str)
+    else:
+        target_date = date.today()
+
+    report = generate_weekly_report(db_path, target_date, config)
+    typer.echo(report)
 
 
 @app.command("version")

@@ -157,6 +157,8 @@ Meeting load, scheduling patterns, and daily briefing context.
 - **Events** — title, time, location, attendees, description; fetched via Google Calendar API (direct client, not gcalcli)
 - **Retention** — 1 year of historical events persisted in `calendar_events` table for meeting-load analysis and project-meeting correlation
 - **Sync window** — configurable: `rebalance calendar-sync --days-back 365 --days-forward 14`
+- **Calendar selection** — sync from any readable calendar (primary, shared, team calendars): `rebalance calendar-sync --calendar-id <email_or_id>`
+- **Daily totals** — aggregate daily event metrics (count + duration): `rebalance calendar-daily-totals --days-back 30`
 - **Context delivery** — upcoming events (next 2 days) + recent events (last 7 days) fed into `ask` tool prompt
 
 Implementation: `calendar.py` → `calendar_events` SQLite table → `querier.py` `_gather_calendar_context()`.
@@ -166,16 +168,16 @@ Implementation: `calendar.py` → `calendar_events` SQLite table → `querier.py
 
 1. **Google Cloud project** — create a project at https://console.cloud.google.com/
 2. **Enable the Google Calendar API** — APIs & Services → Library → search "Google Calendar API" → Enable
-3. **OAuth consent screen** — APIs & Services → OAuth consent screen → User type: External (or Internal if using Google Workspace) → fill in app name ("rebalance OS"), user support email, and developer email. No scopes needed on this screen — gcalcli handles scope requests at auth time.
-4. **Create OAuth 2.0 credentials** — APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type: **Desktop app** → name it "rebalance-gcalcli" → Download the JSON file.
-5. **Install gcalcli** — `pip install gcalcli`
-6. **Authenticate** — run `gcalcli --client-id=<CLIENT_ID> --client-secret=<CLIENT_SECRET> list` (values from the downloaded JSON). This opens a browser for Google OAuth consent. Grant read-only calendar access.
-7. **Verify** — `gcalcli agenda today tomorrow --details location --details attendees` should print today's events.
+3. **OAuth consent screen** — APIs & Services → OAuth consent screen → User type: External (or Internal if using Google Workspace) → fill in app name ("rebalance OS"), user support email, and developer email.
+4. **Create OAuth 2.0 credentials** — APIs & Services → Credentials → Create Credentials → OAuth client ID → Application type: **Desktop app** → name it "rebalance-calendar" → Download the JSON file.
+5. **Authenticate via rebalance** — run `python scripts/setup_calendar_oauth.py --client-secret /path/to/client_secret.json`. This opens a browser for Google OAuth consent. Grant read-only calendar access. Token is saved to `~/.config/gcalcli/oauth`.
+6. **Sync calendar** — run `rebalance calendar-sync --days-back 365` (for initial backfill, then use `--days-back 30` in daily cron/scheduler)
+7. **View daily totals** — `rebalance calendar-daily-totals --days-back 30` shows event count and duration per day
 
-**Required OAuth scopes** (requested automatically by gcalcli):
+**Required OAuth scopes**:
 - `https://www.googleapis.com/auth/calendar.readonly` — read-only access to calendar events
 
-**Token storage:** gcalcli stores the OAuth2 refresh token in `~/.gcalcli_oauth` (or `~/.config/gcalcli/oauth`). This file is outside the repo — not gitignored here, but never committed. The refresh token auto-renews; re-auth is only needed after long gaps or token revocation.
+**Token storage:** OAuth2 refresh token is stored in `~/.config/gcalcli/oauth` (pickle format). This file is outside the repo — not gitignored here, but never committed. The refresh token auto-renews; re-auth is only needed after long gaps or token revocation.
 
 **Security notes:**
 - The OAuth client ID/secret are not sensitive in the same way as API keys — they identify the app, not the user. However, do not commit them to the repo. Store in `temp/rbos.config` alongside the GitHub PAT.

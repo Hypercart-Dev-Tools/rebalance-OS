@@ -112,6 +112,7 @@ def ensure_calendar_schema(conn: sqlite3.Connection) -> None:
 def sync_calendar(
     database_path: Path,
     *,
+    calendar_id: str = "primary",
     days_back: int = 30,
     days_forward: int = 7,
 ) -> CalendarSyncResult:
@@ -120,6 +121,12 @@ def sync_calendar(
     Default window: 30 days back + 7 days forward.
     For initial backfill, pass days_back=365.
     Retention: events are never auto-deleted. Run cleanup manually if needed.
+
+    Args:
+        database_path: Path to SQLite database
+        calendar_id: Calendar to fetch from (default: "primary"). Use calendar email or group ID for other calendars.
+        days_back: How many days back to fetch (default 30)
+        days_forward: How many days forward to fetch (default 7)
     """
     start = time.monotonic()
     service = _build_service()
@@ -134,7 +141,7 @@ def sync_calendar(
     page_token = None
     while True:
         result = service.events().list(
-            calendarId="primary",
+            calendarId=calendar_id,
             timeMin=time_min,
             timeMax=time_max,
             singleEvents=True,
@@ -277,3 +284,99 @@ def get_recent_events(
         }
         for row in rows
     ]
+
+
+@dataclass
+class DailyEventTotal:
+    """Summary of events for a single day."""
+    date: str  # YYYY-MM-DD format
+    day_name: str  # Monday, Tuesday, etc.
+    event_count: int
+    total_minutes: int  # Sum of event durations
+
+    @property
+    def total_hours(self) -> float:
+        """Total hours as decimal (e.g., 2.5 for 2h 30m)."""
+        return self.total_minutes / 60.0
+
+    def __str__(self) -> str:
+        hours = int(self.total_hours)
+        minutes = self.total_minutes % 60
+        if hours > 0:
+            duration = f"{hours}h {minutes}m" if minutes > 0 else f"{hours}h"
+        else:
+            duration = f"{minutes}m"
+        return f"{self.date} ({self.day_name}): {self.event_count} events, {duration} booked"
+
+
+def get_daily_totals(
+    database_path: Path,
+    days_back: int = 30,
+    days_forward: int = 0,
+) -> list[DailyEventTotal]:
+    """Calculate event count and total duration per day.
+
+    Returns days sorted chronologically (oldest first).
+    """
+    from rebalance.ingest.db import get_connection
+    from datetime import date
+
+    conn = get_connection(database_path)
+    ensure_calendar_schema(conn)
+
+    now = datetime.now(timezone.utc)
+    start_date = (now - timedelta(days=days_back)).date()
+    end_date = (now + timedelta(days=days_forward)).date()
+
+    # Get all events in range
+    rows = conn.execute(
+        """SELECT start_time, end_time
+           FROM calendar_events
+           WHERE DATE(start_time) >= ? AND DATE(start_time) <= ?
+           ORDER BY start_time ASC""",
+        (start_date.isoformat(), end_date.isoformat()),
+    ).fetchall()
+    conn.close()
+
+    # Aggregate by day
+    daily_data: dict[str, tuple[int, int]] = {}  # date -> (count, total_minutes)
+
+    for row in rows:
+        start_str = row["start_time"]
+        end_str = row["end_time"]
+
+        # Parse ISO datetime
+        try:
+            start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+        except Exception:
+            continue
+
+        if not end_str:
+            # All-day or no end time; count as 0 duration
+            minutes = 0
+        else:
+            try:
+                end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
+                minutes = int((end_dt - start_dt).total_seconds() / 60)
+            except Exception:
+                minutes = 0
+
+        date_str = start_dt.date().isoformat()
+        count, total_mins = daily_data.get(date_str, (0, 0))
+        daily_data[date_str] = (count + 1, total_mins + minutes)
+
+    # Convert to result objects
+    results = []
+    for date_str in sorted(daily_data.keys()):
+        count, total_mins = daily_data[date_str]
+        day_obj = datetime.fromisoformat(date_str).date()
+        day_name = day_obj.strftime("%A")
+
+        results.append(DailyEventTotal(
+            date=date_str,
+            day_name=day_name,
+            event_count=count,
+            total_minutes=max(0, total_mins),
+        ))
+
+    return results

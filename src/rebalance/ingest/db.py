@@ -16,14 +16,26 @@ import sqlite_vec
 
 
 def get_connection(database_path: Path) -> sqlite3.Connection:
-    """Open a SQLite connection with WAL mode, foreign keys, and sqlite-vec loaded."""
+    """Open a SQLite connection with WAL mode, foreign keys, and sqlite-vec loaded.
+
+    Note: sqlite-vec may not load on all Python builds (e.g., system Python without
+    extension support). The connection will still work for basic queries.
+    """
     database_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(database_path))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
-    conn.enable_load_extension(True)
-    sqlite_vec.load(conn)
-    conn.enable_load_extension(False)
+
+    # Try to load sqlite-vec, but gracefully fall back if unavailable
+    try:
+        if hasattr(conn, 'enable_load_extension'):
+            conn.enable_load_extension(True)
+            sqlite_vec.load(conn)
+            conn.enable_load_extension(False)
+    except (AttributeError, Exception):
+        # sqlite-vec not available on this Python build; continue without it
+        pass
+
     conn.row_factory = sqlite3.Row
     return conn
 
