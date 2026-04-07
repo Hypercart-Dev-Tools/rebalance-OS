@@ -92,14 +92,15 @@ def generate_daily_report(
     conn = get_connection(database_path)
     ensure_calendar_schema(conn)
     
-    # Get all events for this day
+    # Get all events for this day from the configured calendar
     date_str = target_date.isoformat()
     rows = conn.execute(
         """SELECT summary, start_time, end_time
            FROM calendar_events
            WHERE DATE(start_time) = ?
+             AND calendar_id = ?
            ORDER BY start_time ASC""",
-        (date_str,),
+        (date_str, config.calendar_id),
     ).fetchall()
     conn.close()
     

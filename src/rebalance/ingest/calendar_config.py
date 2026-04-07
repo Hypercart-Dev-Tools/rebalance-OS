@@ -4,9 +4,9 @@ Calendar configuration — per-user settings for event filtering, calendar selec
 Config file: temp/calendar_config.json (gitignored, repo root)
 Schema:
   {
-    "calendar_id": "c_dih7iped3im5sescansv8uqab8@group.calendar.google.com",
-    "exclude_keywords": ["Check Slack", "Lunch", "Start Day earlier", "Start to wind-down"],
-    "timezone": "America/Los_Angeles"
+    "calendar_id": "primary",
+    "exclude_keywords": ["Lunch", "Break", "Admin"],
+    "timezone": "America/New_York"
   }
 """
 
@@ -20,14 +20,13 @@ from typing import Any
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent / "temp" / "calendar_config.json"
 
 DEFAULT_CONFIG = {
-    "calendar_id": "c_dih7iped3im5sescansv8uqab8@group.calendar.google.com",
+    "calendar_id": "primary",
     "exclude_keywords": [
-        "Check Slack",
         "Lunch",
-        "Start Day earlier",
-        "Start to wind-down",
+        "Break",
+        "Admin",
     ],
-    "timezone": "America/Los_Angeles",
+    "timezone": "America/New_York",
 }
 
 
