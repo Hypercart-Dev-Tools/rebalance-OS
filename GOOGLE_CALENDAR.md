@@ -6,10 +6,9 @@ Generate daily and weekly timesheet reports from your Google Calendar.
 
 1. [Quick Start](#quick-start)
 2. [First-Time Setup](#first-time-setup)
-   - [Step 1: Get the credential file](#step-1-get-the-credential-file)
-   - [Step 2: Authorize your device](#step-2-authorize-your-device)
-   - [Step 3: Configure your calendar](#step-3-configure-your-calendar)
-   - [Step 4: Sync and verify](#step-4-sync-and-verify)
+   - [Step 1: Authorize your device](#step-1-authorize-your-device)
+   - [Step 2: Configure your calendar](#step-2-configure-your-calendar)
+   - [Step 3: Sync and verify](#step-3-sync-and-verify)
 3. [Running Reports](#running-reports)
 4. [Customizing Your Config](#customizing-your-config)
 5. [Keeping Events Up to Date](#keeping-events-up-to-date)
@@ -31,31 +30,21 @@ rebalance calendar-weekly-report          # This week's timesheet
 
 ## First-Time Setup
 
-### Step 1: Get the credential file
+### Step 1: Authorize your device
 
-Download `client_secret.json` from the link pinned in the team Slack channel and save it to your machine (e.g. `~/client_secret.json`). This file connects the app to Google — you do not need to create anything in Google Cloud.
-
-> The credential is a shared Desktop app key. It only allows the OAuth consent flow — it cannot access anyone's data without you clicking Allow in your own Google account.
-
----
-
-### Step 2: Authorize your device
-
-Run this once to connect your Google account. It opens a browser window where you log in and click **Allow**.
+Run this once to connect your Google account. It opens a browser window where you log in and click **Allow**. No downloads or Google Cloud setup needed.
 
 ```bash
-python scripts/setup_calendar_oauth.py \
-  --client-secret ~/client_secret.json \
-  --test
+python scripts/setup_calendar_oauth.py --test
 ```
 
-After clicking Allow, the script will print a list of your Google Calendars and their IDs. **Copy the ID** of the calendar you want to use for timesheets — you'll need it in the next step.
+After clicking Allow, the script prints a list of your Google Calendars and their IDs. **Copy the ID** of the calendar you want to use — you'll need it in the next step.
 
 > Your login token is saved locally at `~/.config/gcalcli/oauth` and is never stored in the repo.
 
 ---
 
-### Step 3: Configure your calendar
+### Step 2: Configure your calendar
 
 ```bash
 mkdir -p temp
@@ -82,7 +71,7 @@ Open `temp/calendar_config.json` and fill in your details:
 
 ---
 
-### Step 4: Sync and verify
+### Step 3: Sync and verify
 
 ```bash
 # Pull 1 year of events (run once to backfill)
@@ -184,4 +173,4 @@ To automate it on macOS or Linux, add it to your crontab (`crontab -e`):
 - **Is my calendar data stored anywhere online?** No — events are pulled to your local machine only and never uploaded.
 - **Can I change which calendar I use?** Yes — update `calendar_id` in your config and run `calendar-sync` again.
 - **An event I want to hide keeps showing up** — add a word from its title to `exclude_keywords` in your config.
-- **I got a new machine** — download `client_secret.json` from the team Slack link again and repeat Steps 2–4.
+- **I got a new machine** — just clone the repo and repeat Steps 1–3. Everything you need is already included.
