@@ -96,12 +96,16 @@ After clicking Allow, the script prints a list of your Google Calendars and thei
 
 ### Step 2: Configure your calendar
 
+> **Already have a config file?** If a teammate sent you a `calendar_config.json` (e.g. via Slack), place it at `temp/calendar_config.json` and skip the rest of this step — go straight to [Step 3](#step-3-sync-and-verify). Your config is already filled in.
+
+If you don't have a pre-filled config, create one from the template:
+
 ```bash
 mkdir -p temp
 cp calendar_config.example.json temp/calendar_config.json
 ```
 
-Open `temp/calendar_config.json` and fill in your details:
+Then open `temp/calendar_config.json` and fill in your details:
 
 ```json
 {
@@ -113,8 +117,8 @@ Open `temp/calendar_config.json` and fill in your details:
 
 | Field | What to put here |
 |-------|-----------------|
-| `calendar_id` | If a teammate sent you a pre-filled config, leave this as-is. Otherwise paste the calendar ID printed in Step 1, or use `"primary"` for your main Google Calendar. |
-| `exclude_keywords` | Event titles containing these words will be hidden from reports. The same list is also reused by the project aggregator to skip low-signal grouping terms. |
+| `calendar_id` | Paste the calendar ID printed in Step 1, or use `"primary"` for your main Google Calendar. |
+| `exclude_keywords` | Event titles containing these words will be hidden from reports. |
 | `timezone` | Your local timezone — e.g. `"America/Los_Angeles"`, `"America/New_York"`, `"America/Chicago"`. |
 
 > This file is private to your machine and is never synced to GitHub.
@@ -137,24 +141,42 @@ You should see a formatted timesheet for today. If you do, you're all set.
 
 ## Team Quick Setup
 
-If a teammate has already configured the shared calendar and sent you a pre-filled `temp/calendar_config.json`, you can skip Step 2 entirely. This is the fastest path for developers joining a team that already uses calendar reports.
+Got a pre-filled `calendar_config.json` from your team (e.g. via Slack)? This is the fastest path — you only need to do three things:
 
-1. Complete [Prerequisites](#prerequisites) (venv, pip install).
-2. Run [Step 1: Authorize your device](#step-1-authorize-your-device) to connect your own Google account.
-3. Create the `temp/` folder and place the config file your teammate sent you inside it:
-   ```bash
-   mkdir -p temp
-   # Copy or move the file your teammate sent into temp/calendar_config.json
-   ```
-4. Sync and verify:
-   ```bash
-   rebalance calendar-sync --days-back 30
-   rebalance calendar-daily-report
-   ```
+**1. Install dependencies**
 
-That's it. The config already contains the shared `calendar_id`, projects, and timezone — you only needed to authorize your own Google account so the API can read events on your behalf.
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
+pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+```
 
-> **Why does each person need to authorize?** The repo includes the OAuth Desktop app client configuration (shared and non-sensitive), but each developer must grant consent for their own Google account. The resulting token is saved locally at `~/.config/gcalcli/oauth` and is never committed to the repo.
+**2. Place the config file and authorize your device**
+
+```bash
+mkdir -p temp
+# Move the config file your teammate sent into temp/calendar_config.json
+```
+
+Then run the one-time browser authorization:
+
+```bash
+python scripts/setup_calendar_oauth.py --test
+```
+
+A browser window opens — log in with your Google account and click **Allow**. That's all that's needed from you — the config is already set up.
+
+**3. Sync and run a report**
+
+```bash
+rebalance calendar-sync --days-back 30
+rebalance calendar-daily-report
+```
+
+You're done. The config already has the shared `calendar_id`, projects, and timezone — you only authorize once so the app can read your calendar on your behalf.
+
+> **Why does each person need to authorize?** The repo includes the shared OAuth Desktop app credentials, but each person must grant consent for their own Google account. Your token is saved locally at `~/.config/gcalcli/oauth` and never stored in the repo.
 
 ---
 
@@ -162,15 +184,21 @@ That's it. The config already contains the shared `calendar_id`, projects, and t
 
 If you are using Claude Code (Anthropic's CLI or VS Code extension), you can let it drive the setup and reporting for you. Open this file in a VS Code editor pane, select the entire document, and use one of the prompts below.
 
-**First-time setup prompt:**
+**Setup prompt — starting from scratch:**
 
-> Please scan the document and run the local Google Calendar timesheet setup including authorization.
+> Please scan the highlighted document, install dependencies, and then run the local Google Calendar timesheet setup including authorization on this device.
+
+**Setup prompt — if you already have a config file in `/temp`:**
+
+> Please scan the highlighted document, install dependencies, and then run the local Google Calendar timesheet setup including authorization on this device. I already have a copy of the timesheet app config stored in the `/temp` folder.
 
 Claude Code will:
 
 1. Check that prerequisites are met (Python version, venv, dependencies).
-2. Run `python scripts/setup_calendar_oauth.py --test` to open the browser consent flow.
-3. Confirm that `temp/calendar_config.json` exists (either from a teammate or by copying the example).
+2. Check whether `temp/calendar_config.json` already exists.
+   - **If it exists** — use it as-is. Do not overwrite it.
+   - **If it does not exist** — copy from the example and ask the user to fill in `calendar_id` and `timezone`.
+3. Run `python scripts/setup_calendar_oauth.py --test` to open the browser consent flow.
 4. Run `rebalance calendar-sync --days-back 30` to pull events.
 5. Run a report to verify everything works.
 
@@ -385,8 +413,8 @@ To automate it on macOS or Linux, add it to your crontab (`crontab -e`):
 | Problem | What to do |
 |---------|-----------|
 | Browser didn't open during setup | Re-run Step 1 — make sure you have internet access |
-| Reports are empty | Check that `calendar_id` in your config matches what Step 2 printed |
-| Wrong events showing up | Your `calendar_id` may be set to `"primary"` — re-run Step 2 with `--test` to find the right ID |
+| Reports are empty | Check that `calendar_id` in your config matches what Step 1 printed |
+| Wrong events showing up | Your `calendar_id` may be set to `"primary"` — re-run Step 1 with `--test` to find the right ID |
 | Times look wrong | Update `timezone` in `temp/calendar_config.json` to your local timezone |
 | Project names still look heuristic (`Cr`, `Ai`, `Smart`) | Sync your canonical registry into the same SQLite database so `project_registry` is available to the calendar report |
 | I do not use Obsidian | Add `projects` directly to `temp/calendar_config.json`; the report will use that fallback automatically |
