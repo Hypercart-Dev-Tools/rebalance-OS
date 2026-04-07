@@ -55,6 +55,7 @@ class CalendarAggregatorTests(unittest.TestCase):
             exclude_keywords=["Check Slack"],
             timezone="America/Los_Angeles",
             projects=[],
+            hours_format="hm",
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -176,6 +177,7 @@ class CalendarAggregatorTests(unittest.TestCase):
             exclude_keywords=[],
             timezone="America/Los_Angeles",
             projects=[],
+            hours_format="hm",
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -281,6 +283,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                 CalendarProject(name="Bailiwik", aliases=["BW"]),
                 CalendarProject(name="Normans Nursery", aliases=["NN", "Norman's Nursery"]),
             ],
+            hours_format="hm",
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:

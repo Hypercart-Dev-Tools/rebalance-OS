@@ -246,13 +246,17 @@ def get_day_data(
     )
 
 
+def _pluralize_events(count: int) -> str:
+    return "1 event" if count == 1 else f"{count} events"
+
+
 def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
     """Render a DayData into markdown. Pure formatting — no DB access."""
     fmt = config.hours_format
     day_name = day.target_date.strftime("%A")
     md = f"## {day_name}, {day.target_date.strftime('%B %d, %Y')}\n\n"
 
-    md += f"**Total:** {len(day.filtered_events)} events, {_format_duration(day.total_minutes, fmt)}\n\n"
+    md += f"**Total:** {_pluralize_events(len(day.filtered_events))}, {_format_duration(day.total_minutes, fmt)}\n\n"
 
     if day.filtered_events:
         md += "### Events\n\n"
@@ -271,7 +275,7 @@ def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
     if day.groups:
         md += "### Project Aggregator\n\n"
         for group_key, group in sorted_groups:
-            md += f"- **{group_key}**: {group.count} events, {_format_duration(group.total_minutes, fmt)}\n"
+            md += f"- **{group_key}**: {_pluralize_events(group.count)}, {_format_duration(group.total_minutes, fmt)}\n"
         md += "\n"
 
     return md

@@ -50,13 +50,7 @@ python3 --version   # Must be 3.12 or higher
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate       # macOS / Linux
-pip install -e .
-```
-
-**Install Google Calendar dependencies** (not bundled in the core package):
-
-```bash
-pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+pip install -e ".[calendar]"
 ```
 
 After this, `rebalance` should be available on your PATH (inside the venv):
@@ -148,8 +142,7 @@ Got a pre-filled `calendar_config.json` from your team (e.g. via Slack)? This is
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e .
-pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+pip install -e ".[calendar]"
 ```
 
 **2. Place the config file and authorize your device**

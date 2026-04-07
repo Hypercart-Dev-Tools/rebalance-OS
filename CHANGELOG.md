@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.5.8] - 2026-04-07
+
+### Added
+
+- CI test suite for Google Calendar functionality: config loading and validation, duration formatting (decimal and hm), daily reports (filtering, timezone, empty days), weekly reports (summary totals, project aggregator, both formats), calendar-sync config resolution, and calendar_id filtering. 36 tests total.
+- GitHub Actions CI workflow running tests on Python 3.12 and 3.13 for every push and pull request to main (10-minute hard timeout).
+- Google Calendar API dependencies declared as `[calendar]` optional dependency group in pyproject.toml (`pip install -e ".[calendar]"`).
+
+### Fixed
+
+- Report output now uses correct grammar: "1 event" instead of "1 events" in daily totals and project aggregator lines.
+
 ## [0.5.7] - 2026-04-07
 
 ### Added

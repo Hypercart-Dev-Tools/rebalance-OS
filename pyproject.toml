@@ -18,6 +18,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+calendar = [
+  "google-api-python-client>=2.0.0",
+  "google-auth-oauthlib>=1.0.0",
+  "google-auth-httplib2>=0.2.0",
+]
 embeddings = [
   "mlx-embeddings>=0.1.0",
 ]

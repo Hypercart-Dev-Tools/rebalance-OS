@@ -165,10 +165,10 @@ python3 -m venv .venv
 
 OAuth Desktop app credentials are already bundled in the repo. You do **not** need to create a Google Cloud project or download a `client_secret.json`.
 
-**4a. Install Google API dependencies**
+**4a. Install with calendar support**
 
 ```bash
-pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+pip install -e ".[calendar]"
 ```
 
 **4b. Authorize this device**
