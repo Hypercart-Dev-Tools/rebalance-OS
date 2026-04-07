@@ -163,50 +163,52 @@ python3 -m venv .venv
 
 ### Step 4 — Connect Google Calendar (optional)
 
-**4a. Create Google OAuth app (first time only)**
+OAuth Desktop app credentials are already bundled in the repo. You do **not** need to create a Google Cloud project or download a `client_secret.json`.
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project (or use existing)
-3. Enable the Google Calendar API (APIs & Services → Library → search "Google Calendar API" → Enable)
-4. Create OAuth 2.0 credentials (APIs & Services → Credentials → Create → OAuth client ID → Desktop app)
-5. Download the credentials JSON file
+**4a. Install Google API dependencies**
+
+```bash
+pip install google-api-python-client google-auth-oauthlib google-auth-httplib2
+```
 
 **4b. Authorize this device**
 
 ```bash
-# Run the OAuth setup script (opens browser for consent)
-python scripts/setup_calendar_oauth.py --client-secret /path/to/client_secret.json
+python scripts/setup_calendar_oauth.py --test
 ```
 
-This saves your OAuth token locally at `~/.config/gcalcli/oauth` (never in the repo).
+A browser window opens — log in with your Google account and click **Allow**. The script prints your available calendars and their IDs. Your token is saved locally at `~/.config/gcalcli/oauth` (never in the repo).
+
+> **Joining a team?** If a teammate sent you a pre-filled `calendar_config.json`, place it at `temp/calendar_config.json` and skip to step 4d.
 
 **4c. Create your config**
-
-Quick setup (see [CALENDAR_CONFIG_SETUP.md](./CALENDAR_CONFIG_SETUP.md) for details):
 
 ```bash
 mkdir -p temp
 cp calendar_config.example.json temp/calendar_config.json
-nano temp/calendar_config.json  # Edit with your preferences
 ```
 
-Fields to customize:
-- `calendar_id` — your calendar ID (or "primary" for main calendar)
-- `exclude_keywords` — events to filter out from reports (e.g., "Lunch", "Break")
-- `timezone` — your local timezone (e.g., "America/New_York", "America/Los_Angeles")
+Edit `temp/calendar_config.json` with your preferences:
 
-**4d. Sync calendar events**
+| Field | What to put here |
+|-------|-----------------|
+| `calendar_id` | Calendar ID from step 4b, or `"primary"` for your main calendar |
+| `exclude_keywords` | Event titles to hide from reports (e.g., `"Lunch"`, `"Break"`) |
+| `timezone` | Your local timezone (e.g., `"America/Los_Angeles"`) |
+| `hours_format` | `"decimal"` (default, e.g. `4.50h`) or `"hm"` (e.g. `4h 30m`) |
+
+**4d. Sync and run reports**
 
 ```bash
-# Backfill 1 year of events (one-time)
-.venv/bin/rebalance calendar-sync --days-back 365
+# Pull events (use --days-back 365 for initial backfill)
+.venv/bin/rebalance calendar-sync --days-back 30
 
 # Generate reports
-.venv/bin/rebalance calendar-daily-report --date 2026-04-06
+.venv/bin/rebalance calendar-daily-report
 .venv/bin/rebalance calendar-weekly-report
 ```
 
-For more details, see [CALENDAR_SETUP_GUIDE.md](./CALENDAR_SETUP_GUIDE.md) and [CALENDAR_REPORTS.md](./CALENDAR_REPORTS.md).
+For the full guide — including team setup, Claude Code prompts, and project definitions — see [GOOGLE_CALENDAR.md](./GOOGLE_CALENDAR.md).
 
 ### Step 5 — Start using with Claude Code
 

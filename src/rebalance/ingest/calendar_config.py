@@ -7,6 +7,7 @@ Schema:
     "calendar_id": "primary",
     "exclude_keywords": ["Lunch", "Break", "Admin"],
     "timezone": "America/New_York",
+    "hours_format": "decimal",       # "decimal" = 1.75h  |  "hm" = 1h 45m
     "projects": [
       {
         "name": "CreditRegistry",
@@ -36,6 +37,7 @@ DEFAULT_CONFIG = {
     ],
     "timezone": "America/New_York",
     "projects": [],
+    "hours_format": "decimal",
 }
 
 
@@ -53,6 +55,7 @@ class CalendarConfig:
     exclude_keywords: list[str]
     timezone: str
     projects: list[CalendarProject]
+    hours_format: str  # "decimal" (default) or "hm"
 
     @staticmethod
     def _load_projects(raw_projects: Any) -> list[CalendarProject]:
@@ -91,11 +94,16 @@ class CalendarConfig:
         else:
             data = DEFAULT_CONFIG
         
+        hours_fmt = data.get("hours_format", DEFAULT_CONFIG["hours_format"])
+        if hours_fmt not in ("decimal", "hm"):
+            hours_fmt = "decimal"
+
         return cls(
             calendar_id=data.get("calendar_id", DEFAULT_CONFIG["calendar_id"]),
             exclude_keywords=data.get("exclude_keywords", DEFAULT_CONFIG["exclude_keywords"]),
             timezone=data.get("timezone", DEFAULT_CONFIG["timezone"]),
             projects=cls._load_projects(data.get("projects", DEFAULT_CONFIG["projects"])),
+            hours_format=hours_fmt,
         )
     
     def save(self, config_path: Path | None = None) -> None:
@@ -109,6 +117,7 @@ class CalendarConfig:
                     "calendar_id": self.calendar_id,
                     "exclude_keywords": self.exclude_keywords,
                     "timezone": self.timezone,
+                    "hours_format": self.hours_format,
                     "projects": [
                         {
                             "name": project.name,

@@ -1,30 +1,37 @@
 # Changelog
 
+## [0.5.7] - 2026-04-07
+
+### Added
+
+- Configurable hours format for calendar reports: set `"hours_format": "decimal"` (default, e.g. `4.50h`) or `"hm"` (e.g. `4h 30m`) in the calendar config. Applies to daily reports, weekly summaries, and project aggregator tables.
+
 ## [0.5.6] - 2026-04-07
 
 ### Fixed
 
-- `rebalance calendar-sync` now reads `calendar_id` from `temp/calendar_config.json` instead of defaulting to `"primary"`. Previously, syncing always pulled from the user's personal calendar unless `--calendar-id` was passed explicitly, even when the config file pointed to a shared team calendar. The `--calendar-id` CLI flag still overrides when provided.
+- `rebalance calendar-sync` now reads `calendar_id` from the calendar config instead of defaulting to `"primary"`. Previously, syncing always pulled from the user's personal calendar unless `--calendar-id` was passed explicitly, even when the config pointed to a shared team calendar. The `--calendar-id` CLI flag still overrides when provided.
 
 ### Changed
 
-- Updated `GOOGLE_CALENDAR.md` with Prerequisites, Team Quick Setup, and Claude Code Setup sections for smoother developer onboarding.
+- Rewrote Google Calendar documentation with Prerequisites, Team Quick Setup, and Claude Code Setup sections for smoother developer onboarding.
+- Updated README Step 4 to reflect embedded OAuth credentials — developers no longer need to create a Google Cloud project or download a separate client secret file.
 
 ## [0.5.5] - 2026-04-07
 
 ### Added
 
-- Calendar report project matching now supports a non-Obsidian fallback: if no synced `project_registry` exists in SQLite, reports load canonical project names and aliases from `temp/calendar_config.json`.
+- Calendar report project matching now supports a non-Obsidian fallback: if no synced project registry exists in SQLite, reports load canonical project names and aliases from the calendar config.
 
 ### Changed
 
-- `calendar_config.json` now supports a `projects` list for lightweight local project definitions when a developer only needs calendar timesheet grouping without the full Obsidian registry workflow.
+- Calendar config now supports a `projects` list for lightweight local project definitions when a developer only needs calendar timesheet grouping without the full Obsidian registry workflow.
 
 ## [0.5.4] - 2026-04-07
 
 ### Changed
 
-- Calendar report project aggregation now treats the synced `project_registry` projection as the canonical source of truth for project names and aliases, falling back to keyword grouping only for unmatched events.
+- Calendar report project aggregation now treats the synced project registry as the canonical source of truth for project names and aliases, falling back to keyword grouping only for unmatched events.
 
 ### Fixed
 
@@ -34,38 +41,46 @@
 
 ### Fixed
 
-- Weekly and daily project aggregators now skip low-signal verb labels such as "can", "change", and similar filler terms, so grouped work is more maintainable and easier to scan.
-- Project aggregation now reuses the same calendar exclude keyword config as event filtering, so one keyword source drives report cleanup across the calendar reporting flow.
+- Weekly and daily project aggregators now skip low-signal verb labels such as "can", "change", and similar filler terms, so grouped work is easier to scan.
+- Project aggregation now reuses the same calendar exclude keywords as event filtering, so one keyword source drives report cleanup across the calendar reporting flow.
 
-## [0.5.2] - 2026-04-07 — Calendar config setup simplification
+## [0.5.2] - 2026-04-07
 
-- Added `calendar_config.example.json` to repo root — template with instructions for new users.
-- Added `CALENDAR_CONFIG_SETUP.md` — quick setup guide (4 steps: create temp folder, copy example, edit config, verify).
-- Removed `temp/calendar_config.json.template` — now using example file from repo root instead.
-- Updated README.md Step 4c — clearer instructions with code example for config setup.
-- Verified `.gitignore` already includes `/temp` folder — user config stays private.
+### Added
 
-## [0.5.1] - 2026-04-07 — Calendar setup portability & documentation
+- Example calendar config template at repo root for new users.
+- Calendar config setup guide (4 steps: create temp folder, copy example, edit config, verify).
 
-- Added `CALENDAR_PORTABILITY_AUDIT.md` — comprehensive audit of setup and configuration portability; confirms zero hardcoded user data.
-- Added `CALENDAR_NEW_USER_SETUP.md` — step-by-step guide for new users (OAuth setup, config, testing, scheduling).
-- Added `temp/calendar_config.json.template` — template for user configuration (copy and edit).
-- Enhanced `scripts/setup_calendar_oauth.py` — now lists all available calendars with IDs, and provides next-step instructions.
-- Updated `README.md` Step 4 — detailed Google OAuth app creation and calendar setup for new users.
-- Confirmed portability: ✅ All user data outside repo, ✅ No hardcoded credentials, ✅ OAuth per-user, ✅ Config per-user, ✅ Tokens system-native.
+### Changed
 
-## [0.5.0] - 2026-04-07 — Calendar daily & weekly reports with project aggregator
+- Replaced inline config template with repo-root example file.
+- Clarified README calendar config instructions with code examples.
 
-- Added `calendar_config.py` — single gitignored config file per device for calendar selection, exclude keywords, and timezone.
-- Added `daily_report.py` — generates markdown daily reports with event filtering, project aggregator grouping, and time totals.
-- Added `weekly_report.py` — combines daily reports into Sun-Sat format with daily summaries and weekly overview.
-- Added `rebalance calendar-daily-report` and `rebalance calendar-weekly-report` CLI commands.
-- Project aggregator groups similar events by keyword, counts, and sums durations (e.g., "Binoid": 4 events, 7h 15m).
-- Exclude keywords (e.g., "Lunch", "Check Slack") filter events from reports but keep them in database.
-- Timezone-aware report times (configurable in temp/calendar_config.json, defaults to America/Los_Angeles).
+## [0.5.1] - 2026-04-07
+
+### Added
+
+- Portability audit confirming zero hardcoded user data across calendar setup and configuration.
+- Step-by-step new user setup guide for OAuth, config, testing, and scheduling.
+
+### Changed
+
+- OAuth setup script now lists all available calendars with IDs and provides next-step instructions.
+
+## [0.5.0] - 2026-04-07
+
+### Added
+
+- Daily and weekly calendar report CLI commands (`calendar-daily-report`, `calendar-weekly-report`) with event filtering, project aggregator grouping, and time totals.
+- Per-device calendar config for calendar selection, exclude keywords, and timezone (gitignored).
+- Project aggregator groups similar events by keyword, counts, and sums durations.
+- Exclude keywords filter events from reports while keeping them in the database.
+- Timezone-aware report times (configurable, defaults to America/Los_Angeles).
 - All reports generated in clean markdown format suitable for Obsidian, email, or archival.
-- Updated `db.py` to gracefully handle systems without sqlite-vec extension support (system Python).
-- Added CALENDAR_REPORTS.md documentation with usage, config, and examples.
+
+### Fixed
+
+- Database layer now gracefully handles systems without sqlite-vec extension support.
 
 ## [0.4.2] - 2026-04-07 — Google Calendar multi-calendar + daily totals
 

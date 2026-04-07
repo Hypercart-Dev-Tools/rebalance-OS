@@ -70,22 +70,23 @@ def generate_weekly_report(
     md += "## Weekly Summary\n\n"
 
     # Per-day table
+    fmt = config.hours_format
     md += "| Day | Events | Hours |\n"
     md += "|-----|-------:|------:|\n"
     for day in days:
         day_label = day.target_date.strftime("%a %m/%d")
         evt_count = len(day.filtered_events)
-        hours_str = _format_duration(day.total_minutes)
+        hours_str = _format_duration(day.total_minutes, fmt)
         md += f"| {day_label} | {evt_count} | {hours_str} |\n"
-    md += f"| **Total** | **{total_events}** | **{_format_duration(total_minutes)}** |\n\n"
+    md += f"| **Total** | **{total_events}** | **{_format_duration(total_minutes, fmt)}** |\n\n"
 
     if num_working_days > 0:
         avg_events = total_events / num_working_days
-        avg_hours = (total_minutes / 60) / num_working_days
+        avg_minutes = total_minutes / num_working_days
         md += (
             f"Working days: {num_working_days}  \n"
             f"Avg events/day: {avg_events:.1f}  \n"
-            f"Avg hours/day: {avg_hours:.1f}h\n\n"
+            f"Avg hours/day: {_format_duration(int(avg_minutes), fmt)}\n\n"
         )
 
     # ── Weekly Project Aggregator ──
@@ -108,7 +109,7 @@ def generate_weekly_report(
         for group_key, group in sorted_groups:
             md += (
                 f"| {group_key} | {group.count} | "
-                f"{_format_duration(group.total_minutes)} |\n"
+                f"{_format_duration(group.total_minutes, fmt)} |\n"
             )
         md += "\n"
 

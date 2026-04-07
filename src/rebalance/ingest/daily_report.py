@@ -178,13 +178,21 @@ class DayData:
     groups: dict[str, ProjectGroup]
 
 
-def _format_duration(minutes: int) -> str:
-    """Format minutes into human-readable duration string."""
-    hours = int(minutes / 60)
-    mins = minutes % 60
-    if hours > 0:
-        return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
-    return f"{mins}m"
+def _format_duration(minutes: int, hours_format: str = "decimal") -> str:
+    """Format minutes into human-readable duration string.
+
+    hours_format:
+        "decimal" — e.g. "4.50h", "0.58h"  (default)
+        "hm"      — e.g. "4h 30m", "35m"
+    """
+    if hours_format == "hm":
+        hours = int(minutes / 60)
+        mins = minutes % 60
+        if hours > 0:
+            return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
+        return f"{mins}m"
+    # decimal
+    return f"{minutes / 60:.2f}h"
 
 
 def get_day_data(
@@ -240,10 +248,11 @@ def get_day_data(
 
 def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
     """Render a DayData into markdown. Pure formatting — no DB access."""
+    fmt = config.hours_format
     day_name = day.target_date.strftime("%A")
     md = f"## {day_name}, {day.target_date.strftime('%B %d, %Y')}\n\n"
 
-    md += f"**Total:** {len(day.filtered_events)} events, {_format_duration(day.total_minutes)}\n\n"
+    md += f"**Total:** {len(day.filtered_events)} events, {_format_duration(day.total_minutes, fmt)}\n\n"
 
     if day.filtered_events:
         md += "### Events\n\n"
@@ -262,7 +271,7 @@ def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
     if day.groups:
         md += "### Project Aggregator\n\n"
         for group_key, group in sorted_groups:
-            md += f"- **{group_key}**: {group.count} events, {_format_duration(group.total_minutes)}\n"
+            md += f"- **{group_key}**: {group.count} events, {_format_duration(group.total_minutes, fmt)}\n"
         md += "\n"
 
     return md
