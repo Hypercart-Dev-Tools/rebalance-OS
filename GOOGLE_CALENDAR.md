@@ -33,9 +33,9 @@ rebalance calendar-weekly-report          # This week's timesheet
 
 ### Step 1: Get the credential file
 
-Ask your admin for the `client_secret.json` file and save it somewhere on your machine — for example `~/client_secret.json`. This file is what gives the app permission to read your Google Calendar.
+Download `client_secret.json` from the link pinned in the team Slack channel and save it to your machine (e.g. `~/client_secret.json`). This file connects the app to Google — you do not need to create anything in Google Cloud.
 
-> You will not need to create anything in Google Cloud. The credential file is provided to you.
+> The credential is a shared Desktop app key. It only allows the OAuth consent flow — it cannot access anyone's data without you clicking Allow in your own Google account.
 
 ---
 
@@ -184,4 +184,4 @@ To automate it on macOS or Linux, add it to your crontab (`crontab -e`):
 - **Is my calendar data stored anywhere online?** No — events are pulled to your local machine only and never uploaded.
 - **Can I change which calendar I use?** Yes — update `calendar_id` in your config and run `calendar-sync` again.
 - **An event I want to hide keeps showing up** — add a word from its title to `exclude_keywords` in your config.
-- **I got a new machine** — get the `client_secret.json` from your admin again and repeat Steps 2–4.
+- **I got a new machine** — download `client_secret.json` from the team Slack link again and repeat Steps 2–4.
