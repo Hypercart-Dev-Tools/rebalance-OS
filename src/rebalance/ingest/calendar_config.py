@@ -17,7 +17,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent / "temp" / "calendar_config.json"
+# __file__ = src/rebalance/ingest/calendar_config.py
+# .parent (ingest) .parent (rebalance) .parent (src) .parent (repo root)
+DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "temp" / "calendar_config.json"
 
 DEFAULT_CONFIG = {
     "calendar_id": "primary",

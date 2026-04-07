@@ -83,16 +83,33 @@ def group_similar_events(
     return groups
 
 
-def generate_daily_report(
+@dataclass
+class DayData:
+    """Structured data for a single day (used by both daily and weekly reports)."""
+    target_date: date
+    filtered_events: list[dict[str, Any]]
+    total_minutes: int
+    groups: dict[str, ProjectGroup]
+
+
+def _format_duration(minutes: int) -> str:
+    """Format minutes into human-readable duration string."""
+    hours = int(minutes / 60)
+    mins = minutes % 60
+    if hours > 0:
+        return f"{hours}h {mins}m" if mins > 0 else f"{hours}h"
+    return f"{mins}m"
+
+
+def get_day_data(
     database_path: Path,
     target_date: date,
     config: CalendarConfig,
-) -> str:
-    """Generate markdown report for a single day."""
+) -> DayData:
+    """Fetch and filter events for a single day. Returns structured data for reuse."""
     conn = get_connection(database_path)
     ensure_calendar_schema(conn)
-    
-    # Get all events for this day from the configured calendar
+
     date_str = target_date.isoformat()
     rows = conn.execute(
         """SELECT summary, start_time, end_time
@@ -103,7 +120,7 @@ def generate_daily_report(
         (date_str, config.calendar_id),
     ).fetchall()
     conn.close()
-    
+
     events = [
         {
             "summary": row["summary"],
@@ -112,11 +129,9 @@ def generate_daily_report(
         }
         for row in rows
     ]
-    
-    # Filter excluded events
+
     filtered_events = filter_events(events, config.exclude_keywords)
-    
-    # Calculate totals
+
     total_minutes = sum(
         int((datetime.fromisoformat(e["end_time"].replace('Z', '+00:00')) -
              datetime.fromisoformat(e["start_time"].replace('Z', '+00:00'))
@@ -124,25 +139,27 @@ def generate_daily_report(
         for e in filtered_events
         if e.get("end_time")
     )
-    
-    # Group similar events
+
     groups = group_similar_events(filtered_events)
-    sorted_groups = sorted(groups.items(), key=lambda x: x[1].total_minutes, reverse=True)
-    
-    # Build markdown
-    day_name = target_date.strftime("%A")
-    md = f"## {day_name}, {target_date.strftime('%B %d, %Y')}\n\n"
-    
-    # Daily summary
-    hours = int(total_minutes / 60)
-    mins = total_minutes % 60
-    duration_str = f"{hours}h {mins}m" if hours > 0 else f"{mins}m"
-    md += f"**Total:** {len(filtered_events)} events, {duration_str}\n\n"
-    
-    # Event list
-    if filtered_events:
-        md += "### Events (Excluded items removed)\n\n"
-        for event in filtered_events:
+
+    return DayData(
+        target_date=target_date,
+        filtered_events=filtered_events,
+        total_minutes=total_minutes,
+        groups=groups,
+    )
+
+
+def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
+    """Render a DayData into markdown. Pure formatting — no DB access."""
+    day_name = day.target_date.strftime("%A")
+    md = f"## {day_name}, {day.target_date.strftime('%B %d, %Y')}\n\n"
+
+    md += f"**Total:** {len(day.filtered_events)} events, {_format_duration(day.total_minutes)}\n\n"
+
+    if day.filtered_events:
+        md += "### Events\n\n"
+        for event in day.filtered_events:
             try:
                 start_dt = datetime.fromisoformat(event["start_time"].replace('Z', '+00:00'))
                 tz = ZoneInfo(config.timezone)
@@ -152,15 +169,22 @@ def generate_daily_report(
                 time_str = "—"
             md += f"- {time_str} — {event['summary']}\n"
         md += "\n"
-    
-    # Project aggregator
-    if groups:
-        md += "### Project Aggregator (Similar Tasks)\n\n"
+
+    sorted_groups = sorted(day.groups.items(), key=lambda x: x[1].total_minutes, reverse=True)
+    if day.groups:
+        md += "### Project Aggregator\n\n"
         for group_key, group in sorted_groups:
-            group_hours = int(group.total_minutes / 60)
-            group_mins = group.total_minutes % 60
-            group_duration = f"{group_hours}h {group_mins}m" if group_hours > 0 else f"{group_mins}m"
-            md += f"- **{group_key.title()}**: {group.count} events, {group_duration}\n"
+            md += f"- **{group_key.title()}**: {group.count} events, {_format_duration(group.total_minutes)}\n"
         md += "\n"
-    
+
     return md
+
+
+def generate_daily_report(
+    database_path: Path,
+    target_date: date,
+    config: CalendarConfig,
+) -> str:
+    """Generate markdown report for a single day (convenience wrapper)."""
+    day = get_day_data(database_path, target_date, config)
+    return format_daily_markdown(day, config)

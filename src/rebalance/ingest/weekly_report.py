@@ -1,13 +1,23 @@
 """
 Weekly calendar report generator — combines daily reports into Sun-Sat markdown format.
+
+Collects structured data from each day, renders daily sections, then builds a
+proper weekly summary with totals and a cross-week project aggregator.
 """
 
 from __future__ import annotations
 
-from datetime import datetime, date, timedelta
+from datetime import date, timedelta
 from pathlib import Path
 
-from rebalance.ingest.daily_report import generate_daily_report
+from rebalance.ingest.daily_report import (
+    DayData,
+    ProjectGroup,
+    _format_duration,
+    format_daily_markdown,
+    get_day_data,
+    group_similar_events,
+)
 from rebalance.ingest.calendar_config import CalendarConfig
 
 
@@ -22,33 +32,83 @@ def generate_weekly_report(
     target_date: date | None = None,
     config: CalendarConfig | None = None,
 ) -> str:
-    """Generate markdown weekly report (Sun-Sat)."""
+    """Generate markdown weekly report (Sun-Sat) with full summary."""
     if target_date is None:
         target_date = date.today()
     if config is None:
         config = CalendarConfig.load()
-    
+
     week_start = get_week_start(target_date)
     week_end = week_start + timedelta(days=6)
-    
-    # Build markdown
-    md = f"# Weekly Calendar Report\n\n"
-    md += f"**Week of {week_start.strftime('%B %d')} – {week_end.strftime('%B %d, %Y')}**\n\n"
-    
-    # Generate daily reports
-    total_events = 0
-    total_minutes = 0
-    
+
+    # ── Collect structured data for every day ──
+    days: list[DayData] = []
     for offset in range(7):
-        day = week_start + timedelta(days=offset)
-        daily_md = generate_daily_report(database_path, day, config)
-        md += daily_md
-        md += "\n---\n\n"
-    
-    # Weekly summary
+        day_date = week_start + timedelta(days=offset)
+        days.append(get_day_data(database_path, day_date, config))
+
+    # ── Header ──
+    md = f"# Weekly Calendar Report\n\n"
+    md += (
+        f"**Week of {week_start.strftime('%B %d')} – "
+        f"{week_end.strftime('%B %d, %Y')}**  \n"
+        f"Timezone: {config.timezone}\n\n"
+    )
+
+    # ── Daily sections ──
+    for day in days:
+        md += format_daily_markdown(day, config)
+        md += "---\n\n"
+
+    # ── Weekly Summary ──
+    total_events = sum(len(d.filtered_events) for d in days)
+    total_minutes = sum(d.total_minutes for d in days)
+    working_days = [d for d in days if len(d.filtered_events) > 0]
+    num_working_days = len(working_days)
+
     md += "## Weekly Summary\n\n"
-    md += f"Week: {week_start.strftime('%a, %b %d')} – {week_end.strftime('%a, %b %d, %Y')}\n"
-    md += f"Timezone: {config.timezone}\n"
-    md += f"Calendar: {config.calendar_id}\n\n"
-    
+
+    # Per-day table
+    md += "| Day | Events | Hours |\n"
+    md += "|-----|-------:|------:|\n"
+    for day in days:
+        day_label = day.target_date.strftime("%a %m/%d")
+        evt_count = len(day.filtered_events)
+        hours_str = _format_duration(day.total_minutes)
+        md += f"| {day_label} | {evt_count} | {hours_str} |\n"
+    md += f"| **Total** | **{total_events}** | **{_format_duration(total_minutes)}** |\n\n"
+
+    if num_working_days > 0:
+        avg_events = total_events / num_working_days
+        avg_hours = (total_minutes / 60) / num_working_days
+        md += (
+            f"Working days: {num_working_days}  \n"
+            f"Avg events/day: {avg_events:.1f}  \n"
+            f"Avg hours/day: {avg_hours:.1f}h\n\n"
+        )
+
+    # ── Weekly Project Aggregator ──
+    # Pool all filtered events across the week, then re-group
+    all_events: list[dict] = []
+    for day in days:
+        all_events.extend(day.filtered_events)
+
+    if all_events:
+        weekly_groups = group_similar_events(all_events)
+        sorted_groups = sorted(
+            weekly_groups.items(),
+            key=lambda x: x[1].total_minutes,
+            reverse=True,
+        )
+
+        md += "## Weekly Project Aggregator\n\n"
+        md += "| Project | Events | Hours |\n"
+        md += "|---------|-------:|------:|\n"
+        for group_key, group in sorted_groups:
+            md += (
+                f"| {group_key.title()} | {group.count} | "
+                f"{_format_duration(group.total_minutes)} |\n"
+            )
+        md += "\n"
+
     return md
