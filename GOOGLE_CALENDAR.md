@@ -113,7 +113,7 @@ Open `temp/calendar_config.json` and fill in your details:
 
 | Field | What to put here |
 |-------|-----------------|
-| `calendar_id` | Paste the calendar ID printed in Step 2. Use `"primary"` for your main Google Calendar. |
+| `calendar_id` | If a teammate sent you a pre-filled config, leave this as-is. Otherwise paste the calendar ID printed in Step 1, or use `"primary"` for your main Google Calendar. |
 | `exclude_keywords` | Event titles containing these words will be hidden from reports. The same list is also reused by the project aggregator to skip low-signal grouping terms. |
 | `timezone` | Your local timezone — e.g. `"America/Los_Angeles"`, `"America/New_York"`, `"America/Chicago"`. |
 
