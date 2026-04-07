@@ -5,7 +5,7 @@ Reads client_secret.json and stores the OAuth token at ~/.config/gcalcli/oauth (
 
 Usage:
   python scripts/setup_calendar_oauth.py --client-secret /path/to/client_secret.json
-  python scripts/setup_calendar_oauth.py --client-secret /Users/noelsaw/secrets/client_secret_2_409298341985-1kub4u1b1bd0leea3b74d4vmo5cqv75t.apps.googleusercontent.com.json
+  python scripts/setup_calendar_oauth.py --client-secret /path/to/client_secret.json --test
 """
 
 import json

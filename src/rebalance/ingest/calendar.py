@@ -192,7 +192,7 @@ def sync_calendar(
                 end_time,
                 location,
                 json.dumps(attendees),
-                "primary",
+                calendar_id,
                 status,
                 description,
                 fetched_at,
