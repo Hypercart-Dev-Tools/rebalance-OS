@@ -14,9 +14,55 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from rebalance.ingest.calendar import get_daily_totals, ensure_calendar_schema
+from rebalance.ingest.calendar import ensure_calendar_schema
 from rebalance.ingest.calendar_config import CalendarConfig, filter_events
 from rebalance.ingest.db import get_connection
+from rebalance.ingest.project_classifier import (
+    ProjectMatcher,
+    annotate_events_with_projects,
+    load_project_matchers,
+)
+
+DEFAULT_AGGREGATOR_SKIP_WORDS = frozenset(
+    {
+        "and",
+        "can",
+        "change",
+        "check",
+        "confirm",
+        "daily",
+        "download",
+        "drive",
+        "earlier",
+        "fix",
+        "for",
+        "get",
+        "if",
+        "later",
+        "make",
+        "move",
+        "new",
+        "off",
+        "post",
+        "prepare",
+        "recap",
+        "set",
+        "setup",
+        "slack",
+        "start",
+        "submit",
+        "take",
+        "test",
+        "testing",
+        "the",
+        "to",
+        "update",
+        "valid",
+        "weekly",
+        "wind",
+        "with",
+    }
+)
 
 
 @dataclass
@@ -32,28 +78,55 @@ class ProjectGroup:
         return self.total_minutes / 60.0
 
 
-def extract_keywords(text: str, top_n: int = 5) -> list[str]:
+def _normalize_word_tokens(text: str) -> list[str]:
+    """Split text into normalized word tokens for report grouping."""
+    return [
+        word
+        for word in re.findall(r"\b[a-z0-9]+\b", text.lower())
+        if len(word) > 1 and not word.isdigit()
+    ]
+
+
+def _build_aggregator_skip_words(exclude_keywords: list[str] | None = None) -> set[str]:
+    """Combine built-in low-signal words with configured exclude keywords."""
+    skip_words = set(DEFAULT_AGGREGATOR_SKIP_WORDS)
+    for keyword in exclude_keywords or []:
+        skip_words.update(_normalize_word_tokens(keyword))
+    return skip_words
+
+
+def extract_keywords(
+    text: str,
+    top_n: int = 5,
+    *,
+    skip_words: set[str] | None = None,
+) -> list[str]:
     """Extract top N most common words from event name."""
-    # Remove common words and split
-    words = re.findall(r'\b[a-z]+\b', text.lower())
-    # Filter out very short words
-    words = [w for w in words if len(w) > 2]
-    
+    words = [
+        word
+        for word in _normalize_word_tokens(text)
+        if word not in (skip_words or set())
+    ]
+
     counter = Counter(words)
     return [word for word, _ in counter.most_common(top_n)]
 
 
 def group_similar_events(
     events: list[dict[str, Any]],
+    exclude_keywords: list[str] | None = None,
 ) -> dict[str, ProjectGroup]:
     """Group events by most common keywords (case-insensitive substring matching)."""
     groups: dict[str, ProjectGroup] = {}
-    
+    skip_words = _build_aggregator_skip_words(exclude_keywords)
+    fallback_skip_words = set(DEFAULT_AGGREGATOR_SKIP_WORDS)
+
     for event in events:
+        project_name = (event.get("project_name") or "").strip()
         summary = event.get("summary", "")
         start_str = event.get("start_time", "")
         end_str = event.get("end_time", "")
-        
+
         # Calculate duration
         try:
             start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
@@ -61,13 +134,26 @@ def group_similar_events(
             minutes = int((end_dt - start_dt).total_seconds() / 60)
         except Exception:
             minutes = 0
-        
-        # Extract top keywords
-        keywords = extract_keywords(summary)
-        
-        # Group by first keyword (or use full summary if no keywords)
-        group_key = keywords[0] if keywords else summary[:20]
-        
+
+        # Canonical project matches from the registry win over heuristic grouping.
+        if project_name:
+            group_key = project_name
+        else:
+            keywords = extract_keywords(summary, skip_words=skip_words)
+
+            # Prefer configured skip words first, then fall back to built-in skip
+            # words so config can steer grouping without forcing raw-title labels
+            # back in.
+            if keywords:
+                group_key = keywords[0].title()
+            else:
+                relaxed_keywords = extract_keywords(summary, skip_words=fallback_skip_words)
+                group_key = (
+                    relaxed_keywords[0].title()
+                    if relaxed_keywords
+                    else (summary.strip()[:20] or "(untagged)")
+                )
+
         if group_key not in groups:
             groups[group_key] = ProjectGroup(
                 keyword=group_key,
@@ -75,11 +161,11 @@ def group_similar_events(
                 total_minutes=0,
                 events=[],
             )
-        
+
         groups[group_key].count += 1
         groups[group_key].total_minutes += minutes
         groups[group_key].events.append(summary)
-    
+
     return groups
 
 
@@ -105,6 +191,7 @@ def get_day_data(
     database_path: Path,
     target_date: date,
     config: CalendarConfig,
+    project_matchers: list[ProjectMatcher] | None = None,
 ) -> DayData:
     """Fetch and filter events for a single day. Returns structured data for reuse."""
     conn = get_connection(database_path)
@@ -131,6 +218,7 @@ def get_day_data(
     ]
 
     filtered_events = filter_events(events, config.exclude_keywords)
+    filtered_events = annotate_events_with_projects(filtered_events, project_matchers or [])
 
     total_minutes = sum(
         int((datetime.fromisoformat(e["end_time"].replace('Z', '+00:00')) -
@@ -140,7 +228,7 @@ def get_day_data(
         if e.get("end_time")
     )
 
-    groups = group_similar_events(filtered_events)
+    groups = group_similar_events(filtered_events, config.exclude_keywords)
 
     return DayData(
         target_date=target_date,
@@ -174,7 +262,7 @@ def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
     if day.groups:
         md += "### Project Aggregator\n\n"
         for group_key, group in sorted_groups:
-            md += f"- **{group_key.title()}**: {group.count} events, {_format_duration(group.total_minutes)}\n"
+            md += f"- **{group_key}**: {group.count} events, {_format_duration(group.total_minutes)}\n"
         md += "\n"
 
     return md
@@ -186,5 +274,10 @@ def generate_daily_report(
     config: CalendarConfig,
 ) -> str:
     """Generate markdown report for a single day (convenience wrapper)."""
-    day = get_day_data(database_path, target_date, config)
+    day = get_day_data(
+        database_path,
+        target_date,
+        config,
+        project_matchers=load_project_matchers(database_path, config=config),
+    )
     return format_daily_markdown(day, config)

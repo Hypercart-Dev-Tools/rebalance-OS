@@ -6,7 +6,13 @@ Schema:
   {
     "calendar_id": "primary",
     "exclude_keywords": ["Lunch", "Break", "Admin"],
-    "timezone": "America/New_York"
+    "timezone": "America/New_York",
+    "projects": [
+      {
+        "name": "CreditRegistry",
+        "aliases": ["CR", "Credit Registry", "CR CC"]
+      }
+    ]
   }
 """
 
@@ -29,7 +35,15 @@ DEFAULT_CONFIG = {
         "Admin",
     ],
     "timezone": "America/New_York",
+    "projects": [],
 }
+
+
+@dataclass
+class CalendarProject:
+    """Canonical project label and optional calendar aliases."""
+    name: str
+    aliases: list[str]
 
 
 @dataclass
@@ -38,6 +52,33 @@ class CalendarConfig:
     calendar_id: str
     exclude_keywords: list[str]
     timezone: str
+    projects: list[CalendarProject]
+
+    @staticmethod
+    def _load_projects(raw_projects: Any) -> list[CalendarProject]:
+        """Normalize project definitions from config JSON."""
+        if not isinstance(raw_projects, list):
+            return []
+
+        projects: list[CalendarProject] = []
+        for item in raw_projects:
+            if not isinstance(item, dict):
+                continue
+
+            name = str(item.get("name", "")).strip()
+            if not name:
+                continue
+
+            aliases_raw = item.get("aliases", [])
+            aliases = [
+                str(alias).strip()
+                for alias in aliases_raw
+                if str(alias).strip()
+            ] if isinstance(aliases_raw, list) else []
+
+            projects.append(CalendarProject(name=name, aliases=aliases))
+
+        return projects
 
     @classmethod
     def load(cls, config_path: Path | None = None) -> CalendarConfig:
@@ -54,6 +95,7 @@ class CalendarConfig:
             calendar_id=data.get("calendar_id", DEFAULT_CONFIG["calendar_id"]),
             exclude_keywords=data.get("exclude_keywords", DEFAULT_CONFIG["exclude_keywords"]),
             timezone=data.get("timezone", DEFAULT_CONFIG["timezone"]),
+            projects=cls._load_projects(data.get("projects", DEFAULT_CONFIG["projects"])),
         )
     
     def save(self, config_path: Path | None = None) -> None:
@@ -67,6 +109,13 @@ class CalendarConfig:
                     "calendar_id": self.calendar_id,
                     "exclude_keywords": self.exclude_keywords,
                     "timezone": self.timezone,
+                    "projects": [
+                        {
+                            "name": project.name,
+                            "aliases": project.aliases,
+                        }
+                        for project in self.projects
+                    ],
                 },
                 f,
                 indent=2,

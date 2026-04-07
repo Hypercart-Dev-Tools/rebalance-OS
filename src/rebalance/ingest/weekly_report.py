@@ -12,13 +12,13 @@ from pathlib import Path
 
 from rebalance.ingest.daily_report import (
     DayData,
-    ProjectGroup,
     _format_duration,
     format_daily_markdown,
     get_day_data,
     group_similar_events,
 )
 from rebalance.ingest.calendar_config import CalendarConfig
+from rebalance.ingest.project_classifier import load_project_matchers
 
 
 def get_week_start(target_date: date) -> date:
@@ -40,12 +40,13 @@ def generate_weekly_report(
 
     week_start = get_week_start(target_date)
     week_end = week_start + timedelta(days=6)
+    project_matchers = load_project_matchers(database_path, config=config)
 
     # ── Collect structured data for every day ──
     days: list[DayData] = []
     for offset in range(7):
         day_date = week_start + timedelta(days=offset)
-        days.append(get_day_data(database_path, day_date, config))
+        days.append(get_day_data(database_path, day_date, config, project_matchers=project_matchers))
 
     # ── Header ──
     md = f"# Weekly Calendar Report\n\n"
@@ -94,7 +95,7 @@ def generate_weekly_report(
         all_events.extend(day.filtered_events)
 
     if all_events:
-        weekly_groups = group_similar_events(all_events)
+        weekly_groups = group_similar_events(all_events, config.exclude_keywords)
         sorted_groups = sorted(
             weekly_groups.items(),
             key=lambda x: x[1].total_minutes,
@@ -106,7 +107,7 @@ def generate_weekly_report(
         md += "|---------|-------:|------:|\n"
         for group_key, group in sorted_groups:
             md += (
-                f"| {group_key.title()} | {group.count} | "
+                f"| {group_key} | {group.count} | "
                 f"{_format_duration(group.total_minutes)} |\n"
             )
         md += "\n"

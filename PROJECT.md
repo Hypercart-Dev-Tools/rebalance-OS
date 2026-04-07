@@ -356,6 +356,7 @@ active_projects:
     obsidian_folder: Projects/LTVera
     tags: ["#project-ltv-era"]
     custom_fields:
+      calendar_aliases: ["LTV", "LTV Era"]
       quantitative:
         priority_tier: 1
         value_score: 9
@@ -398,6 +399,7 @@ projects:
     obsidian_folder: Projects/LTVera
     tags: ["#project-ltv-era"]
     custom_fields:
+      calendar_aliases: ["LTV", "LTV Era"]
       quantitative:
         value_score: 9
         weekly_hours_target: 8

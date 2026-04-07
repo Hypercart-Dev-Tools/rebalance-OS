@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.5.5] - 2026-04-07
+
+### Added
+
+- Calendar report project matching now supports a non-Obsidian fallback: if no synced `project_registry` exists in SQLite, reports load canonical project names and aliases from `temp/calendar_config.json`.
+
+### Changed
+
+- `calendar_config.json` now supports a `projects` list for lightweight local project definitions when a developer only needs calendar timesheet grouping without the full Obsidian registry workflow.
+
+## [0.5.4] - 2026-04-07
+
+### Changed
+
+- Calendar report project aggregation now treats the synced `project_registry` projection as the canonical source of truth for project names and aliases, falling back to keyword grouping only for unmatched events.
+
+### Fixed
+
+- Daily and weekly calendar reports now preserve canonical project casing from the registry instead of reformatting matched names through heuristic title-casing.
+
+## [0.5.3] - 2026-04-07
+
+### Fixed
+
+- Weekly and daily project aggregators now skip low-signal verb labels such as "can", "change", and similar filler terms, so grouped work is more maintainable and easier to scan.
+- Project aggregation now reuses the same calendar exclude keyword config as event filtering, so one keyword source drives report cleanup across the calendar reporting flow.
+
 ## [0.5.2] - 2026-04-07 — Calendar config setup simplification
 
 - Added `calendar_config.example.json` to repo root — template with instructions for new users.
