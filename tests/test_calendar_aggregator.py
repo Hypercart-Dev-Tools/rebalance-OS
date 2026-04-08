@@ -37,7 +37,7 @@ class CalendarAggregatorTests(unittest.TestCase):
             },
         ]
 
-        groups = group_similar_events(events, ["Check Slack"])
+        groups = group_similar_events(events)
 
         self.assertIn("Cr", groups)
         self.assertIn("Bw", groups)

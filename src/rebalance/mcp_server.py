@@ -310,22 +310,17 @@ def create_server(database_path: Path) -> FastMCP:
         matchers = load_project_matchers(database_path, config=config)
         day = get_day_data(database_path, target, config, project_matchers=matchers)
 
+        from rebalance.ingest.calendar_helpers import event_duration_minutes
+
         review_items = []
         for event in day.needs_review:
             start_str = event.get("start_time", "")
             end_str = event.get("end_time", "")
-            try:
-                from datetime import datetime
-                s = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
-                e = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
-                mins = int((e - s).total_seconds() / 60)
-            except Exception:
-                mins = 0
             review_items.append({
                 "summary": event.get("summary", ""),
                 "start_time": start_str,
                 "end_time": end_str,
-                "duration_minutes": mins,
+                "duration_minutes": event_duration_minutes(start_str, end_str),
             })
 
         project_names = [m.name for m in matchers]

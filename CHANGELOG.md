@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.6.2] - 2026-04-07
+
+### Fixed
+
+- Aggregator skip words no longer tokenize `exclude_titles`. Previously, a title like "Post Daily Timesheet" leaked "post", "daily", and "timesheet" into the aggregator, silently suppressing legitimate project keywords. `exclude_titles` and `aggregator_skip_words` now serve separate purposes with no cross-contamination.
+- Preflight activity date parsing now uses the canonical `parse_calendar_dt` helper instead of inline Z-replace, preventing a CI grep check failure.
+- Added `# raw-ok` annotations to `calendar.py` connection calls that can't use the helper due to circular imports.
+
+### Added
+
+- 16 unit tests for the canonical calendar helpers: datetime parsing (Z-suffix, offset-aware, date-only, invalid), duration calculation (normal, all-day, mixed naive/aware, negative, empty), and connection context manager (open/close lifecycle). 68 tests total.
+
+## [0.6.1] - 2026-04-07
+
+### Changed
+
+- Extracted shared calendar helpers into a single canonical module: datetime parsing (`parse_calendar_dt`), duration calculation (`event_duration_minutes`), and database connection setup (`calendar_connection`). Eliminates duplicated patterns across the daily report, calendar sync, and MCP server modules.
+- `calendar-daily-totals` now applies the same `calendar_id`, `exclude_titles`, and `hours_format` filters as the daily and weekly report commands. Previously showed unfiltered counts that didn't match the other reports. Resolves Hypercart-Dev-Tools/rebalance-OS#5.
+
+### Fixed
+
+- All-day events (date-only strings from Google Calendar) no longer crash the daily report duration calculation. They appear in the event list with 0 duration instead. Resolves Hypercart-Dev-Tools/rebalance-OS#4.
+
+### Added
+
+- CI grep checks that fail the build if raw datetime parsing or duration calculation patterns appear outside the canonical helpers without a `# raw-ok` escape hatch.
+
 ## [0.6.0] - 2026-04-07
 
 ### Added

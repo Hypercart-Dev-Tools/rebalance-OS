@@ -98,10 +98,8 @@ def _calculate_days_since_activity(last_activity_at: str | None) -> int:
     if not last_activity_at:
         return 999
     try:
-        if "T" in last_activity_at:
-            activity_dt = datetime.fromisoformat(last_activity_at.replace("Z", "+00:00"))
-        else:
-            activity_dt = datetime.fromisoformat(last_activity_at)
+        from rebalance.ingest.calendar_helpers import parse_calendar_dt
+        activity_dt = parse_calendar_dt(last_activity_at)
         now = datetime.now(timezone.utc)
         if activity_dt.tzinfo is None:
             activity_dt = activity_dt.replace(tzinfo=timezone.utc)

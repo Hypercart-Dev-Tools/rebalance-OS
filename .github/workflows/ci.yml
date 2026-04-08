@@ -29,3 +29,19 @@ jobs:
 
       - name: Run tests
         run: python -m unittest discover tests -v
+
+      - name: Check for raw datetime parsing (use parse_calendar_dt)
+        run: |
+          if grep -rn "replace('Z'" src/rebalance/ingest/ --include="*.py" \
+               | grep -v "# raw-ok" | grep -v calendar_helpers.py; then
+            echo "::error::Raw Z-replace found — use parse_calendar_dt() from calendar_helpers.py"
+            exit 1
+          fi
+
+      - name: Check for raw duration calculation (use event_duration_minutes)
+        run: |
+          if grep -rn "total_seconds() / 60" src/rebalance/ --include="*.py" \
+               | grep -v "# raw-ok" | grep -v calendar_helpers.py; then
+            echo "::error::Raw duration calc found — use event_duration_minutes() from calendar_helpers.py"
+            exit 1
+          fi

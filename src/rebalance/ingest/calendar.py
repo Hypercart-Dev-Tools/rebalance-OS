@@ -155,9 +155,9 @@ def sync_calendar(
         if not page_token:
             break
 
-    # Persist
+    # Persist — raw-ok: circular import prevents using calendar_connection() here
     from rebalance.ingest.db import get_connection
-    conn = get_connection(database_path)
+    conn = get_connection(database_path)  # raw-ok
     ensure_calendar_schema(conn)
 
     stored = 0
@@ -222,8 +222,8 @@ def get_upcoming_events(
     days_forward: int = 2,
 ) -> list[dict[str, Any]]:
     """Return upcoming events from the calendar_events table."""
-    from rebalance.ingest.db import get_connection
-    conn = get_connection(database_path)
+    from rebalance.ingest.db import get_connection  # raw-ok: circular import
+    conn = get_connection(database_path)  # raw-ok
     ensure_calendar_schema(conn)
 
     now = datetime.now(timezone.utc).isoformat()
@@ -257,8 +257,8 @@ def get_recent_events(
     days_back: int = 7,
 ) -> list[dict[str, Any]]:
     """Return past events for activity/meeting-load context."""
-    from rebalance.ingest.db import get_connection
-    conn = get_connection(database_path)
+    from rebalance.ingest.db import get_connection  # raw-ok: circular import
+    conn = get_connection(database_path)  # raw-ok
     ensure_calendar_schema(conn)
 
     now = datetime.now(timezone.utc).isoformat()
@@ -314,29 +314,28 @@ def get_daily_totals(
     days_back: int = 30,
     days_forward: int = 0,
 ) -> list[DailyEventTotal]:
-    """Calculate event count and total duration per day.
+    """Calculate event count and total duration per day (raw, unfiltered).
 
     Returns days sorted chronologically (oldest first).
     """
-    from rebalance.ingest.db import get_connection
-    from datetime import date
-
-    conn = get_connection(database_path)
-    ensure_calendar_schema(conn)
+    from rebalance.ingest.calendar_helpers import (
+        calendar_connection,
+        event_duration_minutes,
+        parse_calendar_dt,
+    )
 
     now = datetime.now(timezone.utc)
     start_date = (now - timedelta(days=days_back)).date()
     end_date = (now + timedelta(days=days_forward)).date()
 
-    # Get all events in range
-    rows = conn.execute(
-        """SELECT start_time, end_time
-           FROM calendar_events
-           WHERE DATE(start_time) >= ? AND DATE(start_time) <= ?
-           ORDER BY start_time ASC""",
-        (start_date.isoformat(), end_date.isoformat()),
-    ).fetchall()
-    conn.close()
+    with calendar_connection(database_path) as conn:
+        rows = conn.execute(
+            """SELECT start_time, end_time
+               FROM calendar_events
+               WHERE DATE(start_time) >= ? AND DATE(start_time) <= ?
+               ORDER BY start_time ASC""",
+            (start_date.isoformat(), end_date.isoformat()),
+        ).fetchall()
 
     # Aggregate by day
     daily_data: dict[str, tuple[int, int]] = {}  # date -> (count, total_minutes)
@@ -345,22 +344,12 @@ def get_daily_totals(
         start_str = row["start_time"]
         end_str = row["end_time"]
 
-        # Parse ISO datetime
         try:
-            start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
+            start_dt = parse_calendar_dt(start_str)
         except Exception:
             continue
 
-        if not end_str:
-            # All-day or no end time; count as 0 duration
-            minutes = 0
-        else:
-            try:
-                end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00'))
-                minutes = int((end_dt - start_dt).total_seconds() / 60)
-            except Exception:
-                minutes = 0
-
+        minutes = event_duration_minutes(start_str, end_str)
         date_str = start_dt.date().isoformat()
         count, total_mins = daily_data.get(date_str, (0, 0))
         daily_data[date_str] = (count + 1, total_mins + minutes)
@@ -369,7 +358,7 @@ def get_daily_totals(
     results = []
     for date_str in sorted(daily_data.keys()):
         count, total_mins = daily_data[date_str]
-        day_obj = datetime.fromisoformat(date_str).date()
+        day_obj = datetime.fromisoformat(date_str).date()  # raw-ok: date-only string, no Z
         day_name = day_obj.strftime("%A")
 
         results.append(DailyEventTotal(

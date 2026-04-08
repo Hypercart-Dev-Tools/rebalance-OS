@@ -9,18 +9,21 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import datetime, date
+from datetime import date
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from rebalance.ingest.calendar import ensure_calendar_schema
 from rebalance.ingest.calendar_config import (
     CalendarConfig,
     filter_events,
     load_review_decisions,
 )
-from rebalance.ingest.db import get_connection
+from rebalance.ingest.calendar_helpers import (
+    calendar_connection,
+    event_duration_minutes,
+    parse_calendar_dt,
+)
 from rebalance.ingest.project_classifier import (
     ProjectMatcher,
     annotate_events_with_projects,
@@ -93,15 +96,17 @@ def _normalize_word_tokens(text: str) -> list[str]:
 
 def _build_aggregator_skip_words(
     extra_skip_words: list[str] | None = None,
-    exclude_titles: list[str] | None = None,
 ) -> set[str]:
-    """Combine built-in low-signal words with config aggregator_skip_words
-    and tokenized exclude_titles."""
+    """Combine built-in low-signal words with config aggregator_skip_words.
+
+    Does NOT tokenize exclude_titles — those are full event titles used for
+    filtering, not grouping labels. Mixing them leaks words like "post" from
+    "Post Daily Timesheet" into the aggregator where they'd suppress
+    legitimate project keywords.
+    """
     skip_words = set(DEFAULT_AGGREGATOR_SKIP_WORDS)
     for word in extra_skip_words or []:
         skip_words.update(_normalize_word_tokens(word))
-    for title in exclude_titles or []:
-        skip_words.update(_normalize_word_tokens(title))
     return skip_words
 
 
@@ -124,13 +129,12 @@ def extract_keywords(
 
 def group_similar_events(
     events: list[dict[str, Any]],
-    exclude_keywords: list[str] | None = None,
     *,
     aggregator_skip_words: list[str] | None = None,
 ) -> dict[str, ProjectGroup]:
     """Group events by most common keywords (case-insensitive substring matching)."""
     groups: dict[str, ProjectGroup] = {}
-    skip_words = _build_aggregator_skip_words(aggregator_skip_words, exclude_keywords)
+    skip_words = _build_aggregator_skip_words(aggregator_skip_words)
     fallback_skip_words = set(DEFAULT_AGGREGATOR_SKIP_WORDS)
 
     for event in events:
@@ -139,13 +143,7 @@ def group_similar_events(
         start_str = event.get("start_time", "")
         end_str = event.get("end_time", "")
 
-        # Calculate duration
-        try:
-            start_dt = datetime.fromisoformat(start_str.replace('Z', '+00:00'))
-            end_dt = datetime.fromisoformat(end_str.replace('Z', '+00:00')) if end_str else start_dt
-            minutes = int((end_dt - start_dt).total_seconds() / 60)
-        except Exception:
-            minutes = 0
+        minutes = event_duration_minutes(start_str, end_str)
 
         # Canonical project matches from the registry win over heuristic grouping.
         if project_name:
@@ -215,19 +213,16 @@ def get_day_data(
     project_matchers: list[ProjectMatcher] | None = None,
 ) -> DayData:
     """Fetch and filter events for a single day. Returns structured data for reuse."""
-    conn = get_connection(database_path)
-    ensure_calendar_schema(conn)
-
-    date_str = target_date.isoformat()
-    rows = conn.execute(
-        """SELECT summary, start_time, end_time
-           FROM calendar_events
-           WHERE DATE(start_time) = ?
-             AND calendar_id = ?
-           ORDER BY start_time ASC""",
-        (date_str, config.calendar_id),
-    ).fetchall()
-    conn.close()
+    with calendar_connection(database_path) as conn:
+        date_str = target_date.isoformat()
+        rows = conn.execute(
+            """SELECT summary, start_time, end_time
+               FROM calendar_events
+               WHERE DATE(start_time) = ?
+                 AND calendar_id = ?
+               ORDER BY start_time ASC""",
+            (date_str, config.calendar_id),
+        ).fetchall()
 
     events = [
         {
@@ -259,22 +254,13 @@ def get_day_data(
             if not event.get("project_name") and decision != "include":
                 needs_review.append(event)
 
-    total_minutes = 0
-    for e in kept:
-        if not e.get("end_time"):
-            continue
-        try:
-            s = datetime.fromisoformat(e["start_time"].replace('Z', '+00:00'))
-            t = datetime.fromisoformat(e["end_time"].replace('Z', '+00:00'))
-            if s.tzinfo is None or t.tzinfo is None:
-                continue
-            total_minutes += int((t - s).total_seconds() / 60)
-        except Exception:
-            pass
+    total_minutes = sum(
+        event_duration_minutes(e.get("start_time", ""), e.get("end_time", ""))
+        for e in kept
+    )
 
     groups = group_similar_events(
         kept,
-        config.exclude_titles,
         aggregator_skip_words=config.aggregator_skip_words,
     )
 
@@ -291,6 +277,16 @@ def _pluralize_events(count: int) -> str:
     return "1 event" if count == 1 else f"{count} events"
 
 
+def _event_local_time(event: dict[str, Any], config: CalendarConfig) -> str:
+    """Format an event's start time in the configured local timezone."""
+    try:
+        start_dt = parse_calendar_dt(event["start_time"])
+        local_time = start_dt.astimezone(ZoneInfo(config.timezone))
+        return local_time.strftime("%I:%M %p").lstrip("0")
+    except Exception:
+        return "—"
+
+
 def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
     """Render a DayData into markdown. Pure formatting — no DB access."""
     fmt = config.hours_format
@@ -302,14 +298,7 @@ def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
     if day.filtered_events:
         md += "### Events\n\n"
         for event in day.filtered_events:
-            try:
-                start_dt = datetime.fromisoformat(event["start_time"].replace('Z', '+00:00'))
-                tz = ZoneInfo(config.timezone)
-                local_time = start_dt.astimezone(tz)
-                time_str = local_time.strftime("%I:%M %p").lstrip('0')
-            except Exception:
-                time_str = "—"
-            md += f"- {time_str} — {event['summary']}\n"
+            md += f"- {_event_local_time(event, config)} — {event['summary']}\n"
         md += "\n"
 
     sorted_groups = sorted(day.groups.items(), key=lambda x: x[1].total_minutes, reverse=True)
@@ -323,14 +312,7 @@ def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
         md += "### Needs Review\n\n"
         md += "Events not matched to a project. Use `review_timesheet` to classify.\n\n"
         for event in day.needs_review:
-            try:
-                start_dt = datetime.fromisoformat(event["start_time"].replace('Z', '+00:00'))
-                tz = ZoneInfo(config.timezone)
-                local_time = start_dt.astimezone(tz)
-                time_str = local_time.strftime("%I:%M %p").lstrip('0')
-            except Exception:
-                time_str = "—"
-            md += f"- {time_str} — {event['summary']}\n"
+            md += f"- {_event_local_time(event, config)} — {event['summary']}\n"
         md += "\n"
 
     return md
