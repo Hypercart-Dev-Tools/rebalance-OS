@@ -37,7 +37,7 @@ class CalendarAggregatorTests(unittest.TestCase):
             },
         ]
 
-        groups = group_similar_events(events, exclude_keywords=["Check Slack"])
+        groups = group_similar_events(events, ["Check Slack"])
 
         self.assertIn("Cr", groups)
         self.assertIn("Bw", groups)
@@ -52,7 +52,8 @@ class CalendarAggregatorTests(unittest.TestCase):
     def test_weekly_report_skips_low_signal_group_labels(self) -> None:
         config = CalendarConfig(
             calendar_id="primary",
-            exclude_keywords=["Check Slack"],
+            exclude_titles=["Check Slack"],
+            aggregator_skip_words=[],
             timezone="America/Los_Angeles",
             projects=[],
             hours_format="hm",
@@ -174,7 +175,8 @@ class CalendarAggregatorTests(unittest.TestCase):
     def test_weekly_report_prefers_registry_project_names_before_heuristics(self) -> None:
         config = CalendarConfig(
             calendar_id="primary",
-            exclude_keywords=[],
+            exclude_titles=[],
+            aggregator_skip_words=[],
             timezone="America/Los_Angeles",
             projects=[],
             hours_format="hm",
@@ -277,7 +279,8 @@ class CalendarAggregatorTests(unittest.TestCase):
     def test_weekly_report_uses_calendar_config_projects_when_registry_is_missing(self) -> None:
         config = CalendarConfig(
             calendar_id="primary",
-            exclude_keywords=[],
+            exclude_titles=[],
+            aggregator_skip_words=[],
             timezone="America/Los_Angeles",
             projects=[
                 CalendarProject(name="Bailiwik", aliases=["BW"]),

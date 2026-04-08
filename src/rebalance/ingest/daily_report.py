@@ -8,14 +8,18 @@ from __future__ import annotations
 
 import re
 from collections import Counter
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, date
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
 from rebalance.ingest.calendar import ensure_calendar_schema
-from rebalance.ingest.calendar_config import CalendarConfig, filter_events
+from rebalance.ingest.calendar_config import (
+    CalendarConfig,
+    filter_events,
+    load_review_decisions,
+)
 from rebalance.ingest.db import get_connection
 from rebalance.ingest.project_classifier import (
     ProjectMatcher,
@@ -87,11 +91,17 @@ def _normalize_word_tokens(text: str) -> list[str]:
     ]
 
 
-def _build_aggregator_skip_words(exclude_keywords: list[str] | None = None) -> set[str]:
-    """Combine built-in low-signal words with configured exclude keywords."""
+def _build_aggregator_skip_words(
+    extra_skip_words: list[str] | None = None,
+    exclude_titles: list[str] | None = None,
+) -> set[str]:
+    """Combine built-in low-signal words with config aggregator_skip_words
+    and tokenized exclude_titles."""
     skip_words = set(DEFAULT_AGGREGATOR_SKIP_WORDS)
-    for keyword in exclude_keywords or []:
-        skip_words.update(_normalize_word_tokens(keyword))
+    for word in extra_skip_words or []:
+        skip_words.update(_normalize_word_tokens(word))
+    for title in exclude_titles or []:
+        skip_words.update(_normalize_word_tokens(title))
     return skip_words
 
 
@@ -115,10 +125,12 @@ def extract_keywords(
 def group_similar_events(
     events: list[dict[str, Any]],
     exclude_keywords: list[str] | None = None,
+    *,
+    aggregator_skip_words: list[str] | None = None,
 ) -> dict[str, ProjectGroup]:
     """Group events by most common keywords (case-insensitive substring matching)."""
     groups: dict[str, ProjectGroup] = {}
-    skip_words = _build_aggregator_skip_words(exclude_keywords)
+    skip_words = _build_aggregator_skip_words(aggregator_skip_words, exclude_keywords)
     fallback_skip_words = set(DEFAULT_AGGREGATOR_SKIP_WORDS)
 
     for event in events:
@@ -176,6 +188,7 @@ class DayData:
     filtered_events: list[dict[str, Any]]
     total_minutes: int
     groups: dict[str, ProjectGroup]
+    needs_review: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _format_duration(minutes: int, hours_format: str = "decimal") -> str:
@@ -225,24 +238,47 @@ def get_day_data(
         for row in rows
     ]
 
-    filtered_events = filter_events(events, config.exclude_keywords)
+    filtered_events = filter_events(events, config.exclude_titles)
     filtered_events = annotate_events_with_projects(filtered_events, project_matchers or [])
+
+    # Apply persisted review decisions
+    review_decisions = load_review_decisions()
+    kept: list[dict[str, Any]] = []
+    needs_review: list[dict[str, Any]] = []
+    for event in filtered_events:
+        summary_key = event.get("summary", "").strip().lower()
+        decision = review_decisions.get(summary_key)
+        if decision == "exclude":
+            continue
+        elif decision and decision.startswith("project:"):
+            event = {**event, "project_name": decision.split(":", 1)[1]}
+            kept.append(event)
+        else:
+            kept.append(event)
+            # Flag events with no project match and no prior decision
+            if not event.get("project_name") and decision != "include":
+                needs_review.append(event)
 
     total_minutes = sum(
         int((datetime.fromisoformat(e["end_time"].replace('Z', '+00:00')) -
              datetime.fromisoformat(e["start_time"].replace('Z', '+00:00'))
             ).total_seconds() / 60)
-        for e in filtered_events
+        for e in kept
         if e.get("end_time")
     )
 
-    groups = group_similar_events(filtered_events, config.exclude_keywords)
+    groups = group_similar_events(
+        kept,
+        config.exclude_titles,
+        aggregator_skip_words=config.aggregator_skip_words,
+    )
 
     return DayData(
         target_date=target_date,
-        filtered_events=filtered_events,
+        filtered_events=kept,
         total_minutes=total_minutes,
         groups=groups,
+        needs_review=needs_review,
     )
 
 
@@ -276,6 +312,20 @@ def format_daily_markdown(day: DayData, config: CalendarConfig) -> str:
         md += "### Project Aggregator\n\n"
         for group_key, group in sorted_groups:
             md += f"- **{group_key}**: {_pluralize_events(group.count)}, {_format_duration(group.total_minutes, fmt)}\n"
+        md += "\n"
+
+    if day.needs_review:
+        md += "### Needs Review\n\n"
+        md += "Events not matched to a project. Use `review_timesheet` to classify.\n\n"
+        for event in day.needs_review:
+            try:
+                start_dt = datetime.fromisoformat(event["start_time"].replace('Z', '+00:00'))
+                tz = ZoneInfo(config.timezone)
+                local_time = start_dt.astimezone(tz)
+                time_str = local_time.strftime("%I:%M %p").lstrip('0')
+            except Exception:
+                time_str = "—"
+            md += f"- {time_str} — {event['summary']}\n"
         md += "\n"
 
     return md

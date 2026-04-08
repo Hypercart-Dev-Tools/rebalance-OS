@@ -52,7 +52,8 @@ SAMPLE_EVENTS = [
 def _make_config(hours_format: str = "decimal", **kwargs) -> CalendarConfig:
     defaults = dict(
         calendar_id="primary",
-        exclude_keywords=[],
+        exclude_titles=[],
+        aggregator_skip_words=[],
         timezone="America/Los_Angeles",
         projects=[],
         hours_format=hours_format,
@@ -143,7 +144,7 @@ class DailyReportTests(unittest.TestCase):
         self.assertIn("0.00h", report)
 
     def test_daily_report_excludes_keywords(self) -> None:
-        config = _make_config("decimal", exclude_keywords=["morning"])
+        config = _make_config("decimal", exclude_titles=["morning prep"])
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, SAMPLE_EVENTS)

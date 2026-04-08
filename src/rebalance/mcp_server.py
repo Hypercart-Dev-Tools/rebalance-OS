@@ -277,6 +277,97 @@ def create_server(database_path: Path) -> FastMCP:
             "elapsed_seconds": result.elapsed_seconds,
         }
 
+    # ------------------------------------------------------------------
+    # Calendar review tools
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    def review_timesheet(date_str: str = "") -> dict[str, Any]:
+        """
+        Return unclassified calendar events for a given date that need
+        human or agent review.
+
+        These are events that passed the exclude filter but did not match
+        any configured project. The agent can recommend classifying them
+        under a project, marking as "include" (real work, no project),
+        or "exclude" (filler).
+
+        Args:
+            date_str: ISO date (YYYY-MM-DD). Defaults to today.
+
+        Returns:
+            needs_review: list of {summary, start_time, end_time, duration_minutes}
+            available_projects: list of project names for classification
+        """
+        from datetime import date as date_cls
+
+        from rebalance.ingest.calendar_config import CalendarConfig
+        from rebalance.ingest.daily_report import get_day_data
+        from rebalance.ingest.project_classifier import load_project_matchers
+
+        config = CalendarConfig.load()
+        target = date_cls.fromisoformat(date_str) if date_str else date_cls.today()
+        matchers = load_project_matchers(database_path, config=config)
+        day = get_day_data(database_path, target, config, project_matchers=matchers)
+
+        review_items = []
+        for event in day.needs_review:
+            start_str = event.get("start_time", "")
+            end_str = event.get("end_time", "")
+            try:
+                from datetime import datetime
+                s = datetime.fromisoformat(start_str.replace("Z", "+00:00"))
+                e = datetime.fromisoformat(end_str.replace("Z", "+00:00"))
+                mins = int((e - s).total_seconds() / 60)
+            except Exception:
+                mins = 0
+            review_items.append({
+                "summary": event.get("summary", ""),
+                "start_time": start_str,
+                "end_time": end_str,
+                "duration_minutes": mins,
+            })
+
+        project_names = [m.name for m in matchers]
+        return {
+            "date": target.isoformat(),
+            "needs_review": review_items,
+            "available_projects": project_names,
+        }
+
+    @mcp.tool()
+    def classify_event(summary: str, decision: str) -> dict[str, Any]:
+        """
+        Persist a classification decision for an unmatched calendar event.
+
+        After review_timesheet surfaces events, call this to record how
+        each one should be handled in future reports.
+
+        Args:
+            summary: The event title (exact text from the calendar).
+            decision: One of:
+              - "include" — real work, keep in reports (no project assignment)
+              - "exclude" — filler, remove from future reports
+              - "project:<Name>" — assign to a specific project (e.g. "project:Binoid - Bloomz")
+
+        Returns confirmation of the stored decision.
+        """
+        from rebalance.ingest.calendar_config import save_review_decision
+
+        decision = decision.strip()
+        valid_prefixes = ("include", "exclude", "project:")
+        if not any(decision.startswith(p) for p in valid_prefixes):
+            return {
+                "error": f"Invalid decision '{decision}'. Must be 'include', 'exclude', or 'project:<Name>'.",
+            }
+
+        save_review_decision(summary, decision)
+        return {
+            "summary": summary,
+            "decision": decision,
+            "status": "saved",
+        }
+
     return mcp
 
 

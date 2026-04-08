@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.6.0] - 2026-04-07
+
+### Added
+
+- **Agent review layer for calendar reports.** Events that pass the exclude filter but don't match any configured project now appear in a "Needs Review" section at the bottom of daily reports. Agents or users can classify these via the new `review_timesheet` and `classify_event` MCP tools.
+- Two new MCP tools: `review_timesheet(date)` returns unclassified events for a given date with available project names; `classify_event(summary, decision)` persists a classification ("include", "exclude", or "project:Name") so the same event pattern is handled automatically in future reports.
+- Review decisions persist to `temp/review_decisions.json` (gitignored) so they survive across sessions.
+- New config field `aggregator_skip_words` — broad terms (e.g. "wrap", "setup", "test") that are skipped during project aggregator grouping but do **not** filter events from the report.
+
+### Changed
+
+- **Breaking (config):** `exclude_keywords` replaced by `exclude_titles` for event filtering. Filtering now uses **exact title matching** (case-insensitive) instead of substring matching. This prevents real work events like "Wrap up Countdown Timer" and "Setup rebalance app" from being silently dropped when "wrap" or "setup" appear in the exclude list. Legacy `exclude_keywords` in existing config files is automatically migrated to `exclude_titles`.
+
+### Fixed
+
+- Resolves Hypercart-Dev-Tools/rebalance-OS#2 — exclude keywords no longer filter out legitimate work events containing common verbs.
+
 ## [0.5.8] - 2026-04-07
 
 ### Added

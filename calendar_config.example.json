@@ -1,10 +1,15 @@
 {
   "calendar_id": "primary",
-  "exclude_keywords": [
+  "exclude_titles": [
     "Lunch",
     "Break",
-    "Admin",
-    "Standup"
+    "Check Slack",
+    "Post Daily Timesheet"
+  ],
+  "aggregator_skip_words": [
+    "wrap",
+    "setup",
+    "test"
   ],
   "timezone": "America/New_York",
   "hours_format": "decimal",

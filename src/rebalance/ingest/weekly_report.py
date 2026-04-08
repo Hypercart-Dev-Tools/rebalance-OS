@@ -96,7 +96,11 @@ def generate_weekly_report(
         all_events.extend(day.filtered_events)
 
     if all_events:
-        weekly_groups = group_similar_events(all_events, config.exclude_keywords)
+        weekly_groups = group_similar_events(
+            all_events,
+            config.exclude_titles,
+            aggregator_skip_words=config.aggregator_skip_words,
+        )
         sorted_groups = sorted(
             weekly_groups.items(),
             key=lambda x: x[1].total_minutes,

@@ -25,12 +25,12 @@ class CalendarConfigLoadTests(unittest.TestCase):
         self.assertEqual(config.timezone, "America/New_York")
         self.assertEqual(config.hours_format, "decimal")
         self.assertEqual(config.projects, [])
-        self.assertIn("Lunch", config.exclude_keywords)
+        self.assertIn("Lunch", config.exclude_titles)
 
     def test_load_reads_all_fields_from_file(self) -> None:
         data = {
             "calendar_id": "team@group.calendar.google.com",
-            "exclude_keywords": ["Stand-up"],
+            "exclude_titles": ["Stand-up"],
             "timezone": "America/Los_Angeles",
             "hours_format": "hm",
             "projects": [
@@ -44,7 +44,7 @@ class CalendarConfigLoadTests(unittest.TestCase):
         self.assertEqual(config.calendar_id, "team@group.calendar.google.com")
         self.assertEqual(config.timezone, "America/Los_Angeles")
         self.assertEqual(config.hours_format, "hm")
-        self.assertEqual(config.exclude_keywords, ["Stand-up"])
+        self.assertEqual(config.exclude_titles, ["Stand-up"])
         self.assertEqual(len(config.projects), 1)
         self.assertEqual(config.projects[0].name, "Acme")
         self.assertEqual(config.projects[0].aliases, ["AC", "Acme Corp"])
@@ -86,7 +86,8 @@ class CalendarConfigLoadTests(unittest.TestCase):
     def test_save_round_trips_all_fields(self) -> None:
         original = CalendarConfig(
             calendar_id="test@group.calendar.google.com",
-            exclude_keywords=["Lunch", "Break"],
+            exclude_titles=["Lunch", "Break"],
+            aggregator_skip_words=["wrap", "setup"],
             timezone="America/Denver",
             projects=[CalendarProject(name="Foo", aliases=["F", "FOO"])],
             hours_format="hm",
@@ -99,7 +100,8 @@ class CalendarConfigLoadTests(unittest.TestCase):
         self.assertEqual(loaded.calendar_id, original.calendar_id)
         self.assertEqual(loaded.timezone, original.timezone)
         self.assertEqual(loaded.hours_format, original.hours_format)
-        self.assertEqual(loaded.exclude_keywords, original.exclude_keywords)
+        self.assertEqual(loaded.exclude_titles, original.exclude_titles)
+        self.assertEqual(loaded.aggregator_skip_words, original.aggregator_skip_words)
         self.assertEqual(len(loaded.projects), 1)
         self.assertEqual(loaded.projects[0].name, "Foo")
         self.assertEqual(loaded.projects[0].aliases, ["F", "FOO"])

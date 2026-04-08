@@ -193,7 +193,8 @@ Edit `temp/calendar_config.json` with your preferences:
 | Field | What to put here |
 |-------|-----------------|
 | `calendar_id` | Calendar ID from step 4b, or `"primary"` for your main calendar |
-| `exclude_keywords` | Event titles to hide from reports (e.g., `"Lunch"`, `"Break"`) |
+| `exclude_titles` | Exact event titles to hide from reports (e.g., `"Lunch"`, `"Check Slack"`) |
+| `aggregator_skip_words` | Broad terms skipped in project grouping labels only (e.g., `"wrap"`, `"setup"`) |
 | `timezone` | Your local timezone (e.g., `"America/Los_Angeles"`) |
 | `hours_format` | `"decimal"` (default, e.g. `4.50h`) or `"hm"` (e.g. `4h 30m`) |
 
