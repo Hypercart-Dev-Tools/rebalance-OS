@@ -284,32 +284,55 @@ def calendar_daily_totals_cmd(
     days_back: int = typer.Option(30, help="Days back to show"),
     days_forward: int = typer.Option(0, help="Days forward to show"),
 ) -> None:
-    """Show combined daily event totals (count + duration) for calendar events."""
-    from rebalance.ingest.calendar import get_daily_totals
+    """Show combined daily event totals (count + duration) for calendar events.
+
+    Applies the same calendar_id, exclude_titles, and hours_format settings
+    as the daily and weekly report commands.
+    """
+    from datetime import date, timedelta
+    from rebalance.ingest.calendar_config import CalendarConfig
+    from rebalance.ingest.daily_report import _format_duration, get_day_data
+    from rebalance.ingest.project_classifier import load_project_matchers
 
     db_path = database.expanduser().resolve()
-    totals = get_daily_totals(database_path=db_path, days_back=days_back, days_forward=days_forward)
+    config = CalendarConfig.load()
+    fmt = config.hours_format
+    matchers = load_project_matchers(db_path, config=config)
 
-    if not totals:
+    today = date.today()
+    start = today - timedelta(days=days_back)
+    end = today + timedelta(days=days_forward)
+
+    days = []
+    current = start
+    while current <= end:
+        day = get_day_data(db_path, current, config, project_matchers=matchers)
+        if day.filtered_events:
+            days.append(day)
+        current += timedelta(days=1)
+
+    if not days:
         typer.echo("No events found.")
         return
 
     typer.echo(f"\n📅 Daily Event Totals (last {days_back} days):\n")
-    for total in totals:
-        typer.echo(f"  {total}")
+    for day in days:
+        day_name = day.target_date.strftime("%A")
+        count = len(day.filtered_events)
+        duration = _format_duration(day.total_minutes, fmt)
+        typer.echo(f"  {day.target_date.isoformat()} ({day_name}): {count} events, {duration}")
 
-    # Summary stats
-    total_events = sum(t.event_count for t in totals)
-    total_minutes = sum(t.total_minutes for t in totals)
-    avg_events_per_day = total_events / len(totals) if totals else 0
-    avg_hours_per_day = total_minutes / 60 / len(totals) if totals else 0
+    total_events = sum(len(d.filtered_events) for d in days)
+    total_minutes = sum(d.total_minutes for d in days)
+    avg_events_per_day = total_events / len(days) if days else 0
+    avg_hours = _format_duration(int(total_minutes / len(days)), fmt) if days else _format_duration(0, fmt)
 
     typer.echo(f"\n📊 Summary:")
-    typer.echo(f"  Days analyzed: {len(totals)}")
+    typer.echo(f"  Days analyzed: {len(days)}")
     typer.echo(f"  Total events: {total_events}")
-    typer.echo(f"  Total hours: {total_minutes / 60:.1f}h")
+    typer.echo(f"  Total hours: {_format_duration(total_minutes, fmt)}")
     typer.echo(f"  Avg events/day: {avg_events_per_day:.1f}")
-    typer.echo(f"  Avg hours/day: {avg_hours_per_day:.1f}h\n")
+    typer.echo(f"  Avg hours/day: {avg_hours}\n")
 
 
 @app.command("calendar-daily-report")
