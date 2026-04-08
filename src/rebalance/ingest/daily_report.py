@@ -259,13 +259,18 @@ def get_day_data(
             if not event.get("project_name") and decision != "include":
                 needs_review.append(event)
 
-    total_minutes = sum(
-        int((datetime.fromisoformat(e["end_time"].replace('Z', '+00:00')) -
-             datetime.fromisoformat(e["start_time"].replace('Z', '+00:00'))
-            ).total_seconds() / 60)
-        for e in kept
-        if e.get("end_time")
-    )
+    total_minutes = 0
+    for e in kept:
+        if not e.get("end_time"):
+            continue
+        try:
+            s = datetime.fromisoformat(e["start_time"].replace('Z', '+00:00'))
+            t = datetime.fromisoformat(e["end_time"].replace('Z', '+00:00'))
+            if s.tzinfo is None or t.tzinfo is None:
+                continue
+            total_minutes += int((t - s).total_seconds() / 60)
+        except Exception:
+            pass
 
     groups = group_similar_events(
         kept,

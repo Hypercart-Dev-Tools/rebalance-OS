@@ -153,6 +153,25 @@ class DailyReportTests(unittest.TestCase):
         self.assertIn("2 events", report)
         self.assertNotIn("morning prep", report)
 
+    def test_daily_report_handles_all_day_events(self) -> None:
+        """All-day events (date-only strings) should not crash the report."""
+        config = _make_config("decimal")
+        all_day_plus_timed = [
+            # All-day event: date-only strings, no timezone
+            ("ad1", "Company Holiday", "2026-03-31", "2026-04-01"),
+            # Normal timed event
+            ("e1", "Binoid - SEO", "2026-03-31T17:00:00+00:00", "2026-03-31T19:00:00+00:00"),
+        ]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "cal.db"
+            _insert_events(db, all_day_plus_timed)
+            report = generate_daily_report(db, date(2026, 3, 31), config)
+
+        # Should not crash, and timed event hours should be counted
+        self.assertIn("2.00h", report)
+        # All-day event should still appear in the event list
+        self.assertIn("Company Holiday", report)
+
     def test_daily_report_uses_config_timezone(self) -> None:
         config_la = _make_config("hm", timezone="America/Los_Angeles")
         config_ny = _make_config("hm", timezone="America/New_York")
