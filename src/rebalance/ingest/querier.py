@@ -12,16 +12,15 @@ agent (Claude, Copilot, etc.) is expected to refine the output.
 
 from __future__ import annotations
 
-import json
+import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
-from rebalance.ingest.db import get_connection, ensure_schema
+from rebalance.ingest.db import db_connection, ensure_schema, ensure_calendar_schema
 from rebalance.ingest.embedder import query_similar
-from rebalance.ingest.note_ingester import search_by_keyword
 
 DEFAULT_CHAT_MODEL = "Qwen/Qwen3-0.6B"
 
@@ -58,7 +57,8 @@ def _gather_vault_context(
     """Semantic search over embedded vault chunks."""
     try:
         return query_similar(database_path=database_path, query_text=query, top_k=top_k)
-    except Exception:
+    except Exception as e:
+        print(f"[rebalance] vault context unavailable: {e}", file=sys.stderr)
         return []
 
 
@@ -90,17 +90,13 @@ def _gather_temporal_context(
     vacation_event = ""
 
     try:
-        from rebalance.ingest.db import get_connection
-        from rebalance.ingest.calendar import ensure_calendar_schema
-        conn = get_connection(database_path)
-        ensure_calendar_schema(conn)
-        # Check for all-day or spanning events on the target date
-        rows = conn.execute(
-            """SELECT summary FROM calendar_events
-               WHERE start_time <= ? AND end_time >= ?""",
-            (date_str + "T23:59:59", date_str + "T00:00:00"),
-        ).fetchall()
-        conn.close()
+        with db_connection(database_path, ensure_calendar_schema) as conn:
+            # Check for all-day or spanning events on the target date
+            rows = conn.execute(
+                """SELECT summary FROM calendar_events
+                   WHERE start_time <= ? AND end_time >= ?""",
+                (date_str + "T23:59:59", date_str + "T00:00:00"),
+            ).fetchall()
         for row in rows:
             title = (row["summary"] or "").lower()
             if any(kw in title for kw in vacation_keywords):
@@ -132,20 +128,20 @@ def _gather_vault_activity(
     since_days: int = 7,
 ) -> list[dict[str, Any]]:
     """Recently modified vault files as a project activity signal."""
-    conn = get_connection(database_path)
-    ensure_schema(conn)
+    import json
+
     cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
-    rows = conn.execute(
-        """
-        SELECT rel_path, title, last_modified, tags_json
-        FROM vault_files
-        WHERE last_modified >= ?
-        ORDER BY last_modified DESC
-        LIMIT 20
-        """,
-        (cutoff,),
-    ).fetchall()
-    conn.close()
+    with db_connection(database_path, ensure_schema) as conn:
+        rows = conn.execute(
+            """
+            SELECT rel_path, title, last_modified, tags_json
+            FROM vault_files
+            WHERE last_modified >= ?
+            ORDER BY last_modified DESC
+            LIMIT 20
+            """,
+            (cutoff,),
+        ).fetchall()
     return [
         {
             "file_path": row["rel_path"],
@@ -169,7 +165,8 @@ def _gather_calendar_context(
             "upcoming": get_upcoming_events(database_path, days_forward),
             "recent": get_recent_events(database_path, days_back),
         }
-    except Exception:
+    except Exception as e:
+        print(f"[rebalance] calendar context unavailable: {e}", file=sys.stderr)
         return {"upcoming": [], "recent": []}
 
 
@@ -186,36 +183,19 @@ def _gather_github_context(
             project_repos=project_repos,
             since_days=since_days,
         )
-    except Exception:
+    except Exception as e:
+        print(f"[rebalance] github context unavailable: {e}", file=sys.stderr)
         return []
 
 
 def _gather_project_context(database_path: Path) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
     """Project registry entries + repos map."""
-    conn = get_connection(database_path)
-    rows = conn.execute(
-        "SELECT name, status, summary, value_level, priority_tier, risk_level, repos_json FROM project_registry ORDER BY priority_tier ASC, name ASC"
-    ).fetchall()
-    conn.close()
+    from rebalance.ingest.registry import get_projects
 
-    projects = []
+    projects = get_projects(database_path)
     repos_map: dict[str, list[str]] = {}
-    for row in rows:
-        repos = []
-        if row["repos_json"]:
-            try:
-                repos = json.loads(row["repos_json"])
-            except (json.JSONDecodeError, ValueError):
-                pass
-        projects.append({
-            "name": row["name"],
-            "status": row["status"],
-            "summary": row["summary"],
-            "priority_tier": row["priority_tier"],
-            "risk_level": row["risk_level"],
-            "repos": repos,
-        })
-        repos_map[row["name"]] = repos
+    for p in projects:
+        repos_map[p["name"]] = p.get("repos") or []
     return projects, repos_map
 
 

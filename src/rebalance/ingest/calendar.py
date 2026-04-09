@@ -14,9 +14,7 @@ for vector search but high-signal for scheduling context.
 from __future__ import annotations
 
 import json
-import os
 import pickle
-import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -25,25 +23,6 @@ from typing import Any
 
 
 TOKEN_PATH = Path.home() / ".config" / "gcalcli" / "oauth"
-
-CALENDAR_SCHEMA = """
-CREATE TABLE IF NOT EXISTS calendar_events (
-    id              TEXT PRIMARY KEY,
-    summary         TEXT,
-    start_time      TEXT NOT NULL,
-    end_time        TEXT,
-    location        TEXT,
-    attendees_json  TEXT,
-    calendar_id     TEXT NOT NULL DEFAULT 'primary',
-    status          TEXT,
-    description     TEXT,
-    fetched_at      TEXT NOT NULL
-)
-"""
-
-CALENDAR_INDEX = """
-CREATE INDEX IF NOT EXISTS idx_calendar_start ON calendar_events(start_time)
-"""
 
 
 # ---------------------------------------------------------------------------
@@ -92,16 +71,8 @@ def _build_service() -> Any:
     return build("calendar", "v3", credentials=creds)
 
 
-# ---------------------------------------------------------------------------
-# Schema
-# ---------------------------------------------------------------------------
-
-
-def ensure_calendar_schema(conn: sqlite3.Connection) -> None:
-    """Create calendar_events table if it doesn't exist."""
-    conn.execute(CALENDAR_SCHEMA)
-    conn.execute(CALENDAR_INDEX)
-    conn.commit()
+# Re-export so existing callers (e.g. tests) that import from here keep working.
+from rebalance.ingest.db import ensure_calendar_schema  # noqa: F401
 
 
 # ---------------------------------------------------------------------------
@@ -155,53 +126,51 @@ def sync_calendar(
         if not page_token:
             break
 
-    # Persist — raw-ok: circular import prevents using calendar_connection() here
-    from rebalance.ingest.db import get_connection
-    conn = get_connection(database_path)  # raw-ok
-    ensure_calendar_schema(conn)
+    # Persist
+    from rebalance.ingest.calendar_helpers import calendar_connection
 
     stored = 0
-    for event in all_events:
-        event_id = event.get("id", "")
-        summary = event.get("summary", "")
-        start_dt = event.get("start", {})
-        end_dt = event.get("end", {})
-        start_time = start_dt.get("dateTime", start_dt.get("date", ""))
-        end_time = end_dt.get("dateTime", end_dt.get("date", ""))
-        location = event.get("location", "")
-        description = event.get("description", "")
-        status = event.get("status", "")
+    with calendar_connection(database_path) as conn:
+        for event in all_events:
+            event_id = event.get("id", "")
+            summary = event.get("summary", "")
+            start_dt = event.get("start", {})
+            end_dt = event.get("end", {})
+            start_time = start_dt.get("dateTime", start_dt.get("date", ""))
+            end_time = end_dt.get("dateTime", end_dt.get("date", ""))
+            location = event.get("location", "")
+            description = event.get("description", "")
+            status = event.get("status", "")
 
-        attendees = []
-        for a in event.get("attendees", []):
-            attendees.append({
-                "email": a.get("email", ""),
-                "name": a.get("displayName", ""),
-                "response": a.get("responseStatus", ""),
-            })
+            attendees = []
+            for a in event.get("attendees", []):
+                attendees.append({
+                    "email": a.get("email", ""),
+                    "name": a.get("displayName", ""),
+                    "response": a.get("responseStatus", ""),
+                })
 
-        conn.execute(
-            """INSERT OR REPLACE INTO calendar_events
-               (id, summary, start_time, end_time, location, attendees_json,
-                calendar_id, status, description, fetched_at)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                event_id,
-                summary,
-                start_time,
-                end_time,
-                location,
-                json.dumps(attendees),
-                calendar_id,
-                status,
-                description,
-                fetched_at,
-            ),
-        )
-        stored += 1
+            conn.execute(
+                """INSERT OR REPLACE INTO calendar_events
+                   (id, summary, start_time, end_time, location, attendees_json,
+                    calendar_id, status, description, fetched_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    event_id,
+                    summary,
+                    start_time,
+                    end_time,
+                    location,
+                    json.dumps(attendees),
+                    calendar_id,
+                    status,
+                    description,
+                    fetched_at,
+                ),
+            )
+            stored += 1
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
     return CalendarSyncResult(
         events_fetched=len(all_events),
@@ -222,22 +191,20 @@ def get_upcoming_events(
     days_forward: int = 2,
 ) -> list[dict[str, Any]]:
     """Return upcoming events from the calendar_events table."""
-    from rebalance.ingest.db import get_connection  # raw-ok: circular import
-    conn = get_connection(database_path)  # raw-ok
-    ensure_calendar_schema(conn)
+    from rebalance.ingest.calendar_helpers import calendar_connection
 
     now = datetime.now(timezone.utc).isoformat()
     cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
 
-    rows = conn.execute(
-        """SELECT summary, start_time, end_time, location, attendees_json, description
-           FROM calendar_events
-           WHERE start_time >= ? AND start_time <= ?
-           ORDER BY start_time ASC
-           LIMIT 30""",
-        (now, cutoff),
-    ).fetchall()
-    conn.close()
+    with calendar_connection(database_path) as conn:
+        rows = conn.execute(
+            """SELECT summary, start_time, end_time, location, attendees_json, description
+               FROM calendar_events
+               WHERE start_time >= ? AND start_time <= ?
+               ORDER BY start_time ASC
+               LIMIT 30""",
+            (now, cutoff),
+        ).fetchall()
 
     return [
         {
@@ -257,22 +224,20 @@ def get_recent_events(
     days_back: int = 7,
 ) -> list[dict[str, Any]]:
     """Return past events for activity/meeting-load context."""
-    from rebalance.ingest.db import get_connection  # raw-ok: circular import
-    conn = get_connection(database_path)  # raw-ok
-    ensure_calendar_schema(conn)
+    from rebalance.ingest.calendar_helpers import calendar_connection
 
     now = datetime.now(timezone.utc).isoformat()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).isoformat()
 
-    rows = conn.execute(
-        """SELECT summary, start_time, end_time, location, attendees_json
-           FROM calendar_events
-           WHERE start_time >= ? AND start_time < ?
-           ORDER BY start_time DESC
-           LIMIT 50""",
-        (cutoff, now),
-    ).fetchall()
-    conn.close()
+    with calendar_connection(database_path) as conn:
+        rows = conn.execute(
+            """SELECT summary, start_time, end_time, location, attendees_json
+               FROM calendar_events
+               WHERE start_time >= ? AND start_time < ?
+               ORDER BY start_time DESC
+               LIMIT 50""",
+            (cutoff, now),
+        ).fetchall()
 
     return [
         {

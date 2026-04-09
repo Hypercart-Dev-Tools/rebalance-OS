@@ -53,13 +53,11 @@ def calendar_connection(database_path: Path) -> Generator[sqlite3.Connection, No
     Usage:
         with calendar_connection(db_path) as conn:
             rows = conn.execute("SELECT ...").fetchall()
-    """
-    from rebalance.ingest.calendar import ensure_calendar_schema
-    from rebalance.ingest.db import get_connection
 
-    conn = get_connection(database_path)
-    ensure_calendar_schema(conn)  # raw-ok: canonical location
-    try:
+    Thin wrapper around :func:`db_connection` for callers that only need
+    the calendar_events table.
+    """
+    from rebalance.ingest.db import db_connection, ensure_calendar_schema
+
+    with db_connection(database_path, ensure_calendar_schema) as conn:  # raw-ok: canonical location
         yield conn
-    finally:
-        conn.close()

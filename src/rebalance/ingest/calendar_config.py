@@ -190,6 +190,12 @@ def filter_events(
 
 # ── Review decisions persistence ─────────────────────────────────────────────
 
+VALID_DECISION_PREFIXES = ("include", "exclude", "project:")
+
+
+class InvalidDecisionError(ValueError):
+    """Raised when a review decision string doesn't match an accepted format."""
+
 
 def load_review_decisions(path: Path | None = None) -> dict[str, str]:
     """Load prior review decisions from temp/review_decisions.json.
@@ -206,7 +212,15 @@ def load_review_decisions(path: Path | None = None) -> dict[str, str]:
 
 
 def save_review_decision(summary: str, decision: str, path: Path | None = None) -> None:
-    """Persist a review decision so it's applied automatically next time."""
+    """Validate and persist a review decision.
+
+    Raises :class:`InvalidDecisionError` if *decision* is not one of
+    ``"include"``, ``"exclude"``, or ``"project:<Name>"``.
+    """
+    if not any(decision.startswith(p) for p in VALID_DECISION_PREFIXES):
+        raise InvalidDecisionError(
+            f"Invalid decision '{decision}'. Must be 'include', 'exclude', or 'project:<Name>'."
+        )
     p = path or REVIEW_DECISIONS_PATH
     p.parent.mkdir(parents=True, exist_ok=True)
     decisions = load_review_decisions(p)

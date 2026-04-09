@@ -15,7 +15,6 @@ Usage:
 
 from __future__ import annotations
 
-import sqlite3
 import urllib.request
 import urllib.error
 import json
@@ -26,6 +25,14 @@ from typing import Any
 
 GITHUB_API = "https://api.github.com"
 MAX_EVENT_PAGES = 3  # Hard limit documented by GitHub
+
+# Activity band definitions — shared with preflight.py for segmentation.
+#   A = last 7 days   (hot)
+#   B = 8-14 days ago  (warm)
+#   C = 15-30 days ago (cooling)
+BAND_A_DAYS = 7
+BAND_B_DAYS = 14
+BAND_C_DAYS = 30
 
 
 # ---------------------------------------------------------------------------
@@ -109,12 +116,12 @@ def _event_day_key(created_at: str) -> str:
 
 
 def _compute_band_cutoffs(now: datetime) -> tuple[str, str, str]:
-    """Return (cutoff_7d, cutoff_14d, cutoff_30d) as YYYY-MM-DD strings."""
+    """Return (cutoff_A, cutoff_B, cutoff_C) as YYYY-MM-DD strings."""
     fmt = "%Y-%m-%d"
     return (
-        (now - timedelta(days=7)).strftime(fmt),
-        (now - timedelta(days=14)).strftime(fmt),
-        (now - timedelta(days=30)).strftime(fmt),
+        (now - timedelta(days=BAND_A_DAYS)).strftime(fmt),
+        (now - timedelta(days=BAND_B_DAYS)).strftime(fmt),
+        (now - timedelta(days=BAND_C_DAYS)).strftime(fmt),
     )
 
 
@@ -321,25 +328,6 @@ def scan_github(token: str, days: int = 30) -> GitHubScanResult:
 # SQLite persistence
 # ---------------------------------------------------------------------------
 
-_CREATE_TABLE_SQL = """
-CREATE TABLE IF NOT EXISTS github_activity (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    login           TEXT    NOT NULL,
-    repo_full_name  TEXT    NOT NULL,
-    scan_date       TEXT    NOT NULL,
-    commits         INTEGER NOT NULL DEFAULT 0,
-    pushes          INTEGER NOT NULL DEFAULT 0,
-    prs_opened      INTEGER NOT NULL DEFAULT 0,
-    prs_merged      INTEGER NOT NULL DEFAULT 0,
-    issues_opened   INTEGER NOT NULL DEFAULT 0,
-    issue_comments  INTEGER NOT NULL DEFAULT 0,
-    reviews         INTEGER NOT NULL DEFAULT 0,
-    last_active_at  TEXT,
-    scanned_at      TEXT    NOT NULL,
-    UNIQUE(login, repo_full_name, scan_date) ON CONFLICT REPLACE
-)
-"""
-
 _UPSERT_SQL = """
 INSERT OR REPLACE INTO github_activity
     (login, repo_full_name, scan_date, commits, pushes, prs_opened, prs_merged,
@@ -351,11 +339,11 @@ VALUES
 
 def upsert_github_activity(database_path: Path, result: GitHubScanResult) -> None:
     """Persist a GitHubScanResult into the github_activity SQLite table."""
+    from rebalance.ingest.db import db_connection, ensure_github_schema
+
     scan_date = result.scanned_at[:10]  # YYYY-MM-DD
 
-    conn = sqlite3.connect(database_path)
-    try:
-        conn.execute(_CREATE_TABLE_SQL)
+    with db_connection(database_path, ensure_github_schema) as conn:
         for r in result.repo_activity.values():
             conn.execute(
                 _UPSERT_SQL,
@@ -375,8 +363,6 @@ def upsert_github_activity(database_path: Path, result: GitHubScanResult) -> Non
                 ),
             )
         conn.commit()
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -403,11 +389,11 @@ def get_github_balance(
     if not database_path.exists():
         return []
 
+    from rebalance.ingest.db import db_connection, ensure_github_schema
+
     since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
 
-    conn = sqlite3.connect(database_path)
-    conn.row_factory = sqlite3.Row
-    try:
+    with db_connection(database_path, ensure_github_schema) as conn:
         rows = conn.execute(
             """
             SELECT repo_full_name,
@@ -425,8 +411,6 @@ def get_github_balance(
             """,
             (since_date,),
         ).fetchall()
-    finally:
-        conn.close()
 
     # Build lookup: repo_full_name → aggregated activity row
     repo_stats: dict[str, dict[str, Any]] = {

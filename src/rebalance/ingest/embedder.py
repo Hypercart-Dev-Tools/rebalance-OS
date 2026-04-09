@@ -16,7 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from rebalance.ingest.db import get_connection, ensure_schema
+from rebalance.ingest.db import db_connection, ensure_schema
 
 DEFAULT_MODEL = "Qwen/Qwen3-Embedding-0.6B"
 EMBEDDING_DIM = 1024
@@ -96,86 +96,83 @@ def embed_chunks(
     if the model name changed.
     """
     start = time.monotonic()
-    conn = get_connection(database_path)
-    ensure_schema(conn)
 
-    # Check for model version change
-    stored_model = None
-    try:
-        row = conn.execute(
-            "SELECT value FROM embedding_meta WHERE key = 'model_name'"
-        ).fetchone()
-        if row:
-            stored_model = row["value"]
-    except Exception:
-        pass
+    with db_connection(database_path, ensure_schema) as conn:
+        # Check for model version change
+        stored_model = None
+        try:
+            row = conn.execute(
+                "SELECT value FROM embedding_meta WHERE key = 'model_name'"
+            ).fetchone()
+            if row:
+                stored_model = row["value"]
+        except Exception:
+            pass
 
-    if stored_model and stored_model != model_name:
-        force_reembed = True
+        if stored_model and stored_model != model_name:
+            force_reembed = True
 
-    # Find chunks needing embedding
-    if force_reembed:
-        # Clear all embeddings and re-embed everything
-        conn.execute("DELETE FROM embeddings")
-        conn.commit()
-        rows = conn.execute("SELECT id, body FROM chunks").fetchall()
-    else:
-        # Only embed chunks not already in the embeddings table
-        rows = conn.execute("""
-            SELECT c.id, c.body
-            FROM chunks c
-            LEFT JOIN embeddings e ON e.chunk_id = c.id
-            WHERE e.chunk_id IS NULL
-        """).fetchall()
+        # Find chunks needing embedding
+        if force_reembed:
+            # Clear all embeddings and re-embed everything
+            conn.execute("DELETE FROM embeddings")
+            conn.commit()
+            rows = conn.execute("SELECT id, body FROM chunks").fetchall()
+        else:
+            # Only embed chunks not already in the embeddings table
+            rows = conn.execute("""
+                SELECT c.id, c.body
+                FROM chunks c
+                LEFT JOIN embeddings e ON e.chunk_id = c.id
+                WHERE e.chunk_id IS NULL
+            """).fetchall()
 
-    total_chunks_in_db = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
-    skipped = total_chunks_in_db - len(rows)
+        total_chunks_in_db = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+        skipped = total_chunks_in_db - len(rows)
 
-    if not rows:
-        conn.close()
-        return EmbedResult(
-            total_chunks=total_chunks_in_db,
-            embedded_chunks=0,
-            skipped_unchanged=skipped,
-            model_name=model_name,
-            embedding_dim=EMBEDDING_DIM,
-            elapsed_seconds=round(time.monotonic() - start, 2),
-        )
-
-    # Load model
-    model, tokenizer = _load_model(model_name)
-
-    # Batch embed
-    embedded_count = 0
-    for i in range(0, len(rows), batch_size):
-        batch = rows[i:i + batch_size]
-        texts = [row["body"][:2000] for row in batch]  # truncate very long chunks
-        chunk_ids = [row["id"] for row in batch]
-
-        vectors = _embed_batch(model, tokenizer, texts)
-
-        for chunk_id, vec in zip(chunk_ids, vectors):
-            conn.execute(
-                "INSERT OR REPLACE INTO embeddings (chunk_id, embedding) VALUES (?, ?)",
-                (chunk_id, _vec_to_bytes(vec)),
+        if not rows:
+            return EmbedResult(
+                total_chunks=total_chunks_in_db,
+                embedded_chunks=0,
+                skipped_unchanged=skipped,
+                model_name=model_name,
+                embedding_dim=EMBEDDING_DIM,
+                elapsed_seconds=round(time.monotonic() - start, 2),
             )
-            embedded_count += 1
 
+        # Load model
+        model, tokenizer = _load_model(model_name)
+
+        # Batch embed
+        embedded_count = 0
+        for i in range(0, len(rows), batch_size):
+            batch = rows[i:i + batch_size]
+            texts = [row["body"][:2000] for row in batch]  # truncate very long chunks
+            chunk_ids = [row["id"] for row in batch]
+
+            vectors = _embed_batch(model, tokenizer, texts)
+
+            for chunk_id, vec in zip(chunk_ids, vectors):
+                conn.execute(
+                    "INSERT OR REPLACE INTO embeddings (chunk_id, embedding) VALUES (?, ?)",
+                    (chunk_id, _vec_to_bytes(vec)),
+                )
+                embedded_count += 1
+
+            conn.commit()
+
+        # Update embedding_meta
+        now_iso = datetime.now(timezone.utc).isoformat()
+        for key, value in [
+            ("model_name", model_name),
+            ("embedding_dim", str(EMBEDDING_DIM)),
+            ("last_embed_at", now_iso),
+        ]:
+            conn.execute(
+                "INSERT OR REPLACE INTO embedding_meta (key, value) VALUES (?, ?)",
+                (key, value),
+            )
         conn.commit()
-
-    # Update embedding_meta
-    now_iso = datetime.now(timezone.utc).isoformat()
-    for key, value in [
-        ("model_name", model_name),
-        ("embedding_dim", str(EMBEDDING_DIM)),
-        ("last_embed_at", now_iso),
-    ]:
-        conn.execute(
-            "INSERT OR REPLACE INTO embedding_meta (key, value) VALUES (?, ?)",
-            (key, value),
-        )
-    conn.commit()
-    conn.close()
 
     return EmbedResult(
         total_chunks=total_chunks_in_db,
@@ -207,30 +204,26 @@ def query_similar(
     vectors = _embed_batch(model, tokenizer, [query_text])
     query_vec = _vec_to_bytes(vectors[0])
 
-    conn = get_connection(database_path)
-    ensure_schema(conn)
-
-    results = conn.execute(
-        """
-        SELECT
-            e.chunk_id,
-            e.distance,
-            c.heading,
-            SUBSTR(c.body, 1, 300) AS body_preview,
-            c.char_count,
-            vf.rel_path,
-            vf.title,
-            vf.tags_json
-        FROM embeddings e
-        JOIN chunks c ON c.id = e.chunk_id
-        JOIN vault_files vf ON vf.id = c.file_id
-        WHERE e.embedding MATCH ? AND e.k = ?
-        ORDER BY e.distance
-        """,
-        (query_vec, top_k),
-    ).fetchall()
-
-    conn.close()
+    with db_connection(database_path, ensure_schema) as conn:
+        results = conn.execute(
+            """
+            SELECT
+                e.chunk_id,
+                e.distance,
+                c.heading,
+                SUBSTR(c.body, 1, 300) AS body_preview,
+                c.char_count,
+                vf.rel_path,
+                vf.title,
+                vf.tags_json
+            FROM embeddings e
+            JOIN chunks c ON c.id = e.chunk_id
+            JOIN vault_files vf ON vf.id = c.file_id
+            WHERE e.embedding MATCH ? AND e.k = ?
+            ORDER BY e.distance
+            """,
+            (query_vec, top_k),
+        ).fetchall()
 
     return [
         {
