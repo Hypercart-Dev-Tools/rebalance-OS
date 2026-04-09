@@ -1,8 +1,6 @@
 from __future__ import annotations
 
-import json
 import os
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -11,44 +9,12 @@ from mcp.server.fastmcp import FastMCP
 from rebalance.ingest.config import get_github_token, set_github_token, get_config_path
 from rebalance.ingest.github_scan import get_github_balance, validate_github_token
 from rebalance.ingest.preflight import discover_candidates, confirm_and_write
-
-
-def _fetch_projects(database_path: Path, status: str | None = None) -> list[dict[str, Any]]:
-    if not database_path.exists():
-        return []
-
-    conn = sqlite3.connect(database_path)
-    conn.row_factory = sqlite3.Row
-    try:
-        query = "SELECT name, status, summary, value_level, priority_tier, risk_level, repos_json FROM project_registry"
-        params: tuple[Any, ...] = ()
-        if status:
-            query += " WHERE status = ?"
-            params = (status,)
-        query += " ORDER BY name ASC"
-
-        rows = conn.execute(query, params).fetchall()
-        result = []
-        for row in rows:
-            d = dict(row)
-            # repos_json is stored as JSON array string; decode and rename for callers
-            raw_repos = d.pop("repos_json", None)
-            if isinstance(raw_repos, str):
-                try:
-                    d["repos"] = json.loads(raw_repos)
-                except (json.JSONDecodeError, ValueError):
-                    d["repos"] = []
-            else:
-                d["repos"] = []
-            result.append(d)
-        return result
-    finally:
-        conn.close()
+from rebalance.ingest.registry import get_projects
 
 
 def _project_repos_map(database_path: Path) -> dict[str, list[str]]:
     """Return {project_name: [repo, ...]} for all active projects."""
-    projects = _fetch_projects(database_path, status="active")
+    projects = get_projects(database_path, status="active")
     return {p["name"]: p.get("repos") or [] for p in projects}
 
 
@@ -59,7 +25,7 @@ def create_server(database_path: Path) -> FastMCP:
     def list_projects(status: str = "active") -> list[dict[str, Any]]:
         """List projects from the local project_registry table."""
         normalized = status.strip().lower() if status else ""
-        return _fetch_projects(database_path=database_path, status=normalized or None)
+        return get_projects(database_path, status=normalized or None)
 
     @mcp.tool()
     def github_balance(since_days: int = 30) -> list[dict[str, Any]]:
@@ -130,12 +96,7 @@ def create_server(database_path: Path) -> FastMCP:
         db_has_rows = False
         if database_path.exists():
             try:
-                conn = sqlite3.connect(database_path)
-                count = conn.execute(
-                    "SELECT COUNT(*) FROM project_registry"
-                ).fetchone()[0]
-                db_has_rows = count > 0
-                conn.close()
+                db_has_rows = len(get_projects(database_path)) > 0
             except Exception:
                 pass
         steps.append({
@@ -347,19 +308,16 @@ def create_server(database_path: Path) -> FastMCP:
 
         Returns confirmation of the stored decision.
         """
-        from rebalance.ingest.calendar_config import save_review_decision
+        from rebalance.ingest.calendar_config import save_review_decision, InvalidDecisionError
 
-        decision = decision.strip()
-        valid_prefixes = ("include", "exclude", "project:")
-        if not any(decision.startswith(p) for p in valid_prefixes):
-            return {
-                "error": f"Invalid decision '{decision}'. Must be 'include', 'exclude', or 'project:<Name>'.",
-            }
+        try:
+            save_review_decision(summary, decision.strip())
+        except InvalidDecisionError as e:
+            return {"error": str(e)}
 
-        save_review_decision(summary, decision)
         return {
             "summary": summary,
-            "decision": decision,
+            "decision": decision.strip(),
             "status": "saved",
         }
 

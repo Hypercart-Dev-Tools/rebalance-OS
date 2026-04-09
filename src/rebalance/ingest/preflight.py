@@ -14,7 +14,12 @@ from rebalance.ingest.registry import (
     save_registry,
     sync_registry,
 )
-from rebalance.ingest.github_scan import discover_repos_from_activity
+from rebalance.ingest.github_scan import (
+    BAND_A_DAYS,
+    BAND_B_DAYS,
+    BAND_C_DAYS,
+    discover_repos_from_activity,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -112,9 +117,9 @@ def _calculate_days_since_activity(last_activity_at: str | None) -> int:
 def _segment_project(project_dict: dict[str, Any]) -> str:
     """Return the registry section name for a candidate based on activity recency."""
     days_since = _calculate_days_since_activity(project_dict.get("last_activity_at"))
-    if days_since <= 14:
+    if days_since <= BAND_B_DAYS:
         return "most_likely_active_projects"
-    elif days_since <= 30:
+    elif days_since <= BAND_C_DAYS:
         return "semi_active_projects"
     elif days_since < 999:
         return "dormant_projects"
@@ -127,10 +132,10 @@ def _classify_repo_bands(bands: list[str]) -> str:
     Classify a GitHub repo candidate into a registry segment based on which
     time bands have activity.
 
-    Band definitions:
-      A = last 7 days
-      B = 8-14 days ago
-      C = 15-30 days ago
+    Band definitions (see BAND_*_DAYS in github_scan.py):
+      A = last {BAND_A_DAYS} days
+      B = {BAND_A_DAYS+1}-{BAND_B_DAYS} days ago
+      C = {BAND_B_DAYS+1}-{BAND_C_DAYS} days ago
 
     Rules (in priority order):
       A+B (with or without C) → most_likely_active  (consistent recent activity)

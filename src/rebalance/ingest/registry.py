@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 from pathlib import Path
 from typing import Any
 
@@ -127,25 +126,10 @@ def write_projection(projects_yaml_path: Path, projection: dict[str, Any]) -> No
 
 
 def sync_db(database_path: Path, projection: dict[str, Any]) -> int:
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(database_path)
-    try:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS project_registry (
-                name TEXT PRIMARY KEY,
-                status TEXT,
-                summary TEXT,
-                value_level TEXT,
-                priority_tier INTEGER,
-                risk_level TEXT,
-                repos_json TEXT,
-                tags_json TEXT,
-                custom_fields_json TEXT
-            )
-            """
-        )
-        rows = projection.get("projects", [])
+    from rebalance.ingest.db import db_connection, ensure_project_schema
+
+    rows = projection.get("projects", [])
+    with db_connection(database_path, ensure_project_schema) as conn:
         for project in rows:
             conn.execute(
                 """
@@ -176,9 +160,7 @@ def sync_db(database_path: Path, projection: dict[str, Any]) -> int:
                 ),
             )
         conn.commit()
-        return len(rows)
-    finally:
-        conn.close()
+    return len(rows)
 
 
 def _push_from_projection(registry: Registry, projects_yaml_path: Path) -> Registry:
@@ -239,3 +221,58 @@ def sync_registry(mode: str, registry_path: Path, projects_yaml_path: Path, data
         f"Sync pull complete: wrote {projects_yaml_path}, upserted {upserted} rows into "
         f"{database_path}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Centralized project DB reader — single source of truth
+# ---------------------------------------------------------------------------
+
+
+def get_projects(
+    database_path: Path,
+    status: str | None = None,
+) -> list[dict[str, Any]]:
+    """Fetch projects from the project_registry table.
+
+    Returns a list of dicts with ``repos`` (list), ``tags`` (list), and
+    ``custom_fields`` (dict) already decoded from their ``*_json`` columns.
+
+    This is the **canonical** way to read projects from SQLite.  All callers
+    (MCP server, querier, project classifier, etc.) should use this instead
+    of writing their own SQL + JSON-parsing logic.
+    """
+    if not database_path.exists():
+        return []
+
+    from rebalance.ingest.db import db_connection, ensure_project_schema
+
+    with db_connection(database_path, ensure_project_schema) as conn:
+        query = (
+            "SELECT name, status, summary, value_level, priority_tier, "
+            "risk_level, repos_json, tags_json, custom_fields_json "
+            "FROM project_registry"
+        )
+        params: tuple[Any, ...] = ()
+        if status:
+            query += " WHERE status = ?"
+            params = (status,)
+        query += " ORDER BY name ASC"
+
+        rows = conn.execute(query, params).fetchall()
+
+    result: list[dict[str, Any]] = []
+    for row in rows:
+        d = dict(row)
+        # Decode *_json columns into native Python types
+        for json_col, target_key, default in (
+            ("repos_json", "repos", []),
+            ("tags_json", "tags", []),
+            ("custom_fields_json", "custom_fields", {}),
+        ):
+            raw = d.pop(json_col, None)
+            try:
+                d[target_key] = json.loads(raw) if raw else default
+            except (json.JSONDecodeError, ValueError):
+                d[target_key] = default
+        result.append(d)
+    return result

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.calendar_config import CalendarConfig
-from rebalance.ingest.db import get_connection
+from rebalance.ingest.db import db_connection
 
 
 ALIAS_KEYS = {"aliases", "calendar_aliases", "calendar_keywords", "keywords"}
@@ -125,8 +125,7 @@ def load_project_matchers(
     config: CalendarConfig | None = None,
 ) -> list[ProjectMatcher]:
     """Load canonical project matchers from project_registry, or config fallback."""
-    conn = get_connection(database_path)
-    try:
+    with db_connection(database_path) as conn:
         table_exists = conn.execute(
             """
             SELECT 1
@@ -145,8 +144,6 @@ def load_project_matchers(
             ORDER BY LENGTH(name) DESC, name ASC
             """
         ).fetchall()
-    finally:
-        conn.close()
 
     if not rows:
         return _build_matchers_from_config(config)

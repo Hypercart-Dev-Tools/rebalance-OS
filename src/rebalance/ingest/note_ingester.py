@@ -22,7 +22,7 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
-from rebalance.ingest.db import get_connection, ensure_schema
+from rebalance.ingest.db import db_connection, ensure_schema
 from rebalance.ingest.md_parser import parse_note, ParsedNote
 
 
@@ -88,120 +88,118 @@ def ingest_vault(
     """
     start = time.monotonic()
     excludes = exclude_patterns or DEFAULT_EXCLUDES
-    conn = get_connection(database_path)
-    ensure_schema(conn)
 
-    # Load existing file hashes from DB
-    existing = {}
-    try:
-        rows = conn.execute("SELECT rel_path, content_hash FROM vault_files").fetchall()
-        existing = {row["rel_path"]: row["content_hash"] for row in rows}
-    except Exception:
-        pass
+    with db_connection(database_path, ensure_schema) as conn:
+        # Load existing file hashes from DB
+        existing = {}
+        try:
+            rows = conn.execute("SELECT rel_path, content_hash FROM vault_files").fetchall()
+            existing = {row["rel_path"]: row["content_hash"] for row in rows}
+        except Exception:
+            pass
 
-    # Walk vault
-    disk_files: dict[str, Path] = {}
-    for md_path in vault_path.rglob("*.md"):
-        rel = str(md_path.relative_to(vault_path))
-        if any(fnmatch(rel, pat) for pat in excludes):
-            continue
-        disk_files[rel] = md_path
+        # Walk vault
+        disk_files: dict[str, Path] = {}
+        for md_path in vault_path.rglob("*.md"):
+            rel = str(md_path.relative_to(vault_path))
+            if any(fnmatch(rel, pat) for pat in excludes):
+                continue
+            disk_files[rel] = md_path
 
-    new_count = 0
-    updated_count = 0
-    unchanged_count = 0
-    total_chunks = 0
-    total_links = 0
+        new_count = 0
+        updated_count = 0
+        unchanged_count = 0
+        total_chunks = 0
+        total_links = 0
 
-    for rel_path, file_path in disk_files.items():
-        content_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
+        for rel_path, file_path in disk_files.items():
+            content_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
 
-        if rel_path in existing and existing[rel_path] == content_hash:
-            unchanged_count += 1
-            continue
+            if rel_path in existing and existing[rel_path] == content_hash:
+                unchanged_count += 1
+                continue
 
-        if dry_run:
+            if dry_run:
+                if rel_path in existing:
+                    updated_count += 1
+                else:
+                    new_count += 1
+                continue
+
+            # Parse the note
+            parsed = parse_note(file_path, vault_path)
+
+            # Delete old data if exists (CASCADE handles chunks, keywords, links)
+            conn.execute("DELETE FROM vault_files WHERE rel_path = ?", (rel_path,))
+
+            # Insert file
+            stat = file_path.stat()
+            now_iso = datetime.now(timezone.utc).isoformat()
+            mtime_iso = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+
+            conn.execute(
+                """INSERT INTO vault_files
+                   (rel_path, title, content_hash, frontmatter_json, tags_json,
+                    ingested_at, file_size_bytes, last_modified)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    rel_path,
+                    parsed.title,
+                    parsed.content_hash,
+                    json.dumps(parsed.frontmatter, default=_json_default),
+                    json.dumps(parsed.tags),
+                    now_iso,
+                    stat.st_size,
+                    mtime_iso,
+                ),
+            )
+            file_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+
+            # Insert chunks
+            for chunk in parsed.chunks:
+                chunk_hash = hashlib.sha256(chunk.body.encode("utf-8")).hexdigest()
+                conn.execute(
+                    """INSERT INTO chunks
+                       (file_id, chunk_index, heading, heading_level, body, char_count, content_hash)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (file_id, chunk.chunk_index, chunk.heading, chunk.heading_level,
+                     chunk.body, chunk.char_count, chunk_hash),
+                )
+                total_chunks += 1
+
+            # Insert links
+            for target, link_type in parsed.wikilinks:
+                try:
+                    conn.execute(
+                        """INSERT OR IGNORE INTO links
+                           (source_file_id, target_title, link_type)
+                           VALUES (?, ?, ?)""",
+                        (file_id, target, link_type),
+                    )
+                    total_links += 1
+                except Exception:
+                    pass
+
             if rel_path in existing:
                 updated_count += 1
             else:
                 new_count += 1
-            continue
 
-        # Parse the note
-        parsed = parse_note(file_path, vault_path)
+        # Remove files that no longer exist on disk
+        deleted_count = 0
+        if not dry_run:
+            for rel_path in existing:
+                if rel_path not in disk_files:
+                    conn.execute("DELETE FROM vault_files WHERE rel_path = ?", (rel_path,))
+                    deleted_count += 1
 
-        # Delete old data if exists (CASCADE handles chunks, keywords, links)
-        conn.execute("DELETE FROM vault_files WHERE rel_path = ?", (rel_path,))
+        conn.commit()
 
-        # Insert file
-        stat = file_path.stat()
-        now_iso = datetime.now(timezone.utc).isoformat()
-        mtime_iso = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
+        # Compute TF-IDF keywords
+        total_keywords = 0
+        if not dry_run and (new_count > 0 or updated_count > 0 or deleted_count > 0):
+            total_keywords = _compute_tfidf_keywords(conn)
 
-        conn.execute(
-            """INSERT INTO vault_files
-               (rel_path, title, content_hash, frontmatter_json, tags_json,
-                ingested_at, file_size_bytes, last_modified)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                rel_path,
-                parsed.title,
-                parsed.content_hash,
-                json.dumps(parsed.frontmatter, default=_json_default),
-                json.dumps(parsed.tags),
-                now_iso,
-                stat.st_size,
-                mtime_iso,
-            ),
-        )
-        file_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
-
-        # Insert chunks
-        for chunk in parsed.chunks:
-            chunk_hash = hashlib.sha256(chunk.body.encode("utf-8")).hexdigest()
-            conn.execute(
-                """INSERT INTO chunks
-                   (file_id, chunk_index, heading, heading_level, body, char_count, content_hash)
-                   VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                (file_id, chunk.chunk_index, chunk.heading, chunk.heading_level,
-                 chunk.body, chunk.char_count, chunk_hash),
-            )
-            total_chunks += 1
-
-        # Insert links
-        for target, link_type in parsed.wikilinks:
-            try:
-                conn.execute(
-                    """INSERT OR IGNORE INTO links
-                       (source_file_id, target_title, link_type)
-                       VALUES (?, ?, ?)""",
-                    (file_id, target, link_type),
-                )
-                total_links += 1
-            except Exception:
-                pass
-
-        if rel_path in existing:
-            updated_count += 1
-        else:
-            new_count += 1
-
-    # Remove files that no longer exist on disk
-    deleted_count = 0
-    if not dry_run:
-        for rel_path in existing:
-            if rel_path not in disk_files:
-                conn.execute("DELETE FROM vault_files WHERE rel_path = ?", (rel_path,))
-                deleted_count += 1
-
-    conn.commit()
-
-    # Compute TF-IDF keywords
-    total_keywords = 0
-    if not dry_run and (new_count > 0 or updated_count > 0 or deleted_count > 0):
-        total_keywords = _compute_tfidf_keywords(conn)
-
-    conn.close()
     elapsed = time.monotonic() - start
 
     return IngestResult(
@@ -296,31 +294,27 @@ def search_by_keyword(
 
     Returns ranked results with file path, heading, body preview, and TF-IDF score.
     """
-    conn = get_connection(database_path)
-    ensure_schema(conn)
-
-    results = conn.execute(
-        """
-        SELECT
-            k.keyword,
-            k.tf_idf_score,
-            c.heading,
-            SUBSTR(c.body, 1, 300) AS body_preview,
-            c.char_count,
-            vf.rel_path,
-            vf.title,
-            vf.tags_json
-        FROM keywords k
-        JOIN chunks c ON c.id = k.chunk_id
-        JOIN vault_files vf ON vf.id = c.file_id
-        WHERE k.keyword = ?
-        ORDER BY k.tf_idf_score DESC
-        LIMIT ?
-        """,
-        (keyword.lower(), limit),
-    ).fetchall()
-
-    conn.close()
+    with db_connection(database_path, ensure_schema) as conn:
+        results = conn.execute(
+            """
+            SELECT
+                k.keyword,
+                k.tf_idf_score,
+                c.heading,
+                SUBSTR(c.body, 1, 300) AS body_preview,
+                c.char_count,
+                vf.rel_path,
+                vf.title,
+                vf.tags_json
+            FROM keywords k
+            JOIN chunks c ON c.id = k.chunk_id
+            JOIN vault_files vf ON vf.id = c.file_id
+            WHERE k.keyword = ?
+            ORDER BY k.tf_idf_score DESC
+            LIMIT ?
+            """,
+            (keyword.lower(), limit),
+        ).fetchall()
 
     return [
         {

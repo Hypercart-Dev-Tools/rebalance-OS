@@ -1,18 +1,26 @@
 """
 Shared database layer for rebalance — connection factory, schema creation,
-and sqlite-vec extension loading.
+sqlite-vec extension loading, and context managers.
 
-All table creation for vault ingestion and embeddings lives here.
-Does NOT touch project_registry or github_activity — those have their own
-writers in registry.py and github_scan.py.
+All CREATE TABLE statements live here so the full DB shape is visible in
+one place.  Individual modules call the appropriate ensure_*_schema()
+function (or use the db_connection context manager) rather than carrying
+their own DDL.
 """
 
 from __future__ import annotations
 
 import sqlite3
+from contextlib import contextmanager
 from pathlib import Path
+from typing import Callable, Generator
 
 import sqlite_vec
+
+
+# ---------------------------------------------------------------------------
+# Connection factory
+# ---------------------------------------------------------------------------
 
 
 def get_connection(database_path: Path) -> sqlite3.Connection:
@@ -38,6 +46,37 @@ def get_connection(database_path: Path) -> sqlite3.Connection:
 
     conn.row_factory = sqlite3.Row
     return conn
+
+
+@contextmanager
+def db_connection(
+    database_path: Path,
+    ensure_fn: Callable[[sqlite3.Connection], None] | None = None,
+) -> Generator[sqlite3.Connection, None, None]:
+    """Context-managed database connection with optional schema setup.
+
+    Usage::
+
+        with db_connection(db_path, ensure_schema) as conn:
+            rows = conn.execute("SELECT ...").fetchall()
+
+    The connection is always closed on exit — even if the caller raises.
+    Pass *ensure_fn* to guarantee a specific set of tables exists (e.g.
+    ``ensure_schema``, ``ensure_calendar_schema``).  Omit it when you only
+    need a bare connection.
+    """
+    conn = get_connection(database_path)
+    if ensure_fn is not None:
+        ensure_fn(conn)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+# ---------------------------------------------------------------------------
+# Vault schemas (notes, chunks, keywords, links, embeddings)
+# ---------------------------------------------------------------------------
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
@@ -108,4 +147,82 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Calendar schema
+# ---------------------------------------------------------------------------
+
+
+def ensure_calendar_schema(conn: sqlite3.Connection) -> None:
+    """Create calendar_events table if it doesn't exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS calendar_events (
+            id              TEXT PRIMARY KEY,
+            summary         TEXT,
+            start_time      TEXT NOT NULL,
+            end_time        TEXT,
+            location        TEXT,
+            attendees_json  TEXT,
+            calendar_id     TEXT NOT NULL DEFAULT 'primary',
+            status          TEXT,
+            description     TEXT,
+            fetched_at      TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_calendar_start ON calendar_events(start_time)"
+    )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# GitHub activity schema
+# ---------------------------------------------------------------------------
+
+
+def ensure_github_schema(conn: sqlite3.Connection) -> None:
+    """Create github_activity table if it doesn't exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_activity (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            login           TEXT    NOT NULL,
+            repo_full_name  TEXT    NOT NULL,
+            scan_date       TEXT    NOT NULL,
+            commits         INTEGER NOT NULL DEFAULT 0,
+            pushes          INTEGER NOT NULL DEFAULT 0,
+            prs_opened      INTEGER NOT NULL DEFAULT 0,
+            prs_merged      INTEGER NOT NULL DEFAULT 0,
+            issues_opened   INTEGER NOT NULL DEFAULT 0,
+            issue_comments  INTEGER NOT NULL DEFAULT 0,
+            reviews         INTEGER NOT NULL DEFAULT 0,
+            last_active_at  TEXT,
+            scanned_at      TEXT    NOT NULL,
+            UNIQUE(login, repo_full_name, scan_date) ON CONFLICT REPLACE
+        )
+    """)
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Project registry schema
+# ---------------------------------------------------------------------------
+
+
+def ensure_project_schema(conn: sqlite3.Connection) -> None:
+    """Create project_registry table if it doesn't exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS project_registry (
+            name TEXT PRIMARY KEY,
+            status TEXT,
+            summary TEXT,
+            value_level TEXT,
+            priority_tier INTEGER,
+            risk_level TEXT,
+            repos_json TEXT,
+            tags_json TEXT,
+            custom_fields_json TEXT
+        )
+    """)
     conn.commit()
