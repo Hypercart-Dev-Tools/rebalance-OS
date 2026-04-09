@@ -64,6 +64,8 @@ Data sources
                              query_notes
                              search_vault
                              github_balance
+                             review_timesheet
+                             classify_event
                                      │
              ┌───────────────────────┼────────────────────────┐
              ▼                       ▼                        ▼
@@ -113,6 +115,11 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [x] `ask` tool — multi-source natural language query with local LLM synthesis
 - [x] Temporal context (day-of-week, work/off/vacation awareness)
 - [x] Daily scheduler scripts (launchd plist, install helper)
+- [x] Calendar daily/weekly reports with project aggregation and time totals
+- [x] Configurable hours format (decimal or h:m) for calendar reports
+- [x] Agent review layer for calendar events (`review_timesheet`, `classify_event` MCP tools)
+- [x] DRY calendar helpers (shared datetime parsing, duration calc, connection setup)
+- [x] CI test suite (GitHub Actions, Python 3.12/3.13, 68 tests)
 - [ ] Morning briefing assembler
 - [ ] Project weight system (neglect score, momentum decay, avoidance ratio)
 - [ ] Email integration (Gmail API, starred/important threads only, forward-only)
@@ -281,13 +288,16 @@ rebalance ingest notes --vault /path/to/vault --database rebalance.db          #
 rebalance ingest embed --database rebalance.db                                 # embed new chunks
 rebalance github-scan --token ghp_... --database rebalance.db                  # refresh GitHub data
 rebalance calendar-sync --database rebalance.db                                # refresh calendar
+rebalance calendar-daily-report                                                # today's events + project breakdown
+rebalance calendar-weekly-report                                               # this week's summary + aggregator
+rebalance calendar-daily-totals                                                # daily event count + duration stats
 ```
 
 ---
 
 ## License
 
-Copyright 2025 Hypercart DBA Neochrome, Inc.
+Copyright 2025-2026 Hypercart DBA Neochrome, Inc.
 
 Licensed under the **Apache License, Version 2.0**.
 
