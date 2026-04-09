@@ -1,6 +1,4 @@
-> Your workday OS
-
-**Status: Coming soon — active development. Star to follow along.**
+> Your workday "OS"
 
 ---
 
