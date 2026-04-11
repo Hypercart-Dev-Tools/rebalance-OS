@@ -339,6 +339,7 @@ def calendar_daily_totals_cmd(
 def calendar_daily_report_cmd(
     database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
     date_str: str = typer.Option(None, "--date", help="Date to report on (YYYY-MM-DD, default: today)"),
+    output: Path = typer.Option(None, "--output", "-o", help="Write report to a markdown file instead of stdout"),
 ) -> None:
     """Generate daily calendar report with project aggregator (exclude keywords configured in temp/calendar_config.json)."""
     from datetime import date
@@ -354,13 +355,21 @@ def calendar_daily_report_cmd(
         target_date = date.today()
 
     report = generate_daily_report(db_path, target_date, config)
-    typer.echo(report)
+
+    if output:
+        out_path = output.expanduser().resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(report, encoding="utf-8")
+        typer.echo(f"Report written to {out_path}")
+    else:
+        typer.echo(report)
 
 
 @app.command("calendar-weekly-report")
 def calendar_weekly_report_cmd(
     database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
     date_str: str = typer.Option(None, "--date", help="Date in target week (YYYY-MM-DD, default: today)"),
+    output: Path = typer.Option(None, "--output", "-o", help="Write report to a markdown file instead of stdout"),
 ) -> None:
     """Generate weekly calendar report (Sun-Sat) with daily summaries and project aggregator."""
     from datetime import date
@@ -376,7 +385,14 @@ def calendar_weekly_report_cmd(
         target_date = date.today()
 
     report = generate_weekly_report(db_path, target_date, config)
-    typer.echo(report)
+
+    if output:
+        out_path = output.expanduser().resolve()
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_text(report, encoding="utf-8")
+        typer.echo(f"Report written to {out_path}")
+    else:
+        typer.echo(report)
 
 
 @app.command("version")
