@@ -81,6 +81,12 @@ Each developer authorizes their **own** Google account locally. The repo only pr
 python scripts/setup_calendar_oauth.py --test
 ```
 
+If you want agents to create events, authorize with write access instead:
+
+```bash
+python scripts/setup_calendar_oauth.py --write-access --test
+```
+
 After clicking Allow, the script prints a list of your Google Calendars and their IDs. **Copy the ID** of the calendar you want to use — you'll need it in the next step.
 
 > Your login token is saved locally at `~/.config/gcalcli/oauth` and is never stored in the repo.

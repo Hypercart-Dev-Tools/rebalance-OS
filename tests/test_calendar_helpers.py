@@ -1,11 +1,13 @@
 """Tests for the canonical calendar helpers: datetime parsing, duration
-calculation, and database connection context manager."""
+calculation, database connection context manager, and calendar auth helpers."""
 
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import MagicMock, patch
 
+from rebalance.ingest import calendar
 from rebalance.ingest.calendar_helpers import (
     calendar_connection,
     event_duration_minutes,
@@ -126,6 +128,70 @@ class CalendarConnectionTests(unittest.TestCase):
             # Connection should be closed — attempting to use it should fail
             with self.assertRaises(Exception):
                 conn.execute("SELECT 1")
+
+
+class CalendarAuthAndWriteTests(unittest.TestCase):
+    """Tests for calendar OAuth scope enforcement and event creation."""
+
+    def test_credentials_have_scopes(self) -> None:
+        creds = type("Creds", (), {"scopes": [calendar.CALENDAR_READONLY_SCOPE, calendar.CALENDAR_WRITE_SCOPE]})()
+        self.assertTrue(calendar._credentials_have_scopes(creds, [calendar.CALENDAR_READONLY_SCOPE]))
+        self.assertTrue(calendar._credentials_have_scopes(creds, [calendar.CALENDAR_WRITE_SCOPE]))
+
+    @patch("rebalance.ingest.calendar.pickle.load")
+    @patch("builtins.open")
+    @patch("pathlib.Path.exists", return_value=True)
+    def test_load_credentials_rejects_missing_scope(self, _exists: MagicMock, _open_file: MagicMock, mock_pickle: MagicMock) -> None:
+        creds = type("Creds", (), {"expired": False, "refresh_token": "x", "scopes": [calendar.CALENDAR_READONLY_SCOPE]})()
+        mock_pickle.return_value = creds
+
+        with self.assertRaises(PermissionError):
+            calendar._load_credentials(required_scopes=[calendar.CALENDAR_WRITE_SCOPE])
+
+    @patch("rebalance.ingest.calendar._build_service")
+    def test_create_calendar_event_rejects_naive_datetimes(self, _build_service: MagicMock) -> None:
+        with self.assertRaises(ValueError):
+            calendar.create_calendar_event(
+                summary="Planning",
+                start_time="2026-04-14T10:00:00",
+                end_time="2026-04-14T11:00:00",
+            )
+
+    @patch("rebalance.ingest.calendar._build_service")
+    def test_create_calendar_event_inserts_with_attendees(self, mock_build_service: MagicMock) -> None:
+        mock_service = MagicMock()
+        mock_build_service.return_value = mock_service
+        mock_service.events.return_value.insert.return_value.execute.return_value = {
+            "id": "evt-123",
+            "htmlLink": "https://calendar.google.com/event?eid=evt-123",
+            "summary": "Planning",
+            "start": {"dateTime": "2026-04-14T10:00:00-07:00"},
+            "end": {"dateTime": "2026-04-14T11:00:00-07:00"},
+            "attendees": [{"email": "a@example.com"}],
+        }
+
+        result = calendar.create_calendar_event(
+            calendar_id="team@example.com",
+            summary="Planning",
+            start_time="2026-04-14T10:00:00-07:00",
+            end_time="2026-04-14T11:00:00-07:00",
+            timezone_name="America/Los_Angeles",
+            attendees=["a@example.com"],
+            location="Office",
+            description="Agenda",
+        )
+
+        mock_build_service.assert_called_once_with(required_scopes=[calendar.CALENDAR_WRITE_SCOPE])
+        mock_service.events.return_value.insert.assert_called_once()
+        insert_kwargs = mock_service.events.return_value.insert.call_args.kwargs
+        self.assertEqual(insert_kwargs["calendarId"], "team@example.com")
+        self.assertEqual(insert_kwargs["sendUpdates"], "all")
+        self.assertEqual(insert_kwargs["body"]["start"]["timeZone"], "America/Los_Angeles")
+        self.assertEqual(insert_kwargs["body"]["location"], "Office")
+        self.assertEqual(insert_kwargs["body"]["description"], "Agenda")
+        self.assertEqual(insert_kwargs["body"]["attendees"], [{"email": "a@example.com"}])
+        self.assertEqual(result.event_id, "evt-123")
+        self.assertEqual(result.attendees_count, 1)
 
 
 if __name__ == "__main__":

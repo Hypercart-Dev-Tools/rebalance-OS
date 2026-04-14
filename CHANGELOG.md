@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.0] - 2026-04-14
+
+### Added
+
+- Write-capable Google Calendar MCP tool: `create_calendar_event`. Agents can now create events with summary, start/end time, optional description, location, attendees, calendar override, and timezone payload.
+- Calendar write-path tests covering OAuth scope enforcement, timezone-aware validation, and event insertion payload generation.
+
+### Changed
+
+- `scripts/setup_calendar_oauth.py` now supports `--write-access` so a device can be reauthorized with Google Calendar write scope instead of the previous read-only scope.
+- Version metadata is now aligned across the Python package, manifest, and changelog at `0.7.0`.
+
 ## [0.6.2] - 2026-04-07
 
 ### Fixed
