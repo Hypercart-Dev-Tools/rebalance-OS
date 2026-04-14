@@ -18,7 +18,7 @@ app.add_typer(ingest_app, name="ingest")
 app.add_typer(config_app, name="config")
 
 GOOGLE_CALENDAR_ENV_PATH = Path("/Users/noelsaw/secrets/google-calendar.env")
-CALENDAR_EVENT_LOG_PATH = Path("logs/calendar-event-create.jsonl")
+CALENDAR_EVENT_LOG_PATH = Path("temp/logs/calendar-event-create.jsonl")
 
 
 def _load_google_calendar_env() -> dict[str, str]:

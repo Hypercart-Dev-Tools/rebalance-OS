@@ -436,7 +436,7 @@ For all-day events, `--date` is converted into a timezone-aware midnight-to-midn
 
 ### Structured logging
 
-Each non-dry-run invocation appends one JSON line to `logs/calendar-event-create.jsonl` with the request timestamp, summary, start date, action, event ID, and optional `dedupe_key`.
+Each non-dry-run invocation appends one JSON line to `temp/logs/calendar-event-create.jsonl` with the request timestamp, summary, start date, action, event ID, and optional `dedupe_key`.
 
 This gives operators a local audit trail for:
 
@@ -444,9 +444,9 @@ This gives operators a local audit trail for:
 - duplicate blocks
 - `--skip-if-exists` no-op writes
 
-The log stays local and is gitignored.
+The log stays local under `temp/` and is gitignored.
 
-Rotation: if the file grows beyond what you want to keep around, archive or truncate `logs/calendar-event-create.jsonl` manually. JSONL append-only logs are intentionally simple here; there is no built-in retention worker.
+Rotation: if the file grows beyond what you want to keep around, archive or truncate `temp/logs/calendar-event-create.jsonl` manually. JSONL append-only logs are intentionally simple here; there is no built-in retention worker.
 
 ### Worked example
 

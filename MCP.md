@@ -165,8 +165,8 @@ Duplicate-guard limits:
 
 Structured operator log:
 
-- `logs/calendar-event-create.jsonl` records created IDs, duplicate blocks, and skip outcomes for reconciliation
-- the log is local-only, gitignored, and can be rotated manually when it grows
+- `temp/logs/calendar-event-create.jsonl` records created IDs, duplicate blocks, and skip outcomes for reconciliation
+- the log is local-only under `temp/`, gitignored, and can be rotated manually when it grows
 
 For the full operator workflow, dry-run behavior, and a copy-paste worked example, see [GOOGLE_CALENDAR.md — Creating Events Programmatically](./GOOGLE_CALENDAR.md#creating-events-programmatically).
 
