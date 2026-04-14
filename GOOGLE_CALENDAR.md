@@ -404,6 +404,14 @@ Before creating anything, the command also searches the target calendar for an e
 - `--skip-if-exists`: treat that duplicate as success and print the existing event ID/link instead of creating another one.
 - `--dedupe-key <key>`: short-circuit repeat runs from the same machine using the local structured log.
 
+Duplicate-guard limits:
+
+- if the event title changes, the title + start-date search will not match the earlier event
+- if an event spans multiple days but starts on a different date, the guard will not catch it from overlap alone
+- if two different machines race the same write, the local `--dedupe-key` log only protects the machine that already wrote or logged it
+
+Use `--dedupe-key` when you need stronger retry protection across repeated operator runs for the same logical reminder or task.
+
 Reauth reference:
 
 ```bash
@@ -437,6 +445,8 @@ This gives operators a local audit trail for:
 - `--skip-if-exists` no-op writes
 
 The log stays local and is gitignored.
+
+Rotation: if the file grows beyond what you want to keep around, archive or truncate `logs/calendar-event-create.jsonl` manually. JSONL append-only logs are intentionally simple here; there is no built-in retention worker.
 
 ### Worked example
 

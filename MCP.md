@@ -155,11 +155,18 @@ Duplicate/idempotency controls on the CLI:
 
 - `--skip-if-exists` searches the target calendar for the same title + same start date and exits successfully without writing if found
 - `--dedupe-key <key>` uses the local structured event log to short-circuit repeat runs from the same machine
+- `--output json` returns machine-readable status values such as `created`, `skipped_existing`, `blocked_duplicate`, and `idempotency_hit`
+
+Duplicate-guard limits:
+
+- editing the title after the first create defeats the title + start-date lookup
+- overlapping multi-day events are not treated as duplicates unless the same title also starts on the same date
+- for repeated operator retries of the same logical event, prefer `--dedupe-key`
 
 Structured operator log:
 
 - `logs/calendar-event-create.jsonl` records created IDs, duplicate blocks, and skip outcomes for reconciliation
-- the log is local-only and gitignored
+- the log is local-only, gitignored, and can be rotated manually when it grows
 
 For the full operator workflow, dry-run behavior, and a copy-paste worked example, see [GOOGLE_CALENDAR.md — Creating Events Programmatically](./GOOGLE_CALENDAR.md#creating-events-programmatically).
 

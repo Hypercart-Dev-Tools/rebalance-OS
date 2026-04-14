@@ -146,10 +146,14 @@ class CalendarCreateEventCliTests(unittest.TestCase):
                         "--date",
                         "2026-04-21",
                         "--skip-if-exists",
+                        "--output",
+                        "json",
                     ],
                 )
                 self.assertEqual(result.exit_code, 0)
-                self.assertIn("Matching event already exists: evt-2", result.output)
+                payload = json.loads(result.output)
+                self.assertEqual(payload["status"], "skipped_existing")
+                self.assertEqual(payload["event_id"], "evt-2")
                 mock_create.assert_not_called()
                 lines = log_path.read_text(encoding="utf-8").splitlines()
                 self.assertEqual(json.loads(lines[-1])["action"], "skipped_existing")
@@ -187,11 +191,15 @@ class CalendarCreateEventCliTests(unittest.TestCase):
                         "2026-04-21",
                         "--dedupe-key",
                         "binoid-cleanup-2026-04-21",
+                        "--output",
+                        "json",
                     ],
                 )
                 self.assertEqual(result.exit_code, 0)
-                self.assertIn("Idempotency hit for dedupe key: binoid-cleanup-2026-04-21", result.output)
-                self.assertIn("Existing event: evt-3", result.output)
+                payload = json.loads(result.output)
+                self.assertEqual(payload["status"], "idempotency_hit")
+                self.assertEqual(payload["event_id"], "evt-3")
+                self.assertEqual(payload["dedupe_key"], "binoid-cleanup-2026-04-21")
                 mock_find_existing.assert_not_called()
                 mock_create.assert_not_called()
                 lines = log_path.read_text(encoding="utf-8").splitlines()

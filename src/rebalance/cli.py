@@ -197,6 +197,28 @@ def _find_existing_calendar_event(payload: dict[str, object]) -> dict[str, str] 
     return None
 
 
+def _emit_calendar_create_result(output_format: str, data: dict[str, object]) -> None:
+    """Emit calendar-create result in plain text or JSON."""
+    if output_format == "json":
+        typer.echo(json.dumps(data, ensure_ascii=False))
+        return
+
+    status = str(data.get("status", ""))
+    if status == "created":
+        typer.echo(f"Created event: {data.get('event_id', '')}")
+        typer.echo(f"Link: {data.get('html_link', '')}")
+    elif status == "idempotency_hit":
+        typer.echo(f"Idempotency hit for dedupe key: {data.get('dedupe_key', '')}")
+        if data.get("event_id"):
+            typer.echo(f"Existing event: {data['event_id']}")
+        if data.get("html_link"):
+            typer.echo(f"Link: {data['html_link']}")
+    elif status in {"skipped_existing", "blocked_duplicate"}:
+        typer.echo(f"Matching event already exists: {data.get('event_id', '')}")
+        if data.get("html_link"):
+            typer.echo(f"Link: {data['html_link']}")
+
+
 @ingest_app.command("preflight")
 def ingest_preflight(
     vault: Path = typer.Option(..., exists=True, file_okay=False, dir_okay=True, help="Path to Obsidian vault"),
@@ -475,10 +497,15 @@ def calendar_create_event_cmd(
     timezone_name: str = typer.Option("America/Los_Angeles", "--timezone", help="IANA timezone for --date payloads"),
     dedupe_key: str = typer.Option("", "--dedupe-key", help="Optional idempotency key checked against the local create-event log"),
     skip_if_exists: bool = typer.Option(False, "--skip-if-exists", help="Return success instead of erroring when a matching event already exists"),
+    output_format: str = typer.Option("text", "--output", help="Output format: text or json"),
     dry_run: bool = typer.Option(False, "--dry-run", help="Print the normalized payload without creating the event"),
 ) -> None:
     """Create a Google Calendar event from the CLI without needing an MCP host."""
     from rebalance.ingest.calendar import create_calendar_event
+
+    normalized_output_format = output_format.strip().lower()
+    if normalized_output_format not in {"text", "json"}:
+        raise typer.BadParameter("--output must be 'text' or 'json'.")
 
     env_data = _load_google_calendar_env()
     _require_calendar_write_scope(env_data)
@@ -519,33 +546,26 @@ def calendar_create_event_cmd(
     if normalized_dedupe_key:
         logged_hit = _find_logged_dedupe_hit(normalized_dedupe_key)
         if logged_hit and logged_hit.get("action") in {"created", "skipped_existing", "blocked_duplicate"}:
-            _append_calendar_event_log(
-                {
-                    **base_log_record,
-                    "action": "idempotency_hit",
-                    "event_id": logged_hit.get("event_id", ""),
-                    "html_link": logged_hit.get("html_link", ""),
-                }
-            )
-            typer.echo(f"Idempotency hit for dedupe key: {normalized_dedupe_key}")
-            if logged_hit.get("event_id"):
-                typer.echo(f"Existing event: {logged_hit['event_id']}")
-            if logged_hit.get("html_link"):
-                typer.echo(f"Link: {logged_hit['html_link']}")
+            emit_data = {
+                **base_log_record,
+                "status": "idempotency_hit",
+                "event_id": logged_hit.get("event_id", ""),
+                "html_link": logged_hit.get("html_link", ""),
+            }
+            _append_calendar_event_log({**emit_data, "action": "idempotency_hit"})
+            _emit_calendar_create_result(normalized_output_format, emit_data)
             return
 
     existing_event = _find_existing_calendar_event(payload)
     if existing_event:
-        log_record = {
+        emit_data = {
             **base_log_record,
-            "action": "skipped_existing" if skip_if_exists else "blocked_duplicate",
+            "status": "skipped_existing" if skip_if_exists else "blocked_duplicate",
             "event_id": existing_event["event_id"],
             "html_link": existing_event["html_link"],
         }
-        _append_calendar_event_log(log_record)
-        typer.echo(f"Matching event already exists: {existing_event['event_id']}")
-        if existing_event["html_link"]:
-            typer.echo(f"Link: {existing_event['html_link']}")
+        _append_calendar_event_log({**emit_data, "action": emit_data["status"]})
+        _emit_calendar_create_result(normalized_output_format, emit_data)
         if not skip_if_exists:
             raise typer.Exit(code=1)
         return
@@ -560,16 +580,14 @@ def calendar_create_event_cmd(
         location=str(payload["location"]),
         attendees=list(payload["attendees"]),
     )
-    _append_calendar_event_log(
-        {
-            **base_log_record,
-            "action": "created",
-            "event_id": result.event_id,
-            "html_link": result.html_link,
-        }
-    )
-    typer.echo(f"Created event: {result.event_id}")
-    typer.echo(f"Link: {result.html_link}")
+    emit_data = {
+        **base_log_record,
+        "status": "created",
+        "event_id": result.event_id,
+        "html_link": result.html_link,
+    }
+    _append_calendar_event_log({**emit_data, "action": "created"})
+    _emit_calendar_create_result(normalized_output_format, emit_data)
 
 
 @app.command("calendar-daily-totals")

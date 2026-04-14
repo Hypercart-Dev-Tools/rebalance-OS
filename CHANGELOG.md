@@ -9,11 +9,13 @@
 - CLI tests covering the dry-run payload shape and the required write-scope guard.
 - Duplicate guard for calendar event creation: before writing, the CLI now searches the target calendar for an existing event with the same title and start date.
 - Idempotency controls for calendar creation: `--skip-if-exists`, optional `--dedupe-key`, and local structured JSONL logging for created, skipped, and blocked attempts.
+- Machine-readable CLI output via `--output json`, including distinct statuses for `created`, `skipped_existing`, `blocked_duplicate`, and `idempotency_hit`.
 
 ### Changed
 
 - Google Calendar docs now include a "Creating Events Programmatically" section with write-scope validation, dry-run workflow, and a copy-paste Binoid reminder example.
 - MCP docs now recommend the CLI path for non-MCP clients and clarify why the project bypasses raw JSON-RPC for local operator workflows.
+- Calendar event docs now call out duplicate-guard blind spots (title edits, overlapping multi-day events), recommend when to use `--dedupe-key`, and document local log rotation expectations.
 
 ## [0.7.0] - 2026-04-14
 
