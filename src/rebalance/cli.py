@@ -1,4 +1,9 @@
+import json
+import pickle
+from datetime import date as date_cls, datetime, time as time_cls, timedelta
 from pathlib import Path
+from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 import typer
 
@@ -11,6 +16,185 @@ ingest_app = typer.Typer(help="Ingest and project registry workflows")
 config_app = typer.Typer(help="Configuration and secrets management")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(config_app, name="config")
+
+GOOGLE_CALENDAR_ENV_PATH = Path("/Users/noelsaw/secrets/google-calendar.env")
+CALENDAR_EVENT_LOG_PATH = Path("logs/calendar-event-create.jsonl")
+
+
+def _load_google_calendar_env() -> dict[str, str]:
+    """Load shared Google Calendar env metadata from the operator-owned file."""
+    if not GOOGLE_CALENDAR_ENV_PATH.exists():
+        raise typer.BadParameter(
+            f"Google Calendar env file not found: {GOOGLE_CALENDAR_ENV_PATH}"
+        )
+
+    values: dict[str, str] = {}
+    for raw_line in GOOGLE_CALENDAR_ENV_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+    return values
+
+
+def _load_calendar_credentials_from_env(env_data: dict[str, str]) -> object:
+    """Load the pickled Google OAuth credentials referenced by the shared env file."""
+    token_path_str = env_data.get("GOOGLE_CALENDAR_TOKEN_PATH", "").strip()
+    if not token_path_str:
+        raise typer.BadParameter(
+            f"GOOGLE_CALENDAR_TOKEN_PATH is missing in {GOOGLE_CALENDAR_ENV_PATH}"
+        )
+
+    token_path = Path(token_path_str).expanduser()
+    if not token_path.exists():
+        raise typer.BadParameter(f"Google Calendar token not found: {token_path}")
+
+    with open(token_path, "rb") as token_file:
+        return pickle.load(token_file)
+
+
+def _require_calendar_write_scope(env_data: dict[str, str]) -> object:
+    """Validate that the current token already includes the required write scope."""
+    creds = _load_calendar_credentials_from_env(env_data)
+    required_scope = env_data.get("GOOGLE_CALENDAR_REQUIRED_WRITE_SCOPE", "").strip()
+    current_scopes = set(getattr(creds, "scopes", []) or [])
+
+    if required_scope and required_scope not in current_scopes:
+        reauth_command = env_data.get("GOOGLE_CALENDAR_REAUTH_COMMAND", "").strip()
+        message = [
+            "Google Calendar token is missing the required write scope.",
+            f"Required: {required_scope}",
+            f"Current: {sorted(current_scopes)}",
+        ]
+        if reauth_command:
+            message.append(f"Reauthorize with: {reauth_command}")
+        raise typer.BadParameter("\n".join(message))
+
+    return creds
+
+
+def _resolve_calendar_event_window(
+    *,
+    date_str: str,
+    start_time: str,
+    end_time: str,
+    timezone_name: str,
+) -> tuple[str, str, str]:
+    """Resolve either an all-day date or explicit start/end datetimes."""
+    if date_str and (start_time or end_time):
+        raise typer.BadParameter("Use either --date or --start/--end, not both.")
+
+    if date_str:
+        target_date = date_cls.fromisoformat(date_str)
+        tz = ZoneInfo(timezone_name)
+        start_dt = datetime.combine(target_date, time_cls.min, tzinfo=tz)
+        end_dt = datetime.combine(target_date + timedelta(days=1), time_cls.min, tzinfo=tz)
+        return start_dt.isoformat(), end_dt.isoformat(), timezone_name
+
+    if bool(start_time) != bool(end_time):
+        raise typer.BadParameter("--start and --end must be provided together.")
+    if not start_time or not end_time:
+        raise typer.BadParameter("Provide either --date or both --start and --end.")
+
+    try:
+        start_dt = datetime.fromisoformat(start_time)
+        end_dt = datetime.fromisoformat(end_time)
+    except ValueError as exc:
+        raise typer.BadParameter(f"Invalid datetime: {exc}") from exc
+
+    if start_dt.tzinfo is None or end_dt.tzinfo is None:
+        raise typer.BadParameter("--start and --end must include timezone offsets.")
+    if end_dt <= start_dt:
+        raise typer.BadParameter("--end must be after --start.")
+
+    return start_dt.isoformat(), end_dt.isoformat(), timezone_name
+
+
+def _build_calendar_event_payload(
+    *,
+    title: str,
+    start_iso: str,
+    end_iso: str,
+    description: str,
+    location: str,
+    attendees: list[str],
+    calendar_id: str,
+    timezone_name: str,
+) -> dict[str, object]:
+    """Build the normalized payload for create_calendar_event."""
+    return {
+        "calendar_id": calendar_id,
+        "summary": title.strip(),
+        "start_time": start_iso,
+        "end_time": end_iso,
+        "timezone_name": timezone_name,
+        "description": description,
+        "location": location,
+        "attendees": [email.strip() for email in attendees if email.strip()],
+    }
+
+
+def _find_logged_dedupe_hit(dedupe_key: str) -> dict[str, object] | None:
+    """Return the most recent logged record for a dedupe key, if present."""
+    if not dedupe_key or not CALENDAR_EVENT_LOG_PATH.exists():
+        return None
+
+    for raw_line in reversed(CALENDAR_EVENT_LOG_PATH.read_text(encoding="utf-8").splitlines()):
+        line = raw_line.strip()
+        if not line:
+            continue
+        try:
+            record = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if record.get("dedupe_key") == dedupe_key:
+            return record
+    return None
+
+
+def _append_calendar_event_log(record: dict[str, object]) -> None:
+    """Append one structured calendar-create record to the local JSONL log."""
+    CALENDAR_EVENT_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with open(CALENDAR_EVENT_LOG_PATH, "a", encoding="utf-8") as log_file:
+        log_file.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+def _find_existing_calendar_event(payload: dict[str, object]) -> dict[str, str] | None:
+    """Search for an existing event with the same title and same start date."""
+    from rebalance.ingest.calendar import CALENDAR_WRITE_SCOPE, _build_service
+
+    summary = str(payload["summary"])
+    start_iso = str(payload["start_time"])
+    end_iso = str(payload["end_time"])
+    target_date = start_iso[:10]
+
+    service = _build_service(required_scopes=[CALENDAR_WRITE_SCOPE])
+    result = (
+        service.events()
+        .list(
+            calendarId=str(payload["calendar_id"]),
+            q=summary,
+            timeMin=start_iso,
+            timeMax=end_iso,
+            singleEvents=True,
+            orderBy="startTime",
+            maxResults=25,
+        )
+        .execute()
+    )
+
+    for event in result.get("items", []):
+        event_summary = event.get("summary", "")
+        event_start = event.get("start", {}).get("dateTime", event.get("start", {}).get("date", ""))
+        if event_summary == summary and event_start[:10] == target_date:
+            return {
+                "event_id": event.get("id", ""),
+                "html_link": event.get("htmlLink", ""),
+                "summary": event_summary,
+                "start_time": event_start,
+            }
+    return None
 
 
 @ingest_app.command("preflight")
@@ -276,6 +460,116 @@ def calendar_sync_cmd(
         f"stored={result.events_stored}, window={result.window_start}..{result.window_end} "
         f"({result.elapsed_seconds}s)"
     )
+
+
+@app.command("calendar-create-event")
+def calendar_create_event_cmd(
+    title: str = typer.Option(..., "--title", help="Event title"),
+    date_str: str = typer.Option("", "--date", help="All-day event date (YYYY-MM-DD)"),
+    start_time: str = typer.Option("", "--start", help="Start datetime with timezone offset"),
+    end_time: str = typer.Option("", "--end", help="End datetime with timezone offset"),
+    description: str = typer.Option("", "--description", help="Event description"),
+    location: str = typer.Option("", "--location", help="Event location"),
+    attendees: list[str] = typer.Option(None, "--attendee", help="Attendee email; repeat the flag to add more"),
+    calendar_id: str = typer.Option("primary", "--calendar-id", help="Calendar ID (defaults to primary)"),
+    timezone_name: str = typer.Option("America/Los_Angeles", "--timezone", help="IANA timezone for --date payloads"),
+    dedupe_key: str = typer.Option("", "--dedupe-key", help="Optional idempotency key checked against the local create-event log"),
+    skip_if_exists: bool = typer.Option(False, "--skip-if-exists", help="Return success instead of erroring when a matching event already exists"),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Print the normalized payload without creating the event"),
+) -> None:
+    """Create a Google Calendar event from the CLI without needing an MCP host."""
+    from rebalance.ingest.calendar import create_calendar_event
+
+    env_data = _load_google_calendar_env()
+    _require_calendar_write_scope(env_data)
+
+    start_iso, end_iso, resolved_timezone = _resolve_calendar_event_window(
+        date_str=date_str,
+        start_time=start_time,
+        end_time=end_time,
+        timezone_name=timezone_name,
+    )
+
+    payload = _build_calendar_event_payload(
+        title=title,
+        start_iso=start_iso,
+        end_iso=end_iso,
+        description=description,
+        location=location,
+        attendees=attendees or [],
+        calendar_id=calendar_id,
+        timezone_name=resolved_timezone,
+    )
+    request_id = uuid4().hex
+    base_log_record = {
+        "timestamp": datetime.now(ZoneInfo("UTC")).isoformat(),
+        "request_id": request_id,
+        "dedupe_key": dedupe_key.strip(),
+        "calendar_id": payload["calendar_id"],
+        "summary": payload["summary"],
+        "start_time": payload["start_time"],
+        "start_date": str(payload["start_time"])[:10],
+    }
+
+    if dry_run:
+        typer.echo(json.dumps(payload, indent=2))
+        return
+
+    normalized_dedupe_key = dedupe_key.strip()
+    if normalized_dedupe_key:
+        logged_hit = _find_logged_dedupe_hit(normalized_dedupe_key)
+        if logged_hit and logged_hit.get("action") in {"created", "skipped_existing", "blocked_duplicate"}:
+            _append_calendar_event_log(
+                {
+                    **base_log_record,
+                    "action": "idempotency_hit",
+                    "event_id": logged_hit.get("event_id", ""),
+                    "html_link": logged_hit.get("html_link", ""),
+                }
+            )
+            typer.echo(f"Idempotency hit for dedupe key: {normalized_dedupe_key}")
+            if logged_hit.get("event_id"):
+                typer.echo(f"Existing event: {logged_hit['event_id']}")
+            if logged_hit.get("html_link"):
+                typer.echo(f"Link: {logged_hit['html_link']}")
+            return
+
+    existing_event = _find_existing_calendar_event(payload)
+    if existing_event:
+        log_record = {
+            **base_log_record,
+            "action": "skipped_existing" if skip_if_exists else "blocked_duplicate",
+            "event_id": existing_event["event_id"],
+            "html_link": existing_event["html_link"],
+        }
+        _append_calendar_event_log(log_record)
+        typer.echo(f"Matching event already exists: {existing_event['event_id']}")
+        if existing_event["html_link"]:
+            typer.echo(f"Link: {existing_event['html_link']}")
+        if not skip_if_exists:
+            raise typer.Exit(code=1)
+        return
+
+    result = create_calendar_event(
+        calendar_id=str(payload["calendar_id"]),
+        summary=str(payload["summary"]),
+        start_time=str(payload["start_time"]),
+        end_time=str(payload["end_time"]),
+        timezone_name=str(payload["timezone_name"]),
+        description=str(payload["description"]),
+        location=str(payload["location"]),
+        attendees=list(payload["attendees"]),
+    )
+    _append_calendar_event_log(
+        {
+            **base_log_record,
+            "action": "created",
+            "event_id": result.event_id,
+            "html_link": result.html_link,
+        }
+    )
+    typer.echo(f"Created event: {result.event_id}")
+    typer.echo(f"Link: {result.html_link}")
 
 
 @app.command("calendar-daily-totals")

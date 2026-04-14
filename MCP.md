@@ -129,8 +129,8 @@ Creates a Google Calendar event using the device-local OAuth token.
 | `end_time` | `str` | *(required)* | ISO datetime with timezone offset |
 | `description` | `str` | `""` | Optional body text |
 | `location` | `str` | `""` | Optional location |
-| `attendees` | `list[str]` | `[]` | Optional attendee email list |
-| `calendar_id` | `str` | `config.calendar_id` | Calendar to write into |
+| `attendees` | `list[str] \| None` | `None` | Optional attendee email list |
+| `calendar_id` | `str` | `config.calendar_id` when blank | Calendar to write into |
 | `timezone_name` | `str` | `""` | Optional IANA timezone name for the payload |
 
 **Returns:** `{event_id, html_link, calendar_id, summary, start_time, end_time, attendees_count, status}`
@@ -140,6 +140,30 @@ Creates a Google Calendar event using the device-local OAuth token.
 ```bash
 python scripts/setup_calendar_oauth.py --write-access --test
 ```
+
+**Recommended operator path:** use the repo CLI for non-MCP clients:
+
+```bash
+rebalance calendar-create-event \
+  --title "Planning review" \
+  --date 2026-04-21 \
+  --calendar-id primary \
+  --dry-run
+```
+
+Duplicate/idempotency controls on the CLI:
+
+- `--skip-if-exists` searches the target calendar for the same title + same start date and exits successfully without writing if found
+- `--dedupe-key <key>` uses the local structured event log to short-circuit repeat runs from the same machine
+
+Structured operator log:
+
+- `logs/calendar-event-create.jsonl` records created IDs, duplicate blocks, and skip outcomes for reconciliation
+- the log is local-only and gitignored
+
+For the full operator workflow, dry-run behavior, and a copy-paste worked example, see [GOOGLE_CALENDAR.md — Creating Events Programmatically](./GOOGLE_CALENDAR.md#creating-events-programmatically).
+
+**Trade-off:** the MCP tool remains the canonical transport for registered MCP hosts, but the CLI is the cleaner path for local terminal sessions and external AI tools that do not have the rebalance server registered. The CLI calls the same underlying `create_calendar_event(...)` implementation and keeps the same write-scope guardrails while avoiding raw JSON-RPC boilerplate.
 
 ---
 
