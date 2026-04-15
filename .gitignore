@@ -10,3 +10,4 @@ dist/
 *.mcpb
 ~/bin/servers.md
 test_report_output.txt
+mrt-temp/
