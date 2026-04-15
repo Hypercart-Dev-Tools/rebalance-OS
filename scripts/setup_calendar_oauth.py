@@ -11,6 +11,7 @@ Desktop app secrets (benign) and Web app secrets (sensitive).
 Usage:
   python scripts/setup_calendar_oauth.py
   python scripts/setup_calendar_oauth.py --test
+  python scripts/setup_calendar_oauth.py --write-access --test
 """
 
 import base64
@@ -20,8 +21,8 @@ from pathlib import Path
 
 from google_auth_oauthlib.flow import InstalledAppFlow
 
-# OAuth scope — read-only access to the authorizing user's own calendar
-SCOPES = ["https://www.googleapis.com/auth/calendar.readonly"]
+READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
 TOKEN_PATH = Path.home() / ".config" / "gcalcli" / "oauth"
 
 # Desktop app credentials (Base64-encoded to avoid overly-broad secret scanners).
@@ -44,13 +45,13 @@ def _build_client_config() -> dict:
     }
 
 
-def authorize_calendar() -> None:
+def authorize_calendar(scopes: list[str]) -> None:
     """Run OAuth2 browser consent flow and store the token locally."""
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     flow = InstalledAppFlow.from_client_config(
         _build_client_config(),
-        scopes=SCOPES,
+        scopes=scopes,
     )
 
     print("\n🔐 Opening browser for Google OAuth consent...\n")
@@ -61,6 +62,7 @@ def authorize_calendar() -> None:
 
     print(f"\n✅ Token saved to: {TOKEN_PATH}")
     print(f"   Expires: {creds.expiry}")
+    print(f"   Scopes:  {', '.join(scopes)}")
 
 
 if __name__ == "__main__":
@@ -72,10 +74,16 @@ if __name__ == "__main__":
         action="store_true",
         help="List available calendars after authorizing to confirm setup",
     )
+    parser.add_argument(
+        "--write-access",
+        action="store_true",
+        help="Request write-capable Calendar scope so agents can create events",
+    )
     args = parser.parse_args()
 
     try:
-        authorize_calendar()
+        scopes = [WRITE_SCOPE] if args.write_access else [READONLY_SCOPE]
+        authorize_calendar(scopes)
 
         if args.test:
             print("\n🧪 Listing your calendars...\n")
@@ -99,6 +107,8 @@ if __name__ == "__main__":
         print("  2. Edit temp/calendar_config.json — set your calendar ID, timezone, and exclude keywords")
         print("  3. rebalance calendar-sync --days-back 365")
         print("  4. rebalance calendar-daily-report\n")
+        if args.write_access:
+            print("Write access is now enabled for calendar event creation.\n")
 
     except Exception as e:
         print(f"\n❌ Error: {e}")

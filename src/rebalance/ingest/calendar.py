@@ -23,6 +23,8 @@ from typing import Any
 
 
 TOKEN_PATH = Path.home() / ".config" / "gcalcli" / "oauth"
+CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
+CALENDAR_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
 
 
 # ---------------------------------------------------------------------------
@@ -39,12 +41,29 @@ class CalendarSyncResult:
     elapsed_seconds: float
 
 
+@dataclass
+class CalendarCreateResult:
+    event_id: str
+    html_link: str
+    calendar_id: str
+    summary: str
+    start_time: str
+    end_time: str
+    attendees_count: int
+
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
 
 
-def _load_credentials() -> Any:
+def _credentials_have_scopes(creds: Any, required_scopes: list[str]) -> bool:
+    """Return True if the credentials cover every required scope."""
+    current = set(getattr(creds, "scopes", []) or [])
+    return all(scope in current for scope in required_scopes)
+
+
+def _load_credentials(required_scopes: list[str] | None = None) -> Any:
     """Load OAuth2 credentials from the stored token file."""
     if not TOKEN_PATH.exists():
         raise FileNotFoundError(
@@ -61,13 +80,20 @@ def _load_credentials() -> Any:
         with open(TOKEN_PATH, "wb") as f:
             pickle.dump(creds, f)
 
+    if required_scopes and not _credentials_have_scopes(creds, required_scopes):
+        raise PermissionError(
+            "Calendar OAuth token does not include the required scopes. "
+            f"Required: {required_scopes}. Current: {getattr(creds, 'scopes', []) or []}. "
+            "Re-run the OAuth flow with write access enabled."
+        )
+
     return creds
 
 
-def _build_service() -> Any:
+def _build_service(required_scopes: list[str] | None = None) -> Any:
     """Build a Google Calendar API service client."""
     from googleapiclient.discovery import build
-    creds = _load_credentials()
+    creds = _load_credentials(required_scopes=required_scopes)
     return build("calendar", "v3", credentials=creds)
 
 
@@ -100,7 +126,7 @@ def sync_calendar(
         days_forward: How many days forward to fetch (default 7)
     """
     start = time.monotonic()
-    service = _build_service()
+    service = _build_service(required_scopes=[CALENDAR_READONLY_SCOPE])
 
     now = datetime.now(timezone.utc)
     time_min = (now - timedelta(days=days_back)).isoformat()
@@ -178,6 +204,68 @@ def sync_calendar(
         window_start=time_min[:10],
         window_end=time_max[:10],
         elapsed_seconds=round(time.monotonic() - start, 2),
+    )
+
+
+def create_calendar_event(
+    *,
+    calendar_id: str = "primary",
+    summary: str,
+    start_time: str,
+    end_time: str,
+    timezone_name: str | None = None,
+    description: str = "",
+    location: str = "",
+    attendees: list[str] | None = None,
+) -> CalendarCreateResult:
+    """Create a Google Calendar event using the local OAuth token."""
+    if not summary.strip():
+        raise ValueError("summary is required")
+    if not start_time.strip() or not end_time.strip():
+        raise ValueError("start_time and end_time are required")
+
+    from rebalance.ingest.calendar_helpers import parse_calendar_dt
+
+    start_dt = parse_calendar_dt(start_time)
+    end_dt = parse_calendar_dt(end_time)
+    if end_dt <= start_dt:
+        raise ValueError("end_time must be after start_time")
+    if start_dt.tzinfo is None or end_dt.tzinfo is None:
+        raise ValueError("start_time and end_time must be timezone-aware ISO datetimes")
+
+    service = _build_service(required_scopes=[CALENDAR_WRITE_SCOPE])
+
+    payload: dict[str, Any] = {
+        "summary": summary.strip(),
+        "start": {"dateTime": start_dt.isoformat()},
+        "end": {"dateTime": end_dt.isoformat()},
+    }
+    if timezone_name:
+        payload["start"]["timeZone"] = timezone_name
+        payload["end"]["timeZone"] = timezone_name
+    if description.strip():
+        payload["description"] = description.strip()
+    if location.strip():
+        payload["location"] = location.strip()
+
+    normalized_attendees = [{"email": email.strip()} for email in (attendees or []) if email.strip()]
+    if normalized_attendees:
+        payload["attendees"] = normalized_attendees
+
+    event = (
+        service.events()
+        .insert(calendarId=calendar_id, body=payload, sendUpdates="all" if normalized_attendees else "none")
+        .execute()
+    )
+
+    return CalendarCreateResult(
+        event_id=event.get("id", ""),
+        html_link=event.get("htmlLink", ""),
+        calendar_id=calendar_id,
+        summary=event.get("summary", summary.strip()),
+        start_time=event.get("start", {}).get("dateTime", start_dt.isoformat()),
+        end_time=event.get("end", {}).get("dateTime", end_dt.isoformat()),
+        attendees_count=len(event.get("attendees", normalized_attendees)),
     )
 
 

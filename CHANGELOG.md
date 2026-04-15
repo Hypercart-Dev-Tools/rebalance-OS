@@ -1,5 +1,34 @@
 # Changelog
 
+## [0.8.0] - 2026-04-14
+
+### Added
+
+- New `rebalance calendar-create-event` CLI command for creating Google Calendar events from plain terminal sessions without needing the rebalance MCP server to be registered in the calling client.
+- Dry-run support for calendar event creation. Operators can preview the normalized payload, including all-day date expansion into timezone-aware midnight boundaries, with no network calls or calendar writes.
+- CLI tests covering the dry-run payload shape and the required write-scope guard.
+- Duplicate guard for calendar event creation: before writing, the CLI now searches the target calendar for an existing event with the same title and start date.
+- Idempotency controls for calendar creation: `--skip-if-exists`, optional `--dedupe-key`, and local structured JSONL logging for created, skipped, and blocked attempts.
+- Machine-readable CLI output via `--output json`, including distinct statuses for `created`, `skipped_existing`, `blocked_duplicate`, and `idempotency_hit`.
+
+### Changed
+
+- Google Calendar docs now include a "Creating Events Programmatically" section with write-scope validation, dry-run workflow, and a copy-paste Binoid reminder example.
+- MCP docs now recommend the CLI path for non-MCP clients and clarify why the project bypasses raw JSON-RPC for local operator workflows.
+- Calendar event docs now call out duplicate-guard blind spots (title edits, overlapping multi-day events), recommend when to use `--dedupe-key`, and document local log rotation expectations.
+
+## [0.7.0] - 2026-04-14
+
+### Added
+
+- Write-capable Google Calendar MCP tool: `create_calendar_event`. Agents can now create events with summary, start/end time, optional description, location, attendees, calendar override, and timezone payload.
+- Calendar write-path tests covering OAuth scope enforcement, timezone-aware validation, and event insertion payload generation.
+
+### Changed
+
+- `scripts/setup_calendar_oauth.py` now supports `--write-access` so a device can be reauthorized with Google Calendar write scope instead of the previous read-only scope.
+- Version metadata is now aligned across the Python package, manifest, and changelog at `0.7.0`.
+
 ## [0.6.2] - 2026-04-07
 
 ### Fixed

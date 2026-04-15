@@ -17,9 +17,10 @@ Generate daily and weekly timesheet reports from your Google Calendar.
    - [Minimum Project Definition](#minimum-project-definition)
    - [Sync Project Definitions Into the Same Database](#sync-project-definitions-into-the-same-database)
 7. [Running Reports](#running-reports)
-8. [Customizing Your Config](#customizing-your-config)
-9. [Keeping Events Up to Date](#keeping-events-up-to-date)
-10. [Troubleshooting](#troubleshooting)
+8. [Creating Events Programmatically](#creating-events-programmatically)
+9. [Customizing Your Config](#customizing-your-config)
+10. [Keeping Events Up to Date](#keeping-events-up-to-date)
+11. [Troubleshooting](#troubleshooting)
 
 ---
 
@@ -79,6 +80,12 @@ Each developer authorizes their **own** Google account locally. The repo only pr
 
 ```bash
 python scripts/setup_calendar_oauth.py --test
+```
+
+If you want agents to create events, authorize with write access instead:
+
+```bash
+python scripts/setup_calendar_oauth.py --write-access --test
 ```
 
 After clicking Allow, the script prints a list of your Google Calendars and their IDs. **Copy the ID** of the calendar you want to use — you'll need it in the next step.
@@ -359,6 +366,102 @@ rebalance calendar-weekly-report --date 2026-03-31   # Any date in the week you 
 | Bloomz   | 2      | 3h 45m |
 | CR       | 3      | 2h 30m |
 ```
+
+---
+
+## Creating Events Programmatically
+
+Use the native CLI command when you need to create a calendar event from a plain terminal session or another coding tool that does not have the rebalance MCP server registered.
+
+```bash
+rebalance calendar-create-event \
+  --title "Planning review" \
+  --start 2026-04-21T10:00:00-07:00 \
+  --end 2026-04-21T11:00:00-07:00 \
+  --calendar-id primary
+```
+
+### Why this uses the CLI instead of a raw MCP client
+
+The repo already has the underlying write path in the MCP server, but for local operator workflows the CLI is the cleaner interface:
+
+- no JSON-RPC handshake boilerplate
+- no dependency on MCP host registration
+- same local OAuth token and write-path safety checks
+- easier to script from terminals, cron jobs, or other AI tools
+
+The CLI still uses the same underlying `create_calendar_event(...)` implementation in the rebalance codebase. It bypasses the MCP transport layer, not the business logic.
+
+### Write-scope validation
+
+Before any write, the command reads `/Users/noelsaw/secrets/google-calendar.env`, loads the pickled token from `GOOGLE_CALENDAR_TOKEN_PATH`, and verifies the token includes `GOOGLE_CALENDAR_REQUIRED_WRITE_SCOPE`.
+
+If the scope is missing, the command exits non-zero and prints the reauth command from the env file. It does **not** attempt the write with a read-only token.
+
+Before creating anything, the command also searches the target calendar for an existing event with the same title and same start date.
+
+- Default behavior: abort with a duplicate warning and exit non-zero.
+- `--skip-if-exists`: treat that duplicate as success and print the existing event ID/link instead of creating another one.
+- `--dedupe-key <key>`: short-circuit repeat runs from the same machine using the local structured log.
+
+Duplicate-guard limits:
+
+- if the event title changes, the title + start-date search will not match the earlier event
+- if an event spans multiple days but starts on a different date, the guard will not catch it from overlap alone
+- if two different machines race the same write, the local `--dedupe-key` log only protects the machine that already wrote or logged it
+
+Use `--dedupe-key` when you need stronger retry protection across repeated operator runs for the same logical reminder or task.
+
+Reauth reference:
+
+```bash
+python scripts/setup_calendar_oauth.py --write-access --test
+```
+
+If the calendar account changes later or a broader Google scope is ever required, that reauth command is the single point of update.
+
+### Dry run
+
+Use `--dry-run` to preview the normalized payload without any network calls, token refreshes, or calendar writes:
+
+```bash
+rebalance calendar-create-event \
+  --title "Planning review" \
+  --date 2026-04-21 \
+  --calendar-id primary \
+  --dry-run
+```
+
+For all-day events, `--date` is converted into a timezone-aware midnight-to-midnight window using the CLI timezone value. Default timezone: `America/Los_Angeles`.
+
+### Structured logging
+
+Each non-dry-run invocation appends one JSON line to `temp/logs/calendar-event-create.jsonl` with the request timestamp, summary, start date, action, event ID, and optional `dedupe_key`.
+
+This gives operators a local audit trail for:
+
+- created events
+- duplicate blocks
+- `--skip-if-exists` no-op writes
+
+The log stays local under `temp/` and is gitignored.
+
+Rotation: if the file grows beyond what you want to keep around, archive or truncate `temp/logs/calendar-event-create.jsonl` manually. JSONL append-only logs are intentionally simple here; there is no built-in retention worker.
+
+### Worked example
+
+This example matches the Binoid verification reminder described by the operator. It is safe to run with `--dry-run` first.
+
+```bash
+rebalance calendar-create-event \
+  --title "Verify Binoid BQ candidate + staging dataset auto-deletion (2026-04-13 clone+swap cleanup)" \
+  --date 2026-04-21 \
+  --calendar-id primary \
+  --description $'Auto-cleanup expirationTime on Binoid candidate datasets is 2026-04-21 ~18:37 UTC.\nThis reminder is a "check that it actually happened" prompt — expected state:\n  bq ls binoid_woo_candidate_20260413         → Not found (auto-expired)\n  bq ls binoid_woo_candidate_20260413_staging → Not found (auto-expired)\n  bq ls binoid_woo_backup_20260413_prenorm    → still present (expires 2026-05-14)\nContext: 2026-04-13 §B8a clone+swap merge, PR #53 on WP-DB-Toolkit.\nSidecar: temp/binoid/sync-merge-2026-04-06.md' \
+  --dry-run
+```
+
+Remove `--dry-run` after reviewing the payload to create the real event.
 
 ---
 

@@ -239,8 +239,60 @@ def create_server(database_path: Path) -> FastMCP:
         }
 
     # ------------------------------------------------------------------
-    # Calendar review tools
+    # Calendar tools
     # ------------------------------------------------------------------
+
+    @mcp.tool()
+    def create_calendar_event(
+        summary: str,
+        start_time: str,
+        end_time: str,
+        description: str = "",
+        location: str = "",
+        attendees: list[str] | None = None,
+        calendar_id: str = "",
+        timezone_name: str = "",
+    ) -> dict[str, Any]:
+        """
+        Create a Google Calendar event using the local OAuth token.
+
+        Args:
+            summary: Event title.
+            start_time: ISO datetime with timezone offset.
+            end_time: ISO datetime with timezone offset.
+            description: Optional body text.
+            location: Optional location.
+            attendees: Optional attendee email list.
+            calendar_id: Optional calendar ID. Defaults to the local config calendar.
+            timezone_name: Optional IANA timezone name to include in the event payload.
+        """
+        from rebalance.ingest.calendar import create_calendar_event as calendar_create_event
+        from rebalance.ingest.calendar_config import CalendarConfig
+
+        resolved_calendar_id = calendar_id.strip()
+        if not resolved_calendar_id:
+            resolved_calendar_id = CalendarConfig.load().calendar_id
+
+        result = calendar_create_event(
+            calendar_id=resolved_calendar_id,
+            summary=summary,
+            start_time=start_time,
+            end_time=end_time,
+            description=description,
+            location=location,
+            attendees=attendees or [],
+            timezone_name=timezone_name.strip() or None,
+        )
+        return {
+            "event_id": result.event_id,
+            "html_link": result.html_link,
+            "calendar_id": result.calendar_id,
+            "summary": result.summary,
+            "start_time": result.start_time,
+            "end_time": result.end_time,
+            "attendees_count": result.attendees_count,
+            "status": "created",
+        }
 
     @mcp.tool()
     def review_timesheet(date_str: str = "") -> dict[str, Any]:

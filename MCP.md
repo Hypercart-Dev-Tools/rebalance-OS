@@ -118,6 +118,62 @@ Full-text keyword search over vault files.
 
 ---
 
+### `create_calendar_event`
+
+Creates a Google Calendar event using the device-local OAuth token.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `summary` | `str` | *(required)* | Event title |
+| `start_time` | `str` | *(required)* | ISO datetime with timezone offset |
+| `end_time` | `str` | *(required)* | ISO datetime with timezone offset |
+| `description` | `str` | `""` | Optional body text |
+| `location` | `str` | `""` | Optional location |
+| `attendees` | `list[str] \| None` | `None` | Optional attendee email list |
+| `calendar_id` | `str` | `config.calendar_id` when blank | Calendar to write into |
+| `timezone_name` | `str` | `""` | Optional IANA timezone name for the payload |
+
+**Returns:** `{event_id, html_link, calendar_id, summary, start_time, end_time, attendees_count, status}`
+
+**Prerequisite:** authorize the device with write scope:
+
+```bash
+python scripts/setup_calendar_oauth.py --write-access --test
+```
+
+**Recommended operator path:** use the repo CLI for non-MCP clients:
+
+```bash
+rebalance calendar-create-event \
+  --title "Planning review" \
+  --date 2026-04-21 \
+  --calendar-id primary \
+  --dry-run
+```
+
+Duplicate/idempotency controls on the CLI:
+
+- `--skip-if-exists` searches the target calendar for the same title + same start date and exits successfully without writing if found
+- `--dedupe-key <key>` uses the local structured event log to short-circuit repeat runs from the same machine
+- `--output json` returns machine-readable status values such as `created`, `skipped_existing`, `blocked_duplicate`, and `idempotency_hit`
+
+Duplicate-guard limits:
+
+- editing the title after the first create defeats the title + start-date lookup
+- overlapping multi-day events are not treated as duplicates unless the same title also starts on the same date
+- for repeated operator retries of the same logical event, prefer `--dedupe-key`
+
+Structured operator log:
+
+- `temp/logs/calendar-event-create.jsonl` records created IDs, duplicate blocks, and skip outcomes for reconciliation
+- the log is local-only under `temp/`, gitignored, and can be rotated manually when it grows
+
+For the full operator workflow, dry-run behavior, and a copy-paste worked example, see [GOOGLE_CALENDAR.md — Creating Events Programmatically](./GOOGLE_CALENDAR.md#creating-events-programmatically).
+
+**Trade-off:** the MCP tool remains the canonical transport for registered MCP hosts, but the CLI is the cleaner path for local terminal sessions and external AI tools that do not have the rebalance server registered. The CLI calls the same underlying `create_calendar_event(...)` implementation and keeps the same write-scope guardrails while avoiding raw JSON-RPC boilerplate.
+
+---
+
 ## Live Tool Surface — Onboarding
 
 These tools move onboarding out of the CLI and into any MCP-capable host, so an agent can drive the setup flow conversationally. See [PROJECT.md — Onboarding User Story](./PROJECT.md) for the sequence and UX rationale.
@@ -268,7 +324,7 @@ A human-readable reference for all running MCP servers on this machine. Store at
 rebalance   python -m rebalance.mcp_server   REBALANCE_DB=/absolute/path/to/rebalance.db
 ```
 
-Live tools: `ask`, `list_projects`, `github_balance`, `query_notes`, `search_vault`, `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
+Live tools: `ask`, `list_projects`, `github_balance`, `query_notes`, `search_vault`, `create_calendar_event`, `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
 Planned: `todays_agenda`, `morning_brief`, `query_github_context`
 
 ---
