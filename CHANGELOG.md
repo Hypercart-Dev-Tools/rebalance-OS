@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0] - 2026-04-15
+
+### Added
+
+- New `rebalance calendar-snap-edges` CLI command — detects slightly overlapping calendar events and trims Event 1's end to 1 minute before Event 2's start, producing clean adjacent boundaries. Dry-run by default; pass `--apply` to patch Google Calendar.
+- Batch mode via `--days` flag (1-7 consecutive days per run) with per-day overlap reporting.
+- New `snap_calendar_edges` MCP tool with the same capabilities for agent-driven workflows.
+- First `events().patch()` integration — the project can now update existing Google Calendar events (previously only read and create).
+- 18 unit tests covering overlap detection (2-event pairs, 3+ cluster skips, contained events, adjacent non-overlaps, UTC Z-suffix), patch call verification, dry-run vs apply behaviour, timezone preservation, and batch validation.
+
+### Changed
+
+- All-day events and clusters of 3+ overlapping events are intentionally skipped — not enough context for automated resolution. Skipped clusters are reported so operators can resolve them manually.
+
 ## [0.8.0] - 2026-04-14
 
 ### Added

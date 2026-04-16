@@ -373,6 +373,48 @@ def create_server(database_path: Path) -> FastMCP:
             "status": "saved",
         }
 
+    @mcp.tool()
+    def snap_calendar_edges(
+        date_str: str = "",
+        days: int = 1,
+        calendar_id: str = "",
+        timezone_name: str = "",
+        apply: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Detect and fix slightly overlapping calendar events by trimming
+        Event 1's end to 1 minute before Event 2's start.
+
+        Dry-run by default — set apply=True to actually patch Google Calendar.
+        Skips all-day events and clusters of 3+ overlapping events.
+
+        Args:
+            date_str: Start date (YYYY-MM-DD). Defaults to today.
+            days: Number of consecutive days to process (1-7).
+            calendar_id: Calendar ID. Defaults to config calendar.
+            timezone_name: IANA timezone. Defaults to config timezone.
+            apply: If True, patches Google Calendar. Default False (dry-run).
+        """
+        import dataclasses
+        from datetime import date as date_cls
+
+        from rebalance.ingest.calendar_config import CalendarConfig
+        from rebalance.ingest.calendar_snap import snap_edges
+
+        config = CalendarConfig.load()
+        resolved_calendar_id = calendar_id.strip() or config.calendar_id
+        resolved_timezone = timezone_name.strip() or config.timezone
+        start_date = date_cls.fromisoformat(date_str) if date_str.strip() else date_cls.today()
+
+        result = snap_edges(
+            calendar_id=resolved_calendar_id,
+            start_date=start_date,
+            num_days=days,
+            timezone_name=resolved_timezone,
+            apply=apply,
+        )
+        return dataclasses.asdict(result)
+
     return mcp
 
 
