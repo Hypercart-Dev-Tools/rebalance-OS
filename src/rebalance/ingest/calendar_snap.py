@@ -18,7 +18,11 @@ from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from typing import Any
 
-from rebalance.ingest.calendar import CALENDAR_WRITE_SCOPE, _build_service
+from rebalance.ingest.calendar import (
+    CALENDAR_READONLY_SCOPE,
+    CALENDAR_WRITE_SCOPE,
+    _build_service,
+)
 from rebalance.ingest.calendar_helpers import parse_calendar_dt
 
 
@@ -101,8 +105,8 @@ def _detect_overlaps(
     if len(timed) < 2:
         return [], [], allday_count
 
-    # Sort by start time (should already be sorted from API, but enforce)
-    timed.sort(key=lambda e: e["start"]["dateTime"])
+    # Sort by parsed start time — raw string sort breaks with mixed offsets
+    timed.sort(key=lambda e: parse_calendar_dt(e["start"]["dateTime"]))
 
     # Sweep-line clustering
     clusters: list[list[dict[str, Any]]] = []
@@ -136,6 +140,21 @@ def _detect_overlaps(
             ev1, ev2 = cluster
             ev1_end_dt = parse_calendar_dt(ev1["end"]["dateTime"])
             ev2_start_dt = parse_calendar_dt(ev2["start"]["dateTime"])
+            ev2_end_dt = parse_calendar_dt(ev2["end"]["dateTime"])
+
+            # Skip contained events — Event 1 fully wraps Event 2.
+            # Trimming a 3-hour block to 59 minutes is destructive, not
+            # "edge snapping".  Report as a skipped cluster instead.
+            if ev1_end_dt >= ev2_end_dt:
+                skipped.append(
+                    SkippedCluster(
+                        event_ids=[ev1["id"], ev2["id"]],
+                        event_summaries=[ev1.get("summary", ""), ev2.get("summary", "")],
+                        reason="one event fully contains the other — manual resolution required",
+                    )
+                )
+                continue
+
             new_end_dt = ev2_start_dt - timedelta(minutes=1)
             overlap_mins = int((ev1_end_dt - ev2_start_dt).total_seconds() / 60)  # raw-ok: one-off calc
 
@@ -298,7 +317,8 @@ def snap_edges(
         raise ValueError(f"num_days must be between 1 and 7, got {num_days}")
 
     start = time.monotonic()
-    service = _build_service(required_scopes=[CALENDAR_WRITE_SCOPE])
+    required_scope = CALENDAR_WRITE_SCOPE if apply else CALENDAR_READONLY_SCOPE
+    service = _build_service(required_scopes=[required_scope])
 
     days: list[SnapDayResult] = []
     for offset in range(num_days):

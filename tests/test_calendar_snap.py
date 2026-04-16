@@ -141,17 +141,28 @@ class DetectOverlapsTests(unittest.TestCase):
         self.assertEqual(pairs[1].event1_id, "3")
         self.assertEqual(skipped, [])
 
-    def test_contained_event_treated_as_pair(self) -> None:
-        """Event B completely inside Event A — still a 2-event overlap."""
+    def test_contained_event_skipped(self) -> None:
+        """Event B completely inside Event A — skipped, not auto-truncated."""
         events = [
             _make_event("1", "A", "2026-04-15T09:00:00-07:00", "2026-04-15T12:00:00-07:00"),
             _make_event("2", "B", "2026-04-15T10:00:00-07:00", "2026-04-15T10:30:00-07:00"),
         ]
         pairs, skipped, _ = _detect_overlaps(events)
-        self.assertEqual(len(pairs), 1)
-        self.assertEqual(pairs[0].event1_id, "1")
-        # Event A's end gets trimmed to 9:59 (1 min before B's start at 10:00)
-        self.assertEqual(pairs[0].event1_new_end, "2026-04-15T09:59:00-07:00")
+        self.assertEqual(len(pairs), 0)
+        self.assertEqual(len(skipped), 1)
+        self.assertIn("fully contains", skipped[0].reason)
+
+    def test_mixed_offsets_no_false_overlap(self) -> None:
+        """Events with different UTC offsets that don't overlap in real time."""
+        # 09:00-09:30 UTC is 09:00-09:30 real time
+        # 10:00-10:30 +02:00 is 08:00-08:30 UTC — actually BEFORE the first event
+        events = [
+            _make_event("1", "A", "2026-04-15T09:00:00+00:00", "2026-04-15T09:30:00+00:00"),
+            _make_event("2", "B", "2026-04-15T10:00:00+02:00", "2026-04-15T10:30:00+02:00"),
+        ]
+        pairs, skipped, _ = _detect_overlaps(events)
+        self.assertEqual(len(pairs), 0)
+        self.assertEqual(len(skipped), 0)
 
     def test_utc_z_suffix_handled(self) -> None:
         """Events with Z suffix should parse correctly."""

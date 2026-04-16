@@ -396,7 +396,8 @@ def create_server(database_path: Path) -> FastMCP:
             apply: If True, patches Google Calendar. Default False (dry-run).
         """
         import dataclasses
-        from datetime import date as date_cls
+        from datetime import date as date_cls, datetime
+        from zoneinfo import ZoneInfo
 
         from rebalance.ingest.calendar_config import CalendarConfig
         from rebalance.ingest.calendar_snap import snap_edges
@@ -404,7 +405,11 @@ def create_server(database_path: Path) -> FastMCP:
         config = CalendarConfig.load()
         resolved_calendar_id = calendar_id.strip() or config.calendar_id
         resolved_timezone = timezone_name.strip() or config.timezone
-        start_date = date_cls.fromisoformat(date_str) if date_str.strip() else date_cls.today()
+        if date_str.strip():
+            start_date = date_cls.fromisoformat(date_str)
+        else:
+            # Use the calendar timezone for "today", not the server's local date
+            start_date = datetime.now(ZoneInfo(resolved_timezone)).date()
 
         result = snap_edges(
             calendar_id=resolved_calendar_id,

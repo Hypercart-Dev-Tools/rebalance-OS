@@ -675,7 +675,8 @@ def calendar_snap_edges_cmd(
         raise typer.BadParameter("--days must be between 1 and 7.")
 
     env_data = _load_google_calendar_env()
-    _require_calendar_write_scope(env_data)
+    if apply:
+        _require_calendar_write_scope(env_data)
 
     config = CalendarConfig.load()
     resolved_calendar_id = calendar_id.strip() or config.calendar_id
@@ -684,7 +685,8 @@ def calendar_snap_edges_cmd(
     if date_str:
         start_date = date_cls.fromisoformat(date_str)
     else:
-        start_date = date_cls.today()
+        # Use the calendar timezone for "today", not the machine's local date
+        start_date = datetime.now(ZoneInfo(resolved_timezone)).date()
 
     result = snap_edges(
         calendar_id=resolved_calendar_id,
