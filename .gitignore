@@ -12,3 +12,6 @@ dist/
 ~/bin/servers.md
 test_report_output.txt
 mrt-temp/
+rebalance.db-shm
+rebalance.db-wal
+rebalance.db-wal
