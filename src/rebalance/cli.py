@@ -160,6 +160,28 @@ def _append_calendar_event_log(record: dict[str, object]) -> None:
         log_file.write(json.dumps(record, ensure_ascii=False) + "\n")
 
 
+def _resolve_github_repos(database_path: Path, repos: list[str]) -> list[str]:
+    """Use explicit --repo values or fall back to active project registry repos."""
+    normalized = [repo.strip() for repo in repos if repo.strip()]
+    if normalized:
+        return sorted(set(normalized))
+
+    from rebalance.ingest.registry import get_projects
+
+    discovered: list[str] = []
+    if database_path.exists():
+        for project in get_projects(database_path, status="active"):
+            discovered.extend(project.get("repos") or [])
+
+    unique = sorted({repo.strip() for repo in discovered if repo and repo.strip()})
+    if unique:
+        return unique
+
+    raise typer.BadParameter(
+        "No GitHub repos provided. Pass --repo owner/name or sync the project registry first."
+    )
+
+
 def _find_existing_calendar_event(payload: dict[str, object]) -> dict[str, str] | None:
     """Search for an existing event with the same title and same start date."""
     from rebalance.ingest.calendar import CALENDAR_WRITE_SCOPE, _build_service
@@ -297,6 +319,76 @@ def github_scan(
     )
 
 
+@app.command("github-sync-artifacts")
+def github_sync_artifacts(
+    repos: list[str] = typer.Option(
+        [],
+        "--repo",
+        help="GitHub repo in owner/name form. Repeat the flag to sync multiple repos.",
+    ),
+    token: str = typer.Option("", envvar="GITHUB_TOKEN", help="GitHub Personal Access Token"),
+    days: int = typer.Option(90, help="Lookback window for changed issues and PRs"),
+    database: Path = typer.Option(
+        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    ),
+) -> None:
+    """Sync detailed GitHub issues, PRs, comments, reviews, checks, and releases."""
+    from rebalance.ingest.github_knowledge import sync_github_repo
+
+    db_path = database.expanduser().resolve()
+    resolved_token = token.strip() or (get_github_token() or "")
+    if not resolved_token:
+        raise typer.BadParameter(
+            "GitHub token not configured. Use --token, GITHUB_TOKEN, or `rebalance config set-github-token`."
+        )
+
+    target_repos = _resolve_github_repos(db_path, repos or [])
+    for repo in target_repos:
+        typer.echo(f"Syncing GitHub artifacts for {repo} ({days} days)...")
+        result = sync_github_repo(
+            database_path=db_path,
+            repo_full_name=repo,
+            token=resolved_token,
+            since_days=days,
+        )
+        typer.echo(
+            f"  synced branches={result.branches_synced}, issues={result.issues_synced}, prs={result.prs_synced}, "
+            f"comments={result.comments_synced}, commits={result.commits_synced}, "
+            f"checks={result.checks_synced}, docs={result.docs_built} "
+            f"({result.elapsed_seconds}s)"
+        )
+
+
+@app.command("github-embed")
+def github_embed(
+    database: Path = typer.Option(
+        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    ),
+    model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="HuggingFace model name"),
+    batch_size: int = typer.Option(32, help="Batch size for embedding"),
+    min_chars: int = typer.Option(40, help="Minimum document length to embed"),
+    force: bool = typer.Option(False, help="Force re-embed all GitHub documents"),
+) -> None:
+    """Generate embeddings for the local GitHub artifact corpus."""
+    from rebalance.ingest.github_knowledge import embed_github_documents
+
+    db_path = database.expanduser().resolve()
+    typer.echo(f"Embedding GitHub documents with {model} (batch_size={batch_size})...")
+    result = embed_github_documents(
+        database_path=db_path,
+        model_name=model,
+        batch_size=batch_size,
+        min_chars=min_chars,
+        force_reembed=force,
+    )
+    typer.echo(
+        f"GitHub embed complete: embedded={result.embedded_docs}, "
+        f"skipped={result.skipped_unchanged}, total_docs={result.total_docs}, "
+        f"model={result.model_name}, dim={result.embedding_dim} "
+        f"({result.elapsed_seconds}s)"
+    )
+
+
 @ingest_app.command("notes")
 def ingest_notes(
     vault: Path = typer.Option(..., exists=True, file_okay=False, dir_okay=True, help="Path to Obsidian vault"),
@@ -376,6 +468,100 @@ def query_cmd(
         typer.echo()
 
 
+@app.command("github-query")
+def github_query_cmd(
+    text: str = typer.Argument(..., help="Natural language query"),
+    database: Path = typer.Option(
+        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    ),
+    repo: str = typer.Option("", help="Optional owner/name repo filter"),
+    top_k: int = typer.Option(8, help="Number of results to return"),
+    model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
+) -> None:
+    """Semantic search over the local GitHub issue/PR/comment corpus."""
+    from rebalance.ingest.github_knowledge import query_github_documents
+
+    db_path = database.expanduser().resolve()
+    results = query_github_documents(
+        database_path=db_path,
+        query_text=text,
+        repo_full_name=repo,
+        top_k=top_k,
+        model_name=model,
+    )
+    if not results:
+        typer.echo(
+            "No GitHub results found. Run `rebalance github-sync-artifacts` and "
+            "`rebalance github-embed` first."
+        )
+        return
+    for i, result in enumerate(results, 1):
+        labels = f" [{', '.join(result['labels'])}]" if result["labels"] else ""
+        milestone = f" milestone={result['milestone_title']}" if result["milestone_title"] else ""
+        state = f" state={result['state']}" if result["state"] else ""
+        typer.echo(
+            f"{i}. [{result['similarity_score']:.3f}] {result['repo_full_name']} "
+            f"{result['source_type']} #{result['source_number']} {result['doc_type']}{labels}{state}{milestone}"
+        )
+        typer.echo(f"   {result['title']}")
+        if result["html_url"]:
+            typer.echo(f"   {result['html_url']}")
+        typer.echo(f"   {result['body_preview'][:180]}...")
+        typer.echo()
+
+
+@app.command("github-release-readiness")
+def github_release_readiness_cmd(
+    repo: str = typer.Option(..., "--repo", help="Repo in owner/name form"),
+    milestone: str = typer.Option("", "--milestone", help="Optional milestone title"),
+    database: Path = typer.Option(
+        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    ),
+    output_format: str = typer.Option("text", "--output", help="Output format: text or json"),
+) -> None:
+    """Infer current release/readiness state from the local GitHub corpus."""
+    from rebalance.ingest.github_readiness import infer_github_release_readiness
+
+    normalized_output = output_format.strip().lower()
+    if normalized_output not in {"text", "json"}:
+        raise typer.BadParameter("--output must be 'text' or 'json'.")
+
+    db_path = database.expanduser().resolve()
+    result = infer_github_release_readiness(
+        database_path=db_path,
+        repo_full_name=repo.strip(),
+        milestone_title=milestone.strip(),
+    )
+    data = result.as_dict()
+    if normalized_output == "json":
+        typer.echo(json.dumps(data, ensure_ascii=False))
+        return
+
+    typer.echo(f"Repo:       {result.repo_full_name}")
+    typer.echo(f"Milestone:  {result.milestone_title or '(none)'}")
+    if result.milestone_due_on:
+        typer.echo(f"Due:        {result.milestone_due_on[:10]}")
+    typer.echo(f"Status:     {result.status}")
+    typer.echo(f"Confidence: {result.confidence:.2f}")
+    typer.echo(f"\n{result.summary}")
+
+    if result.blockers:
+        typer.echo("\nBlockers:")
+        for blocker in result.blockers:
+            typer.echo(f"  - {blocker}")
+
+    if result.evidence:
+        typer.echo("\nEvidence:")
+        for line in result.evidence[:12]:
+            typer.echo(f"  - {line}")
+
+    if result.issue_states:
+        typer.echo("\nIssue States:")
+        for item in result.issue_states[:12]:
+            prs = f" prs={','.join(str(n) for n in item.linked_pr_numbers)}" if item.linked_pr_numbers else ""
+            typer.echo(f"  - #{item.issue_number} {item.classification}{prs} — {item.title}")
+
+
 @app.command("search")
 def search_cmd(
     keyword: str = typer.Argument(..., help="Keyword to search"),
@@ -438,6 +624,14 @@ def ask_cmd(
                 typer.echo(f"  {g['project_name']:25s}  IDLE")
             else:
                 typer.echo(f"  {g['project_name']:25s}  {g['total_commits']:3d} commits  {g['prs_opened']} PRs  {g['issues_opened']} issues")
+
+    if result.github_semantic_context:
+        typer.echo("\n--- Relevant GitHub Artifacts ---")
+        for item in result.github_semantic_context[:8]:
+            typer.echo(
+                f"  {item['repo_full_name']} {item['source_type']} #{item['source_number']} "
+                f"[{item['similarity_score']:.3f}] {item['title']}"
+            )
 
     if result.calendar_context:
         upcoming = result.calendar_context.get("upcoming", [])
@@ -768,10 +962,13 @@ def calendar_weekly_report_cmd(
     database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
     date_str: str = typer.Option(None, "--date", help="Date in target week (YYYY-MM-DD, default: today)"),
     output: Path = typer.Option(None, "--output", "-o", help="Write report to a markdown file instead of stdout"),
+    vault: Path = typer.Option(None, "--vault", envvar="REBALANCE_VAULT", help="Obsidian vault path for weekly note write-back"),
+    write_week_note: bool = typer.Option(False, "--write-week-note", help="Write week-of-YYYY-MM-DD.md into the vault under Weekly Notes/"),
+    reingest_note: bool = typer.Option(True, "--reingest-note/--no-reingest-note", help="When writing a week note, re-ingest and embed it into the local knowledge store"),
 ) -> None:
     """Generate weekly calendar report (Sun-Sat) with daily summaries and project aggregator."""
     from datetime import date
-    from rebalance.ingest.weekly_report import generate_weekly_report
+    from rebalance.ingest.weekly_report import generate_weekly_report, write_weekly_note
     from rebalance.ingest.calendar_config import CalendarConfig
 
     db_path = database.expanduser().resolve()
@@ -783,13 +980,45 @@ def calendar_weekly_report_cmd(
         target_date = date.today()
 
     report = generate_weekly_report(db_path, target_date, config)
+    wrote_artifact = False
 
     if output:
         out_path = output.expanduser().resolve()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(report, encoding="utf-8")
         typer.echo(f"Report written to {out_path}")
-    else:
+        wrote_artifact = True
+
+    if write_week_note:
+        if vault is None:
+            raise typer.BadParameter("--vault or REBALANCE_VAULT is required with --write-week-note.")
+        vault_path = vault.expanduser().resolve()
+        if not vault_path.exists() or not vault_path.is_dir():
+            raise typer.BadParameter(f"Vault path does not exist or is not a directory: {vault_path}")
+
+        note_path = write_weekly_note(vault_path, report, target_date=target_date, config=config)
+        typer.echo(f"Week note written to {note_path}")
+        wrote_artifact = True
+
+        if reingest_note:
+            from rebalance.ingest.note_ingester import ingest_vault
+            from rebalance.ingest.embedder import embed_chunks
+
+            ingest_result = ingest_vault(vault_path=vault_path, database_path=db_path)
+            typer.echo(
+                "Vault ingest complete: "
+                f"new={ingest_result.new_files}, updated={ingest_result.updated_files}, "
+                f"unchanged={ingest_result.unchanged_files}, deleted={ingest_result.deleted_files} "
+                f"({ingest_result.elapsed_seconds}s)"
+            )
+            embed_result = embed_chunks(database_path=db_path)
+            typer.echo(
+                "Embed complete: "
+                f"embedded={embed_result.embedded_chunks}, skipped={embed_result.skipped_unchanged}, "
+                f"total_chunks={embed_result.total_chunks} ({embed_result.elapsed_seconds}s)"
+            )
+
+    if not wrote_artifact:
         typer.echo(report)
 
 

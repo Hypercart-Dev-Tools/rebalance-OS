@@ -3,3 +3,8 @@
 - Bash-script RAG spike entrypoint: `temp/bash_script_rag_spike.py`.
 - Reusable spike artifacts: `temp/rag/bash-script-spike.sqlite` and `temp/logs/bash-script-spike.jsonl`.
 - The spike's default extra corpus includes wp-code-check scanner patterns from `../GH Repos/wp-code-check/dist/patterns/**/*.json` plus `PATTERN-LIBRARY.json` and `PATTERN-LIBRARY.md`.
+- Repo direction is pivoting from a general second-brain framing toward a GitHub sprint/deployment planner.
+- Clarified product direction: primary purpose remains a second brain over work artifacts; sprint planning and deployment goal-setting are secondary outcomes, driven especially by deeper GitHub artifact ingestion and deploy-readiness inference.
+- Hard requirement: do not rely on an agent skimming hundreds of live GitHub issues/PRs; ingest and vectorize GitHub artifacts into local SQLite so retrieval and recommendations are driven from the local store.
+- The readiness layer should stay explicit and inspectable: computed status, confidence, evidence, and blockers from local repo signals instead of opaque hidden reasoning.
+- Weekly review notes should be able to write back into the Obsidian vault as `week-of-YYYY-MM-DD.md` artifacts and immediately re-enter the retrieval pipeline so next week's knowledge includes last week's summary.

@@ -1,5 +1,50 @@
 # Changelog
 
+## [0.12.0] - 2026-04-17
+
+### Added
+
+- Weekly report write-back path for the Obsidian vault: `calendar-weekly-report --vault ... --write-week-note` now creates `Weekly Notes/week-of-YYYY-MM-DD.md`.
+- Weekly notes now include a deterministic `End of Week Summary` block with week window, total retained hours, working-day count, busiest day, review-needed count, and top project buckets so that next-week retrieval has a compact searchable recap.
+- CLI tests covering weekly note write-back, required vault validation, and the automatic re-ingest/re-embed path.
+- Weekly notes are now formatted as vault-native review artifacts with frontmatter and a stable `week-of-YYYY-MM-DD.md` naming contract for downstream retrieval.
+
+### Changed
+
+- Weekly report generation now supports turning the report into a vault-native note with frontmatter for downstream ingestion and retrieval.
+- Writing a weekly vault note can immediately re-ingest and embed the updated vault so the generated summary becomes part of the local knowledge base without a separate operator step.
+- The weekly review flow now closes the loop between calendar reporting and second-brain retrieval instead of leaving weekly output as a disconnected export.
+
+## [0.11.0] - 2026-04-17
+
+### Added
+
+- New explicit GitHub readiness inference over the local corpus, including milestone selection, blockers, evidence, release-branch detection, deployment-issue parsing, and confidence scoring.
+- New `github-release-readiness` CLI command for current-state inspection from locally synced GitHub signals.
+- New `github_release_readiness` MCP tool so hosts can ask for review, merge, release-candidate, and deploy-ready state without live GitHub scanning.
+- Unit tests covering repo metadata and branch sync plus a focused readiness-inference scenario with review blockers and a missing release branch.
+
+### Changed
+
+- GitHub artifact sync now stores repo metadata and branches so readiness inference can reason about default branches, release branches, and promotion paths locally.
+- The public tool surface now treats GitHub readiness inference as live functionality instead of planned-only work.
+
+## [0.10.0] - 2026-04-17
+
+### Added
+
+- Local-first GitHub knowledge sync for detailed artifacts: issues, pull requests, labels, milestones, releases, comments, reviews, review comments, commits, and check runs are now stored in SQLite instead of being read live at answer time.
+- A new local GitHub document corpus built from issue bodies, PR bodies, comments, reviews, review comments, and commit messages, ready for semantic retrieval with local embeddings.
+- New CLI commands for the GitHub corpus workflow: `github-sync-artifacts`, `github-embed`, and `github-query`.
+- New `query_github_context` MCP tool for semantic retrieval over the local GitHub corpus.
+- Linked-issue extraction from pull request text using closing keywords such as `fixes #123`, so the local store can preserve issue-to-PR relationships for readiness inference.
+- Two focused GitHub unit tests covering artifact sync, document creation, embedding, and semantic query against mocked GitHub responses.
+
+### Changed
+
+- The main `ask` flow now includes relevant semantic GitHub artifacts alongside structured GitHub activity when local GitHub context is available.
+- Version metadata is now aligned again across the package, manifest, and changelog.
+
 ## [0.9.0] - 2026-04-15
 
 ### Added

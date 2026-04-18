@@ -16,7 +16,11 @@ from rebalance.ingest.daily_report import (
     get_day_data,
 )
 from rebalance.ingest.db import get_connection
-from rebalance.ingest.weekly_report import generate_weekly_report
+from rebalance.ingest.weekly_report import (
+    build_weekly_note_content,
+    generate_weekly_report,
+    week_note_filename,
+)
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -291,6 +295,38 @@ class WeeklyReportTests(unittest.TestCase):
         self.assertIn("Working days: 4", report)
         # 315 total min / 4 = 78.75 → int(78) = 1h 18m
         self.assertIn("Avg hours/day: 1h 18m", report)
+
+    def test_weekly_report_includes_end_of_week_summary(self) -> None:
+        config = _make_config(
+            "decimal",
+            projects=[
+                CalendarProject(name="Binoid - Bloomz", aliases=["Binoid"]),
+            ],
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db = Path(tmpdir) / "cal.db"
+            _insert_events(db, WEEK_EVENTS)
+            report = generate_weekly_report(db, date(2026, 3, 31), config)
+
+        self.assertIn("## End of Week Summary", report)
+        self.assertIn("Week window: 2026-03-29 to 2026-04-04", report)
+        self.assertIn("Top project buckets this week:", report)
+        self.assertIn("Busiest day:", report)
+
+    def test_weekly_note_content_wraps_report_with_frontmatter(self) -> None:
+        config = _make_config("decimal")
+        note = build_weekly_note_content(
+            "## Weekly Summary\n\nBody text\n",
+            target_date=date(2026, 3, 31),
+            config=config,
+        )
+
+        self.assertTrue(note.startswith("---\n"))
+        self.assertIn("type: weekly-review", note)
+        self.assertIn("week_start: 2026-03-29", note)
+        self.assertIn("# week-of-2026-03-29", note)
+        self.assertIn("## Weekly Summary", note)
+        self.assertEqual(week_note_filename(date(2026, 3, 31)), "week-of-2026-03-29.md")
 
 
 # ── Calendar-sync config resolution ─────────────────────────────────────────

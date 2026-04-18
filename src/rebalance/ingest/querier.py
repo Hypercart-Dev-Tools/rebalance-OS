@@ -36,6 +36,7 @@ class QueryResult:
     synthesis: str                                     # LLM-generated first-pass answer
     vault_context: list[dict[str, Any]] = field(default_factory=list)    # semantic search hits
     github_context: list[dict[str, Any]] = field(default_factory=list)   # per-project activity
+    github_semantic_context: list[dict[str, Any]] = field(default_factory=list)  # semantic GitHub hits
     project_context: list[dict[str, Any]] = field(default_factory=list)  # registry entries
     vault_activity: list[dict[str, Any]] = field(default_factory=list)   # recently modified notes
     calendar_context: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # upcoming + recent events
@@ -188,6 +189,21 @@ def _gather_github_context(
         return []
 
 
+def _gather_github_semantic_context(
+    database_path: Path,
+    query: str,
+    top_k: int = 6,
+) -> list[dict[str, Any]]:
+    """Semantic search over synced GitHub issues, PRs, comments, and commits."""
+    try:
+        from rebalance.ingest.github_knowledge import query_github_documents
+
+        return query_github_documents(database_path=database_path, query_text=query, top_k=top_k)
+    except Exception as e:
+        print(f"[rebalance] github semantic context unavailable: {e}", file=sys.stderr)
+        return []
+
+
 def _gather_project_context(database_path: Path) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
     """Project registry entries + repos map."""
     from rebalance.ingest.registry import get_projects
@@ -208,6 +224,7 @@ def _build_prompt(
     query: str,
     vault_context: list[dict[str, Any]],
     github_context: list[dict[str, Any]],
+    github_semantic_context: list[dict[str, Any]],
     project_context: list[dict[str, Any]],
     vault_activity: list[dict[str, Any]],
     calendar_context: dict[str, list[dict[str, Any]]] | None = None,
@@ -250,6 +267,20 @@ def _build_prompt(
                     f"{g['prs_opened']} PRs opened, {g['prs_merged']} merged, "
                     f"{g['issues_opened']} issues opened"
                 )
+        sections.append("\n".join(lines))
+
+    if github_semantic_context:
+        lines = ["## Relevant GitHub Artifacts"]
+        for item in github_semantic_context[:5]:
+            meta = f"{item['repo_full_name']} {item['source_type']} #{item['source_number']}"
+            if item.get("state"):
+                meta += f" ({item['state']})"
+            if item.get("milestone_title"):
+                meta += f" milestone={item['milestone_title']}"
+            lines.append(f"### {meta}")
+            lines.append(item.get("title", ""))
+            lines.append(item.get("body_preview", "")[:320])
+            lines.append("")
         sections.append("\n".join(lines))
 
     # Vault activity
@@ -368,6 +399,7 @@ def ask(
     # Gather all context
     project_context, repos_map = _gather_project_context(database_path)
     github_context = _gather_github_context(database_path, repos_map, since_days)
+    github_semantic_context = _gather_github_semantic_context(database_path, query, top_k=min(top_k, 6))
     vault_context = _gather_vault_context(database_path, query, top_k)
     vault_activity = _gather_vault_activity(database_path, since_days)
     calendar_context = _gather_calendar_context(database_path, days_forward=2, days_back=since_days)
@@ -384,7 +416,16 @@ def ask(
     synthesis = ""
     model_used = ""
     if not skip_synthesis:
-        prompt = _build_prompt(query, vault_context, github_context, project_context, vault_activity, calendar_context, temporal_context)
+        prompt = _build_prompt(
+            query,
+            vault_context,
+            github_context,
+            github_semantic_context,
+            project_context,
+            vault_activity,
+            calendar_context,
+            temporal_context,
+        )
         try:
             synthesis = _synthesize(prompt, model_name=chat_model)
             model_used = chat_model
@@ -399,6 +440,7 @@ def ask(
         synthesis=synthesis,
         vault_context=vault_context,
         github_context=github_context,
+        github_semantic_context=github_semantic_context,
         project_context=project_context,
         vault_activity=vault_activity,
         calendar_context=calendar_context,

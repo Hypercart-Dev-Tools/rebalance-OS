@@ -205,6 +205,41 @@ def create_server(database_path: Path) -> FastMCP:
         return search_by_keyword(database_path=database_path, keyword=keyword, limit=limit)
 
     @mcp.tool()
+    def query_github_context(query: str, repo_full_name: str = "", top_k: int = 8) -> list[dict[str, Any]]:
+        """
+        Semantic search over the local GitHub artifact corpus.
+
+        Searches synced issues, pull requests, comments, reviews, and commit
+        messages that have already been ingested into SQLite and embedded with
+        the local model.
+        """
+        from rebalance.ingest.github_knowledge import query_github_documents
+
+        return query_github_documents(
+            database_path=database_path,
+            query_text=query,
+            repo_full_name=repo_full_name,
+            top_k=top_k,
+        )
+
+    @mcp.tool()
+    def github_release_readiness(repo_full_name: str, milestone_title: str = "") -> dict[str, Any]:
+        """
+        Infer current milestone/release readiness from the local GitHub corpus.
+
+        Returns explicit status, confidence, blockers, evidence, and per-issue
+        classifications using only locally synced GitHub signals.
+        """
+        from rebalance.ingest.github_readiness import infer_github_release_readiness
+
+        result = infer_github_release_readiness(
+            database_path=database_path,
+            repo_full_name=repo_full_name,
+            milestone_title=milestone_title,
+        )
+        return result.as_dict()
+
+    @mcp.tool()
     def ask(query: str, since_days: int = 7, skip_synthesis: bool = False) -> dict[str, Any]:
         """
         General-purpose natural language query across all data sources.
@@ -230,6 +265,7 @@ def create_server(database_path: Path) -> FastMCP:
             "synthesis": result.synthesis,
             "vault_context": result.vault_context,
             "github_context": result.github_context,
+            "github_semantic_context": result.github_semantic_context,
             "project_context": result.project_context,
             "vault_activity": result.vault_activity,
             "calendar_context": result.calendar_context,

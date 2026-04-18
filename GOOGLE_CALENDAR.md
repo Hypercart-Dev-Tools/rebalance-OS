@@ -346,7 +346,10 @@ rebalance calendar-daily-report --date 2026-04-06    # Specific date
 ```bash
 rebalance calendar-weekly-report                     # This week
 rebalance calendar-weekly-report --date 2026-03-31   # Any date in the week you want
+rebalance calendar-weekly-report --vault /path/to/vault --write-week-note
 ```
+
+When `--write-week-note` is used, rebalance writes `Weekly Notes/week-of-YYYY-MM-DD.md` into the vault, appends a deterministic `End of Week Summary` section, then re-ingests and embeds the note so it becomes searchable in later asks and semantic queries.
 
 ### What's in each report
 

@@ -15,7 +15,10 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Callable, Generator
 
-import sqlite_vec
+try:
+    import sqlite_vec
+except Exception:  # pragma: no cover - import guard for environments without sqlite-vec
+    sqlite_vec = None
 
 
 # ---------------------------------------------------------------------------
@@ -36,7 +39,7 @@ def get_connection(database_path: Path) -> sqlite3.Connection:
 
     # Try to load sqlite-vec, but gracefully fall back if unavailable
     try:
-        if hasattr(conn, 'enable_load_extension'):
+        if sqlite_vec is not None and hasattr(conn, 'enable_load_extension'):
             conn.enable_load_extension(True)
             sqlite_vec.load(conn)
             conn.enable_load_extension(False)
@@ -133,12 +136,15 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
     """)
     conn.execute("CREATE INDEX IF NOT EXISTS idx_links_target ON links(target_title)")
 
-    conn.execute("""
-        CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(
-            chunk_id INTEGER PRIMARY KEY,
-            embedding float[1024]
-        )
-    """)
+    try:
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS embeddings USING vec0(
+                chunk_id INTEGER PRIMARY KEY,
+                embedding float[1024]
+            )
+        """)
+    except sqlite3.DatabaseError:
+        pass
 
     conn.execute("""
         CREATE TABLE IF NOT EXISTS embedding_meta (
@@ -183,7 +189,7 @@ def ensure_calendar_schema(conn: sqlite3.Connection) -> None:
 
 
 def ensure_github_schema(conn: sqlite3.Connection) -> None:
-    """Create github_activity table if it doesn't exist."""
+    """Create GitHub activity and local knowledge tables if they don't exist."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS github_activity (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -200,6 +206,268 @@ def ensure_github_schema(conn: sqlite3.Connection) -> None:
             last_active_at  TEXT,
             scanned_at      TEXT    NOT NULL,
             UNIQUE(login, repo_full_name, scan_date) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_labels (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name  TEXT    NOT NULL,
+            name            TEXT    NOT NULL,
+            color           TEXT,
+            description     TEXT,
+            is_default      INTEGER NOT NULL DEFAULT 0,
+            UNIQUE(repo_full_name, name) ON CONFLICT REPLACE
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_repo_meta (
+            repo_full_name      TEXT PRIMARY KEY,
+            default_branch      TEXT,
+            pushed_at           TEXT,
+            updated_at          TEXT,
+            open_issues_count   INTEGER NOT NULL DEFAULT 0,
+            has_issues          INTEGER NOT NULL DEFAULT 0,
+            has_projects        INTEGER NOT NULL DEFAULT 0,
+            fetched_at          TEXT NOT NULL
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_branches (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name      TEXT    NOT NULL,
+            name                TEXT    NOT NULL,
+            head_sha            TEXT,
+            is_protected        INTEGER NOT NULL DEFAULT 0,
+            is_default          INTEGER NOT NULL DEFAULT 0,
+            fetched_at          TEXT    NOT NULL,
+            UNIQUE(repo_full_name, name) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_branches_repo "
+        "ON github_branches(repo_full_name)"
+    )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_milestones (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name  TEXT    NOT NULL,
+            number          INTEGER NOT NULL,
+            title           TEXT    NOT NULL,
+            description     TEXT,
+            state           TEXT,
+            open_issues     INTEGER NOT NULL DEFAULT 0,
+            closed_issues   INTEGER NOT NULL DEFAULT 0,
+            due_on          TEXT,
+            created_at      TEXT,
+            updated_at      TEXT,
+            closed_at       TEXT,
+            html_url        TEXT,
+            UNIQUE(repo_full_name, number) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_milestones_repo_state "
+        "ON github_milestones(repo_full_name, state)"
+    )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_releases (
+            id              INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name  TEXT    NOT NULL,
+            github_id       INTEGER,
+            tag_name        TEXT    NOT NULL,
+            name            TEXT,
+            target_commitish TEXT,
+            is_draft        INTEGER NOT NULL DEFAULT 0,
+            is_prerelease   INTEGER NOT NULL DEFAULT 0,
+            body            TEXT,
+            created_at      TEXT,
+            published_at    TEXT,
+            html_url        TEXT,
+            UNIQUE(repo_full_name, tag_name) ON CONFLICT REPLACE
+        )
+    """)
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_items (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name      TEXT    NOT NULL,
+            item_type           TEXT    NOT NULL,
+            number              INTEGER NOT NULL,
+            node_id             TEXT,
+            github_id           INTEGER,
+            title               TEXT    NOT NULL,
+            body                TEXT,
+            state               TEXT,
+            state_reason        TEXT,
+            author_login        TEXT,
+            assignees_json      TEXT,
+            labels_json         TEXT,
+            milestone_number    INTEGER,
+            milestone_title     TEXT,
+            is_draft            INTEGER NOT NULL DEFAULT 0,
+            is_merged           INTEGER NOT NULL DEFAULT 0,
+            base_ref            TEXT,
+            head_ref            TEXT,
+            head_sha            TEXT,
+            mergeable_state     TEXT,
+            review_decision     TEXT,
+            check_status        TEXT,
+            requested_reviewers_json TEXT,
+            comments_count      INTEGER NOT NULL DEFAULT 0,
+            review_comments_count INTEGER NOT NULL DEFAULT 0,
+            commits_count       INTEGER NOT NULL DEFAULT 0,
+            additions           INTEGER NOT NULL DEFAULT 0,
+            deletions           INTEGER NOT NULL DEFAULT 0,
+            changed_files       INTEGER NOT NULL DEFAULT 0,
+            html_url            TEXT,
+            created_at          TEXT,
+            updated_at          TEXT,
+            closed_at           TEXT,
+            merged_at           TEXT,
+            fetched_at          TEXT    NOT NULL,
+            UNIQUE(repo_full_name, item_type, number) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_items_repo_updated "
+        "ON github_items(repo_full_name, updated_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_items_milestone "
+        "ON github_items(repo_full_name, milestone_title)"
+    )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_comments (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name      TEXT    NOT NULL,
+            item_type           TEXT    NOT NULL,
+            item_number         INTEGER NOT NULL,
+            comment_type        TEXT    NOT NULL,
+            github_comment_id   INTEGER NOT NULL,
+            author_login        TEXT,
+            author_association  TEXT,
+            body                TEXT,
+            review_state        TEXT,
+            in_reply_to_id      INTEGER,
+            html_url            TEXT,
+            created_at          TEXT,
+            updated_at          TEXT,
+            fetched_at          TEXT    NOT NULL,
+            UNIQUE(repo_full_name, comment_type, github_comment_id) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_comments_item "
+        "ON github_comments(repo_full_name, item_type, item_number)"
+    )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_commits (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name      TEXT    NOT NULL,
+            item_type           TEXT    NOT NULL,
+            item_number         INTEGER NOT NULL,
+            sha                 TEXT    NOT NULL,
+            author_login        TEXT,
+            message             TEXT,
+            committed_at        TEXT,
+            html_url            TEXT,
+            fetched_at          TEXT    NOT NULL,
+            UNIQUE(repo_full_name, item_type, item_number, sha) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_commits_item "
+        "ON github_commits(repo_full_name, item_type, item_number)"
+    )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_check_runs (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name      TEXT    NOT NULL,
+            item_type           TEXT    NOT NULL,
+            item_number         INTEGER NOT NULL,
+            head_sha            TEXT,
+            name                TEXT    NOT NULL,
+            status              TEXT,
+            conclusion          TEXT,
+            details_url         TEXT,
+            started_at          TEXT,
+            completed_at        TEXT,
+            fetched_at          TEXT    NOT NULL,
+            UNIQUE(repo_full_name, item_type, item_number, head_sha, name) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_checks_item "
+        "ON github_check_runs(repo_full_name, item_type, item_number)"
+    )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_links (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name      TEXT    NOT NULL,
+            source_type         TEXT    NOT NULL,
+            source_number       INTEGER NOT NULL,
+            target_type         TEXT    NOT NULL,
+            target_number       INTEGER NOT NULL,
+            link_kind           TEXT    NOT NULL,
+            UNIQUE(
+                repo_full_name,
+                source_type,
+                source_number,
+                target_type,
+                target_number,
+                link_kind
+            ) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_links_source "
+        "ON github_links(repo_full_name, source_type, source_number)"
+    )
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_documents (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name      TEXT    NOT NULL,
+            source_type         TEXT    NOT NULL,
+            source_number       INTEGER NOT NULL,
+            doc_type            TEXT    NOT NULL,
+            source_key          TEXT    NOT NULL,
+            title               TEXT,
+            body                TEXT    NOT NULL,
+            content_hash        TEXT    NOT NULL,
+            embedded_hash       TEXT,
+            updated_at          TEXT,
+            fetched_at          TEXT    NOT NULL,
+            UNIQUE(source_key) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_documents_source "
+        "ON github_documents(repo_full_name, source_type, source_number)"
+    )
+
+    try:
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS github_embeddings USING vec0(
+                doc_id INTEGER PRIMARY KEY,
+                embedding float[1024]
+            )
+        """)
+    except sqlite3.DatabaseError:
+        pass
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_embedding_meta (
+            key     TEXT PRIMARY KEY,
+            value   TEXT NOT NULL
         )
     """)
     conn.commit()

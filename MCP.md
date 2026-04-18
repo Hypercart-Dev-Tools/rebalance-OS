@@ -106,6 +106,33 @@ Semantic search over chunked vault notes via sqlite-vec embeddings.
 
 ---
 
+### `query_github_context`
+
+Semantic search over the local GitHub artifact corpus after sync + embed.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `query` | `str` | *(required)* | Search query |
+| `repo_full_name` | `str` | `""` | Optional repo filter in `owner/name` form |
+| `top_k` | `int` | `8` | Number of results |
+
+**Returns:** List of matching GitHub issue / PR / comment / commit documents with similarity scores and structured metadata.
+
+---
+
+### `github_release_readiness`
+
+Explicit current-state inference over the local GitHub corpus for a repo and optional milestone.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `repo_full_name` | `str` | *(required)* | Repo in `owner/name` form |
+| `milestone_title` | `str` | `""` | Optional milestone title. When blank, the tool picks the most urgent open milestone with work. |
+
+**Returns:** `{repo_full_name, milestone_title, milestone_due_on, status, confidence, summary, blockers, evidence, counts, release_branch, release_branch_exists, promotion_pr, deployment_issue, recent_release, issue_states}`
+
+---
+
 ### `search_vault`
 
 Full-text keyword search over vault files.
@@ -195,7 +222,6 @@ Design principle: the MCP server stays stateless and host-agnostic. Onboarding l
 |---|---|---|
 | `todays_agenda` | Today's calendar events (dedicated tool) | Google Calendar sync |
 | `morning_brief` | Assembled daily briefing from all sources | All of the above |
-| `query_github_context` | Semantic search over embedded PR/issue bodies | github_embed_queue pipeline (PROJECT.md step 10, phase 2) |
 
 ---
 
@@ -324,8 +350,8 @@ A human-readable reference for all running MCP servers on this machine. Store at
 rebalance   python -m rebalance.mcp_server   REBALANCE_DB=/absolute/path/to/rebalance.db
 ```
 
-Live tools: `ask`, `list_projects`, `github_balance`, `query_notes`, `search_vault`, `create_calendar_event`, `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
-Planned: `todays_agenda`, `morning_brief`, `query_github_context`
+Live tools: `ask`, `list_projects`, `github_balance`, `query_notes`, `query_github_context`, `github_release_readiness`, `search_vault`, `create_calendar_event`, `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
+Planned: `todays_agenda`, `morning_brief`
 
 ---
 

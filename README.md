@@ -109,6 +109,8 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [x] Architecture and design
 - [x] Project registry + MCP onboarding tools
 - [x] GitHub activity scanner + 30-day A/B/C band classification
+- [x] GitHub artifact sync + local semantic query (issues, PRs, comments, reviews, commits)
+- [x] GitHub readiness inference from local repo signals (milestones, linked PRs, branches, releases)
 - [x] Obsidian vault ingester (parse, chunk, keywords, links)
 - [x] Qwen3 embedding pipeline (sqlite-vec, semantic search)
 - [x] Google Calendar integration (OAuth2, 1-year retention)
@@ -124,7 +126,7 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [ ] Project weight system (neglect score, momentum decay, avoidance ratio)
 - [ ] Email integration (Gmail API, starred/important threads only, forward-only)
 - [ ] Slack integration via Sleuth bolt app
-- [ ] GitHub PR/issue body selective embedding (phase 2)
+- [ ] GitHub readiness inference layer (deploy/review/release heuristics over the local corpus)
 - [ ] Email → project auto-correlation (alias map + co-occurrence)
 
 ## Getting Started
@@ -164,6 +166,17 @@ python3 -m venv .venv
 
 # Scan recent activity (commits, PRs, issues across all your repos)
 .venv/bin/rebalance github-scan --token ghp_your_token_here --database rebalance.db
+
+# Sync detailed GitHub artifacts into the local SQLite corpus
+.venv/bin/rebalance github-sync-artifacts \
+  --repo owner/repo \
+  --database rebalance.db
+
+# Embed the local GitHub corpus for semantic retrieval
+.venv/bin/rebalance github-embed --database rebalance.db
+
+# Query the local GitHub corpus without re-reading GitHub live
+.venv/bin/rebalance github-query "What is close to deploy?" --database rebalance.db
 ```
 
 ### Step 4 — Connect Google Calendar (optional)
@@ -218,6 +231,7 @@ Edit `temp/calendar_config.json` with your preferences:
 # Generate reports
 .venv/bin/rebalance calendar-daily-report
 .venv/bin/rebalance calendar-weekly-report
+.venv/bin/rebalance calendar-weekly-report --vault /path/to/vault --write-week-note
 ```
 
 For the full guide — including team setup, Claude Code prompts, and project definitions — see [GOOGLE_CALENDAR.md](./GOOGLE_CALENDAR.md).
@@ -296,6 +310,7 @@ rebalance github-scan --token ghp_... --database rebalance.db                  #
 rebalance calendar-sync --database rebalance.db                                # refresh calendar
 rebalance calendar-daily-report                                                # today's events + project breakdown
 rebalance calendar-weekly-report                                               # this week's summary + aggregator
+rebalance calendar-weekly-report --vault /path/to/vault --write-week-note     # write week-of-YYYY-MM-DD.md and re-index it
 rebalance calendar-daily-totals                                                # daily event count + duration stats
 ```
 
