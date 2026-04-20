@@ -10,3 +10,4 @@
 - Weekly review notes should be able to write back into the Obsidian vault as `week-of-YYYY-MM-DD.md` artifacts and immediately re-enter the retrieval pipeline so next week's knowledge includes last week's summary.
 - Next planning priorities: add inferred GitHub issue<->PR reconciliation with high/medium-confidence close suggestions, and add Sleuth AI / Slack reminder ingestion as a structured signal source before broader Slack thread ingestion.
 - The reviewed Sleuth reminders JSON is a list-shaped feed with fields such as `ReminderID`, `ReminderMessageText`, `ShouldPostOn`, `OriginalChannelID`, and `OriginalMessageID`; start Slack integration from this structured reminder feed before broader thread ingestion.
+- Experimental next step: a deterministic GitHub Action should run every 2-3 days, emit JSON + Markdown close-candidate reports, and stay report-only until the weekly local agent review proves the thresholds.

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.14.0] - 2026-04-20
+
+### Added
+
+- Experimental Phase 0 plan for a deterministic GitHub Action that scans open issues against merged PRs and produces close-candidate recommendations every 2-3 days.
+- Experimental standalone Action helper script in `/experimental` that reads open issues and merged PRs directly from the GitHub REST API, scores deterministic issue <-> PR matches, and emits JSON plus Markdown reports.
+- Focused tests for the experimental Action helper covering explicit auto-close and strong inferred close recommendations.
+
+### Changed
+
+- Product memory now explicitly captures the intended split between deterministic GitHub hygiene in Actions and weekly higher-context local agent review.
+
 ## [0.13.0] - 2026-04-18
 
 ### Added
