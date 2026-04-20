@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.13.0] - 2026-04-18
+
+### Added
+
+- New GitHub issue <-> PR reconciliation pass that suggests open issues likely fixed by merged PRs, grouped into high-confidence and medium-confidence recommendations with evidence.
+- New `github-close-candidates` CLI command for reviewing explicit auto-close candidates and inferred close recommendations from the local GitHub corpus.
+- New `github_close_candidates` MCP tool so hosts can ask for likely closeable issues before release or deployment planning.
+- Unit tests covering explicit auto-close detection, strong inferred issue/PR matches, and medium-confidence review candidates.
+
+### Changed
+
+- GitHub planning can now distinguish between issues with explicit closing links and issues that only have strong inferred evidence from branch names, cross-mentions, commit messages, and title overlap.
+
 ## [0.12.0] - 2026-04-17
 
 ### Added

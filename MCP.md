@@ -133,6 +133,20 @@ Explicit current-state inference over the local GitHub corpus for a repo and opt
 
 ---
 
+### `github_close_candidates`
+
+Suggests open issues that likely map to merged PRs and may be ready to close.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `repo_full_name` | `str` | *(required)* | Repo in `owner/name` form |
+
+**Returns:** `{repo_full_name, generated_at, summary, counts, high_confidence, medium_confidence, unmatched_open_issues}`
+
+Each recommendation includes the candidate issue number, PR number, confidence, recommendation type, and evidence explaining why the pair was matched.
+
+---
+
 ### `search_vault`
 
 Full-text keyword search over vault files.
@@ -350,7 +364,7 @@ A human-readable reference for all running MCP servers on this machine. Store at
 rebalance   python -m rebalance.mcp_server   REBALANCE_DB=/absolute/path/to/rebalance.db
 ```
 
-Live tools: `ask`, `list_projects`, `github_balance`, `query_notes`, `query_github_context`, `github_release_readiness`, `search_vault`, `create_calendar_event`, `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
+Live tools: `ask`, `list_projects`, `github_balance`, `query_notes`, `query_github_context`, `github_release_readiness`, `github_close_candidates`, `search_vault`, `create_calendar_event`, `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
 Planned: `todays_agenda`, `morning_brief`
 
 ---

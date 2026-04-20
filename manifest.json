@@ -2,7 +2,7 @@
   "mcpb_version": "0.1",
   "name": "rebalance-os",
   "display_name": "rebalance OS",
-  "version": "0.12.0",
+  "version": "0.13.0",
   "description": "Your workday OS — surfaces what matters, flags project imbalances, and answers questions about your own work using your Obsidian vault, GitHub activity, and Google Calendar. All local, all on your data.",
   "long_description": "rebalance OS ingests your Obsidian vault, GitHub activity, and Google Calendar into a local SQLite database, then lets you ask natural language questions about your own work. It flags over-investment in low-priority projects, surfaces neglected high-priority work, and assembles context for meetings — all running locally on Apple Silicon via MLX.",
   "author": {
@@ -58,6 +58,7 @@
     {"name": "github_balance", "description": "GitHub activity per project with over/under-investment flags"},
     {"name": "query_github_context", "description": "Semantic search over the local GitHub issue, PR, comment, and commit corpus"},
     {"name": "github_release_readiness", "description": "Explicit release-readiness inference from the local GitHub corpus"},
+    {"name": "github_close_candidates", "description": "Find open issues that likely map to merged PRs and may be ready to close"},
     {"name": "list_projects", "description": "List your tracked projects with priority tiers"},
     {"name": "onboarding_status", "description": "Check which setup steps are complete"},
     {"name": "setup_github_token", "description": "Validate and store a GitHub PAT"},

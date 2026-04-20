@@ -111,6 +111,7 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [x] GitHub activity scanner + 30-day A/B/C band classification
 - [x] GitHub artifact sync + local semantic query (issues, PRs, comments, reviews, commits)
 - [x] GitHub readiness inference from local repo signals (milestones, linked PRs, branches, releases)
+- [x] GitHub issue <-> PR close-candidate reconciliation with high/medium-confidence recommendations
 - [x] Obsidian vault ingester (parse, chunk, keywords, links)
 - [x] Qwen3 embedding pipeline (sqlite-vec, semantic search)
 - [x] Google Calendar integration (OAuth2, 1-year retention)
@@ -307,6 +308,7 @@ rebalance search "binoid" --database rebalance.db                              #
 rebalance ingest notes --vault /path/to/vault --database rebalance.db          # re-ingest (delta)
 rebalance ingest embed --database rebalance.db                                 # embed new chunks
 rebalance github-scan --token ghp_... --database rebalance.db                  # refresh GitHub data
+rebalance github-close-candidates --repo owner/name --database rebalance.db    # open issues likely fixed by merged PRs
 rebalance calendar-sync --database rebalance.db                                # refresh calendar
 rebalance calendar-daily-report                                                # today's events + project breakdown
 rebalance calendar-weekly-report                                               # this week's summary + aggregator

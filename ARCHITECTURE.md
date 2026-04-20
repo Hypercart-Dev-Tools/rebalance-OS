@@ -37,7 +37,7 @@ Each source has a priority, a collector module, and a target table. For detailed
 
 | Priority | Source | Collector | Storage | Vectorized | Status |
 |----------|--------|-----------|---------|------------|--------|
-| P1 | GitHub | `github_scan.py` + `github_knowledge.py` + `github_readiness.py` | `github_activity`, `github_repo_meta`, `github_branches`, `github_items`, `github_comments`, `github_documents`, `github_embeddings` | Yes — structured repo signals plus semantic corpus for issues, PRs, comments, reviews, and commit messages | Active |
+| P1 | GitHub | `github_scan.py` + `github_knowledge.py` + `github_readiness.py` + `github_reconciliation.py` | `github_activity`, `github_repo_meta`, `github_branches`, `github_items`, `github_comments`, `github_documents`, `github_embeddings` | Yes — structured repo signals plus semantic corpus for issues, PRs, comments, reviews, commit messages, and issue/PR reconciliation | Active |
 | P1 | Obsidian Vault | `note_ingester.py` + `embedder.py` | `vault_files`, `chunks`, `keywords`, `links`, `embeddings` | **Yes** — Qwen3-Embedding-0.6B, 1024-dim, sqlite-vec | Active |
 | P2 | Google Calendar | `calendar.py` | `calendar_events` table (1 year retention) | No — structured event data | Active |
 | P3 | Slack / Sleuth | TBD | `tasks` table (planned) | TBD | Planned |

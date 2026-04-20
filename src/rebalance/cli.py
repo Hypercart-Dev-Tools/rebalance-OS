@@ -562,6 +562,63 @@ def github_release_readiness_cmd(
             typer.echo(f"  - #{item.issue_number} {item.classification}{prs} — {item.title}")
 
 
+@app.command("github-close-candidates")
+def github_close_candidates_cmd(
+    repo: str = typer.Option(..., "--repo", help="Repo in owner/name form"),
+    database: Path = typer.Option(
+        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    ),
+    output_format: str = typer.Option("text", "--output", help="Output format: text or json"),
+) -> None:
+    """Suggest open issues that likely map to merged PRs and may be ready to close."""
+    from rebalance.ingest.github_reconciliation import infer_issue_pr_close_candidates
+
+    normalized_output = output_format.strip().lower()
+    if normalized_output not in {"text", "json"}:
+        raise typer.BadParameter("--output must be 'text' or 'json'.")
+
+    db_path = database.expanduser().resolve()
+    report = infer_issue_pr_close_candidates(
+        database_path=db_path,
+        repo_full_name=repo.strip(),
+    )
+    data = report.as_dict()
+    if normalized_output == "json":
+        typer.echo(json.dumps(data, ensure_ascii=False))
+        return
+
+    typer.echo(f"Repo: {report.repo_full_name}")
+    typer.echo(report.summary)
+    typer.echo(
+        "Counts: "
+        f"open_issues={report.counts.get('open_issues_considered', 0)}, "
+        f"merged_prs={report.counts.get('merged_prs_considered', 0)}, "
+        f"high={report.counts.get('high_confidence', 0)}, "
+        f"medium={report.counts.get('medium_confidence', 0)}, "
+        f"explicit_auto_close={report.counts.get('explicit_auto_close', 0)}"
+    )
+
+    if report.high_confidence:
+        typer.echo("\nHigh Confidence")
+        for item in report.high_confidence[:15]:
+            typer.echo(
+                f"  - Issue #{item.issue_number} -> PR #{item.pr_number} "
+                f"[{item.recommendation}, {item.confidence:.2f}] {item.issue_title}"
+            )
+            for line in item.evidence[:3]:
+                typer.echo(f"      {line}")
+
+    if report.medium_confidence:
+        typer.echo("\nMedium Confidence")
+        for item in report.medium_confidence[:15]:
+            typer.echo(
+                f"  - Issue #{item.issue_number} -> PR #{item.pr_number} "
+                f"[{item.recommendation}, {item.confidence:.2f}] {item.issue_title}"
+            )
+            for line in item.evidence[:3]:
+                typer.echo(f"      {line}")
+
+
 @app.command("search")
 def search_cmd(
     keyword: str = typer.Argument(..., help="Keyword to search"),

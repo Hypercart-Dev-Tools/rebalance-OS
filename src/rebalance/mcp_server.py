@@ -240,6 +240,22 @@ def create_server(database_path: Path) -> FastMCP:
         return result.as_dict()
 
     @mcp.tool()
+    def github_close_candidates(repo_full_name: str) -> dict[str, Any]:
+        """
+        Suggest open issues that likely map to merged PRs and may be ready to close.
+
+        Returns explicit and inferred issue <-> PR matches grouped into
+        high-confidence and medium-confidence recommendations.
+        """
+        from rebalance.ingest.github_reconciliation import infer_issue_pr_close_candidates
+
+        report = infer_issue_pr_close_candidates(
+            database_path=database_path,
+            repo_full_name=repo_full_name,
+        )
+        return report.as_dict()
+
+    @mcp.tool()
     def ask(query: str, since_days: int = 7, skip_synthesis: bool = False) -> dict[str, Any]:
         """
         General-purpose natural language query across all data sources.
