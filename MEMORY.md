@@ -11,3 +11,10 @@
 - Next planning priorities: add inferred GitHub issue<->PR reconciliation with high/medium-confidence close suggestions, and add Sleuth AI / Slack reminder ingestion as a structured signal source before broader Slack thread ingestion.
 - The reviewed Sleuth reminders JSON is a list-shaped feed with fields such as `ReminderID`, `ReminderMessageText`, `ShouldPostOn`, `OriginalChannelID`, and `OriginalMessageID`; start Slack integration from this structured reminder feed before broader thread ingestion.
 - Experimental next step: a deterministic GitHub Action should run every 2-3 days, emit JSON + Markdown close-candidate reports, and stay report-only until the weekly local agent review proves the thresholds.
+- The git-pulse maintained codebase now lives under `experimental/git-pulse/`, with the plan at `experimental/git-pulse/git-pulse-plan.md`.
+- The separate sync repo for cross-device pulse data can live outside the config dir via `sync_repo_dir`, currently intended to support a local checkout like `~/Documents/GitHub-Repos/rebalance-git-pulse`.
+- macOS `launchd` can be denied unattended write access to a `sync_repo_dir` under `~/Documents`; the safer pattern is a real repo in an unprotected path plus an optional symlink for convenience.
+- The git-pulse README should treat `~/.config/git-pulse/repo` or another non-protected path as the recommended `sync_repo_dir` for cross-Mac installs; `~/Documents` is not reliable for unattended launchd writes.
+- On macOS, launchd may be blocked from executing scripts inside `~/Documents`, `~/Desktop`, or `~/Downloads`; git-pulse should install a copied `~/bin/git-pulse` launcher in that case instead of a symlink.
+- Local operator convention: `~/bin/git-pulse.log` should point to `~/.config/git-pulse/logs/git-pulse.err` for quick log inspection.
+- git-pulse canonical storage now uses `device_id`-keyed pulse files with UTC timestamps plus `devices/*.yaml` metadata, and `~/bin/git-pulse-view` is the local unified reader.
