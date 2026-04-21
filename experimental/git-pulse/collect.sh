@@ -20,12 +20,157 @@ sanitize_tag() {
     printf '%s' "$1" | sed "s/'//g" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-*//; s/-*$//'
 }
 
+legacy_sanitize_tag() {
+    printf '%s' "$1" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-*//; s/-*$//'
+}
+
 yaml_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
 utc_iso_from_epoch() {
     TZ=UTC date -r "$1" +"%Y-%m-%dT%H:%M:%SZ"
+}
+
+escape_config_value() {
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
+}
+
+set_config_value() {
+    local key="$1"
+    local value="$2"
+    local escaped_value
+    local temp_file
+    local updated
+    local line
+
+    escaped_value="$(escape_config_value "$value")"
+    temp_file="$(mktemp "${TMPDIR:-/tmp}/git-pulse-config.XXXXXX")"
+    updated=0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$updated" -eq 0 ] && [[ "$line" == "$key="* ]]; then
+            printf '%s="%s"\n' "$key" "$escaped_value" >> "$temp_file"
+            updated=1
+            continue
+        fi
+        printf '%s\n' "$line" >> "$temp_file"
+    done < "$CONFIG_FILE"
+
+    if [ "$updated" -eq 0 ]; then
+        printf '\n%s="%s"\n' "$key" "$escaped_value" >> "$temp_file"
+    fi
+
+    mv "$temp_file" "$CONFIG_FILE"
+}
+
+canonical_device_id_from_hostname() {
+    local raw_hostname="$1"
+    local slug
+
+    slug="$(printf '%s' "$raw_hostname" | tr '[:upper:]' '[:lower:]')"
+    slug="$(sanitize_tag "$slug")"
+    [ -n "$slug" ] || slug="unknown-host"
+    printf '%s' "$slug"
+}
+
+legacy_device_id_candidates() {
+    local raw_name="$1"
+    local lower_name
+    local legacy_slug
+
+    lower_name="$(printf '%s' "$raw_name" | tr '[:upper:]' '[:lower:]')"
+    legacy_slug="$(legacy_sanitize_tag "$lower_name")"
+    if [ -n "$legacy_slug" ]; then
+        printf '%s\n' "$legacy_slug"
+    fi
+}
+
+looks_like_uuid() {
+    case "$1" in
+        ????????-????-????-????-????????????) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+extract_canonical_rows() {
+    local file="$1"
+
+    [ -f "$file" ] || return 0
+    awk -F '\t' 'NF == 6 && $1 ~ /^[0-9]+$/ { print }' "$file"
+}
+
+write_pulse_file() {
+    local file="$1"
+    local pulse_device_name="$2"
+    local pulse_device_id="$3"
+    local rows_file="$4"
+
+    cat > "$file" <<HEADER
+# Git pulse — $pulse_device_name
+
+<!-- Append-only chronological log. Tab-separated columns:
+     epoch_utc \t timestamp_utc \t repo \t branch \t short-sha \t subject
+     device_id: $pulse_device_id
+     canonical time: UTC
+     Oldest at top; newest at bottom. Grep-friendly; not meant for pretty rendering. -->
+
+HEADER
+
+    if [ -s "$rows_file" ]; then
+        cat "$rows_file" >> "$file"
+    fi
+}
+
+migrate_legacy_device_identity() {
+    local configured_device_id="$1"
+    local desired_device_id="$2"
+    local old_metadata_file
+    local new_metadata_file
+    local old_pulse_file
+    local new_pulse_file
+    local merge_rows
+
+    if [ "$configured_device_id" = "$desired_device_id" ]; then
+        return
+    fi
+
+    old_metadata_file="$sync_repo_dir/devices/$configured_device_id.yaml"
+    new_metadata_file="$sync_repo_dir/devices/$desired_device_id.yaml"
+    old_pulse_file="$sync_repo_dir/pulse-$configured_device_id.md"
+    new_pulse_file="$sync_repo_dir/pulse-$desired_device_id.md"
+
+    mkdir -p "$sync_repo_dir/devices"
+
+    if [ -f "$old_pulse_file" ] || [ -f "$new_pulse_file" ]; then
+        merge_rows="$(mktemp "${TMPDIR:-/tmp}/git-pulse-migrate.XXXXXX")"
+        {
+            extract_canonical_rows "$new_pulse_file"
+            extract_canonical_rows "$old_pulse_file"
+        } | sort -t $'\t' -n -k1,1 -u > "$merge_rows"
+        write_pulse_file "$new_pulse_file" "$device_name" "$desired_device_id" "$merge_rows"
+        rm -f "$merge_rows"
+        if [ -f "$old_pulse_file" ] && [ "$old_pulse_file" != "$new_pulse_file" ]; then
+            rm -f "$old_pulse_file"
+        fi
+    fi
+
+    cat > "$new_metadata_file" <<METADATA
+schema_version: 1
+device_id: "$desired_device_id"
+device_name: "$(yaml_escape "$device_name")"
+hostname: "$(yaml_escape "$hostname")"
+host_tag: "$host_tag"
+timezone_name: "$(date +%Z)"
+utc_offset: "$(date +%z)"
+pulse_file: "pulse-$desired_device_id.md"
+METADATA
+
+    if [ -f "$old_metadata_file" ] && [ "$old_metadata_file" != "$new_metadata_file" ]; then
+        rm -f "$old_metadata_file"
+    fi
+
+    set_config_value "device_id" "$desired_device_id"
 }
 
 : "${hostname:=$(scutil --get ComputerName 2>/dev/null || echo "${HOSTNAME:-unknown-host}")}"
@@ -35,9 +180,33 @@ utc_iso_from_epoch() {
 
 host_tag="$(sanitize_tag "$hostname")"
 [ -z "$host_tag" ] && host_tag="unknown-host"
-device_id="$(printf '%s' "${device_id:-$host_tag}" | tr '[:upper:]' '[:lower:]')"
-device_id="$(sanitize_tag "$device_id")"
-[ -z "$device_id" ] && device_id="$host_tag"
+configured_device_id="$(printf '%s' "${device_id:-}" | tr '[:upper:]' '[:lower:]')"
+configured_device_id="$(sanitize_tag "$configured_device_id")"
+desired_device_id="$(canonical_device_id_from_hostname "$hostname")"
+
+should_migrate_device_id=0
+if [ -n "$configured_device_id" ]; then
+    if looks_like_uuid "$configured_device_id"; then
+        should_migrate_device_id=1
+    else
+        while IFS= read -r legacy_candidate; do
+            [ -n "$legacy_candidate" ] || continue
+            if [ "$configured_device_id" = "$legacy_candidate" ] && [ "$configured_device_id" != "$desired_device_id" ]; then
+                should_migrate_device_id=1
+                break
+            fi
+        done < <(
+            legacy_device_id_candidates "$hostname"
+            legacy_device_id_candidates "$device_name"
+        )
+    fi
+fi
+
+if [ -n "$configured_device_id" ] && [ "$should_migrate_device_id" -eq 0 ]; then
+    device_id="$configured_device_id"
+else
+    device_id="$desired_device_id"
+fi
 
 LOCK_DIR="$CONFIG_DIR/collect.lock"
 if ! mkdir "$LOCK_DIR" 2>/dev/null; then
@@ -148,6 +317,14 @@ fi
 # Bring in any peer-machine updates before writing.
 if git -C "$sync_repo_dir" rev-parse --verify HEAD >/dev/null 2>&1; then
     git -C "$sync_repo_dir" pull --quiet --rebase
+fi
+
+if [ "$DRY_RUN" -eq 0 ] && [ "$should_migrate_device_id" -eq 1 ] && [ -n "$configured_device_id" ]; then
+    migrate_legacy_device_identity "$configured_device_id" "$desired_device_id"
+    device_id="$desired_device_id"
+    PULSE_FILE_NAME="pulse-$device_id.md"
+    PULSE_FILE="$sync_repo_dir/$PULSE_FILE_NAME"
+    DEVICE_METADATA_FILE="$DEVICE_METADATA_DIR/$device_id.yaml"
 fi
 
 mkdir -p "$DEVICE_METADATA_DIR"

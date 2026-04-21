@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.3] - 2026-04-20
+
+### Added
+
+- Collector self-healing for old git pulse ids: a normal non-dry-run collection now migrates older UUID-based ids and older apostrophe-split slugs to the current human-friendly slug for that machine.
+- Integration coverage for collector-driven device-id migration so the self-heal path is exercised without manual cleanup steps.
+
 ## [0.16.2] - 2026-04-20
 
 ### Changed
