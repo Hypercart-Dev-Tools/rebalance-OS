@@ -18,3 +18,5 @@
 - On macOS, launchd may be blocked from executing scripts inside `~/Documents`, `~/Desktop`, or `~/Downloads`; git-pulse should install a copied `~/bin/git-pulse` launcher in that case instead of a symlink.
 - Local operator convention: `~/bin/git-pulse.log` should point to `~/.config/git-pulse/logs/git-pulse.err` for quick log inspection.
 - git-pulse canonical storage now uses `device_id`-keyed pulse files with UTC timestamps plus `devices/*.yaml` metadata, and `~/bin/git-pulse-view` is the local unified reader.
+- Fresh installs on a new Mac need either a pre-existing `sync_repo_dir` checkout or a valid `sync_repo` remote URL plus working GitHub auth; `gh auth status` can be stale/invalid even when no local git-pulse config exists yet.
+- `experimental/git-pulse/install.sh` must treat blank `device_id` and `device_name` values the same as missing ones, and must shell-escape quoted Mac computer names when writing `config.sh`.

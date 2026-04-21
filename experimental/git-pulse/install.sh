@@ -33,6 +33,38 @@ escape_config_value() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+set_config_value() {
+    local key="$1"
+    local value="$2"
+    local comment="${3:-}"
+    local escaped_value
+    local temp_file
+    local updated
+    local line
+
+    escaped_value="$(escape_config_value "$value")"
+    temp_file="$(mktemp "${TMPDIR:-/tmp}/git-pulse-config.XXXXXX")"
+    updated=0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$updated" -eq 0 ] && [[ "$line" == "$key="* ]]; then
+            printf '%s="%s"\n' "$key" "$escaped_value" >> "$temp_file"
+            updated=1
+            continue
+        fi
+        printf '%s\n' "$line" >> "$temp_file"
+    done < "$CONFIG_DIR/config.sh"
+
+    if [ "$updated" -eq 0 ]; then
+        if [ -n "$comment" ]; then
+            printf '\n%s\n' "$comment" >> "$temp_file"
+        fi
+        printf '%s="%s"\n' "$key" "$escaped_value" >> "$temp_file"
+    fi
+
+    mv "$temp_file" "$CONFIG_DIR/config.sh"
+}
+
 generate_device_id() {
     uuidgen | tr '[:upper:]' '[:lower:]'
 }
@@ -76,17 +108,16 @@ fi
 source "$CONFIG_DIR/config.sh"
 
 config_updated=0
-if ! grep -q '^device_id=' "$CONFIG_DIR/config.sh"; then
+if [ -z "${device_id:-}" ]; then
     device_id="$(generate_device_id)"
-    printf '\n# Stable per-machine identity used in filenames and metadata.\ndevice_id="%s"\n' "$device_id" >> "$CONFIG_DIR/config.sh"
+    set_config_value "device_id" "$device_id" "# Stable per-machine identity used in filenames and metadata."
     echo "Generated device_id=$device_id"
     config_updated=1
 fi
 
-if ! grep -q '^device_name=' "$CONFIG_DIR/config.sh"; then
+if [ -z "${device_name:-}" ]; then
     default_device_name="$(scutil --get ComputerName 2>/dev/null || echo "${HOSTNAME:-unknown-device}")"
-    escaped_device_name="$(escape_config_value "$default_device_name")"
-    printf 'device_name="%s"\n' "$escaped_device_name" >> "$CONFIG_DIR/config.sh"
+    set_config_value "device_name" "$default_device_name"
     echo "Set device_name=\"$default_device_name\""
     config_updated=1
 fi
