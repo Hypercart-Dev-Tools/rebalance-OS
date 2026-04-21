@@ -6,7 +6,14 @@
       "Bash(chmod +x /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/collect.sh /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/install.sh)",
       "Bash(bash -n /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/collect.sh)",
       "Bash(bash -n /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/install.sh)",
-      "Bash(plutil -lint /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/com.user.git-history.plist.template)"
+      "Bash(plutil -lint /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/com.user.git-history.plist.template)",
+      "Bash(gh issue *)",
+      "Bash(gh api -X PATCH /repos/Hypercart-Dev-Tools/rebalance-OS/issues/comments/4286110566 -f 'body= *)",
+      "Bash(gh api *)"
+    ],
+    "additionalDirectories": [
+      "/tmp",
+      "/private/tmp"
     ]
   }
 }
