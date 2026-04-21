@@ -215,7 +215,7 @@ Example unified read:
 - **Hourly cadence.** Default is one sync attempt per hour. Adjust `StartInterval` in the plist template if needed.
 - **HEAD reflog only.** Commits made on detached HEADs or other refs can be missed.
 - **Device IDs are the stable identity.** Hostnames can change; `device_id` should not.
-- **Default IDs are now human-friendly slugs.** If you rename a Mac later, keep the existing `device_id` in `config.sh` unless you intentionally want to migrate filenames.
+- **Default IDs are now human-friendly slugs.** Apostrophes are omitted rather than split into extra separators, so a name like `Noel's device` becomes `noels-device`. If you rename a Mac later, keep the existing `device_id` in `config.sh` unless you intentionally want to migrate filenames.
 - **Protected folders need copy mode.** If the code checkout lives under `~/Documents`, `~/Desktop`, or `~/Downloads`, launchd may be blocked from executing it directly. `install.sh` copies the launchers into `~/bin` in that case, so re-run `./install.sh` after code updates.
 - **Protected folders can also block sync writes.** A `sync_repo_dir` under `~/Documents`, `~/Desktop`, or `~/Downloads` may work interactively but fail under unattended `launchd`. Prefer `~/.config/git-pulse/repo` or another non-protected path.
 - **Credentials are external.** Sync push uses whatever git or `gh` auth is already configured on the Mac.

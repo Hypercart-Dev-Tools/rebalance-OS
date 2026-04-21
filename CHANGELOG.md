@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.16.2] - 2026-04-20
+
+### Changed
+
+- Git pulse slug generation now drops apostrophes instead of turning them into extra separators, so names like `Noel's` become `noels` rather than `noel-s`.
+
 ## [0.16.1] - 2026-04-20
 
 ### Changed

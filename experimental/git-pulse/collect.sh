@@ -17,7 +17,7 @@ fi
 source "$CONFIG_FILE"
 
 sanitize_tag() {
-    printf '%s' "$1" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-*//; s/-*$//'
+    printf '%s' "$1" | sed "s/'//g" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-*//; s/-*$//'
 }
 
 yaml_escape() {

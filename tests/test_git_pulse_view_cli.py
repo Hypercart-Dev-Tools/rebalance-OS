@@ -298,6 +298,63 @@ class GitPulseViewCliTests(unittest.TestCase):
             output_lines,
         )
 
+    def test_include_local_unsynced_drops_apostrophes_in_slugged_device_id(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            bin_dir = home / "bin"
+            config_dir = home / ".config" / "git-pulse"
+            sync_repo = config_dir / "repo"
+            devices_dir = sync_repo / "devices"
+            local_repo = home / "code" / "sample-repo"
+
+            bin_dir.mkdir(parents=True)
+            devices_dir.mkdir(parents=True)
+            (sync_repo / ".git").mkdir()
+            (local_repo / ".git").mkdir(parents=True)
+
+            _write_date_stub(bin_dir / "date")
+            _write_git_stub(bin_dir / "git", local_repo)
+            (config_dir / "config.sh").write_text(
+                textwrap.dedent(
+                    f"""\
+                    repos=("{local_repo}")
+                    sync_repo_dir="{sync_repo}"
+                    device_id=""
+                    device_name="Local Mac"
+                    hostname="Noel's MacBook Pro 14"
+                    """
+                )
+            )
+
+            (devices_dir / "dev-a.yaml").write_text(
+                textwrap.dedent(
+                    """\
+                    schema_version: 1
+                    device_id: "dev-a"
+                    device_name: "Alpha Mac"
+                    pulse_file: "pulse-dev-a.md"
+                    """
+                )
+            )
+            (sync_repo / "pulse-dev-a.md").write_text("# Git pulse — Alpha Mac\n")
+
+            result = subprocess.run(
+                ["/bin/bash", str(VIEW_SCRIPT), "--days", "14", "--include-local-unsynced"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                },
+            )
+
+        self.assertIn(
+            "2026-04-19\t22:30 UTC\t2026-04-19T22:30:00Z\tnoels-macbook-pro-14\tLocal Mac\tsample-repo\tmain\t1234567\tUnsynced local commit",
+            result.stdout.splitlines(),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

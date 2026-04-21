@@ -2,7 +2,7 @@
   "mcpb_version": "0.1",
   "name": "rebalance-os",
   "display_name": "rebalance OS",
-  "version": "0.16.1",
+  "version": "0.16.2",
   "description": "Your workday OS — surfaces what matters, flags project imbalances, and answers questions about your own work using your Obsidian vault, GitHub activity, and Google Calendar. All local, all on your data.",
   "long_description": "rebalance OS ingests your Obsidian vault, GitHub activity, and Google Calendar into a local SQLite database, then lets you ask natural language questions about your own work. It flags over-investment in low-priority projects, surfaces neglected high-priority work, and assembles context for meetings — all running locally on Apple Silicon via MLX.",
   "author": {
