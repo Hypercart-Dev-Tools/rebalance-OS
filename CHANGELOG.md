@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.16.1] - 2026-04-20
+
+### Changed
+
+- Git pulse device ids now default to human-friendly computer-name slugs instead of generated UUIDs when `device_id` is left blank.
+- Git pulse hostname sanitization now trims leading and trailing dashes so device ids and host tags do not pick up quote-induced trailing separators.
+
 ## [0.16.0] - 2026-04-20
 
 ### Added

@@ -33,6 +33,10 @@ escape_config_value() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+sanitize_tag() {
+    printf '%s' "$1" | tr -cs 'A-Za-z0-9._-' '-' | sed 's/^-*//; s/-*$//'
+}
+
 set_config_value() {
     local key="$1"
     local value="$2"
@@ -66,7 +70,18 @@ set_config_value() {
 }
 
 generate_device_id() {
-    uuidgen | tr '[:upper:]' '[:lower:]'
+    local default_device_name
+    local slug
+
+    default_device_name="$(scutil --get ComputerName 2>/dev/null || echo "${HOSTNAME:-unknown-device}")"
+    slug="$(printf '%s' "$default_device_name" | tr '[:upper:]' '[:lower:]')"
+    slug="$(sanitize_tag "$slug")"
+
+    if [ -n "$slug" ]; then
+        printf '%s' "$slug"
+    else
+        uuidgen | tr '[:upper:]' '[:lower:]'
+    fi
 }
 
 install_entrypoint() {
