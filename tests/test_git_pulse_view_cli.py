@@ -51,7 +51,38 @@ def _write_date_stub(path: Path) -> None:
                 print(dt.strftime(args[2][1:]))
                 raise SystemExit(0)
 
+            if len(args) == 5 and args[0] == "-j" and args[1] == "-f" and args[4] == "+%s":
+                dt = datetime.strptime(args[3], "%Y-%m-%dT%H:%M:%S%z")
+                print(int(dt.timestamp()))
+                raise SystemExit(0)
+
             raise SystemExit(f"unsupported date invocation: {args}")
+            """
+        ),
+    )
+
+
+def _write_git_stub(path: Path, repo_path: Path) -> None:
+    _write_executable(
+        path,
+        textwrap.dedent(
+            f"""\
+            #!/usr/bin/env python3
+            import sys
+
+            repo_path = {str(repo_path)!r}
+            args = sys.argv[1:]
+
+            if len(args) >= 3 and args[0] == "-C" and args[1] == repo_path:
+                repo_args = args[2:]
+                if repo_args[:2] == ["log", "-g"]:
+                    print("HEAD@{{2026-04-19T15:30:00-07:00}}\\t1234567890abcdef\\tcommit:\\tUnsynced local commit")
+                    raise SystemExit(0)
+                if repo_args[:2] == ["branch", "--contains"]:
+                    print("main")
+                    raise SystemExit(0)
+
+            raise SystemExit(f"unsupported git invocation: {{args}}")
             """
         ),
     )
@@ -179,6 +210,93 @@ class GitPulseViewCliTests(unittest.TestCase):
 
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("Use either --date or --days", result.stderr)
+
+    def test_include_local_unsynced_writes_combined_output_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            bin_dir = home / "bin"
+            config_dir = home / ".config" / "git-pulse"
+            sync_repo = config_dir / "repo"
+            devices_dir = sync_repo / "devices"
+            local_repo = home / "code" / "sample-repo"
+            output_file = home / "reports" / "combined.tsv"
+
+            bin_dir.mkdir(parents=True)
+            devices_dir.mkdir(parents=True)
+            (sync_repo / ".git").mkdir()
+            (local_repo / ".git").mkdir(parents=True)
+
+            _write_date_stub(bin_dir / "date")
+            _write_git_stub(bin_dir / "git", local_repo)
+            (config_dir / "config.sh").write_text(
+                textwrap.dedent(
+                    f"""\
+                    repos=("{local_repo}")
+                    sync_repo_dir="{sync_repo}"
+                    device_id="local-dev"
+                    device_name="Local Mac"
+                    hostname="local-mac"
+                    """
+                )
+            )
+
+            (devices_dir / "dev-a.yaml").write_text(
+                textwrap.dedent(
+                    """\
+                    schema_version: 1
+                    device_id: "dev-a"
+                    device_name: "Alpha Mac"
+                    pulse_file: "pulse-dev-a.md"
+                    """
+                )
+            )
+            (sync_repo / "pulse-dev-a.md").write_text(
+                textwrap.dedent(
+                    f"""\
+                    # Git pulse — Alpha Mac
+
+                    {_epoch("2026-04-20T17:05:57Z")}	2026-04-20T17:05:57Z	rebalance-OS	main	bbbb222	Synced peer commit
+                    """
+                )
+            )
+
+            result = subprocess.run(
+                [
+                    "/bin/bash",
+                    str(VIEW_SCRIPT),
+                    "--days",
+                    "14",
+                    "--include-local-unsynced",
+                    "--output",
+                    str(output_file),
+                ],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                },
+            )
+
+            output_lines = result.stdout.splitlines()
+            saved_lines = output_file.read_text().splitlines()
+
+        self.assertEqual(output_lines, saved_lines)
+        self.assertEqual(
+            output_lines[0],
+            "local_day\tlocal_time\tutc_time\tdevice_id\tdevice_name\trepo\tbranch\tshort_sha\tsubject",
+        )
+        self.assertEqual(len(output_lines), 3)
+        self.assertIn(
+            "2026-04-19\t22:30 UTC\t2026-04-19T22:30:00Z\tlocal-dev\tLocal Mac\tsample-repo\tmain\t1234567\tUnsynced local commit",
+            output_lines,
+        )
+        self.assertIn(
+            "2026-04-20\t17:05 UTC\t2026-04-20T17:05:57Z\tdev-a\tAlpha Mac\trebalance-OS\tmain\tbbbb222\tSynced peer commit",
+            output_lines,
+        )
 
 
 if __name__ == "__main__":

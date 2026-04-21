@@ -20,7 +20,28 @@ source "$CONFIG_FILE"
 FILTER_DATE=""
 FILTER_DAYS=""
 FILTER_DEVICE_ID=""
+INCLUDE_LOCAL_UNSYNCED=0
 OUTPUT_FILE=""
+
+sanitize_tag() {
+    printf '%s' "$1" | tr -cs 'A-Za-z0-9._-' '-'
+}
+
+current_device_id() {
+    local current_hostname
+    local current_host_tag
+    local current_device_id
+
+    current_hostname="${hostname:-$(scutil --get ComputerName 2>/dev/null || echo "${HOSTNAME:-unknown-host}")}"
+    current_host_tag="$(sanitize_tag "$current_hostname")"
+    [ -z "$current_host_tag" ] && current_host_tag="unknown-host"
+
+    current_device_id="$(printf '%s' "${device_id:-$current_host_tag}" | tr '[:upper:]' '[:lower:]')"
+    current_device_id="$(sanitize_tag "$current_device_id")"
+    [ -z "$current_device_id" ] && current_device_id="$current_host_tag"
+
+    printf '%s' "$current_device_id"
+}
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -39,6 +60,10 @@ while [ "$#" -gt 0 ]; do
         --device-id)
             FILTER_DEVICE_ID="${2:?missing value for --device-id}"
             shift 2
+            ;;
+        --include-local-unsynced)
+            INCLUDE_LOCAL_UNSYNCED=1
+            shift
             ;;
         --output)
             OUTPUT_FILE="${2:?missing value for --output}"
@@ -101,17 +126,61 @@ cleanup() {
 }
 trap cleanup EXIT
 
+local_day_in_scope() {
+    local local_day="$1"
+
+    if [ -n "$FILTER_DATE" ] && [ "$local_day" != "$FILTER_DATE" ]; then
+        return 1
+    fi
+    if [ -n "$range_start_local" ] && { [[ "$local_day" < "$range_start_local" ]] || [[ "$local_day" > "$today_local" ]]; }; then
+        return 1
+    fi
+
+    return 0
+}
+
+append_rendered_row() {
+    local epoch="$1"
+    local utc_iso="$2"
+    local row_device_id="$3"
+    local row_device_name="$4"
+    local repo="$5"
+    local branch="$6"
+    local short_sha="$7"
+    local subject="$8"
+    local local_day
+    local local_time
+
+    local_day="$(date -r "$epoch" +"%Y-%m-%d")"
+    if ! local_day_in_scope "$local_day"; then
+        return
+    fi
+
+    local_time="$(date -r "$epoch" +"%H:%M %Z")"
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$epoch" \
+        "$local_day" \
+        "$local_time" \
+        "$utc_iso" \
+        "$row_device_id" \
+        "$row_device_name" \
+        "$repo" \
+        "$branch" \
+        "$short_sha" \
+        "$subject" >> "$rendered_rows"
+}
+
 metadata_found=0
 for metadata_file in "$sync_repo_dir"/devices/*.yaml; do
     [ -e "$metadata_file" ] || continue
     metadata_found=1
 
-    device_id="$(yaml_value "$metadata_file" "device_id")"
-    device_name="$(yaml_value "$metadata_file" "device_name")"
+    row_device_id="$(yaml_value "$metadata_file" "device_id")"
+    row_device_name="$(yaml_value "$metadata_file" "device_name")"
     pulse_file_rel="$(yaml_value "$metadata_file" "pulse_file")"
-    [ -z "$pulse_file_rel" ] && pulse_file_rel="pulse-$device_id.md"
+    [ -z "$pulse_file_rel" ] && pulse_file_rel="pulse-$row_device_id.md"
 
-    if [ -n "$FILTER_DEVICE_ID" ] && [ "$device_id" != "$FILTER_DEVICE_ID" ]; then
+    if [ -n "$FILTER_DEVICE_ID" ] && [ "$row_device_id" != "$FILTER_DEVICE_ID" ]; then
         continue
     fi
 
@@ -134,27 +203,7 @@ for metadata_file in "$sync_repo_dir"/devices/*.yaml; do
                 continue
                 ;;
         esac
-
-        local_day="$(date -r "$epoch" +"%Y-%m-%d")"
-        if [ -n "$FILTER_DATE" ] && [ "$local_day" != "$FILTER_DATE" ]; then
-            continue
-        fi
-        if [ -n "$range_start_local" ] && { [[ "$local_day" < "$range_start_local" ]] || [[ "$local_day" > "$today_local" ]]; }; then
-            continue
-        fi
-
-        local_time="$(date -r "$epoch" +"%H:%M %Z")"
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-            "$epoch" \
-            "$local_day" \
-            "$local_time" \
-            "$utc_iso" \
-            "$device_id" \
-            "$device_name" \
-            "$repo" \
-            "$branch" \
-            "$short_sha" \
-            "$subject" >> "$rendered_rows"
+        append_rendered_row "$epoch" "$utc_iso" "$row_device_id" "$row_device_name" "$repo" "$branch" "$short_sha" "$subject"
     done < "$pulse_file"
 done
 
@@ -163,10 +212,50 @@ if [ "$metadata_found" -eq 0 ]; then
     exit 1
 fi
 
+if [ "$INCLUDE_LOCAL_UNSYNCED" -eq 1 ]; then
+    local_device_id="$(current_device_id)"
+    local_device_name="${device_name:-${hostname:-$(scutil --get ComputerName 2>/dev/null || echo "${HOSTNAME:-unknown-device}")}}"
+
+    if [ -z "$FILTER_DEVICE_ID" ] || [ "$FILTER_DEVICE_ID" = "$local_device_id" ]; then
+        if declare -p repos >/dev/null 2>&1; then
+            for repo_path in "${repos[@]}"; do
+                if [ ! -d "$repo_path/.git" ]; then
+                    continue
+                fi
+                repo_name=$(basename "$repo_path")
+
+                while IFS=$'\t' read -r gd hash gs subject || [ -n "${gd:-}" ]; do
+                    case "$gs" in
+                        commit:*|"commit (initial):"*|"commit (amend):"*) ;;
+                        *) continue ;;
+                    esac
+
+                    ts="${gd#*\{}"
+                    ts="${ts%\}}"
+                    ts_for_parse="${ts:0:22}${ts:23:2}"
+                    if ! entry_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%S%z" "$ts_for_parse" +%s 2>/dev/null); then
+                        continue
+                    fi
+
+                    branch=$(git -C "$repo_path" branch --contains "$hash" --format='%(refname:short)' 2>/dev/null | head -n1)
+                    [ -z "$branch" ] && branch="(detached)"
+
+                    utc_iso="$(TZ=UTC date -r "$entry_epoch" +"%Y-%m-%dT%H:%M:%SZ")"
+                    short_hash="${hash:0:7}"
+                    clean_subject=${subject//$'\t'/ }
+                    clean_subject=${clean_subject//$'\r'/ }
+
+                    append_rendered_row "$entry_epoch" "$utc_iso" "$local_device_id" "$local_device_name" "$repo_name" "$branch" "$short_hash" "$clean_subject"
+                done < <(git -C "$repo_path" log -g --date=iso-strict --pretty=format:'%gd%x09%H%x09%gs%x09%s')
+            done
+        fi
+    fi
+fi
+
 {
     printf 'local_day\tlocal_time\tutc_time\tdevice_id\tdevice_name\trepo\tbranch\tshort_sha\tsubject\n'
     if [ -s "$rendered_rows" ]; then
-        sort -n -k1,1 "$rendered_rows" | cut -f2-
+        sort -t $'\t' -n -k1,1 -k2,10 "$rendered_rows" | awk '!seen[$0]++' | cut -f2-
     fi
 } > "$rendered_output"
 

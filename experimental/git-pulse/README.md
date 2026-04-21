@@ -56,6 +56,7 @@ If you want the most reliable setup with the fewest choices:
    ~/bin/git-pulse --dry-run
    ~/bin/git-pulse-view --today
    ~/bin/git-pulse-view --days 14
+   ~/bin/git-pulse-view --days 14 --include-local-unsynced
    launchctl list | grep git-pulse
    ```
 
@@ -132,6 +133,7 @@ That layout avoids the macOS protected-folder problem for unattended background 
    ~/bin/git-pulse --dry-run
    ~/bin/git-pulse-view --today
    ~/bin/git-pulse-view --days 14
+   ~/bin/git-pulse-view --days 14 --include-local-unsynced
    launchctl list | grep git-pulse
    tail -f ~/.config/git-pulse/logs/git-pulse.err
    ```
@@ -179,6 +181,8 @@ Example unified read:
 ```bash
 ~/bin/git-pulse-view --today
 ~/bin/git-pulse-view --days 14
+~/bin/git-pulse-view --days 14 --include-local-unsynced
+~/bin/git-pulse-view --days 14 --include-local-unsynced --output "$HOME/.config/git-pulse/repo/reports/combined-14-days.tsv"
 ```
 
 ## Files
@@ -241,6 +245,7 @@ Run:
 ~/bin/git-pulse-view
 ~/bin/git-pulse-view --today
 ~/bin/git-pulse-view --days 14
+~/bin/git-pulse-view --days 14 --include-local-unsynced
 ```
 
 **Want to backfill from before install?**

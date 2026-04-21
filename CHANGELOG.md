@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.16.0] - 2026-04-20
+
+### Added
+
+- A new `--include-local-unsynced` mode for the git pulse viewer so a saved report can combine synced cross-device pulse files with this Mac's current unsynced local reflog activity.
+- Integration coverage for combined git pulse report generation, including writing a reusable TSV report to disk via `--output`.
+
+### Changed
+
+- The git pulse viewer can now generate a real reusable combined range report with `--days N --include-local-unsynced --output ...` instead of requiring ad-hoc terminal merges.
+
 ## [0.15.0] - 2026-04-20
 
 ### Added
