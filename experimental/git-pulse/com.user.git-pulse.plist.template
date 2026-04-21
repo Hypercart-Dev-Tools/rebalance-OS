@@ -3,18 +3,20 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.user.git-history</string>
+    <string>com.user.git-pulse</string>
     <key>ProgramArguments</key>
     <array>
         <string>{{COLLECT_SCRIPT_PATH}}</string>
     </array>
+    <key>WorkingDirectory</key>
+    <string>{{WORKING_DIRECTORY}}</string>
     <key>StartInterval</key>
-    <integer>600</integer>
+    <integer>3600</integer>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>{{LOG_DIR}}/git-history.out</string>
+    <string>{{LOG_DIR}}/git-pulse.out</string>
     <key>StandardErrorPath</key>
-    <string>{{LOG_DIR}}/git-history.err</string>
+    <string>{{LOG_DIR}}/git-pulse.err</string>
 </dict>
 </plist>
