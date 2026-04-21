@@ -1,6 +1,17 @@
 # Git History Plan
 
+## Problem Statement
+
+A coder juggling 6-7 active projects across 2-3 machines loses the thread of their own work. Context lives in scattered places: terminal scrollback on whichever laptop was nearest, VS Code recent-files lists that don't cross machines, GitHub activity feeds that conflate meaningful local work with noise, and commit histories that require walking repo-by-repo to reconstruct.
+
+The usual fix is an orchestration script that every AI agent or workflow is supposed to invoke. That fails in practice: it relies on remembering to tell each agent to run it, every session, every machine. The friction is the failure mode.
+
+This project explores whether a **passive, always-on collector** — running in the background on each machine, writing to a single synced markdown file — can replace that active discipline. If any agent or human can read `GIT-HISTORY.md` without being asked to run anything, the context problem gets solved once rather than every session.
+
+The open question is whether a file this simple is actually enough to be useful, or whether the real value requires richer structure (issue/PR activity, intent capture, cross-referencing). Phase 0 deliberately starts minimal to find out.
+
 ## TOC
+- Problem Statement
 - Overview
 - Phase 0 Spike
 - Architecture
