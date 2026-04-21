@@ -11,6 +11,26 @@
 
 - The git pulse install flow now includes a dedicated report command for turning a saved combined history export into a readable standalone HTML page.
 
+## [0.16.3] - 2026-04-20
+
+### Added
+
+- Collector self-healing for old git pulse ids: a normal non-dry-run collection now migrates older UUID-based ids and older apostrophe-split slugs to the current human-friendly slug for that machine.
+- Integration coverage for collector-driven device-id migration so the self-heal path is exercised without manual cleanup steps.
+
+## [0.16.2] - 2026-04-20
+
+### Changed
+
+- Git pulse slug generation now drops apostrophes instead of turning them into extra separators, so names like `Noel's` become `noels` rather than `noel-s`.
+
+## [0.16.1] - 2026-04-20
+
+### Changed
+
+- Git pulse device ids now default to human-friendly computer-name slugs instead of generated UUIDs when `device_id` is left blank.
+- Git pulse hostname sanitization now trims leading and trailing dashes so device ids and host tags do not pick up quote-induced trailing separators.
+
 ## [0.16.0] - 2026-04-20
 
 ### Added

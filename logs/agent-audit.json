@@ -1,0 +1,25 @@
+[
+  {
+    "timestamp_utc": "2026-04-21T04:32:36Z",
+    "user": "noelsaw",
+    "action": "DELETE",
+    "target": [
+      "/Users/noelsaw/.config/git-pulse/repo/devices/noel-s-macbook-pro-14-.yaml",
+      "/Users/noelsaw/.config/git-pulse/repo/pulse-noel-s-macbook-pro-14-.md"
+    ],
+    "reason": "Remove stale fallback git-pulse device identity after stable UUID-based device_id was generated for this Mac.",
+    "confirm_flag": "explicit user request in chat",
+    "dry_run": false
+  },
+  {
+    "timestamp_utc": "2026-04-21T05:03:25Z",
+    "user": "noelsaw",
+    "action": "DELETE",
+    "target": [
+      "/Users/noelsaw/.config/git-pulse/repo/pulse-Noel-s-MBP-16-M1-Pro.md"
+    ],
+    "reason": "Remove obsolete legacy-format git-pulse file after migrating the same device to a canonical human-friendly slug id.",
+    "confirm_flag": "explicit user request in chat",
+    "dry_run": false
+  }
+]
