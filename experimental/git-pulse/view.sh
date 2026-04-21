@@ -18,6 +18,7 @@ source "$CONFIG_FILE"
 : "${sync_repo_dir:=$CONFIG_DIR/repo}"
 
 FILTER_DATE=""
+FILTER_DAYS=""
 FILTER_DEVICE_ID=""
 OUTPUT_FILE=""
 
@@ -29,6 +30,10 @@ while [ "$#" -gt 0 ]; do
             ;;
         --date)
             FILTER_DATE="${2:?missing value for --date}"
+            shift 2
+            ;;
+        --days)
+            FILTER_DAYS="${2:?missing value for --days}"
             shift 2
             ;;
         --device-id)
@@ -45,6 +50,24 @@ while [ "$#" -gt 0 ]; do
             ;;
     esac
 done
+
+if [ -n "$FILTER_DATE" ] && [ -n "$FILTER_DAYS" ]; then
+    echo "Use either --date or --days, not both." >&2
+    exit 1
+fi
+
+if [ -n "$FILTER_DAYS" ]; then
+    case "$FILTER_DAYS" in
+        ''|*[!0-9]*)
+            echo "--days must be a positive integer." >&2
+            exit 1
+            ;;
+    esac
+    if [ "$FILTER_DAYS" -lt 1 ]; then
+        echo "--days must be at least 1." >&2
+        exit 1
+    fi
+fi
 
 if [ ! -d "$sync_repo_dir/.git" ]; then
     echo "Sync repo not found at $sync_repo_dir" >&2
@@ -66,6 +89,12 @@ yaml_value() {
 
 rendered_rows=$(mktemp "${TMPDIR:-/tmp}/git-pulse-view.rows.XXXXXX")
 rendered_output=$(mktemp "${TMPDIR:-/tmp}/git-pulse-view.out.XXXXXX")
+today_local="$(date +"%Y-%m-%d")"
+range_start_local=""
+
+if [ -n "$FILTER_DAYS" ]; then
+    range_start_local="$(date -v-"$((FILTER_DAYS - 1))"d +"%Y-%m-%d")"
+fi
 
 cleanup() {
     rm -f "$rendered_rows" "$rendered_output"
@@ -110,10 +139,14 @@ for metadata_file in "$sync_repo_dir"/devices/*.yaml; do
         if [ -n "$FILTER_DATE" ] && [ "$local_day" != "$FILTER_DATE" ]; then
             continue
         fi
+        if [ -n "$range_start_local" ] && { [[ "$local_day" < "$range_start_local" ]] || [[ "$local_day" > "$today_local" ]]; }; then
+            continue
+        fi
 
-        local_time="$(date -r "$epoch" +"%Y-%m-%d %H:%M %Z")"
-        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        local_time="$(date -r "$epoch" +"%H:%M %Z")"
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
             "$epoch" \
+            "$local_day" \
             "$local_time" \
             "$utc_iso" \
             "$device_id" \
@@ -131,15 +164,7 @@ if [ "$metadata_found" -eq 0 ]; then
 fi
 
 {
-    echo "# git-pulse view"
-    echo "# generated_at_local: $(date +"%Y-%m-%d %H:%M %Z")"
-    if [ -n "$FILTER_DATE" ]; then
-        echo "# filter_date_local: $FILTER_DATE"
-    fi
-    if [ -n "$FILTER_DEVICE_ID" ]; then
-        echo "# filter_device_id: $FILTER_DEVICE_ID"
-    fi
-    echo "# columns: local_time\tutc_time\tdevice_id\tdevice_name\trepo\tbranch\tshort_sha\tsubject"
+    printf 'local_day\tlocal_time\tutc_time\tdevice_id\tdevice_name\trepo\tbranch\tshort_sha\tsubject\n'
     if [ -s "$rendered_rows" ]; then
         sort -n -k1,1 "$rendered_rows" | cut -f2-
     fi

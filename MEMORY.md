@@ -20,3 +20,4 @@
 - git-pulse canonical storage now uses `device_id`-keyed pulse files with UTC timestamps plus `devices/*.yaml` metadata, and `~/bin/git-pulse-view` is the local unified reader.
 - Fresh installs on a new Mac need either a pre-existing `sync_repo_dir` checkout or a valid `sync_repo` remote URL plus working GitHub auth; `gh auth status` can be stale/invalid even when no local git-pulse config exists yet.
 - `experimental/git-pulse/install.sh` must treat blank `device_id` and `device_name` values the same as missing ones, and must shell-escape quoted Mac computer names when writing `config.sh`.
+- `git-pulse-view` should favor one canonical TSV output for both humans and machines: `local_day`, `local_time`, `utc_time`, `device_id`, `device_name`, `repo`, `branch`, `short_sha`, `subject`, with range filtering such as `--days 14` instead of comment-heavy preambles.

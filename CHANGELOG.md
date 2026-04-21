@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.15.0] - 2026-04-20
+
+### Added
+
+- A new 14-day style window filter for the git pulse viewer so recent activity can be read as a bounded local-time slice instead of only single-day views.
+- An integration test that exercises the git pulse viewer with a deterministic clock stub and verifies the flat row output contract.
+
+### Changed
+
+- The git pulse viewer now emits one canonical tab-separated schema with explicit local day and local time columns, replacing the previous comment-heavy preamble format.
+
 ## [0.14.0] - 2026-04-20
 
 ### Added

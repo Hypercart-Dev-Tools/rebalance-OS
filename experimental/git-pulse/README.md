@@ -55,6 +55,7 @@ If you want the most reliable setup with the fewest choices:
    ```bash
    ~/bin/git-pulse --dry-run
    ~/bin/git-pulse-view --today
+   ~/bin/git-pulse-view --days 14
    launchctl list | grep git-pulse
    ```
 
@@ -130,6 +131,7 @@ That layout avoids the macOS protected-folder problem for unattended background 
    ```bash
    ~/bin/git-pulse --dry-run
    ~/bin/git-pulse-view --today
+   ~/bin/git-pulse-view --days 14
    launchctl list | grep git-pulse
    tail -f ~/.config/git-pulse/logs/git-pulse.err
    ```
@@ -166,12 +168,17 @@ Each device owns its own pulse file, so merge conflicts are structurally unlikel
 epoch_utc	timestamp_utc	repo	branch	short-sha	subject
 ```
 
-Canonical storage time is UTC. `git-pulse-view` converts rows into local time on the machine doing the reading, so no separate timezone-helper file is needed.
+Canonical storage time is UTC. `git-pulse-view` converts rows into local time on the machine doing the reading and emits one TSV header row followed by flat event rows:
+
+```text
+local_day	local_time	utc_time	device_id	device_name	repo	branch	short_sha	subject
+```
 
 Example unified read:
 
 ```bash
 ~/bin/git-pulse-view --today
+~/bin/git-pulse-view --days 14
 ```
 
 ## Files
@@ -233,6 +240,7 @@ Run:
 ```bash
 ~/bin/git-pulse-view
 ~/bin/git-pulse-view --today
+~/bin/git-pulse-view --days 14
 ```
 
 **Want to backfill from before install?**
