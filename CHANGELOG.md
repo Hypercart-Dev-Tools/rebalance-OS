@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.17.0] - 2026-04-20
+
+### Added
+
+- A static HTML report export for combined git pulse history so recent work is easier to scan by day, repo, branch, device, and commit summary instead of reading raw tab-separated rows.
+- Browser-side filtering and visual summaries for combined git pulse history, including day-grouped timelines plus repo and branch breakdowns.
+
+### Changed
+
+- The git pulse install flow now includes a dedicated report command for turning a saved combined history export into a readable standalone HTML page.
+
 ## [0.16.0] - 2026-04-20
 
 ### Added
