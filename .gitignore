@@ -15,3 +15,5 @@ mrt-temp/
 rebalance.db-shm
 rebalance.db-wal
 rebalance.db-wal
+.claude/settings.json
+.claude/settings.json

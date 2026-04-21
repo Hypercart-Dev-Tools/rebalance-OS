@@ -11,6 +11,7 @@ See [`git-pulse-plan.md`](./git-pulse-plan.md) for the background and design not
 - Install on another Mac
 - What it does
 - File format
+- HTML report export
 - Files
 - State lives outside this repo
 - Known limitations
@@ -57,6 +58,7 @@ If you want the most reliable setup with the fewest choices:
    ~/bin/git-pulse-view --today
    ~/bin/git-pulse-view --days 14
    ~/bin/git-pulse-view --days 14 --include-local-unsynced
+   ~/bin/git-pulse-report ~/.config/git-pulse/repo/reports/combined-14-days.tsv
    launchctl list | grep git-pulse
    ```
 
@@ -126,6 +128,7 @@ That layout avoids the macOS protected-folder problem for unattended background 
    The installer:
    - creates `~/bin/git-pulse`
    - creates `~/bin/git-pulse-view`
+   - creates `~/bin/git-pulse-report`
    - installs `~/Library/LaunchAgents/com.user.git-pulse.plist`
    - loads the launchd job
 
@@ -135,6 +138,7 @@ That layout avoids the macOS protected-folder problem for unattended background 
    ~/bin/git-pulse-view --today
    ~/bin/git-pulse-view --days 14
    ~/bin/git-pulse-view --days 14 --include-local-unsynced
+   ~/bin/git-pulse-report ~/.config/git-pulse/repo/reports/combined-14-days.tsv
    launchctl list | grep git-pulse
    tail -f ~/.config/git-pulse/logs/git-pulse.err
    ```
@@ -186,12 +190,32 @@ Example unified read:
 ~/bin/git-pulse-view --days 14 --include-local-unsynced --output "$HOME/.config/git-pulse/repo/reports/combined-14-days.tsv"
 ```
 
+## HTML Report Export
+
+If the flat TSV is too dense to read, render it as a static HTML report:
+
+```bash
+~/bin/git-pulse-report \
+  "$HOME/.config/git-pulse/repo/reports/combined-14-days.tsv" \
+  --output "$HOME/.config/git-pulse/repo/reports/combined-14-days.html"
+```
+
+What the HTML view adds:
+
+- day-grouped timeline instead of one long TSV stream
+- summary cards for commits, active days, repos, and devices
+- instant browser-side filtering by repo, branch, device, SHA, or subject text
+- repo and branch breakdown panels for quick scanning
+
+The TSV stays canonical. `git-pulse-report` is just a readable export layer on top.
+
 ## Files
 
 | File | Purpose |
 |------|---------|
 | `collect.sh` | Collector. Runs every hour via launchd and also supports `--dry-run`. |
 | `view.sh` | Unified local reader across all registered device files. |
+| `report.py` | Static HTML renderer for a combined TSV export. |
 | `install.sh` | Creates local config, installs launchers, installs the launchd plist, and generates `device_id` if needed. |
 | `com.user.git-pulse.plist.template` | launchd agent template used by `install.sh`. |
 | `config.example.sh` | Seed config copied to `~/.config/git-pulse/config.sh` on first install. |
@@ -207,6 +231,7 @@ Example unified read:
 | `~/.config/git-pulse/logs/` | launchd stdout/stderr. |
 | `~/bin/git-pulse` | Launchd entrypoint. Usually a symlink; falls back to a copied script when the code repo lives in a protected macOS folder. |
 | `~/bin/git-pulse-view` | Unified read interface across all registered device files. |
+| `~/bin/git-pulse-report` | Static HTML exporter for a saved combined TSV report. |
 | `~/Library/LaunchAgents/com.user.git-pulse.plist` | Installed launchd agent. |
 
 ## Known Limitations
@@ -251,6 +276,14 @@ Run:
 ~/bin/git-pulse-view --days 14 --include-local-unsynced
 ```
 
+**Want a readable HTML version of a saved combined TSV?**
+Run:
+```bash
+~/bin/git-pulse-report \
+  ~/.config/git-pulse/repo/reports/combined-14-days.tsv \
+  --output ~/.config/git-pulse/repo/reports/combined-14-days.html
+```
+
 **Want to backfill from before install?**
 Run:
 ```bash
@@ -273,6 +306,7 @@ launchctl unload ~/Library/LaunchAgents/com.user.git-pulse.plist
 rm ~/Library/LaunchAgents/com.user.git-pulse.plist
 rm ~/bin/git-pulse
 rm ~/bin/git-pulse-view
+rm ~/bin/git-pulse-report
 rm -rf ~/.config/git-pulse
 ```
 

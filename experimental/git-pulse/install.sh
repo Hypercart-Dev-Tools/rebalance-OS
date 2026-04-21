@@ -13,8 +13,10 @@ PLIST_LABEL="com.user.git-pulse"
 PLIST_PATH="$LAUNCH_AGENT_DIR/$PLIST_LABEL.plist"
 COLLECT_PATH="$SCRIPT_DIR/collect.sh"
 VIEW_PATH="$SCRIPT_DIR/view.sh"
+REPORT_PATH="$SCRIPT_DIR/report.py"
 COLLECT_LINK_PATH="$BIN_DIR/git-pulse"
 VIEW_LINK_PATH="$BIN_DIR/git-pulse-view"
+REPORT_LINK_PATH="$BIN_DIR/git-pulse-report"
 LEGACY_CONFIG_DIR="$HOME/.config/git-history"
 LEGACY_PLIST_PATH="$LAUNCH_AGENT_DIR/com.user.git-history.plist"
 
@@ -106,6 +108,7 @@ mkdir -p "$CONFIG_DIR" "$LOG_DIR" "$BIN_DIR" "$LAUNCH_AGENT_DIR"
 install_entrypoint "$COLLECT_PATH" "$COLLECT_LINK_PATH"
 LINK_MODE="$INSTALL_MODE"
 install_entrypoint "$VIEW_PATH" "$VIEW_LINK_PATH"
+install_entrypoint "$REPORT_PATH" "$REPORT_LINK_PATH"
 
 if [ ! -f "$CONFIG_DIR/config.sh" ]; then
     if [ -f "$LEGACY_CONFIG_DIR/config.sh" ]; then
@@ -179,12 +182,15 @@ echo "Done. Collector fires every hour (and at load)."
 if [ "$LINK_MODE" = "copy" ]; then
     echo "Collector install: copied $COLLECT_PATH to $COLLECT_LINK_PATH"
     echo "View install:      copied $VIEW_PATH to $VIEW_LINK_PATH"
+    echo "Report install:    copied $REPORT_PATH to $REPORT_LINK_PATH"
     echo "Refresh after repo pulls by re-running install.sh."
 else
     echo "Collector install: symlinked $COLLECT_LINK_PATH -> $COLLECT_PATH"
     echo "View install:      symlinked $VIEW_LINK_PATH -> $VIEW_PATH"
+    echo "Report install:    symlinked $REPORT_LINK_PATH -> $REPORT_PATH"
 fi
 echo "Test manually:   $COLLECT_LINK_PATH --dry-run"
 echo "Unified view:    $VIEW_LINK_PATH --today"
+echo "HTML report:     $REPORT_LINK_PATH /path/to/combined.tsv --output /path/to/report.html"
 echo "Tail logs:       tail -f $LOG_DIR/git-pulse.err"
 echo "Uninstall:       launchctl unload $PLIST_PATH && rm $PLIST_PATH"
