@@ -94,27 +94,24 @@ Only entries matching `^commit` get logged, and they are tagged with `$(scutil -
 
 ## File Format
 
-Each machine's `history-<hostname>.md` is append-only, reverse-chronological within each run block, flat across repos:
+Each machine's `history-<hostname>.md` is append-only, oldest at top. One tab-separated line per commit:
 
-```markdown
-# Git history — mac-studio
-
-## 2026-04-20
-
-### 14:32  rebalance-OS  main
-- `a1b2c3d` Add experimental GH close-candidates action spike
-
-### 11:07  neochrome-site  feature/pricing
-- `9f8e7d6` Tweak pricing grid spacing
-- `5c4b3a2` Fix mobile nav overflow
-
-## 2026-04-19
-
-### 22:15  dotfiles  main
-- `7e6d5c4` Bump neovim plugin pins
+```
+YYYY-MM-DD HH:MM\trepo\tbranch\tshort-sha\tsubject
 ```
 
-Grouping: day header → time+repo+branch subheader → one bullet per commit. Branch recorded as `HEAD`'s branch at reflog time. Short SHA + subject line only; full details live in the repo itself.
+Example:
+
+```
+2026-04-19 22:15	dotfiles	main	7e6d5c4	Bump neovim plugin pins
+2026-04-20 11:07	neochrome-site	feature/pricing	5c4b3a2	Fix mobile nav overflow
+2026-04-20 11:07	neochrome-site	feature/pricing	9f8e7d6	Tweak pricing grid spacing
+2026-04-20 14:32	rebalance-OS	main	a1b2c3d	Add experimental GH close-candidates action spike
+```
+
+Rejected alternative: day-grouped markdown with `## 2026-04-20` headers and nested time sub-blocks. Because the collector runs every 10 min, each run would emit its own day block, fragmenting the file into dozens of scattered sub-blocks per day. Flat lines are uglier when rendered but trivially `grep`-able, `sort`-able, and `tail`-able — which is what agents and humans actually do with the file.
+
+Branch is the first current branch that contains the commit (from `git branch --contains`). For merged-and-deleted feature branches this reports the merge target.
 
 ## Sync Strategy
 
@@ -130,15 +127,18 @@ Aggregated view is `cat history-*.md | sort` or a small `view.sh` that merges an
 ## State & Config
 
 Outside the rebalance-OS repo, in `~/.config/git-history/`:
-- `config.toml` — list of repo paths, sync repo URL, hostname override (if desired)
-- `last-run` — ISO timestamp of last successful run (used as `--since` for reflog)
+- `config.sh` — sourced bash: `repos` array, `sync_repo` URL, optional `hostname` override
+- `last-run` — epoch seconds of last successful run (epoch avoids TZ-comparison bugs)
 - `repo/` — checked-out sync repo
+- `logs/` — launchd stdout/stderr
+
+(Earlier drafts proposed `config.toml`; sourced bash won out because it's zero-dependency and supports arrays natively.)
 
 Rationale: the *script* is experimental and versioned with rebalance-OS; the *data and state* are personal and cross-machine, so they live in the user's home.
 
 ## Registry Integration
 
-rebalance-OS already maintains a project registry with repo paths. Phase 0 hardcodes the repo list in `config.toml`. If the tool survives the 4x-in-a-week test, Phase 2 reads repos directly from the rebalance registry — which then becomes a real reason to keep it in this monorepo rather than spin it off.
+rebalance-OS already maintains a project registry with repo paths. Phase 0 hardcodes the repo list in `config.sh`. If the tool survives the 4x-in-a-week test, Phase 2 reads repos directly from the rebalance registry — which then becomes a real reason to keep it in this monorepo rather than spin it off.
 
 ## Deliverables
 
@@ -146,9 +146,9 @@ rebalance-OS already maintains a project registry with repo paths. Phase 0 hardc
 - `experimental/git-history/collect.sh`
 - `experimental/git-history/install.sh`
 - `experimental/git-history/com.user.git-history.plist.template`
-- `experimental/git-history/config.example.toml`
+- `experimental/git-history/config.example.sh`
 - `experimental/git-history/README.md`
-- `experimental/git-history-plan.md` (this file)
+- `experimental/git-history/git-history-plan.md` (this file)
 
 ### Deferred
 - Linux/cron variant of the launchd agent

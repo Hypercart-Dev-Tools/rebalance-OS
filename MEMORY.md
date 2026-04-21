@@ -11,3 +11,4 @@
 - Next planning priorities: add inferred GitHub issue<->PR reconciliation with high/medium-confidence close suggestions, and add Sleuth AI / Slack reminder ingestion as a structured signal source before broader Slack thread ingestion.
 - The reviewed Sleuth reminders JSON is a list-shaped feed with fields such as `ReminderID`, `ReminderMessageText`, `ShouldPostOn`, `OriginalChannelID`, and `OriginalMessageID`; start Slack integration from this structured reminder feed before broader thread ingestion.
 - Experimental next step: a deterministic GitHub Action should run every 2-3 days, emit JSON + Markdown close-candidate reports, and stay report-only until the weekly local agent review proves the thresholds.
+- The git-history spike now lives under `experimental/git-history/`, and its plan file moved there as `experimental/git-history/git-history-plan.md`.
