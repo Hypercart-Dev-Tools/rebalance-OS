@@ -43,39 +43,38 @@ What it does not yet have is a canonical historical query layer. Right now, hist
 
 ## Data Source And Storage Decision
 
-Chosen sync folder:
+Raw (shared) data root:
 
-- Raw data root: `$HOME/Documents/rebalance-git-pulse`
-- Config key: `GIT_PULSE_SYNC_ROOT`
+- Resolved from the existing git-pulse config contract: `sync_repo_dir` in `~/.config/git-pulse/config.sh` (the same path `collect.sh`, `view.sh`, `recap.py`, and the team pipeline already use)
+- This is the GitHub-synced folder, not an iCloud-synced folder
+- **iCloud Drive must not sync this folder.** SQLite's WAL/journal files are incompatible with iCloud's opportunistic file sync and corrupt over time. If `~/Documents` is iCloud-synced on the host machine, either disable Desktop & Documents for that folder or keep the raw folder outside `~/Documents` entirely.
 
-Use that folder for:
+Use that folder for (unchanged from today):
 
 - `pulse-*.md`
 - `devices/*.yaml`
 - `reports/*.tsv`
 - `reports/*.md`
+- `team-pulses/*.tsv` (team pipeline, added in the team-collect work)
+- `team-reports/*.md`
 
-Recommended derived-data rule:
+Derived data (SQLite history layer):
 
-- Read raw inputs from the sync repo checkout
-- Write the derived SQLite database under that same checkout in a dedicated derived path
-- Do **not** commit the SQLite database to Git by default
+- Path: `~/Library/Application Support/git-pulse/history.sqlite`
+- Per-machine, local-only. Not synced through GitHub. Not synced through iCloud.
+- Override via `GIT_PULSE_DB_PATH` env var for operator convenience (e.g. testing, scratch DBs)
+- Lives outside the sync repo entirely, so no `.gitignore` entry is needed
 
-Proposed derived path:
+Reasoning for the split:
 
-- `$HOME/Documents/rebalance-git-pulse/derived/git-pulse-history.sqlite`
-
-Reasoning:
-
-- This keeps all related code and data centered on the existing GitHub sync folder
-- It avoids binary database churn and merge conflicts in the sync repo history
-- It preserves raw synced artifacts as durable, inspectable, line-oriented source material
+- Raw artifacts stay in the shared folder so every machine converges on the same source of truth
+- The derived DB is a computed artifact — cheaper to rebuild than to replicate, and replicating it across machines via GitHub or iCloud invites corruption
+- Each machine's local DB reflects that machine's latest sync state; no cross-machine SQLite writes
 
 Default/fallback behavior:
 
-- If `GIT_PULSE_SYNC_ROOT` is set, use it as the authoritative root
-- If unset, use `$HOME/Documents/rebalance-git-pulse`
-- If the selected root is unavailable or read-only, fail fast with a clear operator error and no partial ingest writes
+- Raw root resolved strictly from `sync_repo_dir` in `config.sh`. If config is missing, fail fast — do not invent a default path
+- If the derived DB path is unavailable or read-only, fail fast with a clear operator error and no partial ingest writes
 
 ## Architecture Direction
 
@@ -118,9 +117,10 @@ Recommended schema direction:
   - first_seen_utc
   - last_seen_utc
 
-- `commits`
-  - canonical row id
-  - device id
+- `commit_observations` (renamed from `commits` — each row is a device-specific observation of a commit, not a globally-canonical commit row; this is deliberate so we can answer "which machines have seen commit X")
+  - row id
+  - device id (nullable for team-sourced rows where no local device observed the commit)
+  - author_login (nullable; populated for team-sourced rows)
   - repo
   - branch
   - short sha
@@ -131,10 +131,14 @@ Recommended schema direction:
   - source_tz_name
   - local_day
   - local_time
-  - source type
-  - source file
-  - source line
+  - source_type (`pulse`, `reports_tsv`, or `team_pulse`)
+  - source_file
+  - source_line
+  - kind (`commit` or `pr`)
+  - pr_number (nullable)
   - dedupe key
+
+Canonical commit view: a deduplicated `commits` view (or materialized table) over `commit_observations` grouped by `(repo, short_sha)` answers "how many distinct commits exist" without losing per-device provenance.
 
 - `ingest_runs`
   - started_at_utc
@@ -154,35 +158,36 @@ Recommended schema direction:
   - summary text
   - embedding status
 
-Canonical dedupe contract:
+Canonical dedupe contract (per-observation):
 
-- Dedupe key formula: `sha1(device_id_norm + "|" + repo_norm + "|" + branch_norm + "|" + short_sha_norm + "|" + timestamp_utc_iso + "|" + subject_norm)`
-- Normalization rules: trim, lowercase where appropriate for identifiers, collapse internal whitespace in subject, and normalize missing branch to `detached`
-- Source precedence on collisions with same dedupe key: `pulse-*.md` first, then `reports/*.tsv` as reconciliation-only metadata
-- Enforce with a unique index on `commits.dedupe_key`; collisions increment `duplicates_skipped` and are logged with source path
+- Dedupe key formula: `sha1(device_id_norm + "|" + repo_norm + "|" + short_sha_norm + "|" + timestamp_utc_iso + "|" + kind + "|" + pr_number_norm)`
+- `subject` is intentionally excluded — an amended commit or a subject typo correction should not produce a phantom duplicate observation. SHA + timestamp uniquely identifies the observation within a device.
+- For team-sourced rows (no `device_id`), substitute the literal string `team:<source_type>` for the device segment so team PRs/commits can coexist with personal pulse rows in the same table without key collision
+- Normalization rules: trim, lowercase identifiers, normalize missing branch to `detached`, normalize empty `pr_number` to `-`
+- Source precedence on collisions with same dedupe key: `pulse-*.md` beats `reports_tsv`; `team_pulse` never collides with personal rows because its device segment differs
+- Enforce with a unique index on `commit_observations.dedupe_key`; collisions increment `duplicates_skipped` and are logged with source path
 
 ## Phase 0 Technical Spike
 
-Timebox: 1-2 hours max
+Timebox: half-day (the prior 1–2 hour target was unrealistic given the checklist).
 
-### Checklist
+### Checklist (must-have to inform Phase 1)
 
-- [ ] Confirm SQLite writes cleanly from this repo against the chosen sync folder
-- [ ] Confirm the derived DB path is writable and acceptable under the chosen sync folder
-- [ ] Confirm `GIT_PULSE_SYNC_ROOT` override works and fallback to default root is deterministic
-- [ ] Confirm current raw inputs can be parsed deterministically:
-  - `pulse-*.md`
-  - `devices/*.yaml`
-  - `reports/*.tsv`
-- [ ] Implement a tiny ingest prototype that loads current data and de-duplicates it
-- [ ] Run 5 real historical queries against the prototype DB
+- [ ] Confirm the derived DB path (`~/Library/Application Support/git-pulse/history.sqlite`) is writable
+- [ ] Parse current `pulse-*.md` deterministically into normalized rows
+- [ ] Parse current `devices/*.yaml` into `devices` + `device_aliases`
+- [ ] Implement a minimal ingest that loads the real sync folder and de-duplicates
+- [ ] Run 2–3 representative queries from Python (e.g., "last commit per repo," "observations per device," "cross-device duplicates")
 - [ ] Measure import time and DB size on current data
-- [ ] Validate blocking dependencies:
-  - standard SQLite availability
-  - FTS5 availability
-  - `sqlite-vec` availability or install path
-- [ ] Validate timezone correctness on at least one DST boundary sample and one cross-device timezone sample
-- [ ] Stop and escalate if the chosen sync folder causes write friction or if vector dependencies are fragile
+- [ ] Confirm FTS5 availability in the Python `sqlite3` build (simple `CREATE VIRTUAL TABLE ... USING fts5`)
+- [ ] Confirm `sqlite-vec` can load as a dynamic extension (already a hard dep in `pyproject.toml` — just verifying `enable_load_extension` is available)
+
+### Deferred to Phase 1 (not blocking the decision to proceed)
+
+- Comprehensive DST-boundary + cross-timezone validation — belongs in a proper test fixture set, not a spike
+- `reports/*.tsv` ingest path — only needed for reconciliation, not Phase 1 correctness
+- Polished CLI query surface — Phase 2 concern
+- Deep device-alias reconciliation heuristics — Phase 1 can start with a manual alias seed
 
 ### What Phase 0 Must Prove
 
@@ -193,9 +198,46 @@ Timebox: 1-2 hours max
 
 ### Spike Deliverables
 
-- [ ] A minimal ingest script under `experimental/git-pulse/`
-- [ ] A scratch SQLite file at the proposed derived path
-- [ ] A short result summary added back into this plan doc before Phase 1 starts
+- [x] A minimal ingest script at [experimental/git-pulse/sqlite_spike.py](../../experimental/git-pulse/sqlite_spike.py)
+- [x] A scratch SQLite file at `~/Library/Application Support/git-pulse/history.sqlite`
+- [x] A result summary added back into this plan doc (below)
+
+### Spike Findings (run 2026-04-22)
+
+Measured against the real sync folder (`/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse/`):
+
+**Dependencies — no blockers:**
+
+- SQLite writes cleanly to `~/Library/Application Support/git-pulse/history.sqlite`.
+- FTS5 virtual tables create successfully in the Python `sqlite3` build.
+- `sqlite-vec` loads via `enable_load_extension` (version `v0.1.9`). Already pinned in `pyproject.toml`; no separate install dance needed.
+
+**Data shape — the surprise:**
+
+- `pulse-*.md` files are *under-populated* for this user. MacBook Pro 14" pulse has **0** rows despite the device showing 66 observations in the combined TSV reports. Mac Studio pulse has 23 rows. MBP 16" M1 Pro has 3.
+- Combined TSVs in `reports/` carry the bulk of the data (82 rows across two files; ~20% overlap between windows).
+- **This inverts the plan's assumption.** The plan treats `pulse-*.md` as canonical and `reports/*.tsv` as "secondary verification." For this dataset, that is wrong — TSVs are load-bearing. Either (a) the launchd collector has not been running on every machine, or (b) the recap pipeline is the only thing keeping history alive. Phase 1 needs to treat `reports/*.tsv` as a first-class ingest source, not a fallback.
+
+**Dedupe — working:**
+
+- 108 rows read, 92 inserted, 16 duplicates skipped — all duplicates come from the 14-day vs. 21-day TSV window overlap.
+- Zero cross-source (pulse ↔ TSV) SHA collisions. This is a *signal, not a feature* — the pulse and TSV sources aren't covering the same commits right now. Phase 1 ingest will need to reconcile the two once collector coverage improves.
+
+**Scale — trivially cheap:**
+
+- Ingest: 1.4ms for 108 rows. DB size: 86 KB. Linear extrapolation: ~100k rows ≈ 100 MB and sub-second ingest. No performance concerns even at orders of magnitude more data.
+
+**Device hygiene — clean for now:**
+
+- Three device YAMLs on disk, three device IDs seen in data, no pulse-file/device-id mismatches detected by the "alias candidate" query. The legacy `noel-s-*` slugs the plan mentions have already been migrated out of live data.
+
+### Phase 1 Adjustments Informed by the Spike
+
+1. Promote `reports/*.tsv` to a first-class ingest source alongside `pulse-*.md`. The spike's `source_type` column already distinguishes them.
+2. Add a post-ingest consistency check: flag devices where `pulse-*.md` row count is dramatically lower than `reports/*.tsv` row count for the same device_id. This is the signal for "collector is not running."
+3. Keep the `commit_observations` per-observation model. It is what made the pulse-vs-TSV coverage gap visible in the spike; a globally-deduped table would have hidden it.
+4. Defer alias reconciliation heuristics — current data doesn't need them. Phase 1 can ship with an empty `device_aliases` table and add seed rows only when drift re-emerges.
+5. FTS5 is ready to light up in Phase 2 without additional validation.
 
 ## Phase 1 Canonical SQLite Layer
 
@@ -320,7 +362,8 @@ Canonical writer responsibilities:
 - **Stale alias drift**: existing `noel-s-*` vs `noels-*` mismatches must be modeled, not silently dropped
 - **Duplicate ingestion**: overlapping TSV windows and repeated recap runs can create duplicates if the dedupe key is weak
 - **Low-signal embeddings**: raw commit subjects may be too sparse for vectors to help
-- **macOS protected folders**: the chosen sync folder is under `~/Documents`, so background sync remains a known write-risk; this does not block local SQLite use, but it remains an operational caveat
+- **iCloud Drive and SQLite are incompatible**: if the raw folder ends up under an iCloud-synced path (e.g., `~/Documents` with Desktop & Documents enabled), SQLite's WAL/journal files will corrupt over time. This is not a caveat — it's a hard rule. The raw folder must live on the GitHub sync path only; the derived DB lives in `~/Library/Application Support/git-pulse/` precisely to avoid this class of failure.
+- **macOS Full Disk Access**: if the raw folder sits under `~/Documents`, terminal processes may need Full Disk Access permission to read it. Worth documenting in the operator setup.
 - **Schema sprawl**: keep one logical pipeline instead of separate pulse/tsv/vector side stores
 
 ## Success Criteria
@@ -336,3 +379,4 @@ Canonical writer responsibilities:
 - [ ] Should saved TSV reports remain first-class ingest inputs long-term, or become verification-only artifacts?
 - [ ] Should grouped summary chunks be persisted as tables, markdown artifacts, or both?
 - [ ] At what data volume does semantic retrieval start outperforming FTS for this commit-history domain?
+- [ ] Team-pulse PRs: keep them in the same `commit_observations` table with `kind = 'pr'`, or split into a sibling `pull_requests` table? This spike's tentative answer is "same table" for Phase 1 simplicity; revisit if PR-specific fields (reviewers, labels, states) become load-bearing.
