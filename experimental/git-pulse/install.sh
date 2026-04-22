@@ -14,9 +14,11 @@ PLIST_PATH="$LAUNCH_AGENT_DIR/$PLIST_LABEL.plist"
 COLLECT_PATH="$SCRIPT_DIR/collect.sh"
 VIEW_PATH="$SCRIPT_DIR/view.sh"
 RECAP_PATH="$SCRIPT_DIR/recap.py"
+HEALTH_PATH="$SCRIPT_DIR/health-check.py"
 COLLECT_LINK_PATH="$BIN_DIR/git-pulse"
 VIEW_LINK_PATH="$BIN_DIR/git-pulse-view"
 RECAP_LINK_PATH="$BIN_DIR/git-pulse-recap"
+HEALTH_LINK_PATH="$BIN_DIR/git-pulse-health"
 LEGACY_CONFIG_DIR="$HOME/.config/git-history"
 LEGACY_PLIST_PATH="$LAUNCH_AGENT_DIR/com.user.git-history.plist"
 
@@ -109,6 +111,7 @@ install_entrypoint "$COLLECT_PATH" "$COLLECT_LINK_PATH"
 LINK_MODE="$INSTALL_MODE"
 install_entrypoint "$VIEW_PATH" "$VIEW_LINK_PATH"
 install_entrypoint "$RECAP_PATH" "$RECAP_LINK_PATH"
+install_entrypoint "$HEALTH_PATH" "$HEALTH_LINK_PATH"
 
 if [ ! -f "$CONFIG_DIR/config.sh" ]; then
     if [ -f "$LEGACY_CONFIG_DIR/config.sh" ]; then
@@ -183,14 +186,17 @@ if [ "$LINK_MODE" = "copy" ]; then
     echo "Collector install: copied $COLLECT_PATH to $COLLECT_LINK_PATH"
     echo "View install:      copied $VIEW_PATH to $VIEW_LINK_PATH"
     echo "Recap install:     copied $RECAP_PATH to $RECAP_LINK_PATH"
+    echo "Health install:    copied $HEALTH_PATH to $HEALTH_LINK_PATH"
     echo "Refresh after repo pulls by re-running install.sh."
 else
     echo "Collector install: symlinked $COLLECT_LINK_PATH -> $COLLECT_PATH"
     echo "View install:      symlinked $VIEW_LINK_PATH -> $VIEW_PATH"
     echo "Recap install:     symlinked $RECAP_LINK_PATH -> $RECAP_PATH"
+    echo "Health install:    symlinked $HEALTH_LINK_PATH -> $HEALTH_PATH"
 fi
 echo "Test manually:   $COLLECT_LINK_PATH --dry-run"
 echo "Unified view:    $VIEW_LINK_PATH --today"
 echo "Recap reports:   $RECAP_LINK_PATH"
+echo "Health check:    $HEALTH_LINK_PATH"
 echo "Tail logs:       tail -f $LOG_DIR/git-pulse.err"
 echo "Uninstall:       launchctl unload $PLIST_PATH && rm $PLIST_PATH"

@@ -14,6 +14,7 @@ from pulse_common import (
     GROUP_ORDER,
     classify_subject,
     current_utc_iso,
+    daily_activity_with_gaps,
     load_sync_repo_dir,
     markdown_cell,
     month_auto_filename,
@@ -404,26 +405,35 @@ def build_appendix(
     lines.extend(["", "### Daily Activity"])
     lines.append("| Local Day | Commits | PRs | Contributors | Repos |")
     lines.append("|---|---:|---:|---:|---:|")
-    for day, entries in sorted(
-        day_rows.items(), key=lambda kv: kv[0], reverse=True
-    ):
-        commit_count = sum(1 for r in entries if r.kind == "commit")
-        pr_count = sum(1 for r in entries if r.kind == "pr")
-        contributors = len({r.author_login for r in entries})
-        repos = len({r.repo for r in entries})
-        lines.append(
-            "| "
-            + " | ".join(
-                [
-                    f"`{day}`",
-                    str(commit_count),
-                    str(pr_count),
-                    str(contributors),
-                    str(repos),
-                ]
+    for item in daily_activity_with_gaps(day_rows):
+        if item[0] == "active":
+            _, day, entries = item
+            commit_count = sum(1 for r in entries if r.kind == "commit")
+            pr_count = sum(1 for r in entries if r.kind == "pr")
+            contributors = len({r.author_login for r in entries})
+            repos = len({r.repo for r in entries})
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        f"`{day}`",
+                        str(commit_count),
+                        str(pr_count),
+                        str(contributors),
+                        str(repos),
+                    ]
+                )
+                + " |"
             )
-            + " |"
-        )
+        else:
+            _, (oldest, newest), count = item
+            if count == 1:
+                label = f"_`{oldest}` — no activity_"
+            else:
+                label = (
+                    f"_`{oldest}` to `{newest}` — no activity ({count} days)_"
+                )
+            lines.append(f"| {label} | 0 | 0 | 0 | 0 |")
 
     lines.extend(["", "### Recent Activity"])
     lines.append(

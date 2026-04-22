@@ -7,7 +7,7 @@ import re
 import shlex
 import subprocess
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Protocol, TypeVar
 
@@ -88,6 +88,62 @@ def split_rows_by_month(
             continue
         buckets[(year, month)].append(row)
     return [(y, m, buckets[(y, m)]) for (y, m) in sorted(buckets)]
+
+
+def daily_activity_with_gaps(
+    day_rows: dict[str, list],
+) -> list[tuple]:
+    """Expand day_rows into a reverse-chronological list of activity entries,
+    with consecutive zero-activity days collapsed into range summaries.
+
+    Window is inferred from the min/max of day_rows keys (all keys assumed
+    ISO YYYY-MM-DD format). Returns tuples:
+
+      ("active", local_day, entries)
+      ("gap",    (oldest_day_iso, newest_day_iso), count)
+
+    Gap tuples describe a run of consecutive zero-activity days; count == 1
+    for a single missing day.
+    """
+    if not day_rows:
+        return []
+
+    try:
+        parsed = sorted(date.fromisoformat(d) for d in day_rows.keys())
+    except ValueError:
+        return [
+            ("active", day, entries)
+            for day, entries in sorted(day_rows.items(), reverse=True)
+        ]
+
+    start = parsed[0]
+    end = parsed[-1]
+
+    # Reverse-chronological walk across the full window
+    timeline: list[tuple[str, list | None]] = []
+    current = end
+    while current >= start:
+        iso = current.isoformat()
+        timeline.append((iso, day_rows.get(iso)))
+        current -= timedelta(days=1)
+
+    collapsed: list[tuple] = []
+    i = 0
+    n = len(timeline)
+    while i < n:
+        day, entries = timeline[i]
+        if entries:
+            collapsed.append(("active", day, entries))
+            i += 1
+            continue
+        j = i
+        while j < n and not timeline[j][1]:
+            j += 1
+        newest = timeline[i][0]
+        oldest = timeline[j - 1][0]
+        collapsed.append(("gap", (oldest, newest), j - i))
+        i = j
+    return collapsed
 
 
 def month_auto_filename(

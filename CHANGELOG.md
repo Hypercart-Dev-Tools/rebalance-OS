@@ -1,5 +1,37 @@
 # Changelog
 
+## [0.18.0] - 2026-04-22
+
+### Added
+
+- New `git-pulse-health` command that reads the sync repo's git log for each `pulse-<device_id>.md` file and reports time-since-last-push per machine. Flags devices as ALIVE / STALE / ALERT / NO PUSHES with configurable thresholds (`--warn-hours`, `--alert-hours`). Exit codes: 0 all alive, 1 at least one stale, 2 any alert or missing pushes — suitable for shell chaining.
+- Recap Daily Activity tables (both personal `recap.py` and team `team-recap.py`) now surface quiet days explicitly. Consecutive zero-activity days inside the coverage window collapse into a single `_<start> to <end> — no activity (N days)_` row so the reader can see gaps at a glance instead of inferring them from missing rows.
+
+### Changed
+
+- `pulse_common.py` gains `daily_activity_with_gaps(day_rows)` to compute the gap-aware reverse-chronological timeline; both recap scripts and any future SQLite-backed renderers share it.
+- `install.sh` now installs a fourth launcher, `~/bin/git-pulse-health`, alongside the collector, view, and recap commands.
+
+### Per-machine re-install instructions
+
+Each machine already running git-pulse needs to pull the updated scripts and refresh its `~/bin/` launchers so launchd picks up the new `collect.sh` (from the earlier `hardware_uuid` work) and gains the new `git-pulse-health` command:
+
+```bash
+# On every machine running git-pulse:
+cd /path/to/rebalance-OS
+git pull
+bash experimental/git-pulse/install.sh
+```
+
+`install.sh` is idempotent — it re-copies the launcher scripts, rewrites the launchd plist, and reloads the agent. No config changes required. After re-install, verify with:
+
+```bash
+git-pulse-health           # prints per-machine health table
+git-pulse --dry-run        # quick smoke test of the collector
+```
+
+Running the collector once post-install (manually or by waiting for the next hourly launchd fire) will also rewrite that machine's `devices/<id>.yaml` with `schema_version: 2` and its `hardware_uuid`, completing the legacy metadata migration.
+
 ## [0.17.1] - 2026-04-22
 
 ### Fixed
