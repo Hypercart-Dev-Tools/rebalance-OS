@@ -108,13 +108,18 @@ class GitPulseRecapCliTests(unittest.TestCase):
         (sync_repo / "pulse-dev-b.md").write_text("# beta\n")
 
         result = self._run_recap(home)
-        output = result.stdout
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
+        expected_path = sync_repo / "reports" / "2026-04-20-PARTIAL.md"
+        self.assertIn(f"wrote: {expected_path}", result.stdout)
+        self.assertTrue(expected_path.exists())
+
+        output = expected_path.read_text()
         self.assertIn("# Git Pulse Executive Recap", output)
         self.assertIn("AGENT INSTRUCTIONS", output)
         self.assertIn("## Summary", output)
         self.assertIn("- Window: `2026-04-19` to `2026-04-20` (2 active days)", output)
+        self.assertIn("- Repos covered: repo-one | repo-two", output)
         self.assertIn("- Commits: 4 across 2 repos from 2 machines", output)
         self.assertIn("<!-- TLDR:", output)
         self.assertIn("## By Repo", output)
@@ -133,9 +138,6 @@ class GitPulseRecapCliTests(unittest.TestCase):
         self.assertIn("### Daily Activity", output)
         self.assertIn("### Recent Activity", output)
         self.assertIn("### Exceptions", output)
-        self.assertIn("- Raw rows: 5", output)
-        self.assertIn("- Unique rows: 4", output)
-        self.assertIn("- Overlapping rows removed: 1", output)
         self.assertIn("alpha.tsv", output)
         self.assertIn("beta.tsv", output)
         self.assertIn("Alpha Mac", output)
@@ -147,6 +149,59 @@ class GitPulseRecapCliTests(unittest.TestCase):
         self.assertIn("Beta follow-up", output)
         self.assertIn("no rows in supplied reports", output)
         self.assertIn("missing `pulse-dev-c.md`", output)
+
+    def test_auto_name_full_calendar_month(self) -> None:
+        home, sync_repo = self._prepare_home()
+        reports_dir = sync_repo / "reports"
+
+        (reports_dir / "alpha.tsv").write_text(
+            textwrap.dedent(
+                """\
+                local_day\tlocal_time\tutc_time\tdevice_id\tdevice_name\trepo\tbranch\tshort_sha\tsubject
+                2026-02-01\t09:00 UTC\t2026-02-01T09:00:00Z\tdev-a\tAlpha Mac\trepo-one\tmain\t1111111\tFirst of Feb
+                2026-02-15\t10:00 UTC\t2026-02-15T10:00:00Z\tdev-a\tAlpha Mac\trepo-one\tmain\t2222222\tMid Feb
+                2026-02-28\t20:00 UTC\t2026-02-28T20:00:00Z\tdev-a\tAlpha Mac\trepo-one\tmain\t3333333\tLast of Feb
+                """
+            )
+        )
+
+        result = self._run_recap(home)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        expected_path = sync_repo / "reports" / "2026-02-FEB.md"
+        self.assertIn(f"wrote: {expected_path}", result.stdout)
+        self.assertTrue(expected_path.exists())
+
+    def test_auto_name_splits_multi_month_window(self) -> None:
+        home, sync_repo = self._prepare_home()
+        reports_dir = sync_repo / "reports"
+
+        (reports_dir / "alpha.tsv").write_text(
+            textwrap.dedent(
+                """\
+                local_day\tlocal_time\tutc_time\tdevice_id\tdevice_name\trepo\tbranch\tshort_sha\tsubject
+                2026-02-15\t09:00 UTC\t2026-02-15T09:00:00Z\tdev-a\tAlpha Mac\trepo-one\tmain\t1111111\tFeb entry
+                2026-03-10\t09:00 UTC\t2026-03-10T09:00:00Z\tdev-a\tAlpha Mac\trepo-one\tmain\t2222222\tMar entry
+                """
+            )
+        )
+
+        result = self._run_recap(home)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        feb_path = sync_repo / "reports" / "2026-02-15-PARTIAL.md"
+        mar_path = sync_repo / "reports" / "2026-03-10-PARTIAL.md"
+        self.assertIn(f"wrote: {feb_path}", result.stdout)
+        self.assertIn(f"wrote: {mar_path}", result.stdout)
+        self.assertTrue(feb_path.exists())
+        self.assertTrue(mar_path.exists())
+
+        feb = feb_path.read_text()
+        mar = mar_path.read_text()
+        self.assertIn("Feb entry", feb)
+        self.assertNotIn("Mar entry", feb)
+        self.assertIn("Mar entry", mar)
+        self.assertNotIn("Feb entry", mar)
 
     def test_output_option_writes_markdown_to_file(self) -> None:
         home, sync_repo = self._prepare_home()

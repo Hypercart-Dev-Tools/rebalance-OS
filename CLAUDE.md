@@ -62,7 +62,8 @@ authoritative rulebook that should be read first.
 
 | Artifact | Rulebook | Notes |
 |---|---|---|
-| Git Pulse Executive Recap (`reports/all-machines-recap.executive.md`) | [experimental/git-pulse/EXEC-SUMMARY.md](experimental/git-pulse/EXEC-SUMMARY.md) | Also registered as Claude Code skill `git-pulse-exec-recap` via `.claude/skills/` |
+| Git Pulse Executive Recap (`reports/YYYY-MM-*.md`) | [experimental/git-pulse/EXEC-SUMMARY.md](experimental/git-pulse/EXEC-SUMMARY.md) | Claude Code skill `git-pulse-exec-recap` via `.claude/skills/` |
+| Git Pulse Team Recap (`team-reports/YYYY-MM-*.md`) | [experimental/git-pulse/TEAM-EXEC-SUMMARY.md](experimental/git-pulse/TEAM-EXEC-SUMMARY.md) | Claude Code skill `git-pulse-team-recap` via `.claude/skills/` |
 
 The generated recap itself carries the same pointer in its top-of-file
 instructions block, so agents that open the file directly will also find the

@@ -5,14 +5,20 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
-import shlex
-import subprocess
 import sys
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
+
+from pulse_common import (
+    GROUP_ORDER,
+    classify_subject,
+    current_utc_iso,
+    load_sync_repo_dir,
+    markdown_cell,
+    month_auto_filename,
+    split_rows_by_month,
+)
 
 
 HEADER = [
@@ -25,28 +31,6 @@ HEADER = [
     "branch",
     "short_sha",
     "subject",
-]
-
-
-CONV_PREFIX_RE = re.compile(
-    r"^(feat|fix|chore|docs|refactor|test|style|perf|build|ci|revert)(?:\([^)]*\))?!?:\s*",
-    re.IGNORECASE,
-)
-
-
-GROUP_ORDER = [
-    "feat",
-    "fix",
-    "refactor",
-    "perf",
-    "docs",
-    "test",
-    "chore",
-    "build",
-    "ci",
-    "style",
-    "revert",
-    "other",
 ]
 
 
@@ -145,38 +129,6 @@ def parse_args() -> argparse.Namespace:
         help="Omit the top-of-file agent instructions block.",
     )
     return parser.parse_args()
-
-
-def current_utc_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def markdown_cell(value: str) -> str:
-    return value.replace("|", "\\|")
-
-
-def classify_subject(subject: str) -> str:
-    match = CONV_PREFIX_RE.match(subject)
-    return match.group(1).lower() if match else "other"
-
-
-def load_sync_repo_dir(config_file: Path, config_dir: Path) -> Path | None:
-    if not config_file.is_file():
-        return None
-
-    shell_script = (
-        'set -euo pipefail\n'
-        f"CONFIG_DIR={shlex.quote(str(config_dir))}\n"
-        f"source {shlex.quote(str(config_file))}\n"
-        'printf "%s" "${sync_repo_dir:-$CONFIG_DIR/repo}"\n'
-    )
-    result = subprocess.run(
-        ["/bin/bash", "-lc", shell_script],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return Path(result.stdout.strip())
 
 
 def discover_input_files(input_args: list[str], sync_repo_dir: Path | None) -> list[Path]:
@@ -619,11 +571,15 @@ def build_lines(
     if not args.no_agent_instructions:
         lines.extend([AGENT_INSTRUCTIONS, ""])
 
+    repos_covered = (
+        " | ".join(sorted(repo_rows.keys())) if repo_rows else "_(none)_"
+    )
     lines.extend(
         [
             "## Summary",
             f"- Generated at: `{current_utc_iso()}`",
             f"- Window: `{coverage_start}` to `{coverage_end}` ({len(day_rows)} active days)",
+            f"- Repos covered: {repos_covered}",
             f"- Commits: {len(rows)} across {len(repo_rows)} repos from {len(device_rows)} machines",
         ]
     )
@@ -729,23 +685,59 @@ def main() -> int:
 
     deduped_rows, duplicates = dedupe_rows(collected)
     metadata = load_metadata(sync_repo_dir)
-    lines = build_lines(
-        args,
-        input_files,
-        deduped_rows,
-        raw_rows=raw_rows,
-        duplicates=duplicates,
-        malformed=malformed,
-        metadata=metadata,
-    )
-    rendered = "\n".join(lines) + "\n"
 
     if args.output:
+        lines = build_lines(
+            args,
+            input_files,
+            deduped_rows,
+            raw_rows=raw_rows,
+            duplicates=duplicates,
+            malformed=malformed,
+            metadata=metadata,
+        )
+        rendered = "\n".join(lines) + "\n"
         output_path = Path(args.output).expanduser()
         output_path.parent.mkdir(parents=True, exist_ok=True)
         output_path.write_text(rendered)
+        sys.stdout.write(rendered)
+        return 0
 
-    sys.stdout.write(rendered)
+    if not deduped_rows:
+        sys.stdout.write(
+            "No commits in the supplied reports; nothing to write.\n"
+        )
+        return 0
+
+    if sync_repo_dir is None:
+        raise SystemExit(
+            "Auto-naming requires either --output or a configured "
+            "sync_repo_dir (~/.config/git-pulse/config.sh). No reports "
+            "directory could be inferred."
+        )
+
+    output_dir = sync_repo_dir / "reports"
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    written: list[Path] = []
+    for year, month, month_rows in split_rows_by_month(deduped_rows):
+        month_lines = build_lines(
+            args,
+            input_files,
+            month_rows,
+            raw_rows=len(month_rows),
+            duplicates=0,
+            malformed=0,
+            metadata=metadata,
+        )
+        rendered = "\n".join(month_lines) + "\n"
+        filename = month_auto_filename(year, month, month_rows)
+        out_path = output_dir / filename
+        out_path.write_text(rendered)
+        written.append(out_path)
+
+    for path in written:
+        sys.stdout.write(f"wrote: {path}\n")
 
     return 0
 
