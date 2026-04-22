@@ -34,18 +34,19 @@ What it does not yet have is a canonical historical query layer. Right now, hist
 
 ## Goals
 
-- [ ] Preserve raw pulse files and TSV reports as the source-of-truth sync artifacts
+- [ ] Preserve raw pulse files as the canonical source-of-truth artifacts, with TSV reports as secondary verification inputs
 - [ ] Build one canonical SQLite history layer over the synced data
 - [ ] Support exact historical retrieval first with SQL + FTS
 - [ ] Add semantic retrieval only where it improves recall over sparse commit subjects
 - [ ] Keep the implementation in this repo under `experimental/git-pulse/`
-- [ ] Use the GitHub-backed sync folder at `/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse` as the raw data root
+- [ ] Use a configurable GitHub-backed sync folder with default root at `$HOME/Documents/rebalance-git-pulse`
 
 ## Data Source And Storage Decision
 
 Chosen sync folder:
 
-- Raw data root: `/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse`
+- Raw data root: `$HOME/Documents/rebalance-git-pulse`
+- Config key: `GIT_PULSE_SYNC_ROOT`
 
 Use that folder for:
 
@@ -62,13 +63,19 @@ Recommended derived-data rule:
 
 Proposed derived path:
 
-- `/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse/derived/git-pulse-history.sqlite`
+- `$HOME/Documents/rebalance-git-pulse/derived/git-pulse-history.sqlite`
 
 Reasoning:
 
 - This keeps all related code and data centered on the existing GitHub sync folder
 - It avoids binary database churn and merge conflicts in the sync repo history
 - It preserves raw synced artifacts as durable, inspectable, line-oriented source material
+
+Default/fallback behavior:
+
+- If `GIT_PULSE_SYNC_ROOT` is set, use it as the authoritative root
+- If unset, use `$HOME/Documents/rebalance-git-pulse`
+- If the selected root is unavailable or read-only, fail fast with a clear operator error and no partial ingest writes
 
 ## Architecture Direction
 
@@ -120,6 +127,8 @@ Recommended schema direction:
   - subject
   - epoch_utc
   - timestamp_utc
+  - source_tz_offset_minutes
+  - source_tz_name
   - local_day
   - local_time
   - source type
@@ -145,6 +154,13 @@ Recommended schema direction:
   - summary text
   - embedding status
 
+Canonical dedupe contract:
+
+- Dedupe key formula: `sha1(device_id_norm + "|" + repo_norm + "|" + branch_norm + "|" + short_sha_norm + "|" + timestamp_utc_iso + "|" + subject_norm)`
+- Normalization rules: trim, lowercase where appropriate for identifiers, collapse internal whitespace in subject, and normalize missing branch to `detached`
+- Source precedence on collisions with same dedupe key: `pulse-*.md` first, then `reports/*.tsv` as reconciliation-only metadata
+- Enforce with a unique index on `commits.dedupe_key`; collisions increment `duplicates_skipped` and are logged with source path
+
 ## Phase 0 Technical Spike
 
 Timebox: 1-2 hours max
@@ -153,6 +169,7 @@ Timebox: 1-2 hours max
 
 - [ ] Confirm SQLite writes cleanly from this repo against the chosen sync folder
 - [ ] Confirm the derived DB path is writable and acceptable under the chosen sync folder
+- [ ] Confirm `GIT_PULSE_SYNC_ROOT` override works and fallback to default root is deterministic
 - [ ] Confirm current raw inputs can be parsed deterministically:
   - `pulse-*.md`
   - `devices/*.yaml`
@@ -164,6 +181,7 @@ Timebox: 1-2 hours max
   - standard SQLite availability
   - FTS5 availability
   - `sqlite-vec` availability or install path
+- [ ] Validate timezone correctness on at least one DST boundary sample and one cross-device timezone sample
 - [ ] Stop and escalate if the chosen sync folder causes write friction or if vector dependencies are fragile
 
 ### What Phase 0 Must Prove
@@ -190,12 +208,14 @@ Objective: build the durable historical database without vector search yet.
 - [ ] Parse metadata files into canonical devices and aliases
 - [ ] Optionally parse saved TSV reports for reconciliation and audit only
 - [ ] Define one stable dedupe key per logical commit row
+- [ ] Persist timezone provenance fields (`source_tz_offset_minutes`, `source_tz_name`) for trustworthy local-day rollups
 - [ ] Create indexes for:
   - `timestamp_utc`
   - `device_id`
   - `repo`
   - `branch`
   - `short_sha`
+  - `dedupe_key` (unique)
 - [ ] Add structured ingest logging with row counts and duplicate counts
 - [ ] Add at least one integration test for ingest over mixed raw sources
 - [ ] Add a health-check style validation command for the DB
@@ -205,6 +225,7 @@ Objective: build the durable historical database without vector search yet.
 - Raw pulse files should remain the primary historical source
 - Saved TSV reports should be treated as secondary derived inputs, useful for verification and recap rebuilding
 - Alias handling needs to be explicit because stale `noel-s-*` metadata already exists in the sync repo
+- Local-day queries must derive from timezone-aware fields, not `timestamp_utc` alone
 
 ## Phase 2 Exact Retrieval And Operator Reports
 
@@ -312,7 +333,6 @@ Canonical writer responsibilities:
 
 ## Open Questions
 
-- [ ] Should the SQLite file live under `derived/` in the sync repo checkout, or under `~/.config/git-pulse/` with the sync repo only as input?
 - [ ] Should saved TSV reports remain first-class ingest inputs long-term, or become verification-only artifacts?
 - [ ] Should grouped summary chunks be persisted as tables, markdown artifacts, or both?
 - [ ] At what data volume does semantic retrieval start outperforming FTS for this commit-history domain?

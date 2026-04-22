@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.17.0] - 2026-04-21
+
+### Added
+
+- A new `git-pulse-recap` command that merges overlapping saved TSV reports and renders an all-machines Markdown recap with summary metrics, coverage, repo rollups, daily activity, recent activity, and exception flags.
+- Integration coverage for the recap flow, including default discovery from `sync_repo_dir/reports` and writing the rendered Markdown to disk.
+
+### Changed
+
+- The git-pulse installer now exposes a third launcher, `~/bin/git-pulse-recap`, alongside the collector and unified view commands.
+- The git-pulse README now documents the saved-report recap workflow and the new recap artifact path under the sync repo's `reports/` directory.
+
 ## [0.16.3] - 2026-04-20
 
 ### Added

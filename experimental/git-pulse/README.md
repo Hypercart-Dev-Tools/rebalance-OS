@@ -57,6 +57,7 @@ If you want the most reliable setup with the fewest choices:
    ~/bin/git-pulse-view --today
    ~/bin/git-pulse-view --days 14
    ~/bin/git-pulse-view --days 14 --include-local-unsynced
+   ~/bin/git-pulse-recap
    launchctl list | grep git-pulse
    ```
 
@@ -135,6 +136,7 @@ That layout avoids the macOS protected-folder problem for unattended background 
    ~/bin/git-pulse-view --today
    ~/bin/git-pulse-view --days 14
    ~/bin/git-pulse-view --days 14 --include-local-unsynced
+   ~/bin/git-pulse-recap
    launchctl list | grep git-pulse
    tail -f ~/.config/git-pulse/logs/git-pulse.err
    ```
@@ -184,7 +186,10 @@ Example unified read:
 ~/bin/git-pulse-view --days 14
 ~/bin/git-pulse-view --days 14 --include-local-unsynced
 ~/bin/git-pulse-view --days 14 --include-local-unsynced --output "$HOME/.config/git-pulse/repo/reports/combined-14-days.tsv"
+~/bin/git-pulse-recap --output "$HOME/.config/git-pulse/repo/reports/all-machines-recap.md"
 ```
+
+`git-pulse-recap` treats those saved TSV files as the raw layer, removes overlapping rows across windows, and emits one Markdown recap across every machine represented in the inputs.
 
 ## Files
 
@@ -192,6 +197,7 @@ Example unified read:
 |------|---------|
 | `collect.sh` | Collector. Runs every hour via launchd and also supports `--dry-run`. |
 | `view.sh` | Unified local reader across all registered device files. |
+| `recap.py` | De-duplicates saved TSV reports and renders an all-machines Markdown recap. |
 | `install.sh` | Creates local config, installs launchers, installs the launchd plist, and generates `device_id` if needed. |
 | `com.user.git-pulse.plist.template` | launchd agent template used by `install.sh`. |
 | `config.example.sh` | Seed config copied to `~/.config/git-pulse/config.sh` on first install. |
@@ -204,9 +210,11 @@ Example unified read:
 | `~/.config/git-pulse/last-run` | Epoch seconds of last successful run. |
 | configured `sync_repo_dir` | Working checkout of the private sync repo. Defaults to `~/.config/git-pulse/repo` if unset. |
 | configured `sync_repo_dir/devices/*.yaml` | Per-device metadata registry used by `git-pulse-view`. |
+| configured `sync_repo_dir/reports/*` | Saved TSV range reports from `git-pulse-view` and Markdown recaps from `git-pulse-recap`. |
 | `~/.config/git-pulse/logs/` | launchd stdout/stderr. |
 | `~/bin/git-pulse` | Launchd entrypoint. Usually a symlink; falls back to a copied script when the code repo lives in a protected macOS folder. |
 | `~/bin/git-pulse-view` | Unified read interface across all registered device files. |
+| `~/bin/git-pulse-recap` | All-machines Markdown recap generator over saved TSV reports. |
 | `~/Library/LaunchAgents/com.user.git-pulse.plist` | Installed launchd agent. |
 
 ## Known Limitations
@@ -249,6 +257,7 @@ Run:
 ~/bin/git-pulse-view --today
 ~/bin/git-pulse-view --days 14
 ~/bin/git-pulse-view --days 14 --include-local-unsynced
+~/bin/git-pulse-recap
 ```
 
 **Want to backfill from before install?**
@@ -273,6 +282,7 @@ launchctl unload ~/Library/LaunchAgents/com.user.git-pulse.plist
 rm ~/Library/LaunchAgents/com.user.git-pulse.plist
 rm ~/bin/git-pulse
 rm ~/bin/git-pulse-view
+rm ~/bin/git-pulse-recap
 rm -rf ~/.config/git-pulse
 ```
 

@@ -53,3 +53,17 @@ Drive this sequence using MCP tool calls:
 - Config: `temp/rbos.config` (gitignored, repo root)
 - Database: resolved from `REBALANCE_DB` env var (set in `.vscode/mcp.json`)
 - Architecture docs: `PROJECT.md`, `MCP.md`
+
+## Agent rulebooks (read before editing generated docs)
+
+Some generated artifacts in this repo ship with placeholder prose that any agent
+(Claude Code, Codex, Copilot, Gemini) is expected to fill in. Each has an
+authoritative rulebook that should be read first.
+
+| Artifact | Rulebook | Notes |
+|---|---|---|
+| Git Pulse Executive Recap (`reports/all-machines-recap.executive.md`) | [experimental/git-pulse/EXEC-SUMMARY.md](experimental/git-pulse/EXEC-SUMMARY.md) | Also registered as Claude Code skill `git-pulse-exec-recap` via `.claude/skills/` |
+
+The generated recap itself carries the same pointer in its top-of-file
+instructions block, so agents that open the file directly will also find the
+rulebook without needing this index.
