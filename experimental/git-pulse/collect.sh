@@ -137,13 +137,26 @@ HEADER
     fi
 }
 
+stage_paths=()
+
+append_stage_path() {
+    local path="$1"
+
+    [ -n "$path" ] || return 0
+    stage_paths+=("$path")
+}
+
 migrate_legacy_device_identity() {
     local configured_device_id="$1"
     local desired_device_id="$2"
     local old_metadata_file
+    local old_metadata_rel
     local new_metadata_file
+    local new_metadata_rel
     local old_pulse_file
+    local old_pulse_rel
     local new_pulse_file
+    local new_pulse_rel
     local merge_rows
 
     if [ "$configured_device_id" = "$desired_device_id" ]; then
@@ -154,6 +167,10 @@ migrate_legacy_device_identity() {
     new_metadata_file="$sync_repo_dir/devices/$desired_device_id.yaml"
     old_pulse_file="$sync_repo_dir/pulse-$configured_device_id.md"
     new_pulse_file="$sync_repo_dir/pulse-$desired_device_id.md"
+    old_metadata_rel="devices/$configured_device_id.yaml"
+    new_metadata_rel="devices/$desired_device_id.yaml"
+    old_pulse_rel="pulse-$configured_device_id.md"
+    new_pulse_rel="pulse-$desired_device_id.md"
 
     mkdir -p "$sync_repo_dir/devices"
 
@@ -185,6 +202,11 @@ METADATA
     if [ -f "$old_metadata_file" ] && [ "$old_metadata_file" != "$new_metadata_file" ]; then
         rm -f "$old_metadata_file"
     fi
+
+    append_stage_path "$old_metadata_rel"
+    append_stage_path "$new_metadata_rel"
+    append_stage_path "$old_pulse_rel"
+    append_stage_path "$new_pulse_rel"
 
     set_config_value "device_id" "$desired_device_id"
 }
@@ -376,7 +398,9 @@ if [ "${#new_entries[@]}" -gt 0 ]; then
 fi
 
 cd "$sync_repo_dir"
-git add -- "$(basename "$PULSE_FILE")" "devices/$device_id.yaml"
+append_stage_path "$(basename "$PULSE_FILE")"
+append_stage_path "devices/$device_id.yaml"
+git add -A -- "${stage_paths[@]}"
 if git diff --cached --quiet; then
     # Nothing actually staged (e.g. file unchanged). Nothing to push.
     echo "$scan_started" > "$LAST_RUN_FILE"

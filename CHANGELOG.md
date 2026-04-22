@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.17.1] - 2026-04-22
+
+### Fixed
+
+- Git pulse collector migration now stages both renamed files and removed legacy files so duplicate machine pulse entries are actually deleted from the sync repo on push.
+- Collector integration coverage now matches the real `git add -A -- ...` staging path used during legacy device-id cleanup.
+
 ## [0.17.0] - 2026-04-21
 
 ### Added

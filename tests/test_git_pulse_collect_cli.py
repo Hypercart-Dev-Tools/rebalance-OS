@@ -106,6 +106,9 @@ def _write_git_stub(path: Path, local_repo: Path, sync_repo: Path) -> None:
                 if repo_path == sync_repo and repo_args[:2] == ["pull", "--quiet"]:
                     raise SystemExit(0)
 
+            if args[:3] == ["add", "-A", "--"]:
+                raise SystemExit(0)
+
             if args[:2] == ["add", "--"]:
                 raise SystemExit(0)
 
