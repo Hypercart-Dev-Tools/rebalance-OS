@@ -82,7 +82,7 @@ Invoked by launchd every N minutes (configured during `install.sh`). On each run
 - `device_id` — friendly slug derived from `scutil --get ComputerName`, lowercased, slug-normalized. Used for filenames (`pulse-<device_id>.md`) and display. Can change across renames and slug-rule updates.
 - `hardware_uuid` — stable hardware-backed identifier (macOS `IOPlatformUUID` via `ioreg`, Linux `/etc/machine-id` fallback). Survives renames, slug changes, and OS reinstalls on the same hardware. Written to `devices/<device_id>.yaml` on every `collect.sh` run (`schema_version: 2`). The [Phase 1 SQLite layer](../../PROJECT/1-INBOX/P1-SQLITE.md) keys canonical dedup off `hardware_uuid`, with the slug as a display-only fallback for pre-UUID observations.
 
-**Pulse file format:** UTC-only. Local time is computed downstream from the device's `timezone_name` in `devices/<device_id>.yaml`.
+**Pulse file format:** UTC-only. Local time is computed downstream at render time — see the view/recap notes below for the actual (not ideal) timezone behavior.
 
 ### 2. Transform — `view.sh` (range reports)
 
@@ -92,7 +92,7 @@ Invoked manually. Reads pulse files from multiple machines (the sync repo merges
 local_day \t local_time \t utc_time \t device_id \t device_name \t repo \t branch \t short_sha \t subject
 ```
 
-`local_day`/`local_time` are computed using each device's `timezone_name` at view time. Multiple range reports can coexist (e.g., `combined-14-day.tsv`, `combined-21-day.tsv`); `recap.py` handles the overlap via dedupe.
+**Current timezone behavior (rough edge, not the ideal):** `local_day`/`local_time` are computed using the timezone of **the machine running `view.sh`** (via `date -r $epoch`), **not** the timezone of the device that originally authored the commit. That means running `view.sh` from Pacific time on commits authored in Eastern time re-stamps them with Pacific-local days. Cross-timezone rollups are viewer-dependent today; the Phase 1 SQLite layer persists per-observation timezone fields so queries can bypass this. Multiple range reports can coexist (e.g., `combined-14-day.tsv`, `combined-21-day.tsv`); `recap.py` handles the overlap via dedupe.
 
 ### 3. Load — `recap.py` (exec recap)
 
@@ -191,5 +191,8 @@ The Phase 0 spike ([sqlite_spike.py](sqlite_spike.py)) proves ingest is triviall
 ## Known rough edges
 
 - **Metadata migration bug (mitigated, not fully resolved):** some `devices/<id>.yaml` files were renamed during an earlier ID normalization but their internal `device_id:` value still holds the legacy slug, which manifests as ghost rows in the Coverage table. `collect.sh` now rewrites the full YAML content on every run and adds `hardware_uuid` for forward-looking canonical dedup, so the ghost rows disappear as soon as each affected machine runs the updated collector. Machines that haven't pulled the new code and re-run will still show the stale content.
+- **`view.sh` timezone is viewer-dependent, not commit-local:** described above. Until `view.sh` reads the source device's `timezone_name` from the devices YAML, cross-timezone `local_day`/`local_time` in `reports/*.tsv` reflect where `view.sh` ran, not where the commit happened. Phase 1 SQLite ingest stores per-observation timezone fields so queries can bypass this, but recaps rendered from TSVs still inherit the viewer's TZ until view.sh is fixed.
+- **Short SHAs are not a safe canonical identity:** today's pulse and team TSVs store only 7-char short SHAs. Short SHAs are not unique within a repo over time. Phase 1 planning treats `full_sha` as the canonical commit identity; both `collect.sh` (pulse format) and `team-collect.py` (team TSV schema) need a small upgrade to emit the full SHA before the SQLite layer can fully rely on it.
+- **Ingest source hierarchy is inverted in practice:** the original assumption was `pulse-*.md` = primary, `reports/*.tsv` = secondary. Phase 0 showed the opposite (TSVs carry most current history). The Phase 1 plan now treats them as co-equal first-class sources.
 - **Pulse files under-populated** for at least one machine in the current dataset. Indicates the launchd collector isn't running everywhere. A Phase 1 consistency check will flag this automatically.
 - **Team pipeline is append-overwrite** (each run replaces the TSV) rather than append-only. History beyond the current `--since` window is lost on re-run. Acceptable for v1; revisit if historical team recall becomes load-bearing.

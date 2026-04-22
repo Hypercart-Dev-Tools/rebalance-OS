@@ -34,12 +34,12 @@ What it does not yet have is a canonical historical query layer. Right now, hist
 
 ## Goals
 
-- [ ] Preserve raw pulse files as the canonical source-of-truth artifacts, with TSV reports as secondary verification inputs
+- [ ] Treat raw pulse files and `reports/*.tsv` as **co-equal first-class** ingest sources (distinguished by `source_type`). The Phase 0 spike showed that `reports/*.tsv` currently carries most of the usable history because the launchd collector isn't running on every machine, so elevating TSVs is a present-day correctness requirement, not an optional reconciliation hook.
 - [ ] Build one canonical SQLite history layer over the synced data
 - [ ] Support exact historical retrieval first with SQL + FTS
 - [ ] Add semantic retrieval only where it improves recall over sparse commit subjects
 - [ ] Keep the implementation in this repo under `experimental/git-pulse/`
-- [ ] Use a configurable GitHub-backed sync folder with default root at `$HOME/Documents/rebalance-git-pulse`
+- [ ] Resolve the GitHub-backed sync folder strictly from `sync_repo_dir` in `~/.config/git-pulse/config.sh` (same contract as `collect.sh`, `view.sh`, `recap.py`, and the team pipeline). No hardcoded default path; fail fast if the config is missing.
 
 ## Data Source And Storage Decision
 
@@ -128,7 +128,8 @@ Recommended schema direction:
   - author_login (nullable; populated for team-sourced rows)
   - repo
   - branch
-  - short sha
+  - full_sha (canonical commit identity — full 40-char SHA; nullable until the upstream collectors are upgraded to emit it, see "Upstream data-source changes" below)
+  - short_sha (display-only; derived from `full_sha` when available, preserved verbatim for legacy rows)
   - subject
   - epoch_utc
   - timestamp_utc
@@ -143,7 +144,16 @@ Recommended schema direction:
   - pr_number (nullable)
   - dedupe key
 
-Canonical commit view: a deduplicated `commits` view (or materialized table) over `commit_observations` grouped by `(repo, short_sha)` answers "how many distinct commits exist" without losing per-device provenance.
+Canonical commit view: a deduplicated `commits` view (or materialized table) over `commit_observations` grouped by `(repo, full_sha)` — **not** `(repo, short_sha)`. Short SHAs are not unique within a repo over time (Git itself uses variable-length prefixes and expands them on collision), so keying canonical identity off a 7-char prefix risks silently merging distinct commits in the exact layer meant to be historically trustworthy. For rows where `full_sha` is null (pre-upgrade legacy data), the view falls back to `(repo, short_sha, timestamp_utc)` as a best-effort proxy and flags the row as "unpromoted" so consumers can tell the difference.
+
+### Upstream data-source changes required for `full_sha`
+
+`collect.sh` and `team-collect.py` currently emit only the 7-char `short_sha`. To make `full_sha` the canonical key, we need a small schema upgrade on both producers:
+
+- `pulse-*.md`: add a 7th column `full_sha` (or replace the existing `short_sha` column with `full_sha` and compute `short_sha` downstream). Backward compat: parser treats 6-col rows as legacy (short-only).
+- `team-pulses/*.tsv`: the GitHub API already returns full SHAs (`item["sha"]`); `team-collect.py` just needs to stop truncating. Add a `full_sha` column to the 11-column TSV header.
+
+This is not done yet. Phase 1 ingest begins against current-schema inputs, with `full_sha` nullable and the fallback dedupe key described above. Promoting `full_sha` to `NOT NULL` waits until both producers have shipped and every active machine has re-run.
 
 - `ingest_runs`
   - started_at_utc
@@ -166,8 +176,9 @@ Canonical commit view: a deduplicated `commits` view (or materialized table) ove
 Canonical dedupe contract (per-observation):
 
 - Identity segment precedence: `hardware_uuid` if present → `device_id` slug fallback → literal `team:<source_type>` for team rows. This keeps pre-UUID pulse rows ingestable and lets slug-only observations coexist until a subsequent collect.sh run backfills the UUID.
-- Dedupe key formula: `sha1(identity_segment_norm + "|" + repo_norm + "|" + short_sha_norm + "|" + timestamp_utc_iso + "|" + kind + "|" + pr_number_norm)`
-- `subject` is intentionally excluded — an amended commit or a subject typo correction should not produce a phantom duplicate observation. SHA + timestamp uniquely identifies the observation within a device.
+- SHA segment precedence: `full_sha` if present → `short_sha + timestamp_utc_iso` compound fallback for legacy rows. Once all producers emit `full_sha`, this fallback retires.
+- Dedupe key formula: `sha1(identity_segment_norm + "|" + repo_norm + "|" + sha_segment_norm + "|" + kind + "|" + pr_number_norm)`
+- `subject` is intentionally excluded — an amended commit or a subject typo correction should not produce a phantom duplicate observation. Full SHA uniquely identifies the commit.
 - Normalization rules: trim, lowercase identifiers, normalize missing branch to `detached`, normalize empty `pr_number` to `-`
 - Source precedence on collisions with same dedupe key: `pulse-*.md` beats `reports_tsv`; `team_pulse` never collides with personal rows because its identity segment differs
 - Enforce with a unique index on `commit_observations.dedupe_key`; collisions increment `duplicates_skipped` and are logged with source path
@@ -252,28 +263,28 @@ Objective: build the durable historical database without vector search yet.
 ### Checklist
 
 - [ ] Create a single ingest pipeline for all git-pulse historical data
-- [ ] Parse raw pulse files into canonical commit rows
+- [ ] Parse raw pulse files into `commit_observations` with `source_type = 'pulse'`
+- [ ] Parse saved TSV reports into `commit_observations` with `source_type = 'reports_tsv'` — first-class, not fallback
 - [ ] Parse metadata files into canonical devices and aliases
-- [ ] Optionally parse saved TSV reports for reconciliation and audit only
 - [ ] Define one stable dedupe key per logical commit row
 - [ ] Persist timezone provenance fields (`source_tz_offset_minutes`, `source_tz_name`) for trustworthy local-day rollups
 - [ ] Create indexes for:
   - `timestamp_utc`
+  - `hardware_uuid`
   - `device_id`
   - `repo`
-  - `branch`
-  - `short_sha`
+  - `full_sha` (primary commit identity)
+  - `short_sha` (display fallback only)
   - `dedupe_key` (unique)
 - [ ] Add structured ingest logging with row counts and duplicate counts
 - [ ] Add at least one integration test for ingest over mixed raw sources
-- [ ] Add a health-check style validation command for the DB
+- [ ] Add a health-check style validation command for the DB, including the collector-coverage check (pulse vs. reports_tsv row counts per device)
 
 ### Notes
 
-- Raw pulse files should remain the primary historical source
-- Saved TSV reports should be treated as secondary derived inputs, useful for verification and recap rebuilding
-- Alias handling needs to be explicit because stale `noel-s-*` metadata already exists in the sync repo
-- Local-day queries must derive from timezone-aware fields, not `timestamp_utc` alone
+- Raw pulse files AND `reports/*.tsv` are both first-class ingest sources. The spike showed the TSVs currently carry most usable history; promoting pulse files back to "primary" only becomes accurate once collector coverage is fixed on every machine.
+- Alias handling needs to be explicit because legacy slug YAMLs still exist on machines that haven't re-run the updated collector
+- Local-day queries must derive from the commit's own timezone (stored as `source_tz_offset_minutes` / `source_tz_name`), not from the machine that ran `view.sh` or the machine running ingest
 
 ## Phase 2 Exact Retrieval And Operator Reports
 
