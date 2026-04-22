@@ -103,23 +103,28 @@ Target layers:
 Recommended schema direction:
 
 - `devices`
-  - canonical device id
+  - hardware_uuid (canonical primary key — stable across renames, reinstalls, slug changes)
+  - device_id (friendly slug used for filenames and display only; not a dedup key)
   - display name
   - hostname
+  - timezone_name
+  - utc_offset
+  - pulse_file
   - first_seen_utc
   - last_seen_utc
   - status
 
 - `device_aliases`
-  - alias device id
-  - canonical device id
+  - alias device_id (the old slug)
+  - canonical hardware_uuid (what it resolves to)
   - reason
   - first_seen_utc
   - last_seen_utc
 
 - `commit_observations` (renamed from `commits` — each row is a device-specific observation of a commit, not a globally-canonical commit row; this is deliberate so we can answer "which machines have seen commit X")
   - row id
-  - device id (nullable for team-sourced rows where no local device observed the commit)
+  - hardware_uuid (FK to `devices.hardware_uuid`; nullable for team-sourced rows and for legacy pulse rows ingested before the UUID field existed)
+  - device_id (slug at the time of ingest — kept for display and for backfilling observations from pre-UUID pulse files)
   - author_login (nullable; populated for team-sourced rows)
   - repo
   - branch
@@ -160,12 +165,13 @@ Canonical commit view: a deduplicated `commits` view (or materialized table) ove
 
 Canonical dedupe contract (per-observation):
 
-- Dedupe key formula: `sha1(device_id_norm + "|" + repo_norm + "|" + short_sha_norm + "|" + timestamp_utc_iso + "|" + kind + "|" + pr_number_norm)`
+- Identity segment precedence: `hardware_uuid` if present → `device_id` slug fallback → literal `team:<source_type>` for team rows. This keeps pre-UUID pulse rows ingestable and lets slug-only observations coexist until a subsequent collect.sh run backfills the UUID.
+- Dedupe key formula: `sha1(identity_segment_norm + "|" + repo_norm + "|" + short_sha_norm + "|" + timestamp_utc_iso + "|" + kind + "|" + pr_number_norm)`
 - `subject` is intentionally excluded — an amended commit or a subject typo correction should not produce a phantom duplicate observation. SHA + timestamp uniquely identifies the observation within a device.
-- For team-sourced rows (no `device_id`), substitute the literal string `team:<source_type>` for the device segment so team PRs/commits can coexist with personal pulse rows in the same table without key collision
 - Normalization rules: trim, lowercase identifiers, normalize missing branch to `detached`, normalize empty `pr_number` to `-`
-- Source precedence on collisions with same dedupe key: `pulse-*.md` beats `reports_tsv`; `team_pulse` never collides with personal rows because its device segment differs
+- Source precedence on collisions with same dedupe key: `pulse-*.md` beats `reports_tsv`; `team_pulse` never collides with personal rows because its identity segment differs
 - Enforce with a unique index on `commit_observations.dedupe_key`; collisions increment `duplicates_skipped` and are logged with source path
+- Migration path: once all active devices emit YAMLs with `hardware_uuid`, a one-time backfill links legacy `device_id`-keyed observations to the matching `hardware_uuid` via `device_aliases`. The unique index stays on `dedupe_key`, not on the identity segment — so a subsequent ingest with the UUID will simply add richer rows alongside the legacy ones rather than displacing them.
 
 ## Phase 0 Technical Spike
 

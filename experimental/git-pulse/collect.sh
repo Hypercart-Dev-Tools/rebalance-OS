@@ -32,6 +32,21 @@ utc_iso_from_epoch() {
     TZ=UTC date -r "$1" +"%Y-%m-%dT%H:%M:%SZ"
 }
 
+read_hardware_uuid() {
+    # Stable hardware-backed identifier that survives renames and OS reinstalls.
+    # Used downstream as the canonical dedupe key in the SQLite history layer;
+    # the friendly slug-based device_id remains for filenames and display.
+    local uuid=""
+    if command -v ioreg >/dev/null 2>&1; then
+        uuid="$(ioreg -rd1 -c IOPlatformExpertDevice 2>/dev/null \
+            | awk -F'"' '/IOPlatformUUID/ { print $4; exit }')"
+    fi
+    if [ -z "$uuid" ] && [ -r /etc/machine-id ]; then
+        uuid="$(cat /etc/machine-id 2>/dev/null)"
+    fi
+    printf '%s' "$uuid"
+}
+
 escape_config_value() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
@@ -156,8 +171,9 @@ migrate_legacy_device_identity() {
     fi
 
     cat > "$new_metadata_file" <<METADATA
-schema_version: 1
+schema_version: 2
 device_id: "$desired_device_id"
+hardware_uuid: "$(yaml_escape "$hardware_uuid")"
 device_name: "$(yaml_escape "$device_name")"
 hostname: "$(yaml_escape "$hostname")"
 host_tag: "$host_tag"
@@ -180,6 +196,7 @@ METADATA
 
 host_tag="$(sanitize_tag "$hostname")"
 [ -z "$host_tag" ] && host_tag="unknown-host"
+hardware_uuid="$(read_hardware_uuid)"
 configured_device_id="$(printf '%s' "${device_id:-}" | tr '[:upper:]' '[:lower:]')"
 configured_device_id="$(sanitize_tag "$configured_device_id")"
 desired_device_id="$(canonical_device_id_from_hostname "$hostname")"
@@ -329,8 +346,9 @@ fi
 
 mkdir -p "$DEVICE_METADATA_DIR"
 cat > "$DEVICE_METADATA_FILE" <<METADATA
-schema_version: 1
+schema_version: 2
 device_id: "$device_id"
+hardware_uuid: "$(yaml_escape "$hardware_uuid")"
 device_name: "$(yaml_escape "$device_name")"
 hostname: "$(yaml_escape "$hostname")"
 host_tag: "$host_tag"
