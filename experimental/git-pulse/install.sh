@@ -15,10 +15,16 @@ COLLECT_PATH="$SCRIPT_DIR/collect.sh"
 VIEW_PATH="$SCRIPT_DIR/view.sh"
 RECAP_PATH="$SCRIPT_DIR/recap.py"
 HEALTH_PATH="$SCRIPT_DIR/health-check.py"
+PULSE_COMMON_PATH="$SCRIPT_DIR/pulse_common.py"
+EXEC_SUMMARY_PATH="$SCRIPT_DIR/EXEC-SUMMARY.md"
+TEAM_EXEC_SUMMARY_PATH="$SCRIPT_DIR/TEAM-EXEC-SUMMARY.md"
 COLLECT_LINK_PATH="$BIN_DIR/git-pulse"
 VIEW_LINK_PATH="$BIN_DIR/git-pulse-view"
 RECAP_LINK_PATH="$BIN_DIR/git-pulse-recap"
 HEALTH_LINK_PATH="$BIN_DIR/git-pulse-health"
+PULSE_COMMON_LINK_PATH="$BIN_DIR/pulse_common.py"
+EXEC_SUMMARY_LINK_PATH="$BIN_DIR/EXEC-SUMMARY.md"
+TEAM_EXEC_SUMMARY_LINK_PATH="$BIN_DIR/TEAM-EXEC-SUMMARY.md"
 LEGACY_CONFIG_DIR="$HOME/.config/git-history"
 LEGACY_PLIST_PATH="$LAUNCH_AGENT_DIR/com.user.git-history.plist"
 
@@ -104,6 +110,20 @@ install_entrypoint() {
     fi
 }
 
+install_support_file() {
+    local source_path="$1"
+    local target_path="$2"
+
+    if needs_launchd_copy "$source_path"; then
+        rm -f "$target_path"
+        cp "$source_path" "$target_path"
+        INSTALL_MODE="copy"
+    else
+        ln -sfn "$source_path" "$target_path"
+        INSTALL_MODE="symlink"
+    fi
+}
+
 echo "Installing git-pulse collector..."
 
 mkdir -p "$CONFIG_DIR" "$LOG_DIR" "$BIN_DIR" "$LAUNCH_AGENT_DIR"
@@ -112,6 +132,9 @@ LINK_MODE="$INSTALL_MODE"
 install_entrypoint "$VIEW_PATH" "$VIEW_LINK_PATH"
 install_entrypoint "$RECAP_PATH" "$RECAP_LINK_PATH"
 install_entrypoint "$HEALTH_PATH" "$HEALTH_LINK_PATH"
+install_support_file "$PULSE_COMMON_PATH" "$PULSE_COMMON_LINK_PATH"
+install_support_file "$EXEC_SUMMARY_PATH" "$EXEC_SUMMARY_LINK_PATH"
+install_support_file "$TEAM_EXEC_SUMMARY_PATH" "$TEAM_EXEC_SUMMARY_LINK_PATH"
 
 if [ ! -f "$CONFIG_DIR/config.sh" ]; then
     if [ -f "$LEGACY_CONFIG_DIR/config.sh" ]; then

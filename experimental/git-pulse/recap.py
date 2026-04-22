@@ -10,6 +10,10 @@ from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from pulse_common import (
     GROUP_ORDER,
     classify_subject,
@@ -35,7 +39,7 @@ HEADER = [
 ]
 
 
-SKILL_PATH = Path(__file__).resolve().parent / "EXEC-SUMMARY.md"
+SKILL_PATH = SCRIPT_DIR / "EXEC-SUMMARY.md"
 
 
 AGENT_INSTRUCTIONS = f"""\

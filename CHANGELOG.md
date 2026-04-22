@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.1] - 2026-04-22
+
+### Fixed
+
+- Git pulse copied Python launchers now install their shared support files beside `~/bin/git-pulse-recap` and `~/bin/git-pulse-health`, including `pulse_common.py` and the recap summary rulebooks, so the new commands work on machines using copy mode from protected folders like `~/Documents`.
+- The Python git-pulse entrypoints now resolve imports from their real script directory, which keeps shared-helper imports working in both copied and symlinked launcher modes.
+
 ## [0.18.0] - 2026-04-22
 
 ### Added

@@ -28,4 +28,5 @@
 - Human-friendly git-pulse ids should use trimmed slug names like `noels-mbp-16-m1-pro`, dropping apostrophes entirely instead of turning them into `-s-`.
 - The hourly `collect.sh` path should auto-migrate a machine's own legacy git-pulse ids, including prior UUID defaults and pre-apostrophe-fix slugs, so cleanup does not require a manual agent pass on each device.
 - The collector-side legacy-id migration must stage deletions with `git add -A -- <old> <new>`; otherwise stale machine pulse/metadata files survive in the sync repo and keep duplicate devices visible.
+- The copied `~/bin` Python git-pulse launchers need their support files installed beside them; `pulse_common.py` is required for imports, and the recap skill markdown files should travel too so copied-launcher paths stay valid on machines using copy mode from `~/Documents`.
 - Real-world git-pulse recap output surfaced stale sync-repo metadata for legacy device ids; coverage should flag those mismatches instead of silently hiding them.

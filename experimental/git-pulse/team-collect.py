@@ -18,6 +18,10 @@ from pathlib import Path
 from typing import Callable
 from urllib import error, parse, request
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from pulse_common import load_sync_repo_dir
 
 
