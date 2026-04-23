@@ -1,6 +1,7 @@
 """
 Google Calendar collector — fetches events via Google Calendar API,
-persists to SQLite for historical queries (1 year retention), and
+persists to SQLite for historical queries (default window 30d back /
+7d forward; 365-day backfill available; no automatic deletion), and
 provides context for the ask tool.
 
 Uses the google-api-python-client directly (not gcalcli) for reliable

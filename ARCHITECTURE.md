@@ -39,7 +39,7 @@ Each source has a priority, a collector module, and a target table. For detailed
 |----------|--------|-----------|---------|------------|--------|
 | P1 | GitHub | `github_scan.py` + `github_knowledge.py` + `github_readiness.py` + `github_reconciliation.py` | `github_activity`, `github_repo_meta`, `github_branches`, `github_items`, `github_comments`, `github_documents`, `github_embeddings` | Yes — structured repo signals plus semantic corpus for issues, PRs, comments, reviews, commit messages, and issue/PR reconciliation | Active |
 | P1 | Obsidian Vault | `note_ingester.py` + `embedder.py` | `vault_files`, `chunks`, `keywords`, `links`, `embeddings` | **Yes** — Qwen3-Embedding-0.6B, 1024-dim, sqlite-vec | Active |
-| P2 | Google Calendar | `calendar.py` | `calendar_events` table (1 year retention) | No — structured event data | Active |
+| P2 | Google Calendar | `calendar.py` | `calendar_events` table (default window 30d back / 7d forward; no auto-deletion) | No — structured event data | Active |
 | P3 | Sleuth reminders (Slack) | `sleuth_reminders.py` | `sleuth_reminders` table | No — structured reminder rows | Active |
 | P4 | Email | TBD | TBD | TBD | Planned |
 
@@ -97,11 +97,11 @@ Project Registry ────▶ registry.py +              MD registry → proj
 | Source | Secret store | Mechanism |
 |---|---|---|
 | GitHub | `temp/rbos.config` (JSON, gitignored) | PAT with `repo:read` |
-| Google Calendar | `~/secrets/google-calendar.env` + pickled OAuth token | OAuth 2.0 user consent |
-| Sleuth | `~/secrets/sleuth-web-api-development.env` (mode 600) | Bearer token, 64-hex |
+| Google Calendar | `/Users/noelsaw/secrets/google-calendar.env` + pickled OAuth token | OAuth 2.0 user consent |
+| Sleuth | `/Users/noelsaw/secrets/sleuth-web-api-development.env` (mode 600) | Bearer token, 64-hex |
 | Obsidian vault | none | filesystem read only |
 
-All env files sit under `~/secrets/` with mode 600 and are parsed manually in [src/rebalance/cli.py](src/rebalance/cli.py) (no `python-dotenv`). Nothing with a secret value is committed.
+Env-file paths are currently **hardcoded as absolute paths** in [src/rebalance/cli.py](src/rebalance/cli.py) (`GOOGLE_CALENDAR_ENV_PATH`, `SLEUTH_ENV_PATH`) — not `~/secrets/` — so the repo is not portable across operator home directories today. Both files should sit at mode 600. Env files are parsed manually (no `python-dotenv`). Nothing with a secret value is committed. **TODO:** resolve via `Path.home() / "secrets" / ...` (or an env var) before any second operator onboards.
 
 ### Adding a New Source
 
@@ -128,10 +128,23 @@ Single SQLite file at the path resolved from `REBALANCE_DB` env var. sqlite-vec 
 Project Registry (writer: registry.py)
   project_registry          — canonical project metadata
 
-GitHub (writer: github_scan.py)
+GitHub activity (writer: github_scan.py)
   github_activity            — per-repo event counts, keyed by (login, repo, scan_date)
-  github_repo_meta           — repo-level metadata such as default branch and issue/project support
+
+GitHub artifacts (writer: github_knowledge.py; schema in db.py::ensure_github_schema)
+  github_repo_meta           — repo-level metadata (default branch, issue/project support)
   github_branches            — local branch inventory for promotion/release inference
+  github_labels              — label dictionary per repo
+  github_milestones          — open/closed milestones with due dates
+  github_releases            — published tags/releases
+  github_items               — issues and PRs (unified table, item_type discriminates)
+  github_comments            — issue/PR/review comments
+  github_commits             — PR commit history
+  github_check_runs          — CI check results per head_sha
+  github_links               — explicit and inferred issue↔PR cross-references
+  github_documents           — per-artifact embeddable document rows
+  github_embeddings          — sqlite-vec virtual table for artifact embeddings
+  github_embedding_meta      — model name + dim for the GitHub corpus
 
 Vault Ingestion (writer: note_ingester.py)
   vault_files                — one row per .md file, with content_hash for delta detection
@@ -145,7 +158,9 @@ Embeddings (writer: embedder.py)
 
 Google Calendar (writer: calendar.py)
   calendar_events            — event id, summary, start/end, location, attendees, description
-                               Keyed by Google event ID (INSERT OR REPLACE). 1 year retention.
+                               Keyed by Google event ID (INSERT OR REPLACE). Default sync window
+                               is 30 days back + 7 days forward (365-day backfill available via
+                               the CLI). No automatic deletion; manual cleanup if pruning is needed.
 
 Sleuth reminders (writer: sleuth_reminders.py)
   sleuth_reminders           — one row per Slack reminder, keyed by reminder_id (TEXT PK).
@@ -157,12 +172,13 @@ Sleuth reminders (writer: sleuth_reminders.py)
 
 ### Delta Strategy
 
-Both ingest pipelines use hash-based delta detection:
+Each ingestor defines how it reconciles a fresh fetch with stored rows:
 
 - **Vault notes**: SHA-256 of raw file bytes stored in `vault_files.content_hash`. On re-ingest, unchanged files are skipped entirely. Changed files are deleted (CASCADE clears chunks/keywords/links) and re-inserted.
 - **GitHub activity**: keyed by `(login, repo_full_name, scan_date)` with `ON CONFLICT REPLACE`. Each scan overwrites that day's data.
+- **GitHub artifacts**: keyed by `(repo_full_name, item_type, number)` for items; comments/commits/checks keyed by GitHub ID. `ON CONFLICT REPLACE` on every sync, with a `since_days` lookback to skip untouched artifacts.
 - **Embeddings**: chunks without a corresponding `embeddings` row get embedded. Model version change triggers full re-embed via `embedding_meta`.
-- **Calendar**: keyed by Google event ID with `INSERT OR REPLACE`. Re-sync overwrites existing events and adds new ones. 1 year retention; no auto-cleanup.
+- **Calendar**: keyed by Google event ID with `INSERT OR REPLACE`. Re-sync overwrites existing events and adds new ones within the requested window (default 30d back / 7d forward; 365d on demand for backfill). No auto-deletion.
 - **Sleuth reminders**: keyed by `reminder_id`. Column-level diff against the stored row decides insert/update/unchanged; `first_seen_at` is set on insert and never overwritten; `last_seen_at` and `last_synced_at` refresh on every sync. Missing reminders are NOT deleted — terminal states (`completed`, `canceled`) remain as history.
 
 ---
@@ -182,7 +198,8 @@ SQLite @ $REBALANCE_DB
    ├──▶ daily_report.py /          ── per-day / per-week calendar rollups
    │    weekly_report.py              with project classification
    │
-   ├──▶ github_balance.py          ── per-project commit/PR/issue counts
+   ├──▶ github_scan.py             ── per-project commit/PR/issue counts
+   │    ::get_github_balance()        (surfaced as the github_balance MCP tool)
    │
    ├──▶ github_readiness.py /      ── release-state inference + issue↔PR
    │    github_reconciliation.py       close candidates
@@ -195,11 +212,13 @@ SQLite @ $REBALANCE_DB
 
 1. **Gathers context** from all sources in parallel-ready functions:
    - `_gather_project_context()` — registry entries + repos map
-   - `_gather_github_context()` — per-project activity summary
+   - `_gather_github_context()` — per-project activity summary (from `github_activity`)
+   - `_gather_github_semantic_context()` — semantic recall over the GitHub corpus (`github_documents` + `github_embeddings`)
    - `_gather_vault_context()` — semantic search (embed query → ANN)
    - `_gather_vault_activity()` — recently modified files
    - `_gather_calendar_context()` — upcoming + recent events from `calendar_events`
-   - *(future: `_gather_slack_context()`, etc.)*
+   - `_gather_temporal_context()` — day-of-week / weekend / holiday framing for the prompt
+   - *(future: `_gather_sleuth_context()`, etc. — `sleuth_reminders` is mirrored but not yet gathered)*
 
 2. **Assembles a prompt** with all context formatted into labeled sections.
 
@@ -262,14 +281,21 @@ Tools are registered in `mcp_server.py:create_server()`. All tools share the sam
 | Category | Tool | Purpose |
 |----------|------|---------|
 | Query | `ask` | Natural language query across all sources (with optional local LLM synthesis) |
-| Query | `query_notes` | Semantic search (embedding-based) |
-| Query | `search_vault` | Keyword search (TF-IDF) |
+| Query | `query_notes` | Vault semantic search (embedding-based) |
+| Query | `search_vault` | Vault keyword search (TF-IDF) |
+| Query | `query_github_context` | Semantic search over the GitHub artifact corpus (issues, PRs, comments, reviews, commits) |
 | Query | `github_balance` | Per-project GitHub activity summary |
+| Query | `github_release_readiness` | Infer milestone/release readiness from the local GitHub corpus |
+| Query | `github_close_candidates` | Suggest open issues that likely map to merged PRs |
 | Registry | `list_projects` | Query project registry |
 | Onboarding | `onboarding_status` | Check setup completion |
 | Onboarding | `setup_github_token` | Validate and store GitHub PAT |
 | Onboarding | `run_preflight` | Discover project candidates (read-only) |
 | Onboarding | `confirm_projects` | Write registry and sync |
+| Calendar | `create_calendar_event` | Create a Google Calendar event via local OAuth |
+| Calendar | `review_timesheet` | Surface unclassified calendar events that need a project decision |
+| Calendar | `classify_event` | Persist an include/exclude/project classification for an event |
+| Calendar | `snap_calendar_edges` | Detect and (optionally) fix slightly overlapping events |
 | Sync | `sleuth_sync_reminders` | Pull Slack reminders from the Sleuth Web API and upsert to SQLite |
 
 Tool specs (params, returns, dependencies): see [MCP.md](./MCP.md).
@@ -288,7 +314,10 @@ src/rebalance/
     config.py              — secrets storage (temp/rbos.config)
     registry.py            — project registry sync (Markdown ↔ YAML ↔ SQLite)
     preflight.py           — onboarding discovery + confirmation
-    github_scan.py         — GitHub Events API collector + balance query
+    github_scan.py         — GitHub Events API collector + per-project balance query
+    github_knowledge.py    — per-repo artifact sync (issues/PRs/comments/commits/checks) + embedding
+    github_readiness.py    — release-readiness inference over the local GitHub corpus (read-only)
+    github_reconciliation.py — issue ↔ PR close-candidate inference (read-only)
     db.py                  — shared DB connection, schema, sqlite-vec loading
     md_parser.py           — pure markdown parsing (frontmatter, wikilinks, tags, chunking)
     note_ingester.py       — vault walker, delta detection, TF-IDF keywords
