@@ -1,5 +1,57 @@
 # Changelog
 
+## [0.18.2] - 2026-04-22
+
+### Fixed
+
+- Hourly launchd-triggered git-pulse runs were silently failing on every machine because the sync repo and the watched repos lived under `~/Documents`, a macOS TCC-protected location. Launchd-spawned shells inherit no Full Disk Access, so `git` exited with `fatal: Unable to read current working directory: Operation not permitted` on every fire (`launchctl list` showed exit 128). The Phase 0 SQLite spike documented this risk only for the future SQLite layer; it should have been flagged for the existing collector too.
+- Discovered as a follow-on issue: `~/.config/git-pulse/last-run` gets bumped to the scan-start epoch even when the watched-repo reflog walk fails inside the loop, so commits authored during the broken window become invisible to subsequent runs unless the operator rolls `last-run` back manually. Worth a future hardening pass on `collect.sh` so `last-run` only advances after a scan that actually iterated the watched repos successfully.
+
+### Per-machine recovery instructions
+
+The same recovery applies to every machine where launchd-triggered git-pulse hasn't been pushing on its expected hourly cadence (check with `git-pulse-health` — STALE for hours = likely affected).
+
+```bash
+# 1. Stop the launchd agent so we can reconfigure cleanly
+launchctl unload ~/Library/LaunchAgents/com.user.git-pulse.plist
+
+# 2. Move the sync repo out of ~/Documents (TCC-protected)
+#    Adjust the source path to match this machine's current sync_repo_dir.
+mv "$HOME/Documents/GH Repos/rebalance-git-pulse" "$HOME/git-pulse-sync"
+
+# 3. Update sync_repo_dir in the config to the new location
+sed -i '' "s|/Users/$USER/Documents/GH Repos/rebalance-git-pulse|/Users/$USER/git-pulse-sync|" \
+  ~/.config/git-pulse/config.sh
+
+# 4. Reload the launchd agent
+launchctl load ~/Library/LaunchAgents/com.user.git-pulse.plist
+```
+
+If your watched repos in `~/.config/git-pulse/config.sh` (`repos=(...)`) still live under `~/Documents`, you also need **one** of the following so launchd-spawned `bash` can reach them:
+
+- **Recommended for personal Macs:** add `/bin/bash` to System Settings → Privacy & Security → Full Disk Access. Open the pane with `open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles"`, click `+`, press `⌘⇧G`, paste `/bin/bash`, Add, and ensure the toggle is on. macOS TCC tracks the responsible parent process; granting FDA on `git` alone does not propagate when invoked from a non-FDA shell.
+- **Alternative:** move each watched repo out of `~/Documents` (mirrors the sync-repo fix). More disruptive — re-points editor workspaces and IDE bookmarks.
+
+Then optionally roll back `last-run` so commits authored during the broken window get re-collected on the next fire:
+
+```bash
+# Use this machine's pulse file. Replace <device-id> with the slug from `git-pulse-health`.
+tail -1 ~/git-pulse-sync/pulse-<device-id>.md | cut -f1 > ~/.config/git-pulse/last-run
+```
+
+Verify:
+
+```bash
+launchctl kickstart -k gui/$(id -u)/com.user.git-pulse
+sleep 5
+launchctl list | grep git-pulse        # exit code should be 0, not 128
+git-pulse-health                       # this machine should flip to ALIVE
+```
+
+### Known quirk surfaced during recovery
+
+`collect.sh` filters reflog entries down to `commit:` / `commit (initial):` / `commit (amend):` prefixes. Commits produced by `git rebase` are recorded in the reflog with different prefixes (`rebase:` family) and are therefore not captured into pulse files. The reachable orphan commits from before a rebase still get captured; the rebased target commits do not. Worth tracking; not blocking for this release.
+
 ## [0.18.1] - 2026-04-22
 
 ### Fixed
