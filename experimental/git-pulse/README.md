@@ -158,7 +158,7 @@ Every hour, `collect.sh`:
 2. Keeps only reflog actions `commit:`, `commit (initial):`, and `commit (amend):`.
 3. Filters to entries newer than `~/.config/git-pulse/last-run`.
 4. Appends new rows to `pulse-<device_id>.md` in the sync repo, storing canonical UTC timestamps.
-5. Refreshes `devices/<device_id>.yaml` with device metadata.
+5. Refreshes `devices/<device_id>.yaml` with device metadata plus a last-scan heartbeat timestamp.
 6. Commits and pushes.
 7. Retries once after `pull --rebase` on push race.
 8. Uses an on-disk lock so overlapping launchd/manual runs do not duplicate entries.
@@ -209,7 +209,7 @@ Example unified read:
 | `~/.config/git-pulse/config.sh` | Repo list, sync repo location, stable `device_id`, human `device_name`, optional hostname override. |
 | `~/.config/git-pulse/last-run` | Epoch seconds of last successful run. |
 | configured `sync_repo_dir` | Working checkout of the private sync repo. Defaults to `~/.config/git-pulse/repo` if unset. |
-| configured `sync_repo_dir/devices/*.yaml` | Per-device metadata registry used by `git-pulse-view`. |
+| configured `sync_repo_dir/devices/*.yaml` | Per-device metadata registry used by `git-pulse-view` and `git-pulse-health`, including the collector heartbeat fields. |
 | configured `sync_repo_dir/reports/*` | Saved TSV range reports from `git-pulse-view` and Markdown recaps from `git-pulse-recap`. |
 | `~/.config/git-pulse/logs/` | launchd stdout/stderr. |
 | `~/bin/git-pulse` | Launchd entrypoint. Usually a symlink; falls back to a copied script when the code repo lives in a protected macOS folder. |

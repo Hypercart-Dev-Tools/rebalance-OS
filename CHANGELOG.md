@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.18.3] - 2026-04-23
+
+### Fixed
+
+- `git-pulse-health` no longer treats a quiet but healthy machine as stale just because its `pulse-<device_id>.md` file has not changed recently. The collector now publishes a sync-visible heartbeat in each device metadata record, and health checks prefer that heartbeat before falling back to pulse-file git history on older installs.
+- Health output now reports the last scan timestamp instead of only the last pulse-file commit timestamp, and adds notes that surface the age of the last pulse update and last local commit when that context is available.
+
 ## [0.18.2] - 2026-04-22
 
 ### Fixed

@@ -33,7 +33,9 @@ class DeviceStatus:
     device_name: str
     pulse_file: str
     pulse_path: Path
-    last_push_utc: datetime | None
+    last_scan_utc: datetime | None
+    last_pulse_push_utc: datetime | None
+    latest_activity_utc: datetime | None
     pulse_exists: bool
     metadata_exists: bool
     notes: list[str] = field(default_factory=list)
@@ -76,6 +78,18 @@ def yaml_value(path: Path, key: str) -> str:
     return ""
 
 
+def parse_utc(value: str) -> datetime | None:
+    if not value:
+        return None
+    normalized = value.strip()
+    if normalized.endswith("Z"):
+        normalized = normalized[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(normalized).astimezone(timezone.utc)
+    except ValueError:
+        return None
+
+
 def git_last_commit_utc(repo_dir: Path, path_in_repo: str) -> datetime | None:
     result = subprocess.run(
         ["git", "-C", str(repo_dir), "log", "-1", "--format=%cI", "--", path_in_repo],
@@ -93,16 +107,38 @@ def git_last_commit_utc(repo_dir: Path, path_in_repo: str) -> datetime | None:
         return None
 
 
+def pulse_latest_activity_utc(path: Path) -> datetime | None:
+    if not path.is_file():
+        return None
+
+    latest: datetime | None = None
+    for raw_line in path.read_text().splitlines():
+        parts = raw_line.split("\t")
+        if len(parts) != 6 or not parts[0].isdigit():
+            continue
+        parsed = parse_utc(parts[1])
+        if parsed is not None:
+            latest = parsed
+    return latest
+
+
+def display_age_hours(moment: datetime, now: datetime) -> str:
+    hours = max((now - moment).total_seconds() / 3600, 0.0)
+    if hours >= 24:
+        return f"{hours / 24:.1f}d"
+    return f"{hours:.1f}h"
+
+
 def classify(
-    last_push: datetime | None,
+    last_scan: datetime | None,
     now: datetime,
     warn_hours: float,
     alert_hours: float,
 ) -> tuple[int, str]:
     """Return (priority, label). Lower priority sorts first (worst first)."""
-    if last_push is None:
+    if last_scan is None:
         return 0, "NO PUSHES"
-    hours = (now - last_push).total_seconds() / 3600
+    hours = (now - last_scan).total_seconds() / 3600
     if hours > alert_hours:
         return 1, f"ALERT ({hours:.0f}h)"
     if hours > warn_hours:
@@ -110,7 +146,7 @@ def classify(
     return 3, f"ALIVE ({hours:.1f}h)"
 
 
-def collect_statuses(sync_repo_dir: Path) -> list[DeviceStatus]:
+def collect_statuses(sync_repo_dir: Path, now: datetime) -> list[DeviceStatus]:
     statuses: list[DeviceStatus] = []
     devices_dir = sync_repo_dir / "devices"
 
@@ -126,13 +162,16 @@ def collect_statuses(sync_repo_dir: Path) -> list[DeviceStatus]:
             )
             pulse_path = sync_repo_dir / pulse_file
             metadata_pulse_files.add(pulse_file)
+            last_scan_utc = parse_utc(yaml_value(yaml_path, "last_scan_utc"))
             statuses.append(
                 DeviceStatus(
                     device_id=device_id,
                     device_name=device_name,
                     pulse_file=pulse_file,
                     pulse_path=pulse_path,
-                    last_push_utc=git_last_commit_utc(sync_repo_dir, pulse_file),
+                    last_scan_utc=last_scan_utc,
+                    last_pulse_push_utc=git_last_commit_utc(sync_repo_dir, pulse_file),
+                    latest_activity_utc=pulse_latest_activity_utc(pulse_path),
                     pulse_exists=pulse_path.is_file(),
                     metadata_exists=True,
                 )
@@ -149,7 +188,9 @@ def collect_statuses(sync_repo_dir: Path) -> list[DeviceStatus]:
                 device_name=device_id,
                 pulse_file=pulse_path.name,
                 pulse_path=pulse_path,
-                last_push_utc=git_last_commit_utc(sync_repo_dir, pulse_path.name),
+                last_scan_utc=git_last_commit_utc(sync_repo_dir, pulse_path.name),
+                last_pulse_push_utc=git_last_commit_utc(sync_repo_dir, pulse_path.name),
+                latest_activity_utc=pulse_latest_activity_utc(pulse_path),
                 pulse_exists=True,
                 metadata_exists=False,
             )
@@ -160,6 +201,18 @@ def collect_statuses(sync_repo_dir: Path) -> list[DeviceStatus]:
             s.notes.append("no metadata YAML")
         if not s.pulse_exists:
             s.notes.append(f"{s.pulse_file} missing on disk")
+            continue
+        if s.last_scan_utc is None:
+            s.last_scan_utc = s.last_pulse_push_utc
+            s.notes.append("heartbeat unavailable; using pulse-file pushes")
+        if s.last_pulse_push_utc and s.last_scan_utc and s.last_scan_utc > s.last_pulse_push_utc:
+            s.notes.append(
+                f"last pulse update {display_age_hours(s.last_pulse_push_utc, now)} ago"
+            )
+        if s.latest_activity_utc:
+            s.notes.append(
+                f"last local commit {display_age_hours(s.latest_activity_utc, now)} ago"
+            )
 
     return statuses
 
@@ -174,7 +227,7 @@ def render(
     if not statuses:
         return (f"no devices found under {sync_repo_dir}\n", 2)
 
-    scored = [(classify(s.last_push_utc, now, warn_hours, alert_hours), s) for s in statuses]
+    scored = [(classify(s.last_scan_utc, now, warn_hours, alert_hours), s) for s in statuses]
     scored.sort(key=lambda pair: (pair[0][0], pair[1].device_name.lower()))
 
     worst_priority = min(priority for (priority, _label), _s in scored)
@@ -184,13 +237,13 @@ def render(
         f"Git Pulse health check — sync_repo_dir: {sync_repo_dir}",
         f"Now: {now.strftime('%Y-%m-%dT%H:%M:%SZ')} · warn > {warn_hours}h · alert > {alert_hours}h",
         "",
-        f"{'Device':<36}  {'Status':<18}  {'Last push (UTC)':<22}  Notes",
+        f"{'Device':<36}  {'Status':<18}  {'Last scan (UTC)':<22}  Notes",
         f"{'-'*36}  {'-'*18}  {'-'*22}  {'-'*30}",
     ]
     for (_, label), s in scored:
         last = (
-            s.last_push_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
-            if s.last_push_utc
+            s.last_scan_utc.strftime("%Y-%m-%dT%H:%M:%SZ")
+            if s.last_scan_utc
             else "(never)"
         )
         note = "; ".join(s.notes) if s.notes else ""
@@ -226,7 +279,7 @@ def main() -> int:
         return 2
 
     now = datetime.now(timezone.utc)
-    statuses = collect_statuses(sync_repo_dir)
+    statuses = collect_statuses(sync_repo_dir, now)
     output, exit_code = render(
         statuses, now, args.warn_hours, args.alert_hours, sync_repo_dir
     )

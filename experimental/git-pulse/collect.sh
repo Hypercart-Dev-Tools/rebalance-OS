@@ -405,6 +405,8 @@ host_tag: "$host_tag"
 timezone_name: "$(date +%Z)"
 utc_offset: "$(date +%z)"
 pulse_file: "$PULSE_FILE_NAME"
+last_scan_epoch: "$scan_started"
+last_scan_utc: "$(utc_iso_from_epoch "$scan_started")"
 METADATA
 
 # Initialize the per-machine file on first run.
@@ -451,7 +453,8 @@ append_stage_path "$(basename "$PULSE_FILE")"
 append_stage_path "devices/$device_id.yaml"
 git add -A -- "${stage_paths[@]}"
 if git diff --cached --quiet; then
-    # Nothing actually staged (e.g. file unchanged). Nothing to push.
+    # Nothing actually staged (e.g. a same-second rerun that produced
+    # identical metadata heartbeat values). Nothing to push.
     echo "$scan_started" > "$LAST_RUN_FILE"
     exit 0
 fi

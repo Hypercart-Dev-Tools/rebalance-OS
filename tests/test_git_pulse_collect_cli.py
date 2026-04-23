@@ -163,12 +163,7 @@ class GitPulseCollectCliTests(unittest.TestCase):
 
             _write_date_stub(bin_dir / "date")
             _write_scutil_stub(bin_dir / "scutil")
-            _write_git_stub(
-                bin_dir / "git",
-                local_repo,
-                sync_repo,
-                diff_cached_exit_code=0,
-            )
+            _write_git_stub(bin_dir / "git", local_repo, sync_repo)
 
             (config_dir / "config.sh").write_text(
                 textwrap.dedent(
@@ -226,8 +221,11 @@ class GitPulseCollectCliTests(unittest.TestCase):
             )
 
             pulse_text = (sync_repo / "pulse-noels-macbook-pro-14.md").read_text()
+            metadata_text = (devices_dir / "noels-macbook-pro-14.yaml").read_text()
 
         self.assertEqual(pulse_text.count("Migrated local commit"), 1)
+        self.assertIn('last_scan_epoch: "1776750000"', metadata_text)
+        self.assertIn('last_scan_utc: "2026-04-21T05:40:00Z"', metadata_text)
 
     def test_collect_skips_unborn_repo_without_failing(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

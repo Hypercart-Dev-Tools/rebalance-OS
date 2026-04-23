@@ -50,7 +50,15 @@ class HealthCheckCliTests(unittest.TestCase):
         devices_dir.mkdir()
         return sync
 
-    def _write_device(self, sync: Path, device_id: str, display: str) -> None:
+    def _write_device(
+        self,
+        sync: Path,
+        device_id: str,
+        display: str,
+        *,
+        extra_yaml: str = "",
+        pulse_rows: str = "",
+    ) -> None:
         (sync / "devices" / f"{device_id}.yaml").write_text(
             textwrap.dedent(
                 f"""\
@@ -58,10 +66,17 @@ class HealthCheckCliTests(unittest.TestCase):
                 device_id: "{device_id}"
                 device_name: "{display}"
                 pulse_file: "pulse-{device_id}.md"
+                {extra_yaml}\
                 """
             )
         )
-        (sync / f"pulse-{device_id}.md").write_text(f"# {display}\n")
+        (sync / f"pulse-{device_id}.md").write_text(
+            textwrap.dedent(
+                f"""\
+                # {display}
+                {pulse_rows}"""
+            )
+        )
 
     def _commit_at(self, sync: Path, message: str, when_utc: datetime, paths: list[str]) -> None:
         iso = when_utc.strftime("%Y-%m-%dT%H:%M:%S +0000")
@@ -114,6 +129,50 @@ class HealthCheckCliTests(unittest.TestCase):
         self.assertEqual(result.returncode, 1, msg=result.stderr + result.stdout)
         self.assertIn("STALE", result.stdout)
 
+    def test_recent_metadata_heartbeat_keeps_quiet_device_alive(self) -> None:
+        sync = self._prepare_sync_repo()
+        old_commit = datetime.now(timezone.utc) - timedelta(hours=12)
+        recent_scan = datetime.now(timezone.utc) - timedelta(minutes=20)
+        self._write_device(
+            sync,
+            "quiet",
+            "Quiet Mac",
+            pulse_rows=(
+                f'{int(old_commit.timestamp())}\t{old_commit.strftime("%Y-%m-%dT%H:%M:%SZ")}'
+                "\trebalance-OS\tmain\tdeadbee\tEarlier local commit\n"
+            ),
+        )
+        self._commit_at(
+            sync,
+            "quiet pulse seed",
+            old_commit,
+            ["devices/quiet.yaml", "pulse-quiet.md"],
+        )
+        (sync / "devices" / "quiet.yaml").write_text(
+            textwrap.dedent(
+                f"""\
+                schema_version: 2
+                device_id: "quiet"
+                device_name: "Quiet Mac"
+                pulse_file: "pulse-quiet.md"
+                last_scan_epoch: "{int(recent_scan.timestamp())}"
+                last_scan_utc: "{recent_scan.strftime("%Y-%m-%dT%H:%M:%SZ")}"
+                """
+            )
+        )
+        self._commit_at(
+            sync,
+            "quiet metadata heartbeat",
+            recent_scan,
+            ["devices/quiet.yaml"],
+        )
+        result = self._run_health(sync, "--warn-hours", "3", "--alert-hours", "24")
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertIn("ALIVE", result.stdout)
+        self.assertIn("Quiet Mac", result.stdout)
+        self.assertIn("last pulse update", result.stdout)
+        self.assertIn("last local commit", result.stdout)
+
     def test_alert_device_exits_two(self) -> None:
         sync = self._prepare_sync_repo()
         self._write_device(sync, "gamma", "Gamma Mac")
@@ -152,6 +211,20 @@ class HealthCheckCliTests(unittest.TestCase):
         result = self._run_health(sync)
         self.assertIn("Delta Mac", result.stdout)
         self.assertIn("pulse-delta.md missing on disk", result.stdout)
+
+    def test_missing_heartbeat_falls_back_to_pulse_pushes(self) -> None:
+        sync = self._prepare_sync_repo()
+        self._write_device(sync, "legacy", "Legacy Mac")
+        stale = datetime.now(timezone.utc) - timedelta(hours=6)
+        self._commit_at(
+            sync,
+            "legacy pulse commit",
+            stale,
+            ["devices/legacy.yaml", "pulse-legacy.md"],
+        )
+        result = self._run_health(sync, "--warn-hours", "3", "--alert-hours", "24")
+        self.assertEqual(result.returncode, 1, msg=result.stderr + result.stdout)
+        self.assertIn("heartbeat unavailable; using pulse-file pushes", result.stdout)
 
 
 if __name__ == "__main__":
