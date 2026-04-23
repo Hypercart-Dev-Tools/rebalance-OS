@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.18.4] - 2026-04-23
+
+### Fixed
+
+- `collect.sh` now treats watched-repo access failures as degraded scans instead of silently collapsing them into "no commits yet." When a repo scan fails, the collector still syncs metadata and any successfully scanned repos, but it records `repo_scan_failures`, `scan_status`, and `scan_failure_examples` in `devices/<device_id>.yaml` so the failure is visible.
+- The collector no longer advances `~/.config/git-pulse/last-run` after a partial scan. That preserves the broken window for later re-collection once repo access is restored instead of making those commits invisible.
+- `git-pulse-health` now reports recent-but-partial scans as `DEGRADED` rather than `ALIVE`, so the new heartbeat does not mask blocked watched repos.
+- `install.sh` and `config.example.sh` now default repo discovery to non-protected roots (`~/code`, `~/src`, `~/Projects`) instead of `~/Documents`, aligning the installer with the launchd/TCC recovery guidance.
+
 ## [0.18.3] - 2026-04-23
 
 ### Fixed

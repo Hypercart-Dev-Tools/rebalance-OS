@@ -81,6 +81,8 @@ def _write_git_stub(
     *,
     diff_cached_exit_code: int = 1,
     unborn_repos: tuple[Path, ...] = (),
+    log_failure_repos: tuple[Path, ...] = (),
+    rev_parse_failure_repos: tuple[Path, ...] = (),
 ) -> None:
     _write_executable(
         path,
@@ -93,6 +95,8 @@ def _write_git_stub(
             local_repo = {str(local_repo)!r}
             sync_repo = {str(sync_repo)!r}
             unborn_repos = {tuple(str(repo) for repo in unborn_repos)!r}
+            log_failure_repos = {tuple(str(repo) for repo in log_failure_repos)!r}
+            rev_parse_failure_repos = {tuple(str(repo) for repo in rev_parse_failure_repos)!r}
             args = sys.argv[1:]
 
             if len(args) >= 3 and args[0] == "-C":
@@ -102,6 +106,9 @@ def _write_git_stub(
                 if repo_args[:3] == ["rev-parse", "--verify", "HEAD"]:
                     if repo_path in unborn_repos:
                         raise SystemExit(128)
+                    if repo_path in rev_parse_failure_repos:
+                        print("fatal: Unable to read current working directory: Operation not permitted", file=sys.stderr)
+                        raise SystemExit(128)
                     if repo_path in {{local_repo, sync_repo}}:
                         print("deadbeef")
                         raise SystemExit(0)
@@ -110,8 +117,15 @@ def _write_git_stub(
                     print("HEAD@{{2026-04-20T14:32:15-07:00}}\\t1234567890abcdef\\tcommit:\\tMigrated local commit")
                     raise SystemExit(0)
 
+                if repo_path in log_failure_repos and repo_args[:2] == ["log", "-g"]:
+                    print("fatal: Unable to read current working directory: Operation not permitted", file=sys.stderr)
+                    raise SystemExit(128)
+
                 if repo_path == local_repo and repo_args[:2] == ["branch", "--contains"]:
                     print("main")
+                    raise SystemExit(0)
+
+                if repo_path in log_failure_repos and repo_args[:2] == ["branch", "--contains"]:
                     raise SystemExit(0)
 
                 if repo_path == sync_repo and repo_args[:2] == ["rev-parse", "--verify"]:
@@ -366,6 +380,68 @@ class GitPulseCollectCliTests(unittest.TestCase):
         self.assertIn("Migrated local commit", new_pulse)
         self.assertFalse((devices_dir / "noel-s-macbook-pro-14.yaml").exists())
         self.assertFalse((sync_repo / "pulse-noel-s-macbook-pro-14.md").exists())
+
+    def test_collect_keeps_last_run_when_a_repo_scan_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            bin_dir = home / "bin"
+            config_dir = home / ".config" / "git-pulse"
+            sync_repo = config_dir / "repo"
+            devices_dir = sync_repo / "devices"
+            local_repo = home / "code" / "sample-repo"
+            blocked_repo = home / "code" / "blocked-repo"
+
+            bin_dir.mkdir(parents=True)
+            devices_dir.mkdir(parents=True)
+            (sync_repo / ".git").mkdir()
+            (local_repo / ".git").mkdir(parents=True)
+            (blocked_repo / ".git").mkdir(parents=True)
+
+            _write_date_stub(bin_dir / "date")
+            _write_scutil_stub(bin_dir / "scutil")
+            _write_git_stub(
+                bin_dir / "git",
+                local_repo,
+                sync_repo,
+                rev_parse_failure_repos=(blocked_repo,),
+            )
+
+            (config_dir / "config.sh").write_text(
+                textwrap.dedent(
+                    f"""\
+                    repos=("{local_repo}" "{blocked_repo}")
+                    sync_repo_dir="{sync_repo}"
+                    device_id="noels-macbook-pro-14"
+                    device_name="Noel's MacBook Pro 14"
+                    hostname="Noel's MacBook Pro 14"
+                    """
+                )
+            )
+            (config_dir / "last-run").write_text("0\n")
+
+            result = subprocess.run(
+                ["/bin/bash", str(COLLECT_SCRIPT)],
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                },
+            )
+
+            pulse_text = (sync_repo / "pulse-noels-macbook-pro-14.md").read_text()
+            metadata_text = (devices_dir / "noels-macbook-pro-14.yaml").read_text()
+            last_run_text = (config_dir / "last-run").read_text()
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertIn(f"Scan failed for {blocked_repo}", result.stderr)
+        self.assertIn("Leaving", result.stderr)
+        self.assertIn("Migrated local commit", pulse_text)
+        self.assertIn('repo_scan_failures: "1"', metadata_text)
+        self.assertIn('scan_status: "degraded"', metadata_text)
+        self.assertIn(str(blocked_repo), metadata_text)
+        self.assertEqual(last_run_text, "0\n")
 
 
 if __name__ == "__main__":

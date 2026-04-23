@@ -59,17 +59,19 @@ class HealthCheckCliTests(unittest.TestCase):
         extra_yaml: str = "",
         pulse_rows: str = "",
     ) -> None:
-        (sync / "devices" / f"{device_id}.yaml").write_text(
-            textwrap.dedent(
-                f"""\
-                schema_version: 2
-                device_id: "{device_id}"
-                device_name: "{display}"
-                pulse_file: "pulse-{device_id}.md"
-                {extra_yaml}\
-                """
-            )
+        metadata = textwrap.dedent(
+            f"""\
+            schema_version: 2
+            device_id: "{device_id}"
+            device_name: "{display}"
+            pulse_file: "pulse-{device_id}.md"
+            """
         )
+        if extra_yaml:
+            metadata = metadata + textwrap.dedent(extra_yaml)
+            if not metadata.endswith("\n"):
+                metadata += "\n"
+        (sync / "devices" / f"{device_id}.yaml").write_text(metadata)
         (sync / f"pulse-{device_id}.md").write_text(
             textwrap.dedent(
                 f"""\
@@ -211,6 +213,34 @@ class HealthCheckCliTests(unittest.TestCase):
         result = self._run_health(sync)
         self.assertIn("Delta Mac", result.stdout)
         self.assertIn("pulse-delta.md missing on disk", result.stdout)
+
+    def test_recent_degraded_scan_is_not_reported_as_alive(self) -> None:
+        sync = self._prepare_sync_repo()
+        recent_scan = datetime.now(timezone.utc) - timedelta(minutes=15)
+        self._write_device(
+            sync,
+            "degraded",
+            "Degraded Mac",
+            extra_yaml=textwrap.dedent(
+                f"""\
+                last_scan_epoch: "{int(recent_scan.timestamp())}"
+                last_scan_utc: "{recent_scan.strftime('%Y-%m-%dT%H:%M:%SZ')}"
+                repo_scan_failures: "1"
+                scan_status: "degraded"
+                scan_failure_examples: "/Users/noelsaw/Documents/GH Repos/project-a"
+                """
+            ),
+        )
+        self._commit_at(
+            sync,
+            "degraded metadata heartbeat",
+            recent_scan,
+            ["devices/degraded.yaml", "pulse-degraded.md"],
+        )
+        result = self._run_health(sync, "--warn-hours", "3", "--alert-hours", "24")
+        self.assertEqual(result.returncode, 2, msg=result.stderr + result.stdout)
+        self.assertIn("DEGRADED", result.stdout)
+        self.assertIn("repo scan failures: 1", result.stdout)
 
     def test_missing_heartbeat_falls_back_to_pulse_pushes(self) -> None:
         sync = self._prepare_sync_repo()

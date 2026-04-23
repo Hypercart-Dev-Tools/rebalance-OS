@@ -276,9 +276,9 @@ fi
 
 if ! declare -p repo_roots >/dev/null 2>&1; then
     repo_roots=(
-        "$HOME/Documents/GH Repos"
-        "$HOME/Documents/GitHub-Repos"
-        "$HOME/Documents"
+        "$HOME/code"
+        "$HOME/src"
+        "$HOME/Projects"
     )
     set_config_array "repo_roots" "# Roots scanned for local GitHub repos during install." "${repo_roots[@]}"
     config_updated=1
@@ -414,6 +414,6 @@ echo "Recap reports:   $RECAP_LINK_PATH"
 echo "Health check:    $HEALTH_LINK_PATH"
 echo "Validate recap:  $VALIDATE_LINK_PATH <recap-file.md>"
 echo "Scope section:   $SCOPE_LINK_PATH <recap-file.md> --section tldr|focus|observations"
-echo "Discover repos:   $DISCOVER_LINK_PATH --root \"$HOME/Documents/GH Repos\""
+echo "Discover repos:   $DISCOVER_LINK_PATH --root \"$HOME/code\""
 echo "Tail logs:       tail -f $LOG_DIR/git-pulse.err"
 echo "Uninstall:       launchctl unload $PLIST_PATH && rm $PLIST_PATH"

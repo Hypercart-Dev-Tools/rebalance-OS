@@ -38,6 +38,9 @@ class DeviceStatus:
     latest_activity_utc: datetime | None
     pulse_exists: bool
     metadata_exists: bool
+    scan_status: str = "ok"
+    repo_scan_failures: int = 0
+    scan_failure_examples: str = ""
     notes: list[str] = field(default_factory=list)
 
 
@@ -130,14 +133,18 @@ def display_age_hours(moment: datetime, now: datetime) -> str:
 
 
 def classify(
-    last_scan: datetime | None,
+    status: DeviceStatus,
     now: datetime,
     warn_hours: float,
     alert_hours: float,
 ) -> tuple[int, str]:
     """Return (priority, label). Lower priority sorts first (worst first)."""
+    last_scan = status.last_scan_utc
     if last_scan is None:
         return 0, "NO PUSHES"
+    if status.repo_scan_failures > 0 or status.scan_status == "degraded":
+        hours = (now - last_scan).total_seconds() / 3600
+        return 1, f"DEGRADED ({hours:.1f}h)"
     hours = (now - last_scan).total_seconds() / 3600
     if hours > alert_hours:
         return 1, f"ALERT ({hours:.0f}h)"
@@ -174,6 +181,9 @@ def collect_statuses(sync_repo_dir: Path, now: datetime) -> list[DeviceStatus]:
                     latest_activity_utc=pulse_latest_activity_utc(pulse_path),
                     pulse_exists=pulse_path.is_file(),
                     metadata_exists=True,
+                    scan_status=yaml_value(yaml_path, "scan_status") or "ok",
+                    repo_scan_failures=int(yaml_value(yaml_path, "repo_scan_failures") or "0"),
+                    scan_failure_examples=yaml_value(yaml_path, "scan_failure_examples"),
                 )
             )
 
@@ -205,6 +215,13 @@ def collect_statuses(sync_repo_dir: Path, now: datetime) -> list[DeviceStatus]:
         if s.last_scan_utc is None:
             s.last_scan_utc = s.last_pulse_push_utc
             s.notes.append("heartbeat unavailable; using pulse-file pushes")
+        if s.repo_scan_failures > 0 or s.scan_status == "degraded":
+            if s.scan_failure_examples:
+                s.notes.append(
+                    f"repo scan failures: {s.repo_scan_failures} ({s.scan_failure_examples})"
+                )
+            else:
+                s.notes.append(f"repo scan failures: {s.repo_scan_failures}")
         if s.last_pulse_push_utc and s.last_scan_utc and s.last_scan_utc > s.last_pulse_push_utc:
             s.notes.append(
                 f"last pulse update {display_age_hours(s.last_pulse_push_utc, now)} ago"
@@ -227,7 +244,7 @@ def render(
     if not statuses:
         return (f"no devices found under {sync_repo_dir}\n", 2)
 
-    scored = [(classify(s.last_scan_utc, now, warn_hours, alert_hours), s) for s in statuses]
+    scored = [(classify(s, now, warn_hours, alert_hours), s) for s in statuses]
     scored.sort(key=lambda pair: (pair[0][0], pair[1].device_name.lower()))
 
     worst_priority = min(priority for (priority, _label), _s in scored)

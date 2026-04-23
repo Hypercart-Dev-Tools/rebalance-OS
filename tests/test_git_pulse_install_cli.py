@@ -41,6 +41,57 @@ def _git(repo: Path, *args: str, env_override: dict[str, str] | None = None) -> 
 
 
 class GitPulseInstallCliTests(unittest.TestCase):
+    def test_install_safe_default_repo_roots_avoid_documents(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            path_bin = home / "path-bin"
+            launch_agents = home / "Library" / "LaunchAgents"
+            config_dir = home / ".config" / "git-pulse"
+            sync_repo = config_dir / "repo"
+
+            path_bin.mkdir(parents=True)
+            launch_agents.mkdir(parents=True)
+            sync_repo.mkdir(parents=True)
+
+            _write_executable(
+                path_bin / "launchctl",
+                "#!/bin/sh\nexit 0\n",
+            )
+
+            _git(sync_repo.parent, "init", str(sync_repo), "--initial-branch=main", "--quiet")
+
+            (config_dir / "config.sh").write_text(
+                textwrap.dedent(
+                    f"""\
+                    repos=()
+                    sync_repo_dir="{sync_repo}"
+                    device_id="test-device"
+                    device_name="Test Device"
+                    hostname="Test Device"
+                    """
+                )
+            )
+
+            subprocess.run(
+                ["/bin/bash", str(INSTALL_SCRIPT)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{path_bin}:{os.environ['PATH']}",
+                },
+            )
+
+            config_text = (config_dir / "config.sh").read_text()
+
+        self.assertIn(f'"{home / "code"}"', config_text)
+        self.assertIn(f'"{home / "src"}"', config_text)
+        self.assertIn(f'"{home / "Projects"}"', config_text)
+        self.assertNotIn("Documents/GH Repos", config_text)
+        self.assertNotIn("Documents/GitHub-Repos", config_text)
+
     def test_install_discovers_local_github_repos_and_updates_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)

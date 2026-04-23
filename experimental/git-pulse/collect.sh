@@ -28,6 +28,10 @@ yaml_escape() {
     printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'
 }
 
+normalize_git_error() {
+    tr '\n' ' ' < "$1" | sed 's/[[:space:]]\+/ /g; s/^ //; s/ $//'
+}
+
 utc_iso_from_epoch() {
     TZ=UTC date -r "$1" +"%Y-%m-%dT%H:%M:%SZ"
 }
@@ -281,6 +285,15 @@ cleanup() {
 }
 trap cleanup EXIT
 
+enter_safe_working_dir() {
+    if [ -d "$HOME" ] && cd "$HOME" 2>/dev/null; then
+        return 0
+    fi
+    cd / >/dev/null 2>&1 || true
+}
+
+enter_safe_working_dir
+
 if ! declare -p repos >/dev/null 2>&1; then
     echo "repos array is not defined in $CONFIG_FILE" >&2
     exit 1
@@ -309,17 +322,55 @@ scan_started=$(date +%s)
 # Collect entries: one tab-separated line per new local commit.
 # Fields: epoch_utc \t timestamp_utc \t repo \t branch \t short-sha \t subject
 new_entries=()
+repo_count=0
+repos_scanned=0
+repos_skipped_missing_git=0
+repos_skipped_unborn=0
+repo_scan_failures=0
+failed_repos=()
 
 for repo_path in "${repos[@]}"; do
+    repo_count=$((repo_count + 1))
     if [ ! -d "$repo_path/.git" ]; then
         echo "Skipping $repo_path: not a git repo" >&2
+        repos_skipped_missing_git=$((repos_skipped_missing_git + 1))
         continue
     fi
-    if ! git -C "$repo_path" rev-parse --verify HEAD >/dev/null 2>&1; then
+    repo_head_error="$(mktemp "${TMPDIR:-/tmp}/git-pulse-head-err.XXXXXX")"
+    if ! git -C "$repo_path" rev-parse --verify HEAD >/dev/null 2>"$repo_head_error"; then
+        error_text="$(normalize_git_error "$repo_head_error")"
+        rm -f "$repo_head_error"
+        case "$error_text" in
+            *"Operation not permitted"*|*"cannot change to"*|*"Unable to read current working directory"*)
+                repo_scan_failures=$((repo_scan_failures + 1))
+                failed_repos+=("$repo_path")
+                [ -n "$error_text" ] || error_text="git rev-parse failed"
+                echo "Scan failed for $repo_path: $error_text" >&2
+                continue
+                ;;
+        esac
         echo "Skipping $repo_path: no commits yet" >&2
+        repos_skipped_unborn=$((repos_skipped_unborn + 1))
         continue
     fi
+    rm -f "$repo_head_error"
     repo_name=$(basename "$repo_path")
+
+    repo_log_output="$(mktemp "${TMPDIR:-/tmp}/git-pulse-log.XXXXXX")"
+    repo_log_error="$(mktemp "${TMPDIR:-/tmp}/git-pulse-log-err.XXXXXX")"
+    if ! git -C "$repo_path" log -g --date=iso-strict --pretty=format:'%gd%x09%H%x09%gs%x09%s' >"$repo_log_output" 2>"$repo_log_error"; then
+        repo_scan_failures=$((repo_scan_failures + 1))
+        failed_repos+=("$repo_path")
+        error_text="$(normalize_git_error "$repo_log_error")"
+        if [ -z "$error_text" ]; then
+            error_text="git log failed"
+        fi
+        echo "Scan failed for $repo_path: $error_text" >&2
+        rm -f "$repo_log_output" "$repo_log_error"
+        continue
+    fi
+    rm -f "$repo_log_error"
+    repos_scanned=$((repos_scanned + 1))
 
     # Walk HEAD reflog with iso-strict reflog-entry timestamps in %gd.
     # %gd format with --date=iso-strict: HEAD@{2026-04-20T14:32:15-07:00}
@@ -357,7 +408,8 @@ for repo_path in "${repos[@]}"; do
         clean_subject=${clean_subject//$'\r'/ }
 
         new_entries+=("$(printf '%s\t%s\t%s\t%s\t%s\t%s' "$entry_epoch" "$utc_iso" "$repo_name" "$branch" "$short_hash" "$clean_subject")")
-    done < <(git -C "$repo_path" log -g --date=iso-strict --pretty=format:'%gd%x09%H%x09%gs%x09%s')
+    done < "$repo_log_output"
+    rm -f "$repo_log_output"
 done
 
 PULSE_FILE_NAME="pulse-$device_id.md"
@@ -395,6 +447,15 @@ if [ "$DRY_RUN" -eq 0 ] && [ "$should_migrate_device_id" -eq 1 ] && [ -n "$confi
 fi
 
 mkdir -p "$DEVICE_METADATA_DIR"
+scan_status="ok"
+failure_preview=""
+if [ "$repo_scan_failures" -gt 0 ]; then
+    scan_status="degraded"
+    preview_limit=3
+    preview_items=("${failed_repos[@]:0:$preview_limit}")
+    failure_preview="$(printf '%s, ' "${preview_items[@]}")"
+    failure_preview="${failure_preview%, }"
+fi
 cat > "$DEVICE_METADATA_FILE" <<METADATA
 schema_version: 2
 device_id: "$device_id"
@@ -407,6 +468,13 @@ utc_offset: "$(date +%z)"
 pulse_file: "$PULSE_FILE_NAME"
 last_scan_epoch: "$scan_started"
 last_scan_utc: "$(utc_iso_from_epoch "$scan_started")"
+repo_count: "$repo_count"
+repos_scanned: "$repos_scanned"
+repos_skipped_missing_git: "$repos_skipped_missing_git"
+repos_skipped_unborn: "$repos_skipped_unborn"
+repo_scan_failures: "$repo_scan_failures"
+scan_status: "$scan_status"
+scan_failure_examples: "$(yaml_escape "$failure_preview")"
 METADATA
 
 # Initialize the per-machine file on first run.
@@ -455,7 +523,11 @@ git add -A -- "${stage_paths[@]}"
 if git diff --cached --quiet; then
     # Nothing actually staged (e.g. a same-second rerun that produced
     # identical metadata heartbeat values). Nothing to push.
-    echo "$scan_started" > "$LAST_RUN_FILE"
+    if [ "$repo_scan_failures" -eq 0 ]; then
+        echo "$scan_started" > "$LAST_RUN_FILE"
+    else
+        echo "Leaving $LAST_RUN_FILE unchanged because $repo_scan_failures repo scan(s) failed." >&2
+    fi
     exit 0
 fi
 
@@ -479,5 +551,9 @@ if ! push_current_branch 2>/dev/null; then
     push_current_branch
 fi
 
-# Only advance last-run on a successful write + push.
-echo "$scan_started" > "$LAST_RUN_FILE"
+# Only advance last-run when every watched repo scan succeeded.
+if [ "$repo_scan_failures" -eq 0 ]; then
+    echo "$scan_started" > "$LAST_RUN_FILE"
+else
+    echo "Leaving $LAST_RUN_FILE unchanged because $repo_scan_failures repo scan(s) failed." >&2
+fi

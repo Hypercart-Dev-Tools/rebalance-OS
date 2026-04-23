@@ -11,9 +11,9 @@ repos=(
 
 # Roots scanned by `install.sh` when repo discovery is enabled.
 repo_roots=(
-    "$HOME/Documents/GH Repos"
-    "$HOME/Documents/GitHub-Repos"
-    "$HOME/Documents"
+    "$HOME/code"
+    "$HOME/src"
+    "$HOME/Projects"
 )
 
 # Repo discovery mode:

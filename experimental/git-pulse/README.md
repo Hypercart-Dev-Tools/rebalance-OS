@@ -30,9 +30,12 @@ Recommended safe locations for the sync repo checkout:
 
 - `~/.config/git-pulse/repo`
 - `~/code/rebalance-git-pulse`
+- `~/src/rebalance-git-pulse`
 - any non-protected path outside `~/Documents`, `~/Desktop`, and `~/Downloads`
 
 Avoid using `~/Documents/...` for `sync_repo_dir`. Manual terminal runs may work there, but unattended `launchd` runs can be denied write access by macOS.
+
+`install.sh` now defaults repo discovery to non-protected roots (`~/code`, `~/src`, `~/Projects`). If your watched repos live under `~/Documents`, add them explicitly in `repos=()` or opt into `repo_roots=()` manually, and expect to either grant `/bin/bash` Full Disk Access or move those repos.
 
 ## Happy path
 
@@ -118,6 +121,7 @@ That layout avoids the macOS protected-folder problem for unattended background 
    - If `sync_repo_dir` already points at a git repo, `install.sh` uses it directly.
    - If `device_id` is blank or missing, `install.sh` defaults it to a slugified version of the Mac's computer name.
    - If `device_name` is blank or missing, `install.sh` defaults it to the Mac's computer name.
+   - If `repo_roots` is blank or missing, `install.sh` seeds it with `~/code`, `~/src`, and `~/Projects` instead of `~/Documents`.
    - On later collector runs, legacy ids from older slug rules or older UUID defaults are auto-migrated to the current human-friendly slug for that machine.
 
 7. Re-run the installer:
@@ -162,6 +166,7 @@ Every hour, `collect.sh`:
 6. Commits and pushes.
 7. Retries once after `pull --rebase` on push race.
 8. Uses an on-disk lock so overlapping launchd/manual runs do not duplicate entries.
+9. Leaves `~/.config/git-pulse/last-run` unchanged when any watched repo scan fails, so a broken unattended window can be re-collected after access is restored.
 
 Each device owns its own pulse file, so merge conflicts are structurally unlikely even when all devices push to the same `main` branch.
 
@@ -228,6 +233,7 @@ Example unified read:
 - **Legacy ids self-heal during collection.** If a machine still has an older UUID-based id or an older apostrophe-split slug such as `noel-s-...`, the hourly collector migrates the config and synced filenames to the current slug automatically.
 - **Protected folders need copy mode.** If the code checkout lives under `~/Documents`, `~/Desktop`, or `~/Downloads`, launchd may be blocked from executing it directly. `install.sh` copies the launchers into `~/bin` in that case, so re-run `./install.sh` after code updates.
 - **Protected folders can also block sync writes.** A `sync_repo_dir` under `~/Documents`, `~/Desktop`, or `~/Downloads` may work interactively but fail under unattended `launchd`. Prefer `~/.config/git-pulse/repo` or another non-protected path.
+- **Recent heartbeat does not guarantee full coverage.** `git-pulse-health` reports `DEGRADED` when the collector ran recently but one or more watched repos failed to scan; check `scan_failure_examples` in `devices/<device_id>.yaml` or the collector stderr log for the blocked paths.
 - **Credentials are external.** Sync push uses whatever git or `gh` auth is already configured on the Mac.
 
 ## Troubleshooting
@@ -248,7 +254,16 @@ tail -f ~/.config/git-pulse/logs/git-pulse.err
 Then confirm:
 - `sync_repo_dir` points at the checkout you expect
 - that checkout is not inside `~/Documents`, `~/Desktop`, or `~/Downloads`
+- any repos under `~/Documents` are either moved, added to Full Disk Access via `/bin/bash`, or removed from the watched set
 - git can push from this Mac
+
+**Health says `DEGRADED`.**
+Run:
+```bash
+~/bin/git-pulse-health
+tail -f ~/.config/git-pulse/logs/git-pulse.err
+```
+Then check the listed blocked repo paths. The collector now preserves the previous `last-run` when a scan fails, so fixing access and rerunning will backfill the missed window.
 
 **Want a unified stream across devices?**
 Run:
