@@ -6,7 +6,9 @@
       "Bash(chmod +x /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/collect.sh /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/install.sh)",
       "Bash(bash -n /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/collect.sh)",
       "Bash(bash -n /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/install.sh)",
-      "Bash(plutil -lint /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/com.user.git-history.plist.template)"
+      "Bash(plutil -lint /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/com.user.git-history.plist.template)",
+      "Bash(python /Users/noelsaw/Documents/rebalance-OS/experimental/git-pulse/recap.py --input '/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse/reports/combined-14-day-local-and-synced.tsv' --input '/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse/reports/combined-21-day-local-and-synced.tsv' --output /tmp/recap-smoke.md)",
+      "Read(//tmp/**)"
     ]
   }
 }
