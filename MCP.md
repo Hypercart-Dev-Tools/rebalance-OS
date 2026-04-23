@@ -73,7 +73,7 @@ Shows GitHub commit/PR/issue activity per project over a rolling window.
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `since_days` | `int` | `14` | Rolling window in calendar days |
+| `since_days` | `int` | `30` | Rolling window in calendar days |
 
 **Returns:** `list[{project_name, repos_linked, repos_touched, total_commits, prs_opened, prs_merged, issues_opened, last_active_at, is_idle}]`
 
@@ -89,7 +89,7 @@ General-purpose natural language query across all data sources. Gathers context 
 | `since_days` | `int` | `7` | Rolling window for GitHub and vault activity |
 | `skip_synthesis` | `bool` | `false` | Return raw context only (faster, no model load) |
 
-**Returns:** `{synthesis, vault_context, github_context, project_context, vault_activity, calendar_context, temporal_context, model_used, elapsed_seconds}`
+**Returns:** `{query, synthesis, vault_context, github_context, github_semantic_context, project_context, vault_activity, calendar_context, temporal_context, model_used, elapsed_seconds}`
 
 ---
 
@@ -100,7 +100,7 @@ Semantic search over chunked vault notes via sqlite-vec embeddings.
 | Param | Type | Default | Description |
 |---|---|---|---|
 | `query` | `str` | *(required)* | Search query |
-| `top_k` | `int` | `8` | Number of results |
+| `top_k` | `int` | `10` | Number of results |
 
 **Returns:** List of matching chunks with similarity scores.
 
@@ -149,13 +149,14 @@ Each recommendation includes the candidate issue number, PR number, confidence, 
 
 ### `search_vault`
 
-Full-text keyword search over vault files.
+Exact keyword search over the indexed vault keywords table.
 
 | Param | Type | Default | Description |
 |---|---|---|---|
-| `query` | `str` | *(required)* | Keyword(s) to search |
+| `keyword` | `str` | *(required)* | Exact keyword to search |
+| `limit` | `int` | `20` | Maximum number of ranked matches |
 
-**Returns:** List of matching files with context snippets.
+**Returns:** `list[{file_path, title, heading, body_preview, keyword_score, char_count, tags}]`
 
 ---
 
@@ -215,6 +216,61 @@ For the full operator workflow, dry-run behavior, and a copy-paste worked exampl
 
 ---
 
+## Live Tool Surface — Calendar Review And Maintenance
+
+### `review_timesheet`
+
+Returns unclassified calendar events that need review for a given day.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `date_str` | `str` | `""` | ISO date (`YYYY-MM-DD`). Blank means today. |
+
+**Returns:** `{date, needs_review, available_projects}` where each `needs_review` item includes `{summary, start_time, end_time, duration_minutes}`.
+
+---
+
+### `classify_event`
+
+Persists a classification decision for an unmatched calendar event so future reports stop asking the same question.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `summary` | `str` | *(required)* | Exact event title from Google Calendar |
+| `decision` | `str` | *(required)* | `include`, `exclude`, or `project:<Name>` |
+
+**Returns:** `{summary, decision, status}` on success or `{error}` on invalid decisions.
+
+---
+
+### `snap_calendar_edges`
+
+Detects and optionally fixes slight overlaps between adjacent timed calendar events by trimming Event 1's end to one minute before Event 2's start.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `date_str` | `str` | `""` | Start date (`YYYY-MM-DD`). Blank means today in the calendar timezone. |
+| `days` | `int` | `1` | Number of consecutive days to process |
+| `calendar_id` | `str` | `""` | Override config calendar |
+| `timezone_name` | `str` | `""` | Override config timezone |
+| `apply` | `bool` | `false` | Dry-run by default. Set true to patch Google Calendar. |
+
+**Returns:** `{days, total_snapped, total_skipped_clusters, applied, elapsed_seconds}`. Each day includes snapped pairs, skipped clusters, skipped all-day count, and total events examined.
+
+---
+
+### `sleuth_sync_reminders`
+
+Pulls Slack reminders from the Sleuth Web API and mirrors them into SQLite.
+
+| Param | Type | Default | Description |
+|---|---|---|---|
+| `active_only` | `bool` | `false` | When true, fetch only currently active reminders |
+
+**Returns:** `{workspace_name, fetched_at, total_reminder_count, returned_reminder_count, inserted_count, updated_count, unchanged_count}`.
+
+---
+
 ## Live Tool Surface — Onboarding
 
 These tools move onboarding out of the CLI and into any MCP-capable host, so an agent can drive the setup flow conversationally. See [PROJECT.md — Onboarding User Story](./PROJECT.md) for the sequence and UX rationale.
@@ -234,8 +290,14 @@ Design principle: the MCP server stays stateless and host-agnostic. Onboarding l
 
 | Tool | Description | Depends on |
 |---|---|---|
+| `weekly_rebalance` | Weekly verdict-first report across active projects with `verdict`, `evidence`, `next_move`, target share, actual share, and confidence | Attention ledger, project targets, calendar classification, git-pulse rollups, GitHub activity, reminders |
+| `project_attention` | Single-project drilldown showing attention sources, target gap, pressure, progress, and recommended next move | Attention ledger, project registry, GitHub activity, calendar classification |
+| `review_unattributed_attention` | Returns low-confidence or unattributed attention items that need human classification before the weekly report is trusted | Attention ledger, classification feedback store |
+| `classify_attention_item` | Persists include, exclude, or reassign decisions for ambiguous attention items across all sources | Classification feedback store |
 | `todays_agenda` | Today's calendar events (dedicated tool) | Google Calendar sync |
 | `morning_brief` | Assembled daily briefing from all sources | All of the above |
+
+The narrower operator path should be weekly-rebalance-first. Broad retrieval tools such as `ask`, `query_notes`, and `query_github_context` remain useful for exploration, but they should explain or drill into a verdict rather than act as the primary dashboard surface.
 
 ---
 
@@ -364,8 +426,8 @@ A human-readable reference for all running MCP servers on this machine. Store at
 rebalance   python -m rebalance.mcp_server   REBALANCE_DB=/absolute/path/to/rebalance.db
 ```
 
-Live tools: `ask`, `list_projects`, `github_balance`, `query_notes`, `query_github_context`, `github_release_readiness`, `github_close_candidates`, `search_vault`, `create_calendar_event`, `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
-Planned: `todays_agenda`, `morning_brief`
+Live tools: `ask`, `list_projects`, `github_balance`, `query_notes`, `query_github_context`, `github_release_readiness`, `github_close_candidates`, `search_vault`, `create_calendar_event`, `review_timesheet`, `classify_event`, `snap_calendar_edges`, `sleuth_sync_reminders`, `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`
+Planned: `weekly_rebalance`, `project_attention`, `review_unattributed_attention`, `classify_attention_item`, `todays_agenda`, `morning_brief`
 
 ---
 
