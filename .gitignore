@@ -1,3 +1,5 @@
+PROJECT/.scrub-list.json
+PROJECT/.scrub-log.jsonl
 .DS_Store
 /temp
 logs/

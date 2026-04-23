@@ -285,12 +285,12 @@ If you are **not** using Obsidian, define your canonical calendar projects direc
   "timezone": "America/Los_Angeles",
   "projects": [
     {
-      "name": "Bailiwik",
-      "aliases": ["Bailiwik", "BW"]
+      "name": "Project Alpha",
+      "aliases": ["Project Alpha", "PA"]
     },
     {
-      "name": "Normans Nursery",
-      "aliases": ["Normans Nursery", "Norman's Nursery", "NN"]
+      "name": "Project Beta",
+      "aliases": ["Project Beta", "PB"]
     }
   ]
 }
@@ -365,9 +365,9 @@ When `--write-week-note` is used, rebalance writes `Weekly Notes/week-of-YYYY-MM
 ```
 | Project  | Events | Hours  |
 |----------|-------:|-------:|
-| Binoid   | 4      | 7h 15m |
-| Bloomz   | 2      | 3h 45m |
-| CR       | 3      | 2h 30m |
+| Project Alpha | 4 | 7h 15m |
+| Project Beta  | 2 | 3h 45m |
+| Project Gamma | 3 | 2h 30m |
 ```
 
 ---
@@ -453,14 +453,14 @@ Rotation: if the file grows beyond what you want to keep around, archive or trun
 
 ### Worked example
 
-This example matches the Binoid verification reminder described by the operator. It is safe to run with `--dry-run` first.
+This example matches a project verification reminder pattern described by the operator. It is safe to run with `--dry-run` first.
 
 ```bash
 rebalance calendar-create-event \
-  --title "Verify Binoid BQ candidate + staging dataset auto-deletion (2026-04-13 clone+swap cleanup)" \
+  --title "Verify project candidate + staging dataset auto-deletion (2026-04-13 clone+swap cleanup)" \
   --date 2026-04-21 \
   --calendar-id primary \
-  --description $'Auto-cleanup expirationTime on Binoid candidate datasets is 2026-04-21 ~18:37 UTC.\nThis reminder is a "check that it actually happened" prompt — expected state:\n  bq ls binoid_woo_candidate_20260413         → Not found (auto-expired)\n  bq ls binoid_woo_candidate_20260413_staging → Not found (auto-expired)\n  bq ls binoid_woo_backup_20260413_prenorm    → still present (expires 2026-05-14)\nContext: 2026-04-13 §B8a clone+swap merge, PR #53 on WP-DB-Toolkit.\nSidecar: temp/binoid/sync-merge-2026-04-06.md' \
+  --description $'Auto-cleanup expirationTime on the candidate datasets is 2026-04-21 ~18:37 UTC.\nThis reminder is a "check that it actually happened" prompt — expected state:\n  bq ls project_candidate_20260413         → Not found (auto-expired)\n  bq ls project_candidate_20260413_staging → Not found (auto-expired)\n  bq ls project_backup_20260413_prenorm    → still present (expires 2026-05-14)\nContext: 2026-04-13 clone+swap merge.\nSidecar: temp/project/sync-merge-2026-04-06.md' \
   --dry-run
 ```
 

@@ -1,6 +1,6 @@
 # Sleuth → rebalance-OS: Production Cutover Checklist
 
-**Trigger:** Sleuth has been deployed to the **prod** Vultr server (`64.176.223.93`) on
+**Trigger:** Sleuth has been deployed to the production host (`<prod-host>`) on
 a HEAD that includes commit `15725ec` (`Add rebalance reminders API export`) or later.
 
 **Goal:** Switch the rebalance-OS daily sync from pulling dev reminders to pulling
@@ -12,18 +12,18 @@ prod reminders, while keeping the dev integration available for ad-hoc/manual us
 
 - [ ] Confirm Sleuth prod is running the new reminders code:
   ```bash
-  ssh root@64.176.223.93 'git -C /root/sleuth-app log --oneline -5 | grep 15725ec || echo "MISSING — deploy first"'
+  ssh root@<prod-host> 'git -C /root/sleuth-app log --oneline -5 | grep 15725ec || echo "MISSING — deploy first"'
   ```
-  Password is in `~/secrets/vultr-sleuth-production.env` (line 3).
+  Use the existing out-of-band admin access method for the host. Do not store password retrieval notes in repo docs.
 - [ ] Confirm the systemd unit already references the runtime env file:
   ```bash
-  ssh root@64.176.223.93 'grep EnvironmentFile /etc/systemd/system/sleuth-app.service'
+  ssh root@<prod-host> 'grep EnvironmentFile /etc/systemd/system/sleuth-app.service'
   ```
   Expected: `EnvironmentFile = -/root/sleuth-app/.env.runtime`. If missing, deploy
   the updated `sleuth-app.service` first.
-- [ ] Decide the prod **workspace name** (likely `neochrome`, not `neochrome-dev`):
+- [ ] Decide the prod **workspace name** (`<production-workspace>`):
   ```bash
-  ssh root@64.176.223.93 'ls /root/sleuth-app/data/runtime/reminders/ 2>/dev/null'
+  ssh root@<prod-host> 'ls /root/sleuth-app/data/runtime/reminders/ 2>/dev/null'
   ```
   Look for `<name>_reminders.json` — that `<name>` is the workspace.
 
@@ -57,7 +57,7 @@ dev already), or run them by hand.
 - [ ] **1.5** Verify on the server (replace `<workspace>` with the value from 0):
   ```bash
   curl -sS -H "Authorization: Bearer $TOKEN" http://127.0.0.1:2020/workspaces
-  curl -sS -H "Authorization: Bearer test" http://127.0.0.1:2020/workspaces  # expect Forbidden
+  curl -sS -H "Authorization: Bearer <invalid-token>" http://127.0.0.1:2020/workspaces  # expect Forbidden
   curl -sS -H "Authorization: Bearer $TOKEN" \
     "http://127.0.0.1:2020/workspace/<workspace>/reminders?format=rebalance&activeOnly=false" | head -c 400
   ```
@@ -69,7 +69,7 @@ dev already), or run them by hand.
 
 - [ ] Create `~/secrets/sleuth-web-api-production.env` with mode 600:
   ```
-  SLEUTH_WEB_API_BASE_URL=http://64.176.223.93:2020
+  SLEUTH_WEB_API_BASE_URL=http://<prod-host>:2020
   SLEUTH_WEB_API_TOKEN=<token from step 1.6>
   SLEUTH_WORKSPACE_NAME=<workspace from step 0>
   ```
@@ -142,8 +142,8 @@ implementation). Required changes:
 ## 5. Verification
 
 - [ ] `sqlite3 <rebalance-db> "SELECT workspace_name, COUNT(*) FROM sleuth_reminders GROUP BY workspace_name;"`
-  → expect rows for both `neochrome-dev` (historical, from earlier dev runs) and
-  the prod workspace (new).
+  → expect rows for both `<development-workspace>` (historical, from earlier dev runs) and
+  `<production-workspace>` (new).
 - [ ] `sqlite3 <rebalance-db> "SELECT MAX(last_synced_at) FROM sleuth_reminders WHERE workspace_name = '<prod-workspace>';"`
   → should be within minutes of "now".
 - [ ] Spot-check one prod reminder by ID — open the corresponding Slack message

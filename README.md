@@ -37,7 +37,7 @@ Ask "What's my day look like?" and get today's meetings, yesterday's commit acti
 "Am I over-investing in client X?" surfaces commit velocity, PR activity, and note density per project. Flags when one repo is consuming >40% of your attention.
 
 **Knowledge retrieval**
-"What did I decide about the LTVera embedding pipeline?" Semantic search across your entire vault, ranked by relevance, answered by a local LLM.
+"What did I decide about the Project Alpha embedding pipeline?" Semantic search across your entire vault, ranked by relevance, answered by a local LLM.
 
 **Handoff prep**
 "Summarize everything I know about Project Y" pulls notes, recent commits, and open issues into a coherent brief — useful for client updates, team handoffs, or just getting back up to speed after a break.
@@ -163,10 +163,10 @@ python3 -m venv .venv
 
 ```bash
 # Store your PAT
-.venv/bin/rebalance config set-github-token ghp_your_token_here
+.venv/bin/rebalance config set-github-token <github-pat>
 
 # Scan recent activity (commits, PRs, issues across all your repos)
-.venv/bin/rebalance github-scan --token ghp_your_token_here --database rebalance.db
+.venv/bin/rebalance github-scan --token <github-pat> --database rebalance.db
 
 # Sync detailed GitHub artifacts into the local SQLite corpus
 .venv/bin/rebalance github-sync-artifacts \
@@ -304,10 +304,10 @@ All tools are also available as CLI commands:
 rebalance ask "What should I work on today?" --database rebalance.db
 rebalance ask "What should I work on today?" --database rebalance.db --no-llm  # raw context only
 rebalance query "embedding pipeline" --database rebalance.db                   # semantic search
-rebalance search "binoid" --database rebalance.db                              # keyword search
+rebalance search "project alpha" --database rebalance.db                       # keyword search
 rebalance ingest notes --vault /path/to/vault --database rebalance.db          # re-ingest (delta)
 rebalance ingest embed --database rebalance.db                                 # embed new chunks
-rebalance github-scan --token ghp_... --database rebalance.db                  # refresh GitHub data
+rebalance github-scan --token <github-pat> --database rebalance.db             # refresh GitHub data
 rebalance github-close-candidates --repo owner/name --database rebalance.db    # open issues likely fixed by merged PRs
 rebalance calendar-sync --database rebalance.db                                # refresh calendar
 rebalance calendar-daily-report                                                # today's events + project breakdown

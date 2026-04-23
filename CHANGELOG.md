@@ -249,7 +249,7 @@ Running the collector once post-install (manually or by waiting for the next hou
 
 ### Changed
 
-- Google Calendar docs now include a "Creating Events Programmatically" section with write-scope validation, dry-run workflow, and a copy-paste Binoid reminder example.
+- Google Calendar docs now include a "Creating Events Programmatically" section with write-scope validation, dry-run workflow, and a copy-paste project reminder example.
 - MCP docs now recommend the CLI path for non-MCP clients and clarify why the project bypasses raw JSON-RPC for local operator workflows.
 - Calendar event docs now call out duplicate-guard blind spots (title edits, overlapping multi-day events), recommend when to use `--dedupe-key`, and document local log rotation expectations.
 
@@ -491,10 +491,9 @@ Running the collector once post-install (manually or by waiting for the next hou
 ## 2026-03-29 (continued, part 2)
 
 - **Tested GitHub & vault preflight discovery**:
-  - GitHub PAT authentication working (verified with Kissplugins account).
+  - GitHub PAT authentication working with a non-production operator account.
   - GitHub activity scanner runs correctly; no recent activity in last 14 days (most recent events: Aug 2025).
-  - Vault title scanner discovered **36 projects** from vault:
-    1. Everyday, Temp, Finances, Ltvera, Love 2 Hug, 4. Acronyms, Wp Canary, Taxes For 2025, Welcome, Week Of Md Template, 0. Agents Ai Dtkk And Mcp Server, Marketing, 4x4clarity.com, Ai Dtkk, Wp Boxes, Sleuth, Bailiwik, 0. All Projects, Binoid, 3. Dumb Things, Hello World, Ucla Sacto, Wp Db Toolkit, 2. New Project Template Garl, Agents Scratchpad, Gitdashboard, Wp Page Builder V2, Macnerd, Project Templates.md, Project Dashboard, Mcp, Changelog, Project, Readme, Project Registry.template, License.
+  - Vault title scanner discovered **36 project candidates** spanning active work, templates, scratchpads, and admin notes.
   - Registry file now properly formatted (newlines fixed in `_default_registry_markdown()` and `save_registry()` functions).
   - All 36 candidates stored in `potential_projects` section ready for curation.
 

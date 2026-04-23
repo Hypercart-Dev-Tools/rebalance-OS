@@ -41,7 +41,7 @@ All decisions that create divergence between tiers should be flagged explicitly 
 - **Data Quality**: "Garbage in, garbage out" — assumes curated notes with consistent tagging (e.g. `#project-ai-ddtk`) and a maintained registry.
 - **Performance**: Single-user, offline-first; no multi-tenancy; embeddings batched to avoid OOM on M-series chips.
 - **Scope**: MVP targets ingestion, embedding, GitHub delta analysis, calendar integration, and daily briefing output. No real-time sync.
-- **Embedding Standardization**: If OpenAI embeddings are in use for a parallel pgvector project (e.g. LTVera), standardize on one embedding model before building the embedder to avoid model drift and double overhead on the Mac Studio.
+- **Embedding Standardization**: If OpenAI embeddings are in use for a parallel pgvector project (e.g. Project Alpha), standardize on one embedding model before building the embedder to avoid model drift and double overhead on the Mac Studio.
 
 ---
 
@@ -348,15 +348,15 @@ Example canonical Markdown section (`Projects/00-project-registry.md`):
 
 ```yaml
 active_projects:
-  - name: LTVera
+  - name: Project Alpha
     status: active
     summary: >
       2-3 sentence project summary goes here.
-    repos: [ltv-era]
-    obsidian_folder: Projects/LTVera
-    tags: ["#project-ltv-era"]
+    repos: [project-alpha]
+    obsidian_folder: Projects/Project Alpha
+    tags: ["#project-project-alpha"]
     custom_fields:
-      calendar_aliases: ["LTV", "LTV Era"]
+      calendar_aliases: ["PA", "Project Alpha"]
       quantitative:
         priority_tier: 1
         value_score: 9
@@ -389,31 +389,31 @@ Note: `most_likely_active_projects`, `semi_active_projects`, `dormant_projects`,
 
 ```yaml
 projects:
-  - name: LTVera
+  - name: Project Alpha
     summary: 2-3 sentence summary in plain text
     status: active
     value_level: strategic
     priority_tier: 1
     risk_level: high
-    repos: [ltv-era]
-    obsidian_folder: Projects/LTVera
-    tags: ["#project-ltv-era"]
+    repos: [project-alpha]
+    obsidian_folder: Projects/Project Alpha
+    tags: ["#project-project-alpha"]
     custom_fields:
-      calendar_aliases: ["LTV", "LTV Era"]
+      calendar_aliases: ["PA", "Project Alpha"]
       quantitative:
         value_score: 9
         weekly_hours_target: 8
       qualitative:
         momentum_state: warm
 
-  - name: WP Canary
+  - name: Project Beta
     status: active
     value_level: revenue-generating
     priority_tier: 1
     risk_level: medium
-    repos: [wp-canary]
-    obsidian_folder: Projects/WPCanary
-    tags: ["#project-wp-canary"]
+    repos: [project-beta]
+    obsidian_folder: Projects/Project Beta
+    tags: ["#project-project-beta"]
 
   - name: AI-DDTK
     status: active
@@ -588,7 +588,7 @@ Build order is sequenced for independent testability — each step works standal
 **Step 5 — Embedder (1 day)**
 - Batch Qwen3 embeddings via `mlx-embeddings`; store in sqlite-vec vector column
 - Hash-based delta updates to skip unchanged notes
-- ⚠️ Decide embedding model (Qwen3 vs OpenAI) before this step — align with LTVera if applicable
+- ⚠️ Decide embedding model (Qwen3 vs OpenAI) before this step — align with Project Alpha if applicable
 
 **Step 6 — GitHub scanner (2 days)**
 - Paginated REST API calls for commits, PRs, issues
@@ -623,7 +623,7 @@ Build order is sequenced for independent testability — each step works standal
 Once built, the MCP host becomes the conversational interface to the assembled output:
 
 - **Morning**: "Summarize my day" → reads today's briefing MD
-- **Ad hoc**: "What did I decide about the LTVera embedding pipeline?"
+- **Ad hoc**: "What did I decide about the Project Alpha embedding pipeline?"
 - **Balance check**: "Am I over-investing anywhere this week?"
 - **Meeting prep**: "What Obsidian notes are relevant to my 10am call?"
 
@@ -674,11 +674,11 @@ Items explicitly deferred to reduce scope. Prerequisites: P1–P3 signals stable
 
 ### Email → Project Auto-Correlation
 
-**Problem:** Keyword matching (`subject LIKE '%LTVera%'`) catches obvious hits but misses threads like "Re: Q3 renewal pricing" that are clearly project-related. Unmatched threads pile up in the "unlinked" bucket.
+**Problem:** Keyword matching (`subject LIKE '%Project Alpha%'`) catches obvious hits but misses threads like "Re: Q3 renewal pricing" that are clearly project-related. Unmatched threads pile up in the "unlinked" bucket.
 
 **Approach (phased):**
 
-1. **Alias map (semi-automatic)** — When a user replies to an unlinked thread during the same week they commit to a specific repo, the system *proposes* a link: "Link 'Q3 renewal pricing' → LTVera?" User confirms or rejects. Confirmed aliases persist and auto-apply to future threads with similar subjects.
+1. **Alias map (semi-automatic)** — When a user replies to an unlinked thread during the same week they commit to a specific repo, the system *proposes* a link: "Link 'Q3 renewal pricing' → Project Alpha?" User confirms or rejects. Confirmed aliases persist and auto-apply to future threads with similar subjects.
 2. **Correspondent → Project mapping** — Co-occurrence inference: if emails from a specific sender spike when a project's GitHub activity spikes, propose the association. Structured correlation query — no vectors needed.
 3. **Subject embedding (evaluate last)** — Embed subject lines + project names into the same vector space for fuzzy matching. Only worth it if alias map coverage plateaus below ~80%. Short-text embeddings are noisy; may not outperform the alias approach.
 
@@ -740,7 +740,7 @@ Licensed under the **Apache License, Version 2.0**. You may use, reproduce, modi
 - [ ] Create canonical registry `Projects/00-project-registry.md` in vault
 - [ ] Smoke test: `pip install -e .` → `rebalance ingest sync --mode check --vault /path/to/vault`
 - [ ] Prototype note ingester: `python ingest.py /path/to/vault`
-- [ ] Decide: Qwen3-Embedding or OpenAI embeddings (align with LTVera if applicable)
+- [ ] Decide: Qwen3-Embedding or OpenAI embeddings (align with Project Alpha if applicable)
 - [ ] Install and authenticate gcalcli: `pip install gcalcli && gcalcli list`
 - [ ] Wire `morning_brief.py` + launchd plist
 - [ ] Phase 2: implement `github_embed_queue` selective embedding pipeline
