@@ -20,6 +20,10 @@ app.add_typer(config_app, name="config")
 GOOGLE_CALENDAR_ENV_PATH = Path("/Users/noelsaw/secrets/google-calendar.env")
 CALENDAR_EVENT_LOG_PATH = Path("temp/logs/calendar-event-create.jsonl")
 
+# TODO: support ~/secrets/sleuth-web-api-production.env once a prod Sleuth
+# deployment exists — likely via a --env name|production|development flag.
+SLEUTH_ENV_PATH = Path("/Users/noelsaw/secrets/sleuth-web-api-development.env")
+
 
 def _load_google_calendar_env() -> dict[str, str]:
     """Load shared Google Calendar env metadata from the operator-owned file."""
@@ -35,6 +39,29 @@ def _load_google_calendar_env() -> dict[str, str]:
             continue
         key, value = line.split("=", 1)
         values[key.strip()] = value.strip()
+    return values
+
+
+def _load_sleuth_env() -> dict[str, str]:
+    """Load Sleuth Web API connection details from the operator-owned env file."""
+    if not SLEUTH_ENV_PATH.exists():
+        raise typer.BadParameter(f"Sleuth env file not found: {SLEUTH_ENV_PATH}")
+
+    values: dict[str, str] = {}
+    for raw_line in SLEUTH_ENV_PATH.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+
+    required = ("SLEUTH_WEB_API_BASE_URL", "SLEUTH_WEB_API_TOKEN", "SLEUTH_WORKSPACE_NAME")
+    missing = [k for k in required if not values.get(k)]
+    if missing:
+        raise typer.BadParameter(
+            f"Sleuth env file missing required keys: {', '.join(missing)} "
+            f"(expected in {SLEUTH_ENV_PATH})"
+        )
     return values
 
 
@@ -1077,6 +1104,46 @@ def calendar_weekly_report_cmd(
 
     if not wrote_artifact:
         typer.echo(report)
+
+
+@app.command("sleuth-sync")
+def sleuth_sync_cmd(
+    active_only: bool = typer.Option(
+        False,
+        "--active-only/--all",
+        help="Only fetch currently active reminders (default: all)",
+    ),
+    database: Path = typer.Option(
+        Path("rebalance.db"),
+        "--database-path",
+        envvar="REBALANCE_DB",
+        help="SQLite database path",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit full sync result as JSON"),
+) -> None:
+    """Pull Slack reminders from the Sleuth Web API and upsert them into SQLite."""
+    from rebalance.ingest.sleuth_reminders import sync_sleuth_reminders
+
+    env_data = _load_sleuth_env()
+    db_path = database.expanduser().resolve()
+    result = sync_sleuth_reminders(
+        base_url=env_data["SLEUTH_WEB_API_BASE_URL"],
+        token=env_data["SLEUTH_WEB_API_TOKEN"],
+        workspace_name=env_data["SLEUTH_WORKSPACE_NAME"],
+        database_path=db_path,
+        active_only=active_only,
+    )
+
+    if json_output:
+        typer.echo(json.dumps(result.as_dict(), ensure_ascii=False))
+        return
+
+    typer.echo(
+        f"Sleuth sync: workspace={result.workspace_name}, "
+        f"returned={result.returned_reminder_count}/{result.total_reminder_count}, "
+        f"inserted={result.inserted_count}, updated={result.updated_count}, "
+        f"unchanged={result.unchanged_count}"
+    )
 
 
 @app.command("version")

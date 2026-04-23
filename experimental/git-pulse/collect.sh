@@ -115,6 +115,30 @@ extract_canonical_rows() {
     awk -F '\t' 'NF == 6 && $1 ~ /^[0-9]+$/ { print }' "$file"
 }
 
+filter_existing_rows() {
+    local pulse_file="$1"
+    local candidate_rows="$2"
+    local existing_rows
+
+    [ -s "$candidate_rows" ] || return 0
+    if [ ! -f "$pulse_file" ]; then
+        cat "$candidate_rows"
+        return 0
+    fi
+
+    existing_rows="$(mktemp "${TMPDIR:-/tmp}/git-pulse-existing.XXXXXX")"
+    extract_canonical_rows "$pulse_file" | sort -u > "$existing_rows"
+
+    if [ ! -s "$existing_rows" ]; then
+        rm -f "$existing_rows"
+        cat "$candidate_rows"
+        return 0
+    fi
+
+    grep -Fvx -f "$existing_rows" "$candidate_rows" || true
+    rm -f "$existing_rows"
+}
+
 write_pulse_file() {
     local file="$1"
     local pulse_device_name="$2"
@@ -291,6 +315,10 @@ for repo_path in "${repos[@]}"; do
         echo "Skipping $repo_path: not a git repo" >&2
         continue
     fi
+    if ! git -C "$repo_path" rev-parse --verify HEAD >/dev/null 2>&1; then
+        echo "Skipping $repo_path: no commits yet" >&2
+        continue
+    fi
     repo_name=$(basename "$repo_path")
 
     # Walk HEAD reflog with iso-strict reflog-entry timestamps in %gd.
@@ -391,6 +419,27 @@ if [ ! -f "$PULSE_FILE" ]; then
      Oldest at top; newest at bottom. Grep-friendly; not meant for pretty rendering. -->
 
 HEADER
+fi
+
+if [ "${#new_entries[@]}" -gt 0 ]; then
+    candidate_rows_file="$(mktemp "${TMPDIR:-/tmp}/git-pulse-candidates.XXXXXX")"
+    printf '%s\n' "$sorted_display" > "$candidate_rows_file"
+    filtered_display="$(filter_existing_rows "$PULSE_FILE" "$candidate_rows_file")"
+    rm -f "$candidate_rows_file"
+
+    if [ -n "$filtered_display" ]; then
+        new_entries=()
+        while IFS= read -r entry_line; do
+            [ -n "$entry_line" ] || continue
+            new_entries+=("$entry_line")
+        done <<EOF
+$filtered_display
+EOF
+        sorted_display="$filtered_display"
+    else
+        new_entries=()
+        sorted_display=""
+    fi
 fi
 
 if [ "${#new_entries[@]}" -gt 0 ]; then

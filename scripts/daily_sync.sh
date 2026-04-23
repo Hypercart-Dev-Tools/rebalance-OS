@@ -53,7 +53,13 @@ log "Syncing Google Calendar..."
     && log "  Calendar sync: OK" \
     || log "  Calendar sync: FAILED"
 
-# 5. Cleanup old logs (keep 30 days)
+# 5. Sleuth reminders sync (do not fail the whole pipeline if Sleuth is down)
+log "Syncing Sleuth reminders..."
+"$CLI" sleuth-sync --all --database-path "$DATABASE" >> "$LOG_FILE" 2>&1 \
+    && log "  Sleuth reminders: OK" \
+    || log "  Sleuth reminders: FAILED"
+
+# 6. Cleanup old logs (keep 30 days)
 find "$LOG_DIR" -name "daily_sync_*.log" -mtime +30 -delete 2>/dev/null || true
 
 log "=== rebalance daily sync complete ==="

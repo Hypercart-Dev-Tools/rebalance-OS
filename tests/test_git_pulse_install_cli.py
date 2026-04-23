@@ -41,6 +41,64 @@ def _git(repo: Path, *args: str, env_override: dict[str, str] | None = None) -> 
 
 
 class GitPulseInstallCliTests(unittest.TestCase):
+    def test_install_discovers_local_github_repos_and_updates_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            path_bin = home / "path-bin"
+            launch_agents = home / "Library" / "LaunchAgents"
+            config_dir = home / ".config" / "git-pulse"
+            sync_repo = config_dir / "repo"
+            roots_dir = home / "Documents" / "GH Repos"
+            github_repo = roots_dir / "alpha"
+            non_github_repo = roots_dir / "beta"
+
+            path_bin.mkdir(parents=True)
+            launch_agents.mkdir(parents=True)
+            sync_repo.mkdir(parents=True)
+            roots_dir.mkdir(parents=True)
+
+            _write_executable(
+                path_bin / "launchctl",
+                "#!/bin/sh\nexit 0\n",
+            )
+
+            _git(sync_repo.parent, "init", str(sync_repo), "--initial-branch=main", "--quiet")
+            _git(roots_dir, "init", str(github_repo), "--initial-branch=main", "--quiet")
+            _git(roots_dir, "init", str(non_github_repo), "--initial-branch=main", "--quiet")
+            _git(github_repo, "remote", "add", "origin", "git@github.com:example/alpha.git")
+            _git(non_github_repo, "remote", "add", "origin", "git@gitlab.com:example/beta.git")
+
+            (config_dir / "config.sh").write_text(
+                textwrap.dedent(
+                    f"""\
+                    repos=()
+                    repo_roots=("{roots_dir}")
+                    repo_discovery_mode="append"
+                    sync_repo_dir="{sync_repo}"
+                    device_id="test-device"
+                    device_name="Test Device"
+                    hostname="Test Device"
+                    """
+                )
+            )
+
+            subprocess.run(
+                ["/bin/bash", str(INSTALL_SCRIPT)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{path_bin}:{os.environ['PATH']}",
+                },
+            )
+
+            config_text = (config_dir / "config.sh").read_text()
+
+        self.assertIn(str(github_repo), config_text)
+        self.assertNotIn(str(non_github_repo), config_text)
+
     def test_copy_mode_installs_working_health_launcher_with_shared_module(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)

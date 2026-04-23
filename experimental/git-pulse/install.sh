@@ -17,6 +17,7 @@ RECAP_PATH="$SCRIPT_DIR/recap.py"
 HEALTH_PATH="$SCRIPT_DIR/health-check.py"
 VALIDATE_PATH="$SCRIPT_DIR/validators.py"
 SCOPE_PATH="$SCRIPT_DIR/scope.py"
+DISCOVER_PATH="$SCRIPT_DIR/discover-repos.py"
 PULSE_COMMON_PATH="$SCRIPT_DIR/pulse_common.py"
 EXEC_SUMMARY_PATH="$SCRIPT_DIR/EXEC-SUMMARY.md"
 TEAM_EXEC_SUMMARY_PATH="$SCRIPT_DIR/TEAM-EXEC-SUMMARY.md"
@@ -26,6 +27,7 @@ RECAP_LINK_PATH="$BIN_DIR/git-pulse-recap"
 HEALTH_LINK_PATH="$BIN_DIR/git-pulse-health"
 VALIDATE_LINK_PATH="$BIN_DIR/git-pulse-validate"
 SCOPE_LINK_PATH="$BIN_DIR/git-pulse-scope"
+DISCOVER_LINK_PATH="$BIN_DIR/git-pulse-discover"
 PULSE_COMMON_LINK_PATH="$BIN_DIR/pulse_common.py"
 EXEC_SUMMARY_LINK_PATH="$BIN_DIR/EXEC-SUMMARY.md"
 TEAM_EXEC_SUMMARY_LINK_PATH="$BIN_DIR/TEAM-EXEC-SUMMARY.md"
@@ -83,6 +85,105 @@ set_config_value() {
     mv "$temp_file" "$CONFIG_DIR/config.sh"
 }
 
+set_config_array() {
+    local key="$1"
+    local comment="${2:-}"
+    shift 2
+    local temp_file
+    local updated
+    local skipping
+    local line
+    local value
+
+    temp_file="$(mktemp "${TMPDIR:-/tmp}/git-pulse-config.XXXXXX")"
+    updated=0
+    skipping=0
+
+    while IFS= read -r line || [ -n "$line" ]; do
+        if [ "$skipping" -eq 1 ]; then
+            if [ "$line" = ")" ]; then
+                skipping=0
+            fi
+            continue
+        fi
+
+        if [ "$updated" -eq 0 ] && [[ "$line" == "$key=()" ]]; then
+            printf '%s=(\n' "$key" >> "$temp_file"
+            for value in "$@"; do
+                printf '    "%s"\n' "$(escape_config_value "$value")" >> "$temp_file"
+            done
+            printf ')\n' >> "$temp_file"
+            updated=1
+            continue
+        fi
+
+        if [ "$updated" -eq 0 ] && [[ "$line" == "$key=(" ]]; then
+            printf '%s=(\n' "$key" >> "$temp_file"
+            for value in "$@"; do
+                printf '    "%s"\n' "$(escape_config_value "$value")" >> "$temp_file"
+            done
+            printf ')\n' >> "$temp_file"
+            updated=1
+            skipping=1
+            continue
+        fi
+
+        printf '%s\n' "$line" >> "$temp_file"
+    done < "$CONFIG_DIR/config.sh"
+
+    if [ "$updated" -eq 0 ]; then
+        if [ -n "$comment" ]; then
+            printf '\n%s\n' "$comment" >> "$temp_file"
+        fi
+        printf '%s=(\n' "$key" >> "$temp_file"
+        for value in "$@"; do
+            printf '    "%s"\n' "$(escape_config_value "$value")" >> "$temp_file"
+        done
+        printf ')\n' >> "$temp_file"
+    fi
+
+    mv "$temp_file" "$CONFIG_DIR/config.sh"
+}
+
+merge_unique_paths() {
+    local value
+    local existing
+    local found
+    local merged=()
+
+    for value in "$@"; do
+        [ -n "$value" ] || continue
+        found=0
+        for existing in "${merged[@]-}"; do
+            if [ "$existing" = "$value" ]; then
+                found=1
+                break
+            fi
+        done
+        if [ "$found" -eq 0 ]; then
+            merged+=("$value")
+        fi
+    done
+
+    printf '%s\n' "${merged[@]-}"
+}
+
+load_discovered_repos() {
+    local discover_args=()
+    local root
+
+    for root in "$@"; do
+        [ -n "$root" ] || continue
+        discover_args+=("--root" "$root")
+    done
+
+    if [ "${#discover_args[@]}" -eq 0 ]; then
+        return 0
+    fi
+
+    "$DISCOVER_PATH" "${discover_args[@]}"
+}
+
 generate_device_id() {
     local default_device_name
     local slug
@@ -138,6 +239,7 @@ install_entrypoint "$RECAP_PATH" "$RECAP_LINK_PATH"
 install_entrypoint "$HEALTH_PATH" "$HEALTH_LINK_PATH"
 install_entrypoint "$VALIDATE_PATH" "$VALIDATE_LINK_PATH"
 install_entrypoint "$SCOPE_PATH" "$SCOPE_LINK_PATH"
+install_entrypoint "$DISCOVER_PATH" "$DISCOVER_LINK_PATH"
 install_support_file "$PULSE_COMMON_PATH" "$PULSE_COMMON_LINK_PATH"
 install_support_file "$EXEC_SUMMARY_PATH" "$EXEC_SUMMARY_LINK_PATH"
 install_support_file "$TEAM_EXEC_SUMMARY_PATH" "$TEAM_EXEC_SUMMARY_LINK_PATH"
@@ -170,6 +272,83 @@ if [ -z "${device_name:-}" ]; then
     set_config_value "device_name" "$default_device_name"
     echo "Set device_name=\"$default_device_name\""
     config_updated=1
+fi
+
+if ! declare -p repo_roots >/dev/null 2>&1; then
+    repo_roots=(
+        "$HOME/Documents/GH Repos"
+        "$HOME/Documents/GitHub-Repos"
+        "$HOME/Documents"
+    )
+    set_config_array "repo_roots" "# Roots scanned for local GitHub repos during install." "${repo_roots[@]}"
+    config_updated=1
+fi
+
+if [ -z "${repo_discovery_mode:-}" ]; then
+    repo_discovery_mode="append"
+    set_config_value "repo_discovery_mode" "$repo_discovery_mode" "# Repo discovery mode: append | replace | fill-if-empty | off"
+    config_updated=1
+fi
+
+configured_repos=()
+if declare -p repos >/dev/null 2>&1; then
+    while IFS= read -r repo_path; do
+        [ -n "$repo_path" ] || continue
+        configured_repos+=("$repo_path")
+    done <<EOF
+$(printf '%s\n' "${repos[@]-}")
+EOF
+fi
+configured_repo_count="${#configured_repos[@]}"
+
+discovered_repos=()
+while IFS= read -r repo_path; do
+    [ -n "$repo_path" ] || continue
+    discovered_repos+=("$repo_path")
+done < <(load_discovered_repos "${repo_roots[@]}")
+
+if [ "${repo_discovery_mode:-append}" != "off" ] && [ "${#discovered_repos[@]}" -gt 0 ]; then
+    merged_repos=()
+    case "$repo_discovery_mode" in
+        append)
+            while IFS= read -r repo_path; do
+                [ -n "$repo_path" ] || continue
+                merged_repos+=("$repo_path")
+            done < <(merge_unique_paths "${configured_repos[@]-}" "${discovered_repos[@]}")
+            ;;
+        replace)
+            while IFS= read -r repo_path; do
+                [ -n "$repo_path" ] || continue
+                merged_repos+=("$repo_path")
+            done < <(merge_unique_paths "${discovered_repos[@]}")
+            ;;
+        fill-if-empty)
+            if [ "$configured_repo_count" -eq 0 ]; then
+                while IFS= read -r repo_path; do
+                    [ -n "$repo_path" ] || continue
+                    merged_repos+=("$repo_path")
+                done < <(merge_unique_paths "${discovered_repos[@]}")
+            else
+                while IFS= read -r repo_path; do
+                    [ -n "$repo_path" ] || continue
+                    merged_repos+=("$repo_path")
+                done < <(merge_unique_paths "${configured_repos[@]-}")
+            fi
+            ;;
+        *)
+            echo "ERROR: unsupported repo_discovery_mode=$repo_discovery_mode" >&2
+            exit 1
+            ;;
+    esac
+
+    merged_current=$(printf '%s\n' "${configured_repos[@]-}")
+    merged_next=$(printf '%s\n' "${merged_repos[@]-}")
+    if [ "$merged_current" != "$merged_next" ]; then
+        repos=("${merged_repos[@]}")
+        set_config_array "repos" "# Absolute repo paths monitored by git-pulse." "${repos[@]}"
+        echo "Discovered ${#discovered_repos[@]} local GitHub repo(s); monitoring ${#repos[@]} total."
+        config_updated=1
+    fi
 fi
 
 if [ "$config_updated" -eq 1 ]; then
@@ -218,6 +397,7 @@ if [ "$LINK_MODE" = "copy" ]; then
     echo "Health install:    copied $HEALTH_PATH to $HEALTH_LINK_PATH"
     echo "Validate install:  copied $VALIDATE_PATH to $VALIDATE_LINK_PATH"
     echo "Scope install:     copied $SCOPE_PATH to $SCOPE_LINK_PATH"
+    echo "Discover install:  copied $DISCOVER_PATH to $DISCOVER_LINK_PATH"
     echo "Refresh after repo pulls by re-running install.sh."
 else
     echo "Collector install: symlinked $COLLECT_LINK_PATH -> $COLLECT_PATH"
@@ -226,6 +406,7 @@ else
     echo "Health install:    symlinked $HEALTH_LINK_PATH -> $HEALTH_PATH"
     echo "Validate install:  symlinked $VALIDATE_LINK_PATH -> $VALIDATE_PATH"
     echo "Scope install:     symlinked $SCOPE_LINK_PATH -> $SCOPE_PATH"
+    echo "Discover install:  symlinked $DISCOVER_LINK_PATH -> $DISCOVER_PATH"
 fi
 echo "Test manually:   $COLLECT_LINK_PATH --dry-run"
 echo "Unified view:    $VIEW_LINK_PATH --today"
@@ -233,5 +414,6 @@ echo "Recap reports:   $RECAP_LINK_PATH"
 echo "Health check:    $HEALTH_LINK_PATH"
 echo "Validate recap:  $VALIDATE_LINK_PATH <recap-file.md>"
 echo "Scope section:   $SCOPE_LINK_PATH <recap-file.md> --section tldr|focus|observations"
+echo "Discover repos:   $DISCOVER_LINK_PATH --root \"$HOME/Documents/GH Repos\""
 echo "Tail logs:       tail -f $LOG_DIR/git-pulse.err"
 echo "Uninstall:       launchctl unload $PLIST_PATH && rm $PLIST_PATH"

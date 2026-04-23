@@ -2,10 +2,26 @@
 # Copy to ~/.config/git-pulse/config.sh and edit before the first run.
 
 # Absolute repo paths to monitor. Quote each entry so paths with spaces work.
+# `install.sh` can auto-discover additional local GitHub repos and merge them
+# into this list.
 repos=(
     "$HOME/Documents/GitHub-Repos/rebalance-OS"
     # "$HOME/code/other-project"
 )
+
+# Roots scanned by `install.sh` when repo discovery is enabled.
+repo_roots=(
+    "$HOME/Documents/GH Repos"
+    "$HOME/Documents/GitHub-Repos"
+    "$HOME/Documents"
+)
+
+# Repo discovery mode:
+#   append        -> merge discovered local GitHub repos into repos=()
+#   replace       -> overwrite repos=() with discovered local GitHub repos
+#   fill-if-empty -> only discover when repos=() is empty
+#   off           -> never auto-discover
+repo_discovery_mode="append"
 
 # URL of the private GitHub repo that stores synced history files.
 # Create once with: gh repo create --private git-pulse

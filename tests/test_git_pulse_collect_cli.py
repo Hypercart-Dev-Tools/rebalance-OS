@@ -74,7 +74,14 @@ def _write_scutil_stub(path: Path) -> None:
     )
 
 
-def _write_git_stub(path: Path, local_repo: Path, sync_repo: Path) -> None:
+def _write_git_stub(
+    path: Path,
+    local_repo: Path,
+    sync_repo: Path,
+    *,
+    diff_cached_exit_code: int = 1,
+    unborn_repos: tuple[Path, ...] = (),
+) -> None:
     _write_executable(
         path,
         textwrap.dedent(
@@ -85,11 +92,19 @@ def _write_git_stub(path: Path, local_repo: Path, sync_repo: Path) -> None:
 
             local_repo = {str(local_repo)!r}
             sync_repo = {str(sync_repo)!r}
+            unborn_repos = {tuple(str(repo) for repo in unborn_repos)!r}
             args = sys.argv[1:]
 
             if len(args) >= 3 and args[0] == "-C":
                 repo_path = args[1]
                 repo_args = args[2:]
+
+                if repo_args[:3] == ["rev-parse", "--verify", "HEAD"]:
+                    if repo_path in unborn_repos:
+                        raise SystemExit(128)
+                    if repo_path in {{local_repo, sync_repo}}:
+                        print("deadbeef")
+                        raise SystemExit(0)
 
                 if repo_path == local_repo and repo_args[:2] == ["log", "-g"]:
                     print("HEAD@{{2026-04-20T14:32:15-07:00}}\\t1234567890abcdef\\tcommit:\\tMigrated local commit")
@@ -113,7 +128,7 @@ def _write_git_stub(path: Path, local_repo: Path, sync_repo: Path) -> None:
                 raise SystemExit(0)
 
             if args[:2] == ["diff", "--cached"]:
-                raise SystemExit(1)
+                raise SystemExit({diff_cached_exit_code})
 
             if args and args[0] == "commit":
                 raise SystemExit(0)
@@ -132,6 +147,143 @@ def _write_git_stub(path: Path, local_repo: Path, sync_repo: Path) -> None:
 
 
 class GitPulseCollectCliTests(unittest.TestCase):
+    def test_collect_backfill_skips_rows_already_present_in_pulse_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            bin_dir = home / "bin"
+            config_dir = home / ".config" / "git-pulse"
+            sync_repo = config_dir / "repo"
+            devices_dir = sync_repo / "devices"
+            local_repo = home / "code" / "sample-repo"
+
+            bin_dir.mkdir(parents=True)
+            devices_dir.mkdir(parents=True)
+            (sync_repo / ".git").mkdir()
+            (local_repo / ".git").mkdir(parents=True)
+
+            _write_date_stub(bin_dir / "date")
+            _write_scutil_stub(bin_dir / "scutil")
+            _write_git_stub(
+                bin_dir / "git",
+                local_repo,
+                sync_repo,
+                diff_cached_exit_code=0,
+            )
+
+            (config_dir / "config.sh").write_text(
+                textwrap.dedent(
+                    f"""\
+                    repos=("{local_repo}")
+                    sync_repo_dir="{sync_repo}"
+                    device_id="noels-macbook-pro-14"
+                    device_name="Noel's MacBook Pro 14"
+                    hostname="Noel's MacBook Pro 14"
+                    """
+                )
+            )
+            (config_dir / "last-run").write_text("0\n")
+
+            (devices_dir / "noels-macbook-pro-14.yaml").write_text(
+                textwrap.dedent(
+                    """\
+                    schema_version: 2
+                    device_id: "noels-macbook-pro-14"
+                    device_name: "Noel's MacBook Pro 14"
+                    hostname: "Noel's MacBook Pro 14"
+                    host_tag: "Noels-MacBook-Pro-14"
+                    timezone_name: "PDT"
+                    utc_offset: "-0700"
+                    pulse_file: "pulse-noels-macbook-pro-14.md"
+                    """
+                )
+            )
+            (sync_repo / "pulse-noels-macbook-pro-14.md").write_text(
+                textwrap.dedent(
+                    """\
+                    # Git pulse — Noel's MacBook Pro 14
+
+                    <!-- Append-only chronological log. Tab-separated columns:
+                         epoch_utc \t timestamp_utc \t repo \t branch \t short-sha \t subject
+                         device_id: noels-macbook-pro-14
+                         canonical time: UTC
+                         Oldest at top; newest at bottom. Grep-friendly; not meant for pretty rendering. -->
+
+                    1776720735\t2026-04-20T21:32:15Z\tsample-repo\tmain\t1234567\tMigrated local commit
+                    """
+                )
+            )
+
+            subprocess.run(
+                ["/bin/bash", str(COLLECT_SCRIPT)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                },
+            )
+
+            pulse_text = (sync_repo / "pulse-noels-macbook-pro-14.md").read_text()
+
+        self.assertEqual(pulse_text.count("Migrated local commit"), 1)
+
+    def test_collect_skips_unborn_repo_without_failing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            bin_dir = home / "bin"
+            config_dir = home / ".config" / "git-pulse"
+            sync_repo = config_dir / "repo"
+            devices_dir = sync_repo / "devices"
+            local_repo = home / "code" / "sample-repo"
+            unborn_repo = home / "code" / "empty-repo"
+
+            bin_dir.mkdir(parents=True)
+            devices_dir.mkdir(parents=True)
+            (sync_repo / ".git").mkdir()
+            (local_repo / ".git").mkdir(parents=True)
+            (unborn_repo / ".git").mkdir(parents=True)
+
+            _write_date_stub(bin_dir / "date")
+            _write_scutil_stub(bin_dir / "scutil")
+            _write_git_stub(
+                bin_dir / "git",
+                local_repo,
+                sync_repo,
+                unborn_repos=(unborn_repo,),
+            )
+
+            (config_dir / "config.sh").write_text(
+                textwrap.dedent(
+                    f"""\
+                    repos=("{local_repo}" "{unborn_repo}")
+                    sync_repo_dir="{sync_repo}"
+                    device_id="noels-macbook-pro-14"
+                    device_name="Noel's MacBook Pro 14"
+                    hostname="Noel's MacBook Pro 14"
+                    """
+                )
+            )
+            (config_dir / "last-run").write_text("0\n")
+
+            result = subprocess.run(
+                ["/bin/bash", str(COLLECT_SCRIPT)],
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                },
+            )
+
+            pulse_text = (sync_repo / "pulse-noels-macbook-pro-14.md").read_text()
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr + result.stdout)
+        self.assertIn(f"Skipping {unborn_repo}: no commits yet", result.stderr)
+        self.assertIn("Migrated local commit", pulse_text)
+
     def test_collect_self_migrates_legacy_slugged_device_id(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             home = Path(tmpdir)
