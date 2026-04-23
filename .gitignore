@@ -16,3 +16,4 @@ rebalance.db-shm
 rebalance.db-wal
 rebalance.db-wal
 /reports
+/git-pulse-reports
