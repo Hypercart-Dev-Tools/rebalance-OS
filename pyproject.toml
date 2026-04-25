@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rebalance-os"
-version = "0.18.3"
+version = "0.19.0"
 description = "Local-first workday operating system with MCP tools and Obsidian ingest"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from rebalance.ingest.db import db_connection, ensure_github_schema
+from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_semantic_schema
 from rebalance.ingest.github_knowledge import (
     embed_github_documents,
     query_github_documents,
@@ -312,6 +312,11 @@ class GitHubKnowledgeTests(unittest.TestCase):
 
                 doc_count = conn.execute("SELECT COUNT(*) FROM github_documents").fetchone()[0]
                 self.assertGreaterEqual(doc_count, 6)
+            with db_connection(db_path, ensure_semantic_schema) as conn:
+                semantic_doc_count = conn.execute(
+                    "SELECT COUNT(*) FROM semantic_documents WHERE source_type = 'github'"
+                ).fetchone()[0]
+                self.assertGreaterEqual(semantic_doc_count, 6)
 
     def test_embed_and_query_local_github_corpus(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

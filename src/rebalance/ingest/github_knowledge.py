@@ -22,7 +22,7 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 import re
 
-from rebalance.ingest.db import db_connection, ensure_github_schema
+from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_semantic_schema
 from rebalance.ingest.embedder import (
     DEFAULT_MODEL as DEFAULT_EMBED_MODEL,
     EMBEDDING_DIM,
@@ -30,6 +30,7 @@ from rebalance.ingest.embedder import (
     _load_model,
     _vec_to_bytes,
 )
+from rebalance.ingest.semantic_index import sync_github_documents
 
 GITHUB_API = "https://api.github.com"
 DEFAULT_SYNC_DAYS = 90
@@ -855,6 +856,8 @@ def sync_github_repo(
                 )
                 docs_built += 1
 
+        ensure_semantic_schema(conn)
+        sync_github_documents(conn, repo_full_name=repo_full_name)
         conn.commit()
 
     elapsed = round(time.monotonic() - start, 2)

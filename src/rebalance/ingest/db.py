@@ -157,6 +157,58 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Unified semantic index schema
+# ---------------------------------------------------------------------------
+
+
+def ensure_semantic_schema(conn: sqlite3.Connection) -> None:
+    """Create derived cross-source semantic index tables if they don't exist."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS semantic_documents (
+            id                      INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_type             TEXT    NOT NULL,
+            source_table            TEXT    NOT NULL,
+            source_pk               TEXT    NOT NULL,
+            doc_kind                TEXT    NOT NULL,
+            title                   TEXT,
+            body                    TEXT    NOT NULL,
+            content_hash            TEXT    NOT NULL,
+            embedded_hash           TEXT,
+            embedded_model_version  TEXT,
+            embedded_at             TEXT,
+            metadata_json           TEXT,
+            created_at              TEXT    NOT NULL,
+            updated_at              TEXT    NOT NULL,
+            UNIQUE(source_type, source_pk)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semantic_docs_source "
+        "ON semantic_documents(source_type, updated_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_semantic_docs_source_table "
+        "ON semantic_documents(source_type, source_table)"
+    )
+    try:
+        conn.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS semantic_embeddings USING vec0(
+                embedding float[1024]
+            )
+        """)
+    except sqlite3.DatabaseError:
+        pass
+
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS semantic_embedding_meta (
+            key     TEXT PRIMARY KEY,
+            value   TEXT NOT NULL
+        )
+    """)
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
 # Calendar schema
 # ---------------------------------------------------------------------------
 

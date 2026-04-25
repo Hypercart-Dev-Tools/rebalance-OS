@@ -22,8 +22,9 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
-from rebalance.ingest.db import db_connection, ensure_schema
+from rebalance.ingest.db import db_connection, ensure_schema, ensure_semantic_schema
 from rebalance.ingest.md_parser import parse_note, ParsedNote
+from rebalance.ingest.semantic_index import sync_vault_documents
 
 
 def _json_default(obj: Any) -> Any:
@@ -199,6 +200,19 @@ def ingest_vault(
         total_keywords = 0
         if not dry_run and (new_count > 0 or updated_count > 0 or deleted_count > 0):
             total_keywords = _compute_tfidf_keywords(conn)
+
+        if not dry_run:
+            semantic_rows = conn.execute(
+                "SELECT COUNT(*) FROM semantic_documents WHERE source_type = 'vault'"
+            ).fetchone()[0] if conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='semantic_documents'"
+            ).fetchone() else 0
+            if new_count > 0 or updated_count > 0 or deleted_count > 0 or (
+                semantic_rows == 0 and existing
+            ):
+                ensure_semantic_schema(conn)
+                sync_vault_documents(conn)
+                conn.commit()
 
     elapsed = time.monotonic() - start
 

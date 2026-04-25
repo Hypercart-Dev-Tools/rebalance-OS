@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.19.0] - 2026-04-24
+
+### Added
+
+- A new unified semantic index layer with `semantic_documents`, `semantic_embeddings`, and `semantic_embedding_meta` so vault chunks and GitHub artifact documents can be embedded and queried through one shared contract instead of separate per-source vector tables.
+- New `rebalance semantic-backfill`, `rebalance semantic-embed`, and `rebalance semantic-query` CLI commands for populating, embedding, and querying the unified semantic layer directly from the existing local SQLite database.
+- Focused semantic-index tests covering cross-source backfill, shared embedding/query behavior, and incremental re-embed behavior when only one source row changes.
+
+### Changed
+
+- Vault ingest now dual-writes into the unified semantic document layer after chunk updates, keeping the derived semantic index aligned with the canonical `chunks` table.
+- GitHub artifact sync now dual-writes into the unified semantic document layer after rebuilding `github_documents`, so the new cross-source semantic index stays current without a separate post-sync job.
+- GitHub artifact sync tests now assert that semantic write-through is happening, not just the legacy `github_documents` population.
+
 ## [0.18.4] - 2026-04-23
 
 ### Fixed
