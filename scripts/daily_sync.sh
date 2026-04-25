@@ -9,11 +9,17 @@ set -euo pipefail
 
 # --- Configuration ---
 REBALANCE_DIR="/Users/noelsaw/Documents/Obsidian Vault/rebalance-OS"
-VAULT_PATH="/Users/noelsaw/Documents/Obsidian Vault"
 DATABASE="$REBALANCE_DIR/rebalance.db"
 PYTHON="$REBALANCE_DIR/.venv/bin/python"
 CLI="$REBALANCE_DIR/.venv/bin/rebalance"
 LOG_DIR="$REBALANCE_DIR/temp/logs"
+
+# Vault path: read from canonical config (temp/rbos.config). Falls back to the
+# legacy path if the config key is missing so the cron still runs.
+VAULT_PATH=$("$PYTHON" -c "from rebalance.ingest.config import get_vault_path; print(get_vault_path() or '')")
+if [ -z "$VAULT_PATH" ]; then
+    VAULT_PATH="/Users/noelsaw/Documents/Obsidian Vault"
+fi
 
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/daily_sync_$(date +%Y-%m-%d).log"

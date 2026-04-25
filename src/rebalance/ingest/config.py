@@ -57,6 +57,23 @@ def set_github_token(token: str) -> None:
     _write_config(config)
 
 
+def get_vault_path() -> str | None:
+    """
+    Get Obsidian vault path from config. Returns None if not set.
+
+    Config key: vault_path
+    """
+    config = _read_config()
+    return config.get("vault_path")
+
+
+def set_vault_path(path: str) -> None:
+    """Store Obsidian vault path in config."""
+    config = _read_config()
+    config["vault_path"] = path.strip()
+    _write_config(config)
+
+
 def get_config_path() -> Path:
     """Return the config file path (for user reference)."""
     return CONFIG_PATH

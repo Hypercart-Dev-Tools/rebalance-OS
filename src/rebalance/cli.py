@@ -9,7 +9,13 @@ import typer
 
 from rebalance.ingest.preflight import run_preflight
 from rebalance.ingest.registry import sync_registry
-from rebalance.ingest.config import get_github_token, set_github_token, get_config_path
+from rebalance.ingest.config import (
+    get_github_token,
+    set_github_token,
+    get_vault_path,
+    set_vault_path,
+    get_config_path,
+)
 
 app = typer.Typer(help="rebalance CLI")
 ingest_app = typer.Typer(help="Ingest and project registry workflows")
@@ -1174,6 +1180,28 @@ def config_get_github_token() -> None:
     else:
         typer.echo("✗ GitHub token not configured. Set it with:")
         typer.echo("  rebalance config set-github-token <PAT>")
+
+
+@config_app.command("set-vault")
+def config_set_vault(
+    path: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True, help="Absolute path to the Obsidian vault root"),
+) -> None:
+    """Store Obsidian vault path in local config (temp/rbos.config). Canonical source for all ingest/sync workflows."""
+    resolved = str(path.expanduser().resolve())
+    set_vault_path(resolved)
+    typer.echo(f"✓ Vault path stored in {get_config_path()}")
+    typer.echo(f"  vault_path = {resolved}")
+
+
+@config_app.command("get-vault")
+def config_get_vault() -> None:
+    """Show the configured Obsidian vault path."""
+    path = get_vault_path()
+    if path:
+        typer.echo(f"✓ Vault path: {path}")
+    else:
+        typer.echo("✗ Vault path not configured. Set it with:")
+        typer.echo("  rebalance config set-vault <absolute-path>")
 
 
 @config_app.command("show-config-path")

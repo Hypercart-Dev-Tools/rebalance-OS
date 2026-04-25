@@ -59,8 +59,21 @@ class CalendarCreateResult:
 
 
 def _credentials_have_scopes(creds: Any, required_scopes: list[str]) -> bool:
-    """Return True if the credentials cover every required scope."""
+    """Return True if the credentials cover every required scope.
+
+    Google Calendar OAuth scopes have a hierarchy: the full ``.../auth/calendar``
+    scope (read/write) is a superset of every narrower calendar scope
+    (e.g. ``.../calendar.readonly``, ``.../calendar.events``). A token that
+    holds the full scope therefore satisfies any narrower requirement.
+    """
     current = set(getattr(creds, "scopes", []) or [])
+    if "https://www.googleapis.com/auth/calendar" in current:
+        current |= {
+            "https://www.googleapis.com/auth/calendar.readonly",
+            "https://www.googleapis.com/auth/calendar.events",
+            "https://www.googleapis.com/auth/calendar.events.readonly",
+            "https://www.googleapis.com/auth/calendar.settings.readonly",
+        }
     return all(scope in current for scope in required_scopes)
 
 
