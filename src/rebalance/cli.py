@@ -11,7 +11,9 @@ from rebalance.ingest.preflight import run_preflight
 from rebalance.ingest.registry import sync_registry
 from rebalance.ingest.config import (
     get_github_token,
+    get_github_token_with_source,
     set_github_token,
+    clear_github_token,
     get_vault_path,
     set_vault_path,
     get_config_path,
@@ -1315,14 +1317,24 @@ def config_set_github_token(
 
 @config_app.command("get-github-token")
 def config_get_github_token() -> None:
-    """Check if GitHub PAT is configured (returns masked result for security)."""
-    token = get_github_token()
+    """Check if GitHub token is available (config first, gh CLI fallback)."""
+    token, source = get_github_token_with_source()
     if token:
         masked = token[:10] + "..." + token[-4:] if len(token) > 14 else "***"
-        typer.echo(f"✓ GitHub token is configured: {masked}")
+        label = {"config": "stored PAT", "gh-cli": "via `gh auth token`"}.get(source, source or "unknown")
+        typer.echo(f"✓ GitHub token available: {masked}  (source: {label})")
     else:
-        typer.echo("✗ GitHub token not configured. Set it with:")
+        typer.echo("✗ No GitHub token available. Either:")
         typer.echo("  rebalance config set-github-token <PAT>")
+        typer.echo("  — or —")
+        typer.echo("  gh auth login   (then it'll be picked up automatically)")
+
+
+@config_app.command("clear-github-token")
+def config_clear_github_token() -> None:
+    """Remove stored PAT so the gh CLI fallback takes over (`gh auth token`)."""
+    clear_github_token()
+    typer.echo("✓ Stored PAT cleared. `get-github-token` will now fall back to gh CLI.")
 
 
 @config_app.command("set-vault")
