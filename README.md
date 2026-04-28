@@ -14,7 +14,7 @@ If you've ever opened your laptop in the morning and genuinely not known where t
 
 ## The problem
 
-Your work lives in three places that never talk to each other: your notes, your code repos, and your calendar. You context-switch constantly, lose track of which projects are getting too much attention (and which aren't getting enough), and spend the first 30 minutes of every day reconstructing what you were doing yesterday.
+Your work lives in multiple places that never talk to each other: your notes, your code repos, your recent git activity, your calendar, and the reminder systems wrapped around them. You context-switch constantly, lose track of which projects are getting too much attention (and which aren't getting enough), and spend the first 30 minutes of every day reconstructing what you were doing yesterday.
 
 AI assistants could help — but they can't see your Obsidian vault, your GitHub activity, or your Google Calendar. And sending all of that to a cloud LLM isn't an option for client work.
 
@@ -24,7 +24,7 @@ AI assistants could help — but they can't see your Obsidian vault, your GitHub
 
 ## What it does
 
-**rebalance OS** is a local-first morning briefing engine that ingests your Obsidian vault, GitHub activity, and calendar into a queryable SQLite database — then lets any MCP-capable host or agent (ChatGPT, Gemini, Claude, Copilot, Cursor, Continue, and others where MCP is supported) answer questions about your own work, flag over-investment in specific projects, and surface what actually needs your attention today.
+**rebalance OS** is a local-first work operating system that ingests your Obsidian vault, GitHub activity and artifacts, recent git history, and calendar into a queryable SQLite database — then lets any MCP-capable host or agent (ChatGPT, Gemini, Claude, Copilot, Cursor, Continue, and others where MCP is supported) answer questions about your own work, flag over-investment in specific projects, and move toward explicit weekly rebalance verdicts instead of vague retrieval.
 
 ---
 
@@ -37,12 +37,16 @@ Ask "What's my day look like?" and get today's meetings, yesterday's commit acti
 "Am I over-investing in client X?" surfaces commit velocity, PR activity, and note density per project. Flags when one repo is consuming >40% of your attention.
 
 **Knowledge retrieval**
-"What did I decide about the Project Alpha embedding pipeline?" Semantic search across your entire vault, ranked by relevance, answered by a local LLM.
+"What did I decide about the Project Alpha embedding pipeline?" Semantic search across your vault and synced GitHub corpus, ranked by relevance and answered from the local SQLite evidence layer.
 
 **Handoff prep**
 "Summarize everything I know about Project Y" pulls notes, recent commits, and open issues into a coherent brief — useful for client updates, team handoffs, or just getting back up to speed after a break.
 
-**Coming soon: Slack activity** (via Sleuth bolt app integration) — adds team communication context to the balance picture.
+**Weekly rebalance**
+"Where did my attention actually go this week, and what should change next week?" is the direction of travel: verdict-first summaries grounded in notes, calendar, git-pulse history, GitHub activity, and reminder signals.
+
+**Coming soon: reminder-driven follow-up**
+Sleuth reminder ingestion is live as structured data and is intended to become another attention signal alongside calendar and git history.
 
 ---
 
@@ -50,22 +54,30 @@ Ask "What's my day look like?" and get today's meetings, yesterday's commit acti
 
 ```
 Data sources
-  Google Calendar  ──┐
-  GitHub activity  ──┤──▶  scheduler (daily) ──▶ SQLite + sqlite-vec
-  Obsidian vault   ──┤      (launchd on macOS,   (chunks, embeddings,
-  Slack [planned]  ──┤       Task Scheduler on    github_activity,
-  Email [planned]  ──┘       Windows, cron on     calendar_events)
-                              Linux)
+  Google Calendar   ──┐
+  GitHub activity   ──┤
+  GitHub artifacts  ──┤
+  Git pulse history ──┤──▶  scheduler / on-demand sync ──▶ SQLite + sqlite-vec
+  Obsidian vault    ──┤      (launchd on macOS,           (vault chunks,
+  Sleuth reminders  ──┤       Task Scheduler on            github_activity,
+  Slack [planned]   ──┤       Windows, cron on Linux)      github_artifacts,
+  Email [planned]   ──┘                                     calendar_events,
+                                                              git-pulse reports,
+                                                              semantic_documents)
                                      │
                                      ▼
                            MCP server (Python)
                            rebalance tools:
                              ask
                              query_notes
+                             query_github_context
                              search_vault
                              github_balance
+                             github_release_readiness
+                             github_close_candidates
                              review_timesheet
                              classify_event
+                             sleuth_sync_reminders
                                      │
              ┌───────────────────────┼────────────────────────┐
              ▼                       ▼                        ▼
@@ -81,11 +93,11 @@ For layer roles, tool surface, server configuration, and host adapter setup (Cla
 
 ## Why Markdown files and local LLMs make this possible
 
-Obsidian stores everything as plain `.md` files. No proprietary database, no sync lock-in, no API needed — just a folder on your disk. That makes ingestion a simple recursive file scan: parse frontmatter, chunk by headings, extract tags and wikilinks, embed, and index. The entire vault becomes a queryable vector store in a single SQLite file.
+Obsidian stores everything as plain `.md` files. No proprietary database, no sync lock-in, no API needed — just a folder on your disk. That makes ingestion a simple recursive file scan: parse frontmatter, chunk by headings, extract tags and wikilinks, embed, and index. Recent work extends that same pattern beyond the vault: embeddable GitHub artifacts now flow into the same unified semantic document layer instead of living in a separate vector silo.
 
 Local LLMs — such as Qwen3 via Ollama or LM Studio-compatible models — close the loop. Your vault content can stay local and be queried without sending note content to a hosted LLM by default. GitHub and Google Calendar data are pulled from their APIs, then cached and queried locally. The model runs on-device (optimized for Apple Silicon via MLX), retrieves context from the local vector store, and answers in seconds.
 
-The result is an AI assistant that actually knows your work — because it's reading the same files you are.
+The result is an AI assistant that actually knows your work — because it's reading the same files and synced local history you are.
 
 ---
 
@@ -94,11 +106,13 @@ The result is an AI assistant that actually knows your work — because it's rea
 | Layer | Tool |
 |---|---|
 | Notes | Obsidian (plain `.md`) |
+| Local activity history | `git-pulse` sync repo + recap/report layer |
 | Vector DB | SQLite + `sqlite-vec` |
 | Embeddings | Qwen3-Embedding-0.6B via `mlx-embeddings` (Apple Silicon MLX) |
 | LLM synthesis | Qwen3-0.6B via `mlx-lm` (on-device, Layer 1) |
 | Calendar | Google Calendar API (direct client, OAuth2) |
 | GitHub | GitHub REST API + PAT |
+| Reminders | Sleuth Web API (structured sync) |
 | MCP server | Python `mcp` SDK (FastMCP, stdio) |
 | LLM clients | Any MCP host (Claude Code, Copilot, Cursor, Continue, Claude Desktop, and others) |
 
@@ -110,11 +124,14 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [x] Project registry + MCP onboarding tools
 - [x] GitHub activity scanner + 30-day A/B/C band classification
 - [x] GitHub artifact sync + local semantic query (issues, PRs, comments, reviews, commits)
+- [x] Unified semantic index across vault and GitHub (`semantic_documents`, `semantic_embeddings`)
 - [x] GitHub readiness inference from local repo signals (milestones, linked PRs, branches, releases)
 - [x] GitHub issue <-> PR close-candidate reconciliation with high/medium-confidence recommendations
 - [x] Obsidian vault ingester (parse, chunk, keywords, links)
 - [x] Qwen3 embedding pipeline (sqlite-vec, semantic search)
 - [x] Google Calendar integration (OAuth2, 1-year retention)
+- [x] Git-pulse local repo discovery, recap layer, health checks, and sync hardening
+- [x] Sleuth reminder sync (structured ingest)
 - [x] `ask` tool — multi-source natural language query with local LLM synthesis
 - [x] Temporal context (day-of-week, work/off/vacation awareness)
 - [x] Daily scheduler scripts (launchd plist, install helper)
@@ -122,20 +139,20 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [x] Configurable hours format (decimal or h:m) for calendar reports
 - [x] Agent review layer for calendar events (`review_timesheet`, `classify_event` MCP tools)
 - [x] DRY calendar helpers (shared datetime parsing, duration calc, connection setup)
-- [x] CI test suite (GitHub Actions, Python 3.12/3.13, 68 tests)
-- [ ] Morning briefing assembler
-- [ ] Project weight system (neglect score, momentum decay, avoidance ratio)
+- [x] CI test suite (GitHub Actions, Python 3.12/3.13)
+- [ ] Weekly rebalance note generation with verdicts, evidence, and next moves per project
+- [ ] Attention ledger contract (`project_targets`, `attention_events`, `attention_feedback`, rollups)
+- [ ] Narrower verdict-first MCP surface (`weekly_rebalance`, `project_attention`, unattributed review)
 - [ ] Email integration (Gmail API, starred/important threads only, forward-only)
-- [ ] Slack integration via Sleuth bolt app
-- [ ] GitHub readiness inference layer (deploy/review/release heuristics over the local corpus)
+- [ ] Slack integration beyond reminder/task signals
 - [ ] Email → project auto-correlation (alias map + co-occurrence)
 
 ## Getting Started
 
 ### Prerequisites
 
-- macOS with Apple Silicon (M1+) — required for mlx-embeddings
-- Python 3.12+
+- macOS with Apple Silicon (M1+)
+- Python 3.13 recommended for the local MLX embeddings stack
 - An Obsidian vault (local folder with `.md` files)
 - A GitHub Personal Access Token with `repo:read` scope ([create one here](https://github.com/settings/tokens))
 - Claude Code (CLI or VS Code extension)
@@ -145,8 +162,8 @@ The result is an AI assistant that actually knows your work — because it's rea
 ```bash
 git clone https://github.com/Hypercart-Dev-Tools/rebalance-OS.git
 cd rebalance-OS
-python3 -m venv .venv
-.venv/bin/pip install -e ".[embeddings]"
+/opt/homebrew/bin/python3.13 -m venv .venv
+.venv/bin/pip install -e ".[embeddings,calendar]"
 ```
 
 ### Step 2 — Ingest your vault
@@ -155,7 +172,7 @@ python3 -m venv .venv
 # Parse all .md files, chunk by headings, extract keywords and links
 .venv/bin/rebalance ingest notes --vault /path/to/your/vault --database rebalance.db
 
-# Generate semantic embeddings (downloads Qwen3-Embedding-0.6B on first run, ~1min)
+# Generate vault embeddings
 .venv/bin/rebalance ingest embed --database rebalance.db
 ```
 
@@ -173,11 +190,21 @@ python3 -m venv .venv
   --repo owner/repo \
   --database rebalance.db
 
-# Embed the local GitHub corpus for semantic retrieval
-.venv/bin/rebalance github-embed --database rebalance.db
+# Backfill the unified semantic layer from vault + GitHub
+.venv/bin/rebalance semantic-backfill --source vault --source github --database rebalance.db
 
-# Query the local GitHub corpus without re-reading GitHub live
-.venv/bin/rebalance github-query "What is close to deploy?" --database rebalance.db
+# Embed the unified semantic layer (downloads Qwen3-Embedding-0.6B on first run)
+.venv/bin/rebalance semantic-embed --source vault --source github --database rebalance.db
+
+# Query the unified semantic corpus without re-reading GitHub live
+.venv/bin/rebalance semantic-query "What is close to deploy?" --source vault --source github --database rebalance.db
+```
+
+You can still use the source-specific commands:
+
+```bash
+.venv/bin/rebalance github-embed --database rebalance.db
+.venv/bin/rebalance github-query "What changed in release readiness?" --database rebalance.db
 ```
 
 ### Step 4 — Connect Google Calendar (optional)
@@ -187,13 +214,13 @@ OAuth Desktop app credentials are already bundled in the repo. You do **not** ne
 **4a. Install with calendar support**
 
 ```bash
-pip install -e ".[calendar]"
+.venv/bin/pip install -e ".[calendar]"
 ```
 
 **4b. Authorize this device**
 
 ```bash
-python scripts/setup_calendar_oauth.py --test
+.venv/bin/python scripts/setup_calendar_oauth.py --test
 ```
 
 A browser window opens — log in with your Google account and click **Allow**. The script prints your available calendars and their IDs. Your token is saved locally at `~/.config/gcalcli/oauth` (never in the repo).
@@ -201,7 +228,7 @@ A browser window opens — log in with your Google account and click **Allow**. 
 If you want MCP agents to create events, re-run auth with write access:
 
 ```bash
-python scripts/setup_calendar_oauth.py --write-access --test
+.venv/bin/python scripts/setup_calendar_oauth.py --write-access --test
 ```
 
 > **Joining a team?** If a teammate sent you a pre-filled `calendar_config.json`, place it at `temp/calendar_config.json` and skip to step 4d.
