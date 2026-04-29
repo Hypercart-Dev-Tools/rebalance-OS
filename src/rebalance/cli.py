@@ -10,14 +10,19 @@ import typer
 from rebalance.ingest.preflight import run_preflight
 from rebalance.ingest.registry import sync_registry
 from rebalance.ingest.config import (
+    add_github_ignored_repo,
+    clear_github_token,
     get_github_token,
     get_github_token_with_source,
+    get_github_ignored_repos,
     set_github_token,
-    clear_github_token,
     get_vault_path,
     set_vault_path,
     get_config_path,
+    normalize_github_repo_name,
+    remove_github_ignored_repo,
 )
+from rebalance.ingest.audit import append_audit_entry
 
 app = typer.Typer(help="rebalance CLI")
 ingest_app = typer.Typer(help="Ingest and project registry workflows")
@@ -197,8 +202,14 @@ def _append_calendar_event_log(record: dict[str, object]) -> None:
 
 def _resolve_github_repos(database_path: Path, repos: list[str]) -> list[str]:
     """Use explicit --repo values or fall back to active project registry repos."""
+    ignored = set(get_github_ignored_repos())
     normalized = [repo.strip() for repo in repos if repo.strip()]
     if normalized:
+        explicit = [normalize_github_repo_name(repo) for repo in normalized]
+        ignored_explicit = [repo for repo in explicit if repo in ignored]
+        if ignored_explicit:
+            typer.echo(f"GitHub repo is ignored: {', '.join(ignored_explicit)}")
+            raise typer.Exit(code=2)
         return sorted(set(normalized))
 
     from rebalance.ingest.registry import get_projects
@@ -208,13 +219,24 @@ def _resolve_github_repos(database_path: Path, repos: list[str]) -> list[str]:
         for project in get_projects(database_path, status="active"):
             discovered.extend(project.get("repos") or [])
 
-    unique = sorted({repo.strip() for repo in discovered if repo and repo.strip()})
+    unique = sorted(
+        {
+            repo.strip()
+            for repo in discovered
+            if repo and repo.strip() and normalize_github_repo_name(repo) not in ignored
+        }
+    )
     if unique:
         return unique
 
     raise typer.BadParameter(
-        "No GitHub repos provided. Pass --repo owner/name or sync the project registry first."
+        "No eligible GitHub repos provided. Pass --repo owner/name or sync the project registry first."
     )
+
+
+def _format_purge_counts(row_counts: dict[str, int]) -> str:
+    parts = [f"{name}={count}" for name, count in row_counts.items() if count]
+    return ", ".join(parts) if parts else "no matching rows"
 
 
 def _normalize_semantic_sources_option(values: list[str]) -> list[str]:
@@ -352,6 +374,54 @@ def ingest_sync(
     typer.echo(summary)
 
 
+@ingest_app.command("infer-project-registry")
+def ingest_infer_project_registry(
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    calendar_days_back: int = typer.Option(90, help="How many calendar days back to use for inference"),
+    calendar_days_forward: int = typer.Option(14, help="How many calendar days forward to include for meeting signals"),
+    dry_run: bool = typer.Option(False, help="Preview inferred project rows without writing to project_registry"),
+) -> None:
+    """Infer project_registry rows from the current GitHub and Calendar activity in SQLite."""
+    from rebalance.ingest.calendar_config import CalendarConfig
+    from rebalance.ingest.project_inference import infer_project_registry, sync_inferred_project_registry
+
+    db_path = database.expanduser().resolve()
+    config = CalendarConfig.load()
+
+    if dry_run:
+        projects, summary = infer_project_registry(
+            db_path,
+            calendar_config=config,
+            calendar_days_back=calendar_days_back,
+            calendar_days_forward=calendar_days_forward,
+        )
+        typer.echo(
+            f"Dry run: inferred={summary.inferred_count}, github_backed={summary.github_backed_count}, "
+            f"calendar_only={summary.calendar_only_count}"
+        )
+        for project in projects:
+            repo_count = len(project["repos"])
+            typer.echo(
+                f"  {project['name']} [{project['status']}] repos={repo_count} "
+                f"tags={','.join(project['tags'])}"
+            )
+        return
+
+    summary = sync_inferred_project_registry(
+        db_path,
+        calendar_config=config,
+        calendar_days_back=calendar_days_back,
+        calendar_days_forward=calendar_days_forward,
+    )
+    typer.echo(
+        f"Inferred project registry: inferred={summary.inferred_count}, updated={summary.updated_count}, "
+        f"github_backed={summary.github_backed_count}, calendar_only={summary.calendar_only_count}, "
+        f"deleted_stale={summary.deleted_stale_inferred_count}"
+    )
+    for name in summary.project_names:
+        typer.echo(f"  {name}")
+
+
 @app.command("github-scan")
 def github_scan(
     token: str = typer.Option(..., envvar="GITHUB_TOKEN", help="GitHub Personal Access Token"),
@@ -361,15 +431,20 @@ def github_scan(
     ),
 ) -> None:
     """Fetch GitHub activity and persist to database for use by github_balance MCP tool."""
-    from rebalance.ingest.github_scan import scan_github, upsert_github_activity
+    from rebalance.ingest.github_scan import (
+        filter_ignored_repo_activity,
+        scan_github,
+        upsert_github_activity,
+    )
 
     db_path = database.expanduser().resolve()
     typer.echo(f"Scanning GitHub activity for last {days} days...")
     result = scan_github(token=token, days=days)
+    skipped_repos = filter_ignored_repo_activity(result, get_github_ignored_repos())
     upsert_github_activity(db_path, result)
     typer.echo(
         f"Done: login={result.login}, events={result.total_events}, "
-        f"repos={len(result.repo_activity)}, stored to {db_path}"
+        f"repos={len(result.repo_activity)}, skipped={len(skipped_repos)}, stored to {db_path}"
     )
 
 
@@ -390,13 +465,13 @@ def github_sync_artifacts(
     from rebalance.ingest.github_knowledge import sync_github_repo
 
     db_path = database.expanduser().resolve()
+    target_repos = _resolve_github_repos(db_path, repos or [])
     resolved_token = token.strip() or (get_github_token() or "")
     if not resolved_token:
         raise typer.BadParameter(
             "GitHub token not configured. Use --token, GITHUB_TOKEN, or `rebalance config set-github-token`."
         )
 
-    target_repos = _resolve_github_repos(db_path, repos or [])
     for repo in target_repos:
         typer.echo(f"Syncing GitHub artifacts for {repo} ({days} days)...")
         result = sync_github_repo(
@@ -1257,6 +1332,90 @@ def calendar_weekly_report_cmd(
         typer.echo(report)
 
 
+@app.command("dashboard-render")
+def dashboard_render_cmd(
+    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    date_str: str = typer.Option(None, "--date", help="Date anchoring the dashboard window (YYYY-MM-DD, default: today)"),
+    since_days: int = typer.Option(14, "--since-days", min=1, help="Lookback window for recent signals"),
+    vault: Path = typer.Option(None, "--vault", envvar="REBALANCE_VAULT", help="Obsidian vault path for dashboard note write-back"),
+    note_path: str = typer.Option("Dashboards/rebalanceOS Dashboard.md", "--note-path", help="Vault-relative dashboard note path"),
+    output: Path = typer.Option(None, "--output", "-o", help="Write dashboard markdown to an explicit path"),
+    gemini_synthesis: bool = typer.Option(False, "--gemini-synthesis", help="Add a Gemini-written operator summary"),
+    cleanup: bool = typer.Option(False, "--cleanup", help="Tighten the Gemini-written summary to reduce redundancy"),
+    gemini_model: str = typer.Option("gemini-2.5-flash", "--gemini-model", help="Gemini model for optional synthesis"),
+    reingest_note: bool = typer.Option(False, "--reingest-note/--no-reingest-note", help="When writing into the vault, re-ingest and embed the updated note"),
+    changelog_path: Path = typer.Option(Path("CHANGELOG.md"), "--changelog-path", help="Path to the changelog source"),
+    goals_path: Path = typer.Option(Path("4X4.md"), "--goals-path", help="Path to the 4X4 source"),
+) -> None:
+    """Generate the Obsidian dashboard note from recent local signals."""
+    from datetime import date
+    from rebalance.ingest.dashboard import build_dashboard_note_content, write_dashboard_note
+    from rebalance.ingest.calendar_config import CalendarConfig
+
+    db_path = database.expanduser().resolve()
+    config = CalendarConfig.load()
+
+    if date_str:
+        target_date = date.fromisoformat(date_str)
+    else:
+        target_date = date.today()
+
+    resolved_output: Path | None = output.expanduser().resolve() if output else None
+    resolved_vault: Path | None = None
+    if vault is not None:
+        resolved_vault = vault.expanduser().resolve()
+    elif not resolved_output:
+        configured_vault = get_vault_path()
+        if configured_vault:
+            resolved_vault = Path(configured_vault).expanduser().resolve()
+
+    if resolved_output is None:
+        if resolved_vault is None:
+            raise typer.BadParameter("--vault, REBALANCE_VAULT, configured vault path, or --output is required.")
+        if not resolved_vault.exists() or not resolved_vault.is_dir():
+            raise typer.BadParameter(f"Vault path does not exist or is not a directory: {resolved_vault}")
+        resolved_output = (resolved_vault / note_path).resolve()
+
+    if reingest_note and resolved_vault is None:
+        raise typer.BadParameter("--reingest-note requires a vault path.")
+
+    try:
+        markdown = build_dashboard_note_content(
+            db_path,
+            target_date=target_date,
+            since_days=since_days,
+            config=config,
+            changelog_path=changelog_path.expanduser().resolve(),
+            goals_path=goals_path.expanduser().resolve(),
+            gemini_synthesis=gemini_synthesis,
+            gemini_model=gemini_model,
+            cleanup=cleanup,
+        )
+    except RuntimeError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+
+    note_file = write_dashboard_note(resolved_output, markdown)
+    typer.echo(f"Dashboard written to {note_file}")
+
+    if reingest_note:
+        from rebalance.ingest.note_ingester import ingest_vault
+        from rebalance.ingest.embedder import embed_chunks
+
+        ingest_result = ingest_vault(vault_path=resolved_vault, database_path=db_path)
+        typer.echo(
+            "Vault ingest complete: "
+            f"new={ingest_result.new_files}, updated={ingest_result.updated_files}, "
+            f"unchanged={ingest_result.unchanged_files}, deleted={ingest_result.deleted_files} "
+            f"({ingest_result.elapsed_seconds}s)"
+        )
+        embed_result = embed_chunks(database_path=db_path)
+        typer.echo(
+            "Embed complete: "
+            f"embedded={embed_result.embedded_chunks}, skipped={embed_result.skipped_unchanged}, "
+            f"total_chunks={embed_result.total_chunks} ({embed_result.elapsed_seconds}s)"
+        )
+
+
 @app.command("sleuth-sync")
 def sleuth_sync_cmd(
     active_only: bool = typer.Option(
@@ -1303,6 +1462,93 @@ def version() -> None:
     from rebalance import __version__
 
     typer.echo(__version__)
+
+
+@config_app.command("add-github-ignored-repo")
+def config_add_github_ignored_repo(
+    repo: str = typer.Argument(..., help="GitHub repo in owner/name form"),
+    purge: bool = typer.Option(False, help="Purge existing local GitHub rows for this repo"),
+    dry_run: bool = typer.Option(False, help="Preview purge counts without deleting"),
+    confirm: bool = typer.Option(False, help="Confirm destructive purge execution"),
+    database: Path = typer.Option(
+        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path for purge operations"
+    ),
+) -> None:
+    """Add one repo to the local GitHub ingest ignore list, with optional purge."""
+    from rebalance.ingest.github_knowledge import purge_github_repo_data
+
+    normalized_repo = normalize_github_repo_name(repo)
+    added = add_github_ignored_repo(normalized_repo)
+    if added:
+        typer.echo(f"✓ Added ignored GitHub repo: {normalized_repo}")
+    else:
+        typer.echo(f"✓ GitHub repo already ignored: {normalized_repo}")
+
+    if not purge and not dry_run:
+        return
+
+    db_path = database.expanduser().resolve()
+    if dry_run:
+        purge_result = purge_github_repo_data(db_path, normalized_repo, dry_run=True)
+        append_audit_entry(
+            "github_repo_purge",
+            normalized_repo,
+            dry_run=True,
+            confirmed=False,
+            database_path=str(db_path),
+            row_counts=purge_result.row_counts,
+            total_rows=purge_result.total_rows,
+            deleted_rows=purge_result.deleted_rows,
+        )
+        typer.echo(
+            f"Dry run: {normalized_repo} would purge {purge_result.total_rows} rows "
+            f"({_format_purge_counts(purge_result.row_counts)})"
+        )
+        return
+
+    if not confirm:
+        typer.echo("Use --confirm with --purge to execute the destructive delete.")
+        raise typer.Exit(code=2)
+
+    purge_result = purge_github_repo_data(db_path, normalized_repo, dry_run=False)
+    append_audit_entry(
+        "github_repo_purge",
+        normalized_repo,
+        dry_run=False,
+        confirmed=True,
+        database_path=str(db_path),
+        row_counts=purge_result.row_counts,
+        total_rows=purge_result.total_rows,
+        deleted_rows=purge_result.deleted_rows,
+    )
+    typer.echo(
+        f"Purged {purge_result.deleted_rows} rows for {normalized_repo} "
+        f"({_format_purge_counts(purge_result.row_counts)})"
+    )
+
+
+@config_app.command("remove-github-ignored-repo")
+def config_remove_github_ignored_repo(
+    repo: str = typer.Argument(..., help="GitHub repo in owner/name form"),
+) -> None:
+    """Remove one repo from the local GitHub ingest ignore list."""
+    normalized_repo = normalize_github_repo_name(repo)
+    removed = remove_github_ignored_repo(normalized_repo)
+    if removed:
+        typer.echo(f"✓ Removed ignored GitHub repo: {normalized_repo}")
+    else:
+        typer.echo(f"✓ GitHub repo was not ignored: {normalized_repo}")
+
+
+@config_app.command("list-github-ignored-repos")
+def config_list_github_ignored_repos() -> None:
+    """List the operator-local GitHub repos excluded from ingest."""
+    repos = get_github_ignored_repos()
+    if not repos:
+        typer.echo("No ignored GitHub repos configured.")
+        return
+    for repo in repos:
+        typer.echo(repo)
 
 
 @config_app.command("set-github-token")

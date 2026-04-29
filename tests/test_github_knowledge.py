@@ -4,12 +4,16 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rebalance.ingest import config as config_module
 from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_semantic_schema
 from rebalance.ingest.github_knowledge import (
+    purge_github_repo_data,
     embed_github_documents,
     query_github_documents,
     sync_github_repo,
 )
+from rebalance.ingest.config import add_github_ignored_repo
+from rebalance.ingest.embedder import _vec_to_bytes
 
 
 def _fake_github_api(url: str) -> object:
@@ -244,6 +248,15 @@ def _fake_embed_texts(texts: list[str], _model_name: str) -> list[list[float]]:
 
 
 class GitHubKnowledgeTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._orig_path = config_module.CONFIG_PATH
+        config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+
+    def tearDown(self) -> None:
+        config_module.CONFIG_PATH = self._orig_path
+
     def test_sync_persists_github_artifacts_and_documents(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "rebalance.db"
@@ -317,6 +330,93 @@ class GitHubKnowledgeTests(unittest.TestCase):
                     "SELECT COUNT(*) FROM semantic_documents WHERE source_type = 'github'"
                 ).fetchone()[0]
                 self.assertGreaterEqual(semantic_doc_count, 6)
+
+    def test_sync_rejects_ignored_repo(self) -> None:
+        add_github_ignored_repo("dlt-hub/dlt")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with self.assertRaisesRegex(ValueError, "GitHub repo is ignored"):
+                sync_github_repo(
+                    database_path=db_path,
+                    repo_full_name="DLT-HUB/dlt",
+                    token="ghp_test",
+                    since_days=30,
+                    api_get_json=_fake_github_api,
+                )
+
+    def test_purge_removes_repo_github_and_semantic_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                ensure_github_schema(conn)
+                ensure_semantic_schema(conn)
+                conn.execute(
+                    """
+                    INSERT INTO github_documents
+                        (repo_full_name, source_type, source_number, doc_type, source_key,
+                         title, body, content_hash, embedded_hash, updated_at, fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "dlt-hub/dlt",
+                        "issue",
+                        101,
+                        "item_body",
+                        "dlt-hub/dlt:issue:101:item",
+                        "Title",
+                        "Body",
+                        "hash",
+                        None,
+                        "2026-04-28T00:00:00Z",
+                        "2026-04-28T00:00:00Z",
+                    ),
+                )
+                doc_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute(
+                    """
+                    INSERT INTO semantic_documents
+                        (source_type, source_table, source_pk, doc_kind, title, body, content_hash,
+                         embedded_hash, embedded_model_version, embedded_at, metadata_json,
+                         created_at, updated_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "github",
+                        "github_documents",
+                        "dlt-hub/dlt:issue:101:item",
+                        "item_body",
+                        "Title",
+                        "Body",
+                        "hash",
+                        "hash",
+                        "Qwen/Qwen3-Embedding-0.6B|1024",
+                        "2026-04-28T00:00:00Z",
+                        "{}",
+                        "2026-04-28T00:00:00Z",
+                        "2026-04-28T00:00:00Z",
+                    ),
+                )
+                semantic_doc_id = int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+                conn.execute(
+                    "INSERT INTO github_embeddings (doc_id, embedding) VALUES (?, ?)",
+                    (doc_id, _vec_to_bytes([0.0] * 1024)),
+                )
+                conn.execute(
+                    "INSERT INTO semantic_embeddings (rowid, embedding) VALUES (?, ?)",
+                    (semantic_doc_id, _vec_to_bytes([0.0] * 1024)),
+                )
+                conn.commit()
+
+            result = purge_github_repo_data(db_path, "DLT-HUB/dlt")
+            self.assertGreaterEqual(result.deleted_rows, 4)
+
+            with db_connection(db_path, ensure_github_schema) as conn:
+                github_docs = conn.execute("SELECT COUNT(*) FROM github_documents").fetchone()[0]
+                semantic_docs = conn.execute("SELECT COUNT(*) FROM semantic_documents").fetchone()[0]
+                semantic_rows = conn.execute("SELECT COUNT(*) FROM semantic_embeddings_rowids").fetchone()[0]
+            self.assertEqual(github_docs, 0)
+            self.assertEqual(semantic_docs, 0)
+            self.assertEqual(semantic_rows, 0)
 
     def test_embed_and_query_local_github_corpus(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -8,6 +8,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from rebalance.ingest import config as config_module
+from rebalance.ingest.config import add_github_ignored_repo
 from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_schema, ensure_semantic_schema
 from rebalance.ingest.semantic_index import backfill_semantic_documents, embed_pending, query
 
@@ -34,6 +36,15 @@ def _fake_embed_texts(texts: list[str], _model_name: str) -> list[list[float]]:
 
 
 class SemanticIndexTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._orig_path = config_module.CONFIG_PATH
+        config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+
+    def tearDown(self) -> None:
+        config_module.CONFIG_PATH = self._orig_path
+
     def test_backfill_embed_and_query_across_vault_and_github(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "rebalance.db"
@@ -252,6 +263,64 @@ class SemanticIndexTests(unittest.TestCase):
                 embed_texts=_fake_embed_texts,
             )
             self.assertEqual(third_embed.embedded_docs, 1)
+
+    def test_github_backfill_skips_ignored_repos(self) -> None:
+        add_github_ignored_repo("dlt-hub/dlt")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                ensure_github_schema(conn)
+                conn.execute(
+                    """
+                    INSERT INTO github_items
+                        (repo_full_name, item_type, number, title, body, state, labels_json,
+                         milestone_title, review_decision, check_status, html_url, fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "dlt-hub/dlt",
+                        "issue",
+                        1,
+                        "Ignored",
+                        "Ignored body",
+                        "open",
+                        "[]",
+                        "",
+                        "",
+                        "",
+                        "https://github.example/issues/1",
+                        "2026-04-28T00:00:00Z",
+                    ),
+                )
+                conn.execute(
+                    """
+                    INSERT INTO github_documents
+                        (repo_full_name, source_type, source_number, doc_type, source_key,
+                         title, body, content_hash, embedded_hash, updated_at, fetched_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        "dlt-hub/dlt",
+                        "issue",
+                        1,
+                        "item_body",
+                        "dlt-hub/dlt:issue:1:item",
+                        "Ignored",
+                        "Ignored body",
+                        _hash_text("Ignored body"),
+                        None,
+                        "2026-04-28T00:00:00Z",
+                        "2026-04-28T00:00:00Z",
+                    ),
+                )
+                conn.commit()
+
+            result = backfill_semantic_documents(db_path, source_types=["github"])
+            self.assertEqual(result.total_documents, 0)
+
+            with db_connection(db_path, ensure_semantic_schema) as conn:
+                doc_count = conn.execute("SELECT COUNT(*) FROM semantic_documents").fetchone()[0]
+            self.assertEqual(doc_count, 0)
 
 
 if __name__ == "__main__":

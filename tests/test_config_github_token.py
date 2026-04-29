@@ -9,10 +9,15 @@ from unittest.mock import patch
 
 from rebalance.ingest import config as config_module
 from rebalance.ingest.config import (
+    add_github_ignored_repo,
     clear_github_token,
     get_github_token,
     get_github_token_with_source,
+    get_github_ignored_repos,
+    is_github_repo_ignored,
+    remove_github_ignored_repo,
     set_github_token,
+    set_github_ignored_repos,
 )
 
 
@@ -97,6 +102,28 @@ class GhCliFallbackErrorHandlingTests(unittest.TestCase):
         completed = subprocess.CompletedProcess(args=["gh"], returncode=0, stdout="ghu_abc123\n", stderr="")
         with patch.object(config_module.subprocess, "run", return_value=completed):
             self.assertEqual(config_module._try_gh_cli_token(), "ghu_abc123")
+
+
+class GitHubIgnoredReposTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._orig_path = config_module.CONFIG_PATH
+        config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+
+    def tearDown(self) -> None:
+        config_module.CONFIG_PATH = self._orig_path
+
+    def test_round_trip_normalizes_dedupes_and_sorts(self) -> None:
+        set_github_ignored_repos(["DLT-HUB/dlt", "example/repo", "dlt-hub/dlt"])
+        self.assertEqual(get_github_ignored_repos(), ["dlt-hub/dlt", "example/repo"])
+
+    def test_add_remove_and_membership_are_case_insensitive(self) -> None:
+        self.assertTrue(add_github_ignored_repo("DLT-HUB/dlt"))
+        self.assertFalse(add_github_ignored_repo("dlt-hub/dlt"))
+        self.assertTrue(is_github_repo_ignored("dlt-hub/DLT"))
+        self.assertTrue(remove_github_ignored_repo("DLT-HUB/dlt"))
+        self.assertFalse(is_github_repo_ignored("dlt-hub/dlt"))
 
 
 if __name__ == "__main__":

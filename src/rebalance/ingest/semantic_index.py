@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
+from rebalance.ingest.config import get_github_ignored_repos, normalize_github_repo_name
 from rebalance.ingest.db import (
     db_connection,
     ensure_github_schema,
@@ -276,13 +277,23 @@ def sync_vault_documents(conn: Any) -> dict[str, int]:
 def sync_github_documents(conn: Any, *, repo_full_name: str = "") -> dict[str, int]:
     """Backfill semantic documents from ``github_documents``."""
     ensure_semantic_schema(conn)
+    ignored_repos = set(get_github_ignored_repos())
+    normalized_repo = normalize_github_repo_name(repo_full_name) if repo_full_name.strip() else ""
+    if normalized_repo and normalized_repo in ignored_repos:
+        return {"total": 0, "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0}
+
     params: tuple[Any, ...]
     where_sql = ""
-    if repo_full_name.strip():
-        where_sql = "WHERE gd.repo_full_name = ?"
-        params = (repo_full_name.strip(),)
+    if normalized_repo:
+        where_sql = "WHERE LOWER(gd.repo_full_name) = ?"
+        params = (normalized_repo,)
     else:
-        params = ()
+        ignored_placeholders = ", ".join("?" for _ in ignored_repos)
+        if ignored_placeholders:
+            where_sql = f"WHERE LOWER(gd.repo_full_name) NOT IN ({ignored_placeholders})"
+            params = tuple(sorted(ignored_repos))
+        else:
+            params = ()
 
     rows = conn.execute(
         f"""
@@ -349,11 +360,12 @@ def sync_github_documents(conn: Any, *, repo_full_name: str = "") -> dict[str, i
         else:
             unchanged += 1
 
+    explicit_prefix = f"{repo_full_name.strip()}:" if repo_full_name.strip() else ""
     deleted = _delete_missing_docs(
         conn,
         source_type="github",
         seen_source_pks=seen_source_pks,
-        source_pk_prefix=f"{repo_full_name.strip()}:" if repo_full_name.strip() else "",
+        source_pk_prefix=explicit_prefix,
     )
     return {
         "total": len(rows),

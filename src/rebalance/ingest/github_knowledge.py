@@ -22,6 +22,7 @@ from typing import Any, Callable
 from urllib.parse import urlencode
 import re
 
+from rebalance.ingest.config import get_github_ignored_repos, normalize_github_repo_name
 from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_semantic_schema
 from rebalance.ingest.embedder import (
     DEFAULT_MODEL as DEFAULT_EMBED_MODEL,
@@ -66,6 +67,15 @@ class GitHubEmbedResult:
     model_name: str
     embedding_dim: int
     elapsed_seconds: float
+
+
+@dataclass
+class GitHubRepoPurgeResult:
+    repo_full_name: str
+    dry_run: bool
+    row_counts: dict[str, int]
+    total_rows: int
+    deleted_rows: int
 
 
 def _github_headers(token: str) -> dict[str, str]:
@@ -293,6 +303,111 @@ def _insert_document(
     return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
 
+def purge_github_repo_data(
+    database_path: Path,
+    repo_full_name: str,
+    *,
+    dry_run: bool = False,
+) -> GitHubRepoPurgeResult:
+    """Delete one repo's GitHub ingest footprint and related semantic rows."""
+    normalized_repo = normalize_github_repo_name(repo_full_name)
+    table_names = [
+        "github_activity",
+        "github_branches",
+        "github_labels",
+        "github_milestones",
+        "github_releases",
+        "github_items",
+        "github_comments",
+        "github_commits",
+        "github_check_runs",
+        "github_links",
+        "github_documents",
+        "github_repo_meta",
+    ]
+
+    with db_connection(database_path) as conn:
+        ensure_github_schema(conn)
+        ensure_semantic_schema(conn)
+
+        row_counts: dict[str, int] = {}
+        for table_name in table_names:
+            row_counts[table_name] = conn.execute(
+                f"SELECT COUNT(*) FROM {table_name} WHERE LOWER(repo_full_name) = ?",
+                (normalized_repo,),
+            ).fetchone()[0]
+
+        github_doc_ids = [
+            int(row["id"])
+            for row in conn.execute(
+                """
+                SELECT id
+                FROM github_documents
+                WHERE LOWER(repo_full_name) = ?
+                """,
+                (normalized_repo,),
+            ).fetchall()
+        ]
+        if github_doc_ids:
+            placeholders = ", ".join("?" for _ in github_doc_ids)
+            row_counts["github_embeddings"] = conn.execute(
+                f"SELECT COUNT(*) FROM github_embeddings WHERE doc_id IN ({placeholders})",
+                github_doc_ids,
+            ).fetchone()[0]
+        else:
+            row_counts["github_embeddings"] = 0
+
+        semantic_doc_ids = [
+            int(row["id"])
+            for row in conn.execute(
+                """
+                SELECT sd.id
+                FROM semantic_documents sd
+                JOIN github_documents gd ON gd.source_key = sd.source_pk
+                WHERE sd.source_type = 'github'
+                  AND LOWER(gd.repo_full_name) = ?
+                """,
+                (normalized_repo,),
+            ).fetchall()
+        ]
+        row_counts["semantic_documents"] = len(semantic_doc_ids)
+        if semantic_doc_ids:
+            placeholders = ", ".join("?" for _ in semantic_doc_ids)
+            row_counts["semantic_embeddings"] = conn.execute(
+                f"SELECT COUNT(*) FROM semantic_embeddings WHERE rowid IN ({placeholders})",
+                semantic_doc_ids,
+            ).fetchone()[0]
+        else:
+            row_counts["semantic_embeddings"] = 0
+
+        total_rows = sum(row_counts.values())
+        if dry_run:
+            return GitHubRepoPurgeResult(
+                repo_full_name=normalized_repo,
+                dry_run=True,
+                row_counts=row_counts,
+                total_rows=total_rows,
+                deleted_rows=0,
+            )
+
+        if semantic_doc_ids:
+            conn.executemany("DELETE FROM semantic_embeddings WHERE rowid = ?", [(doc_id,) for doc_id in semantic_doc_ids])
+            conn.executemany("DELETE FROM semantic_documents WHERE id = ?", [(doc_id,) for doc_id in semantic_doc_ids])
+        if github_doc_ids:
+            conn.executemany("DELETE FROM github_embeddings WHERE doc_id = ?", [(doc_id,) for doc_id in github_doc_ids])
+        for table_name in table_names:
+            conn.execute(f"DELETE FROM {table_name} WHERE LOWER(repo_full_name) = ?", (normalized_repo,))
+        conn.commit()
+
+    return GitHubRepoPurgeResult(
+        repo_full_name=normalized_repo,
+        dry_run=False,
+        row_counts=row_counts,
+        total_rows=total_rows,
+        deleted_rows=total_rows,
+    )
+
+
 def sync_github_repo(
     database_path: Path,
     repo_full_name: str,
@@ -301,6 +416,10 @@ def sync_github_repo(
     since_days: int = DEFAULT_SYNC_DAYS,
     api_get_json: JsonFetcher | None = None,
 ) -> GitHubKnowledgeSyncResult:
+    normalized_repo = normalize_github_repo_name(repo_full_name)
+    if normalized_repo in set(get_github_ignored_repos()):
+        raise ValueError(f"GitHub repo is ignored: {normalized_repo}")
+
     start = time.monotonic()
     fetched_at = datetime.now(timezone.utc).isoformat()
     cutoff = _cutoff_iso(since_days)

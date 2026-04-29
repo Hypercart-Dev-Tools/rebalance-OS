@@ -1,5 +1,44 @@
 # Changelog
 
+## [0.22.0] - 2026-04-28
+
+### Added
+
+- A new dashboard rendering command that synthesizes one Obsidian-ready operating note from recent local project, calendar, and GitHub signals.
+- Structured dashboard output that pulls recent release highlights and current weekly goals into the same generated note so the operating surface stays anchored in recent shipped work and current intent.
+- Focused tests covering dashboard note write-back plus the optional Gemini summary path.
+
+### Changed
+
+- Dashboard generation now supports an optional Gemini narrative layer for the operator summary while keeping project verdicts and evidence deterministic from local data.
+- The dashboard flow now supports an optional cleanup mode that tightens the Gemini-written summary without changing the underlying structured evidence.
+
+## [0.21.0] - 2026-04-28
+
+### Added
+
+- A new inferred project-registry pipeline that builds `project_registry` rows from existing GitHub and Calendar activity already stored in local SQLite, instead of requiring a hand-written registry to exist first.
+- A `rebalance ingest infer-project-registry` command with a dry-run mode so inferred project rows can be previewed before they are written into the canonical SQLite registry.
+- Focused tests covering repo-plus-calendar project merging, calendar-only project inference, ignored-repo exclusion, and stale inferred-row cleanup on resync.
+
+### Changed
+
+- Organization-style owners such as `NeochromeTeam` and `BinoidCBD` now collapse into cleaner umbrella project names when their repos are inferred from GitHub activity.
+- Project inference now ignores repos with zero activity in the latest GitHub scan and filters out several recurring non-project calendar labels, producing a more usable first-pass registry.
+
+## [0.20.0] - 2026-04-28
+
+### Added
+
+- A first-class local GitHub ingest ignore list stored in gitignored operator config, with CLI commands to add, remove, and list exact skipped repos.
+- A destructive-but-audited GitHub repo purge path that can preview row counts with `--dry-run`, requires `--confirm` for execution, and records purge activity in the local audit log.
+- Targeted tests covering ignored-repo config normalization, CLI management flows, GitHub scan filtering, artifact-sync rejection, purge cleanup, and semantic backfill exclusion.
+
+### Changed
+
+- GitHub activity scans now filter ignored repos before persistence and report how many repos were skipped.
+- GitHub artifact sync and unified GitHub semantic backfill now enforce the same ignored-repo contract so skipped repos cannot be reintroduced through later ingest runs.
+
 ## [0.19.0] - 2026-04-24
 
 ### Added

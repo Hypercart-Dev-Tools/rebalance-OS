@@ -23,6 +23,8 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
+from rebalance.ingest.config import normalize_github_repo_name
+
 GITHUB_API = "https://api.github.com"
 MAX_EVENT_PAGES = 3  # Hard limit documented by GitHub
 
@@ -363,6 +365,26 @@ def upsert_github_activity(database_path: Path, result: GitHubScanResult) -> Non
                 ),
             )
         conn.commit()
+
+
+def filter_ignored_repo_activity(result: GitHubScanResult, ignored_repos: list[str]) -> list[str]:
+    """Remove ignored repos from a scan result in place and return the skipped set."""
+    ignored = {normalize_github_repo_name(repo) for repo in ignored_repos}
+    if not ignored:
+        return []
+
+    kept: dict[str, RepoActivity] = {}
+    skipped: list[str] = []
+    for repo_full_name, activity in result.repo_activity.items():
+        normalized = normalize_github_repo_name(repo_full_name)
+        if normalized in ignored:
+            if normalized not in skipped:
+                skipped.append(normalized)
+            continue
+        kept[repo_full_name] = activity
+
+    result.repo_activity = kept
+    return sorted(skipped)
 
 
 # ---------------------------------------------------------------------------

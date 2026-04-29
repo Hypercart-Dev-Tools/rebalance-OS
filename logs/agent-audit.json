@@ -21,5 +21,33 @@
     "reason": "Remove obsolete legacy-format git-pulse file after migrating the same device to a canonical human-friendly slug id.",
     "confirm_flag": "explicit user request in chat",
     "dry_run": false
+  },
+  {
+    "timestamp": "2026-04-28T15:46:52.055521+00:00",
+    "user": "noelsaw",
+    "action": "github_repo_purge",
+    "target": "dlt-hub/dlt",
+    "dry_run": false,
+    "confirmed": true,
+    "database_path": "/Users/noelsaw/Documents/rebalance-OS/rebalance.db",
+    "row_counts": {
+      "github_activity": 1,
+      "github_branches": 107,
+      "github_labels": 21,
+      "github_milestones": 1,
+      "github_releases": 121,
+      "github_items": 434,
+      "github_comments": 1585,
+      "github_commits": 1861,
+      "github_check_runs": 12150,
+      "github_links": 154,
+      "github_documents": 3617,
+      "github_repo_meta": 1,
+      "github_embeddings": 333,
+      "semantic_documents": 3617,
+      "semantic_embeddings": 3617
+    },
+    "total_rows": 27620,
+    "deleted_rows": 27620
   }
 ]
