@@ -1,0 +1,46 @@
+name: 'Close Candidates Suggester'
+description: >-
+  After a PR merges, suggest open issues that this PR likely closes
+  (catching closes-keyword refs that GitHub did not auto-close because
+  the PR merged into a non-default branch). Posts an idempotent PR comment.
+author: 'Hypercart-Dev-Tools'
+branding:
+  icon: 'check-circle'
+  color: 'green'
+
+inputs:
+  pr-number:
+    description: 'PR number to analyze. Defaults to the triggering PR.'
+    required: false
+    default: ${{ github.event.pull_request.number }}
+  min-confidence:
+    description: 'Skip candidates whose score is below this (0.0–1.0).'
+    required: false
+    default: '0.5'
+  dry-run:
+    description: 'Print the would-be comment to stdout instead of posting it.'
+    required: false
+    default: 'false'
+  github-token:
+    description: 'Token for REST + comment posting. Use ${{ secrets.GITHUB_TOKEN }}.'
+    required: true
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+
+    - name: Run close-candidates analyzer
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: |
+        python "${{ github.action_path }}/entrypoint.py" \
+          --repo "$GITHUB_REPOSITORY" \
+          --pr "${{ inputs.pr-number }}" \
+          --min-confidence "${{ inputs.min-confidence }}" \
+          ${{ inputs.dry-run == 'true' && '--dry-run' || '' }}

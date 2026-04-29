@@ -1,0 +1,27 @@
+# Drop this file into a calling repo as
+#     .github/workflows/close-candidates.yml
+# and the bot will comment on every merged PR with close-candidate suggestions.
+
+name: Close Candidates
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: read
+  pull-requests: write   # post/update PR comments
+  issues: read           # list open issues
+
+jobs:
+  suggest:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Suggest close candidates
+        uses: Hypercart-Dev-Tools/rebalance-OS/experimental/close-candidates-action@main
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          # Optional knobs:
+          # min-confidence: '0.5'
+          # dry-run: 'false'
