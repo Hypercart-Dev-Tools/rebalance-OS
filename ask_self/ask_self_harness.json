@@ -1,0 +1,119 @@
+{
+  "repo_label": "rebalance OS",
+  "repo_kind": "python-repo",
+  "db_filename": "rebalance-os-self-ask.sqlite",
+  "system_instructions_path": "ask_self/ask_self_system_instructions.json",
+  "env_file_path": "temp/ask-self-rag.env",
+  "ingest_command": "./scripts/ask-self-ingest.sh",
+  "tenancy_env_var": "REBALANCE_OS_SELF_ASK_TEAM_ID",
+  "github": {
+    "owner": "Hypercart-Dev-Tools",
+    "repo": "rebalance-OS",
+    "default_fetch_limit": 200,
+    "token_env_vars": [
+      "SLEUTH_RAG_GITHUB_PAT",
+      "GITHUB_TOKEN"
+    ]
+  },
+  "docs": {
+    "extensions": [
+      ".md",
+      ".txt",
+      ".json"
+    ],
+    "include_patterns": [
+      "^[^/]+\\.(?:md|txt|json)$",
+      "^PROJECT/.+\\.(?:md|txt|json)$",
+      "^experimental/.+\\.(?:md|txt|json)$",
+      "^templates/.+\\.(?:md|txt|json)$"
+    ],
+    "exclude_patterns": [
+      "^\\.git/",
+      "^\\.pytest_cache/",
+      "^\\.venv/",
+      "^\\.venv-py314-backup/",
+      "^build/",
+      "^dist/",
+      "^temp/",
+      "^logs/",
+      "^reports/",
+      "^git-pulse-sync/",
+      "^PROJECT/\\.scrub-",
+      "^scripts/__pycache__/"
+    ]
+  },
+  "source": {
+    "extensions": [
+      ".py",
+      ".sh"
+    ],
+    "include_patterns": [
+      "^(?:src|tests|server)/.+\\.py$",
+      "^scripts/.+\\.(?:py|sh)$",
+      "^experimental/.+\\.(?:py|sh)$",
+      "^PROJECT/.+\\.sh$"
+    ],
+    "exclude_patterns": [
+      "^\\.git/",
+      "^\\.pytest_cache/",
+      "^\\.venv/",
+      "^\\.venv-py314-backup/",
+      "^build/",
+      "^dist/",
+      "^temp/",
+      "^logs/",
+      "^reports/",
+      "^git-pulse-sync/",
+      "^scripts/__pycache__/"
+    ]
+  },
+  "classification_rules": [
+    {
+      "pattern": "(?i)changelog\\.md$",
+      "source": "changelog",
+      "priority": 5,
+      "chunker": "changelog"
+    },
+    {
+      "pattern": "^(?:README|PROJECT|ARCHITECTURE|MCP|4X4|MEMORY|GOOGLE_CALENDAR|PORTABILITY_SUMMARY|AGENTS|CLAUDE)\\.md$",
+      "source": "guide",
+      "priority": 4,
+      "chunker": "text"
+    },
+    {
+      "pattern": "^experimental/.+\\.md$",
+      "source": "experiment-doc",
+      "priority": 2,
+      "chunker": "text"
+    },
+    {
+      "pattern": "^tests?/",
+      "source": "test",
+      "priority": 1,
+      "chunker": "line"
+    },
+    {
+      "pattern": "^experimental/.+\\.py$",
+      "source": "experiment",
+      "priority": 2,
+      "chunker": "python"
+    },
+    {
+      "pattern": "\\.py$",
+      "source": "module",
+      "priority": 3,
+      "chunker": "python"
+    },
+    {
+      "pattern": "\\.sh$",
+      "source": "script",
+      "priority": 2,
+      "chunker": "line"
+    }
+  ],
+  "default_classification": {
+    "source": "doc",
+    "priority": 1,
+    "chunker": "text"
+  }
+}

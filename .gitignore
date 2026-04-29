@@ -2,6 +2,9 @@ PROJECT/.scrub-list.json
 PROJECT/.scrub-log.jsonl
 .DS_Store
 /temp
+temp/rag/
+temp/ask-self-rag.env
+temp/ask-self*.log
 logs/
 __pycache__/
 *.pyc

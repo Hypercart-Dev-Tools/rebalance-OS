@@ -323,6 +323,24 @@ The server works with any MCP-compatible client. Config files are provided for:
 - **Claude Desktop** — manual config (see above) or extension (`.mcpb`, coming soon)
 - **Cursor** — see [MCP.md](./MCP.md) for config snippet
 
+## Code Intelligence
+
+`ask-self` is an external RAG-based code and docs scanner that can build a local queryable index for this repository without vendoring its code here.
+
+### Ingest this repo
+
+```bash
+./scripts/ask-self-ingest.sh
+```
+
+### Query this repo
+
+```bash
+./scripts/ask-self-query.sh "How does dashboard rendering work?"
+```
+
+The wrappers point at `/Users/noelsaw/Documents/GH Repos/ask-self` by default. Override `ASK_SELF_PATH` if your `ask-self` checkout lives elsewhere.
+
 ### CLI reference
 
 All tools are also available as CLI commands:
