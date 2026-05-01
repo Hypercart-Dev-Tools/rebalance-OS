@@ -2,7 +2,7 @@
 """End-to-end triage CLI for any synced GitHub repo in rebalance.db.
 
 Reads from local SQLite (populated by `rebalance github-sync-artifacts` and
-`rebalance sleuth-sync`), bucketizes open issues + PRs into 6 deterministic
+`rebalance sleuth-sync`), bucketizes open issues + PRs into deterministic
 action categories, optionally posts the result as a GitHub issue.
 
 Edge cases (fuzzy duplicates, PROJECT-umbrella scope decisions) are routed
@@ -100,6 +100,9 @@ def pr_url(repo: str, number: int) -> str:
 
 
 # ── jaccard for duplicate detection ─────────────────────────────────────────
+REF_RE = re.compile(r"(?<![/\w])#(\d+)\b")
+CLOSE_RE = re.compile(
+    r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", re.IGNORECASE)
 WORD_RE = re.compile(r"[a-z0-9]+")
 STOPWORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "has",
@@ -198,17 +201,18 @@ def load_decisions(path: Path | None) -> dict[str, ReviewCase]:
 def bucket_prs_unblocked(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
     rows = conn.execute("""
         SELECT number, title, base_ref, mergeable_state, review_decision,
-               check_status, requested_reviewers_json, is_draft
+               check_status, requested_reviewers_json, is_draft, fetched_at
         FROM github_items
         WHERE repo_full_name = ? AND item_type = 'pull_request' AND state = 'open'
+          AND is_merged = 0 AND merged_at IS NULL
+          AND check_status = 'success'
+          AND is_draft = 0
         ORDER BY updated_at DESC LIMIT 6
     """, (repo,)).fetchall()
     b = Bucket("prs_unblocked", "🚀", "Merge now (or unblock)",
-               "PRs that are CI-green but stuck on review or mergeability.")
+               "Open, non-draft PRs with CI green — blocked on review or mergeability.")
     for r in rows:
-        bits = []
-        if r["check_status"] == "success":
-            bits.append("CI green")
+        bits = ["CI green"]
         if r["mergeable_state"] == "dirty":
             bits.append("**rebase needed**")
         elif r["mergeable_state"] == "blocked":
@@ -218,9 +222,17 @@ def bucket_prs_unblocked(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
             bits.append(f"requested: {', '.join(str(x) for x in reviewers)}")
         else:
             bits.append("no reviewer requested → assign one")
-        if r["is_draft"]:
-            bits.append("DRAFT")
         bits.append(f"→`{r['base_ref']}`")
+        fetched = r["fetched_at"] or ""
+        if fetched:
+            try:
+                age_h = (datetime.now(timezone.utc) -
+                         datetime.fromisoformat(fetched.replace("Z", "+00:00"))
+                         ).total_seconds() / 3600
+                if age_h > 24:
+                    bits.append(f"⚠ data {age_h:.0f}h old")
+            except ValueError:
+                pass
         b.items.append(Item(
             number=r["number"], title=r["title"], url=pr_url(repo, r["number"]),
             rationale=" · ".join(bits),
@@ -230,18 +242,42 @@ def bucket_prs_unblocked(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
 
 def bucket_release_blockers(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
     rows = conn.execute("""
-        SELECT number, title, milestone_title
-        FROM github_items
-        WHERE repo_full_name = ? AND item_type = 'issue' AND state = 'open'
-          AND milestone_title IS NOT NULL AND milestone_title != ''
-        ORDER BY milestone_title, number LIMIT 6
+        SELECT gi.number, gi.title, gi.milestone_title,
+               gm.due_on, gm.state AS milestone_state,
+               gm.open_issues AS ms_open, gm.closed_issues AS ms_closed
+        FROM github_items gi
+        LEFT JOIN github_milestones gm
+          ON gm.repo_full_name = gi.repo_full_name
+         AND gm.title = gi.milestone_title
+        WHERE gi.repo_full_name = ? AND gi.item_type = 'issue' AND gi.state = 'open'
+          AND gi.milestone_title IS NOT NULL AND gi.milestone_title != ''
+        ORDER BY gm.due_on ASC NULLS LAST, gi.number LIMIT 6
     """, (repo,)).fetchall()
     b = Bucket("release_blockers", "🔥", "Release blockers",
                "Open issues attached to active milestones — finish to ship.")
+    now = datetime.now(timezone.utc)
     for r in rows:
+        parts = [f"milestone: **{r['milestone_title']}**"]
+        due = r["due_on"]
+        if due:
+            try:
+                due_dt = datetime.fromisoformat(due.replace("Z", "+00:00"))
+                days_until = (due_dt - now).days
+                if days_until < 0:
+                    parts.append(f"**OVERDUE by {abs(days_until)}d**")
+                elif days_until <= 7:
+                    parts.append(f"due in {days_until}d")
+                else:
+                    parts.append(f"due {due[:10]}")
+            except ValueError:
+                parts.append(f"due {due[:10]}")
+        if r["ms_open"] is not None and r["ms_closed"] is not None:
+            total = r["ms_open"] + r["ms_closed"]
+            if total > 0:
+                parts.append(f"{r['ms_open']}/{total} open")
         b.items.append(Item(
             number=r["number"], title=r["title"], url=issue_url(repo, r["number"]),
-            rationale=f"milestone: **{r['milestone_title']}**",
+            rationale=" · ".join(parts),
         ))
     return b
 
@@ -277,19 +313,121 @@ def bucket_client_visible(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
     return b
 
 
+CLOSE_INTENT_LABELS = {
+    "proposed: close as not fixing", "wontfix", "won't fix", "duplicate",
+    "invalid", "stale", "close", "not planned",
+}
+
+
+def has_close_intent_label(labels_json: str | None) -> str | None:
+    """Return the first close-intent label found, or None."""
+    for label in json.loads(labels_json or "[]"):
+        name = (label.get("name") if isinstance(label, dict) else str(label)).lower()
+        if name in CLOSE_INTENT_LABELS:
+            return label.get("name") if isinstance(label, dict) else str(label)
+    return None
+
+
 def bucket_perf_concrete(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
     rows = conn.execute("""
-        SELECT number, title FROM github_items
+        SELECT number, title, labels_json FROM github_items
         WHERE repo_full_name = ? AND item_type = 'issue' AND state = 'open'
           AND (title LIKE 'perf:%' OR title LIKE 'Perf:%' OR title LIKE 'perf %')
-        ORDER BY updated_at DESC LIMIT 6
+        ORDER BY updated_at DESC LIMIT 12
     """, (repo,)).fetchall()
     b = Bucket("perf_concrete", "⚡", "Performance — concrete data attached",
                "`perf:`-prefixed issues — typically pre-scoped, low decision overhead.")
     for r in rows:
+        close_label = has_close_intent_label(r["labels_json"])
+        if close_label:
+            b.items.append(Item(
+                number=r["number"], title=r["title"], url=issue_url(repo, r["number"]),
+                rationale=f"⚠ labeled **{close_label}** — verify intent before picking up",
+            ))
+        else:
+            b.items.append(Item(
+                number=r["number"], title=r["title"], url=issue_url(repo, r["number"]),
+                rationale="perf-prefixed → concrete metric or fix-shape implied",
+            ))
+        if len(b.items) >= 6:
+            break
+    return b
+
+
+def _score_close_candidate(issue: sqlite3.Row, pr: sqlite3.Row) -> tuple[float, list[str]]:
+    """Score how likely a merged PR resolves an open issue. Returns (score, evidence)."""
+    i_num, i_title = issue["number"], issue["title"] or ""
+    p_num, p_title = pr["number"], pr["title"] or ""
+    p_body = pr["body"] or ""
+    i_body = issue["body"] or ""
+    pr_text = f"{p_title}\n{p_body}"
+    issue_text = f"{i_title}\n{i_body}"
+
+    score = 0.0
+    evidence: list[str] = []
+
+    if i_num in {int(n) for n in CLOSE_RE.findall(pr_text)}:
+        return (0.99, [f"PR #{p_num} explicitly closes #{i_num}"])
+
+    if i_num in {int(n) for n in REF_RE.findall(pr_text)}:
+        score += 0.45
+        evidence.append(f"PR #{p_num} references #{i_num}")
+    if p_num in {int(n) for n in REF_RE.findall(issue_text)}:
+        score += 0.30
+        evidence.append(f"issue #{i_num} mentions PR #{p_num}")
+
+    head = pr["head_ref"] or ""
+    if head and re.search(rf"(^|[^0-9]){i_num}([^0-9]|$)", head):
+        score += 0.35
+        evidence.append(f"branch `{head}` contains #{i_num}")
+
+    sim = jaccard(i_title, p_title)
+    if sim >= 0.6:
+        score += 0.30
+        evidence.append(f"title similarity {sim:.2f}")
+    elif sim >= 0.35:
+        score += 0.18
+        evidence.append(f"moderate title overlap {sim:.2f}")
+
+    return (min(score, 0.99), evidence)
+
+
+def bucket_close_candidates(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
+    """Open issues that likely have a merged PR but were never closed."""
+    open_issues = conn.execute("""
+        SELECT number, title, body FROM github_items
+        WHERE repo_full_name = ? AND item_type = 'issue' AND state = 'open'
+        ORDER BY number
+    """, (repo,)).fetchall()
+    merged_prs = conn.execute("""
+        SELECT number, title, body, head_ref, merged_at FROM github_items
+        WHERE repo_full_name = ? AND item_type = 'pull_request'
+          AND is_merged = 1 AND merged_at IS NOT NULL
+        ORDER BY merged_at DESC LIMIT 200
+    """, (repo,)).fetchall()
+
+    b = Bucket("close_candidates", "🔒", "Likely closeable (merged PR found)",
+               "Open issues matched to merged PRs — auto-close may have missed them.")
+    hits: list[tuple[float, sqlite3.Row, sqlite3.Row, list[str]]] = []
+    for issue in open_issues:
+        best_score, best_pr, best_ev = 0.0, None, []
+        for pr in merged_prs:
+            sc, ev = _score_close_candidate(issue, pr)
+            if sc > best_score:
+                best_score, best_pr, best_ev = sc, pr, ev
+        if best_score >= 0.65 and best_pr is not None:
+            hits.append((best_score, issue, best_pr, best_ev))
+
+    hits.sort(key=lambda h: -h[0])
+    for score, issue, pr, ev in hits[:6]:
+        band = "high" if score >= 0.85 else "medium"
         b.items.append(Item(
-            number=r["number"], title=r["title"], url=issue_url(repo, r["number"]),
-            rationale="perf-prefixed → concrete metric or fix-shape implied",
+            number=issue["number"], title=issue["title"],
+            url=issue_url(repo, issue["number"]),
+            rationale=(
+                f"**{band}** ({score:.2f}) → PR #{pr['number']} "
+                f"merged {(pr['merged_at'] or '')[:10]} · {'; '.join(ev)}"
+            ),
         ))
     return b
 
@@ -367,19 +505,85 @@ def bucket_project_umbrellas(conn: sqlite3.Connection, repo: str,
     return b
 
 
+def bucket_stale_issues(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
+    """Issues with no meaningful activity, using comment dates to beat bulk-label noise."""
+    rows = conn.execute("""
+        SELECT gi.number, gi.title, gi.created_at, gi.updated_at, gi.labels_json,
+               MAX(gc.created_at) AS last_comment_at
+        FROM github_items gi
+        LEFT JOIN github_comments gc
+          ON gc.repo_full_name = gi.repo_full_name
+         AND gc.item_number = gi.number
+         AND gc.item_type = 'issue'
+        WHERE gi.repo_full_name = ? AND gi.item_type = 'issue' AND gi.state = 'open'
+        GROUP BY gi.number
+        ORDER BY gi.created_at ASC
+    """, (repo,)).fetchall()
+    b = Bucket("stale_issues", "🕸️", "Stale issues",
+               "Open issues with no meaningful comment activity in 90+ days.")
+    now = datetime.now(timezone.utc)
+    stale_threshold_days = 90
+    for r in rows:
+        last_activity = r["last_comment_at"] or r["created_at"] or ""
+        if not last_activity:
+            continue
+        try:
+            last_dt = datetime.fromisoformat(last_activity.replace("Z", "+00:00"))
+            age_days = (now - last_dt).days
+        except ValueError:
+            continue
+        if age_days < stale_threshold_days:
+            continue
+        created = (r["created_at"] or "")[:10]
+        last_date = last_activity[:10]
+        b.items.append(Item(
+            number=r["number"], title=r["title"], url=issue_url(repo, r["number"]),
+            rationale=f"created {created} · last comment {last_date} · **{age_days}d silent**",
+        ))
+        if len(b.items) >= 6:
+            break
+    return b
+
+
 BUCKET_BUILDERS: list[Callable[..., Bucket]] = [
     bucket_prs_unblocked,
     bucket_release_blockers,
     bucket_client_visible,
     bucket_perf_concrete,
+    bucket_close_candidates,
     bucket_duplicates,
     bucket_project_umbrellas,
+    bucket_stale_issues,
 ]
+
+
+# ── stale branches (notes section, not a bucket) ──────────────────────────
+def count_stale_branches(conn: sqlite3.Connection, repo: str) -> tuple[int, int]:
+    """Return (stale_branch_count, total_branch_count).
+
+    A branch is stale if its head_sha matches a merged PR's head_sha.
+    """
+    total = conn.execute("""
+        SELECT COUNT(*) FROM github_branches
+        WHERE repo_full_name = ? AND is_default = 0 AND is_protected = 0
+    """, (repo,)).fetchone()[0]
+    stale = conn.execute("""
+        SELECT COUNT(DISTINCT gb.name)
+        FROM github_branches gb
+        INNER JOIN github_items gi
+          ON gi.repo_full_name = gb.repo_full_name
+         AND gi.head_sha = gb.head_sha
+         AND gi.item_type = 'pull_request'
+         AND gi.is_merged = 1
+        WHERE gb.repo_full_name = ? AND gb.is_default = 0 AND gb.is_protected = 0
+    """, (repo,)).fetchone()[0]
+    return (stale, total)
 
 
 # ── markdown rendering ──────────────────────────────────────────────────────
 def render_markdown(buckets: list[Bucket], repo: str, generated_at: str,
-                    queue_path: Path | None) -> str:
+                    queue_path: Path | None,
+                    stale_branches: tuple[int, int] | None = None) -> str:
     lines: list[str] = []
     lines.append(
         f"> Generated **{generated_at}** from a cross-source query against "
@@ -413,6 +617,18 @@ def render_markdown(buckets: list[Bucket], repo: str, generated_at: str,
         for marker in b.review_markers:
             lines.append(marker)
         lines.append("")
+    if stale_branches:
+        stale, total = stale_branches
+        if stale > 0:
+            lines.append("---")
+            lines.append("")
+            lines.append("## Notes")
+            lines.append("")
+            lines.append(
+                f"**Stale remote branches:** {stale} of {total} non-default branches "
+                f"have a `head_sha` matching a merged PR. Consider deleting them."
+            )
+            lines.append("")
     return "\n".join(lines)
 
 
@@ -456,7 +672,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--post-issue", action="store_true",
                    help="post final markdown as a GitHub issue via gh CLI")
     p.add_argument("--issue-title", default=None,
-                   help="title for posted issue (default: 'Triage: 6 action buckets ...')")
+                   help="title for posted issue (default: 'Triage: N action buckets ...')")
     p.add_argument("--dry-run", action="store_true",
                    help="print what would happen but don't post")
     args = p.parse_args(argv)
@@ -474,10 +690,12 @@ def main(argv: list[str] | None = None) -> int:
                   threshold=args.duplicate_threshold)
             for build in BUCKET_BUILDERS
         ]
+        stale_branches = count_stale_branches(conn, args.repo)
 
     queue_emitted = resolver.flush_queue()
     generated_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    body = render_markdown(buckets, args.repo, generated_at, queue_emitted)
+    body = render_markdown(buckets, args.repo, generated_at, queue_emitted,
+                           stale_branches=stale_branches)
 
     body_path.write_text(body, encoding="utf-8")
     print(f"[triage] markdown → {body_path}", file=sys.stderr)
@@ -486,7 +704,8 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
 
     if args.post_issue and not args.dry_run:
-        title = args.issue_title or f"Triage: 6 action buckets ({generated_at[:10]})"
+        n = len([b for b in buckets if b.items])
+        title = args.issue_title or f"Triage: {n} action buckets ({generated_at[:10]})"
         url = post_issue(args.repo, title, body)
         print(url)
     elif args.post_issue and args.dry_run:
