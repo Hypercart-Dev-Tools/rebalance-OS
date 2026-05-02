@@ -283,10 +283,15 @@ def bucket_release_blockers(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
 
 
 def bucket_client_visible(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
-    rows = conn.execute("""
-        SELECT github_urls_json FROM sleuth_reminders
-        WHERE is_active = 1 AND github_urls_json LIKE ?
-    """, (f"%{repo}%",)).fetchall()
+    b = Bucket("client_visible", "👀", "Client-visible (Sleuth-linked)",
+               "Items referenced from active Sleuth reminders — client is watching.")
+    try:
+        rows = conn.execute("""
+            SELECT github_urls_json FROM sleuth_reminders
+            WHERE is_active = 1 AND github_urls_json LIKE ?
+        """, (f"%{repo}%",)).fetchall()
+    except sqlite3.OperationalError:
+        return b
     seen: dict[int, list[str]] = {}
     pat = re.compile(rf"github\.com/{re.escape(repo)}/(?:issues|pull)/(\d+)", re.I)
     for r in rows:
@@ -294,8 +299,6 @@ def bucket_client_visible(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
             m = pat.search(url or "")
             if m:
                 seen.setdefault(int(m.group(1)), []).append(url)
-    b = Bucket("client_visible", "👀", "Client-visible (Sleuth-linked)",
-               "Items referenced from active Sleuth reminders — client is watching.")
     if not seen:
         return b
     placeholders = ",".join("?" * len(seen))
