@@ -4,6 +4,12 @@ Please follow instructions from AGENTS.md
 
 This project is an MCP server. When a user opens this workspace, you have access to rebalance MCP tools via `.vscode/mcp.json`.
 
+**Do not scan the repo for `rebalance ...` CLI scripts.** Every refresh and query path is exposed through MCP tools below — reach for those first.
+
+### Single-entry-point tools (use these first)
+
+For "what data is available?" or "is the index fresh?" call `index_status()`. For "refresh the local DB" call `refresh_index(scope=[...], dry_run=True)` to preview the plan, then re-call without `dry_run` to execute. For "search across vault + GitHub in one ranked list" call `semantic_query(query, sources=["vault","github"])`.
+
 ### On first interaction
 
 Call `onboarding_status` with the user's vault path to check setup state. If any steps are incomplete, walk the user through them in order (see flow below).
@@ -30,13 +36,20 @@ Drive this sequence using MCP tool calls:
 
 5. **Verify:** Call `list_projects()` to confirm projects are queryable. Show the user a summary.
 
-6. **Optional — GitHub activity scan:** Suggest the user run this in the terminal:
-   ```
-   rebalance github-scan --token <PAT> --database <path-to-rebalance.db>
-   ```
-   After that, `github_balance()` will show per-project commit/PR/issue counts.
+6. **Initial data refresh:** Call `refresh_index(scope=["all"])` to populate the SQLite knowledge base. Use `dry_run=True` first if you want a preview. After it completes, `index_status()` will show the resulting freshness, and `github_balance()` will return per-project commit/PR/issue counts.
 
 ### Available MCP tools
+
+**Single entry points (prefer these):**
+
+| Tool | Purpose |
+|------|---------|
+| `index_status()` | Snapshot of all sources + unified semantic index, with drift indicators |
+| `refresh_index(scope, vault_path?, since_days?, repos?, dry_run?)` | Orchestrated refresh: vault / github / calendar / sleuth / semantic / all |
+| `semantic_query(query, sources?, top_k?)` | Vector search across the unified semantic index (vault + github) |
+| `publish_pulse(dry_run?, push?)` | Render today's + yesterday's activity to markdown and push to a private pulse repo (uses `temp/rbos.config` keys: `github_login`, `slack_user_id`, `pulse_target_path`, `pulse_filename`, `pulse_timezone`) |
+
+**Onboarding & projects:**
 
 | Tool | Purpose |
 |------|---------|
@@ -45,7 +58,18 @@ Drive this sequence using MCP tool calls:
 | `run_preflight(vault_path)` | Discover project candidates (read-only) |
 | `confirm_projects(projects, vault_path)` | Write registry and sync to DB |
 | `list_projects(status?)` | Query projects (default: active) |
-| `github_balance(since_days?)` | GitHub activity per project (requires prior `github-scan`) |
+| `github_balance(since_days?)` | GitHub activity per project (requires prior refresh) |
+
+**Targeted retrieval (older, per-source):**
+
+| Tool | Purpose |
+|------|---------|
+| `query_notes(query, top_k?)` | Vault-only vector search (legacy `embeddings` table) |
+| `search_vault(keyword, limit?)` | Full-text/keyword search over vault |
+| `query_github_context(query, repo?, top_k?)` | GitHub-only vector search (legacy `github_embeddings`) |
+| `ask(query, since_days?, skip_synthesis?)` | Combined context + optional local LLM synthesis |
+| `github_release_readiness(repo, milestone?)` | Milestone readiness inferred from local corpus |
+| `github_close_candidates(repo)` | Issues likely closed by merged PRs |
 
 ### Key paths
 

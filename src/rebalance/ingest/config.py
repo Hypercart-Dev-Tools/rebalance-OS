@@ -195,3 +195,45 @@ def is_github_repo_ignored(repo: str) -> bool:
 def get_config_path() -> Path:
     """Return the config file path (for user reference)."""
     return CONFIG_PATH
+
+
+# ---------------------------------------------------------------------------
+# Pulse (hourly status report) config
+# ---------------------------------------------------------------------------
+
+
+def get_pulse_config() -> dict[str, Any]:
+    """Return the pulse-related config block.
+
+    Keys (all optional; pulse rendering will fail loudly if a required one is
+    missing at run time):
+      - github_login: GitHub username to attribute work to
+      - slack_user_id: Slack user_id for sleuth_reminders.assignee_id filter
+      - pulse_target_path: absolute path to the local clone of the destination
+        git repo (e.g. a private "git-pulse-sync" working tree)
+      - pulse_filename: relative path of the markdown file inside the target
+        repo (default: "live-pulse.md")
+      - pulse_timezone: IANA timezone name for "today" / "yesterday" boundaries
+        (default: read from CalendarConfig if available)
+    """
+    config = _read_config()
+    return {
+        "github_login": config.get("github_login"),
+        "slack_user_id": config.get("slack_user_id"),
+        "pulse_target_path": config.get("pulse_target_path"),
+        "pulse_filename": config.get("pulse_filename", "live-pulse.md"),
+        "pulse_timezone": config.get("pulse_timezone"),
+    }
+
+
+def set_pulse_config(**values: Any) -> None:
+    """Update one or more pulse config keys. Pass None to leave a key unchanged."""
+    allowed = {"github_login", "slack_user_id", "pulse_target_path", "pulse_filename", "pulse_timezone"}
+    config = _read_config()
+    for key, value in values.items():
+        if key not in allowed:
+            raise ValueError(f"Unknown pulse config key: {key}")
+        if value is None:
+            continue
+        config[key] = str(value).strip() if isinstance(value, str) else value
+    _write_config(config)

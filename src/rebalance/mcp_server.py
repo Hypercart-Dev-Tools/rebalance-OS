@@ -473,6 +473,131 @@ def create_server(database_path: Path) -> FastMCP:
         return dataclasses.asdict(result)
 
     # ------------------------------------------------------------------
+    # Single-entry-point tools (index status + orchestrated refresh + unified query)
+    #
+    # These are the tools agents should reach for first. They wrap the
+    # underlying ingest pipelines so callers do not need to know the order of
+    # github-scan -> github-sync-artifacts -> semantic-backfill -> semantic-embed,
+    # vault note ingest -> embed -> semantic backfill -> semantic embed, etc.
+    # ------------------------------------------------------------------
+
+    @mcp.tool()
+    def index_status() -> dict[str, Any]:
+        """
+        Snapshot the SQLite knowledge base: per-source counts, last-synced
+        timestamps, unified semantic index health, and drift between source
+        tables and the semantic index.
+
+        Use this before deciding whether to call refresh_index, and to answer
+        "what data is available right now?" without scanning the repo.
+        Read-only; cheap.
+        """
+        from rebalance.ingest.index_ops import get_index_status
+        return get_index_status(database_path)
+
+    @mcp.tool()
+    def refresh_index(
+        scope: list[str] | None = None,
+        vault_path: str = "",
+        since_days: int = 30,
+        repos: list[str] | None = None,
+        dry_run: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Orchestrated refresh of the local knowledge base. This is the single
+        entry point for getting the SQLite vector DB up to date — agents
+        should call this instead of running individual `rebalance ...` CLI
+        commands.
+
+        Args:
+            scope: Any combination of "vault", "github", "calendar", "sleuth",
+                "semantic", or "all". Defaults to ["all"].
+                - vault: ingest vault notes -> embed chunks -> semantic backfill+embed (vault)
+                - github: github-scan -> sync artifacts per repo -> embed -> semantic backfill+embed (github)
+                - calendar: sync Google Calendar events
+                - sleuth: pull Slack/Sleuth reminders
+                - semantic: re-run unified backfill+embed only (assumes upstream syncs done)
+            vault_path: Optional override; falls back to configured vault path.
+            since_days: Lookback window for github-scan and calendar-sync (default 30).
+            repos: Optional list of owner/name repos for github sync. Defaults
+                to all active project repos.
+            dry_run: If True, returns the planned steps without touching the
+                DB or network. Useful for a "what would this do?" preview.
+
+        Caveat: github sync hits the GitHub API for every active project repo
+        and can take minutes. Use dry_run=True first if unsure.
+        """
+        from rebalance.ingest.index_ops import refresh_index as _refresh
+        return _refresh(
+            database_path,
+            scope=scope,
+            vault_path=vault_path,
+            since_days=since_days,
+            repos=repos,
+            dry_run=dry_run,
+        )
+
+    @mcp.tool()
+    def publish_pulse(
+        dry_run: bool = False,
+        push: bool = True,
+    ) -> dict[str, Any]:
+        """
+        Render today's + yesterday's activity into a markdown status page and
+        publish it to a private git repo (e.g. a personal "git-pulse-sync"
+        working tree). Reads pulse settings from temp/rbos.config:
+          - github_login, slack_user_id, pulse_target_path, pulse_filename,
+            pulse_timezone
+
+        The output covers:
+          - Current Day: GitHub commits/issues/PRs/comments authored by you,
+            Obsidian vault edits, Sleuth reminders assigned to you,
+            upcoming Google Calendar events, and live-fetched GitHub issues
+            assigned to you over the last 7 days (today's at the top).
+          - Yesterday: a summarized version of the same.
+
+        The commit + push only happens when the rendered markdown actually
+        changed since the last run, so quiet hours don't create churn.
+
+        Args:
+            dry_run: If True, returns the rendered markdown but does not
+                touch the target repo. Useful for previews from agents.
+            push: If False, commit locally but don't push to origin.
+
+        The hourly launchd job (com.rebalance-os.pulse-sync) calls this with
+        dry_run=False, push=True between 6 AM and 11 PM local time.
+        """
+        from rebalance.ingest.pulse import publish_pulse as _publish_pulse
+        return _publish_pulse(database_path, dry_run=dry_run, push=push)
+
+    @mcp.tool()
+    def semantic_query(
+        query: str,
+        sources: list[str] | None = None,
+        top_k: int = 10,
+    ) -> list[dict[str, Any]]:
+        """
+        Vector search across the unified semantic index (vault chunks +
+        GitHub issues/PRs/comments in one ranked result set).
+
+        Prefer this over query_notes / query_github_context when you want a
+        single ranked result set across every source. The older tools still
+        work and read pre-unified per-source indexes.
+
+        Args:
+            query: Natural language query.
+            sources: Filter to ["vault"], ["github"], or both. Defaults to both.
+            top_k: Number of results.
+        """
+        from rebalance.ingest.semantic_index import query as _semantic_query
+        return _semantic_query(
+            database_path,
+            query,
+            top_k=top_k,
+            source_filter=sources,
+        )
+
+    # ------------------------------------------------------------------
     # Sleuth reminders
     # ------------------------------------------------------------------
 

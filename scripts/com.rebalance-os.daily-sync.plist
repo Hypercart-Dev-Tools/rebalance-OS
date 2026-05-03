@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/noelsaw/Documents/Obsidian Vault/rebalance-OS/scripts/daily_sync.sh</string>
+        <string>/Users/noelsaw/Documents/rebalance-OS/scripts/daily_sync.sh</string>
     </array>
 
     <!-- Run at 6:30 AM every day -->
@@ -24,10 +24,10 @@
     <true/>
 
     <key>StandardOutPath</key>
-    <string>/Users/noelsaw/Documents/Obsidian Vault/rebalance-OS/temp/logs/launchd_stdout.log</string>
+    <string>/Users/noelsaw/Documents/rebalance-OS/temp/logs/launchd_stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/noelsaw/Documents/Obsidian Vault/rebalance-OS/temp/logs/launchd_stderr.log</string>
+    <string>/Users/noelsaw/Documents/rebalance-OS/temp/logs/launchd_stderr.log</string>
 
     <!-- Don't restart on failure — just run next scheduled time -->
     <key>KeepAlive</key>

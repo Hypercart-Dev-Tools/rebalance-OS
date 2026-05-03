@@ -1,3 +1,28 @@
+## Working with the rebalance MCP server (Codex, Gemini, Claude, others)
+
+This repo **is** an MCP server. Every refresh and query path is exposed through MCP tools — do not scan the codebase for `rebalance ...` CLI commands or write ad-hoc shell pipelines. Reach for the tools first.
+
+**Connection.** The repo ships two equivalent configs: [.vscode/mcp.json](.vscode/mcp.json) for VS Code agents and [.mcp.json](.mcp.json) at the repo root for tools that look there. Both launch `.venv/bin/python -m rebalance.mcp_server` over stdio with `REBALANCE_DB` set to the repo's `rebalance.db`.
+
+**Single entry points (use these first):**
+
+| Tool | When to call |
+|---|---|
+| `index_status()` | "Is the data fresh?" / "What's in the DB right now?" — read-only snapshot of every source + the unified semantic index, with drift indicators |
+| `refresh_index(scope=[...], dry_run=?)` | "Refresh the local DB." `scope` accepts `vault` / `github` / `calendar` / `sleuth` / `semantic` / `all`. Always preview with `dry_run=True` first if scope includes `github` — that hits the GitHub API for every active project repo and can take minutes |
+| `semantic_query(query, sources=[...], top_k=?)` | Cross-source vector search across the unified `semantic_documents` table |
+| `publish_pulse(dry_run=?, push=?)` | Render today's + yesterday's activity into a markdown status page and publish it to a private pulse repo. Reusable: every per-user value (`github_login`, `slack_user_id`, `pulse_target_path`, `pulse_filename`, `pulse_timezone`) lives in `temp/rbos.config`. See `src/rebalance/ingest/pulse.py` |
+
+**Onboarding & projects:** `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`, `list_projects`, `github_balance`. See [CLAUDE.md](CLAUDE.md) for the full onboarding flow.
+
+**Targeted retrieval (older, per-source — still valid):** `query_notes`, `search_vault`, `query_github_context`, `ask`, `github_release_readiness`, `github_close_candidates`.
+
+**Background refresh.** A launchd job (`com.rebalance-os.daily-sync`) runs [scripts/daily_sync.sh](scripts/daily_sync.sh) at 6:30 AM daily and on boot. The script invokes the same `refresh_index(scope=["all"])` orchestration, so the cron and the MCP tool share one code path. If the index looks stale, check `temp/logs/daily_sync_YYYY-MM-DD.log` before manually re-running.
+
+**Hourly pulse publish.** A second launchd job (`com.rebalance-os.pulse-sync`) runs [scripts/pulse_sync.sh](scripts/pulse_sync.sh) on the hour, every hour from 6 AM to 11 PM local. It calls the same `publish_pulse()` orchestration the MCP tool exposes — render markdown, commit + push to the configured private pulse repo only when content actually changed. Logs in `temp/logs/pulse_sync_YYYY-MM-DD.log`. Install via `bash scripts/install_pulse_scheduler.sh`. Public users wanting to reuse this only need to populate the pulse keys in their own `temp/rbos.config` and point at their own private clone.
+
+**Source of truth for the orchestration:** [src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py). Only edit there if you need to change refresh behavior — the MCP wrappers in `src/rebalance/mcp_server.py` and `daily_sync.sh` are thin and should stay that way.
+
 ## Communication & Documentation
 
 - Precise, concise chat replies/updates: Short as possible, detailed enough.
