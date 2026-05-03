@@ -1,0 +1,10 @@
+[Unit]
+Description=Pull rebalance-os device-pulse mirror from GitHub
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+WorkingDirectory=/root/rebalance-pulse-mirror
+ExecStart=/usr/bin/git pull --ff-only --quiet
+TimeoutStartSec=60
