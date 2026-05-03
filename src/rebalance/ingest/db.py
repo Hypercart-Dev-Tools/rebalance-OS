@@ -461,6 +461,37 @@ def ensure_github_schema(conn: sqlite3.Connection) -> None:
     )
 
     conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_workflow_runs (
+            id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name      TEXT    NOT NULL,
+            run_id              INTEGER NOT NULL,
+            run_attempt         INTEGER NOT NULL DEFAULT 1,
+            workflow_name       TEXT,
+            event               TEXT,
+            head_branch         TEXT,
+            head_sha            TEXT,
+            status              TEXT,
+            conclusion          TEXT,
+            actor_login         TEXT,
+            triggering_actor_login TEXT,
+            run_url             TEXT,
+            created_at          TEXT,
+            updated_at          TEXT,
+            run_started_at      TEXT,
+            fetched_at          TEXT    NOT NULL,
+            UNIQUE(repo_full_name, run_id, run_attempt) ON CONFLICT REPLACE
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_workflow_runs_repo_created "
+        "ON github_workflow_runs(repo_full_name, created_at DESC)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_workflow_runs_head_sha "
+        "ON github_workflow_runs(head_sha)"
+    )
+
+    conn.execute("""
         CREATE TABLE IF NOT EXISTS github_links (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
             repo_full_name      TEXT    NOT NULL,

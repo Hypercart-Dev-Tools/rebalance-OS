@@ -1,0 +1,10 @@
+[Unit]
+Description=Periodic rebalance-os device-pulse mirror pull (every 10 min)
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=10min
+Unit=rebalance-web-pull.service
+
+[Install]
+WantedBy=timers.target

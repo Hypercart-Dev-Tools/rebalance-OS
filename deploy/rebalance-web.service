@@ -1,0 +1,26 @@
+[Unit]
+Description=rebalance-os activity dashboard (FastAPI)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/root/rebalance-os
+EnvironmentFile=-/root/rebalance-os/.env.runtime
+ExecStart=/root/rebalance-os/.venv/bin/uvicorn rebalance.web.app:app \
+    --host 127.0.0.1 \
+    --port 2030 \
+    --proxy-headers
+Restart=on-failure
+RestartSec=5s
+
+# Hardening — same posture as sleuth-app
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/root/rebalance-os /var/lib/rbos-web /root/rebalance-pulse-mirror
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
