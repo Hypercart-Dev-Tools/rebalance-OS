@@ -33,6 +33,7 @@ import requests
 from rebalance.ingest.agent_tags import classify as classify_source
 from rebalance.ingest.config import get_github_token, get_pulse_config
 from rebalance.ingest.db import db_connection
+from rebalance.ingest.slack_users import format_slack_mentions
 
 
 # Author logins of known cloud-agent bots. Mirrors agent_tags.py — kept here
@@ -282,7 +283,9 @@ def _query_day_activity(
         ).fetchall()
         for r in rows:
             if _in_window(r["last_seen_at"], start, end):
-                msg = (r["reminder_message_text"] or "").replace("\n", " ").strip()
+                msg = format_slack_mentions(
+                    (r["reminder_message_text"] or "").replace("\n", " ").strip()
+                )
                 gh_urls = []
                 if r["github_urls_json"]:
                     try:

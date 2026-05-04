@@ -245,6 +245,7 @@ def _refresh_vault(
             "total_files": ingest_result.total_files,
             "new_files": ingest_result.new_files,
             "updated_files": ingest_result.updated_files,
+            "touched_files": ingest_result.touched_files,
             "deleted_files": ingest_result.deleted_files,
             "total_chunks": ingest_result.total_chunks,
             "elapsed_seconds": ingest_result.elapsed_seconds,

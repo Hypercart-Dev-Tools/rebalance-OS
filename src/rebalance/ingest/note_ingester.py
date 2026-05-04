@@ -63,6 +63,7 @@ class IngestResult:
     new_files: int
     updated_files: int
     unchanged_files: int
+    touched_files: int  # content unchanged but on-disk mtime changed; last_modified refreshed
     deleted_files: int
     total_chunks: int
     total_keywords: int
@@ -91,11 +92,19 @@ def ingest_vault(
     excludes = exclude_patterns or DEFAULT_EXCLUDES
 
     with db_connection(database_path, ensure_schema) as conn:
-        # Load existing file hashes from DB
-        existing = {}
+        # Load existing (content_hash, last_modified) per file. We track the
+        # mtime so we can refresh ``last_modified`` on no-op edits — opening
+        # a note in Obsidian and saving it without changing bytes still
+        # signals "you touched this," and the dashboard should reflect that.
+        existing: dict[str, tuple[str, str | None]] = {}
         try:
-            rows = conn.execute("SELECT rel_path, content_hash FROM vault_files").fetchall()
-            existing = {row["rel_path"]: row["content_hash"] for row in rows}
+            rows = conn.execute(
+                "SELECT rel_path, content_hash, last_modified FROM vault_files"
+            ).fetchall()
+            existing = {
+                row["rel_path"]: (row["content_hash"], row["last_modified"])
+                for row in rows
+            }
         except Exception:
             pass
 
@@ -110,14 +119,29 @@ def ingest_vault(
         new_count = 0
         updated_count = 0
         unchanged_count = 0
+        touched_count = 0
         total_chunks = 0
         total_links = 0
 
         for rel_path, file_path in disk_files.items():
             content_hash = hashlib.sha256(file_path.read_bytes()).hexdigest()
 
-            if rel_path in existing and existing[rel_path] == content_hash:
-                unchanged_count += 1
+            existing_hash, existing_mtime = existing.get(rel_path, (None, None))
+            if existing_hash == content_hash:
+                # Content unchanged — but if on-disk mtime moved forward,
+                # refresh the stored last_modified so "vault edits" surfaces
+                # the touch. Cheap UPDATE; no chunk/embedding work.
+                disk_mtime_iso = datetime.fromtimestamp(
+                    file_path.stat().st_mtime, tz=timezone.utc
+                ).isoformat()
+                if not dry_run and disk_mtime_iso != (existing_mtime or ""):
+                    conn.execute(
+                        "UPDATE vault_files SET last_modified = ? WHERE rel_path = ?",
+                        (disk_mtime_iso, rel_path),
+                    )
+                    touched_count += 1
+                else:
+                    unchanged_count += 1
                 continue
 
             if dry_run:
@@ -221,6 +245,7 @@ def ingest_vault(
         new_files=new_count,
         updated_files=updated_count,
         unchanged_files=unchanged_count,
+        touched_files=touched_count,
         deleted_files=deleted_count,
         total_chunks=total_chunks,
         total_keywords=total_keywords,
