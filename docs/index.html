@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>rebalance · activity</title>
+    <link rel="stylesheet" href="./app.css">
+</head>
+<body>
+<header>
+    <h1>activity</h1>
+    <div class="controls">
+        <label>
+            window
+            <select id="since">
+                <option value="6h">6h</option>
+                <option value="24h" selected>24h</option>
+                <option value="3d">3d</option>
+                <option value="7d">7d</option>
+            </select>
+        </label>
+        <label>
+            source
+            <select id="source">
+                <option value="all" selected>all</option>
+                <option value="claude-cloud">claude-cloud</option>
+                <option value="codex-cloud">codex-cloud</option>
+                <option value="lovable">lovable</option>
+                <option value="local-vscode">local-vscode</option>
+                <option value="human">human</option>
+            </select>
+        </label>
+        <button id="refresh" title="Re-fetch status.json (CDN may be ~1 min stale)">refresh</button>
+        <span id="status" class="status">loading…</span>
+    </div>
+</header>
+
+<section id="watched"></section>
+
+<main>
+    <ol id="feed" class="feed"></ol>
+</main>
+
+<template id="row-tpl">
+    <li class="row">
+        <span class="when"></span>
+        <span class="tag"></span>
+        <a class="repo" target="_blank" rel="noopener"></a>
+        <span class="branch"></span>
+        <span class="kind"></span>
+        <span class="title"></span>
+        <span class="actor"></span>
+        <a class="ci" target="_blank" rel="noopener"></a>
+    </li>
+</template>
+
+<script src="./app.js"></script>
+</body>
+</html>
