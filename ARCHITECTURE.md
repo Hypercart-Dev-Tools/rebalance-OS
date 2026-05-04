@@ -174,7 +174,7 @@ Sleuth reminders (writer: sleuth_reminders.py)
 
 Each ingestor defines how it reconciles a fresh fetch with stored rows:
 
-- **Vault notes**: SHA-256 of raw file bytes stored in `vault_files.content_hash`. On re-ingest, unchanged files are skipped entirely. Changed files are deleted (CASCADE clears chunks/keywords/links) and re-inserted.
+- **Vault notes**: SHA-256 of raw file bytes stored in `vault_files.content_hash`. On re-ingest, unchanged-content files have their `last_modified` refreshed if the on-disk mtime moved forward (a "touch") but skip all parsing and embedding work — surfaced as `touched_files` in the ingest result. Changed-content files are deleted (CASCADE clears chunks/keywords/links) and re-inserted.
 - **GitHub activity**: keyed by `(login, repo_full_name, scan_date)` with `ON CONFLICT REPLACE`. Each scan overwrites that day's data.
 - **GitHub artifacts**: keyed by `(repo_full_name, item_type, number)` for items; comments/commits/checks keyed by GitHub ID. `ON CONFLICT REPLACE` on every sync, with a `since_days` lookback to skip untouched artifacts.
 - **Embeddings**: chunks without a corresponding `embeddings` row get embedded. Model version change triggers full re-embed via `embedding_meta`.
@@ -254,23 +254,19 @@ User sees final answer
 
 ## Invocation Modes
 
-Three ways the pipeline runs:
+Four ways the pipeline runs:
 
-1. **Interactive CLI** — `rebalance <subcommand>` via the Typer app. Ad-hoc and one-shot workflows (`calendar-create-event`, `github-release-readiness`, `sleuth-sync --json`, etc.).
+1. **Interactive CLI** — `rebalance <subcommand>` via the Typer app. Ad-hoc and one-shot workflows (`calendar-create-event`, `github-release-readiness`, `sleuth-sync --json`, `profile-sync`, etc.). `rebalance` invoked with no arguments launches the live dashboard (mode 4).
 
-2. **Unattended daily sync** — [scripts/daily_sync.sh](scripts/daily_sync.sh) runs under launchd ([scripts/com.rebalance-os.daily-sync.plist](scripts/com.rebalance-os.daily-sync.plist)) at 06:30 local time. Current sequence:
+2. **Unattended scheduled syncs** — three launchd jobs cooperate:
 
-   ```
-   1. ingest notes       (vault delta walk)
-   2. ingest embed       (embed new/changed chunks)
-   3. github-scan        (if token present)
-   4. calendar-sync      (30d back, 14d forward)
-   5. sleuth-sync --all  (reminders mirror)
-   ```
-
-   Each step uses `&& OK || FAILED` so one bad source never aborts the whole run.
+   - **Daily full sync** ([scripts/daily_sync.sh](scripts/daily_sync.sh) / [scripts/com.rebalance-os.daily-sync.plist](scripts/com.rebalance-os.daily-sync.plist)) at 06:30 local time, plus on boot/login if 06:30 was missed. Calls `refresh_index(scope=["all"])`, which runs vault → github → calendar → sleuth → unified semantic index. Per-scope failures are captured in the result's `errors` list rather than aborting the run.
+   - **Hourly vault refresh** ([scripts/vault_sync.sh](scripts/vault_sync.sh) / [scripts/com.rebalance-os.vault-sync.plist](scripts/com.rebalance-os.vault-sync.plist)) at HH:15 from 06:15 to 23:15. Calls `refresh_index(scope=["vault"])` only — keeps notes edited mid-day visible in the dashboard / pulse / semantic search without waiting for the next morning's full sync. Vault ingest is cheap (~0.02s with no changes) and fully offline.
+   - **Hourly pulse publish** ([scripts/pulse_sync.sh](scripts/pulse_sync.sh) / [scripts/com.rebalance-os.pulse-sync.plist](scripts/com.rebalance-os.pulse-sync.plist)) on the hour, 06:00 to 23:00. Renders the operator pulse markdown and pushes it to the configured private repo, but only when the rendered content actually changed since the previous run.
 
 3. **MCP tool handlers** — [src/rebalance/mcp_server.py](src/rebalance/mcp_server.py) wraps ingestors and readers as MCP tools. Host agents (Claude Code / Claude Desktop) call these on demand. `REBALANCE_DB` env var resolves the shared DB path.
+
+4. **Live dashboard** — [scripts/dashboard.py](scripts/dashboard.py) is a Rich Live monitor that polls the local SQLite every 2 seconds (cheap; no network) and runs `refresh_index(scope=["github"])` in a background thread every 10 minutes so the underlying data actually changes. Launch via `rebalance` (no args) or `rebalance dashboard`. Press `r` to trigger an immediate GitHub refresh, `q` (or Ctrl+C) to quit. Theming and cadence are env-var controlled (`PULSE_INVERSE`, `PULSE_TICK`, `PULSE_AUTO_MIN`, `REBALANCE_TZ`). The dashboard is intentionally read-only against the same DB the MCP server and the launchd jobs write to.
 
 ---
 
@@ -287,6 +283,7 @@ Tools are registered in `mcp_server.py:create_server()`. All tools share the sam
 | Query | `github_balance` | Per-project GitHub activity summary |
 | Query | `github_release_readiness` | Infer milestone/release readiness from the local GitHub corpus |
 | Query | `github_close_candidates` | Suggest open issues that likely map to merged PRs |
+| Diagnostics | `diagnose_repo` | Walk the watched-repos + sync funnel for a single repo (optionally a `sha` or `pr`) and explain coverage + freshness gaps; opt-in `live=True` distinguishes "we never synced" from "PAT can't see it" |
 | Registry | `list_projects` | Query project registry |
 | Onboarding | `onboarding_status` | Check setup completion |
 | Onboarding | `setup_github_token` | Validate and store GitHub PAT |
@@ -324,7 +321,23 @@ src/rebalance/
     embedder.py            — mlx-embeddings batch embed + ANN query
     calendar.py            — Google Calendar API collector + SQLite persistence
     sleuth_reminders.py    — Sleuth Web API collector (Bearer auth, urllib) + upsert
+    slack_users.py         — Slack user-id → friendly-name lookup, file-mtime cached;
+                              feeds the dashboard sleuth panel and the pulse markdown
+    diagnose.py            — repo-level diagnostic that walks the watched-repos +
+                              sync funnel for one repo (optionally sha/PR) — backs
+                              the diagnose_repo MCP tool
+    profile_sync.py        — daily-sync log parser that surfaces per-repo GitHub
+                              timings; backs the rebalance profile-sync subcommand
     querier.py             — multi-source context gathering + local LLM synthesis
+
+scripts/                   — Operator entry points (not part of the importable package)
+  dashboard.py             — Rich Live terminal dashboard (mode 4 above)
+  daily_sync.sh            — daily_sync launchd entry (mode 2)
+  vault_sync.sh            — hourly vault-only launchd entry (mode 2)
+  pulse_sync.sh            — hourly pulse-publish launchd entry (mode 2)
+  install_scheduler.sh     — install/reload the daily launchd job
+  install_vault_scheduler.sh — install/reload the hourly vault launchd job
+  install_pulse_scheduler.sh — install/reload the hourly pulse launchd job
 ```
 
 ---

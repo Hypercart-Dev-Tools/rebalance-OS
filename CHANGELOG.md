@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.23.0] - 2026-05-03
+
+### Added
+
+- A new `rebalance pulse` terminal dashboard (`scripts/dashboard.py`) — a Rich Live four-pane monitor of watched repos, recent GitHub activity, vault/calendar/sleuth signals, and index health. Polls the local SQLite every 2 seconds and runs `refresh_index(scope=["github"])` in a background thread every 10 minutes so the underlying data actually changes. Themed with the "Refined Dark" palette (single amber accent, low-contrast borders) and toggleable to inverse-video via `PULSE_INVERSE=1` for a brain-hack visual modality.
+- A new `diagnose_repo` MCP tool that walks the watched-repos and sync funnel for a single repo and explains why it is or isn't being monitored. Supports per-commit and per-PR diagnoses (`sha=`, `pr=`) and an opt-in `live=True` that probes GitHub directly so callers can distinguish "we never synced" from "PAT can't see it."
+- A new hourly vault refresh job (`scripts/com.rebalance-os.vault-sync.plist` + `vault_sync.sh` + `install_vault_scheduler.sh`) that calls `refresh_index(scope=["vault"])` at HH:15 from 06:15 to 23:15, so notes edited mid-day surface within the hour instead of waiting for the daily 06:30 sync.
+- A new `rebalance profile-sync` subcommand that parses the most recent `daily_sync_*.log`, extracts per-repo GitHub timings, and prints a sorted Rich table with semantic colour bands for outliers and a `--top N` flag. The log parser walks the file with `JSONDecoder.raw_decode` for the last valid object, so it survives shell-prefixed lines, `tqdm` progress bars on the JSON line, and even multi-run logs.
+- A new Slack user lookup (`src/rebalance/ingest/slack_users.py` + user-editable, gitignored `temp/slack_users.json`) that rewrites `<@U…>` mentions to friendly names across the dashboard sleuth panel and the published pulse markdown. Cached against the file's mtime so edits land on the next read without a restart.
+
+### Changed
+
+- The `rebalance` CLI now launches the live dashboard when invoked with no arguments. All existing subcommands continue to work and `rebalance --help` lists the full surface; `rebalance dashboard` is exposed explicitly so the launcher is discoverable. The CLI defaults `REBALANCE_DB` to the repo's `rebalance.db` so the dashboard works from any cwd.
+- The vault note ingester now refreshes `vault_files.last_modified` when the on-disk mtime moves but content bytes don't, so a no-op save in Obsidian still registers as a "touch" in the dashboard. A new `touched_files` counter is reported alongside `new_files` / `updated_files` in the `refresh_index` JSON.
+- The pulse markdown publisher now runs reminder messages through the same Slack mention rewrite, so reminders rendered into the daily pulse use friendly names instead of raw user IDs.
+
 ## [0.22.0] - 2026-04-28
 
 ### Added
