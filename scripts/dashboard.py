@@ -49,7 +49,7 @@ from rebalance.ingest.index_ops import (  # noqa: E402
     get_watched_repos,
     refresh_index,
 )
-from rebalance.ingest.slack_users import format_slack_mentions  # noqa: E402
+from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 
 
 DB_PATH = Path(os.environ.get("REBALANCE_DB", "rebalance.db")).expanduser().resolve()
@@ -547,7 +547,7 @@ def render_vault_calendar(
     sleuth_table.add_column(justify="left", ratio=1)
     if sleuth_rows:
         for s in sleuth_rows:
-            msg = format_slack_mentions(s.get("reminder_message_text") or "")
+            msg = compact_sleuth_reminder(s.get("reminder_message_text") or "")
             sleuth_table.add_row(
                 Text(_ago(s.get("should_post_on"), now=now).rjust(6), style=PALETTE["fg_dim"]),
                 Text(_truncate(msg, 60), style=PALETTE["fg"]),
