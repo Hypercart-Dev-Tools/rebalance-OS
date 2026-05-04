@@ -538,6 +538,51 @@ def create_server(database_path: Path) -> FastMCP:
         )
 
     @mcp.tool()
+    def diagnose_repo(
+        repo: str,
+        sha: str = "",
+        pr: int | None = None,
+        live: bool = False,
+    ) -> dict[str, Any]:
+        """
+        Walk the watched-repos + sync funnel for a single GitHub repo and
+        report why it is (or isn't) showing up. Answers three questions:
+
+          - Is this repo being monitored?
+          - Why isn't this repo showing up?
+          - Why didn't this specific commit / PR show up?
+
+        DB-only by default — fast, offline-safe, and reads the same source
+        of truth as list_watched_repos. Pass live=True to also probe
+        GitHub directly: confirms PAT visibility on the repo and (if sha
+        or pr is supplied) whether the commit / PR actually exists
+        upstream. Useful for distinguishing "we never synced" from "PAT
+        can't see it".
+
+        Args:
+            repo: "owner/name". Case-insensitive; validated against the
+                same regex used elsewhere.
+            sha: Optional commit SHA (full or short prefix). Reports
+                whether the commit was ingested and which PR it was
+                associated with.
+            pr: Optional PR number. Reports whether the PR was ingested
+                and its state / freshness.
+            live: If True, hit GitHub for /repos, /commits/{sha}, and
+                /pulls/{number}. Off by default to avoid network cost.
+
+        Returns a dict with: verdict, summary, monitoring{}, sync{},
+        commit{} | None, pr{} | None, pat{}, next_actions[].
+        """
+        from rebalance.ingest.diagnose import diagnose_repo as _diagnose_repo
+        return _diagnose_repo(
+            database_path,
+            repo=repo,
+            sha=sha,
+            pr=pr,
+            live=live,
+        )
+
+    @mcp.tool()
     def list_watched_repos(since_days: int = 14) -> dict[str, Any]:
         """
         Show which GitHub repos are currently being monitored, and where each
