@@ -1,0 +1,66 @@
+name: Update activity status
+
+# Refreshes data/status.json (and the static frontend) on the orphan
+# `gh-pages` branch. Active hours only — 8am-8pm Pacific year-round, with
+# a small DST drift (PDT: 8am-9pm, PST: 7am-8pm). The cron is UTC.
+#
+# Cadence: every 15 minutes during the active window.
+# Budget:  ~52 runs/day × 30 days × ≤1 min each = ~1,560 min/month
+#          (free tier on a private repo is 2,000 min/month).
+#
+# Manual trigger: Actions tab → "Update activity status" → "Run workflow".
+
+on:
+  schedule:
+    - cron: '*/15 15-23,0-3 * * *'
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/update-status.yml'
+      - 'scripts/build_status.py'
+      - 'scripts/publish_gh_pages.sh'
+      - 'docs/**'
+      - 'src/rebalance/ingest/agent_tags.py'
+
+concurrency:
+  group: update-status
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # If you add the device-pulse repo as a submodule under
+          # ``experimental/git-pulse-mirror/``, flip this to ``recursive``
+          # and provide a deploy key via ``ssh-key:`` below.
+          submodules: false
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Build status.json
+        env:
+          # Use a fine-scoped PAT (repo:read on the orgs you watch) stored
+          # as a secret. The default GITHUB_TOKEN won't see other repos.
+          GH_TOKEN: ${{ secrets.STATUS_GH_TOKEN }}
+          # Optional override — comma-separated owner/name list. When unset
+          # the script discovers repos from the user's events feed.
+          REBALANCE_WATCH_REPOS: ${{ vars.REBALANCE_WATCH_REPOS }}
+        run: |
+          python scripts/build_status.py --out /tmp/status.json --window-days 7
+
+      - name: Publish to gh-pages branch
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: bash scripts/publish_gh_pages.sh /tmp/status.json
