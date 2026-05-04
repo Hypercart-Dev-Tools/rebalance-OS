@@ -30,8 +30,27 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from rebalance.ingest.agent_tags import classify as classify_source
 from rebalance.ingest.config import get_github_token, get_pulse_config
 from rebalance.ingest.db import db_connection
+
+
+# Author logins of known cloud-agent bots. Mirrors agent_tags.py — kept here
+# for SQL-side prefiltering so we don't fetch every bot row in the DB.
+CLOUD_AGENT_AUTHORS: tuple[str, ...] = (
+    "lovable-dev[bot]",
+    "lovable[bot]",
+    "chatgpt-codex-connector[bot]",
+    "codex-bot[bot]",
+    "claude[bot]",
+    "claude-bot[bot]",
+)
+
+
+def _author_filter_sql(column: str) -> str:
+    """SQL fragment matching the user OR any cloud-agent bot author."""
+    placeholders = ", ".join("?" for _ in CLOUD_AGENT_AUTHORS)
+    return f"(LOWER({column}) = LOWER(?) OR {column} IN ({placeholders}))"
 
 
 GITHUB_API_ROOT = "https://api.github.com"
@@ -140,42 +159,68 @@ def _query_day_activity(
                 "last_modified": r["last_modified"],
             })
 
+    commit_filter = _author_filter_sql("c.author_login")
     rows = conn.execute(
-        """
-        SELECT repo_full_name, sha, message, committed_at, html_url
-        FROM github_commits
-        WHERE LOWER(author_login) = LOWER(?) AND committed_at >= ?
-        ORDER BY committed_at DESC
+        f"""
+        SELECT c.repo_full_name, c.sha, c.message, c.committed_at, c.html_url,
+               c.author_login, gi.head_ref
+        FROM github_commits c
+        LEFT JOIN github_items gi
+          ON gi.repo_full_name = c.repo_full_name
+         AND gi.item_type = c.item_type
+         AND gi.number = c.item_number
+        WHERE c.committed_at >= ?
+          AND {commit_filter}
+        ORDER BY c.committed_at DESC
         """,
-        (github_login, sql_floor),
+        (sql_floor, github_login, *CLOUD_AGENT_AUTHORS),
     ).fetchall()
     for r in rows:
         if _in_window(r["committed_at"], start, end):
             first_line = (r["message"] or "").splitlines()[0] if r["message"] else ""
+            tag = classify_source(
+                branch=r["head_ref"],
+                author_login=r["author_login"],
+                commit_message=r["message"],
+            )
             activity.gh_commits.append({
                 "repo": r["repo_full_name"],
                 "sha": r["sha"][:7] if r["sha"] else "",
                 "subject": first_line[:160],
                 "committed_at": r["committed_at"],
                 "html_url": r["html_url"] or "",
+                "author_login": r["author_login"] or "",
+                "source_tag": tag,
             })
 
+    item_filter = _author_filter_sql("author_login")
     rows = conn.execute(
-        """
+        f"""
         SELECT repo_full_name, item_type, number, title, state, html_url,
-               created_at, updated_at, author_login
+               created_at, updated_at, author_login, head_ref, body
         FROM github_items
-        WHERE LOWER(author_login) = LOWER(?)
-          AND (created_at >= ? OR updated_at >= ?)
+        WHERE (created_at >= ? OR updated_at >= ?)
+          AND (
+                {item_filter}
+                OR head_ref LIKE 'claude/%'
+                OR head_ref LIKE 'codex/%'
+                OR head_ref LIKE 'lovable-%'
+                OR head_ref LIKE 'lovable/%'
+          )
         ORDER BY COALESCE(updated_at, created_at) DESC
         """,
-        (github_login, sql_floor, sql_floor),
+        (sql_floor, sql_floor, github_login, *CLOUD_AGENT_AUTHORS),
     ).fetchall()
     for r in rows:
         created_in = _in_window(r["created_at"], start, end)
         updated_in = _in_window(r["updated_at"], start, end)
         if not (created_in or updated_in):
             continue
+        tag = classify_source(
+            branch=r["head_ref"],
+            author_login=r["author_login"],
+            commit_message=r["body"] or "",
+        )
         activity.gh_items.append({
             "repo": r["repo_full_name"],
             "item_type": r["item_type"],
@@ -185,23 +230,32 @@ def _query_day_activity(
             "html_url": r["html_url"] or "",
             "created_at": r["created_at"],
             "updated_at": r["updated_at"],
+            "author_login": r["author_login"] or "",
+            "head_ref": r["head_ref"] or "",
             "is_new": created_in,
+            "source_tag": tag,
         })
 
+    comment_filter = _author_filter_sql("author_login")
     rows = conn.execute(
-        """
+        f"""
         SELECT repo_full_name, item_type, item_number, comment_type, body,
-               html_url, created_at
+               html_url, created_at, author_login
         FROM github_comments
-        WHERE LOWER(author_login) = LOWER(?) AND created_at >= ?
+        WHERE created_at >= ?
+          AND {comment_filter}
         ORDER BY created_at DESC
         """,
-        (github_login, sql_floor),
+        (sql_floor, github_login, *CLOUD_AGENT_AUTHORS),
     ).fetchall()
     for r in rows:
         if _in_window(r["created_at"], start, end):
             body = (r["body"] or "").strip().replace("\r", "")
             preview = body.split("\n", 1)[0][:160]
+            tag = classify_source(
+                author_login=r["author_login"],
+                commit_message=body,
+            )
             activity.gh_comments.append({
                 "repo": r["repo_full_name"],
                 "item_type": r["item_type"],
@@ -210,6 +264,8 @@ def _query_day_activity(
                 "preview": preview,
                 "html_url": r["html_url"] or "",
                 "created_at": r["created_at"],
+                "author_login": r["author_login"] or "",
+                "source_tag": tag,
             })
 
     if slack_user_id:
@@ -434,6 +490,41 @@ def collect_pulse_snapshot(
 # ---------------------------------------------------------------------------
 
 
+_TAG_DISPLAY = {
+    "claude-cloud": "🤖cloud-claude",
+    "codex-cloud": "🤖cloud-codex",
+    "lovable": "💜lovable",
+    "local-vscode": "💻local",
+    "human": "",  # no chip — keeps the line uncluttered for normal human work
+}
+
+
+def _tag_chip(tag: str | None) -> str:
+    """Inline label rendered before each row. Empty for plain human work."""
+    label = _TAG_DISPLAY.get(tag or "human", "")
+    return f"`{label}` " if label else ""
+
+
+def _group_counts(rows: list[dict[str, Any]], key: str) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for r in rows:
+        v = r.get(key) or "human"
+        counts[v] = counts.get(v, 0) + 1
+    return counts
+
+
+def _tag_summary(counts: dict[str, int]) -> str:
+    """Compact tag breakdown shown next to the section header, e.g. (12 — 8 local · 4 cloud-claude)."""
+    if not counts:
+        return ""
+    total = sum(counts.values())
+    parts = []
+    for tag, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+        label = _TAG_DISPLAY.get(tag, tag) or "human"
+        parts.append(f"{n} {label}")
+    return f"({total} — {' · '.join(parts)})"
+
+
 def _fmt_local(dt_value: str | None, tz: ZoneInfo, *, time_only: bool = False) -> str:
     parsed = _parse_iso(dt_value)
     if parsed is None:
@@ -452,21 +543,25 @@ def _render_section_today_work(today: DayActivity, tz: ZoneInfo) -> str:
         return "_Nothing recorded yet today._"
 
     if today.gh_commits:
-        lines.append("**GitHub commits**")
+        by_tag = _group_counts(today.gh_commits, "source_tag")
+        lines.append(f"**GitHub commits** {_tag_summary(by_tag)}")
         for c in today.gh_commits[:25]:
             url_part = f" ([{c['sha']}]({c['html_url']}))" if c.get("html_url") else f" (`{c['sha']}`)"
-            lines.append(f"- `{c['repo']}` {c['subject']}{url_part}")
+            tag_chip = _tag_chip(c.get("source_tag"))
+            lines.append(f"- {tag_chip}`{c['repo']}` {c['subject']}{url_part}")
         if len(today.gh_commits) > 25:
             lines.append(f"- _…and {len(today.gh_commits) - 25} more_")
         lines.append("")
 
     if today.gh_items:
-        lines.append("**Issues / PRs created or updated**")
+        by_tag = _group_counts(today.gh_items, "source_tag")
+        lines.append(f"**Issues / PRs created or updated** {_tag_summary(by_tag)}")
         for it in today.gh_items[:20]:
-            tag = "NEW " if it.get("is_new") else ""
+            new_marker = "NEW " if it.get("is_new") else ""
             kind = it.get("item_type") or "item"
+            tag_chip = _tag_chip(it.get("source_tag"))
             lines.append(
-                f"- {tag}`{it['repo']}` [{kind} #{it['number']}]({it['html_url']}) "
+                f"- {tag_chip}{new_marker}`{it['repo']}` [{kind} #{it['number']}]({it['html_url']}) "
                 f"({it.get('state','')}) — {it['title']}"
             )
         if len(today.gh_items) > 20:
@@ -474,11 +569,13 @@ def _render_section_today_work(today: DayActivity, tz: ZoneInfo) -> str:
         lines.append("")
 
     if today.gh_comments:
-        lines.append("**Comments posted**")
+        by_tag = _group_counts(today.gh_comments, "source_tag")
+        lines.append(f"**Comments posted** {_tag_summary(by_tag)}")
         for c in today.gh_comments[:15]:
             kind = c.get("comment_type") or "comment"
+            tag_chip = _tag_chip(c.get("source_tag"))
             lines.append(
-                f"- `{c['repo']}` [{kind} on #{c['item_number']}]({c['html_url']}) — "
+                f"- {tag_chip}`{c['repo']}` [{kind} on #{c['item_number']}]({c['html_url']}) — "
                 f"{c['preview']}"
             )
         if len(today.gh_comments) > 15:

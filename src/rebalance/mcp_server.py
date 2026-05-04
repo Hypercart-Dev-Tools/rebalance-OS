@@ -538,6 +538,26 @@ def create_server(database_path: Path) -> FastMCP:
         )
 
     @mcp.tool()
+    def list_watched_repos(since_days: int = 14) -> dict[str, Any]:
+        """
+        Show which GitHub repos are currently being monitored, and where each
+        one came from. The merged "watched" list = (project registry ∪ recent
+        activity from github_activity) − ignored. This is the same set
+        refresh_index syncs.
+
+        Use this when:
+          - The user asks "is X being monitored?"
+          - You suspect coverage gaps (a repo with activity but no synced artifacts)
+          - Before/after editing the active project list or ignored repos
+
+        Args:
+            since_days: Lookback window for the auto-discovered activity set.
+                Default 14 — matches refresh_index defaults.
+        """
+        from rebalance.ingest.index_ops import get_watched_repos
+        return get_watched_repos(database_path, since_days=since_days)
+
+    @mcp.tool()
     def publish_pulse(
         dry_run: bool = False,
         push: bool = True,

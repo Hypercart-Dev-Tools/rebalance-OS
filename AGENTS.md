@@ -11,7 +11,8 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 | `index_status()` | "Is the data fresh?" / "What's in the DB right now?" — read-only snapshot of every source + the unified semantic index, with drift indicators |
 | `refresh_index(scope=[...], dry_run=?)` | "Refresh the local DB." `scope` accepts `vault` / `github` / `calendar` / `sleuth` / `semantic` / `all`. Always preview with `dry_run=True` first if scope includes `github` — that hits the GitHub API for every active project repo and can take minutes |
 | `semantic_query(query, sources=[...], top_k=?)` | Cross-source vector search across the unified `semantic_documents` table |
-| `publish_pulse(dry_run=?, push=?)` | Render today's + yesterday's activity into a markdown status page and publish it to a private pulse repo. Reusable: every per-user value (`github_login`, `slack_user_id`, `pulse_target_path`, `pulse_filename`, `pulse_timezone`) lives in `temp/rbos.config`. See `src/rebalance/ingest/pulse.py` |
+| `list_watched_repos(since_days=?)` | Show the merged set of GitHub repos being monitored — project registry ∪ recent `github_activity` − ignored. Same set `refresh_index(scope=["github"])` syncs. Use this to debug coverage gaps |
+| `publish_pulse(dry_run=?, push=?)` | Render today's + yesterday's activity into a markdown status page and publish it to a private pulse repo. Each row tagged by source (`claude-cloud` / `codex-cloud` / `lovable` / `local-vscode` / `human`) via `src/rebalance/ingest/agent_tags.py`. Reusable: every per-user value (`github_login`, `slack_user_id`, `pulse_target_path`, `pulse_filename`, `pulse_timezone`) lives in `temp/rbos.config` |
 
 **Onboarding & projects:** `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`, `list_projects`, `github_balance`. See [CLAUDE.md](CLAUDE.md) for the full onboarding flow.
 
@@ -22,6 +23,8 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 **Hourly pulse publish.** A second launchd job (`com.rebalance-os.pulse-sync`) runs [scripts/pulse_sync.sh](scripts/pulse_sync.sh) on the hour, every hour from 6 AM to 11 PM local. It calls the same `publish_pulse()` orchestration the MCP tool exposes — render markdown, commit + push to the configured private pulse repo only when content actually changed. Logs in `temp/logs/pulse_sync_YYYY-MM-DD.log`. Install via `bash scripts/install_pulse_scheduler.sh`. Public users wanting to reuse this only need to populate the pulse keys in their own `temp/rbos.config` and point at their own private clone.
 
 **Source of truth for the orchestration:** [src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py). Only edit there if you need to change refresh behavior — the MCP wrappers in `src/rebalance/mcp_server.py` and `daily_sync.sh` are thin and should stay that way.
+
+**Repo coverage.** `refresh_index(scope=["github"])` no longer requires every monitored repo to be in the active project registry. It auto-merges `project_repos ∪ activity_repos` (from `github_activity`, last 14 days) and skips `github_ignored_repos`. Use `list_watched_repos()` for the canonical view. The `refresh_index` orchestration and the `pulse` renderer both consume the same set, so a repo only has to appear once for everything downstream to see it.
 
 ## Communication & Documentation
 

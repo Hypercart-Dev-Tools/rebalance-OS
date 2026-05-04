@@ -271,19 +271,90 @@ def _refresh_vault(
     }
 
 
-def _resolve_repos_for_refresh(database_path: Path, repos: list[str]) -> list[str]:
-    if repos:
-        return [r.strip() for r in repos if r.strip()]
-    project_repos: list[str] = []
+def _project_repos(database_path: Path) -> list[str]:
+    """Repos drawn from the active project registry (operator-curated)."""
+    repos: list[str] = []
     try:
         for project in get_projects(database_path, status="active"):
             for repo in project.get("repos") or []:
-                repo = repo.strip()
-                if repo and repo not in project_repos:
-                    project_repos.append(repo)
+                r = repo.strip()
+                if r and r not in repos:
+                    repos.append(r)
     except Exception:
         pass
-    return project_repos
+    return repos
+
+
+def _activity_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
+    """Repos with recent activity according to ``github_activity``.
+
+    These are repos the user has *actually touched* on GitHub in the last
+    *since_days*, regardless of whether they appear in the project registry.
+    Auto-discovered, used to close coverage gaps.
+    """
+    repos: list[str] = []
+    try:
+        with db_connection(database_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT DISTINCT repo_full_name
+                FROM github_activity
+                WHERE scan_date >= date('now', ?)
+                ORDER BY repo_full_name
+                """,
+                (f"-{int(since_days)} days",),
+            ).fetchall()
+            for r in rows:
+                repo = (r["repo_full_name"] or "").strip()
+                if repo and repo not in repos:
+                    repos.append(repo)
+    except Exception:
+        pass
+    return repos
+
+
+def get_watched_repos(
+    database_path: Path,
+    *,
+    since_days: int = 14,
+) -> dict[str, list[str]]:
+    """Return the canonical view of which repos are monitored.
+
+    The merged ``watched`` list = (project_repos ∪ activity_repos) − ignored.
+    Callers (``refresh_index``, ``list_watched_repos`` MCP tool) consume the
+    same source of truth so the user can never wonder "what's actually
+    being synced?"
+    """
+    from rebalance.ingest.config import get_github_ignored_repos
+
+    project = _project_repos(database_path)
+    activity = _activity_repos(database_path, since_days=since_days)
+    ignored = set(get_github_ignored_repos())
+
+    project_set = set(project)
+    activity_set = set(activity)
+
+    watched: list[str] = []
+    for repo in project + activity:
+        if repo in ignored:
+            continue
+        if repo not in watched:
+            watched.append(repo)
+
+    return {
+        "watched": watched,
+        "project_repos": project,
+        "activity_repos": activity,
+        "auto_discovered": sorted(activity_set - project_set - ignored),
+        "ignored": sorted(ignored),
+        "since_days": since_days,
+    }
+
+
+def _resolve_repos_for_refresh(database_path: Path, repos: list[str]) -> list[str]:
+    if repos:
+        return [r.strip() for r in repos if r.strip()]
+    return get_watched_repos(database_path)["watched"]
 
 
 def _refresh_github(

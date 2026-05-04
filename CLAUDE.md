@@ -47,7 +47,8 @@ Drive this sequence using MCP tool calls:
 | `index_status()` | Snapshot of all sources + unified semantic index, with drift indicators |
 | `refresh_index(scope, vault_path?, since_days?, repos?, dry_run?)` | Orchestrated refresh: vault / github / calendar / sleuth / semantic / all |
 | `semantic_query(query, sources?, top_k?)` | Vector search across the unified semantic index (vault + github) |
-| `publish_pulse(dry_run?, push?)` | Render today's + yesterday's activity to markdown and push to a private pulse repo (uses `temp/rbos.config` keys: `github_login`, `slack_user_id`, `pulse_target_path`, `pulse_filename`, `pulse_timezone`) |
+| `list_watched_repos(since_days?)` | Show which repos are being monitored (project registry ∪ recent activity − ignored). Use this to debug "is X being synced?" |
+| `publish_pulse(dry_run?, push?)` | Render today's + yesterday's activity to markdown and push to a private pulse repo. Each row is tagged by source (`claude-cloud` / `codex-cloud` / `lovable` / `local-vscode` / `human`) via `agent_tags.classify`. Uses `temp/rbos.config` keys: `github_login`, `slack_user_id`, `pulse_target_path`, `pulse_filename`, `pulse_timezone` |
 
 **Onboarding & projects:**
 
