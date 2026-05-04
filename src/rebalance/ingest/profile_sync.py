@@ -2,10 +2,12 @@
 Profile a daily_sync log to surface slow repos.
 
 The launchd-driven daily_sync.sh dumps a JSON document into
-``temp/logs/daily_sync_YYYY-MM-DD.log``; this module finds the latest
-log, extracts the JSON (resilient to surrounding shell output and even
-to truncated/multi-run logs), and renders a Rich table showing per-repo
-timings for the GitHub scope.
+``temp/logs/daily_sync_YYYY-MM-DD.log``. The live dashboard also appends
+GitHub-only refresh records to ``temp/logs/github_refresh_YYYY-MM-DD.log``.
+This module finds the latest supported timing log, extracts the JSON
+(resilient to surrounding shell output and even to truncated/multi-run
+logs), and renders a Rich table showing per-repo timings for the GitHub
+scope.
 
 The parser is deliberately defensive: it never raises on a shape change.
 If a key it expected is missing or renamed, it surfaces what it could
@@ -45,15 +47,17 @@ _PALETTE = {
 # ---------------------------------------------------------------------------
 
 
+_LOG_GLOBS = ("daily_sync_*.log", "github_refresh_*.log")
+
+
 def _find_most_recent_log(log_dir: Path) -> Path | None:
-    """Return the most recently modified ``daily_sync_*.log`` or None."""
+    """Return the most recently modified supported sync profile log or None."""
     if not log_dir.exists():
         return None
-    candidates = sorted(
-        log_dir.glob("daily_sync_*.log"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True,
-    )
+    candidates: list[Path] = []
+    for pattern in _LOG_GLOBS:
+        candidates.extend(log_dir.glob(pattern))
+    candidates.sort(key=lambda p: p.stat().st_mtime, reverse=True)
     return candidates[0] if candidates else None
 
 
@@ -111,16 +115,27 @@ def _coerce_seconds(value: Any) -> float | None:
     return None
 
 
+def _unwrap_refresh_result(data: dict[str, Any]) -> dict[str, Any]:
+    """Return the refresh_index result from daily or dashboard log shapes."""
+    result = data.get("result")
+    if isinstance(result, dict):
+        return result
+    return data
+
+
 def _extract_github_artifacts(data: dict[str, Any]) -> list[dict[str, Any]]:
     """Pull the per-repo timing rows from a parsed daily_sync JSON.
 
     Walks ``results[]`` looking for the github scope and returns its
-    ``artifact_sync`` list (or ``[]``). Tolerant of:
+    ``artifact_sync`` list (or ``[]``). Dashboard refresh logs wrap the
+    refresh result as ``{"source": "dashboard", "result": ...}``, so unwrap
+    that shape first. Tolerant of:
       - ``results`` missing or non-list
       - github scope absent
       - ``artifact_sync`` renamed/missing → returns []
       - rows that aren't dicts → filtered out
     """
+    data = _unwrap_refresh_result(data)
     results = data.get("results")
     if not isinstance(results, list):
         return []
@@ -196,13 +211,13 @@ def render_profile_sync(
         if log_path is None:
             out.print(
                 Text(
-                    f"No daily_sync_*.log files found in {log_dir}.",
+                    f"No daily_sync_*.log or github_refresh_*.log files found in {log_dir}.",
                     style=_PALETTE["danger"],
                 )
             )
             out.print(
                 Text(
-                    "Run: bash scripts/daily_sync.sh   (or wait for the 06:30 launchd job)",
+                    "Run: rebalance, press [r], then use rebalance profile-sync after it completes.",
                     style=_PALETTE["fg_muted"],
                 )
             )
@@ -251,7 +266,8 @@ def render_profile_sync(
         timings = timings[:top_n]
 
     total = sum(t[1] for t in timings if isinstance(t[1], float))
-    overall_run_seconds = _coerce_seconds(data.get("elapsed_seconds")) or 0.0
+    refresh_result = _unwrap_refresh_result(data)
+    overall_run_seconds = _coerce_seconds(refresh_result.get("elapsed_seconds")) or 0.0
     log_age = _format_log_age(log_path)
 
     # Header

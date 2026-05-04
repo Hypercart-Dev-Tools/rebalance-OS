@@ -15,11 +15,13 @@ Optional environment:
     REBALANCE_TZ     IANA timezone for "now" rendering (default: America/Los_Angeles)
     PULSE_TICK       UI poll interval in seconds (default: 2)
     PULSE_AUTO_MIN   GitHub auto-refresh interval in minutes (default: 10; 0 = off)
+    PULSE_INVERSE    1 = high-contrast light palette (default: refined dark)
 """
 
 from __future__ import annotations
 
 import os
+import json
 import select
 import sys
 import termios
@@ -53,6 +55,8 @@ from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 
 
 DB_PATH = Path(os.environ.get("REBALANCE_DB", "rebalance.db")).expanduser().resolve()
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+LOG_DIR = PROJECT_ROOT / "temp" / "logs"
 TZ = ZoneInfo(os.environ.get("REBALANCE_TZ", "America/Los_Angeles"))
 TICK_SECONDS = float(os.environ.get("PULSE_TICK", "2"))
 AUTO_REFRESH_MINUTES = int(os.environ.get("PULSE_AUTO_MIN", "10"))
@@ -60,25 +64,55 @@ INVERSE = os.environ.get("PULSE_INVERSE", "0") not in ("", "0", "false", "False"
 
 
 # ---------------------------------------------------------------------------
-# Palette — the "refined dark" theme from /Users/noelsaw/Downloads/Rebalance
-# project/app.jsx. One signature accent (amber); semantic colours for content,
-# never chrome. Borders are deliberately low-contrast so the eye lands on
-# data, not on box edges.
+# Palettes. The default keeps the "refined dark" mood: one signature accent
+# (amber), semantic colours for content, and restrained chrome. Inverse mode is
+# now an explicit light palette instead of ANSI ``reverse``; Rich's reverse
+# semantics interact poorly with true-colour foregrounds and can produce
+# off-white text on a white terminal.
 # ---------------------------------------------------------------------------
-PALETTE = {
-    "bg":        "#0e1013",
-    "border":    "#262a31",
-    "border_hi": "#3a414b",
-    "fg":        "#e8e6e3",  # warm off-white
-    "fg_muted":  "#a8a29c",
-    "fg_dim":    "#6c6660",
-    "trough":    "#23262b",
-    "accent":    "#e8b86a",  # amber — single signature colour
-    "ok":        "#7fb069",  # green — commits / fresh
-    "info":      "#6aa3e8",  # blue — PRs / calendar
-    "warn":      "#e8b86a",  # amber — issues (alias of accent)
-    "danger":    "#d65f5f",  # red — never-synced / errors
+DARK_PALETTE = {
+    "bg": "#0e1013",
+    "border": "#3a414b",
+    "border_hi": "#515966",
+    "fg": "#f2eee8",
+    "fg_muted": "#bdb5ac",
+    "fg_dim": "#928a81",
+    "trough": "#23262b",
+    "accent": "#e8b86a",  # amber — single signature colour
+    "ok": "#88bd71",      # green — commits / fresh
+    "info": "#75afea",    # blue — PRs / calendar
+    "warn": "#e8b86a",    # amber — issues (alias of accent)
+    "danger": "#e07171",  # red — never-synced / errors
 }
+
+LIGHT_PALETTE = {
+    "bg": "#fbf8f1",
+    "border": "#7f7468",
+    "border_hi": "#5f574d",
+    "fg": "#242629",
+    "fg_muted": "#57534d",
+    "fg_dim": "#746f67",
+    "trough": "#e7dfd3",
+    "accent": "#a65f00",
+    "ok": "#2f7437",
+    "info": "#1d6fa8",
+    "warn": "#a65f00",
+    "danger": "#b33a2e",
+}
+
+PALETTE = LIGHT_PALETTE if INVERSE else DARK_PALETTE
+
+
+def _style(fg: str | None = None, *, bold: bool = False, italic: bool = False) -> str:
+    tokens = []
+    if bold:
+        tokens.append("bold")
+    if italic:
+        tokens.append("italic")
+    if fg:
+        tokens.append(fg)
+    tokens.append(f"on {PALETTE['bg']}")
+    return " ".join(tokens)
 
 
 def _panel_style(_unused: str = "") -> dict[str, Any]:
@@ -86,18 +120,19 @@ def _panel_style(_unused: str = "") -> dict[str, Any]:
 
     Every panel uses the same low-contrast border colour so the dashboard
     reads as a single composition; semantic colour goes on the content,
-    not the chrome. ``PULSE_INVERSE=1`` still works for the brain-hack
-    flip.
+    not the chrome.
     """
-    border = PALETTE["border"]
-    if INVERSE:
-        return {"border_style": f"reverse {border}", "style": "reverse"}
-    return {"border_style": border, "style": ""}
+    return {
+        "border_style": _style(PALETTE["border"]),
+        "style": _style(PALETTE["fg"]),
+    }
 
 
-def _title(label: str) -> str:
+def _title(label: str) -> Text:
     """Panel titles: amber bullet + accented label, matching the design mock."""
-    return f"[{PALETTE['accent']}]●[/] [bold {PALETTE['fg']}]{label}[/]"
+    title = Text("●", style=_style(PALETTE["accent"], bold=True))
+    title.append(f" {label}", style=_style(PALETTE["fg"], bold=True))
+    return title
 
 
 # ---------------------------------------------------------------------------
@@ -112,17 +147,19 @@ class RefreshState:
         self.last_finished: datetime | None = None
         self.last_started: datetime | None = None
         self.last_error: str = ""
+        self.last_profile: dict[str, Any] | None = None
 
     def start(self) -> None:
         with self.lock:
             self.status = "running"
             self.last_started = datetime.now(timezone.utc)
 
-    def succeed(self) -> None:
+    def succeed(self, profile: dict[str, Any] | None = None) -> None:
         with self.lock:
             self.status = "ok"
             self.last_finished = datetime.now(timezone.utc)
             self.last_error = ""
+            self.last_profile = profile
 
     def fail(self, err: str) -> None:
         with self.lock:
@@ -137,6 +174,7 @@ class RefreshState:
                 "last_started": self.last_started,
                 "last_finished": self.last_finished,
                 "last_error": self.last_error,
+                "last_profile": self.last_profile,
             }
 
 
@@ -144,11 +182,50 @@ REFRESH = RefreshState()
 _stop_event = threading.Event()
 
 
+def _github_scope_result(result: dict[str, Any]) -> dict[str, Any] | None:
+    for entry in result.get("results") or []:
+        if isinstance(entry, dict) and entry.get("scope") == "github":
+            return entry
+    return None
+
+
+def _summarize_refresh_profile(result: dict[str, Any]) -> dict[str, Any]:
+    github = _github_scope_result(result) or {}
+    rows = [r for r in github.get("artifact_sync") or [] if isinstance(r, dict)]
+    timed_rows = [
+        r for r in rows
+        if isinstance(r.get("elapsed_seconds"), (int, float))
+    ]
+    timed_rows.sort(key=lambda r: float(r["elapsed_seconds"]), reverse=True)
+    slowest = timed_rows[0] if timed_rows else None
+    return {
+        "elapsed_seconds": result.get("elapsed_seconds"),
+        "repo_count": len(rows),
+        "slowest_repo": slowest.get("repo") if slowest else None,
+        "slowest_seconds": slowest.get("elapsed_seconds") if slowest else None,
+        "log_name": f"github_refresh_{datetime.now(TZ).date().isoformat()}.log",
+    }
+
+
+def _write_refresh_profile(result: dict[str, Any]) -> None:
+    """Append dashboard-triggered GitHub refresh timings for profile-sync."""
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    log_path = LOG_DIR / f"github_refresh_{datetime.now(TZ).date().isoformat()}.log"
+    record = {
+        "logged_at": datetime.now(timezone.utc).isoformat(),
+        "source": "dashboard",
+        "result": result,
+    }
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(record, default=str) + "\n")
+
+
 def _do_refresh() -> None:
     REFRESH.start()
     try:
-        refresh_index(DB_PATH, scope=["github"])
-        REFRESH.succeed()
+        result = refresh_index(DB_PATH, scope=["github"])
+        _write_refresh_profile(result)
+        REFRESH.succeed(_summarize_refresh_profile(result))
     except Exception as exc:  # noqa: BLE001
         REFRESH.fail(f"{type(exc).__name__}: {exc}")
 
@@ -270,9 +347,17 @@ def fetch_watched_summary(now: datetime) -> dict[str, Any]:
 
 def fetch_recent_github(limit: int = 9) -> list[dict[str, Any]]:
     """Union of recent items, commits, and comments — sorted by recency."""
+    ignored = get_github_ignored_repos()
+    ignored_clause = ""
+    params: list[Any] = []
+    if ignored:
+        placeholders = ",".join("?" * len(ignored))
+        ignored_clause = f"WHERE LOWER(repo_full_name) NOT IN ({placeholders})"
+        params.extend(ignored)
+
     with db_connection(DB_PATH) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT kind, sub, repo_full_name, num, detail, ts, who FROM (
                 SELECT 'item' AS kind, item_type AS sub, repo_full_name,
                        number AS num, title AS detail, updated_at AS ts,
@@ -290,10 +375,11 @@ def fetch_recent_github(limit: int = 9) -> list[dict[str, Any]]:
                 FROM github_comments
                 WHERE created_at IS NOT NULL
             )
+            {ignored_clause}
             ORDER BY ts DESC
             LIMIT ?
             """,
-            (limit,),
+            (*params, limit),
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -640,7 +726,17 @@ def render_footer(refresh_snapshot: dict[str, Any], now: datetime) -> Panel:
         bits.append(Text("● refreshing github…", style=f"bold {PALETTE['accent']}"))
     elif status == "ok":
         last = refresh_snapshot["last_finished"]
-        bits.append(Text(f"● github refreshed {_ago(last, now=now)}", style=PALETTE["ok"]))
+        profile = refresh_snapshot.get("last_profile") or {}
+        slowest_repo = profile.get("slowest_repo")
+        slowest_seconds = profile.get("slowest_seconds")
+        if slowest_repo and isinstance(slowest_seconds, (int, float)):
+            repo_short = str(slowest_repo).split("/")[-1]
+            bits.append(Text(
+                f"● github refreshed {_ago(last, now=now)} · slowest {repo_short} {slowest_seconds:.1f}s",
+                style=PALETTE["ok"],
+            ))
+        else:
+            bits.append(Text(f"● github refreshed {_ago(last, now=now)}", style=PALETTE["ok"]))
     elif status == "error":
         err = refresh_snapshot["last_error"][:60]
         bits.append(Text(f"✗ refresh failed: {err}", style=PALETTE["danger"]))
@@ -782,7 +878,7 @@ def main() -> int:
         print(f"REBALANCE_DB not found: {DB_PATH}", file=sys.stderr)
         return 1
 
-    console = Console()
+    console = Console(style=f"on {PALETTE['bg']}")
     layout = build_layout()
 
     threading.Thread(target=_auto_refresh_loop, daemon=True).start()

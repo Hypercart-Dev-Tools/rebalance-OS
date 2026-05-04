@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.23.4] - 2026-05-04
+
+### Added
+
+- Dashboard-triggered GitHub refreshes now append profile records to local logs, and `rebalance profile-sync` can read those logs to show the slowest repos from the latest live refresh instead of only the daily sync job.
+
+## [0.23.3] - 2026-05-04
+
+### Fixed
+
+- Starred or watched GitHub repos no longer become automatically monitored. Auto-discovered watched repos now require at least one real work signal such as a push, commit, issue, PR, comment, or review.
+
+## [0.23.2] - 2026-05-04
+
+### Fixed
+
+- The terminal pulse dashboard now filters its recent GitHub feed through the configured GitHub ignore list, so ignored repos stay hidden even when older rows are still present in the local database.
+
+## [0.23.1] - 2026-05-04
+
+### Fixed
+
+- The terminal pulse dashboard now uses explicit dark and light palettes instead of ANSI reverse-video styling, preventing low-contrast text on light terminal backgrounds while preserving the inverse visual mode.
+- Rich is now declared as a runtime dependency so the terminal dashboard and profiling tables are available after a normal package install.
+
 ## [0.23.0] - 2026-05-03
 
 ### Added

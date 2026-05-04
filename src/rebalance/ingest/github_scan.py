@@ -67,6 +67,18 @@ class RepoActivity:
             "last_active_at": self.last_active_at,
         }
 
+    def work_event_count(self) -> int:
+        """Count contribution-style events; passive events like stars do not qualify."""
+        return (
+            self.commits
+            + self.pushes
+            + self.prs_opened
+            + self.prs_merged
+            + self.issues_opened
+            + self.issue_comments
+            + self.reviews
+        )
+
 
 @dataclass
 class GitHubScanResult:
@@ -223,11 +235,23 @@ def _summarize_by_repo(
     """
     activity: dict[str, RepoActivity] = {}
 
+    work_event_types = {
+        "PushEvent",
+        "PullRequestEvent",
+        "IssuesEvent",
+        "IssueCommentEvent",
+        "PullRequestReviewEvent",
+        "PullRequestReviewCommentEvent",
+    }
+
     for event in events:
         repo_full_name: str = event.get("repo", {}).get("name", "unknown/unknown")
         event_type: str = event.get("type", "")
         payload: dict[str, Any] = event.get("payload", {})
         created_at: str | None = event.get("created_at")
+
+        if event_type not in work_event_types:
+            continue
 
         if repo_full_name not in activity:
             activity[repo_full_name] = RepoActivity(repo_full_name=repo_full_name)
@@ -347,6 +371,8 @@ def upsert_github_activity(database_path: Path, result: GitHubScanResult) -> Non
 
     with db_connection(database_path, ensure_github_schema) as conn:
         for r in result.repo_activity.values():
+            if r.work_event_count() <= 0:
+                continue
             conn.execute(
                 _UPSERT_SQL,
                 (

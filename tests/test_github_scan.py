@@ -8,7 +8,13 @@ from pathlib import Path
 
 from rebalance.ingest import config as config_module
 from rebalance.ingest.db import db_connection, ensure_github_schema
-from rebalance.ingest.github_scan import GitHubScanResult, RepoActivity, filter_ignored_repo_activity, upsert_github_activity
+from rebalance.ingest.github_scan import (
+    GitHubScanResult,
+    RepoActivity,
+    _summarize_by_repo,
+    filter_ignored_repo_activity,
+    upsert_github_activity,
+)
 
 
 class GitHubScanIgnoreTests(unittest.TestCase):
@@ -47,3 +53,53 @@ class GitHubScanIgnoreTests(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertEqual(rows[0]["repo_full_name"], "example/repo")
         self.assertEqual(rows[0]["commits"], 3)
+
+    def test_watch_event_does_not_create_activity_repo(self) -> None:
+        events = [
+            {
+                "type": "WatchEvent",
+                "repo": {"name": "example/starred"},
+                "payload": {"action": "started"},
+                "created_at": "2026-05-04T12:00:00Z",
+            },
+            {
+                "type": "PushEvent",
+                "repo": {"name": "example/worked"},
+                "payload": {"commits": [{"sha": "abc"}]},
+                "created_at": "2026-05-04T13:00:00Z",
+            },
+        ]
+
+        activity = _summarize_by_repo(events)
+
+        self.assertNotIn("example/starred", activity)
+        self.assertEqual(activity["example/worked"].commits, 1)
+
+    def test_upsert_skips_zero_work_activity_rows(self) -> None:
+        db_path = Path(self._tmp.name) / "rebalance.db"
+        result = GitHubScanResult(
+            login="tester",
+            scanned_at="2026-05-04T12:00:00+00:00",
+            days_fetched=30,
+            total_events=2,
+            repo_activity={
+                "example/starred": RepoActivity(
+                    repo_full_name="example/starred",
+                    last_active_at="2026-05-04T12:00:00Z",
+                ),
+                "example/worked": RepoActivity(
+                    repo_full_name="example/worked",
+                    commits=1,
+                    pushes=1,
+                    last_active_at="2026-05-04T13:00:00Z",
+                ),
+            },
+        )
+
+        upsert_github_activity(db_path, result)
+        with db_connection(db_path, ensure_github_schema) as conn:
+            rows = conn.execute(
+                "SELECT repo_full_name FROM github_activity ORDER BY repo_full_name"
+            ).fetchall()
+
+        self.assertEqual([row["repo_full_name"] for row in rows], ["example/worked"])

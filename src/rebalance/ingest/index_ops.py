@@ -289,9 +289,10 @@ def _project_repos(database_path: Path) -> list[str]:
 def _activity_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
     """Repos with recent activity according to ``github_activity``.
 
-    These are repos the user has *actually touched* on GitHub in the last
+    These are repos the user has *actually worked in* on GitHub in the last
     *since_days*, regardless of whether they appear in the project registry.
-    Auto-discovered, used to close coverage gaps.
+    Passive events such as starring/watching a repo may create GitHub Events
+    API entries, but they must not auto-monitor a repo.
     """
     repos: list[str] = []
     try:
@@ -301,6 +302,10 @@ def _activity_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
                 SELECT DISTINCT repo_full_name
                 FROM github_activity
                 WHERE scan_date >= date('now', ?)
+                  AND (
+                    commits + pushes + prs_opened + prs_merged
+                    + issues_opened + issue_comments + reviews
+                  ) > 0
                 ORDER BY repo_full_name
                 """,
                 (f"-{int(since_days)} days",),
