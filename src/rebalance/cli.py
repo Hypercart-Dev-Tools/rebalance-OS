@@ -30,6 +30,84 @@ config_app = typer.Typer(help="Configuration and secrets management")
 app.add_typer(ingest_app, name="ingest")
 app.add_typer(config_app, name="config")
 
+
+# Resolved once so all paths in the CLI process agree on where the project
+# lives — cli.py is at src/rebalance/cli.py, so .parent.parent.parent is the
+# repo root regardless of cwd.
+_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _launch_dashboard() -> None:
+    """Replace the current CLI process with the live dashboard.
+
+    Used by both the no-arg invocation (``rebalance``) and the explicit
+    ``rebalance dashboard`` subcommand. We ``execv`` the dashboard
+    script so the user sees a clean process with no nested Python
+    overhead and so the dashboard's own termios / Rich Live cleanup
+    runs at exit.
+    """
+    import os
+    import sys
+
+    dashboard_path = _PROJECT_ROOT / "scripts" / "dashboard.py"
+    if not dashboard_path.exists():
+        typer.echo(f"dashboard script not found: {dashboard_path}", err=True)
+        raise typer.Exit(1)
+
+    # Default REBALANCE_DB so `rebalance` works from any cwd, not just
+    # the project root.
+    os.environ.setdefault("REBALANCE_DB", str(_PROJECT_ROOT / "rebalance.db"))
+    os.execv(sys.executable, [sys.executable, str(dashboard_path)])
+
+
+@app.callback(invoke_without_command=True)
+def _root(ctx: typer.Context) -> None:
+    """rebalance — local-first workday operating system.
+
+    Invoked with no subcommand: launches the live activity dashboard
+    (Rich Live, 4-pane). Subcommands continue to work as before; see
+    ``rebalance --help`` for the full surface.
+    """
+    if ctx.invoked_subcommand is None:
+        _launch_dashboard()
+
+
+@app.command("dashboard")
+def dashboard_cmd() -> None:
+    """Launch the live activity dashboard (Rich Live, 4-pane).
+
+    Same as running ``rebalance`` with no arguments — exposed
+    explicitly so it shows up in ``--help``.
+    """
+    _launch_dashboard()
+
+
+@app.command("profile-sync")
+def profile_sync_cmd(
+    log: Path = typer.Option(
+        None,
+        "--log",
+        help="Specific daily_sync log file to parse. Defaults to the most recent one in temp/logs/.",
+    ),
+    top: int = typer.Option(0, "--top", help="If >0, show only the slowest N repos."),
+) -> None:
+    """Show per-repo timings from the most recent GitHub sync.
+
+    Parses the JSON dumped by ``scripts/daily_sync.sh`` so you can see
+    which repos dominate the run and where the sync budget goes. Pass
+    ``--log`` for a specific log file or ``--top 5`` to see only the
+    biggest offenders.
+    """
+    from rebalance.ingest.profile_sync import render_profile_sync
+
+    exit_code = render_profile_sync(
+        project_root=_PROJECT_ROOT,
+        log_override=log,
+        top_n=top if top > 0 else None,
+    )
+    if exit_code:
+        raise typer.Exit(exit_code)
+
 GOOGLE_CALENDAR_ENV_PATH = Path("/Users/noelsaw/secrets/google-calendar.env")
 CALENDAR_EVENT_LOG_PATH = Path("temp/logs/calendar-event-create.jsonl")
 
