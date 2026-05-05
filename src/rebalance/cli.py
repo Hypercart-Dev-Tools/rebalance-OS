@@ -314,11 +314,11 @@ CALENDAR_EVENT_LOG_PATH = Path("temp/logs/calendar-event-create.jsonl")
 # TODO: support sleuth-web-api-production.env once a prod Sleuth deployment
 # exists — likely via a --env name|production|development flag.
 
-# Module-level path for the Google Calendar env file. Resolved at import time
-# so tests can patch `rebalance.cli.GOOGLE_CALENDAR_ENV_PATH` to redirect
-# subsequent reads in `_load_google_calendar_env` without monkey-patching the
-# resolver itself.
+# Module-level paths for operator env files. Resolved at import time so tests
+# can patch `rebalance.cli.GOOGLE_CALENDAR_ENV_PATH` / `rebalance.cli.SLEUTH_ENV_PATH`
+# to redirect subsequent reads without monkey-patching the resolver itself.
 GOOGLE_CALENDAR_ENV_PATH = resolve_secret_path("google-calendar.env")
+SLEUTH_ENV_PATH = resolve_secret_path("sleuth-web-api-development.env")
 
 
 def _load_google_calendar_env() -> dict[str, str]:

@@ -3,11 +3,6 @@
     "allow": [
       "mcp__rebalance__onboarding_status",
       "mcp__rebalance__ask",
-      "Bash(chmod +x /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/collect.sh /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/install.sh)",
-      "Bash(bash -n /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/collect.sh)",
-      "Bash(bash -n /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/install.sh)",
-      "Bash(plutil -lint /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/com.user.git-history.plist.template)",
-      "Bash(python /Users/noelsaw/Documents/rebalance-OS/experimental/git-pulse/recap.py --input '/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse/reports/combined-14-day-local-and-synced.tsv' --input '/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse/reports/combined-21-day-local-and-synced.tsv' --output /tmp/recap-smoke.md)",
       "Read(//tmp/**)",
       "Bash(.venv/bin/python -c ' *)",
       "Bash(git commit -m ' *)",
@@ -15,7 +10,6 @@
       "Bash(python -c \"import rich; print\\('rich ok:', rich.__version__\\)\")",
       "Bash(python -c \"from rich.console import Console; from rich.layout import Layout; from rich.live import Live; print\\('rich ok'\\)\")",
       "Bash(.venv/bin/rebalance refresh *)",
-      "Bash(chmod +x /Users/noelsaw/Documents/rebalance-OS/scripts/pulse_server.sh)",
       "Bash(.venv/bin/python scripts/pulse_server.py --port 8765)",
       "Bash(echo \"pid=$!\")",
       "Bash(curl -fsS http://127.0.0.1:8765/api/health -o /dev/null)",
@@ -36,13 +30,14 @@
       "Bash(echo \"new pid=$!\")",
       "Bash(curl -s -o /tmp/resp.json -w 'HTTP %{http_code}\\\\n' -X POST http://127.0.0.1:8767/api/goals/complete -H 'content-type: application/json' -d '{\"title\":\"__definitely_not_a_real_goal__\"}')",
       "Bash(curl -s -o /tmp/resp.json -w 'HTTP %{http_code}\\\\n' -X POST http://127.0.0.1:8767/api/goals/complete -H 'content-type: application/json' -d '{\"title\":\"\"}')",
-      "Bash(git -C /Users/noelsaw/Documents/rebalance-OS log -1 --stat)",
       "mcp__rebalance__sleuth_sync_reminders",
       "Bash(.venv/bin/python -m pytest tests/test_sleuth_reminders.py tests/test_pulse_sleuth_scope.py -q)",
-      "Bash(.venv/bin/python -m unittest tests.test_sleuth_reminders tests.test_pulse_sleuth_scope -v)"
-    ],
-    "additionalDirectories": [
-      "/Users/noelsaw/Documents/rebalance-OS/.claude"
+      "Bash(.venv/bin/python -m unittest tests.test_sleuth_reminders tests.test_pulse_sleuth_scope -v)",
+      "Bash(awk 'NR>=755 && NR<=770' PROJECT/cleanup.sh)",
+      "Skill(update-config)",
+      "Skill(update-config:*)",
+      "Bash(.venv/bin/python -m pytest tests/test_calendar_create_event_cli.py tests/test_git_pulse_health_check.py tests/test_dashboard_terminal_theme.py -q)",
+      "Bash(python3 -m py_compile src/rebalance/cli.py tests/test_git_pulse_health_check.py tests/test_calendar_create_event_cli.py)"
     ]
   }
 }

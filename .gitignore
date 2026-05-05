@@ -29,3 +29,6 @@ rebalance.db-wal
 /git-pulse-sync
 /web/pulse.html
 /web/*.tmp
+
+# Rendered launchd plists — generated from .plist.template by scripts/install_*_scheduler.sh
+scripts/com.rebalance-os.*.plist

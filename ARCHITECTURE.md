@@ -118,11 +118,11 @@ Project Registry ────▶ registry.py +              MD registry → proj
 | Source | Secret store | Mechanism |
 |---|---|---|
 | GitHub | `temp/rbos.config` (JSON, gitignored) | PAT with `repo:read` |
-| Google Calendar | `/Users/noelsaw/secrets/google-calendar.env` + pickled OAuth token | OAuth 2.0 user consent |
-| Sleuth | `/Users/noelsaw/secrets/sleuth-web-api-development.env` (mode 600) | Bearer token, 64-hex |
+| Google Calendar | `~/secrets/google-calendar.env` + pickled OAuth token | OAuth 2.0 user consent |
+| Sleuth | `~/secrets/sleuth-web-api-development.env` (mode 600) | Bearer token, 64-hex |
 | Obsidian vault | none | filesystem read only |
 
-Env-file paths now resolve via [src/rebalance/paths.py](src/rebalance/paths.py)::`resolve_secret_path(name)` — the layered chain is `REBALANCE_SECRETS_DIR` env var → `secrets_dir` field in `~/.config/rebalance-os/config.json` (set via `rebalance config set-secrets-dir`) → `~/secrets/` legacy default. Both files should sit at mode 600. Env files are parsed manually (no `python-dotenv`). Nothing with a secret value is committed.
+Env-file paths resolve via [src/rebalance/paths.py](src/rebalance/paths.py)::`resolve_secret_path(name)` — the layered chain is `REBALANCE_SECRETS_DIR` env var → `secrets_dir` field in `~/.config/rebalance-os/config.json` (set via `rebalance config set-secrets-dir`) → `~/secrets/` legacy default. Both `GOOGLE_CALENDAR_ENV_PATH` and `SLEUTH_ENV_PATH` in [src/rebalance/cli.py](src/rebalance/cli.py) use this resolver, so the repo is portable across operator home directories without hardcoded paths. Both files should sit at mode 600. Env files are parsed manually (no `python-dotenv`). Nothing with a secret value is committed.
 
 ### Adding a New Source
 
@@ -166,6 +166,15 @@ GitHub artifacts (writer: github_knowledge.py; schema in db.py::ensure_github_sc
   github_documents           — per-artifact embeddable document rows
   github_embeddings          — sqlite-vec virtual table for artifact embeddings
   github_embedding_meta      — model name + dim for the GitHub corpus
+
+Unified Semantic Index (writers: semantic_index.py, index_ops.py)
+  semantic_documents         — canonical cross-source document rows (vault chunks +
+                               GitHub issues/PRs/comments/commits). Writer:
+                               semantic_index.py::backfill_semantic_documents().
+                               Consumed by semantic_query() and the LLM context layer.
+  semantic_embeddings        — sqlite-vec virtual table, float[1024], keyed by
+                               semantic_documents.id. Unified ANN search target.
+  semantic_embedding_meta    — model name, dimension, embedder_version, last_embed_at
 
 Vault Ingestion (writer: note_ingester.py)
   vault_files                — one row per .md file, with content_hash for delta detection
@@ -282,10 +291,13 @@ Four ways the pipeline runs:
 
 2. **Unattended scheduled syncs** — four launchd jobs cooperate:
 
-   - **Daily all-source sync** ([scripts/daily_sync.sh](scripts/daily_sync.sh) / [scripts/com.rebalance-os.daily-sync.plist](scripts/com.rebalance-os.daily-sync.plist)) at 06:30 local time, plus on boot/login if 06:30 was missed. Calls `refresh_index(scope=["all"])`, which walks every source: vault → github → calendar → sleuth → unified semantic index. "All" means *every source*, **not** a full re-download — each step uses its own incremental logic from [Sync semantics per source](#sync-semantics-per-source). Per-scope failures are captured in the result's `errors` list rather than aborting the run.
-   - **Hourly vault refresh** ([scripts/vault_sync.sh](scripts/vault_sync.sh) / [scripts/com.rebalance-os.vault-sync.plist](scripts/com.rebalance-os.vault-sync.plist)) at HH:15 from 06:15 to 23:15. Calls `refresh_index(scope=["vault"])` only — keeps notes edited mid-day visible in the dashboard / pulse / semantic search without waiting for the next morning's full sync. Vault ingest is cheap (~0.02s with no changes) and fully offline.
-   - **Hourly pulse publish** ([scripts/pulse_sync.sh](scripts/pulse_sync.sh) / [scripts/com.rebalance-os.pulse-sync.plist](scripts/com.rebalance-os.pulse-sync.plist)) on the hour, 06:00 to 23:00. Renders the operator pulse markdown and pushes it to the configured private repo, but only when the rendered content actually changed since the previous run.
-   - **30-minute pulse-web refresh** ([scripts/pulse_web_sync.sh](scripts/pulse_web_sync.sh) / [scripts/com.rebalance-os.pulse-web-sync.plist](scripts/com.rebalance-os.pulse-web-sync.plist)) every 30 minutes from 06:00 to 23:30. Calls [scripts/pulse_web.py](scripts/pulse_web.py) to regenerate the local `web/pulse.html` mirror of the dashboard. Atomic via tmp+replace (a crashed run leaves the previous HTML intact). No network, no git push — separate from the markdown→private-repo flow above.
+   - **Daily all-source sync** ([scripts/daily_sync.sh](scripts/daily_sync.sh) / [scripts/com.rebalance-os.daily-sync.plist.template](scripts/com.rebalance-os.daily-sync.plist.template)) at 06:30 local time, plus on boot/login if 06:30 was missed. Calls `refresh_index(scope=["all"])`, which walks every source: vault → github → calendar → sleuth → unified semantic index. "All" means *every source*, **not** a full re-download — each step uses its own incremental logic from [Sync semantics per source](#sync-semantics-per-source). Per-scope failures are captured in the result's `errors` list rather than aborting the run.
+   - **Hourly vault refresh** ([scripts/vault_sync.sh](scripts/vault_sync.sh) / [scripts/com.rebalance-os.vault-sync.plist.template](scripts/com.rebalance-os.vault-sync.plist.template)) at HH:15 from 06:15 to 23:15. Calls `refresh_index(scope=["vault"])` only — keeps notes edited mid-day visible in the dashboard / pulse / semantic search without waiting for the next morning's full sync. Vault ingest is cheap (~0.02s with no changes) and fully offline.
+   - **Hourly pulse publish** ([scripts/pulse_sync.sh](scripts/pulse_sync.sh) / [scripts/com.rebalance-os.pulse-sync.plist.template](scripts/com.rebalance-os.pulse-sync.plist.template)) on the hour, 06:00 to 23:00. Renders the operator pulse markdown and pushes it to the configured private repo, but only when the rendered content actually changed since the previous run.
+   - **30-minute pulse-web refresh** ([scripts/pulse_web_sync.sh](scripts/pulse_web_sync.sh) / [scripts/com.rebalance-os.pulse-web-sync.plist.template](scripts/com.rebalance-os.pulse-web-sync.plist.template)) every 30 minutes from 06:00 to 23:30. Calls [scripts/pulse_web.py](scripts/pulse_web.py) to regenerate the local `web/pulse.html` mirror of the dashboard. Atomic via tmp+replace (a crashed run leaves the previous HTML intact). No network, no git push — separate from the markdown→private-repo flow above.
+   - **Hourly GitHub sync** ([scripts/github_sync.sh](scripts/github_sync.sh) / [scripts/com.rebalance-os.github-sync.plist.template](scripts/com.rebalance-os.github-sync.plist.template)) — a narrower github-only refresh independent of the daily full sync, for environments that want fresher GitHub data without paying the full multi-source cost.
+
+   The shell scripts derive `REBALANCE_DIR` from their own location, and the `.plist.template` files use a `{{REBALANCE_DIR}}` placeholder that each `install_*_scheduler.sh` substitutes with the local checkout path before writing into `~/Library/LaunchAgents/`. The rendered plists are gitignored — the templates are the only checked-in form, so a clone on any machine installs cleanly with no per-user editing.
 
 3. **MCP tool handlers** — [src/rebalance/mcp_server.py](src/rebalance/mcp_server.py) wraps ingestors and readers as MCP tools. Host agents (Claude Code / Claude Desktop) call these on demand. `REBALANCE_DB` env var resolves the shared DB path.
 
@@ -306,6 +318,10 @@ Tools are registered in `mcp_server.py:create_server()`. All tools share the sam
 | Query | `github_balance` | Per-project GitHub activity summary |
 | Query | `github_release_readiness` | Infer milestone/release readiness from the local GitHub corpus |
 | Query | `github_close_candidates` | Suggest open issues that likely map to merged PRs |
+| Query | `semantic_query` | Unified vector search across vault + GitHub corpus (single ranked result set) |
+| Diagnostics | `index_status` | Snapshot of every source + semantic index freshness (read-only) |
+| Diagnostics | `refresh_index` | Orchestrated refresh of the local knowledge base (single entry point) |
+| Diagnostics | `list_watched_repos` | Show merged set of repos being monitored (project registry ∪ activity − ignored) |
 | Diagnostics | `diagnose_repo` | Walk the watched-repos + sync funnel for a single repo (optionally a `sha` or `pr`) and explain coverage + freshness gaps; opt-in `live=True` distinguishes "we never synced" from "PAT can't see it" |
 | Registry | `list_projects` | Query project registry |
 | Onboarding | `onboarding_status` | Check setup completion |
@@ -317,6 +333,7 @@ Tools are registered in `mcp_server.py:create_server()`. All tools share the sam
 | Calendar | `classify_event` | Persist an include/exclude/project classification for an event |
 | Calendar | `snap_calendar_edges` | Detect and (optionally) fix slightly overlapping events |
 | Sync | `sleuth_sync_reminders` | Pull Slack reminders from the Sleuth Web API and upsert to SQLite |
+| Sync | `publish_pulse` | Render today+yesterday activity to markdown and push to private pulse repo |
 | Hygiene | `audit_modules` | Run [scripts/audit_modules.py](scripts/audit_modules.py) and return the structured JSON result. Verifies that ingest collectors / render modules / scheduled-job infrastructure are documented in ARCHITECTURE.md and CHANGELOG.md, and that recent commits' file changes appear in the latest CHANGELOG version section. Supports `init=True` to snapshot the baseline lockfile and `include_uncommitted=True` for a pre-commit working-tree preview |
 
 Tool specs (params, returns, dependencies): see [MCP.md](./MCP.md).
@@ -350,7 +367,15 @@ src/rebalance/
     md_parser.py           — pure markdown parsing (frontmatter, wikilinks, tags, chunking)
     note_ingester.py       — vault walker, delta detection, TF-IDF keywords
     embedder.py            — mlx-embeddings batch embed + ANN query
+    semantic_index.py      — unified semantic index: backfill, embed, and query across
+                              vault + GitHub sources (semantic_documents / semantic_embeddings)
+    index_ops.py           — single entry point for refresh_index() and index_status();
+                              orchestrates the full ingest pipeline so agents don't
+                              need to know individual CLI command ordering
     calendar.py            — Google Calendar API collector + SQLite persistence
+    calendar_config.py     — OAuth token storage, classification rules, review-decision persistence
+    calendar_helpers.py    — duration/math utilities consumed by calendar tools
+    calendar_snap.py       — edge-snapping logic for slightly overlapping calendar events
     sleuth_reminders.py    — Sleuth Web API collector (Bearer auth, urllib) + upsert
     slack_users.py         — Slack user-id → friendly-name lookup, file-mtime cached;
                               feeds the dashboard sleuth panel and the pulse markdown
@@ -359,6 +384,12 @@ src/rebalance/
                               the diagnose_repo MCP tool
     profile_sync.py        — daily-sync log parser that surfaces per-repo GitHub
                               timings; backs the rebalance profile-sync subcommand
+    pulse.py               — pulse markdown renderer; backs publish_pulse MCP tool
+    agent_tags.py          — source-tagging for pulse rows (claude-cloud, codex-cloud,
+                              lovable, local-vscode, human)
+    project_classifier.py  — calendar event → project matcher for timesheet reports
+    project_inference.py   — project inference from note titles / calendar summaries
+    audit.py               — structured audit logging (append_audit_entry)
     querier.py             — multi-source context gathering + local LLM synthesis
 
 scripts/                   — Operator entry points (not part of the importable package)
@@ -374,6 +405,12 @@ scripts/                   — Operator entry points (not part of the importable
   install_vault_scheduler.sh — install/reload the hourly vault launchd job
   install_pulse_scheduler.sh — install/reload the hourly pulse-markdown launchd job
   install_pulse_web_scheduler.sh — install/reload the 30-min pulse-web launchd job
+  install_github_scheduler.sh — install/reload the hourly github-only launchd job
+  github_sync.sh           — github-only launchd entry (mode 2)
+  setup_calendar_oauth.py  — interactive OAuth consent flow for Google Calendar
+  build_extension.py       — native extension builder
+  ask-self-ingest.sh       — self-ingest shell wrapper (portable mode, requires ASK_SELF_PATH)
+  ask-self-query.sh        — self-query shell wrapper (portable mode, requires ASK_SELF_PATH)
   audit_modules.py         — repository hygiene audit (Approach A): verifies ingest
                               collectors / render modules / scheduled-job infrastructure
                               are documented in ARCHITECTURE.md + CHANGELOG.md; supports a

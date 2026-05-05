@@ -1,5 +1,42 @@
 # Changelog
 
+## [0.29.0] - 2026-05-13
+
+### Changed
+
+- **Operator-breaking**: the ask-self wrappers ([scripts/ask-self-ingest.sh](scripts/ask-self-ingest.sh), [scripts/ask-self-query.sh](scripts/ask-self-query.sh)) now require `ASK_SELF_PATH` to be set in the environment and fail with an actionable error message when it isn't. Previously they fell back to a hardcoded `/Users/noelsaw/...` path that didn't exist on any other operator's machine — a missing env var manifested as a confusing "ask-self repo not found at <someone-else's-path>". Add `export ASK_SELF_PATH="$HOME/Documents/GitHub/ask-self"` (adjust to your checkout) to your shell rc to keep using these wrappers.
+
+### Fixed
+
+- The launchd installers no longer ship with one developer's home directory baked in. All five sync shell scripts (`daily_sync.sh`, `vault_sync.sh`, `pulse_sync.sh`, `pulse_web_sync.sh`, `github_sync.sh`) now derive `REBALANCE_DIR` from their own location, and their five plists became `.plist.template` files with a `{{REBALANCE_DIR}}` placeholder that each `install_*_scheduler.sh` substitutes with the local checkout path before writing into `~/Library/LaunchAgents/`. The rendered plists are gitignored, so a fresh clone on any machine installs cleanly with no per-user editing.
+- The author-fallback in `PROJECT/cleanup.sh` no longer hardcodes a single operator's username — it falls back to `os.environ.get('USER', 'unknown')` when neither the existing frontmatter nor git provides an author.
+- The `Degraded Mac` test fixture in [tests/test_git_pulse_health_check.py](tests/test_git_pulse_health_check.py) no longer embeds a real operator path in its `scan_failure_examples` example; it uses a generic `/Users/operator/...` placeholder instead.
+- The project's `.claude/settings.json` permission allowlist had a few stale `Bash(...)` entries pointing at paths from another machine (`/Users/noelsaw/Documents/GitHub-Repos/...` and `/Users/noelsaw/Documents/rebalance-OS/...`) along with a corresponding `additionalDirectories` entry — all removed since they were dead-ends on this checkout.
+
+### Action required on existing machines
+
+If you already had launchd jobs or ask-self wrappers set up against the previous code, the changes above don't take effect until you do the following on each affected machine:
+
+1. **Re-install the launchd jobs** so the rendered plists in `~/Library/LaunchAgents/` are regenerated from the new templates with your local checkout path. The install scripts unload any existing job before re-rendering, so this is safe to re-run:
+
+   ```bash
+   bash scripts/install_scheduler.sh             # daily sync (06:30)
+   bash scripts/install_vault_scheduler.sh       # hourly vault refresh
+   bash scripts/install_pulse_scheduler.sh       # hourly pulse publish
+   bash scripts/install_pulse_web_scheduler.sh   # 30-min pulse-web refresh
+   bash scripts/install_github_scheduler.sh      # hourly github-only sync
+   ```
+
+   Skip any installer for a job you don't currently have loaded (`launchctl list | grep rebalance-os` shows what's running).
+
+2. **Set `ASK_SELF_PATH` in your shell** if you use the ask-self wrappers — there is no longer a built-in default. Add to `~/.zshrc` / `~/.bashrc`:
+
+   ```bash
+   export ASK_SELF_PATH="$HOME/Documents/GitHub/ask-self"   # adjust to your checkout
+   ```
+
+No DB or vault migration is required — only the install paths above change behavior.
+
 ## [0.28.2] - 2026-05-13
 
 ### Changed

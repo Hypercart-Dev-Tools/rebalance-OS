@@ -397,7 +397,7 @@ The CLI still uses the same underlying `create_calendar_event(...)` implementati
 
 ### Write-scope validation
 
-Before any write, the command reads `/Users/noelsaw/secrets/google-calendar.env`, loads the pickled token from `GOOGLE_CALENDAR_TOKEN_PATH`, and verifies the token includes `GOOGLE_CALENDAR_REQUIRED_WRITE_SCOPE`.
+Before any write, the command reads `~/secrets/google-calendar.env`, loads the pickled token from `GOOGLE_CALENDAR_TOKEN_PATH`, and verifies the token includes `GOOGLE_CALENDAR_REQUIRED_WRITE_SCOPE`.
 
 If the scope is missing, the command exits non-zero and prints the reauth command from the env file. It does **not** attempt the write with a read-only token.
 

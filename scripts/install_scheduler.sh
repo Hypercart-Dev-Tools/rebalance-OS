@@ -2,7 +2,8 @@
 # Install (or reinstall) the rebalance OS daily sync scheduler.
 #
 # What this does:
-#   1. Copies the launchd plist to ~/Library/LaunchAgents/
+#   1. Renders com.rebalance-os.daily-sync.plist.template (substituting the
+#      local checkout path for {{REBALANCE_DIR}}) into ~/Library/LaunchAgents/.
 #   2. Loads it so macOS runs daily_sync.sh:
 #      - At 6:30 AM every day
 #      - On boot/login if 6:30 AM was missed (laptop was asleep)
@@ -17,10 +18,12 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLIST_SRC="$SCRIPT_DIR/com.rebalance-os.daily-sync.plist"
+REBALANCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLIST_TEMPLATE="$SCRIPT_DIR/com.rebalance-os.daily-sync.plist.template"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.rebalance-os.daily-sync.plist"
 
 echo "Installing rebalance OS daily sync scheduler..."
+echo "  REBALANCE_DIR=$REBALANCE_DIR"
 
 # Unload if already loaded
 if launchctl list | grep -q "com.rebalance-os.daily-sync"; then
@@ -28,9 +31,10 @@ if launchctl list | grep -q "com.rebalance-os.daily-sync"; then
     launchctl unload "$PLIST_DEST" 2>/dev/null || true
 fi
 
-# Copy plist
-cp "$PLIST_SRC" "$PLIST_DEST"
-echo "  Copied plist to $PLIST_DEST"
+# Render template into LaunchAgents — escape '/' and '&' for sed.
+ESCAPED_DIR=$(printf '%s\n' "$REBALANCE_DIR" | sed 's/[\/&]/\\&/g')
+sed "s/{{REBALANCE_DIR}}/$ESCAPED_DIR/g" "$PLIST_TEMPLATE" > "$PLIST_DEST"
+echo "  Rendered plist to $PLIST_DEST"
 
 # Create log directory
 mkdir -p "$SCRIPT_DIR/../temp/logs"
