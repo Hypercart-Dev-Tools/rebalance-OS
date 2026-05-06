@@ -13,6 +13,7 @@ from unittest.mock import patch
 from rebalance.ingest.db import db_connection, ensure_email_schema, ensure_semantic_schema
 from rebalance.ingest.gmail import (
     DEFAULT_QUERY_FILTER,
+    GmailAuthError,
     _parse_from,
     _parse_received_at,
     sync_gmail,
@@ -226,6 +227,37 @@ class SyncGmailTests(unittest.TestCase):
             db_path = Path(tmpdir) / "rebalance.db"
             result = sync_gmail(db_path, service=service)
         self.assertEqual(result.query_filter, DEFAULT_QUERY_FILTER)
+
+    def test_403_insufficient_scope_raises_gmail_auth_error(self) -> None:
+        # Simulate Gmail's HttpError shape: an object with a .resp.status of 403.
+        class _FakeResp:
+            status = 403
+
+        class _Http403Error(Exception):
+            resp = _FakeResp()
+
+        class _FailingMessages:
+            def list(self, **_kwargs):
+                class _Req:
+                    def execute(self_inner):
+                        raise _Http403Error("insufficient scopes")
+                return _Req()
+
+        class _FailingUsers:
+            def messages(self):
+                return _FailingMessages()
+
+        class _FailingService:
+            def users(self):
+                return _FailingUsers()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with self.assertRaises(GmailAuthError) as ctx:
+                sync_gmail(db_path, query_filter="in:inbox", service=_FailingService())
+        message = str(ctx.exception)
+        self.assertIn("gcloud auth application-default login", message)
+        self.assertIn("gmail.readonly", message)
 
 
 # ---------------------------------------------------------------------------

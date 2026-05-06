@@ -144,6 +144,21 @@ def _parse_from(headers: dict[str, str]) -> tuple[str, str]:
 # ---------------------------------------------------------------------------
 
 
+def _is_insufficient_scope_error(exc: Exception) -> bool:
+    """Detect Gmail's 403 insufficient-scope response.
+
+    Returns True for HttpError responses whose status is 403 — these
+    indicate the ADC token is valid but lacks the ``gmail.readonly``
+    scope, which can't be remediated programmatically.
+    """
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    try:
+        status_int = int(status) if status is not None else None
+    except (TypeError, ValueError):
+        status_int = None
+    return status_int == 403
+
+
 def sync_gmail(
     database_path: Path,
     *,
@@ -172,11 +187,21 @@ def sync_gmail(
     if service is None:
         service = _build_service()
 
-    list_response = service.users().messages().list(
-        userId="me",
-        q=query_filter,
-        maxResults=max_results,
-    ).execute()
+    try:
+        list_response = service.users().messages().list(
+            userId="me",
+            q=query_filter,
+            maxResults=max_results,
+        ).execute()
+    except Exception as exc:
+        if _is_insufficient_scope_error(exc):
+            raise GmailAuthError(
+                "ADC token is missing the Gmail readonly scope. Re-run:\n"
+                f"  {GCLOUD_LOGIN_HINT}\n"
+                "(Adding new scopes requires re-running the login command — "
+                "it does not merge with previous scopes silently.)"
+            ) from exc
+        raise
     message_refs = list_response.get("messages", []) or []
 
     synced_at = datetime.now(timezone.utc).isoformat()
