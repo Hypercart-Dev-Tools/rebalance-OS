@@ -7,7 +7,7 @@
   "ingest_command": "./scripts/ask-self-ingest.sh --mode all",
   "tenancy_env_var": "REBALANCE_OS_SELF_ASK_TEAM_ID",
   "shared_index": {
-    "enabled": true,
+    "enabled": false,
     "path": "ask_self/index/rebalance-os-shared.sqlite",
     "prefer_for_query": false
   },

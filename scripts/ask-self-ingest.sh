@@ -35,22 +35,10 @@ fi
 
 DEFAULT_ARGS=()
 HAS_MODE=0
-HAS_SHARED_INDEX=0
-HAS_SOURCE_FILTER=0
-HAS_EXCLUDE_PATTERN=0
 for arg in "$@"; do
     case "$arg" in
-        --shared-index)
-            HAS_SHARED_INDEX=1
-            ;;
         --mode|--mode=*)
             HAS_MODE=1
-            ;;
-        --source|--source=*)
-            HAS_SOURCE_FILTER=1
-            ;;
-        --exclude-pattern|--exclude-pattern=*)
-            HAS_EXCLUDE_PATTERN=1
             ;;
         -h|--help)
             HAS_MODE=1
@@ -58,31 +46,11 @@ for arg in "$@"; do
     esac
 done
 
-if [ "$HAS_SHARED_INDEX" -eq 1 ] && [ "$HAS_MODE" -eq 0 ]; then
-    DEFAULT_ARGS+=(--mode code)
-fi
-
-if [ "$HAS_SHARED_INDEX" -eq 1 ] && [ "$HAS_SOURCE_FILTER" -eq 0 ]; then
-    DEFAULT_ARGS+=(--source module --source script)
-fi
-
-if [ "$HAS_SHARED_INDEX" -eq 1 ] && [ "$HAS_EXCLUDE_PATTERN" -eq 0 ]; then
-    DEFAULT_ARGS+=(--exclude-pattern '^tests?/' --exclude-pattern '^experimental/')
-fi
-
-if [ "$HAS_SHARED_INDEX" -eq 0 ] && [ "$HAS_MODE" -eq 0 ]; then
+if [ "$HAS_MODE" -eq 0 ]; then
     exec "$PYTHON_BIN" "$ENTRYPOINT" \
         --repo-root "$REPO_ROOT" \
         --harness-config "$HARNESS_CONFIG" \
         --mode all \
-        "$@"
-fi
-
-if [ "${#DEFAULT_ARGS[@]}" -gt 0 ]; then
-    exec "$PYTHON_BIN" "$ENTRYPOINT" \
-        --repo-root "$REPO_ROOT" \
-        --harness-config "$HARNESS_CONFIG" \
-        "${DEFAULT_ARGS[@]}" \
         "$@"
 fi
 

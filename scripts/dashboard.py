@@ -652,7 +652,13 @@ def render_vault_calendar(
             Text("—", style=PALETTE["fg_dim"]),
             Text("no upcoming events", style=f"italic {PALETTE['fg_dim']}"),
         )
-    sections.append(Text("upcoming calendar", style=f"bold {PALETTE['accent']}"))
+    cal_header_date = now.astimezone(TZ).strftime("%a. %B %-d, %Y")
+    sections.append(
+        Text(
+            f"upcoming calendar · {cal_header_date}",
+            style=f"bold {PALETTE['accent']}",
+        )
+    )
     sections.append(cal_table)
 
     # Sleuth

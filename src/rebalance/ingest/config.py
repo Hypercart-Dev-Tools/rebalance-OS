@@ -214,6 +214,65 @@ def is_github_repo_ignored(repo: str) -> bool:
     return normalized in set(get_github_ignored_repos())
 
 
+def get_github_collector_repos() -> list[str]:
+    """Return repos tagged as automated collectors (e.g. rebalance-git-pulse).
+
+    Distinct from ``github_ignored_repos``: ignored repos are hidden entirely
+    from ingest and triage, whereas collector repos are excluded from "what
+    I shipped" views (`github_balance`) but still tracked for sync-heartbeat
+    health (their most-recent commit timestamp surfaces in `index_status`).
+    """
+    config = _read_config()
+    value = config.get("github_collector_repos")
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        try:
+            repo = normalize_github_repo_name(item)
+        except ValueError:
+            continue
+        if repo not in normalized:
+            normalized.append(repo)
+    return sorted(normalized)
+
+
+def set_github_collector_repos(repos: list[str]) -> None:
+    """Store the canonical operator-local GitHub collector list."""
+    config = _read_config()
+    config["github_collector_repos"] = _normalize_github_repo_list(repos)
+    _write_config(config)
+
+
+def add_github_collector_repo(repo: str) -> bool:
+    """Tag one repo as an automated collector."""
+    normalized = normalize_github_repo_name(repo)
+    existing = get_github_collector_repos()
+    if normalized in existing:
+        return False
+    existing.append(normalized)
+    set_github_collector_repos(existing)
+    return True
+
+
+def remove_github_collector_repo(repo: str) -> bool:
+    """Untag one repo from the collector list."""
+    normalized = normalize_github_repo_name(repo)
+    existing = get_github_collector_repos()
+    if normalized not in existing:
+        return False
+    set_github_collector_repos([item for item in existing if item != normalized])
+    return True
+
+
+def is_github_repo_collector(repo: str) -> bool:
+    """Return True when the exact repo is tagged as a collector."""
+    normalized = normalize_github_repo_name(repo)
+    return normalized in set(get_github_collector_repos())
+
+
 def get_github_related_repos(repo: str) -> list[str]:
     """Return repos treated as affiliate implementation repos for a central tracker."""
     normalized_repo = normalize_github_repo_name(repo)

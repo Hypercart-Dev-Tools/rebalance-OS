@@ -335,14 +335,6 @@ The server works with any MCP-compatible client. Config files are provided for:
 
 The wrapper defaults to `--mode all`, so the local temp index includes both code and docs under `temp/rag/`.
 
-### Publish the light shared baseline index
-
-```bash
-./scripts/ask-self-ingest.sh --shared-index
-```
-
-The shared-index wrapper path defaults to a code-only baseline: `--mode code`, no docs, and extra excludes for `tests/` and `experimental/` unless you override them explicitly. It writes the committed baseline index to `ask_self/index/rebalance-os-shared.sqlite`. Query prefers a fresh local temp index when one exists and otherwise falls back to that shared baseline.
-
 ### Query this repo
 
 ```bash
@@ -351,7 +343,11 @@ The shared-index wrapper path defaults to a code-only baseline: `--mode code`, n
 
 The wrappers default `ASK_SELF_PATH` to `/path/to/ask-self`; override it if your external `ask-self` checkout lives elsewhere. If you need a specific interpreter for that checkout, set `ASK_SELF_PYTHON`.
 
-Credentials can come from `GOOGLE_API_KEY`, `GOOGLE_API_KEY_FILE`, or Google Secret Manager via `GOOGLE_API_KEY_SECRET_NAME`. For new setups, prefer Secret Manager over a long-lived local key file. `ask-self query` still requires Gemini credentials for synthesis, and both local and shared indexes only reflect the last ingest rather than current uncommitted changes.
+Credentials can come from `GOOGLE_API_KEY`, `GOOGLE_API_KEY_FILE`, or Google Secret Manager via `GOOGLE_API_KEY_SECRET_NAME`. For new setups, prefer Secret Manager over a long-lived local key file. `ask-self query` still requires Gemini credentials for synthesis, and the local index only reflects the last ingest rather than current uncommitted changes.
+
+### Archived Shared Baseline
+
+A previously generated shared baseline index currently remains at `ask_self/index/rebalance-os-shared.sqlite`, but it is not part of the default maintenance workflow. The harness no longer prefers or falls back to that file automatically, and the wrapper no longer shapes a special shared-index ingest path. Treat it as an archived artifact unless the team explicitly decides to reactivate it.
 
 ### CLI reference
 

@@ -101,6 +101,6 @@ rulebook without needing this index.
 - Exact command: `./scripts/ask-self-query.sh "your question here"`
 - Use it for session-start orientation, unfamiliar subsystems, pronoun-heavy references like "that helper" or "the auth flow", and cross-file behavior questions.
 - Do not use it for trivial single-file reads, tight edit-test loops, or questions about current uncommitted state.
-- Staleness: the index reflects the last ingest. The committed shared index is only a baseline and may lag branch work.
-- Refresh the local index with `./scripts/ask-self-ingest.sh` and the light shared baseline with `./scripts/ask-self-ingest.sh --shared-index`.
+- Staleness: the index reflects the last ingest. Prefer the fresh local temp index; any committed shared SQLite should be treated as archival unless the team explicitly reactivates it.
+- Refresh the local index with `./scripts/ask-self-ingest.sh`.
 - Override the external checkout path with `ASK_SELF_PATH`. Set `ASK_SELF_PYTHON` if that checkout needs a specific interpreter.

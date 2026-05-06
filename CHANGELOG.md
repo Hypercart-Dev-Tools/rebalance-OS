@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.24.2] - 2026-05-05
+
+### Added
+
+- New `github_collector_repos` config key (in `temp/rbos.config`) tags automated-collector repos like `rebalance-git-pulse` so they are dropped from `github_balance` "what I shipped" views by default while still being tracked as a sync-visible heartbeat. `index_status()` gains a `collectors` block mapping each tagged repo to its most-recent `github_activity.last_active_at`, so a stalled collector is obvious without inspecting commit volume.
+- `get_github_balance()` now accepts `include_collectors=True` to opt back into the old behavior.
+- The terminal dashboard's upcoming-calendar panel now shows the day-of-week and date in the configured timezone (e.g. `upcoming calendar · Wed. May 6, 2026`), so a multi-day view is unambiguous at a glance.
+
+### Changed
+
+- The committed ask-self shared SQLite is now decoupled from the normal maintenance path: the harness no longer auto-uses it, the wrapper no longer injects special shared-index defaults, and repo guidance now treats it as archival unless the team explicitly reactivates it.
+
 ## [0.24.1] - 2026-05-05
 
 ### Changed

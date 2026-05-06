@@ -421,6 +421,8 @@ def get_github_balance(
     database_path: Path,
     project_repos: dict[str, list[str]],
     since_days: int = 14,
+    *,
+    include_collectors: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Return GitHub activity summary per project using the project→repos mapping.
@@ -429,6 +431,10 @@ def get_github_balance(
         database_path:  Path to the SQLite database.
         project_repos:  {project_name: [repo_full_name, ...]} mapping.
         since_days:     How many days back to aggregate.
+        include_collectors: When False (default), repos tagged as automated
+            collectors via ``github_collector_repos`` are dropped from each
+            project's totals so dashboards reflect hand-coded shipping. The
+            collector heartbeat is surfaced separately by ``index_status``.
 
     Returns:
         List of dicts with project_name, total_commits, prs_opened, prs_merged,
@@ -437,9 +443,13 @@ def get_github_balance(
     if not database_path.exists():
         return []
 
+    from rebalance.ingest.config import get_github_collector_repos
     from rebalance.ingest.db import db_connection, ensure_github_schema
 
     since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
+    collector_set: set[str] = (
+        set() if include_collectors else set(get_github_collector_repos())
+    )
 
     with db_connection(database_path, ensure_github_schema) as conn:
         rows = conn.execute(
@@ -467,6 +477,11 @@ def get_github_balance(
 
     results: list[dict[str, Any]] = []
     for project_name, repos in project_repos.items():
+        visible_repos = [r for r in repos if r.lower() not in collector_set]
+        # Project that's exclusively collectors → drop from balance entirely.
+        if not visible_repos and repos:
+            continue
+
         total_commits = 0
         total_prs_opened = 0
         total_prs_merged = 0
@@ -474,7 +489,7 @@ def get_github_balance(
         repos_touched: list[str] = []
         last_active: str | None = None
 
-        for repo in repos:
+        for repo in visible_repos:
             stats = repo_stats.get(repo)
             if not stats:
                 continue
@@ -489,7 +504,7 @@ def get_github_balance(
 
         results.append({
             "project_name": project_name,
-            "repos_linked": repos,
+            "repos_linked": visible_repos,
             "repos_touched": repos_touched,
             "total_commits": total_commits,
             "prs_opened": total_prs_opened,

@@ -172,7 +172,6 @@ Before grep-spelunking or asking the user to re-explain repo context, query ask-
 - Exact command: `./scripts/ask-self-query.sh "your question here"`
 - Use it for session-start orientation, unfamiliar subsystems, pronoun-heavy references like "that helper" or "the auth flow", and cross-file behavior questions.
 - Do not use it for trivial single-file reads, tight edit-test loops, or questions about current uncommitted state.
-- Staleness: the index reflects the last ingest. The committed shared index at `ask_self/index/rebalance-os-shared.sqlite` is a baseline and may lag active branch work.
+- Staleness: the index reflects the last ingest. Prefer the fresh local temp index; any committed shared SQLite in `ask_self/index/` should be treated as archival unless the team explicitly reactivates it.
 - Local ingest: `./scripts/ask-self-ingest.sh`
-- Shared baseline refresh: `./scripts/ask-self-ingest.sh --shared-index`
 - Override the external checkout path with `ASK_SELF_PATH`. Set `ASK_SELF_PYTHON` if that checkout must run under a specific interpreter.

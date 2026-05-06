@@ -124,6 +124,27 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "newest_received_at": _safe_max(conn, "email_messages", "received_at"),
         }
 
+        # Collector heartbeats — per-repo most-recent activity for repos
+        # tagged as automated collectors. Used as a sync-visible health
+        # signal so a stalled collector is obvious without inspecting
+        # commit volume in shipping views.
+        try:
+            from rebalance.ingest.config import get_github_collector_repos
+            collector_repos = get_github_collector_repos()
+        except Exception:
+            collector_repos = []
+        collectors_block: dict[str, str | None] = {}
+        for repo in collector_repos:
+            try:
+                row = conn.execute(
+                    "SELECT MAX(last_active_at) AS la FROM github_activity WHERE LOWER(repo_full_name) = ?",
+                    (repo,),
+                ).fetchone()
+            except Exception:
+                row = None
+            collectors_block[repo] = row["la"] if row and row["la"] else None
+        payload["collectors"] = collectors_block
+
         # Semantic index
         sem_total = _safe_count(conn, "semantic_documents")
         sem_meta = _safe_meta(conn, "semantic_embedding_meta")
