@@ -7,7 +7,7 @@ Schema:
     "calendar_id": "primary",
     "exclude_titles": ["Check Slack", "Post Daily Timesheet"],
     "aggregator_skip_words": ["wrap", "setup", "test"],
-    "timezone": "America/New_York",
+    "timezone": "America/Los_Angeles",  // omit or leave blank to use device local timezone
     "hours_format": "decimal",       # "decimal" = 1.75h  |  "hm" = 1h 45m
     "projects": [
       {
@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from rebalance.ingest.tz_utils import local_tz
+
 # __file__ = src/rebalance/ingest/calendar_config.py
 # .parent (ingest) .parent (rebalance) .parent (src) .parent (repo root)
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "temp" / "calendar_config.json"
@@ -41,7 +43,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "Admin",
     ],
     "aggregator_skip_words": [],
-    "timezone": "America/New_York",
+    "timezone": "",  # empty → resolved to device local timezone at load time
     "projects": [],
     "hours_format": "decimal",
 }
@@ -131,7 +133,7 @@ class CalendarConfig:
             calendar_id=data.get("calendar_id", DEFAULT_CONFIG["calendar_id"]),
             exclude_titles=exclude_titles,
             aggregator_skip_words=aggregator_skip_words,
-            timezone=data.get("timezone", DEFAULT_CONFIG["timezone"]),
+            timezone=data.get("timezone") or local_tz().key,
             projects=cls._load_projects(data.get("projects", DEFAULT_CONFIG["projects"])),
             hours_format=hours_fmt,
         )

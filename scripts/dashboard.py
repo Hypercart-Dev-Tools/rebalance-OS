@@ -13,7 +13,7 @@ the local embedding model into the terminal process.
 
 Optional environment:
     REBALANCE_DB     path to the SQLite db (default: ./rebalance.db)
-    REBALANCE_TZ     IANA timezone for "now" rendering (default: America/Los_Angeles)
+    REBALANCE_TZ     IANA timezone override for display (default: device local timezone)
     PULSE_TICK       UI poll interval in seconds (default: 2)
     PULSE_AUTO_MIN   GitHub auto-refresh interval in minutes (default: 10; 0 = off)
     PULSE_INVERSE    1 = high-contrast light palette (default: refined dark)
@@ -32,7 +32,6 @@ import tty
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from rich.align import Align
 from rich.box import ROUNDED
@@ -52,6 +51,7 @@ from rebalance.ingest.config import (  # noqa: E402
     get_pulse_config,
 )
 from rebalance.ingest.db import db_connection  # noqa: E402
+from rebalance.ingest.tz_utils import local_tz  # noqa: E402
 from rebalance.ingest.index_ops import (  # noqa: E402
     get_index_status,
     get_watched_repos,
@@ -68,7 +68,7 @@ except Exception:
     DB_PATH = Path(os.environ.get("REBALANCE_DB", "rebalance.db")).expanduser().resolve()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = PROJECT_ROOT / "temp" / "logs"
-TZ = ZoneInfo(os.environ.get("REBALANCE_TZ", "America/Los_Angeles"))
+TZ = local_tz()
 TICK_SECONDS = float(os.environ.get("PULSE_TICK", "2"))
 AUTO_REFRESH_MINUTES = int(os.environ.get("PULSE_AUTO_MIN", "10"))
 INVERSE = os.environ.get("PULSE_INVERSE", "0") not in ("", "0", "false", "False")
