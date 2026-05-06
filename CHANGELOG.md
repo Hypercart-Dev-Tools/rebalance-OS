@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.24.0] - 2026-05-05
+
+### Added
+
+- A committed ask-self light-index lane is now configured so teammates and future agents can publish a shared baseline knowledge index alongside the repo instead of relying only on per-user temp databases.
+- New `email` source for the unified knowledge base: `refresh_index(scope=["email"])` syncs the newest 100 inbox messages from Gmail and backfills them into the semantic index alongside vault and GitHub. Phase 1 stores subject + Gmail-provided snippet only — full MIME body parsing is deferred to Phase 2.
+- Gmail auth uses Application Default Credentials (no setup tool, no client-secret file). Run `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/cloud-platform` once and ingest works thereafter; missing-auth errors return the exact gcloud command in the response.
+- New `gmail_query_filter` config key (defaults to `in:inbox`) lets power users scope to e.g. `in:inbox -category:promotions -category:social` without code changes.
+- `index_status()` now reports an `email` source block (count, last_synced_at, newest_received_at), and email participates in default `semantic_query()` results — no `sources=["email"]` argument needed.
+
+### Changed
+
+- The ask-self integration now uses a repo-local shared-index path, placeholder external checkout defaults, and tighter ignore rules so generated caches and events files stay untracked while the shared baseline remains commit-friendly.
+- Ask-self ingest wrappers now default to full code-and-docs indexing, and the repo guidance now instructs agents to query ask-self before spelunking the tree for cross-file context.
+
 ## [0.23.7] - 2026-05-05
 
 ### Changed

@@ -64,15 +64,15 @@ def _json_dumps(value: Any) -> str:
 
 def _normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
     if source_types is None:
-        return ("vault", "github")
+        return ("vault", "github", "email")
     normalized = []
     for value in source_types:
         item = value.strip().lower()
         if not item:
             continue
         if item == "all":
-            return ("vault", "github")
-        if item not in {"vault", "github", "calendar", "sleuth"}:
+            return ("vault", "github", "email")
+        if item not in {"vault", "github", "calendar", "sleuth", "email"}:
             raise ValueError(f"Unsupported source type: {value}")
         if item not in normalized:
             normalized.append(item)
@@ -376,6 +376,69 @@ def sync_github_documents(conn: Any, *, repo_full_name: str = "") -> dict[str, i
     }
 
 
+def sync_email_documents(conn: Any) -> dict[str, int]:
+    """Backfill semantic documents from ``email_messages``.
+
+    Body is ``subject + "\\n" + snippet`` per the Phase 1 plan — full MIME
+    body extraction is deferred to Phase 2. Newest-100 rolling fetches
+    don't delete older rows, so we don't reconcile against ``seen``: an
+    email row that drops out of the fetch window stays in the index.
+    """
+    ensure_semantic_schema(conn)
+    rows = conn.execute(
+        """
+        SELECT message_id, thread_id, from_address, from_name, subject,
+               snippet, received_at, labels_json, synced_at
+        FROM email_messages
+        ORDER BY received_at DESC
+        """
+    ).fetchall()
+
+    inserted = updated = unchanged = 0
+    for row in rows:
+        subject = row["subject"] or ""
+        snippet = row["snippet"] or ""
+        body = f"{subject}\n{snippet}".strip()
+        if not body:
+            continue
+
+        title = subject or (row["from_address"] or "(no subject)")
+        received_at = row["received_at"] or row["synced_at"]
+
+        _, state = upsert_document(
+            conn,
+            source_type="email",
+            source_table="email_messages",
+            source_pk=row["message_id"],
+            doc_kind="message",
+            title=title,
+            body=body,
+            metadata={
+                "thread_id": row["thread_id"] or "",
+                "from_address": row["from_address"] or "",
+                "from_name": row["from_name"] or "",
+                "labels": json.loads(row["labels_json"]) if row["labels_json"] else [],
+                "received_at": received_at,
+            },
+            created_at=received_at,
+            updated_at=row["synced_at"],
+        )
+        if state == "inserted":
+            inserted += 1
+        elif state == "updated":
+            updated += 1
+        else:
+            unchanged += 1
+
+    return {
+        "total": len(rows),
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "deleted": 0,
+    }
+
+
 def backfill_semantic_documents(
     database_path: Path,
     *,
@@ -400,6 +463,15 @@ def backfill_semantic_documents(
         if "github" in selected_sources:
             ensure_github_schema(conn)
             result = sync_github_documents(conn, repo_full_name=repo_full_name)
+            inserted += result["inserted"]
+            updated += result["updated"]
+            unchanged += result["unchanged"]
+            deleted += result["deleted"]
+            total += result["total"]
+        if "email" in selected_sources:
+            from rebalance.ingest.db import ensure_email_schema
+            ensure_email_schema(conn)
+            result = sync_email_documents(conn)
             inserted += result["inserted"]
             updated += result["updated"]
             unchanged += result["unchanged"]
@@ -436,7 +508,7 @@ def embed_pending(
 
     with db_connection(database_path, ensure_semantic_schema) as conn:
         if force_reembed:
-            if set(selected_sources) == {"vault", "github"} and len(selected_sources) == 2:
+            if set(selected_sources) == {"vault", "github", "email"} and len(selected_sources) == 3:
                 conn.execute("DELETE FROM semantic_embeddings")
                 conn.execute(
                     """

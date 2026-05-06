@@ -25,7 +25,7 @@ import time
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-ASK_SELF_PATH = Path(os.environ.get("ASK_SELF_PATH", "/Users/noelsaw/Documents/GH Repos/ask-self"))
+ASK_SELF_PATH = Path(os.environ.get("ASK_SELF_PATH", "/path/to/ask-self"))
 HARNESS_CONFIG = REPO_ROOT / "ask_self" / "ask_self_harness.json"
 ENV_FILE = REPO_ROOT / "temp" / "ask-self-rag.env"
 
@@ -114,6 +114,9 @@ def main() -> int:
         "--harness-config", str(HARNESS_CONFIG),
         "--concurrency", str(args.concurrency),
     ] + [a for a in passthrough if a != "--"]
+
+    if "--mode" not in forwarded and not any(arg.startswith("--mode=") for arg in forwarded):
+        forwarded.extend(["--mode", "all"])
 
     print(f"[ingest] forwarding to ask_self_ingest.main with: {' '.join(forwarded)}",
           file=sys.stderr)

@@ -93,3 +93,14 @@ authoritative rulebook that should be read first.
 The generated recap itself carries the same pointer in its top-of-file
 instructions block, so agents that open the file directly will also find the
 rulebook without needing this index.
+
+## ask-self
+
+`ask-self` is available in this repo as an external, repository-grounded RAG layer for code and docs. Before grep-spelunking or asking the user to re-explain repo context, query ask-self first.
+
+- Exact command: `./scripts/ask-self-query.sh "your question here"`
+- Use it for session-start orientation, unfamiliar subsystems, pronoun-heavy references like "that helper" or "the auth flow", and cross-file behavior questions.
+- Do not use it for trivial single-file reads, tight edit-test loops, or questions about current uncommitted state.
+- Staleness: the index reflects the last ingest. The committed shared index is only a baseline and may lag branch work.
+- Refresh the local index with `./scripts/ask-self-ingest.sh` and the light shared baseline with `./scripts/ask-self-ingest.sh --shared-index --mode all`.
+- Override the external checkout path with `ASK_SELF_PATH`. Set `ASK_SELF_PYTHON` if that checkout needs a specific interpreter.

@@ -162,3 +162,17 @@ D. RECENT LESSONS LEARNED
 ---
 
 Attn: LLM Remove 4X4 section after extraction.
+
+## ask-self
+
+`ask-self` is the repo-local code intelligence layer for this workspace. It builds a repository-grounded RAG index over the checked-in code and docs so agents can answer cross-file questions with citations instead of re-deriving the same context every session.
+
+Before grep-spelunking or asking the user to re-explain repo context, query ask-self first.
+
+- Exact command: `./scripts/ask-self-query.sh "your question here"`
+- Use it for session-start orientation, unfamiliar subsystems, pronoun-heavy references like "that helper" or "the auth flow", and cross-file behavior questions.
+- Do not use it for trivial single-file reads, tight edit-test loops, or questions about current uncommitted state.
+- Staleness: the index reflects the last ingest. The committed shared index at `ask_self/index/rebalance-os-shared.sqlite` is a baseline and may lag active branch work.
+- Local ingest: `./scripts/ask-self-ingest.sh`
+- Shared baseline refresh: `./scripts/ask-self-ingest.sh --shared-index --mode all`
+- Override the external checkout path with `ASK_SELF_PATH`. Set `ASK_SELF_PYTHON` if that checkout must run under a specific interpreter.

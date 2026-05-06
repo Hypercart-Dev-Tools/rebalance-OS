@@ -325,7 +325,7 @@ The server works with any MCP-compatible client. Config files are provided for:
 
 ## Code Intelligence
 
-`ask-self` is an external RAG-based code and docs scanner that can build a local queryable index for this repository without vendoring its code here.
+`ask-self` is an external repository-grounded RAG tool that builds a local queryable index of this repo's code and docs without vendoring its runtime here.
 
 ### Ingest this repo
 
@@ -333,13 +333,25 @@ The server works with any MCP-compatible client. Config files are provided for:
 ./scripts/ask-self-ingest.sh
 ```
 
+The wrapper defaults to `--mode all`, so the local temp index includes both code and docs under `temp/rag/`.
+
+### Publish the light shared baseline index
+
+```bash
+./scripts/ask-self-ingest.sh --shared-index --mode all
+```
+
+This writes the lightweight committed baseline index to `ask_self/index/rebalance-os-shared.sqlite`. Query prefers a fresh local temp index when one exists and otherwise falls back to that shared baseline.
+
 ### Query this repo
 
 ```bash
 ./scripts/ask-self-query.sh "How does dashboard rendering work?"
 ```
 
-The wrappers point at `/Users/noelsaw/Documents/GH Repos/ask-self` by default. Override `ASK_SELF_PATH` if your `ask-self` checkout lives elsewhere.
+The wrappers default `ASK_SELF_PATH` to `/path/to/ask-self`; override it if your external `ask-self` checkout lives elsewhere. If you need a specific interpreter for that checkout, set `ASK_SELF_PYTHON`.
+
+Credentials can come from `GOOGLE_API_KEY`, `GOOGLE_API_KEY_FILE`, or Google Secret Manager via `GOOGLE_API_KEY_SECRET_NAME`. For new setups, prefer Secret Manager over a long-lived local key file. `ask-self query` still requires Gemini credentials for synthesis, and both local and shared indexes only reflect the last ingest rather than current uncommitted changes.
 
 ### CLI reference
 

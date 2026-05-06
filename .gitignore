@@ -3,8 +3,16 @@ PROJECT/.scrub-log.jsonl
 .DS_Store
 /temp
 temp/rag/
+temp/rag/*.cache.sqlite
+temp/rag/*.events.jsonl
+temp/rag/*.sqlite-shm
+temp/rag/*.sqlite-wal
 temp/ask-self-rag.env
 temp/ask-self*.log
+ask_self/index/*.cache.sqlite
+ask_self/index/*.events.jsonl
+ask_self/index/*.sqlite-shm
+ask_self/index/*.sqlite-wal
 logs/
 __pycache__/
 *.pyc

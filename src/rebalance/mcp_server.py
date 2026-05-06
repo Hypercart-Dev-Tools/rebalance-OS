@@ -511,11 +511,14 @@ def create_server(database_path: Path) -> FastMCP:
 
         Args:
             scope: Any combination of "vault", "github", "calendar", "sleuth",
-                "semantic", or "all". Defaults to ["all"].
+                "email", "semantic", or "all". Defaults to ["all"].
                 - vault: ingest vault notes -> embed chunks -> semantic backfill+embed (vault)
                 - github: github-scan -> sync artifacts per repo -> embed -> semantic backfill+embed (github)
                 - calendar: sync Google Calendar events
                 - sleuth: pull Slack/Sleuth reminders
+                - email: sync newest-100 inbox messages from Gmail (ADC auth)
+                  and backfill them into the semantic index. Configure scope
+                  via ``gmail_query_filter`` in temp/rbos.config.
                 - semantic: re-run unified backfill+embed only (assumes upstream syncs done)
             vault_path: Optional override; falls back to configured vault path.
             since_days: Lookback window for github-scan and calendar-sync (default 30).

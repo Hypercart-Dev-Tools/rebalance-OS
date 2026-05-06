@@ -4,8 +4,13 @@
   "db_filename": "rebalance-os-self-ask.sqlite",
   "system_instructions_path": "ask_self/ask_self_system_instructions.json",
   "env_file_path": "temp/ask-self-rag.env",
-  "ingest_command": "./scripts/ask-self-ingest.sh",
+  "ingest_command": "./scripts/ask-self-ingest.sh --mode all",
   "tenancy_env_var": "REBALANCE_OS_SELF_ASK_TEAM_ID",
+  "shared_index": {
+    "enabled": true,
+    "path": "ask_self/index/rebalance-os-shared.sqlite",
+    "prefer_for_query": false
+  },
   "github": {
     "owner": "Hypercart-Dev-Tools",
     "repo": "rebalance-OS",
@@ -19,13 +24,20 @@
     "extensions": [
       ".md",
       ".txt",
-      ".json"
+      ".json",
+      ".toml",
+      ".yml",
+      ".yaml"
     ],
     "include_patterns": [
-      "^[^/]+\\.(?:md|txt|json)$",
+      "^[^/]+\\.(?:md|txt)$",
+      "^(?:pyproject\\.toml|manifest\\.json|calendar_config\\.example\\.json|\\.mcp\\.json)$",
+      "^\\.github/.+\\.(?:md|ya?ml)$",
+      "^\\.vscode/.+\\.json$",
       "^PROJECT/.+\\.(?:md|txt|json)$",
       "^experimental/.+\\.(?:md|txt|json)$",
-      "^templates/.+\\.(?:md|txt|json)$"
+      "^templates/.+\\.(?:md|txt|json)$",
+      "^ask_self/(?:ask_self_harness|ask_self_system_instructions)\\.json$"
     ],
     "exclude_patterns": [
       "^\\.git/",
@@ -38,20 +50,32 @@
       "^logs/",
       "^reports/",
       "^git-pulse-sync/",
+      "^ask_self/index/",
       "^PROJECT/\\.scrub-",
-      "^scripts/__pycache__/"
+      "^scripts/__pycache__/",
+      "(?i)^ASK_SELF\\.md$",
+      "(?i)^ARCHITECTURE-BAK\\.md$"
     ]
   },
   "source": {
     "extensions": [
       ".py",
-      ".sh"
+      ".sh",
+      ".json",
+      ".toml",
+      ".yml",
+      ".yaml",
+      ".plist"
     ],
     "include_patterns": [
       "^(?:src|tests|server)/.+\\.py$",
-      "^scripts/.+\\.(?:py|sh)$",
+      "^scripts/.+\\.(?:py|sh|plist)$",
       "^experimental/.+\\.(?:py|sh)$",
-      "^PROJECT/.+\\.sh$"
+      "^PROJECT/.+\\.sh$",
+      "^(?:pyproject\\.toml|manifest\\.json|calendar_config\\.example\\.json|\\.mcp\\.json)$",
+      "^\\.github/workflows/.+\\.ya?ml$",
+      "^\\.vscode/.+\\.json$",
+      "^ask_self/(?:ask_self_harness|ask_self_system_instructions)\\.json$"
     ],
     "exclude_patterns": [
       "^\\.git/",
@@ -64,7 +88,10 @@
       "^logs/",
       "^reports/",
       "^git-pulse-sync/",
-      "^scripts/__pycache__/"
+      "^ask_self/index/",
+      "^scripts/__pycache__/",
+      "(?i)^ASK_SELF\\.md$",
+      "(?i)^ARCHITECTURE-BAK\\.md$"
     ]
   },
   "classification_rules": [
@@ -77,6 +104,12 @@
     {
       "pattern": "^(?:README|PROJECT|ARCHITECTURE|MCP|4X4|MEMORY|GOOGLE_CALENDAR|PORTABILITY_SUMMARY|AGENTS|CLAUDE)\\.md$",
       "source": "guide",
+      "priority": 4,
+      "chunker": "text"
+    },
+    {
+      "pattern": "^(?:pyproject\\.toml|manifest\\.json|calendar_config\\.example\\.json|\\.mcp\\.json)$|^\\.vscode/.+\\.json$|^\\.github/workflows/.+\\.ya?ml$|^ask_self/.+\\.json$|^scripts/.+\\.plist$",
+      "source": "config",
       "priority": 4,
       "chunker": "text"
     },
@@ -109,6 +142,12 @@
       "source": "script",
       "priority": 2,
       "chunker": "line"
+    },
+    {
+      "pattern": "\\.(?:json|toml|ya?ml|plist)$",
+      "source": "config",
+      "priority": 2,
+      "chunker": "text"
     }
   ],
   "default_classification": {

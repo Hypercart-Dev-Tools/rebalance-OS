@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ASK_SELF_PATH="${ASK_SELF_PATH:-/Users/noelsaw/Documents/GH Repos/ask-self}"
+ASK_SELF_PATH="${ASK_SELF_PATH:-/path/to/ask-self}"
 HARNESS_CONFIG="$REPO_ROOT/ask_self/ask_self_harness.json"
 ENTRYPOINT="$ASK_SELF_PATH/ask_self_ingest.py"
 
@@ -28,11 +28,30 @@ PYTHON_BIN="${ASK_SELF_PYTHON:-}"
 if [ -z "$PYTHON_BIN" ]; then
     if [ -x "$ASK_SELF_PATH/.venv/bin/python" ]; then
         PYTHON_BIN="$ASK_SELF_PATH/.venv/bin/python"
-    elif [ -x "$REPO_ROOT/.venv/bin/python" ]; then
-        PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
     else
         PYTHON_BIN="python3"
     fi
+fi
+
+DEFAULT_ARGS=()
+HAS_MODE=0
+for arg in "$@"; do
+    case "$arg" in
+        --mode|--mode=*)
+            HAS_MODE=1
+            ;;
+        -h|--help)
+            HAS_MODE=1
+            ;;
+    esac
+done
+
+if [ "$HAS_MODE" -eq 0 ]; then
+    exec "$PYTHON_BIN" "$ENTRYPOINT" \
+        --repo-root "$REPO_ROOT" \
+        --harness-config "$HARNESS_CONFIG" \
+        --mode all \
+        "$@"
 fi
 
 exec "$PYTHON_BIN" "$ENTRYPOINT" \

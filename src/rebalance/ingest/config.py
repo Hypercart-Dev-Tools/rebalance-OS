@@ -139,6 +139,28 @@ def set_vault_path(path: str) -> None:
     _write_config(config)
 
 
+def get_gmail_query_filter() -> str | None:
+    """Return the configured Gmail search query, or None if unset.
+
+    Config key: ``gmail_query_filter``. Default applied by the caller is
+    ``in:inbox`` (see ``rebalance.ingest.gmail.DEFAULT_QUERY_FILTER``).
+    Power users can scope to e.g. ``in:inbox -category:promotions``.
+    """
+    config = _read_config()
+    value = config.get("gmail_query_filter")
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def set_gmail_query_filter(query: str) -> None:
+    """Store the Gmail search query filter in config."""
+    config = _read_config()
+    config["gmail_query_filter"] = query.strip()
+    _write_config(config)
+
+
 def get_github_ignored_repos() -> list[str]:
     """Return the locally configured GitHub repos to skip across ingest."""
     config = _read_config()
