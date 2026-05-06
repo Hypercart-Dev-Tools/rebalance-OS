@@ -616,7 +616,7 @@ def create_server(database_path: Path) -> FastMCP:
 
         The output covers:
           - Current Day: GitHub commits/issues/PRs/comments authored by you,
-            Obsidian vault edits, Sleuth reminders assigned to you,
+            Obsidian vault edits, Sleuth reminders assigned to you or by you,
             upcoming Google Calendar events, and live-fetched GitHub issues
             assigned to you over the last 7 days (today's at the top).
           - Yesterday: a summarized version of the same.

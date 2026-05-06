@@ -1,12 +1,16 @@
 # Triage Spike
 
-End-to-end triage CLI: reads any synced GitHub repo from local SQLite, groups open issues + PRs into 6 action buckets, optionally posts the result as a GitHub issue. Edge cases are routed through a review queue so a human or VS Code agent can resolve them without forking the script.
+End-to-end triage CLI: reads any synced GitHub repo from local SQLite, groups open issues + PRs into action buckets, optionally posts the result as a GitHub issue. Edge cases are routed through a review queue so a human or VS Code agent can resolve them without forking the script.
 
 ## TL;DR
 
 ```bash
-# Print to stdout, queue ambiguous cases (default mode)
+# Print to stdout, queue ambiguous cases (default mode).
+# Related repos come from config and can also be added per run.
 ./experimental/triage/spike.py --repo BinoidCBD/universal-child-theme-oct-2024
+
+./experimental/triage/spike.py --repo BinoidCBD/universal-child-theme-oct-2024 \
+  --related-repo kissplugins/KISS-woo-order-monitoring-alerts
 
 # Resolve ambiguities interactively at the terminal
 ./experimental/triage/spike.py --repo X --ambiguity ask-operator
@@ -17,7 +21,22 @@ End-to-end triage CLI: reads any synced GitHub repo from local SQLite, groups op
   --post-issue
 ```
 
-## The six buckets
+## Related repo config
+
+Some repos act as central project trackers while implementation work lives in affiliate/plugin repos. Configure that once:
+
+```bash
+rebalance config add-github-related-repo \
+  BinoidCBD/universal-child-theme-oct-2024 \
+  kissplugins/KISS-woo-order-monitoring-alerts
+
+rebalance config list-github-related-repos \
+  BinoidCBD/universal-child-theme-oct-2024
+```
+
+The triage report then includes open issues/PRs from those related repos and marks whether each one is already linked from an open central tracker issue. Use `--related-repo owner/name` for one-off additions without editing config.
+
+## The seven buckets
 
 | # | Bucket | Source data | Deterministic? |
 |---|---|---|---|
@@ -25,10 +44,11 @@ End-to-end triage CLI: reads any synced GitHub repo from local SQLite, groups op
 | 2 | 🔥 Release blockers | open issues with `milestone_title` set | yes |
 | 3 | 👀 Client-visible (Sleuth-linked) | `sleuth_reminders.github_urls_json` ↔ `github_items` | yes |
 | 4 | ⚡ Performance — concrete data | open issues whose title starts `perf:` | yes |
-| 5 | 🧹 Probable duplicates | open-issue title pairs with jaccard ≥ `--duplicate-threshold` | **no — needs review** |
-| 6 | 🤔 PROJECT umbrellas | open issues whose title starts `PROJECT` / `Project:` | **no — needs review** |
+| 5 | 🔗 Related project repos | configured affiliate repos via `github_related_repos` + `--related-repo` | yes |
+| 6 | 🧹 Probable duplicates | open-issue title pairs with jaccard ≥ `--duplicate-threshold` | **no — needs review** |
+| 7 | 🤔 PROJECT umbrellas | open issues whose title starts `PROJECT` / `Project:` | **no — needs review** |
 
-Buckets 1–4 produce the same output every run. Buckets 5 and 6 generate review cases that route through the agent-hook contract below.
+Buckets 1–5 produce the same output every run. Buckets 6 and 7 generate review cases that route through the agent-hook contract below.
 
 ## Agent hook contract
 
@@ -115,7 +135,8 @@ Everything lands under `temp/triage/` (gitignored via `/temp`):
 ## Limitations / known cuts
 
 - **Bucket 4 (perf)** trusts the `perf:` title prefix. Issues with measurable data but a different title prefix (e.g. "Reduce slow query for X") will not appear here.
-- **Bucket 5** uses Jaccard over a small stopword list. False positives on short titles ("Update X" / "Update Y") are possible — that's exactly why they go through the review queue, not auto-applied.
+- **Bucket 5 (related repos)** only sees repos already synced into the local SQLite corpus. Run a GitHub refresh after adding new related repos.
+- **Bucket 6** uses Jaccard over a small stopword list. False positives on short titles ("Update X" / "Update Y") are possible — that's exactly why they go through the review queue, not auto-applied.
 - **No bucket for "stale issues"** — stale-cutoff logic was out of scope for the first pass. If your repo has a long backlog, add a 7th bucket (1 SQL query + 1 builder function, ~15 lines).
 - **`gh` must be installed and authenticated** in the org for `--post-issue` to work. The earlier `rebalance config get-github-token` fallback to `gh auth token` covers the auth side.
 

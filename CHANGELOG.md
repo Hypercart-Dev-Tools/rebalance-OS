@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.23.7] - 2026-05-05
+
+### Changed
+
+- Pulse Sleuth reminder sections now include tasks assigned by the operator to other people, not only tasks assigned to the operator, so delegated follow-ups remain visible in the daily operating view.
+
+## [0.23.6] - 2026-05-05
+
+### Added
+
+- GitHub triage reports can now include configured related/affiliate project repos, showing open external issues and PRs alongside whether each one is already linked from a central tracker issue.
+- Local config now supports per-tracker related GitHub repo lists so implementation repos can stay separate while project tracking remains centralized.
+
+## [0.23.5] - 2026-05-05
+
+### Fixed
+
+- The terminal pulse dashboard now skips GitHub semantic embedding during its background refresh, preventing the terminal process from loading the local embedding model and consuming excessive memory. Daily sync and explicit refresh calls still run semantic work by default.
+
 ## [0.23.4] - 2026-05-04
 
 ### Added

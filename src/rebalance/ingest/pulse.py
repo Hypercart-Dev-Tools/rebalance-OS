@@ -11,7 +11,7 @@ Data sources:
   - GitHub commits:     ``github_commits`` (authored by ``github_login``)
   - GitHub issues/PRs:  ``github_items`` created or updated today by user
   - GitHub comments:    ``github_comments`` posted by user
-  - Sleuth reminders:   ``sleuth_reminders`` where assignee_id == slack_user_id
+  - Sleuth reminders:   assigned to the operator OR assigned by the operator
   - Calendar events:    ``calendar_events`` (today's upcoming)
   - Assigned issues:    GitHub search API, fetched fresh each run
 """
@@ -274,12 +274,13 @@ def _query_day_activity(
             """
             SELECT reminder_id, state, is_active, reminder_message_text,
                    should_post_on, last_seen_at, original_channel_name,
-                   github_urls_json
+                   github_urls_json, assignee_id, original_sender_id
             FROM sleuth_reminders
-            WHERE assignee_id = ? AND last_seen_at >= ?
+            WHERE (assignee_id = ? OR original_sender_id = ?)
+              AND last_seen_at >= ?
             ORDER BY last_seen_at DESC
             """,
-            (slack_user_id, sql_floor),
+            (slack_user_id, slack_user_id, sql_floor),
         ).fetchall()
         for r in rows:
             if _in_window(r["last_seen_at"], start, end):
@@ -301,6 +302,13 @@ def _query_day_activity(
                     "github_urls": gh_urls,
                     "should_post_on": r["should_post_on"],
                     "last_seen_at": r["last_seen_at"],
+                    "assignee_id": r["assignee_id"] or "",
+                    "original_sender_id": r["original_sender_id"] or "",
+                    "sleuth_role": (
+                        "assigned_to_me"
+                        if r["assignee_id"] == slack_user_id
+                        else "assigned_by_me"
+                    ),
                 })
 
     return activity
@@ -597,7 +605,8 @@ def _render_section_today_work(today: DayActivity, tz: ZoneInfo) -> str:
         lines.append("**Sleuth/Slack reminders touched**")
         for s in today.sleuth_activity[:15]:
             url_part = f" — links: {' '.join(s['github_urls'])}" if s["github_urls"] else ""
-            lines.append(f"- [{s['state']}] {s['message_preview']}{url_part}")
+            role = "assigned by me" if s.get("sleuth_role") == "assigned_by_me" else "assigned to me"
+            lines.append(f"- [{s['state']} / {role}] {s['message_preview']}{url_part}")
         if len(today.sleuth_activity) > 15:
             lines.append(f"- _…and {len(today.sleuth_activity) - 15} more_")
         lines.append("")
@@ -705,7 +714,7 @@ def render_pulse_markdown(snapshot: PulseSnapshot) -> str:
         "### GitHub Issues assigned to me (last 7 days)",
         _render_section_assigned_issues(snapshot.assigned_issues, today_start=today_start, tz=tz),
         "",
-        "### Sleuth (Slack) reminders assigned to me",
+        "### Sleuth (Slack) reminders assigned to/by me",
         _render_section_today_sleuth(snapshot.today, tz),
         "",
         "## Yesterday",
@@ -730,9 +739,10 @@ def _render_section_today_sleuth(today: DayActivity, tz: ZoneInfo) -> str:
     lines: list[str] = []
     for s in today.sleuth_activity[:20]:
         active = "active" if s["is_active"] else "inactive"
+        role = "assigned by me" if s.get("sleuth_role") == "assigned_by_me" else "assigned to me"
         url_part = f" — links: {' '.join(s['github_urls'])}" if s["github_urls"] else ""
         chan = f" #{s['channel']}" if s["channel"] else ""
-        lines.append(f"- [{s['state']} / {active}]{chan} {s['message_preview']}{url_part}")
+        lines.append(f"- [{s['state']} / {active} / {role}]{chan} {s['message_preview']}{url_part}")
     return "\n".join(lines)
 
 

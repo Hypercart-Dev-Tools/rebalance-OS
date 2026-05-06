@@ -3,8 +3,9 @@ rebalance pulse — terminal dashboard.
 
 A Rich-styled live monitor of local + remote activity, backed by the
 SQLite knowledge base. The DB is polled every 2 seconds (cheap); a
-background thread runs `refresh_index(scope=['github'])` every 10
-minutes so the data underneath actually changes.
+background thread runs a lightweight `refresh_index(scope=['github'])`
+every 10 minutes so the data underneath actually changes without loading
+the local embedding model into the terminal process.
 
     Run:   uv run python scripts/dashboard.py
     Quit:  q (or Ctrl+C)
@@ -44,7 +45,7 @@ from rich.text import Text
 # Make `rebalance.*` importable when running the script straight from the repo.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from rebalance.ingest.config import get_github_ignored_repos  # noqa: E402
+from rebalance.ingest.config import get_github_ignored_repos, get_pulse_config  # noqa: E402
 from rebalance.ingest.db import db_connection  # noqa: E402
 from rebalance.ingest.index_ops import (  # noqa: E402
     get_index_status,
@@ -223,7 +224,7 @@ def _write_refresh_profile(result: dict[str, Any]) -> None:
 def _do_refresh() -> None:
     REFRESH.start()
     try:
-        result = refresh_index(DB_PATH, scope=["github"])
+        result = refresh_index(DB_PATH, scope=["github"], include_semantic=False)
         _write_refresh_profile(result)
         REFRESH.succeed(_summarize_refresh_profile(result))
     except Exception as exc:  # noqa: BLE001
@@ -415,18 +416,45 @@ def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any
 
 
 def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
+    slack_user_id = get_pulse_config().get("slack_user_id")
     with db_connection(DB_PATH) as conn:
-        rows = conn.execute(
-            """
-            SELECT reminder_message_text, should_post_on, state
-            FROM sleuth_reminders
-            WHERE is_active = 1
-            ORDER BY should_post_on ASC NULLS LAST
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+        if slack_user_id:
+            rows = conn.execute(
+                """
+                SELECT reminder_id, reminder_message_text, should_post_on, state,
+                       assignee_id, original_sender_id
+                FROM sleuth_reminders
+                WHERE is_active = 1
+                  AND (assignee_id = ? OR original_sender_id = ?)
+                ORDER BY should_post_on ASC NULLS LAST
+                LIMIT ?
+                """,
+                (slack_user_id, slack_user_id, limit),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT reminder_id, reminder_message_text, should_post_on, state,
+                       assignee_id, original_sender_id
+                FROM sleuth_reminders
+                WHERE is_active = 1
+                ORDER BY should_post_on ASC NULLS LAST
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    out = []
+    for r in rows:
+        row = dict(r)
+        row["sleuth_role"] = (
+            "assigned_by_me"
+            if slack_user_id
+            and row.get("assignee_id") != slack_user_id
+            and row.get("original_sender_id") == slack_user_id
+            else "assigned_to_me"
+        )
+        out.append(row)
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -634,9 +662,10 @@ def render_vault_calendar(
     if sleuth_rows:
         for s in sleuth_rows:
             msg = compact_sleuth_reminder(s.get("reminder_message_text") or "")
+            role = "by me" if s.get("sleuth_role") == "assigned_by_me" else "to me"
             sleuth_table.add_row(
                 Text(_ago(s.get("should_post_on"), now=now).rjust(6), style=PALETTE["fg_dim"]),
-                Text(_truncate(msg, 60), style=PALETTE["fg"]),
+                Text(_truncate(f"{role} · {msg}", 60), style=PALETTE["fg"]),
             )
     else:
         sleuth_table.add_row(

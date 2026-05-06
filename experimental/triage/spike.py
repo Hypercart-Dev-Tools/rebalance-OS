@@ -39,8 +39,17 @@ from pathlib import Path
 from typing import Any, Callable
 
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
+SRC_ROOT = REPO_ROOT / "src"
 DEFAULT_OUT_DIR = REPO_ROOT / "temp" / "triage"
 DEFAULT_DB = Path(os.environ.get("REBALANCE_DB", REPO_ROOT / "rebalance.db"))
+
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
+from rebalance.ingest.config import (  # noqa: E402
+    get_github_related_repos,
+    normalize_github_repo_name,
+)
 
 
 # ── data shapes ─────────────────────────────────────────────────────────────
@@ -97,6 +106,82 @@ def issue_url(repo: str, number: int) -> str:
 
 def pr_url(repo: str, number: int) -> str:
     return f"https://github.com/{repo}/pull/{number}"
+
+
+def item_url(repo: str, item_type: str, number: int) -> str:
+    if item_type == "pull_request":
+        return pr_url(repo, number)
+    return issue_url(repo, number)
+
+
+def item_label(item_type: str) -> str:
+    return "PR" if item_type == "pull_request" else "issue"
+
+
+def resolve_related_repos(repo: str, explicit_repos: list[str] | None = None) -> list[str]:
+    """Merge config-backed affiliate repos with per-run CLI overrides."""
+    normalized_repo = normalize_github_repo_name(repo)
+    related = get_github_related_repos(normalized_repo)
+    for raw_repo in explicit_repos or []:
+        normalized_related = normalize_github_repo_name(raw_repo)
+        if normalized_related != normalized_repo and normalized_related not in related:
+            related.append(normalized_related)
+    return sorted(related)
+
+
+def find_central_trackers(
+    conn: sqlite3.Connection,
+    central_repo: str,
+    external_repo: str,
+    item_type: str,
+    number: int,
+) -> list[sqlite3.Row]:
+    """Return central tracker issues that link to one external issue/PR."""
+    central_repo = normalize_github_repo_name(central_repo)
+    path = "pull" if item_type == "pull_request" else "issues"
+    direct_url = f"github.com/{external_repo}/{path}/{number}"
+    alternate_path = "issues" if item_type == "pull_request" else "pull"
+    alternate_url = f"github.com/{external_repo}/{alternate_path}/{number}"
+    like_direct = f"%{direct_url}%"
+    like_alternate = f"%{alternate_url}%"
+
+    issue_rows = conn.execute(
+        """
+        SELECT DISTINCT number, title
+        FROM github_items
+        WHERE lower(repo_full_name) = ? AND item_type = 'issue'
+          AND state = 'open'
+          AND (body LIKE ? OR body LIKE ?)
+        ORDER BY number
+        LIMIT 3
+        """,
+        (central_repo, like_direct, like_alternate),
+    ).fetchall()
+    comment_rows = conn.execute(
+        """
+        SELECT DISTINCT gi.number, gi.title
+        FROM github_comments gc
+        JOIN github_items gi
+          ON gi.repo_full_name = gc.repo_full_name
+         AND gi.item_type = gc.item_type
+         AND gi.number = gc.item_number
+        WHERE lower(gc.repo_full_name) = ? AND gi.item_type = 'issue'
+          AND gi.state = 'open'
+          AND (gc.body LIKE ? OR gc.body LIKE ?)
+        ORDER BY gi.number
+        LIMIT 3
+        """,
+        (central_repo, like_direct, like_alternate),
+    ).fetchall()
+
+    seen: set[int] = set()
+    trackers: list[sqlite3.Row] = []
+    for row in [*issue_rows, *comment_rows]:
+        if row["number"] in seen:
+            continue
+        seen.add(row["number"])
+        trackers.append(row)
+    return trackers[:3]
 
 
 # ── jaccard for duplicate detection ─────────────────────────────────────────
@@ -294,6 +379,65 @@ def bucket_perf_concrete(conn: sqlite3.Connection, repo: str, **_) -> Bucket:
     return b
 
 
+def bucket_related_project_repos(
+    conn: sqlite3.Connection,
+    repo: str,
+    related_repos: list[str] | None = None,
+    **_,
+) -> Bucket:
+    b = Bucket(
+        "related_project_repos",
+        "🔗",
+        "Related project repos",
+        "Open work in configured affiliate repos, with central-tracker coverage checks.",
+    )
+    if not related_repos:
+        return b
+
+    placeholders = ",".join("?" * len(related_repos))
+    rows = conn.execute(
+        f"""
+        SELECT repo_full_name, item_type, number, title, updated_at, html_url
+        FROM github_items
+        WHERE lower(repo_full_name) IN ({placeholders})
+          AND state = 'open'
+          AND item_type IN ('issue', 'pull_request')
+        ORDER BY updated_at DESC
+        LIMIT 12
+        """,
+        tuple(related_repos),
+    ).fetchall()
+
+    for r in rows:
+        external_repo = r["repo_full_name"]
+        trackers = find_central_trackers(
+            conn,
+            repo,
+            external_repo,
+            r["item_type"],
+            r["number"],
+        )
+        if trackers:
+            tracker_links = ", ".join(
+                f"[#{tracker['number']}]({issue_url(repo, tracker['number'])})"
+                for tracker in trackers
+            )
+            tracking_status = f"tracked centrally by {tracker_links}"
+        else:
+            tracking_status = "**missing central tracker link**"
+        updated = (r["updated_at"] or "")[:10] or "unknown date"
+        kind = item_label(r["item_type"])
+        b.items.append(
+            Item(
+                number=r["number"],
+                title=f"`{external_repo}` {kind} #{r['number']}: {r['title']}",
+                url=r["html_url"] or item_url(external_repo, r["item_type"], r["number"]),
+                rationale=f"updated {updated} · {tracking_status}",
+            )
+        )
+    return b
+
+
 def bucket_duplicates(conn: sqlite3.Connection, repo: str,
                       resolver: AmbiguityResolver, threshold: float = 0.7,
                       **_) -> Bucket:
@@ -372,6 +516,7 @@ BUCKET_BUILDERS: list[Callable[..., Bucket]] = [
     bucket_release_blockers,
     bucket_client_visible,
     bucket_perf_concrete,
+    bucket_related_project_repos,
     bucket_duplicates,
     bucket_project_umbrellas,
 ]
@@ -453,10 +598,12 @@ def main(argv: list[str] | None = None) -> int:
                    help="JSONL of pre-made decisions (overrides --ambiguity)")
     p.add_argument("--duplicate-threshold", type=float, default=0.7,
                    help="jaccard cutoff for duplicate detection (0..1)")
+    p.add_argument("--related-repo", action="append", default=[],
+                   help="affiliate implementation repo to include in related-project tracking")
     p.add_argument("--post-issue", action="store_true",
                    help="post final markdown as a GitHub issue via gh CLI")
     p.add_argument("--issue-title", default=None,
-                   help="title for posted issue (default: 'Triage: 6 action buckets ...')")
+                   help="title for posted issue (default: 'Triage: action buckets ...')")
     p.add_argument("--dry-run", action="store_true",
                    help="print what would happen but don't post")
     args = p.parse_args(argv)
@@ -467,11 +614,13 @@ def main(argv: list[str] | None = None) -> int:
     body_path = args.out_dir / f"{args.repo.replace('/', '__')}__triage.md"
 
     resolver = AmbiguityResolver(args.ambiguity, decisions, queue_path, args.repo)
+    related_repos = resolve_related_repos(args.repo, args.related_repo)
 
     with open_db(args.db) as conn:
         buckets = [
             build(conn, args.repo, resolver=resolver,
-                  threshold=args.duplicate_threshold)
+                  threshold=args.duplicate_threshold,
+                  related_repos=related_repos)
             for build in BUCKET_BUILDERS
         ]
 
@@ -486,7 +635,7 @@ def main(argv: list[str] | None = None) -> int:
               file=sys.stderr)
 
     if args.post_issue and not args.dry_run:
-        title = args.issue_title or f"Triage: 6 action buckets ({generated_at[:10]})"
+        title = args.issue_title or f"Triage: action buckets ({generated_at[:10]})"
         url = post_issue(args.repo, title, body)
         print(url)
     elif args.post_issue and args.dry_run:

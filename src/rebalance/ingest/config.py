@@ -192,6 +192,74 @@ def is_github_repo_ignored(repo: str) -> bool:
     return normalized in set(get_github_ignored_repos())
 
 
+def get_github_related_repos(repo: str) -> list[str]:
+    """Return repos treated as affiliate implementation repos for a central tracker."""
+    normalized_repo = normalize_github_repo_name(repo)
+    config = _read_config()
+    value = config.get("github_related_repos")
+    if not isinstance(value, dict):
+        return []
+    repos = value.get(normalized_repo) or value.get(repo.strip())
+    if repos is None:
+        for key, candidate in value.items():
+            if isinstance(key, str) and key.lower() == normalized_repo:
+                repos = candidate
+                break
+    if not isinstance(repos, list):
+        return []
+    normalized: list[str] = []
+    for item in repos:
+        if not isinstance(item, str):
+            continue
+        try:
+            related_repo = normalize_github_repo_name(item)
+        except ValueError:
+            continue
+        if related_repo != normalized_repo and related_repo not in normalized:
+            normalized.append(related_repo)
+    return sorted(normalized)
+
+
+def set_github_related_repos(repo: str, related_repos: list[str]) -> None:
+    """Store affiliate implementation repos for one central GitHub tracker repo."""
+    normalized_repo = normalize_github_repo_name(repo)
+    normalized_related = [
+        item
+        for item in _normalize_github_repo_list(related_repos)
+        if item != normalized_repo
+    ]
+    config = _read_config()
+    value = config.get("github_related_repos")
+    mapping = value if isinstance(value, dict) else {}
+    mapping[normalized_repo] = normalized_related
+    config["github_related_repos"] = mapping
+    _write_config(config)
+
+
+def add_github_related_repo(repo: str, related_repo: str) -> bool:
+    """Add one affiliate implementation repo for a central GitHub tracker repo."""
+    normalized_related = normalize_github_repo_name(related_repo)
+    existing = get_github_related_repos(repo)
+    if normalized_related in existing:
+        return False
+    existing.append(normalized_related)
+    set_github_related_repos(repo, existing)
+    return True
+
+
+def remove_github_related_repo(repo: str, related_repo: str) -> bool:
+    """Remove one affiliate implementation repo from a central tracker repo."""
+    normalized_related = normalize_github_repo_name(related_repo)
+    existing = get_github_related_repos(repo)
+    if normalized_related not in existing:
+        return False
+    set_github_related_repos(
+        repo,
+        [item for item in existing if item != normalized_related],
+    )
+    return True
+
+
 def get_config_path() -> Path:
     """Return the config file path (for user reference)."""
     return CONFIG_PATH
@@ -208,7 +276,7 @@ def get_pulse_config() -> dict[str, Any]:
     Keys (all optional; pulse rendering will fail loudly if a required one is
     missing at run time):
       - github_login: GitHub username to attribute work to
-      - slack_user_id: Slack user_id for sleuth_reminders.assignee_id filter
+      - slack_user_id: Slack user_id for Sleuth reminders assigned to/by you
       - pulse_target_path: absolute path to the local clone of the destination
         git repo (e.g. a private "git-pulse-sync" working tree)
       - pulse_filename: relative path of the markdown file inside the target

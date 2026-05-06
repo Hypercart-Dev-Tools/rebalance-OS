@@ -12,8 +12,9 @@ from unittest.mock import patch
 from uuid import uuid4
 
 from rebalance.ingest import config as config_module
-from rebalance.ingest.config import set_github_ignored_repos
+from rebalance.ingest.config import set_github_ignored_repos, set_pulse_config
 from rebalance.ingest.db import db_connection, ensure_github_schema
+from rebalance.ingest.sleuth_reminders import ensure_sleuth_schema
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -143,6 +144,81 @@ class DashboardTerminalThemeTests(unittest.TestCase):
             rows = dashboard.fetch_recent_github(limit=10)
 
         self.assertEqual([row["repo_full_name"] for row in rows], ["kissplugins/KISS-woo-order-monitoring-alerts"])
+
+    def test_dashboard_refresh_skips_semantic_embedding(self) -> None:
+        dashboard = _load_dashboard(inverse=False)
+        result = {
+            "elapsed_seconds": 1.2,
+            "results": [
+                {
+                    "scope": "github",
+                    "artifact_sync": [
+                        {"repo": "example/repo", "elapsed_seconds": 1.0},
+                    ],
+                    "semantic": {"skipped": True},
+                }
+            ],
+            "errors": [],
+        }
+
+        with (
+            patch.object(dashboard, "refresh_index", return_value=result) as refresh,
+            patch.object(dashboard, "_write_refresh_profile"),
+        ):
+            dashboard._do_refresh()
+
+        refresh.assert_called_once_with(dashboard.DB_PATH, scope=["github"], include_semantic=False)
+        snapshot = dashboard.REFRESH.snapshot()
+        self.assertEqual(snapshot["status"], "ok")
+        self.assertEqual(snapshot["last_profile"]["slowest_repo"], "example/repo")
+
+    def test_sleuth_panel_includes_reminders_assigned_by_me(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            db_path = root / "rebalance.db"
+            config_module.CONFIG_PATH = root / "rbos.config"
+            set_pulse_config(slack_user_id="U032TCHJ8")
+
+            with db_connection(db_path, ensure_sleuth_schema) as conn:
+                for reminder_id, assignee_id, sender_id, message in [
+                    ("to-me", "U032TCHJ8", "U999", "Assigned to me"),
+                    ("by-me", "U08BHQEAX", "U032TCHJ8", "Assigned by me"),
+                    ("not-mine", "U08BHQEAX", "U999", "Not mine"),
+                ]:
+                    conn.execute(
+                        """
+                        INSERT INTO sleuth_reminders (
+                            reminder_id, workspace_name, state, is_active,
+                            created_on, should_post_on, reminder_message_text,
+                            ignore_snooze, assignee_id, original_sender_id,
+                            target_channel_id, original_channel_id, original_channel_name,
+                            original_message_id, original_thread_ts, github_urls_json,
+                            first_seen_at, last_seen_at, last_synced_at
+                        ) VALUES (?, 'neochrome-dev', 'scheduled', 1,
+                            ?, ?, ?, 0, ?, ?, 'C1', 'C2', 'eng',
+                            '123.456', NULL, '[]', ?, ?, ?
+                        )
+                        """,
+                        (
+                            reminder_id,
+                            "2026-05-05T17:00:00+00:00",
+                            "2026-05-05T20:00:00+00:00",
+                            message,
+                            assignee_id,
+                            sender_id,
+                            "2026-05-05T18:00:00+00:00",
+                            "2026-05-05T18:00:00+00:00",
+                            "2026-05-05T18:00:00+00:00",
+                        ),
+                    )
+                conn.commit()
+
+            dashboard = _load_dashboard(inverse=False, database_path=db_path)
+            rows = dashboard.fetch_sleuth_due(limit=10)
+
+        self.assertEqual([row["reminder_id"] for row in rows], ["to-me", "by-me"])
+        self.assertEqual(rows[0]["sleuth_role"], "assigned_to_me")
+        self.assertEqual(rows[1]["sleuth_role"], "assigned_by_me")
 
 
 if __name__ == "__main__":

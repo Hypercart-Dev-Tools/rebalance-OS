@@ -1,4 +1,4 @@
 """rebalance package."""
 
 __all__ = ["__version__"]
-__version__ = "0.23.4"
+__version__ = "0.23.7"

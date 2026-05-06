@@ -10,12 +10,16 @@ from unittest.mock import patch
 from rebalance.ingest import config as config_module
 from rebalance.ingest.config import (
     add_github_ignored_repo,
+    add_github_related_repo,
     clear_github_token,
+    get_github_related_repos,
     get_github_token,
     get_github_token_with_source,
     get_github_ignored_repos,
     is_github_repo_ignored,
+    remove_github_related_repo,
     remove_github_ignored_repo,
+    set_github_related_repos,
     set_github_token,
     set_github_ignored_repos,
 )
@@ -124,6 +128,46 @@ class GitHubIgnoredReposTests(unittest.TestCase):
         self.assertTrue(is_github_repo_ignored("dlt-hub/DLT"))
         self.assertTrue(remove_github_ignored_repo("DLT-HUB/dlt"))
         self.assertFalse(is_github_repo_ignored("dlt-hub/dlt"))
+
+
+class GitHubRelatedReposTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._orig_path = config_module.CONFIG_PATH
+        config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+
+    def tearDown(self) -> None:
+        config_module.CONFIG_PATH = self._orig_path
+
+    def test_round_trip_normalizes_dedupes_sorts_and_excludes_self(self) -> None:
+        set_github_related_repos(
+            "BinoidCBD/universal-child-theme-oct-2024",
+            [
+                "kissplugins/KISS-woo-order-monitoring-alerts",
+                "BinoidCBD/universal-child-theme-oct-2024",
+                "KISSPLUGINS/kiss-woo-order-monitoring-alerts",
+            ],
+        )
+        self.assertEqual(
+            get_github_related_repos("binoidcbd/universal-child-theme-oct-2024"),
+            ["kissplugins/kiss-woo-order-monitoring-alerts"],
+        )
+
+    def test_add_remove_related_repo(self) -> None:
+        central = "BinoidCBD/universal-child-theme-oct-2024"
+        related = "kissplugins/KISS-woo-fast-search"
+
+        self.assertTrue(add_github_related_repo(central, related))
+        self.assertFalse(add_github_related_repo(central, related))
+        self.assertEqual(
+            get_github_related_repos(central),
+            ["kissplugins/kiss-woo-fast-search"],
+        )
+
+        self.assertTrue(remove_github_related_repo(central, related))
+        self.assertFalse(remove_github_related_repo(central, related))
+        self.assertEqual(get_github_related_repos(central), [])
 
 
 if __name__ == "__main__":

@@ -10,8 +10,10 @@ import typer
 from rebalance.ingest.preflight import run_preflight
 from rebalance.ingest.registry import sync_registry
 from rebalance.ingest.config import (
+    add_github_related_repo,
     add_github_ignored_repo,
     clear_github_token,
+    get_github_related_repos,
     get_github_token,
     get_github_token_with_source,
     get_github_ignored_repos,
@@ -20,6 +22,7 @@ from rebalance.ingest.config import (
     set_vault_path,
     get_config_path,
     normalize_github_repo_name,
+    remove_github_related_repo,
     remove_github_ignored_repo,
 )
 from rebalance.ingest.audit import append_audit_entry
@@ -1627,6 +1630,50 @@ def config_list_github_ignored_repos() -> None:
         return
     for repo in repos:
         typer.echo(repo)
+
+
+@config_app.command("add-github-related-repo")
+def config_add_github_related_repo(
+    repo: str = typer.Argument(..., help="Central tracker repo in owner/name form"),
+    related_repo: str = typer.Argument(..., help="Related implementation repo in owner/name form"),
+) -> None:
+    """Add an affiliate implementation repo for a central GitHub tracker repo."""
+    normalized_repo = normalize_github_repo_name(repo)
+    normalized_related = normalize_github_repo_name(related_repo)
+    added = add_github_related_repo(normalized_repo, normalized_related)
+    if added:
+        typer.echo(f"✓ Added related GitHub repo for {normalized_repo}: {normalized_related}")
+    else:
+        typer.echo(f"✓ Related GitHub repo already configured for {normalized_repo}: {normalized_related}")
+
+
+@config_app.command("remove-github-related-repo")
+def config_remove_github_related_repo(
+    repo: str = typer.Argument(..., help="Central tracker repo in owner/name form"),
+    related_repo: str = typer.Argument(..., help="Related implementation repo in owner/name form"),
+) -> None:
+    """Remove an affiliate implementation repo from a central tracker repo."""
+    normalized_repo = normalize_github_repo_name(repo)
+    normalized_related = normalize_github_repo_name(related_repo)
+    removed = remove_github_related_repo(normalized_repo, normalized_related)
+    if removed:
+        typer.echo(f"✓ Removed related GitHub repo for {normalized_repo}: {normalized_related}")
+    else:
+        typer.echo(f"✓ Related GitHub repo was not configured for {normalized_repo}: {normalized_related}")
+
+
+@config_app.command("list-github-related-repos")
+def config_list_github_related_repos(
+    repo: str = typer.Argument(..., help="Central tracker repo in owner/name form"),
+) -> None:
+    """List affiliate implementation repos for a central GitHub tracker repo."""
+    normalized_repo = normalize_github_repo_name(repo)
+    repos = get_github_related_repos(normalized_repo)
+    if not repos:
+        typer.echo(f"No related GitHub repos configured for {normalized_repo}.")
+        return
+    for related_repo in repos:
+        typer.echo(related_repo)
 
 
 @config_app.command("set-github-token")

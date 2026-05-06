@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from rebalance.cli import app
 from rebalance.ingest import audit as audit_module
 from rebalance.ingest import config as config_module
-from rebalance.ingest.config import get_github_ignored_repos
+from rebalance.ingest.config import get_github_ignored_repos, get_github_related_repos
 from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_semantic_schema
 
 
@@ -40,6 +40,31 @@ class GitHubIgnoreCliTests(unittest.TestCase):
         listed = self.runner.invoke(app, ["config", "list-github-ignored-repos"])
         self.assertEqual(listed.exit_code, 0)
         self.assertIn("dlt-hub/dlt", listed.stdout)
+
+    def test_add_list_and_remove_related_repo(self) -> None:
+        central = "BinoidCBD/universal-child-theme-oct-2024"
+        related = "kissplugins/KISS-woo-order-monitoring-alerts"
+
+        result = self.runner.invoke(
+            app,
+            ["config", "add-github-related-repo", central, related],
+        )
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(
+            get_github_related_repos(central),
+            ["kissplugins/kiss-woo-order-monitoring-alerts"],
+        )
+
+        listed = self.runner.invoke(app, ["config", "list-github-related-repos", central])
+        self.assertEqual(listed.exit_code, 0)
+        self.assertIn("kissplugins/kiss-woo-order-monitoring-alerts", listed.stdout)
+
+        removed = self.runner.invoke(
+            app,
+            ["config", "remove-github-related-repo", central, related],
+        )
+        self.assertEqual(removed.exit_code, 0)
+        self.assertEqual(get_github_related_repos(central), [])
 
     def test_add_with_dry_run_reports_counts_without_deleting(self) -> None:
         db_path = Path(self._tmp.name) / "rebalance.db"

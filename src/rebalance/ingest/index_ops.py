@@ -370,15 +370,21 @@ def _refresh_github(
     since_days: int,
     repos: list[str],
     dry_run: bool,
+    include_semantic: bool = True,
 ) -> dict[str, Any]:
     target_repos = _resolve_repos_for_refresh(database_path, repos)
     plan_steps = [
         f"github_scan(days={since_days})",
         f"sync_github_repo() x {len(target_repos)} repos",
-        "embed_github_documents()",
-        "semantic_backfill(source=['github'])",
-        "semantic_embed(source=['github'])",
     ]
+    if include_semantic:
+        plan_steps.extend([
+            "embed_github_documents()",
+            "semantic_backfill(source=['github'])",
+            "semantic_embed(source=['github'])",
+        ])
+    else:
+        plan_steps.append("skip semantic embedding")
     if dry_run:
         return {
             "scope": "github",
@@ -393,14 +399,7 @@ def _refresh_github(
         upsert_github_activity,
     )
     from rebalance.ingest.config import get_github_ignored_repos
-    from rebalance.ingest.github_knowledge import (
-        embed_github_documents,
-        sync_github_repo,
-    )
-    from rebalance.ingest.semantic_index import (
-        backfill_semantic_documents,
-        embed_pending,
-    )
+    from rebalance.ingest.github_knowledge import sync_github_repo
 
     scan_result = scan_github(token=token, days=since_days)
     skipped = filter_ignored_repo_activity(scan_result, get_github_ignored_repos())
@@ -429,11 +428,7 @@ def _refresh_github(
         except Exception as e:
             repo_results.append({"repo": repo, "error": str(e)})
 
-    gh_embed = embed_github_documents(database_path=database_path)
-    backfill = backfill_semantic_documents(database_path, source_types=["github"])
-    sem_embed = embed_pending(database_path, source_types=["github"])
-
-    return {
+    result: dict[str, Any] = {
         "scope": "github",
         "dry_run": False,
         "github_scan": {
@@ -443,6 +438,24 @@ def _refresh_github(
             "skipped_ignored": len(skipped),
         },
         "artifact_sync": repo_results,
+    }
+    if not include_semantic:
+        result["semantic"] = {
+            "skipped": True,
+            "reason": "include_semantic=False",
+        }
+        return result
+
+    from rebalance.ingest.github_knowledge import embed_github_documents
+    from rebalance.ingest.semantic_index import (
+        backfill_semantic_documents,
+        embed_pending,
+    )
+
+    gh_embed = embed_github_documents(database_path=database_path)
+    backfill = backfill_semantic_documents(database_path, source_types=["github"])
+    sem_embed = embed_pending(database_path, source_types=["github"])
+    result.update({
         "github_embed": {
             "total": gh_embed.total_docs,
             "embedded": gh_embed.embedded_docs,
@@ -462,7 +475,8 @@ def _refresh_github(
             "skipped_unchanged": sem_embed.skipped_unchanged,
             "elapsed_seconds": sem_embed.elapsed_seconds,
         },
-    }
+    })
+    return result
 
 
 def _refresh_calendar(database_path: Path, *, since_days: int, dry_run: bool) -> dict[str, Any]:
@@ -549,6 +563,7 @@ def refresh_index(
     since_days: int = 30,
     repos: list[str] | None = None,
     dry_run: bool = False,
+    include_semantic: bool = True,
 ) -> dict[str, Any]:
     """Run the configured ingest pipelines for ``scope`` and return a summary.
 
@@ -604,6 +619,7 @@ def refresh_index(
                     since_days=since_days,
                     repos=repos_list,
                     dry_run=dry_run,
+                    include_semantic=include_semantic,
                 ))
             elif s == "calendar":
                 results.append(_refresh_calendar(db_path, since_days=since_days, dry_run=dry_run))
