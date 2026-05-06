@@ -16,12 +16,15 @@ from rebalance.ingest.config import (
     get_github_token,
     get_github_token_with_source,
     get_github_ignored_repos,
+    get_project_priority_rules,
     is_github_repo_ignored,
     remove_github_related_repo,
     remove_github_ignored_repo,
+    remove_project_priority_rule,
     set_github_related_repos,
     set_github_token,
     set_github_ignored_repos,
+    set_project_priority_rule,
 )
 
 
@@ -168,6 +171,41 @@ class GitHubRelatedReposTests(unittest.TestCase):
         self.assertTrue(remove_github_related_repo(central, related))
         self.assertFalse(remove_github_related_repo(central, related))
         self.assertEqual(get_github_related_repos(central), [])
+
+
+class ProjectPriorityRulesTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._orig_path = config_module.CONFIG_PATH
+        config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+
+    def tearDown(self) -> None:
+        config_module.CONFIG_PATH = self._orig_path
+
+    def test_set_list_and_remove_project_priority_rule(self) -> None:
+        rule = set_project_priority_rule(
+            name="Client Alpha",
+            aliases=["Alpha Site", "Alpha Site"],
+            client="Alpha",
+            priority_tier=1,
+            value_score=10,
+            value_level="strategic",
+            risk_level="high",
+        )
+
+        self.assertEqual(rule["aliases"], ["Alpha Site"])
+        self.assertEqual(get_project_priority_rules(), [rule])
+
+        self.assertTrue(remove_project_priority_rule("Client Alpha"))
+        self.assertFalse(remove_project_priority_rule("Client Alpha"))
+        self.assertEqual(get_project_priority_rules(), [])
+
+    def test_invalid_priority_values_raise(self) -> None:
+        with self.assertRaises(ValueError):
+            set_project_priority_rule(name="Client Alpha", priority_tier=6)
+        with self.assertRaises(ValueError):
+            set_project_priority_rule(name="Client Alpha", value_score=11)
 
 
 if __name__ == "__main__":

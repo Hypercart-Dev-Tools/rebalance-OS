@@ -15,6 +15,7 @@ from rebalance.ingest.calendar_config import CalendarConfig, filter_events, load
 from rebalance.ingest.calendar_helpers import event_duration_minutes
 from rebalance.ingest.db import db_connection, ensure_calendar_schema
 from rebalance.ingest.github_scan import get_github_balance
+from rebalance.ingest.project_priority import apply_project_priorities
 from rebalance.ingest.project_classifier import annotate_events_with_projects, load_project_matchers
 from rebalance.ingest.registry import get_projects
 
@@ -29,6 +30,11 @@ class DashboardProjectRow:
     priority_tier: int | None
     verdict: str
     confidence: str
+    priority_score: int = 0
+    client: str = ""
+    value_level: str | None = None
+    value_score: int | None = None
+    risk_level: str | None = None
     evidence: list[str] = field(default_factory=list)
     next_move: str = ""
     source_counts: dict[str, int] = field(default_factory=dict)
@@ -234,7 +240,7 @@ def build_dashboard_payload(
 ) -> DashboardPayload:
     """Build the structured payload that drives the dashboard markdown."""
     config = config or CalendarConfig.load()
-    projects = get_projects(database_path, status="active")
+    projects = apply_project_priorities(get_projects(database_path, status="active"))
     repo_map = {project["name"]: list(project.get("repos") or []) for project in projects}
     github_rows = {
         row["project_name"]: row
@@ -250,6 +256,8 @@ def build_dashboard_payload(
     project_rows: list[DashboardProjectRow] = []
     for project in projects:
         name = project["name"]
+        custom_fields = project.get("custom_fields") or {}
+        display_name = str(custom_fields.get("priority_display_name") or name)
         github_stats = github_rows.get(
             name,
             {
@@ -261,10 +269,8 @@ def build_dashboard_payload(
                 "repos_linked": project.get("repos") or [],
             },
         )
-        calendar_row = calendar_stats.get(
-            name,
-            {"event_count": 0, "total_minutes": 0, "sample_titles": []},
-        )
+        default_calendar_row = {"event_count": 0, "total_minutes": 0, "sample_titles": []}
+        calendar_row = calendar_stats.get(display_name) or calendar_stats.get(name) or default_calendar_row
         verdict, confidence, next_move, activity_score = _determine_verdict(
             priority_tier=project.get("priority_tier"),
             calendar_minutes=int(calendar_row["total_minutes"]),
@@ -286,12 +292,28 @@ def build_dashboard_payload(
             evidence.append("Recent calendar titles: " + "; ".join(calendar_row["sample_titles"]))
         if project.get("summary"):
             evidence.append(f"Registry summary: {project['summary']}")
+        client = str(custom_fields.get("client") or "")
+        value_score = custom_fields.get("value_score")
+        if client or project.get("value_level") or value_score is not None:
+            parts = []
+            if client:
+                parts.append(f"client={client}")
+            if project.get("value_level"):
+                parts.append(f"value_level={project['value_level']}")
+            if value_score is not None:
+                parts.append(f"value_score={value_score}/10")
+            evidence.append("Priority: " + ", ".join(parts))
 
         project_rows.append(
             DashboardProjectRow(
-                name=name,
+                name=display_name,
                 summary=project.get("summary") or "",
                 priority_tier=project.get("priority_tier"),
+                priority_score=int(project.get("priority_score") or 0),
+                client=client,
+                value_level=project.get("value_level"),
+                value_score=value_score if isinstance(value_score, int) else None,
+                risk_level=project.get("risk_level"),
                 verdict=verdict,
                 confidence=confidence,
                 evidence=evidence,
@@ -307,6 +329,7 @@ def build_dashboard_payload(
 
     project_rows.sort(
         key=lambda row: (
+            -row.priority_score,
             row.priority_tier if row.priority_tier is not None else 99,
             -row.activity_score,
             row.name.lower(),
@@ -415,6 +438,7 @@ def render_dashboard_markdown(
     synthesized_summary: str = "",
 ) -> str:
     """Render the dashboard markdown note."""
+    generated_at = _format_generated_at(payload.generated_at)
     lines = [
         "---",
         "type: dashboard",
@@ -428,6 +452,7 @@ def render_dashboard_markdown(
         "---",
         "",
         "# rebalanceOS Dashboard",
+        f"_Last generated: {generated_at}_",
         "",
         "## Table of Contents",
         "- [Now](#now)",
@@ -469,6 +494,11 @@ def render_dashboard_markdown(
                     f"- Verdict: {project.verdict}",
                     f"- Confidence: {project.confidence}",
                     f"- Priority tier: {tier}",
+                    f"- Priority score: {project.priority_score}",
+                    f"- Client: {project.client or 'n/a'}",
+                    f"- Value: {project.value_level or 'n/a'}"
+                    + (f" ({project.value_score}/10)" if project.value_score is not None else ""),
+                    f"- Risk: {project.risk_level or 'n/a'}",
                     f"- Source counts: calendar_events={project.source_counts.get('calendar_events', 0)}, "
                     f"repos_linked={project.source_counts.get('repos_linked', 0)}, "
                     f"repos_touched={project.source_counts.get('repos_touched', 0)}",
@@ -494,6 +524,17 @@ def render_dashboard_markdown(
         ]
     )
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _format_generated_at(value: str) -> str:
+    """Format an ISO timestamp for the visible dashboard freshness marker."""
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return value
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
 
 def build_dashboard_note_content(

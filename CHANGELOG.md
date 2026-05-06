@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.23.9] - 2026-05-05
+
+### Added
+
+- Local project/client priority rules can now assign dashboard priority tiers, value scores, client labels, value levels, and risk levels without committing private account metadata.
+- The dashboard now ranks projects by local priority score before activity, shows the priority metadata in each project block, and can surface configured priority projects even before they exist in the active registry.
+- Calendar/project classification now uses the same local priority aliases, so important client or project nicknames route to the right dashboard row.
+- The config CLI can set, list, and remove local project priority rules stored in the ignored operator config.
+
+## [0.23.8] - 2026-05-05
+
+### Changed
+
+- Full index refreshes now update the Obsidian dashboard note after successful ingest and immediately re-ingest/embed that note so the local SQLite index sees the refreshed operating dashboard.
+- The generated dashboard note now shows a visible "Last generated" timestamp directly under the title, making freshness/staleness obvious without inspecting frontmatter.
+
 ## [0.23.7] - 2026-05-05
 
 ### Changed

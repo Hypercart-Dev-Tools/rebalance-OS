@@ -9,7 +9,11 @@
       "Bash(plutil -lint /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/experimental/git-history/com.user.git-history.plist.template)",
       "Bash(python /Users/noelsaw/Documents/rebalance-OS/experimental/git-pulse/recap.py --input '/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse/reports/combined-14-day-local-and-synced.tsv' --input '/Users/noelsaw/Documents/GH Repos/rebalance-git-pulse/reports/combined-21-day-local-and-synced.tsv' --output /tmp/recap-smoke.md)",
       "Read(//tmp/**)",
-      "Bash(.venv/bin/python -c ' *)"
+      "Bash(.venv/bin/python -c ' *)",
+      "Bash(git commit -m ' *)",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"import rich; print\\('rich ok:', rich.__version__\\)\")",
+      "Bash(python -c \"from rich.console import Console; from rich.layout import Layout; from rich.live import Live; print\\('rich ok'\\)\")"
     ],
     "additionalDirectories": [
       "/Users/noelsaw/Documents/rebalance-OS/.claude"

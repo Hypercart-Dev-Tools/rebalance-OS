@@ -260,6 +260,150 @@ def remove_github_related_repo(repo: str, related_repo: str) -> bool:
     return True
 
 
+def _normalize_priority_tier(value: Any) -> int | None:
+    if value in ("", None):
+        return None
+    try:
+        tier = int(value)
+    except (TypeError, ValueError):
+        return None
+    if tier < 1 or tier > 5:
+        return None
+    return tier
+
+
+def _normalize_value_score(value: Any) -> int | None:
+    if value in ("", None):
+        return None
+    try:
+        score = int(value)
+    except (TypeError, ValueError):
+        return None
+    if score < 1 or score > 10:
+        return None
+    return score
+
+
+def _normalize_string_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[str] = []
+    for item in value:
+        text = str(item).strip()
+        if text and text not in normalized:
+            normalized.append(text)
+    return normalized
+
+
+def _normalize_project_priority_rule(rule: dict[str, Any]) -> dict[str, Any] | None:
+    name = str(rule.get("name") or "").strip()
+    if not name:
+        return None
+    normalized: dict[str, Any] = {
+        "name": name,
+        "aliases": _normalize_string_list(rule.get("aliases")),
+    }
+    client = str(rule.get("client") or "").strip()
+    if client:
+        normalized["client"] = client
+    priority_tier = _normalize_priority_tier(rule.get("priority_tier"))
+    if priority_tier is not None:
+        normalized["priority_tier"] = priority_tier
+    value_score = _normalize_value_score(rule.get("value_score"))
+    if value_score is not None:
+        normalized["value_score"] = value_score
+    value_level = str(rule.get("value_level") or "").strip()
+    if value_level:
+        normalized["value_level"] = value_level
+    risk_level = str(rule.get("risk_level") or "").strip()
+    if risk_level:
+        normalized["risk_level"] = risk_level
+    return normalized
+
+
+def get_project_priority_rules() -> list[dict[str, Any]]:
+    """Return local project/client priority rules from gitignored config."""
+    config = _read_config()
+    value = config.get("project_priority_rules")
+    if not isinstance(value, list):
+        return []
+    rules: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        normalized = _normalize_project_priority_rule(item)
+        if not normalized:
+            continue
+        key = normalized["name"].casefold()
+        if key in seen:
+            continue
+        seen.add(key)
+        rules.append(normalized)
+    return rules
+
+
+def set_project_priority_rule(
+    *,
+    name: str,
+    aliases: list[str] | None = None,
+    client: str = "",
+    priority_tier: int | None = None,
+    value_score: int | None = None,
+    value_level: str = "",
+    risk_level: str = "",
+) -> dict[str, Any]:
+    """Upsert one local project/client priority rule."""
+    candidate = {
+        "name": name,
+        "aliases": list(aliases or []),
+        "client": client,
+        "priority_tier": priority_tier,
+        "value_score": value_score,
+        "value_level": value_level,
+        "risk_level": risk_level,
+    }
+    normalized = _normalize_project_priority_rule(candidate)
+    if normalized is None:
+        raise ValueError("Project priority rule requires a non-empty name.")
+    if priority_tier is not None and "priority_tier" not in normalized:
+        raise ValueError("priority_tier must be between 1 and 5.")
+    if value_score is not None and "value_score" not in normalized:
+        raise ValueError("value_score must be between 1 and 10.")
+
+    config = _read_config()
+    existing = get_project_priority_rules()
+    replaced = False
+    out: list[dict[str, Any]] = []
+    key = normalized["name"].casefold()
+    for rule in existing:
+        if rule["name"].casefold() == key:
+            out.append(normalized)
+            replaced = True
+        else:
+            out.append(rule)
+    if not replaced:
+        out.append(normalized)
+    config["project_priority_rules"] = out
+    _write_config(config)
+    return normalized
+
+
+def remove_project_priority_rule(name: str) -> bool:
+    """Remove one local project/client priority rule by project name."""
+    key = str(name or "").strip().casefold()
+    if not key:
+        return False
+    existing = get_project_priority_rules()
+    remaining = [rule for rule in existing if rule["name"].casefold() != key]
+    if len(remaining) == len(existing):
+        return False
+    config = _read_config()
+    config["project_priority_rules"] = remaining
+    _write_config(config)
+    return True
+
+
 def get_config_path() -> Path:
     """Return the config file path (for user reference)."""
     return CONFIG_PATH

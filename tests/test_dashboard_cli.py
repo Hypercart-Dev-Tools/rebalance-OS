@@ -177,6 +177,7 @@ class DashboardRenderCliTests(unittest.TestCase):
             self.assertTrue(note_path.exists())
             note_text = note_path.read_text(encoding="utf-8")
             self.assertIn("# rebalanceOS Dashboard", note_text)
+            self.assertIn("_Last generated:", note_text)
             self.assertIn("Added inferred project registry.", note_text)
             self.assertIn("Generate the first dashboard note.", note_text)
             self.assertIn("### Binoid", note_text)

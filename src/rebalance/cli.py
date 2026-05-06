@@ -17,13 +17,16 @@ from rebalance.ingest.config import (
     get_github_token,
     get_github_token_with_source,
     get_github_ignored_repos,
+    get_project_priority_rules,
     set_github_token,
+    set_project_priority_rule,
     get_vault_path,
     set_vault_path,
     get_config_path,
     normalize_github_repo_name,
     remove_github_related_repo,
     remove_github_ignored_repo,
+    remove_project_priority_rule,
 )
 from rebalance.ingest.audit import append_audit_entry
 
@@ -1674,6 +1677,64 @@ def config_list_github_related_repos(
         return
     for related_repo in repos:
         typer.echo(related_repo)
+
+
+@config_app.command("set-project-priority")
+def config_set_project_priority(
+    name: str = typer.Argument(..., help="Canonical project name"),
+    alias: list[str] = typer.Option([], "--alias", help="Project/client alias. Repeat for multiple aliases."),
+    client: str = typer.Option("", "--client", help="Client or account label"),
+    priority_tier: int | None = typer.Option(None, "--priority-tier", min=1, max=5, help="Priority tier: 1 is highest, 5 is lowest"),
+    value_score: int | None = typer.Option(None, "--value-score", min=1, max=10, help="Value score: 10 is highest"),
+    value_level: str = typer.Option("", "--value-level", help="Value level, e.g. strategic or revenue-generating"),
+    risk_level: str = typer.Option("", "--risk-level", help="Risk level, e.g. high, medium, low"),
+) -> None:
+    """Set local project/client priority metadata used by dashboards."""
+    try:
+        rule = set_project_priority_rule(
+            name=name,
+            aliases=alias,
+            client=client,
+            priority_tier=priority_tier,
+            value_score=value_score,
+            value_level=value_level,
+            risk_level=risk_level,
+        )
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
+    typer.echo(f"✓ Set project priority: {rule['name']}")
+
+
+@config_app.command("remove-project-priority")
+def config_remove_project_priority(
+    name: str = typer.Argument(..., help="Canonical project name"),
+) -> None:
+    """Remove local project/client priority metadata by project name."""
+    removed = remove_project_priority_rule(name)
+    if removed:
+        typer.echo(f"✓ Removed project priority: {name}")
+    else:
+        typer.echo(f"✓ Project priority was not configured: {name}")
+
+
+@config_app.command("list-project-priorities")
+def config_list_project_priorities() -> None:
+    """List local project/client priority metadata."""
+    rules = get_project_priority_rules()
+    if not rules:
+        typer.echo("No project priorities configured.")
+        return
+    for rule in rules:
+        pieces = [
+            rule["name"],
+            f"tier={rule.get('priority_tier', 'n/a')}",
+            f"value={rule.get('value_score', 'n/a')}",
+        ]
+        if rule.get("client"):
+            pieces.append(f"client={rule['client']}")
+        if rule.get("aliases"):
+            pieces.append(f"aliases={', '.join(rule['aliases'])}")
+        typer.echo(" | ".join(pieces))
 
 
 @config_app.command("set-github-token")

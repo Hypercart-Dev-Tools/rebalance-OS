@@ -8,6 +8,7 @@ from typing import Any
 
 from rebalance.ingest.calendar_config import CalendarConfig
 from rebalance.ingest.db import db_connection
+from rebalance.ingest.config import get_project_priority_rules
 
 
 ALIAS_KEYS = {"aliases", "calendar_aliases", "calendar_keywords", "keywords"}
@@ -120,11 +121,27 @@ def _build_matchers_from_config(config: CalendarConfig | None) -> list[ProjectMa
     return matchers
 
 
+def _build_matchers_from_priority_rules() -> list[ProjectMatcher]:
+    """Build matchers from operator-local priority rules."""
+    matchers: list[ProjectMatcher] = []
+    for rule in get_project_priority_rules():
+        aliases = _build_aliases(
+            name=rule["name"],
+            repos=[],
+            tags=[],
+            custom_fields={"aliases": list(rule.get("aliases") or [])},
+        )
+        if aliases:
+            matchers.append(ProjectMatcher(name=rule["name"], aliases=aliases))
+    return matchers
+
+
 def load_project_matchers(
     database_path: Path,
     config: CalendarConfig | None = None,
 ) -> list[ProjectMatcher]:
     """Load canonical project matchers from project_registry, or config fallback."""
+    priority_matchers = _build_matchers_from_priority_rules()
     with db_connection(database_path) as conn:
         table_exists = conn.execute(
             """
@@ -134,7 +151,7 @@ def load_project_matchers(
             """
         ).fetchone()
         if not table_exists:
-            return _build_matchers_from_config(config)
+            return [*priority_matchers, *_build_matchers_from_config(config)]
 
         rows = conn.execute(
             """
@@ -146,7 +163,7 @@ def load_project_matchers(
         ).fetchall()
 
     if not rows:
-        return _build_matchers_from_config(config)
+        return [*priority_matchers, *_build_matchers_from_config(config)]
 
     matchers: list[ProjectMatcher] = []
     for row in rows:
@@ -162,7 +179,7 @@ def load_project_matchers(
         if aliases:
             matchers.append(ProjectMatcher(name=row["name"], aliases=aliases))
 
-    return matchers
+    return [*priority_matchers, *matchers]
 
 
 def classify_event_project(summary: str, matchers: list[ProjectMatcher]) -> str | None:

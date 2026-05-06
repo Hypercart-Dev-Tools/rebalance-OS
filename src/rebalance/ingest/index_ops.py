@@ -10,6 +10,7 @@ underlying ingest pipelines so callers do not have to know the order of
 from __future__ import annotations
 
 import time
+from datetime import date
 from pathlib import Path
 from typing import Any, Iterable
 
@@ -555,6 +556,84 @@ def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, A
     }
 
 
+def _refresh_dashboard_note(
+    database_path: Path,
+    *,
+    vault_path: Path,
+    since_days: int,
+    dry_run: bool,
+    note_path: str = "Dashboards/rebalanceOS Dashboard.md",
+) -> dict[str, Any]:
+    output_path = (vault_path / note_path).resolve()
+    plan = {
+        "scope": "dashboard",
+        "dry_run": dry_run,
+        "output_path": str(output_path),
+        "steps": [
+            "build_dashboard_note_content()",
+            "write_dashboard_note()",
+            "ingest_vault()",
+            "embed_chunks()",
+            "semantic_backfill(source=['vault'])",
+            "semantic_embed(source=['vault'])",
+        ],
+    }
+    if dry_run:
+        return plan
+
+    from rebalance.ingest.calendar_config import CalendarConfig
+    from rebalance.ingest.dashboard import build_dashboard_note_content, write_dashboard_note
+    from rebalance.ingest.embedder import embed_chunks
+    from rebalance.ingest.note_ingester import ingest_vault
+    from rebalance.ingest.semantic_index import backfill_semantic_documents, embed_pending
+
+    markdown = build_dashboard_note_content(
+        database_path,
+        target_date=date.today(),
+        since_days=since_days,
+        config=CalendarConfig.load(),
+    )
+    note_file = write_dashboard_note(output_path, markdown)
+    ingest_result = ingest_vault(vault_path=vault_path, database_path=database_path)
+    embed_result = embed_chunks(database_path=database_path)
+    backfill = backfill_semantic_documents(database_path, source_types=["vault"])
+    sem_embed = embed_pending(database_path, source_types=["vault"])
+
+    return {
+        "scope": "dashboard",
+        "dry_run": False,
+        "output_path": str(note_file),
+        "ingest": {
+            "total_files": ingest_result.total_files,
+            "new_files": ingest_result.new_files,
+            "updated_files": ingest_result.updated_files,
+            "touched_files": ingest_result.touched_files,
+            "deleted_files": ingest_result.deleted_files,
+            "total_chunks": ingest_result.total_chunks,
+            "elapsed_seconds": ingest_result.elapsed_seconds,
+        },
+        "embed_chunks": {
+            "total_chunks": embed_result.total_chunks,
+            "embedded": embed_result.embedded_chunks,
+            "skipped_unchanged": embed_result.skipped_unchanged,
+            "elapsed_seconds": embed_result.elapsed_seconds,
+        },
+        "semantic_backfill": {
+            "total": backfill.total_documents,
+            "inserted": backfill.inserted_count,
+            "updated": backfill.updated_count,
+            "deleted": backfill.deleted_count,
+            "elapsed_seconds": backfill.elapsed_seconds,
+        },
+        "semantic_embed": {
+            "total": sem_embed.total_docs,
+            "embedded": sem_embed.embedded_docs,
+            "skipped_unchanged": sem_embed.skipped_unchanged,
+            "elapsed_seconds": sem_embed.elapsed_seconds,
+        },
+    }
+
+
 def refresh_index(
     database_path: Path,
     *,
@@ -564,6 +643,7 @@ def refresh_index(
     repos: list[str] | None = None,
     dry_run: bool = False,
     include_semantic: bool = True,
+    update_dashboard_note: bool = True,
 ) -> dict[str, Any]:
     """Run the configured ingest pipelines for ``scope`` and return a summary.
 
@@ -573,6 +653,7 @@ def refresh_index(
     """
     db_path = Path(database_path).expanduser().resolve()
     requested_scopes = _normalize_scope(scope)
+    full_refresh_requested = set(requested_scopes) == {"vault", "github", "calendar", "sleuth", "semantic"}
     started = time.monotonic()
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -629,6 +710,25 @@ def refresh_index(
                 results.append(_refresh_semantic_only(db_path, dry_run=dry_run))
         except Exception as e:
             errors.append({"scope": s, "error": str(e)})
+
+    if update_dashboard_note and full_refresh_requested and resolved_vault is not None:
+        if errors and not dry_run:
+            results.append({
+                "scope": "dashboard",
+                "dry_run": False,
+                "skipped": True,
+                "reason": "upstream refresh errors",
+            })
+        else:
+            try:
+                results.append(_refresh_dashboard_note(
+                    db_path,
+                    vault_path=resolved_vault,
+                    since_days=since_days,
+                    dry_run=dry_run,
+                ))
+            except Exception as e:
+                errors.append({"scope": "dashboard", "error": str(e)})
 
     return {
         "database_path": str(db_path),
