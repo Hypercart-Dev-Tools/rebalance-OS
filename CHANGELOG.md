@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.24.1] - 2026-05-05
+
+### Changed
+
+- The committed ask-self shared index now defaults to a genuinely light code-only corpus, excluding docs plus the `tests` and `experimental` trees unless the operator explicitly overrides that scope.
+
 ## [0.24.0] - 2026-05-05
 
 ### Added

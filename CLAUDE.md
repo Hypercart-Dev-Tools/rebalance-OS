@@ -102,5 +102,5 @@ rulebook without needing this index.
 - Use it for session-start orientation, unfamiliar subsystems, pronoun-heavy references like "that helper" or "the auth flow", and cross-file behavior questions.
 - Do not use it for trivial single-file reads, tight edit-test loops, or questions about current uncommitted state.
 - Staleness: the index reflects the last ingest. The committed shared index is only a baseline and may lag branch work.
-- Refresh the local index with `./scripts/ask-self-ingest.sh` and the light shared baseline with `./scripts/ask-self-ingest.sh --shared-index --mode all`.
+- Refresh the local index with `./scripts/ask-self-ingest.sh` and the light shared baseline with `./scripts/ask-self-ingest.sh --shared-index`.
 - Override the external checkout path with `ASK_SELF_PATH`. Set `ASK_SELF_PYTHON` if that checkout needs a specific interpreter.

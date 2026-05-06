@@ -174,5 +174,5 @@ Before grep-spelunking or asking the user to re-explain repo context, query ask-
 - Do not use it for trivial single-file reads, tight edit-test loops, or questions about current uncommitted state.
 - Staleness: the index reflects the last ingest. The committed shared index at `ask_self/index/rebalance-os-shared.sqlite` is a baseline and may lag active branch work.
 - Local ingest: `./scripts/ask-self-ingest.sh`
-- Shared baseline refresh: `./scripts/ask-self-ingest.sh --shared-index --mode all`
+- Shared baseline refresh: `./scripts/ask-self-ingest.sh --shared-index`
 - Override the external checkout path with `ASK_SELF_PATH`. Set `ASK_SELF_PYTHON` if that checkout must run under a specific interpreter.

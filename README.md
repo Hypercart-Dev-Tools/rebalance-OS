@@ -338,10 +338,10 @@ The wrapper defaults to `--mode all`, so the local temp index includes both code
 ### Publish the light shared baseline index
 
 ```bash
-./scripts/ask-self-ingest.sh --shared-index --mode all
+./scripts/ask-self-ingest.sh --shared-index
 ```
 
-This writes the lightweight committed baseline index to `ask_self/index/rebalance-os-shared.sqlite`. Query prefers a fresh local temp index when one exists and otherwise falls back to that shared baseline.
+The shared-index wrapper path defaults to a code-only baseline: `--mode code`, no docs, and extra excludes for `tests/` and `experimental/` unless you override them explicitly. It writes the committed baseline index to `ask_self/index/rebalance-os-shared.sqlite`. Query prefers a fresh local temp index when one exists and otherwise falls back to that shared baseline.
 
 ### Query this repo
 
