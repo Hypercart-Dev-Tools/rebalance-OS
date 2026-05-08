@@ -802,8 +802,17 @@ def create_server(database_path: Path) -> FastMCP:
 
 
 def main() -> None:
-    db_env = os.getenv("REBALANCE_DB", "rebalance.db")
-    database_path = Path(db_env).expanduser().resolve()
+    from rebalance.paths import DatabaseNotFoundError, resolve_database_path
+
+    try:
+        database_path = resolve_database_path()
+    except DatabaseNotFoundError as exc:
+        # MCP servers are usually launched by a host (Claude Desktop / VS Code)
+        # with REBALANCE_DB set in mcp.json. Surface the structured error to
+        # stderr so the operator sees how to fix it on first launch.
+        import sys as _sys
+        print(str(exc), file=_sys.stderr)
+        raise SystemExit(2) from exc
     server = create_server(database_path=database_path)
     server.run()
 

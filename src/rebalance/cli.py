@@ -30,6 +30,11 @@ from rebalance.ingest.config import (
     remove_project_priority_rule,
 )
 from rebalance.ingest.audit import append_audit_entry
+from rebalance.paths import (
+    DatabaseNotFoundError,
+    resolve_database_path,
+    resolve_secret_path,
+)
 
 app = typer.Typer(help="rebalance CLI")
 ingest_app = typer.Typer(help="Ingest and project registry workflows")
@@ -115,23 +120,23 @@ def profile_sync_cmd(
     if exit_code:
         raise typer.Exit(exit_code)
 
-GOOGLE_CALENDAR_ENV_PATH = Path("/Users/noelsaw/secrets/google-calendar.env")
 CALENDAR_EVENT_LOG_PATH = Path("temp/logs/calendar-event-create.jsonl")
 
-# TODO: support ~/secrets/sleuth-web-api-production.env once a prod Sleuth
-# deployment exists — likely via a --env name|production|development flag.
-SLEUTH_ENV_PATH = Path("/Users/noelsaw/secrets/sleuth-web-api-development.env")
+# Secret env files resolve via rebalance.paths.resolve_secret_path which honors
+# REBALANCE_SECRETS_DIR, ~/.config/rebalance-os/config.json (set via
+# `rebalance config set-secrets-dir`), and ~/secrets as the legacy default.
+# TODO: support sleuth-web-api-production.env once a prod Sleuth deployment
+# exists — likely via a --env name|production|development flag.
 
 
 def _load_google_calendar_env() -> dict[str, str]:
     """Load shared Google Calendar env metadata from the operator-owned file."""
-    if not GOOGLE_CALENDAR_ENV_PATH.exists():
-        raise typer.BadParameter(
-            f"Google Calendar env file not found: {GOOGLE_CALENDAR_ENV_PATH}"
-        )
+    path = resolve_secret_path("google-calendar.env")
+    if not path.exists():
+        raise typer.BadParameter(f"Google Calendar env file not found: {path}")
 
     values: dict[str, str] = {}
-    for raw_line in GOOGLE_CALENDAR_ENV_PATH.read_text(encoding="utf-8").splitlines():
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -142,11 +147,12 @@ def _load_google_calendar_env() -> dict[str, str]:
 
 def _load_sleuth_env() -> dict[str, str]:
     """Load Sleuth Web API connection details from the operator-owned env file."""
-    if not SLEUTH_ENV_PATH.exists():
-        raise typer.BadParameter(f"Sleuth env file not found: {SLEUTH_ENV_PATH}")
+    path = resolve_secret_path("sleuth-web-api-development.env")
+    if not path.exists():
+        raise typer.BadParameter(f"Sleuth env file not found: {path}")
 
     values: dict[str, str] = {}
-    for raw_line in SLEUTH_ENV_PATH.read_text(encoding="utf-8").splitlines():
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -158,7 +164,7 @@ def _load_sleuth_env() -> dict[str, str]:
     if missing:
         raise typer.BadParameter(
             f"Sleuth env file missing required keys: {', '.join(missing)} "
-            f"(expected in {SLEUTH_ENV_PATH})"
+            f"(expected in {path})"
         )
     return values
 
@@ -461,7 +467,7 @@ def ingest_sync(
 
 @ingest_app.command("infer-project-registry")
 def ingest_infer_project_registry(
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     calendar_days_back: int = typer.Option(90, help="How many calendar days back to use for inference"),
     calendar_days_forward: int = typer.Option(14, help="How many calendar days forward to include for meeting signals"),
     dry_run: bool = typer.Option(False, help="Preview inferred project rows without writing to project_registry"),
@@ -470,7 +476,11 @@ def ingest_infer_project_registry(
     from rebalance.ingest.calendar_config import CalendarConfig
     from rebalance.ingest.project_inference import infer_project_registry, sync_inferred_project_registry
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     config = CalendarConfig.load()
 
     if dry_run:
@@ -511,8 +521,8 @@ def ingest_infer_project_registry(
 def github_scan(
     token: str = typer.Option(..., envvar="GITHUB_TOKEN", help="GitHub Personal Access Token"),
     days: int = typer.Option(30, help="Number of days to look back (supports 30-day A/B/C band classification)"),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
 ) -> None:
     """Fetch GitHub activity and persist to database for use by github_balance MCP tool."""
@@ -522,7 +532,11 @@ def github_scan(
         upsert_github_activity,
     )
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     typer.echo(f"Scanning GitHub activity for last {days} days...")
     result = scan_github(token=token, days=days)
     skipped_repos = filter_ignored_repo_activity(result, get_github_ignored_repos())
@@ -699,8 +713,8 @@ def raw(
         help="Re-run every N seconds until Ctrl-C. Floor 30s recommended (GH events API has ~30s eventual consistency).",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of a Rich table."),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
 ) -> None:
     """Calibration view: GitHub events from the last N minutes vs local pipeline state.
@@ -731,10 +745,11 @@ def raw(
         typer.echo(f"[error] cannot resolve GH login: {exc}")
         raise typer.Exit(2)
 
-    db_path = database.expanduser().resolve()
-    if not db_path.exists():
-        typer.echo(f"[error] database not found at {db_path}. Set REBALANCE_DB or pass --database.")
-        raise typer.Exit(2)
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
 
     if watch is not None and watch < 30:
         typer.echo(f"[warn] --watch {watch}s is below the recommended 30s floor; rate-limit fine but events API won't refresh faster.")
@@ -762,14 +777,18 @@ def github_sync_artifacts(
     ),
     token: str = typer.Option("", envvar="GITHUB_TOKEN", help="GitHub Personal Access Token"),
     days: int = typer.Option(90, help="Lookback window for changed issues and PRs"),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
 ) -> None:
     """Sync detailed GitHub issues, PRs, comments, reviews, checks, and releases."""
     from rebalance.ingest.github_knowledge import sync_github_repo
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     target_repos = _resolve_github_repos(db_path, repos or [])
     resolved_token = token.strip() or (get_github_token() or "")
     if not resolved_token:
@@ -795,8 +814,8 @@ def github_sync_artifacts(
 
 @app.command("github-embed")
 def github_embed(
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="HuggingFace model name"),
     batch_size: int = typer.Option(32, help="Batch size for embedding"),
@@ -806,7 +825,11 @@ def github_embed(
     """Generate embeddings for the local GitHub artifact corpus."""
     from rebalance.ingest.github_knowledge import embed_github_documents
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     typer.echo(f"Embedding GitHub documents with {model} (batch_size={batch_size})...")
     result = embed_github_documents(
         database_path=db_path,
@@ -826,7 +849,7 @@ def github_embed(
 @ingest_app.command("notes")
 def ingest_notes(
     vault: Path = typer.Option(..., exists=True, file_okay=False, dir_okay=True, help="Path to Obsidian vault"),
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     exclude: list[str] = typer.Option(
         [".obsidian/*", ".trash/*", "node_modules/*", ".git/*", ".venv/*", "*/.venv/*"],
         help="Glob patterns to exclude",
@@ -836,7 +859,11 @@ def ingest_notes(
     """Ingest Obsidian vault notes into SQLite (parse, chunk, extract keywords/links)."""
     from rebalance.ingest.note_ingester import ingest_vault
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     result = ingest_vault(
         vault_path=vault,
         database_path=db_path,
@@ -855,7 +882,7 @@ def ingest_notes(
 
 @ingest_app.command("embed")
 def ingest_embed(
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="HuggingFace model name"),
     batch_size: int = typer.Option(32, help="Batch size for embedding (lower = less memory)"),
     force: bool = typer.Option(False, help="Force re-embed all chunks (use after model change)"),
@@ -863,7 +890,11 @@ def ingest_embed(
     """Generate embeddings for ingested chunks via mlx-embeddings."""
     from rebalance.ingest.embedder import embed_chunks
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     typer.echo(f"Embedding chunks with {model} (batch_size={batch_size})...")
     result = embed_chunks(
         database_path=db_path,
@@ -882,14 +913,18 @@ def ingest_embed(
 @app.command("query")
 def query_cmd(
     text: str = typer.Argument(..., help="Natural language query"),
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     top_k: int = typer.Option(10, help="Number of results to return"),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
 ) -> None:
     """Semantic search over vault notes."""
     from rebalance.ingest.embedder import query_similar
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     results = query_similar(database_path=db_path, query_text=text, model_name=model, top_k=top_k)
     if not results:
         typer.echo("No results found. Run `rebalance ingest notes` and `rebalance ingest embed` first.")
@@ -905,8 +940,8 @@ def query_cmd(
 @app.command("github-query")
 def github_query_cmd(
     text: str = typer.Argument(..., help="Natural language query"),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
     repo: str = typer.Option("", help="Optional owner/name repo filter"),
     top_k: int = typer.Option(8, help="Number of results to return"),
@@ -915,7 +950,11 @@ def github_query_cmd(
     """Semantic search over the local GitHub issue/PR/comment corpus."""
     from rebalance.ingest.github_knowledge import query_github_documents
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     results = query_github_documents(
         database_path=db_path,
         query_text=text,
@@ -956,14 +995,18 @@ def semantic_backfill_cmd(
         "--repo",
         help="Optional owner/name filter when backfilling GitHub semantic documents.",
     ),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
 ) -> None:
     """Populate the unified semantic document layer from existing source tables."""
     from rebalance.ingest.semantic_index import backfill_semantic_documents
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     sources = _normalize_semantic_sources_option(source)
     typer.echo(f"Backfilling semantic documents for {', '.join(sources)}...")
     result = backfill_semantic_documents(
@@ -986,8 +1029,8 @@ def semantic_embed_cmd(
         "--source",
         help="Source family to embed. Repeat for multiple values.",
     ),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="HuggingFace model name"),
     batch_size: int = typer.Option(32, help="Batch size for embedding"),
@@ -997,7 +1040,11 @@ def semantic_embed_cmd(
     """Generate embeddings for the unified semantic document layer."""
     from rebalance.ingest.semantic_index import embed_pending
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     sources = _normalize_semantic_sources_option(source)
     typer.echo(
         f"Embedding semantic documents for {', '.join(sources)} with {model} "
@@ -1027,8 +1074,8 @@ def semantic_query_cmd(
         "--source",
         help="Source family to search. Repeat for multiple values.",
     ),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
     top_k: int = typer.Option(10, help="Number of results to return"),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
@@ -1036,7 +1083,11 @@ def semantic_query_cmd(
     """Semantic search over the unified semantic index."""
     from rebalance.ingest.semantic_index import query
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     sources = _normalize_semantic_sources_option(source)
     results = query(
         database_path=db_path,
@@ -1072,8 +1123,8 @@ def semantic_query_cmd(
 def github_release_readiness_cmd(
     repo: str = typer.Option(..., "--repo", help="Repo in owner/name form"),
     milestone: str = typer.Option("", "--milestone", help="Optional milestone title"),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
     output_format: str = typer.Option("text", "--output", help="Output format: text or json"),
 ) -> None:
@@ -1084,7 +1135,11 @@ def github_release_readiness_cmd(
     if normalized_output not in {"text", "json"}:
         raise typer.BadParameter("--output must be 'text' or 'json'.")
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     result = infer_github_release_readiness(
         database_path=db_path,
         repo_full_name=repo.strip(),
@@ -1123,8 +1178,8 @@ def github_release_readiness_cmd(
 @app.command("github-close-candidates")
 def github_close_candidates_cmd(
     repo: str = typer.Option(..., "--repo", help="Repo in owner/name form"),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
     ),
     output_format: str = typer.Option("text", "--output", help="Output format: text or json"),
 ) -> None:
@@ -1135,7 +1190,11 @@ def github_close_candidates_cmd(
     if normalized_output not in {"text", "json"}:
         raise typer.BadParameter("--output must be 'text' or 'json'.")
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     report = infer_issue_pr_close_candidates(
         database_path=db_path,
         repo_full_name=repo.strip(),
@@ -1180,13 +1239,17 @@ def github_close_candidates_cmd(
 @app.command("search")
 def search_cmd(
     keyword: str = typer.Argument(..., help="Keyword to search"),
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     limit: int = typer.Option(20, help="Max results"),
 ) -> None:
     """Full-text keyword search over vault files and chunks."""
     from rebalance.ingest.note_ingester import search_by_keyword
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     results = search_by_keyword(database_path=db_path, keyword=keyword, limit=limit)
     if not results:
         typer.echo(f"No results for '{keyword}'. Run `rebalance ingest notes` first.")
@@ -1201,7 +1264,7 @@ def search_cmd(
 @app.command("ask")
 def ask_cmd(
     text: str = typer.Argument(..., help="Natural language question"),
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     days: int = typer.Option(7, help="Activity window in days"),
     no_llm: bool = typer.Option(False, help="Skip local LLM synthesis, return raw context only"),
     chat_model: str = typer.Option("Qwen/Qwen3-0.6B", help="Chat model for synthesis"),
@@ -1209,7 +1272,11 @@ def ask_cmd(
     """Ask a natural language question across all data sources."""
     from rebalance.ingest.querier import ask as querier_ask
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     typer.echo(f"Gathering context...")
     result = querier_ask(
         query=text,
@@ -1265,7 +1332,7 @@ def ask_cmd(
 
 @app.command("calendar-sync")
 def calendar_sync_cmd(
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     calendar_id: str = typer.Option("", help="Calendar ID or email (default: from config, then 'primary')"),
     days_back: int = typer.Option(30, help="Days back to fetch (use 365 for initial backfill)"),
     days_forward: int = typer.Option(7, help="Days forward to fetch"),
@@ -1278,7 +1345,11 @@ def calendar_sync_cmd(
         config = CalendarConfig.load()
         calendar_id = config.calendar_id
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     typer.echo(f"Syncing calendar '{calendar_id}' ({days_back} days back, {days_forward} days forward)...")
     result = sync_calendar(
         database_path=db_path,
@@ -1401,7 +1472,7 @@ def calendar_create_event_cmd(
 
 @app.command("calendar-daily-totals")
 def calendar_daily_totals_cmd(
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     days_back: int = typer.Option(30, help="Days back to show"),
     days_forward: int = typer.Option(0, help="Days forward to show"),
 ) -> None:
@@ -1415,7 +1486,11 @@ def calendar_daily_totals_cmd(
     from rebalance.ingest.daily_report import _format_duration, get_day_data
     from rebalance.ingest.project_classifier import load_project_matchers
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     config = CalendarConfig.load()
     fmt = config.hours_format
     matchers = load_project_matchers(db_path, config=config)
@@ -1544,7 +1619,7 @@ def calendar_snap_edges_cmd(
 
 @app.command("calendar-daily-report")
 def calendar_daily_report_cmd(
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     date_str: str = typer.Option(None, "--date", help="Date to report on (YYYY-MM-DD, default: today)"),
     output: Path = typer.Option(None, "--output", "-o", help="Write report to a markdown file instead of stdout"),
 ) -> None:
@@ -1553,7 +1628,11 @@ def calendar_daily_report_cmd(
     from rebalance.ingest.daily_report import generate_daily_report
     from rebalance.ingest.calendar_config import CalendarConfig
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     config = CalendarConfig.load()
 
     if date_str:
@@ -1574,7 +1653,7 @@ def calendar_daily_report_cmd(
 
 @app.command("calendar-weekly-report")
 def calendar_weekly_report_cmd(
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     date_str: str = typer.Option(None, "--date", help="Date in target week (YYYY-MM-DD, default: today)"),
     output: Path = typer.Option(None, "--output", "-o", help="Write report to a markdown file instead of stdout"),
     vault: Path = typer.Option(None, "--vault", envvar="REBALANCE_VAULT", help="Obsidian vault path for weekly note write-back"),
@@ -1586,7 +1665,11 @@ def calendar_weekly_report_cmd(
     from rebalance.ingest.weekly_report import generate_weekly_report, write_weekly_note
     from rebalance.ingest.calendar_config import CalendarConfig
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     config = CalendarConfig.load()
 
     if date_str:
@@ -1639,7 +1722,7 @@ def calendar_weekly_report_cmd(
 
 @app.command("dashboard-render")
 def dashboard_render_cmd(
-    database: Path = typer.Option(Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"),
+    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
     date_str: str = typer.Option(None, "--date", help="Date anchoring the dashboard window (YYYY-MM-DD, default: today)"),
     since_days: int = typer.Option(14, "--since-days", min=1, help="Lookback window for recent signals"),
     vault: Path = typer.Option(None, "--vault", envvar="REBALANCE_VAULT", help="Obsidian vault path for dashboard note write-back"),
@@ -1657,7 +1740,11 @@ def dashboard_render_cmd(
     from rebalance.ingest.dashboard import build_dashboard_note_content, write_dashboard_note
     from rebalance.ingest.calendar_config import CalendarConfig
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     config = CalendarConfig.load()
 
     if date_str:
@@ -1728,11 +1815,11 @@ def sleuth_sync_cmd(
         "--active-only/--all",
         help="Only fetch currently active reminders (default: all)",
     ),
-    database: Path = typer.Option(
-        Path("rebalance.db"),
+    database: Path | None = typer.Option(
+        None,
         "--database-path",
         envvar="REBALANCE_DB",
-        help="SQLite database path",
+        help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)",
     ),
     json_output: bool = typer.Option(False, "--json", help="Emit full sync result as JSON"),
 ) -> None:
@@ -1740,7 +1827,11 @@ def sleuth_sync_cmd(
     from rebalance.ingest.sleuth_reminders import sync_sleuth_reminders
 
     env_data = _load_sleuth_env()
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     result = sync_sleuth_reminders(
         base_url=env_data["SLEUTH_WEB_API_BASE_URL"],
         token=env_data["SLEUTH_WEB_API_TOKEN"],
@@ -1775,8 +1866,8 @@ def config_add_github_ignored_repo(
     purge: bool = typer.Option(False, help="Purge existing local GitHub rows for this repo"),
     dry_run: bool = typer.Option(False, help="Preview purge counts without deleting"),
     confirm: bool = typer.Option(False, help="Confirm destructive purge execution"),
-    database: Path = typer.Option(
-        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path for purge operations"
+    database: Path | None = typer.Option(
+        None, envvar="REBALANCE_DB", help="SQLite database path for purge operations (resolves via layered chain)"
     ),
 ) -> None:
     """Add one repo to the local GitHub ingest ignore list, with optional purge."""
@@ -1792,7 +1883,11 @@ def config_add_github_ignored_repo(
     if not purge and not dry_run:
         return
 
-    db_path = database.expanduser().resolve()
+    try:
+        db_path = resolve_database_path(database)
+    except DatabaseNotFoundError as exc:
+        typer.echo(str(exc))
+        raise typer.Exit(2) from exc
     if dry_run:
         purge_result = purge_github_repo_data(db_path, normalized_repo, dry_run=True)
         append_audit_entry(
@@ -2018,3 +2113,73 @@ def config_show_config_path() -> None:
     path = get_config_path()
     typer.echo(f"Config file: {path}")
     typer.echo(f"Gitignored:  {path.parent.name}/ is in .gitignore")
+
+
+@config_app.command("set-default-database")
+def config_set_default_database(
+    path: Path = typer.Argument(..., help="Absolute path to rebalance.db"),
+) -> None:
+    """Set the user-level default database path.
+
+    Writes ``database_path`` to ~/.config/rebalance-os/config.json so any
+    `rebalance` command run from any directory on this machine resolves to
+    the right database without needing REBALANCE_DB in the shell rc.
+
+    Resolution order (highest priority first):
+      1. --database flag
+      2. REBALANCE_DB env var
+      3. Walk-up from cwd for a project marker (.git / pyproject.toml)
+      4. This user-level default
+    """
+    from rebalance.paths import set_user_config_value
+
+    abs_path = path.expanduser().resolve()
+    if not abs_path.exists():
+        typer.echo(f"[error] {abs_path} does not exist; refusing to write default")
+        raise typer.Exit(2)
+    config_file = set_user_config_value("database_path", str(abs_path))
+    typer.echo(f"[+] wrote database_path={abs_path}")
+    typer.echo(f"    to {config_file}")
+
+
+@config_app.command("set-secrets-dir")
+def config_set_secrets_dir(
+    path: Path = typer.Argument(..., help="Absolute path to secrets directory"),
+) -> None:
+    """Set the user-level secrets directory.
+
+    Writes ``secrets_dir`` to ~/.config/rebalance-os/config.json. Used when
+    resolving env files like google-calendar.env, sleuth-web-api-development.env,
+    etc.
+
+    Resolution order:
+      1. REBALANCE_SECRETS_DIR env var
+      2. This user-level default
+      3. ~/secrets (legacy fallback)
+    """
+    from rebalance.paths import set_user_config_value
+
+    abs_path = path.expanduser().resolve()
+    if not abs_path.exists():
+        typer.echo(f"[error] {abs_path} does not exist; refusing to write default")
+        raise typer.Exit(2)
+    if not abs_path.is_dir():
+        typer.echo(f"[error] {abs_path} is not a directory")
+        raise typer.Exit(2)
+    config_file = set_user_config_value("secrets_dir", str(abs_path))
+    typer.echo(f"[+] wrote secrets_dir={abs_path}")
+    typer.echo(f"    to {config_file}")
+
+
+@config_app.command("show-defaults")
+def config_show_defaults() -> None:
+    """Show the layered path-resolution state (debug helper).
+
+    Prints what every layer of the resolver currently sees, so you can tell
+    *why* a particular DB or secret path is being used.
+    """
+    from rebalance.paths import get_user_config_summary
+
+    summary = get_user_config_summary()
+    for k, v in summary.items():
+        typer.echo(f"  {k}: {v}")

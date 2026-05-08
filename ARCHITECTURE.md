@@ -101,7 +101,7 @@ Project Registry ────▶ registry.py +              MD registry → proj
 | Sleuth | `/Users/noelsaw/secrets/sleuth-web-api-development.env` (mode 600) | Bearer token, 64-hex |
 | Obsidian vault | none | filesystem read only |
 
-Env-file paths are currently **hardcoded as absolute paths** in [src/rebalance/cli.py](src/rebalance/cli.py) (`GOOGLE_CALENDAR_ENV_PATH`, `SLEUTH_ENV_PATH`) — not `~/secrets/` — so the repo is not portable across operator home directories today. Both files should sit at mode 600. Env files are parsed manually (no `python-dotenv`). Nothing with a secret value is committed. **TODO:** resolve via `Path.home() / "secrets" / ...` (or an env var) before any second operator onboards.
+Env-file paths now resolve via [src/rebalance/paths.py](src/rebalance/paths.py)::`resolve_secret_path(name)` — the layered chain is `REBALANCE_SECRETS_DIR` env var → `secrets_dir` field in `~/.config/rebalance-os/config.json` (set via `rebalance config set-secrets-dir`) → `~/secrets/` legacy default. Both files should sit at mode 600. Env files are parsed manually (no `python-dotenv`). Nothing with a secret value is committed.
 
 ### Adding a New Source
 
@@ -309,6 +309,13 @@ src/rebalance/
   __main__.py              — CLI entry point
   cli.py                   — typer commands (ingest, config, query, ask, search)
   mcp_server.py            — FastMCP server, all tool registrations
+  paths.py                 — centralized path resolver. `resolve_database_path()` and
+                              `resolve_secret_path()` walk a layered chain (explicit
+                              flag → env var → cwd walk-up for project marker → user
+                              config at ~/.config/rebalance-os/config.json). Single
+                              source of truth for "where is the DB / secrets dir?"
+                              Configure user defaults via `rebalance config
+                              set-default-database` and `set-secrets-dir`.
   ingest/
     config.py              — secrets storage (temp/rbos.config)
     registry.py            — project registry sync (Markdown ↔ YAML ↔ SQLite)
