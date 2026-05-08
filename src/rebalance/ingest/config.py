@@ -192,6 +192,20 @@ def is_github_repo_ignored(repo: str) -> bool:
     return normalized in set(get_github_ignored_repos())
 
 
+def get_calendar_ignored_summaries() -> list[str]:
+    """Return operator-local calendar event summaries to suppress.
+
+    Patterns are matched case-insensitively as substrings against
+    ``calendar_events.summary``. Stored in ``temp/rbos.config`` under
+    ``calendar_ignored_summaries`` (list of strings, edited manually).
+    """
+    config = _read_config()
+    value = config.get("calendar_ignored_summaries")
+    if not isinstance(value, list):
+        return []
+    return [s.strip() for s in value if isinstance(s, str) and s.strip()]
+
+
 def get_github_related_repos(repo: str) -> list[str]:
     """Return repos treated as affiliate implementation repos for a central tracker."""
     normalized_repo = normalize_github_repo_name(repo)

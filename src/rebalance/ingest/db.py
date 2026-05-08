@@ -36,6 +36,10 @@ def get_connection(database_path: Path) -> sqlite3.Connection:
     conn = sqlite3.connect(str(database_path))
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA foreign_keys=ON")
+    # Wait up to 30s for a writer slot before raising "database is locked".
+    # Background refreshes from the TUI can briefly overlap launchd jobs;
+    # without this they fail instantly. See git history for the 2026-05 incident.
+    conn.execute("PRAGMA busy_timeout=30000")
 
     # Try to load sqlite-vec, but gracefully fall back if unavailable
     try:

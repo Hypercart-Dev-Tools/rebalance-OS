@@ -112,7 +112,7 @@ def _get(url: str, token: str) -> tuple[int, Any]:
     """Minimal HTTP GET — returns (status_code, parsed_json_or_None)."""
     req = urllib.request.Request(url, headers=_headers(token))
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return resp.status, json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         return exc.code, None
@@ -312,7 +312,7 @@ def validate_github_token(token: str) -> dict[str, Any]:
     """
     req = urllib.request.Request(f"{GITHUB_API}/user", headers=_headers(token))
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode())
             scopes_header = resp.headers.get("X-OAuth-Scopes", "")
             scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]

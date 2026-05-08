@@ -90,7 +90,7 @@ def _github_headers(token: str) -> dict[str, str]:
 def _http_get_json(url: str, token: str) -> Any:
     req = urllib.request.Request(url, headers=_github_headers(token))
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             return json.loads(resp.read().decode())
     except urllib.error.HTTPError as exc:
         body = exc.read().decode() if exc.fp else ""

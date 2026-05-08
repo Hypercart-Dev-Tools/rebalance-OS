@@ -23,3 +23,5 @@ rebalance.db-wal
 /reports
 /git-pulse-reports
 /git-pulse-sync
+/web/pulse.html
+/web/*.tmp
