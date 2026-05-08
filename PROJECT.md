@@ -692,6 +692,42 @@ PR descriptions and issue bodies >100 chars embedded into sqlite-vec via `github
 
 Unified timeline view across GitHub + Vault + Calendar + Email — detect patterns like "meetings spike → commits drop" or "email pressure on Project X but no vault notes updated." Requires all four sources active and at least 30 days of data.
 
+### Standalone Mac App for the Pulse Dashboard
+
+**Status:** in-flight. HTML mirror shipped (0.25.0); native-app path under evaluation.
+
+**What ships today:** [scripts/pulse_web.py](scripts/pulse_web.py) generates a self-contained `web/pulse.html` from the same SQLite KB the TUI reads. Hero pulls from `{vault_path}/0. Goals.md`; sidebar surfaces upcoming calendar events + Sleuth reminders; meta-refresh + `--watch` keeps it live. Opens via `file://`.
+
+**Goal of "native":** Dock icon, menu-bar presence, native window chrome, eventually push-driven refresh and goals checkbox write-back.
+
+**Three paths evaluated:**
+
+| Path | Effort | Tradeoff |
+|---|---|---|
+| **A. WKWebView wrapper** | ~½ day | SwiftUI/AppKit shell loads `file://web/pulse.html`. Reuses everything. Still HTML inside a window — no native list affordances, write-back needs a bridge. |
+| **B. Full Toga (BeeWare) port** | 1-2 days | Single Python codebase, reuses `fetch_*` directly. Mac-default styling (clean but not Things-y). |
+| **C. Toga + Cocoa native bridges (Rubicon-ObjC)** | 3-5 days *(quoted)* — see spike findings below, the real cost is higher | Native widgets + custom `CALayer` styling for rounded cards, shadows, gradients. |
+
+**Toga spike — findings (branch [`spike/pulse-toga`](experimental/pulse-toga-spike/)):**
+
+Built a single-file Toga app rendering the sidebar + hero card with real DB-backed data via `fetch_calendar_upcoming` and `parse_goals` imported directly from the existing scripts/. Took ~1 hour total.
+
+What worked:
+- ✅ **Layout (Pack)** — sidebar + main split, multi-line list rows, scroll containers all behaved sensibly.
+- ✅ **Data-layer reuse** — the spike imports `fetch_*` and `parse_goals` 1:1, no port. This was the biggest open question and it's clean.
+- ✅ **Native chrome** — traffic lights, system font, antialiasing all "just work."
+- ✅ **Cocoa bridge mechanics** — Rubicon-ObjC reaches the underlying NSView, sets layer properties, and `layer.backgroundColor` + `layer.borderColor`/`borderWidth` render visibly (verified with hot-pink + red-border probe).
+
+What didn't work — and this is the load-bearing finding:
+- ❌ **`layer.cornerRadius` is silently ignored on TogaView** even though the property reads back as 12. The hot-pink probe rendered as a sharp rectangle, not a rounded one. TogaView declares `wantsUpdateLayer = YES` and manages its own drawing path that doesn't honor `cornerRadius` for the visible fill.
+- ❌ **`layer.shadow*` is not rendered** — TogaView's bounds-equal frame leaves no margin for the shadow to escape into, and likely sets clipping at draw time.
+
+**Implication for Path C:** the 3-5 day estimate was optimistic. Getting rounded shadowed cards inside Toga requires one of: (a) forking/patching `toga-cocoa` to expose a hook for custom layer state, (b) subclassing TogaView via Rubicon-ObjC (brittle to Toga version bumps), or (c) embedding raw NSView subclasses outside Toga's widget system for every styled surface. All three are real maintenance debt.
+
+**Recommendation:** **ship Path A (WKWebView wrapper) first** as the half-day quick win — gets a real Dock icon today and reuses 100% of the HTML view we already have. Path B (Toga with Mac-default styling) remains viable as a v2 if HTML-in-a-window starts feeling wrong. Park Path C unless someone upstream lands a clean way to set layer state on TogaView; the cost-to-fidelity ratio is bad today.
+
+Spike artifacts live at [experimental/pulse-toga-spike/](experimental/pulse-toga-spike/) with a more detailed README. Branch is preserved as a reference even if we never merge.
+
 ---
 
 ## Risks & Mitigations

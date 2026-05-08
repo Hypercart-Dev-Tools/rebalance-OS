@@ -32,8 +32,135 @@ import toga
 from toga.style import Pack
 from toga.style.pack import COLUMN, ROW
 
+# Rubicon-ObjC is shipped as a Toga dependency on macOS. We use it to drop
+# below Pack and reach the underlying NSView so we can set CALayer properties
+# Toga's style system doesn't expose: corner radius, shadow, gradient.
+# AppKit isn't loaded until toga-cocoa initializes — resolve classes lazily.
+from rubicon.objc import ObjCClass  # type: ignore
+
 from dashboard import fetch_calendar_upcoming, _parse_iso, TZ  # type: ignore
 from pulse_web import load_vault_path, parse_goals  # type: ignore
+
+
+_NSColor = None
+
+
+def _ns_color():
+    global _NSColor
+    if _NSColor is None:
+        _NSColor = ObjCClass("NSColor")
+    return _NSColor
+
+
+def _hex_to_nscolor(hex_str: str, alpha: float = 1.0):
+    """Convert "#rrggbb" or "#rrggbbaa" to an NSColor (sRGB)."""
+    h = hex_str.lstrip("#")
+    if len(h) == 8:
+        r, g, b, a = (int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4, 6))
+    else:
+        r, g, b = (int(h[i : i + 2], 16) / 255.0 for i in (0, 2, 4))
+        a = alpha
+    return _ns_color().colorWithSRGBRed(r, green=g, blue=b, alpha=a)
+
+
+def _native_view(widget: toga.Widget):
+    """Return the underlying NSView for a Toga widget on macOS."""
+    impl = getattr(widget, "_impl", None)
+    if impl is None:
+        return None
+    native = getattr(impl, "native", None)
+    if native is None:
+        # Some widgets (Box) wrap an inner container; fall back to that.
+        native = getattr(impl, "container", None)
+    return native
+
+
+_CALayer = None
+
+
+def _ca_layer():
+    global _CALayer
+    if _CALayer is None:
+        _CALayer = ObjCClass("CALayer")
+    return _CALayer
+
+
+def style_as_card(
+    widget: toga.Widget,
+    *,
+    radius: float = 12.0,
+    bg_hex: str = "#ffffff",
+    border_hex: str | None = "#e3ddd0",
+    shadow_opacity: float = 0.06,
+    shadow_radius: float = 18.0,
+    shadow_offset_y: float = -2.0,
+    label: str = "card",
+) -> None:
+    """Apply rounded corners + drop shadow to a Toga widget via CALayer.
+
+    Must be called AFTER the window is shown, otherwise the NSView's layer
+    is None and the call silently no-ops. Diagnostics print to stderr so
+    we can see when the bridge reaches dead ends.
+    """
+    view = _native_view(widget)
+    if view is None:
+        print(f"[card:{label}] no native view found", file=sys.stderr)
+        return
+
+    # Diagnose: what NSView subclass is this, and does it draw via layer?
+    try:
+        cls_name = str(view.objc_class.name)
+    except Exception as e:
+        cls_name = f"?({e})"
+    frame = view.frame
+    print(
+        f"[card:{label}] view={cls_name} "
+        f"frame=({frame.origin.x:.0f},{frame.origin.y:.0f},"
+        f"{frame.size.width:.0f}x{frame.size.height:.0f}) "
+        f"wantsUpdateLayer={view.wantsUpdateLayer}",
+        file=sys.stderr,
+    )
+
+    # Force a layer-backed view AND assign an explicit CALayer so we don't
+    # depend on AppKit lazily creating one.
+    view.wantsLayer = True
+    if view.layer is None:
+        view.layer = _ca_layer().layer()
+    layer = view.layer
+    if layer is None:
+        print(f"[card:{label}] layer still None after assignment", file=sys.stderr)
+        return
+
+    # NOTE — empirical finding from iteration 1 (see README):
+    #   - layer.backgroundColor: APPLIED, visible
+    #   - layer.borderColor / borderWidth: APPLIED, visible
+    #   - layer.cornerRadius: STICKS on the layer object, but the visible
+    #     drawing path on TogaView does NOT honor it (corners stay sharp)
+    #   - layer.shadow*: not rendered (TogaView likely sets bounds-equal
+    #     clipping at draw time)
+    # We still apply them so a future fix at the TogaView level (subclass
+    # or upstream patch) flips the visible result without code changes here.
+    layer.cornerRadius = radius
+    layer.backgroundColor = _hex_to_nscolor(bg_hex).CGColor
+    if border_hex:
+        layer.borderColor = _hex_to_nscolor(border_hex).CGColor
+        layer.borderWidth = 1.0
+
+    layer.masksToBounds = False
+    layer.shadowOpacity = shadow_opacity
+    layer.shadowRadius = shadow_radius
+    layer.shadowOffset = (0.0, shadow_offset_y)
+    layer.shadowColor = _hex_to_nscolor("#000000").CGColor
+
+    view.needsDisplay = True
+    layer.setNeedsDisplay()
+
+    print(
+        f"[card:{label}] applied: radius={layer.cornerRadius} "
+        f"borderWidth={layer.borderWidth} "
+        f"shadow_opacity={layer.shadowOpacity}",
+        file=sys.stderr,
+    )
 
 
 # Palette mirrored from web/pulse.html so we can compare apples-to-apples.
@@ -172,14 +299,16 @@ class PulseSpike(toga.App):
                 toga.Label("No goals found in 0. Goals.md.", style=Pack(color=FG_DIM))
             )
 
+        # Note: deliberately NO background_color in Pack. Pack draws bg via
+        # NSView.drawRect: which ignores layer.cornerRadius. The fill is set
+        # entirely by style_as_card() via layer.backgroundColor, which DOES
+        # respect cornerRadius.
         hero_card = toga.Box(
             children=hero_children,
-            style=Pack(
-                direction=COLUMN,
-                padding=22,
-                background_color=PANEL,
-            ),
+            style=Pack(direction=COLUMN, padding=22),
         )
+        # Stash for deferred styling — see on_running().
+        self._cards_to_style = [(hero_card, "hero")]
 
         # --- Main column -------------------------------------------------
         main = toga.Box(
@@ -202,6 +331,11 @@ class PulseSpike(toga.App):
         self.main_window = toga.MainWindow(title="rebalance Pulse (Toga spike)", size=(1200, 800))
         self.main_window.content = root
         self.main_window.show()
+
+    async def on_running(self) -> None:
+        """Apply Cocoa-bridge styling once the run loop is alive and views have layers."""
+        for widget, label in getattr(self, "_cards_to_style", []):
+            style_as_card(widget, label=label)
 
 
 def main() -> toga.App:

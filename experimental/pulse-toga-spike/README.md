@@ -3,8 +3,10 @@
 **Branch:** `spike/pulse-toga`
 **Date:** 2026-05-08
 **Time spent:** ~30 min (well under the 1-2 hour budget)
-**Verdict:** 🟡 **YELLOW** — Toga can do this, but matching the HTML aesthetic
-needs Cocoa native-bridge work. "Capable, with a known styling tax."
+**Verdict:** 🟠 **ORANGE** (revised after iteration 1) — Toga renders the
+layout and reuses the data layer cleanly, but the Cocoa native-bridge path
+to rounded/shadowed cards is more constrained than the initial yellow
+verdict assumed. See "Iteration 1" section below for the deeper finding.
 
 ## Goal
 
@@ -81,6 +83,62 @@ Answer four questions cheaply before committing to a full Toga port:
 - Goals checkbox write-back (separate axis, single-process Python so feasible)
 - Activity / Watched / Index health cards (same patterns as hero + sidebar)
 
+## Iteration 1: Cocoa bridge for rounded corners + shadow
+
+After the initial spike's yellow verdict, we tried the native-bridge path
+to see if `CALayer.cornerRadius` + drop shadow on the hero card was the
+small lift the verdict implied.
+
+**Setup:** added a `style_as_card()` helper that uses Rubicon-ObjC to
+reach `widget._impl.native` (the underlying NSView), sets
+`wantsLayer = True`, and applies `cornerRadius`, `borderColor`,
+`borderWidth`, and shadow properties on `view.layer`. Deferred the call
+to `App.on_running()` so the layer was alive by then.
+
+**What we observed (probed with a deliberately loud hot-pink fill +
+4px red border to make changes obvious):**
+
+- ✅ `layer.backgroundColor` — renders visibly. Card filled hot pink.
+- ✅ `layer.borderColor` + `borderWidth` — renders visibly. 4px red
+  border drew correctly around the card's rectangular bounds.
+- ❌ **`layer.cornerRadius` is silently ignored** for visible drawing
+  even though the property reads back as 12. Card stayed a sharp
+  rectangle. The bridge stored the value; the drawing path didn't
+  honor it.
+- ❌ **`layer.shadow*` did not render.** Even with
+  `masksToBounds = False` set, no shadow appeared.
+
+**Diagnosis:** Toga's view class for `Box` is `TogaView`. It declares
+`wantsUpdateLayer = YES`, meaning it goes through AppKit's "fast path"
+where the view's `updateLayer:` method is the canonical place layer
+state is set during display. TogaView's `updateLayer:` re-asserts a
+specific layer configuration that doesn't include `cornerRadius`, and
+TogaView's bounds-equal frame leaves no margin for shadows to escape
+into. Setting custom CALayer state outside of `updateLayer:` is
+effectively decorative — `backgroundColor` happens to survive the
+re-assert path but `cornerRadius` and `shadow*` do not.
+
+**Implication for the "go all-in" path:**
+
+Getting rounded shadowed cards inside Toga requires one of:
+
+1. Forking / patching `toga-cocoa` so `updateLayer:` exposes a hook
+   that lets app code preserve `cornerRadius` / `shadow*`. Cleanest
+   long-term but means maintaining a fork until the change lands
+   upstream.
+2. Subclassing `TogaView` via Rubicon-ObjC and overriding
+   `updateLayer:` ourselves. Works without forking but is brittle
+   across Toga version bumps; Toga's Box implementation is internal
+   API and free to change between minor releases.
+3. Embedding hand-rolled NSView subclasses outside Toga's widget
+   system for every styled surface, then composing them via Pack.
+   Most work, lowest reuse from existing widgets.
+
+None of these is impossible — but the original "3-5 days" estimate
+for the native-bridge path is optimistic. Realistic for option (2):
+3-5 days for **just the styled cards**, plus ongoing maintenance
+when Toga ships new versions.
+
 ## Recommendation
 
 Two paths from here, decided by how much aesthetic fidelity to the HTML mockup
@@ -91,17 +149,20 @@ matters:
    quirk (likely 5-min fix), wire `add_background_task` for auto-refresh,
    wrap with Briefcase. The result feels like Apple Notes/Reminders: clean,
    squarer, less shadowed, but still recognizably the same dashboard. No
-   Cocoa bridge needed.
+   Cocoa bridge needed. **Still viable after iteration 1's findings —
+   nothing in the cornerRadius/shadow gap blocks this path; you just don't
+   get the rounded shadowed look.**
 
-**B. "Match the Things-style HTML aesthetic" → 3-5 days.**
-   Layer in Rubicon-ObjC native bridge calls to set CALayer corner radius +
-   shadow on cards, fix label wrapping, fake the gradient sidebar with a box
-   stack. Briefcase packaging same as A.
+**B. "Match the Things-style HTML aesthetic" → revised cost: substantial.**
+   Per iteration 1, this requires forking `toga-cocoa`, subclassing
+   TogaView via Rubicon-ObjC, or embedding hand-rolled NSViews — all with
+   real maintenance debt. **Not recommended as a near-term path.**
 
-**Pragmatic order:** still ship Path A (WKWebView wrapper of the HTML, ~half a
-day) first as the lowest-risk way to get a Mac app icon in your Dock today.
-Toga path A above stays viable as a v2 if you want to drop the HTML
-dependency entirely later.
+**Pragmatic order (unchanged after iteration 1):** ship the WKWebView
+wrapper of the existing HTML pulse view first (~½ day) for a real Dock
+icon today. Path A (Toga with default Mac styling) stays viable as a v2
+if HTML-in-a-window starts feeling wrong. Path B is parked unless an
+upstream change lands that makes custom layer state on TogaView clean.
 
 ## Cleanup
 
