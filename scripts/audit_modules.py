@@ -9,9 +9,9 @@ CHANGELOG.md.
 Three checks:
 
   1. ARCHITECTURE.md mention check
-       For every Python module in src/rebalance/ingest/ and scripts/ (minus
-       IGNORED_FILES), confirm the filename or stem appears somewhere in
-       ARCHITECTURE.md.
+       For every Python module in src/rebalance/, src/rebalance/ingest/, and
+       scripts/ (minus IGNORED_FILES), confirm the filename or stem appears
+       somewhere in ARCHITECTURE.md.
 
   2. CHANGELOG.md historical-mention check
        Same idea against CHANGELOG.md — confirms the module name has appeared
@@ -67,11 +67,16 @@ AUDIT_VERSION = 1
 
 # Paths relative to project root
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-INGEST_DIR = PROJECT_ROOT / "src" / "rebalance" / "ingest"
+SRC_PACKAGE_DIR = PROJECT_ROOT / "src" / "rebalance"
+INGEST_DIR = SRC_PACKAGE_DIR / "ingest"
 SCRIPTS_DIR = PROJECT_ROOT / "scripts"
 ARCHITECTURE_FILE = PROJECT_ROOT / "ARCHITECTURE.md"
 CHANGELOG_FILE = PROJECT_ROOT / "CHANGELOG.md"
 LOCK_FILE = SCRIPTS_DIR / "audit_modules.lock"
+
+# Top-level package files (src/rebalance/*.py) that aren't real "modules" in
+# the documentation sense — listed alongside the ingest/ helpers in
+# IGNORED_FILES below.
 
 # File extensions the recent-commits check considers "audit-worthy."
 # .py covers collectors and render modules; .sh / .plist cover scheduled-job
@@ -81,6 +86,7 @@ AUDIT_WORTHY_EXTS = {".py", ".sh", ".plist"}
 # Files that are NOT considered standalone modules (helpers, configs, etc.)
 IGNORED_FILES = {
     "__init__.py",
+    "__main__.py",                   # CLI entry point shim, not a module
     "config.py",
     "db.py",
     "calendar_config.py",
@@ -103,7 +109,7 @@ IGNORED_FILES = {
 
 def validate_ignored_files():
     """Return list of stale IGNORED_FILES entries, or empty list."""
-    search_dirs = [INGEST_DIR, SCRIPTS_DIR]
+    search_dirs = [SRC_PACKAGE_DIR, INGEST_DIR, SCRIPTS_DIR]
     return sorted(
         name for name in IGNORED_FILES
         if not any((d / name).exists() for d in search_dirs)
@@ -111,11 +117,16 @@ def validate_ignored_files():
 
 
 def get_candidate_modules():
-    """Find all .py files in ingest/ and scripts/ that aren't ignored."""
+    """Find all .py files in src/rebalance/, ingest/, and scripts/ that aren't ignored.
+
+    Top-level src/rebalance/*.py covers cli.py, mcp_server.py, paths.py — which
+    are first-class modules that need ARCHITECTURE.md / CHANGELOG.md fan-out
+    just like the ingest collectors and scripts.
+    """
     candidates = []
-    for d in (INGEST_DIR, SCRIPTS_DIR):
+    for d in (SRC_PACKAGE_DIR, INGEST_DIR, SCRIPTS_DIR):
         if d.exists():
-            for p in d.glob("*.py"):
+            for p in d.glob("*.py"):  # non-recursive — INGEST_DIR is handled separately
                 if p.name not in IGNORED_FILES:
                     candidates.append(p)
     return candidates
@@ -133,10 +144,15 @@ def check_file_mentions(modules, target_file):
     """
     if not target_file.exists():
         raise FileNotFoundError(target_file)
-    content = target_file.read_text(encoding="utf-8")
+    # Case-insensitive match: 'cli.py' / 'cli' should match prose like "the CLI"
+    # so the audit doesn't false-negative when docs talk about a module using
+    # capitalized words but never write its lowercased filename. Trades a small
+    # false-positive risk (English word matching a module stem) for catching the
+    # genuinely-undocumented case.
+    content = target_file.read_text(encoding="utf-8").lower()
     missing = [
         mod.name for mod in modules
-        if mod.name not in content and mod.stem not in content
+        if mod.name.lower() not in content and mod.stem.lower() not in content
     ]
     return sorted(missing)
 
@@ -235,6 +251,7 @@ def check_recent_commits(n=20):
         return result
     result["version_section_checked"] = version
     result["version_date"] = version_date
+    section_text_lower = section_text.lower()  # case-insensitive substring match
 
     log_args = ["log", f"-n{n}", "--no-merges", "--pretty=format:%H|%s"]
     if version_date:
@@ -268,11 +285,11 @@ def check_recent_commits(n=20):
             p = Path(f)
             if p.suffix not in AUDIT_WORTHY_EXTS:
                 continue
-            if not (f.startswith("src/rebalance/ingest/") or f.startswith("scripts/")):
+            if not (f.startswith("src/rebalance/") or f.startswith("scripts/")):
                 continue
             if p.name in IGNORED_FILES:
                 continue
-            if p.name not in section_text and p.stem not in section_text:
+            if p.name.lower() not in section_text_lower and p.stem.lower() not in section_text_lower:
                 relevant.append(f)
 
         if relevant:
@@ -308,6 +325,7 @@ def check_working_tree():
         return result
     result["version_section_checked"] = version
     result["version_date"] = version_date
+    section_text_lower = section_text.lower()  # case-insensitive substring match
 
     status_out = _git("status", "--porcelain")
     if status_out is None:
@@ -336,13 +354,13 @@ def check_working_tree():
         p = Path(path_part)
         if p.suffix not in AUDIT_WORTHY_EXTS:
             continue
-        if not (path_part.startswith("src/rebalance/ingest/") or path_part.startswith("scripts/")):
+        if not (path_part.startswith("src/rebalance/") or path_part.startswith("scripts/")):
             continue
         if p.name in IGNORED_FILES:
             continue
 
         uncommitted_relevant.append({"path": path_part, "git_code": code.strip() or "M"})
-        if p.name not in section_text and p.stem not in section_text:
+        if p.name.lower() not in section_text_lower and p.stem.lower() not in section_text_lower:
             missing.append(path_part)
 
     result["uncommitted_files"] = sorted(uncommitted_relevant, key=lambda x: x["path"])
