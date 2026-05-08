@@ -1,5 +1,6 @@
 """Tests for weekly report write-back into the vault."""
 
+import re
 import tempfile
 import unittest
 from datetime import date
@@ -12,6 +13,15 @@ from rebalance.cli import app
 from rebalance.ingest.calendar_config import CalendarConfig
 from rebalance.ingest.embedder import EmbedResult
 from rebalance.ingest.note_ingester import IngestResult
+
+
+# Typer/Rich now wraps each `--flag` token in cyan ANSI escapes, which breaks
+# plain-string assertIn matches against rendered error panels.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 def _insert_events(database_path: Path, events: list[tuple], calendar_id: str = "primary") -> None:
@@ -115,4 +125,4 @@ class CalendarWeeklyReportCliTests(unittest.TestCase):
             )
 
             self.assertNotEqual(result.exit_code, 0)
-            self.assertIn("--vault or REBALANCE_VAULT is required", result.output)
+            self.assertIn("--vault or REBALANCE_VAULT is required", _strip_ansi(result.output))

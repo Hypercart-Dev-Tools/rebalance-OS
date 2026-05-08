@@ -2,6 +2,7 @@
 
 import json
 import pickle
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -11,6 +12,15 @@ from unittest.mock import patch
 from typer.testing import CliRunner
 
 from rebalance.cli import app
+
+
+# Typer/Rich now wraps each `--flag` token in cyan ANSI escapes, which breaks
+# plain-string assertIn matches against rendered error panels.
+_ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
+
+
+def _strip_ansi(text: str) -> str:
+    return _ANSI_RE.sub("", text)
 
 
 class CalendarCreateEventCliTests(unittest.TestCase):
@@ -92,7 +102,7 @@ class CalendarCreateEventCliTests(unittest.TestCase):
                 )
 
         self.assertNotEqual(result.exit_code, 0)
-        error_output = result.stderr or result.output
+        error_output = _strip_ansi(result.stderr or result.output)
         self.assertIn("missing the required write scope", error_output)
         self.assertIn("setup_calendar_oauth.py --write-access", error_output)
         self.assertIn("--test", error_output)
