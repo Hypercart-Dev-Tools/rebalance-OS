@@ -78,6 +78,7 @@ Data sources
                              review_timesheet
                              classify_event
                              sleuth_sync_reminders
+                             audit_modules
                                      │
              ┌───────────────────────┼────────────────────────┐
              ▼                       ▼                        ▼

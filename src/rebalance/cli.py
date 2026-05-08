@@ -2,6 +2,7 @@ import json
 import pickle
 from datetime import date as date_cls, datetime, time as time_cls, timedelta
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 
@@ -530,6 +531,226 @@ def github_scan(
         f"Done: login={result.login}, events={result.total_events}, "
         f"repos={len(result.repo_activity)}, skipped={len(skipped_repos)}, stored to {db_path}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Raw activity probe (calibration tool)
+# ---------------------------------------------------------------------------
+
+def _raw_summarize_event(event: dict[str, Any]) -> str:
+    """One-line summary of a GitHub user-event dict."""
+    kind = event.get("type") or ""
+    p = event.get("payload") or {}
+    if kind == "PushEvent":
+        n = len(p.get("commits") or [])
+        ref = (p.get("ref") or "").split("/")[-1]
+        return f"{n} commit{'s' if n != 1 else ''} → {ref}" if ref else f"{n} commit{'s' if n != 1 else ''}"
+    if kind == "PullRequestEvent":
+        pr = p.get("pull_request") or {}
+        return f"#{pr.get('number','?')} {p.get('action','')} — {(pr.get('title') or '').strip()[:60]}"
+    if kind == "IssuesEvent":
+        issue = p.get("issue") or {}
+        return f"#{issue.get('number','?')} {p.get('action','')} — {(issue.get('title') or '').strip()[:60]}"
+    if kind == "IssueCommentEvent":
+        issue = p.get("issue") or {}
+        return f"comment on #{issue.get('number','?')}"
+    if kind == "PullRequestReviewEvent":
+        pr = p.get("pull_request") or {}
+        return f"review on #{pr.get('number','?')}"
+    if kind == "PullRequestReviewCommentEvent":
+        pr = p.get("pull_request") or {}
+        return f"review comment on #{pr.get('number','?')}"
+    if kind == "CreateEvent":
+        return f"create {p.get('ref_type','')} {p.get('ref','') or ''}".strip()
+    if kind == "DeleteEvent":
+        return f"delete {p.get('ref_type','')} {p.get('ref','') or ''}".strip()
+    if kind == "ReleaseEvent":
+        rel = p.get("release") or {}
+        return f"release {rel.get('tag_name','')}"
+    if kind == "WatchEvent":
+        return "starred"
+    if kind == "ForkEvent":
+        return "forked"
+    return ""
+
+
+def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int) -> dict[str, Any]:
+    """Fetch recent GH events and classify each against local pipeline state."""
+    import sqlite3 as _sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    from rebalance.ingest.github_scan import _fetch_events
+
+    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+
+    # 1 API request: events API caps recent activity at ~30 days; we just need the latest page.
+    events = _fetch_events(login, token, days=1)
+
+    recent = []
+    for e in events:
+        try:
+            t = datetime.fromisoformat((e.get("created_at") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if t >= cutoff:
+            recent.append((t, e))
+    recent.sort(key=lambda x: x[0], reverse=True)
+
+    with _sqlite3.connect(db_path) as conn:
+        watched = {row[0] for row in conn.execute("SELECT repo_full_name FROM github_repo_meta")}
+        last_active_rows = conn.execute(
+            "SELECT repo_full_name, MAX(last_active_at) FROM github_activity "
+            "WHERE last_active_at IS NOT NULL GROUP BY repo_full_name"
+        ).fetchall()
+    last_active_map: dict[str, datetime] = {}
+    for repo, ts in last_active_rows:
+        try:
+            last_active_map[repo] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+        except (AttributeError, ValueError):
+            continue
+
+    items: list[dict[str, Any]] = []
+    counts = {"captured": 0, "pending": 0, "unwatched": 0}
+    unwatched_repos: set[str] = set()
+
+    for event_time, event in recent:
+        repo = (event.get("repo") or {}).get("name") or ""
+        if repo and repo not in watched:
+            status = "unwatched"
+            la_iso: str | None = None
+            unwatched_repos.add(repo)
+        else:
+            la = last_active_map.get(repo)
+            la_iso = la.isoformat(timespec="seconds") if la else None
+            status = "captured" if (la and la >= event_time) else "pending"
+        counts[status] += 1
+        items.append({
+            "time": event_time.isoformat(timespec="seconds"),
+            "type": event.get("type") or "",
+            "repo": repo,
+            "summary": _raw_summarize_event(event),
+            "status": status,
+            "last_active_at": la_iso,
+        })
+
+    return {
+        "raw_version": 1,
+        "scanned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "login": login,
+        "window_minutes": minutes,
+        "events": items,
+        "summary": {
+            "total": len(items),
+            **counts,
+            "unwatched_repos": sorted(unwatched_repos),
+        },
+    }
+
+
+def _raw_render_text(snapshot: dict[str, Any]) -> None:
+    """Render snapshot as a Rich table for terminal use."""
+    from datetime import datetime
+    from rich.console import Console
+    from rich.table import Table
+
+    console = Console()
+    sm = snapshot["summary"]
+    console.print(
+        f"[bold]raw activity · last {snapshot['window_minutes']} min · "
+        f"@{snapshot['login']} · {snapshot['scanned_at']}[/bold]"
+    )
+    console.print(
+        f"[dim]{sm['total']} event(s) · "
+        f"[green]✓ {sm['captured']} captured[/green] · "
+        f"[yellow]⏳ {sm['pending']} pending[/yellow] · "
+        f"[red]✗ {sm['unwatched']} unwatched[/red][/dim]"
+    )
+
+    if not snapshot["events"]:
+        console.print("[dim](no events in window)[/dim]")
+        return
+
+    table = Table(show_header=True, header_style="bold")
+    table.add_column("time", style="dim")
+    table.add_column("status", justify="center", width=6)
+    table.add_column("type")
+    table.add_column("repo")
+    table.add_column("summary", overflow="fold")
+
+    glyphs = {"captured": ("✓", "green"), "pending": ("⏳", "yellow"), "unwatched": ("✗", "red")}
+    for ev in snapshot["events"]:
+        glyph, color = glyphs.get(ev["status"], ("?", "white"))
+        local_time = datetime.fromisoformat(ev["time"]).astimezone().strftime("%H:%M:%S")
+        table.add_row(local_time, f"[{color}]{glyph}[/{color}]", ev["type"], ev["repo"], ev["summary"])
+    console.print(table)
+
+    if sm["unwatched_repos"]:
+        console.print()
+        console.print("[red]Unwatched repos with recent activity (likely missing from pipeline):[/red]")
+        for r in sm["unwatched_repos"]:
+            console.print(f"  - {r}")
+
+
+@app.command("raw")
+def raw(
+    minutes: int = typer.Option(30, "--minutes", "-m", help="Look back this many minutes (default 30)."),
+    watch: int | None = typer.Option(
+        None, "--watch", "-w",
+        help="Re-run every N seconds until Ctrl-C. Floor 30s recommended (GH events API has ~30s eventual consistency).",
+    ),
+    json_output: bool = typer.Option(False, "--json", help="Emit JSON instead of a Rich table."),
+    database: Path = typer.Option(
+        Path("rebalance.db"), envvar="REBALANCE_DB", help="SQLite database path"
+    ),
+) -> None:
+    """Calibration view: GitHub events from the last N minutes vs local pipeline state.
+
+    For each recent GH event, classifies it as:
+        ✓ captured   — local pipeline has caught up (last_active_at >= event_time)
+        ⏳ pending    — repo is watched but the next sync hasn't run yet
+        ✗ unwatched  — repo is NOT in github_repo_meta; silently missing from the pipeline
+
+    Costs 1 GitHub API request per invocation. Default --watch cadence: 60s
+    is comfortable; 30s is the practical floor; faster gives diminishing
+    returns due to GH events API ~30s eventual consistency.
+    """
+    import json as _json
+    import time
+
+    from rebalance.ingest.config import get_github_token
+    from rebalance.ingest.github_scan import GitHubApiError, _get_login
+
+    token = get_github_token()
+    if not token:
+        typer.echo("[error] no GitHub token configured. Run: rebalance config set-github-token")
+        raise typer.Exit(2)
+
+    try:
+        login = _get_login(token)
+    except GitHubApiError as exc:
+        typer.echo(f"[error] cannot resolve GH login: {exc}")
+        raise typer.Exit(2)
+
+    db_path = database.expanduser().resolve()
+    if not db_path.exists():
+        typer.echo(f"[error] database not found at {db_path}. Set REBALANCE_DB or pass --database.")
+        raise typer.Exit(2)
+
+    if watch is not None and watch < 30:
+        typer.echo(f"[warn] --watch {watch}s is below the recommended 30s floor; rate-limit fine but events API won't refresh faster.")
+
+    while True:
+        snapshot = _raw_gather_snapshot(login, token, db_path, minutes)
+        if json_output:
+            print(_json.dumps(snapshot, indent=2))
+        else:
+            _raw_render_text(snapshot)
+        if watch is None:
+            break
+        try:
+            time.sleep(watch)
+        except KeyboardInterrupt:
+            break
 
 
 @app.command("github-sync-artifacts")

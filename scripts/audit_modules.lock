@@ -1,0 +1,24 @@
+{
+  "_note": "Baseline of pre-existing documentation gaps. Modules listed here are silenced from the audit until removed. Re-generate after a deliberate doc backfill via: python scripts/audit_modules.py --init",
+  "generated_at": "2026-05-08T16:30:56+00:00",
+  "missing_from_architecture": [
+    "calendar_snap.py",
+    "project_classifier.py",
+    "project_inference.py",
+    "project_priority.py",
+    "semantic_index.py"
+  ],
+  "missing_from_changelog": [
+    "calendar_snap.py",
+    "daily_report.py",
+    "github_readiness.py",
+    "github_reconciliation.py",
+    "profile_sync.py",
+    "project_classifier.py",
+    "project_inference.py",
+    "project_priority.py",
+    "semantic_index.py",
+    "sleuth_reminders.py",
+    "weekly_report.py"
+  ]
+}

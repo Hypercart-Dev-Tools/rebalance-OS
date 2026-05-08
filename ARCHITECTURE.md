@@ -256,13 +256,14 @@ User sees final answer
 
 Four ways the pipeline runs:
 
-1. **Interactive CLI** — `rebalance <subcommand>` via the Typer app. Ad-hoc and one-shot workflows (`calendar-create-event`, `github-release-readiness`, `sleuth-sync --json`, `profile-sync`, etc.). `rebalance` invoked with no arguments launches the live dashboard (mode 4).
+1. **Interactive CLI** — `rebalance <subcommand>` via the Typer app. Ad-hoc and one-shot workflows (`calendar-create-event`, `github-release-readiness`, `sleuth-sync --json`, `profile-sync`, `raw`, etc.). `rebalance` invoked with no arguments launches the live dashboard (mode 4). `rebalance raw [--minutes N] [--watch S] [--json]` is a calibration probe: 1 GitHub API request per invocation, classifies recent events as captured / pending / unwatched against the local pipeline state, used to verify that commits/PRs/issues are making it into rebalanceOS.
 
-2. **Unattended scheduled syncs** — three launchd jobs cooperate:
+2. **Unattended scheduled syncs** — four launchd jobs cooperate:
 
    - **Daily full sync** ([scripts/daily_sync.sh](scripts/daily_sync.sh) / [scripts/com.rebalance-os.daily-sync.plist](scripts/com.rebalance-os.daily-sync.plist)) at 06:30 local time, plus on boot/login if 06:30 was missed. Calls `refresh_index(scope=["all"])`, which runs vault → github → calendar → sleuth → unified semantic index. Per-scope failures are captured in the result's `errors` list rather than aborting the run.
    - **Hourly vault refresh** ([scripts/vault_sync.sh](scripts/vault_sync.sh) / [scripts/com.rebalance-os.vault-sync.plist](scripts/com.rebalance-os.vault-sync.plist)) at HH:15 from 06:15 to 23:15. Calls `refresh_index(scope=["vault"])` only — keeps notes edited mid-day visible in the dashboard / pulse / semantic search without waiting for the next morning's full sync. Vault ingest is cheap (~0.02s with no changes) and fully offline.
    - **Hourly pulse publish** ([scripts/pulse_sync.sh](scripts/pulse_sync.sh) / [scripts/com.rebalance-os.pulse-sync.plist](scripts/com.rebalance-os.pulse-sync.plist)) on the hour, 06:00 to 23:00. Renders the operator pulse markdown and pushes it to the configured private repo, but only when the rendered content actually changed since the previous run.
+   - **30-minute pulse-web refresh** ([scripts/pulse_web_sync.sh](scripts/pulse_web_sync.sh) / [scripts/com.rebalance-os.pulse-web-sync.plist](scripts/com.rebalance-os.pulse-web-sync.plist)) every 30 minutes from 06:00 to 23:30. Calls [scripts/pulse_web.py](scripts/pulse_web.py) to regenerate the local `web/pulse.html` mirror of the dashboard. Atomic via tmp+replace (a crashed run leaves the previous HTML intact). No network, no git push — separate from the markdown→private-repo flow above.
 
 3. **MCP tool handlers** — [src/rebalance/mcp_server.py](src/rebalance/mcp_server.py) wraps ingestors and readers as MCP tools. Host agents (Claude Code / Claude Desktop) call these on demand. `REBALANCE_DB` env var resolves the shared DB path.
 
@@ -294,6 +295,7 @@ Tools are registered in `mcp_server.py:create_server()`. All tools share the sam
 | Calendar | `classify_event` | Persist an include/exclude/project classification for an event |
 | Calendar | `snap_calendar_edges` | Detect and (optionally) fix slightly overlapping events |
 | Sync | `sleuth_sync_reminders` | Pull Slack reminders from the Sleuth Web API and upsert to SQLite |
+| Hygiene | `audit_modules` | Run [scripts/audit_modules.py](scripts/audit_modules.py) and return the structured JSON result. Verifies that ingest collectors / render modules / scheduled-job infrastructure are documented in ARCHITECTURE.md and CHANGELOG.md, and that recent commits' file changes appear in the latest CHANGELOG version section. Supports `init=True` to snapshot the baseline lockfile and `include_uncommitted=True` for a pre-commit working-tree preview |
 
 Tool specs (params, returns, dependencies): see [MCP.md](./MCP.md).
 
@@ -332,12 +334,24 @@ src/rebalance/
 
 scripts/                   — Operator entry points (not part of the importable package)
   dashboard.py             — Rich Live terminal dashboard (mode 4 above)
+  pulse_web.py             — render module: regenerates web/pulse.html (the local
+                              browser mirror of the dashboard) from the same SQLite
+                              knowledge base; atomic via tmp+replace; supports --watch
   daily_sync.sh            — daily_sync launchd entry (mode 2)
   vault_sync.sh            — hourly vault-only launchd entry (mode 2)
-  pulse_sync.sh            — hourly pulse-publish launchd entry (mode 2)
+  pulse_sync.sh            — hourly pulse-publish (markdown→private repo) launchd entry (mode 2)
+  pulse_web_sync.sh        — 30-minute pulse-web (web/pulse.html) launchd entry (mode 2)
   install_scheduler.sh     — install/reload the daily launchd job
   install_vault_scheduler.sh — install/reload the hourly vault launchd job
-  install_pulse_scheduler.sh — install/reload the hourly pulse launchd job
+  install_pulse_scheduler.sh — install/reload the hourly pulse-markdown launchd job
+  install_pulse_web_scheduler.sh — install/reload the 30-min pulse-web launchd job
+  audit_modules.py         — repository hygiene audit (Approach A): verifies ingest
+                              collectors / render modules / scheduled-job infrastructure
+                              are documented in ARCHITECTURE.md + CHANGELOG.md; supports a
+                              baseline lockfile (audit_modules.lock), recent-commit coverage
+                              against the live CHANGELOG version section, and a pre-commit
+                              working-tree preview (--include-uncommitted). JSON output for
+                              orchestrating agents; also exposed as the audit_modules MCP tool
 ```
 
 ---
