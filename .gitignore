@@ -25,3 +25,4 @@ rebalance.db-wal
 /git-pulse-sync
 /web/pulse.html
 /web/*.tmp
+.venv-toga/
