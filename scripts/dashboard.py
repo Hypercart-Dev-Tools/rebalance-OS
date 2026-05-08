@@ -45,7 +45,11 @@ from rich.text import Text
 # Make `rebalance.*` importable when running the script straight from the repo.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
-from rebalance.ingest.config import get_github_ignored_repos, get_pulse_config  # noqa: E402
+from rebalance.ingest.config import (  # noqa: E402
+    get_calendar_ignored_summaries,
+    get_github_ignored_repos,
+    get_pulse_config,
+)
 from rebalance.ingest.db import db_connection  # noqa: E402
 from rebalance.ingest.index_ops import (  # noqa: E402
     get_index_status,
@@ -401,6 +405,8 @@ def fetch_vault_recent(limit: int = 6) -> list[dict[str, Any]]:
 
 
 def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any]]:
+    ignored = [pat.lower() for pat in get_calendar_ignored_summaries()]
+    overfetch = max(limit * 3, limit + len(ignored)) if ignored else limit
     with db_connection(DB_PATH) as conn:
         rows = conn.execute(
             """
@@ -410,9 +416,15 @@ def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any
             ORDER BY start_time ASC
             LIMIT ?
             """,
-            (now.isoformat(), limit),
+            (now.isoformat(), overfetch),
         ).fetchall()
-    return [dict(r) for r in rows]
+    out = [dict(r) for r in rows]
+    if ignored:
+        out = [
+            r for r in out
+            if not any(pat in (r.get("summary") or "").lower() for pat in ignored)
+        ]
+    return out[:limit]
 
 
 def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:

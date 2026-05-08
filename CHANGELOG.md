@@ -1,5 +1,25 @@
 # Changelog
 
+## [0.25.0] - 2026-05-07
+
+### Added
+
+- Static web mirror of the terminal pulse dashboard. `scripts/pulse_web.py` renders a self-contained `web/pulse.html` from the same SQLite knowledge base the TUI reads, with an "Open in Obsidian" link in the hero, a left sidebar that surfaces the next 6 calendar events and 6 Sleuth reminders, and meta-refresh-driven auto-reload. Run one-shot via `./.venv/bin/python scripts/pulse_web.py`, or in `--watch` mode for continuous regeneration. Goals are pulled from `{vault_path}/0. Goals.md` by default; override with `--goals` or `PULSE_GOALS`.
+- Calendar ignore list. Add a `calendar_ignored_summaries` array to `temp/rbos.config` (the same gitignored config file that holds `github_ignored_repos`) to suppress recurring events from both the web mirror and the terminal dashboard. Patterns are matched case-insensitively as substrings against `calendar_events.summary` — no glob or regex syntax. Example:
+
+    ```json
+    {
+      "calendar_ignored_summaries": ["Daily Standup", "Lunch Break"]
+    }
+    ```
+
+  Edits take effect on the next render or refresh — no restart needed.
+
+### Fixed
+
+- Background HTTP calls to the GitHub API now have a 30-second timeout (`urlopen(req, timeout=30)`) in `github_scan.py`, `github_knowledge.py`, and `diagnose.py`. Without this, a stalled HTTPS connection (commonly after macOS sleep/wake) could leave a long-running terminal dashboard blocked inside `urlopen` indefinitely, holding a SQLite writer connection across the hang.
+- SQLite connections now set `PRAGMA busy_timeout=30000`, so brief writer contention waits up to 30 seconds for a slot instead of erroring instantly. Together with the HTTP timeouts, this prevents the cascade where one stalled request silently broke the daily sync, every hourly vault sync, and the TUI auto-refresh with "database is locked" until the holder process was manually killed.
+
 ## [0.23.9] - 2026-05-05
 
 ### Added

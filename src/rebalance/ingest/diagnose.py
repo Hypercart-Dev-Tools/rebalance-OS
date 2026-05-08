@@ -65,7 +65,7 @@ def _live_probe_repo(repo: str, token: str) -> dict[str, Any]:
         },
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode())
             return {
                 "can_see": True,
@@ -91,7 +91,7 @@ def _live_probe_commit(repo: str, sha: str, token: str) -> dict[str, Any]:
         },
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode())
             commit = data.get("commit") or {}
             committer = commit.get("committer") or {}
@@ -119,7 +119,7 @@ def _live_probe_pr(repo: str, pr: int, token: str) -> dict[str, Any]:
         },
     )
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=30) as resp:
             data = json.loads(resp.read().decode())
             return {
                 "exists": True,
