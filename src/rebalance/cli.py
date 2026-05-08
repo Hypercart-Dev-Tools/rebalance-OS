@@ -561,10 +561,10 @@ def _raw_summarize_event(event: dict[str, Any]) -> str:
         return f"{n} commit{'s' if n != 1 else ''} → {ref}" if ref else f"{n} commit{'s' if n != 1 else ''}"
     if kind == "PullRequestEvent":
         pr = p.get("pull_request") or {}
-        return f"#{pr.get('number','?')} {p.get('action','')} — {(pr.get('title') or '').strip()[:60]}"
+        return f"#{pr.get('number','?')} {p.get('action','')} — {(pr.get('title') or '').strip()[:160]}"
     if kind == "IssuesEvent":
         issue = p.get("issue") or {}
-        return f"#{issue.get('number','?')} {p.get('action','')} — {(issue.get('title') or '').strip()[:60]}"
+        return f"#{issue.get('number','?')} {p.get('action','')} — {(issue.get('title') or '').strip()[:160]}"
     if kind == "IssueCommentEvent":
         issue = p.get("issue") or {}
         return f"comment on #{issue.get('number','?')}"
@@ -684,12 +684,12 @@ def _raw_render_text(snapshot: dict[str, Any]) -> None:
         console.print("[dim](no events in window)[/dim]")
         return
 
-    table = Table(show_header=True, header_style="bold")
-    table.add_column("time", style="dim")
-    table.add_column("status", justify="center", width=6)
-    table.add_column("type")
-    table.add_column("repo")
-    table.add_column("summary", overflow="fold")
+    table = Table(show_header=True, header_style="bold", expand=True)
+    table.add_column("time", style="dim", no_wrap=True)
+    table.add_column("status", justify="center", no_wrap=True, width=6)
+    table.add_column("type", overflow="fold", ratio=1, max_width=30)
+    table.add_column("repo", overflow="fold", ratio=2)
+    table.add_column("summary", overflow="fold", ratio=2)
 
     glyphs = {"captured": ("✓", "green"), "pending": ("⏳", "yellow"), "unwatched": ("✗", "red")}
     for ev in snapshot["events"]:
