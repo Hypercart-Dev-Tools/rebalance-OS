@@ -689,6 +689,71 @@ def _raw_gather_team_activity(
     }
 
 
+def _raw_gather_unwatched_active_repos(
+    token: str, db_path: Path, fresh_threshold_days: int = 7, per_page: int = 30
+) -> dict[str, Any]:
+    """Find accessible-but-unwatched repos with recent pushes.
+
+    Independent of the events feed — surfaces freshly-created or low-event
+    repos that the time-bounded user/team-activity sections can't see. Hits
+    /user/repos?sort=pushed&direction=desc=per_page=N and compares against
+    github_repo_meta and the configured ignored-repos list.
+
+    Cost: 1 GH API request per probe.
+    """
+    import sqlite3 as _sqlite3
+    from datetime import datetime, timedelta, timezone
+
+    from rebalance.ingest.github_scan import GITHUB_API, _get
+
+    result: dict[str, Any] = {
+        "checked_count": 0,
+        "fresh_threshold_days": fresh_threshold_days,
+        "repos": [],
+    }
+    try:
+        status, data = _get(
+            f"{GITHUB_API}/user/repos?sort=pushed&direction=desc&per_page={per_page}",
+            token,
+        )
+    except Exception as exc:
+        result["error"] = f"fetch failed: {exc}"
+        return result
+    if status != 200 or not isinstance(data, list):
+        result["error"] = f"unexpected response: status={status}"
+        return result
+
+    result["checked_count"] = len(data)
+
+    with _sqlite3.connect(db_path) as conn:
+        watched = {row[0] for row in conn.execute("SELECT repo_full_name FROM github_repo_meta")}
+    ignored = set(get_github_ignored_repos())
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=fresh_threshold_days)
+    repos: list[dict[str, Any]] = []
+    for r in data:
+        full = r.get("full_name") or ""
+        if not full or full in watched or full in ignored:
+            continue
+        if r.get("archived") or r.get("disabled"):
+            continue
+        try:
+            pushed = datetime.fromisoformat((r.get("pushed_at") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        if pushed < cutoff:
+            continue
+        repos.append({
+            "full_name": full,
+            "pushed_at": pushed.isoformat(timespec="seconds"),
+            "private": bool(r.get("private")),
+            "fork": bool(r.get("fork")),
+        })
+
+    result["repos"] = repos
+    return result
+
+
 def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, top_n: int) -> dict[str, Any]:
     """Fetch recent GH events and classify each against local pipeline state."""
     import sqlite3 as _sqlite3
@@ -749,6 +814,7 @@ def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, to
         })
 
     team_activity = _raw_gather_team_activity(login, token, db_path, minutes, top_n)
+    unwatched_active_repos = _raw_gather_unwatched_active_repos(token, db_path)
 
     return {
         "raw_version": 1,
@@ -762,6 +828,7 @@ def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, to
             "unwatched_repos": sorted(unwatched_repos),
         },
         "team_activity": team_activity,
+        "unwatched_active_repos": unwatched_active_repos,
     }
 
 
@@ -843,6 +910,39 @@ def _raw_render_text(snapshot: dict[str, Any]) -> None:
             console.print(team_table)
         console.print(f"[dim]Repos checked: {', '.join(top_repos)}[/dim]")
 
+    unwatched = snapshot.get("unwatched_active_repos") or {}
+    if unwatched.get("error"):
+        console.print()
+        console.print(f"[yellow]Unwatched-repos check skipped: {unwatched['error']}[/yellow]")
+    elif unwatched.get("repos"):
+        from datetime import datetime, timezone
+        console.print()
+        console.print(
+            f"[red]Unwatched repos with recent pushes "
+            f"(last {unwatched['fresh_threshold_days']}d, not in github_repo_meta or ignored list):[/red]"
+        )
+        now_utc = datetime.now(timezone.utc)
+        for r in unwatched["repos"]:
+            pushed = datetime.fromisoformat(r["pushed_at"])
+            delta = now_utc - pushed
+            if delta.days > 0:
+                ago = f"{delta.days}d ago"
+            elif delta.seconds >= 3600:
+                ago = f"{delta.seconds // 3600}h ago"
+            else:
+                ago = f"{max(1, delta.seconds // 60)}m ago"
+            flags = []
+            if r.get("private"): flags.append("private")
+            if r.get("fork"): flags.append("fork")
+            flag_str = f"  [dim]({', '.join(flags)})[/dim]" if flags else ""
+            console.print(f"  - {r['full_name']}  [dim]pushed {ago}[/dim]{flag_str}")
+    elif unwatched.get("checked_count"):
+        console.print()
+        console.print(
+            f"[dim]All {unwatched['checked_count']} most-recently-pushed accessible repos "
+            f"are watched or ignored.[/dim]"
+        )
+
 
 @app.command("raw")
 def raw(
@@ -862,7 +962,7 @@ def raw(
 ) -> None:
     """Calibration view: GitHub events from the last N minutes vs local pipeline state.
 
-    Two sections:
+    Three sections:
       - Your activity (from /users/{login}/events) classified as
             ✓ captured   — pipeline caught up (last_active_at >= event_time)
             ⏳ pending    — repo is watched but the next sync hasn't run yet
@@ -870,10 +970,15 @@ def raw(
       - Team activity from the top N most-active watched repos (per-repo events,
         excluding the current user) — surfaces teammate activity the
         user-events feed alone can't see, classified as captured / pending.
+      - Unwatched repos with recent pushes (from /user/repos?sort=pushed) —
+        independent of the events feed, so freshly-created or low-event repos
+        you haven't yet added to the watch list don't slip past. Honors the
+        configured ignored-repos list and skips archived/disabled repos.
 
-    Costs 1 + N GitHub API requests per invocation (default N=10). Default
-    --watch cadence: 60s is comfortable; 30s is the practical floor; faster
-    gives diminishing returns due to GH events API ~30s eventual consistency.
+    Costs 1 + N + 1 GitHub API requests per invocation (default N=10).
+    Default --watch cadence: 60s is comfortable; 30s is the practical floor;
+    faster gives diminishing returns due to GH events API ~30s eventual
+    consistency.
     """
     import json as _json
     import time
