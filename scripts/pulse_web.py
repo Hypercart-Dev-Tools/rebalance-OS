@@ -97,6 +97,63 @@ def parse_goals(path: Path, limit: int = 3) -> list[dict[str, Any]]:
     return items[:limit]
 
 
+def resolve_goals_path(explicit: Path | None = None) -> Path | None:
+    """Resolve the active Goals.md path the same way `main()` does.
+
+    Priority: explicit arg → PULSE_GOALS env → {vault_path}/0. Goals.md.
+    Returns None only if no vault is configured and no override is provided.
+    """
+    if explicit is not None:
+        return explicit.expanduser()
+    env = os.environ.get("PULSE_GOALS")
+    if env:
+        return Path(env).expanduser()
+    vault = load_vault_path()
+    if vault is None:
+        return None
+    return vault / "0. Goals.md"
+
+
+def complete_goal_in_file(path: Path, title: str) -> bool:
+    """Mark the first matching `- [ ] <title>` line as `- [x] <title>` in place.
+
+    Returns True if a line was rewritten, False if no unchecked line matched.
+    Write is atomic (tmp + replace). Comparison is on the stripped title text
+    so it survives surrounding whitespace differences.
+    """
+    if not path.exists():
+        return False
+    target = title.strip()
+    if not target:
+        return False
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    changed = False
+    for i, raw in enumerate(lines):
+        m = CHECKBOX_RE.match(raw.rstrip("\n"))
+        if not m or m.group("mark").lower() == "x":
+            continue
+        if m.group("title").strip() != target:
+            continue
+        # Preserve the original line ending (LF / CRLF / none).
+        ending = ""
+        if raw.endswith("\r\n"):
+            ending = "\r\n"
+        elif raw.endswith("\n"):
+            ending = "\n"
+        # Preserve indent + bullet by swapping only the marker character.
+        body = raw[: -len(ending)] if ending else raw
+        # body looks like "  - [ ] title…" — replace first "[ ]" with "[x]".
+        lines[i] = body.replace("[ ]", "[x]", 1) + ending
+        changed = True
+        break
+    if not changed:
+        return False
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp.write_text("".join(lines), encoding="utf-8")
+    tmp.replace(path)
+    return True
+
+
 def load_vault_path() -> Path | None:
     if not CONFIG_PATH.exists():
         return None
@@ -190,8 +247,8 @@ def render_hero(
         cls = "done" if g["done"] else ""
         check = "checked" if g["done"] else ""
         rows.append(f"""
-        <li class="goal {cls}">
-          <span class="check {check}"></span>
+        <li class="goal {cls}" data-goal-title="{_esc(g['title'])}">
+          <span class="check {check}" role="checkbox" tabindex="0" aria-label="Complete: {_esc(g['title'])}"></span>
           <div class="goal-body">
             <div class="goal-title">{_esc(g['title'])}</div>
             <div class="goal-desc">{_esc(g['description'])}</div>
@@ -504,6 +561,10 @@ h2 { font-size: 14px; color: var(--fg); }
 .synced { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); }
 .synced .ok-dot { width: 8px; height: 8px; background: var(--ok); border-radius: 50%; }
 .refresh-btn { font: inherit; padding: 6px 14px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font-weight: 500; }
+.refresh-btn:disabled { opacity: .55; cursor: progress; }
+.pulse-filter { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--fg); width: 220px; }
+.pulse-filter:focus { outline: none; border-color: var(--accent); }
+.is-hidden-by-filter { display: none !important; }
 
 /* Card */
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
@@ -522,7 +583,11 @@ h2 { font-size: 14px; color: var(--fg); }
 .goals { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
 .goal { display: flex; align-items: flex-start; gap: 14px; padding: 12px 6px; border-top: 1px solid var(--border); }
 .goal:first-child { border-top: 0; }
-.goal .check { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #c8c2b3; margin-top: 2px; flex-shrink: 0; background: #fff; }
+.goal .check { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #c8c2b3; margin-top: 2px; flex-shrink: 0; background: #fff; cursor: pointer; transition: border-color .12s, background .12s; }
+.goal .check[role="checkbox"]:hover { border-color: var(--accent); }
+.goal .check[role="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.goal.is-busy .check { opacity: .55; cursor: progress; }
+.goal.is-completing { opacity: 0; transition: opacity .18s ease-out; pointer-events: none; }
 .goal .check.checked { background: var(--accent); border-color: var(--accent); position: relative; }
 .goal .check.checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .goal-title { font-weight: 600; color: var(--fg); }
@@ -571,19 +636,110 @@ h2 { font-size: 14px; color: var(--fg); }
 """
 
 
+PULSE_JS = r"""
+(() => {
+  const FILTER_TARGETS = '.activity-row, .goal, .side-row, .strip > div, .kv-list li';
+  const input = document.getElementById('pulse-filter');
+  const btn = document.getElementById('pulse-refresh');
+
+  if (input) {
+    const rows = Array.from(document.querySelectorAll(FILTER_TARGETS));
+    const haystacks = rows.map(r => (r.textContent || '').toLowerCase());
+    const apply = () => {
+      const q = input.value.trim().toLowerCase();
+      for (let i = 0; i < rows.length; i++) {
+        rows[i].classList.toggle('is-hidden-by-filter', q !== '' && !haystacks[i].includes(q));
+      }
+    };
+    input.addEventListener('input', apply);
+    document.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement !== input) { e.preventDefault(); input.focus(); }
+      if (e.key === 'Escape' && document.activeElement === input) { input.value = ''; apply(); input.blur(); }
+    });
+  }
+
+  // Today's Goals — clickable check spans. POST /api/goals/complete, then
+  // hide the row (mirrors the server-side "ignore completed" behavior so the
+  // view matches what a full reload would render).
+  const completeGoal = async (li) => {
+    if (!li || li.classList.contains('is-busy')) return;
+    const title = li.dataset.goalTitle || '';
+    if (!title) return;
+    li.classList.add('is-busy');
+    const check = li.querySelector('.check');
+    try {
+      const res = await fetch('/api/goals/complete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      if (!res.ok) throw new Error('complete failed: ' + res.status);
+      if (check) check.classList.add('checked');
+      // Brief tick, then collapse out.
+      setTimeout(() => {
+        li.classList.add('is-completing');
+        setTimeout(() => { li.style.display = 'none'; }, 220);
+      }, 140);
+      // Decrement the "in progress" counter (the "done" counter excludes
+      // completed items in the server render too, so leave it at 0).
+      const ipEl = document.querySelector('.hero-stats div:nth-child(2) b');
+      if (ipEl) {
+        const n = parseInt(ipEl.textContent || '0', 10);
+        if (!Number.isNaN(n) && n > 0) ipEl.textContent = String(n - 1);
+      }
+    } catch (err) {
+      console.warn('goal complete failed:', err);
+      li.classList.remove('is-busy');
+      alert('Could not mark goal complete — check the server log.');
+    }
+  };
+
+  document.querySelectorAll('.goal[data-goal-title] .check').forEach((el) => {
+    el.addEventListener('click', () => completeGoal(el.closest('.goal')));
+    el.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        completeGoal(el.closest('.goal'));
+      }
+    });
+  });
+
+  if (btn) {
+    btn.addEventListener('click', async () => {
+      const original = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Refreshing…';
+      try {
+        const res = await fetch('/api/refresh', { method: 'POST' });
+        if (!res.ok) throw new Error('refresh failed: ' + res.status);
+        location.reload();
+      } catch (err) {
+        // Static-file mode (no server) or refresh failed — fall back to a plain reload.
+        console.warn('pulse refresh fallback:', err);
+        location.reload();
+      } finally {
+        btn.disabled = false;
+        btn.textContent = original;
+      }
+    });
+  }
+})();
+"""
+
+
 def render_page(*, title: str, body_html: str, now: datetime, refresh_seconds: int) -> str:
     return f"""<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta http-equiv="refresh" content="{refresh_seconds}">
   <title>{_esc(title)}</title>
   <style>{CSS}</style>
 </head>
 <body>
 {body_html}
 <!-- generated {now.isoformat()} -->
+<script>{PULSE_JS}</script>
 </body>
 </html>
 """
@@ -635,8 +791,9 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
         <div class="topbar">
           <div class="crumb">Pulse <span style="color:var(--fg-dim); margin:0 4px">›</span> Today</div>
           <div style="display:flex; gap:10px; align-items:center;">
+            <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
             <span class="synced"><span class="ok-dot"></span>Synced {_esc(synced_ago)}</span>
-            <button class="refresh-btn" onclick="location.reload()">Refresh</button>
+            <button id="pulse-refresh" class="refresh-btn">Refresh</button>
           </div>
         </div>
         {render_hero(goals, pulled_from, local_now, obsidian_url)}
@@ -688,16 +845,10 @@ def main() -> int:
     args = parser.parse_args()
 
     vault_path = load_vault_path()
-    goals_path: Path
-    if args.goals:
-        goals_path = args.goals.expanduser()
-    elif env := os.environ.get("PULSE_GOALS"):
-        goals_path = Path(env).expanduser()
-    else:
-        if vault_path is None:
-            print("error: no --goals path and vault_path not set in temp/rbos.config", file=sys.stderr)
-            return 2
-        goals_path = vault_path / "0. Goals.md"
+    goals_path = resolve_goals_path(args.goals)
+    if goals_path is None:
+        print("error: no --goals path and vault_path not set in temp/rbos.config", file=sys.stderr)
+        return 2
 
     if not args.watch:
         out = write_page(args.out, goals_path=goals_path, vault_path=vault_path, refresh_seconds=args.interval)
