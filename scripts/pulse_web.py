@@ -73,21 +73,23 @@ def parse_goals(path: Path, limit: int = 3) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     current: dict[str, Any] | None = None
     for raw in path.read_text(encoding="utf-8").splitlines():
+        if not raw.strip():
+            continue
         m = CHECKBOX_RE.match(raw)
         if m:
             if current is not None:
                 items.append(current)
-            current = {
-                "done": m.group("mark").lower() == "x",
-                "title": m.group("title").strip(),
-                "description": "",
-            }
+            is_done = m.group("mark").lower() == "x"
+            if is_done:
+                current = None
+            else:
+                current = {
+                    "done": False,
+                    "title": m.group("title").strip(),
+                    "description": "",
+                }
             continue
         if current is None:
-            continue
-        if not raw.strip():
-            items.append(current)
-            current = None
             continue
         current["description"] = (current["description"] + " " + raw.strip()).strip()
     if current is not None:
