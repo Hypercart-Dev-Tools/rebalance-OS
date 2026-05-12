@@ -254,6 +254,21 @@ def build_slack_url(reminder: dict[str, Any]) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _linkify(text: str) -> str:
+    """Convert URLs in text to clickable links that open in new tabs."""
+    if not text:
+        return ""
+    # Match http:// https:// and file:// URLs
+    url_pattern = re.compile(r'(https?://[^\s<>"{}|\\^`\[\]]*[^\s<>"{}|\\^`\[\].,;:!?\)])')
+
+    def replace_url(match):
+        url = match.group(1)
+        escaped_url = _esc(url)
+        return f'<a href="{escaped_url}" target="_blank" rel="noopener noreferrer">{escaped_url}</a>'
+
+    return url_pattern.sub(replace_url, _esc(text))
+
+
 def render_hero(
     goals: list[dict[str, Any]],
     pulled_from: str,
@@ -267,12 +282,14 @@ def render_hero(
     for g in goals:
         cls = "done" if g["done"] else ""
         check = "checked" if g["done"] else ""
+        title_html = _linkify(g['title'])
+        desc_html = _linkify(g['description'])
         rows.append(f"""
         <li class="goal {cls}" data-goal-title="{_esc(g['title'])}">
           <span class="check {check}" role="checkbox" tabindex="0" aria-label="Complete: {_esc(g['title'])}"></span>
           <div class="goal-body">
-            <div class="goal-title">{_esc(g['title'])}</div>
-            <div class="goal-desc">{_esc(g['description'])}</div>
+            <div class="goal-title">{title_html}</div>
+            <div class="goal-desc">{desc_html}</div>
           </div>
         </li>
         """)
@@ -667,6 +684,8 @@ h2 { font-size: 14px; color: var(--fg); }
 .goal .check.checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .goal-title { font-weight: 600; color: var(--fg); }
 .goal-desc { color: var(--fg-muted); font-size: 12.5px; margin-top: 2px; }
+.goal-title a, .goal-desc a { color: var(--accent); text-decoration: none; }
+.goal-title a:hover, .goal-desc a:hover { text-decoration: underline; }
 .goal.done .goal-title { text-decoration: line-through; color: var(--fg-dim); }
 .goal.done .goal-desc { color: var(--fg-dim); }
 
