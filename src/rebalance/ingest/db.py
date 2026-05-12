@@ -289,6 +289,28 @@ def ensure_github_schema(conn: sqlite3.Connection) -> None:
         )
     """)
 
+    # Auto-discovery cache: every repo the PAT has seen via /user/repos?sort=pushed.
+    # Independent of github_repo_meta (which only gets a row after a full artifact
+    # sync). Lets get_watched_repos() pick up pushes that the events feed missed —
+    # collaborator pushes on private org repos, non-default-branch pushes, events
+    # dropped by the 300-event pagination cap, etc.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_pushed_repos (
+            repo_full_name  TEXT PRIMARY KEY,
+            pushed_at       TEXT NOT NULL,
+            private         INTEGER NOT NULL DEFAULT 0,
+            fork            INTEGER NOT NULL DEFAULT 0,
+            archived        INTEGER NOT NULL DEFAULT 0,
+            disabled        INTEGER NOT NULL DEFAULT 0,
+            first_seen_at   TEXT NOT NULL,
+            last_seen_at    TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_pushed_repos_pushed "
+        "ON github_pushed_repos(pushed_at DESC)"
+    )
+
     conn.execute("""
         CREATE TABLE IF NOT EXISTS github_branches (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,

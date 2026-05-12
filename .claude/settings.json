@@ -13,7 +13,8 @@
       "Bash(git commit -m ' *)",
       "Bash(python -c ' *)",
       "Bash(python -c \"import rich; print\\('rich ok:', rich.__version__\\)\")",
-      "Bash(python -c \"from rich.console import Console; from rich.layout import Layout; from rich.live import Live; print\\('rich ok'\\)\")"
+      "Bash(python -c \"from rich.console import Console; from rich.layout import Layout; from rich.live import Live; print\\('rich ok'\\)\")",
+      "Bash(.venv/bin/rebalance refresh *)"
     ],
     "additionalDirectories": [
       "/Users/noelsaw/Documents/rebalance-OS/.claude"

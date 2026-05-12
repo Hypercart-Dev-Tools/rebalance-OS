@@ -363,20 +363,20 @@ def fetch_recent_github(limit: int = 9) -> list[dict[str, Any]]:
     with db_connection(DB_PATH) as conn:
         rows = conn.execute(
             f"""
-            SELECT kind, sub, repo_full_name, num, detail, ts, who FROM (
+            SELECT kind, sub, repo_full_name, num, detail, ts, who, html_url FROM (
                 SELECT 'item' AS kind, item_type AS sub, repo_full_name,
                        number AS num, title AS detail, updated_at AS ts,
-                       author_login AS who
+                       author_login AS who, html_url
                 FROM github_items
                 WHERE updated_at IS NOT NULL
                 UNION ALL
                 SELECT 'commit', '', repo_full_name, item_number, message,
-                       committed_at, author_login
+                       committed_at, author_login, html_url
                 FROM github_commits
                 WHERE committed_at IS NOT NULL
                 UNION ALL
                 SELECT 'comment', comment_type, repo_full_name, item_number,
-                       body, created_at, author_login
+                       body, created_at, author_login, html_url
                 FROM github_comments
                 WHERE created_at IS NOT NULL
             )

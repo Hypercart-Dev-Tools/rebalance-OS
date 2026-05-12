@@ -393,6 +393,155 @@ def upsert_github_activity(database_path: Path, result: GitHubScanResult) -> Non
         conn.commit()
 
 
+# ---------------------------------------------------------------------------
+# Pushed-repos discovery — more reliable than the events feed for catching
+# pushes the operator wasn't the actor on, or that the events API dropped.
+# ---------------------------------------------------------------------------
+
+@dataclass
+class PushedRepoRecord:
+    repo_full_name: str
+    pushed_at: str  # ISO 8601 from GitHub
+    private: bool = False
+    fork: bool = False
+    archived: bool = False
+    disabled: bool = False
+
+
+@dataclass
+class PushedReposSyncResult:
+    fetched: int = 0
+    inserted: int = 0
+    updated: int = 0
+    unchanged: int = 0
+    skipped_archived: int = 0
+    error: str | None = None
+
+
+def fetch_pushed_repos(token: str, *, per_page: int = 30) -> list[PushedRepoRecord]:
+    """Fetch the most-recently-pushed repos accessible to the PAT.
+
+    Hits /user/repos?sort=pushed&direction=desc&per_page=N. One API request.
+    Returns up to *per_page* repos sorted by pushed_at desc, including
+    archived/disabled — the caller decides what to do with them.
+
+    Used for auto-discovery (sync_pushed_repos) and for the `rebalance raw`
+    diagnostic. More reliable than /users/{login}/events for catching recent
+    pushes: it returns repos regardless of actor and is unaffected by the
+    300-event pagination cap or eventual-consistency gaps on private org
+    repos that the events feed exhibits.
+    """
+    status, data = _get(
+        f"{GITHUB_API}/user/repos?sort=pushed&direction=desc&per_page={per_page}",
+        token,
+    )
+    if status != 200 or not isinstance(data, list):
+        raise GitHubApiError(
+            f"Failed to fetch /user/repos?sort=pushed: HTTP {status}",
+            status,
+            is_rate_limit=(status in (403, 429)),
+        )
+    out: list[PushedRepoRecord] = []
+    for r in data:
+        full = r.get("full_name") or ""
+        pushed = r.get("pushed_at") or ""
+        if not full or not pushed:
+            continue
+        out.append(PushedRepoRecord(
+            repo_full_name=full,
+            pushed_at=pushed,
+            private=bool(r.get("private")),
+            fork=bool(r.get("fork")),
+            archived=bool(r.get("archived")),
+            disabled=bool(r.get("disabled")),
+        ))
+    return out
+
+
+def sync_pushed_repos(
+    database_path: Path,
+    token: str,
+    *,
+    per_page: int = 30,
+) -> PushedReposSyncResult:
+    """Fetch /user/repos?sort=pushed and upsert into github_pushed_repos.
+
+    Skips archived/disabled repos — we don't want them in the auto-discovery
+    watched set. Idempotent: re-running with the same data yields all-unchanged
+    counts. Errors are returned in the result rather than raised so callers in
+    the refresh pipeline don't have to wrap individual sources in try/except.
+    """
+    from rebalance.ingest.db import db_connection, ensure_github_schema
+
+    result = PushedReposSyncResult()
+    try:
+        records = fetch_pushed_repos(token, per_page=per_page)
+    except Exception as exc:
+        result.error = f"fetch failed: {exc}"
+        return result
+
+    result.fetched = len(records)
+    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    with db_connection(database_path, ensure_github_schema) as conn:
+        for rec in records:
+            if rec.archived or rec.disabled:
+                result.skipped_archived += 1
+                continue
+            existing = conn.execute(
+                "SELECT pushed_at, private, fork FROM github_pushed_repos "
+                "WHERE repo_full_name = ?",
+                (rec.repo_full_name,),
+            ).fetchone()
+            if existing is None:
+                conn.execute(
+                    """
+                    INSERT INTO github_pushed_repos
+                        (repo_full_name, pushed_at, private, fork,
+                         archived, disabled, first_seen_at, last_seen_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        rec.repo_full_name, rec.pushed_at,
+                        int(rec.private), int(rec.fork),
+                        int(rec.archived), int(rec.disabled),
+                        now, now,
+                    ),
+                )
+                result.inserted += 1
+                continue
+            same = (
+                existing["pushed_at"] == rec.pushed_at
+                and bool(existing["private"]) == rec.private
+                and bool(existing["fork"]) == rec.fork
+            )
+            if same:
+                conn.execute(
+                    "UPDATE github_pushed_repos SET last_seen_at = ? "
+                    "WHERE repo_full_name = ?",
+                    (now, rec.repo_full_name),
+                )
+                result.unchanged += 1
+            else:
+                conn.execute(
+                    """
+                    UPDATE github_pushed_repos
+                    SET pushed_at = ?, private = ?, fork = ?,
+                        archived = ?, disabled = ?, last_seen_at = ?
+                    WHERE repo_full_name = ?
+                    """,
+                    (
+                        rec.pushed_at, int(rec.private), int(rec.fork),
+                        int(rec.archived), int(rec.disabled),
+                        now, rec.repo_full_name,
+                    ),
+                )
+                result.updated += 1
+        conn.commit()
+
+    return result
+
+
 def filter_ignored_repo_activity(result: GitHubScanResult, ignored_repos: list[str]) -> list[str]:
     """Remove ignored repos from a scan result in place and return the skipped set."""
     ignored = {normalize_github_repo_name(repo) for repo in ignored_repos}

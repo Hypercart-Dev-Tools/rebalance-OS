@@ -250,11 +250,19 @@ def render_recent_activity(
             label = f"{'PR' if sub == 'pull_request' else 'Issue'} #{num}" if num else (sub or "item")
         else:
             label = f"comment on #{num}" if num else "comment"
+        html_url = r.get("html_url") or ""
+        if html_url:
+            label_html = (
+                f'<a class="label {color}" href="{_esc(html_url)}" '
+                f'target="_blank" rel="noopener noreferrer">{_esc(label)}</a>'
+            )
+        else:
+            label_html = f'<span class="label {color}">{_esc(label)}</span>'
         items.append(f"""
         <li class="activity-row">
           <span class="ts">{_esc(ago)}</span>
           <span class="glyph {color}">{glyph}</span>
-          <span class="label {color}">{_esc(label)}</span>
+          {label_html}
           <span class="repo">{_esc(repo)}</span>
           <span class="who">{('@' + _esc(who)) if who else ''}</span>
           <div class="detail">{_esc(detail)}</div>
@@ -533,6 +541,8 @@ h2 { font-size: 14px; color: var(--fg); }
 .activity-row .ts { color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
 .activity-row .glyph { font-size: 13px; }
 .activity-row .label { font-weight: 500; }
+.activity-row a.label { text-decoration: none; }
+.activity-row a.label:hover { text-decoration: underline; }
 .activity-row .repo { color: var(--fg-muted); }
 .activity-row .who { color: var(--fg-dim); }
 .activity-row .detail { grid-column: 3 / -1; color: var(--fg-muted); font-size: 12.5px; }

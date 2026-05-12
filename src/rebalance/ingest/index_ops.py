@@ -320,6 +320,42 @@ def _activity_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
     return repos
 
 
+def _pushed_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
+    """Repos discovered via /user/repos?sort=pushed with a recent pushed_at.
+
+    Read from the github_pushed_repos table populated by sync_pushed_repos().
+    Catches activity that the events feed misses — pushes by collaborators
+    on private org repos, pushes dropped by the events API's 300-event
+    pagination cap, eventual-consistency gaps, and non-default-branch /
+    force-push edge cases. The events feed and this signal are
+    complementary; the union goes into the watched set.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    repos: list[str] = []
+    try:
+        cutoff = (
+            datetime.now(timezone.utc) - timedelta(days=int(since_days))
+        ).isoformat()
+        with db_connection(database_path) as conn:
+            rows = conn.execute(
+                """
+                SELECT repo_full_name FROM github_pushed_repos
+                WHERE pushed_at >= ?
+                  AND archived = 0 AND disabled = 0
+                ORDER BY pushed_at DESC
+                """,
+                (cutoff,),
+            ).fetchall()
+            for r in rows:
+                repo = (r["repo_full_name"] or "").strip()
+                if repo and repo not in repos:
+                    repos.append(repo)
+    except Exception:
+        pass
+    return repos
+
+
 def get_watched_repos(
     database_path: Path,
     *,
@@ -327,8 +363,9 @@ def get_watched_repos(
 ) -> dict[str, list[str]]:
     """Return the canonical view of which repos are monitored.
 
-    The merged ``watched`` list = (project_repos ∪ activity_repos) − ignored.
-    Callers (``refresh_index``, ``list_watched_repos`` MCP tool) consume the
+    The merged ``watched`` list = (project_repos ∪ activity_repos ∪
+    pushed_repos) − ignored. Callers (``refresh_index``,
+    ``list_watched_repos`` MCP tool, the ``raw`` diagnostic) consume the
     same source of truth so the user can never wonder "what's actually
     being synced?"
     """
@@ -336,24 +373,36 @@ def get_watched_repos(
 
     project = _project_repos(database_path)
     activity = _activity_repos(database_path, since_days=since_days)
-    ignored = set(get_github_ignored_repos())
+    pushed = _pushed_repos(database_path, since_days=since_days)
+    ignored = sorted(get_github_ignored_repos())
+    # Ignored entries are stored lowercased (CLI normalizes on add);
+    # watched-set sources keep GitHub's original casing. Compare on lowercase
+    # so e.g. an "xpressbase/athenacomply" entry blocks "xpressbase/athenaComply".
+    ignored_lower = {r.lower() for r in ignored}
 
     project_set = set(project)
     activity_set = set(activity)
+    pushed_set = set(pushed)
 
     watched: list[str] = []
-    for repo in project + activity:
-        if repo in ignored:
+    for repo in project + activity + pushed:
+        if repo.lower() in ignored_lower:
             continue
         if repo not in watched:
             watched.append(repo)
+
+    auto_discovered = sorted(
+        repo for repo in (activity_set | pushed_set) - project_set
+        if repo.lower() not in ignored_lower
+    )
 
     return {
         "watched": watched,
         "project_repos": project,
         "activity_repos": activity,
-        "auto_discovered": sorted(activity_set - project_set - ignored),
-        "ignored": sorted(ignored),
+        "pushed_repos": pushed,
+        "auto_discovered": auto_discovered,
+        "ignored": ignored,
         "since_days": since_days,
     }
 
@@ -373,10 +422,11 @@ def _refresh_github(
     dry_run: bool,
     include_semantic: bool = True,
 ) -> dict[str, Any]:
-    target_repos = _resolve_repos_for_refresh(database_path, repos)
+    initial_target_repos = _resolve_repos_for_refresh(database_path, repos)
     plan_steps = [
+        "sync_pushed_repos()",
         f"github_scan(days={since_days})",
-        f"sync_github_repo() x {len(target_repos)} repos",
+        f"sync_github_repo() x ~{len(initial_target_repos)} repos (after auto-discovery)",
     ]
     if include_semantic:
         plan_steps.extend([
@@ -390,17 +440,24 @@ def _refresh_github(
         return {
             "scope": "github",
             "dry_run": True,
-            "target_repos": target_repos,
+            "target_repos": initial_target_repos,
             "steps": plan_steps,
         }
 
     from rebalance.ingest.github_scan import (
         filter_ignored_repo_activity,
         scan_github,
+        sync_pushed_repos,
         upsert_github_activity,
     )
     from rebalance.ingest.config import get_github_ignored_repos
     from rebalance.ingest.github_knowledge import sync_github_repo
+
+    # Auto-discovery: fetch /user/repos?sort=pushed and upsert into
+    # github_pushed_repos BEFORE resolving target repos, so newly-pushed
+    # repos enter the watched set on this refresh rather than the next one.
+    pushed_result = sync_pushed_repos(database_path, token=token)
+    target_repos = _resolve_repos_for_refresh(database_path, repos)
 
     scan_result = scan_github(token=token, days=since_days)
     skipped = filter_ignored_repo_activity(scan_result, get_github_ignored_repos())
@@ -432,6 +489,14 @@ def _refresh_github(
     result: dict[str, Any] = {
         "scope": "github",
         "dry_run": False,
+        "pushed_repos_sync": {
+            "fetched": pushed_result.fetched,
+            "inserted": pushed_result.inserted,
+            "updated": pushed_result.updated,
+            "unchanged": pushed_result.unchanged,
+            "skipped_archived": pushed_result.skipped_archived,
+            "error": pushed_result.error,
+        },
         "github_scan": {
             "login": scan_result.login,
             "events": scan_result.total_events,
