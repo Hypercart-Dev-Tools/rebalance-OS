@@ -41,6 +41,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     TZ,
     fetch_calendar_upcoming,
     fetch_recent_github,
+    fetch_repo_activity_counts,
     fetch_sleuth_due,
     fetch_vault_recent,
     fetch_watched_summary,
@@ -228,6 +229,26 @@ def build_obsidian_url(vault_path: Path | None, file_path: Path) -> str | None:
     return f"obsidian://open?vault={urllib.parse.quote(vault_name)}&file={urllib.parse.quote(rel_str)}"
 
 
+def build_slack_url(reminder: dict[str, Any]) -> str | None:
+    """Return a slack.com permalink for a sleuth reminder.
+
+    Uses https://<workspace>.slack.com/archives/<channel>/p<ts-no-dot>. macOS
+    Slack registers slack.com as a Universal Link and opens these in the app
+    when it's installed. Falls back to a channel-only URL if no message ts is
+    available; returns None if there's no channel at all.
+    """
+    workspace = reminder.get("workspace_name")
+    channel = reminder.get("original_channel_id") or reminder.get("target_channel_id")
+    if not workspace or not channel:
+        return None
+    base = f"https://{workspace}.slack.com/archives/{channel}"
+    msg_ts = reminder.get("original_message_id") or reminder.get("original_thread_ts")
+    if msg_ts:
+        # Slack's permalink ts strips the dot: 1774287154.212369 → 1774287154212369
+        return f"{base}/p{str(msg_ts).replace('.', '')}"
+    return base
+
+
 # ---------------------------------------------------------------------------
 # Section renderers
 # ---------------------------------------------------------------------------
@@ -345,6 +366,45 @@ def render_recent_activity(
     """
 
 
+# Stable, accessible palette — repeats if there are more repos than colors.
+PIE_PALETTE = [
+    "#7cc4ff", "#b388ff", "#ffb86b", "#7be08a", "#ff8aa1",
+    "#ffd166", "#06d6a0", "#118ab2", "#ef476f", "#8d99ae",
+    "#f4a261", "#c77dff",
+]
+
+
+def render_repo_pie(rows: list[dict[str, Any]], *, days: int) -> str:
+    """Doughnut chart of per-repo event counts over the last N days."""
+    if not rows:
+        return f"""
+    <section class="card repo-pie">
+      <header class="card-head"><h2>Repo activity ({_esc(days)}d)</h2></header>
+      <div class="empty" style="padding:18px 4px;">No GitHub activity in the last {_esc(days)} days.</div>
+    </section>
+    """
+
+    labels = [_short_repo(r.get("repo_full_name")) for r in rows]
+    values = [int(r.get("events") or 0) for r in rows]
+    colors = [PIE_PALETTE[i % len(PIE_PALETTE)] for i in range(len(rows))]
+    total = sum(values)
+
+    payload = json.dumps({"labels": labels, "values": values, "colors": colors})
+
+    return f"""
+    <section class="card repo-pie">
+      <header class="card-head">
+        <h2>Repo activity ({_esc(days)}d)</h2>
+        <span class="card-head-meta">{total} events · {len(rows)} repos</span>
+      </header>
+      <div class="repo-pie-wrap">
+        <canvas id="repo-pie-canvas" height="220"></canvas>
+      </div>
+      <script type="application/json" id="repo-pie-data">{payload}</script>
+    </section>
+    """
+
+
 def render_watched(summary: dict[str, Any], now: datetime) -> str:
     last = _ago(summary.get("last_synced"), now=now) if summary.get("last_synced") else "—"
     rows = [
@@ -439,12 +499,23 @@ def render_sidebar(
         when = _format_dt_short(s.get("should_post_on"), tz=tz) if s.get("should_post_on") else ""
         role = "from me" if s.get("sleuth_role") == "assigned_by_me" else "for me"
         meta_bits = [b for b in [when, role] if b]
-        sleuth_items.append(f"""
-          <li class="side-row">
+        slack_url = build_slack_url(s)
+        body = f"""
             <div class="side-row-title">{_esc(msg)}</div>
             <div class="side-row-meta">{_esc(' · '.join(meta_bits))}</div>
+        """
+        if slack_url:
+            sleuth_items.append(f"""
+          <li class="side-row has-link">
+            <a class="side-row-link" href="{_esc(slack_url)}" target="_blank" rel="noopener noreferrer" title="Open in Slack">
+              {body}
+            </a>
           </li>
-        """)
+            """)
+        else:
+            sleuth_items.append(f"""
+          <li class="side-row">{body}</li>
+            """)
     if not sleuth_items:
         sleuth_items.append('<li class="side-row empty"><div class="side-row-meta">Inbox clear.</div></li>')
 
@@ -539,6 +610,10 @@ h2 { font-size: 14px; color: var(--fg); }
 .side-row { padding: 7px 8px; border-radius: 6px; }
 .side-row + .side-row { margin-top: 1px; }
 .side-row:hover { background: rgba(0,0,0,.03); }
+.side-row.has-link { padding: 0; }
+.side-row-link { display: block; padding: 7px 8px; color: inherit; text-decoration: none; border-radius: 6px; }
+.side-row-link:hover { background: rgba(124,196,255,.10); }
+.side-row-link:hover .side-row-title { color: var(--info); }
 .side-row-title { font-size: 12.5px; line-height: 1.35; color: var(--fg); font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .side-row-meta { font-size: 11.5px; color: var(--fg-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .side-row.empty .side-row-meta { font-style: italic; }
@@ -598,6 +673,13 @@ h2 { font-size: 14px; color: var(--fg); }
 /* Two-column body */
 .grid { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr); gap: 16px; }
 .grid .col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.full-row { margin-top: 16px; }
+
+/* Repo activity doughnut */
+.repo-pie .card-head { display: flex; align-items: baseline; justify-content: space-between; }
+.repo-pie .card-head-meta { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
+.repo-pie-wrap { padding: 8px 14px 16px; }
+.repo-pie-wrap canvas { max-width: 100%; }
 
 /* Activity */
 .activity-list { list-style: none; padding: 0 4px 14px; margin: 0; }
@@ -723,6 +805,57 @@ PULSE_JS = r"""
       }
     });
   }
+
+  // Repo activity doughnut (Chart.js, loaded via CDN with defer).
+  const initRepoPie = () => {
+    const canvas = document.getElementById('repo-pie-canvas');
+    const dataEl = document.getElementById('repo-pie-data');
+    if (!canvas || !dataEl || typeof Chart === 'undefined') return false;
+    let payload;
+    try { payload = JSON.parse(dataEl.textContent || '{}'); }
+    catch (e) { console.warn('repo-pie payload parse failed', e); return true; }
+    const { labels = [], values = [], colors = [] } = payload;
+    if (!labels.length) return true;
+    const total = values.reduce((a, b) => a + b, 0) || 1;
+    new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          backgroundColor: colors,
+          borderColor: 'rgba(0,0,0,0.25)',
+          borderWidth: 1,
+          hoverOffset: 6,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '58%',
+        plugins: {
+          legend: {
+            position: 'right',
+            labels: { color: '#cfd6e4', boxWidth: 10, boxHeight: 10, font: { size: 11 } },
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const v = ctx.parsed || 0;
+                const pct = ((v / total) * 100).toFixed(1);
+                return `${ctx.label}: ${v} (${pct}%)`;
+              },
+            },
+          },
+        },
+      },
+    });
+    return true;
+  };
+  if (!initRepoPie()) {
+    // Chart.js still loading (defer) — retry once on window load.
+    window.addEventListener('load', initRepoPie, { once: true });
+  }
 })();
 """
 
@@ -735,6 +868,7 @@ def render_page(*, title: str, body_html: str, now: datetime, refresh_seconds: i
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{_esc(title)}</title>
   <style>{CSS}</style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>
 </head>
 <body>
 {body_html}
@@ -758,6 +892,8 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     vault_rows = fetch_vault_recent(limit=6)
     cal_rows = fetch_calendar_upcoming(now, limit=6)
     sleuth_rows = fetch_sleuth_due(limit=6)
+    repo_pie_days = 7
+    repo_pie_rows = fetch_repo_activity_counts(days=repo_pie_days, limit=12)
     status = get_index_status(DB_PATH)
 
     in_progress = sum(1 for g in goals if not g["done"])
@@ -803,8 +939,11 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           </div>
           <div class="col">
             {render_watched(watched, now)}
-            {render_index_health(status, now)}
+            {render_repo_pie(repo_pie_rows, days=repo_pie_days)}
           </div>
+        </div>
+        <div class="full-row">
+          {render_index_health(status, now)}
         </div>
       </main>
     </div>

@@ -331,11 +331,23 @@ def _load_google_calendar_env() -> dict[str, str]:
     return values
 
 
-def _load_sleuth_env() -> dict[str, str]:
-    """Load Sleuth Web API connection details from the operator-owned env file."""
-    path = resolve_secret_path("sleuth-web-api-development.env")
-    if not path.exists():
-        raise typer.BadParameter(f"Sleuth env file not found: {path}")
+def _load_sleuth_env(which: str = "production") -> dict[str, str]:
+    """Load Sleuth Web API connection details from the operator-owned env file.
+
+    Looks up `sleuth-web-api-{which}.env` (default: production). Falls back to
+    the development env file if the requested one doesn't exist — keeps the
+    older dev-only setup working until production is configured.
+    """
+    primary = resolve_secret_path(f"sleuth-web-api-{which}.env")
+    fallback = resolve_secret_path("sleuth-web-api-development.env")
+    if primary.exists():
+        path = primary
+    elif fallback.exists():
+        path = fallback
+    else:
+        raise typer.BadParameter(
+            f"Sleuth env file not found: tried {primary} then {fallback}"
+        )
 
     values: dict[str, str] = {}
     for raw_line in path.read_text(encoding="utf-8").splitlines():

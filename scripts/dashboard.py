@@ -389,6 +389,42 @@ def fetch_recent_github(limit: int = 9) -> list[dict[str, Any]]:
     return [dict(r) for r in rows]
 
 
+def fetch_repo_activity_counts(days: int = 7, limit: int = 12) -> list[dict[str, Any]]:
+    """Per-repo event counts (items + commits + comments) over the last N days."""
+    ignored = get_github_ignored_repos()
+    ignored_clause = ""
+    params: list[Any] = [f"-{int(days)} days"] * 3
+    if ignored:
+        placeholders = ",".join("?" * len(ignored))
+        ignored_clause = f"WHERE LOWER(repo_full_name) NOT IN ({placeholders})"
+        params.extend(ignored)
+    params.append(limit)
+    with db_connection(DB_PATH) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT repo_full_name, COUNT(*) AS events FROM (
+                SELECT repo_full_name FROM github_items
+                  WHERE updated_at IS NOT NULL
+                    AND updated_at >= datetime('now', ?)
+                UNION ALL
+                SELECT repo_full_name FROM github_commits
+                  WHERE committed_at IS NOT NULL
+                    AND committed_at >= datetime('now', ?)
+                UNION ALL
+                SELECT repo_full_name FROM github_comments
+                  WHERE created_at IS NOT NULL
+                    AND created_at >= datetime('now', ?)
+            )
+            {ignored_clause}
+            GROUP BY repo_full_name
+            ORDER BY events DESC
+            LIMIT ?
+            """,
+            tuple(params),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 def fetch_vault_recent(limit: int = 6) -> list[dict[str, Any]]:
     with db_connection(DB_PATH) as conn:
         rows = conn.execute(
@@ -432,36 +468,53 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
     # ingest-side reconciliation (sync_sleuth_reminders), don't surface
     # reminders whose should_post_on is more than 2 days in the past.
     # NULLs are kept so reminders without a scheduled time still show.
-    slack_user_id = get_pulse_config().get("slack_user_id")
+    pulse_config = get_pulse_config()
+    slack_user_id = pulse_config.get("slack_user_id")
+    ignored_workspaces = [
+        str(w).lower() for w in (pulse_config.get("sleuth_ignored_workspaces") or [])
+        if isinstance(w, str) and w
+    ]
+    ws_clause = ""
+    ws_params: list[Any] = []
+    if ignored_workspaces:
+        placeholders = ",".join("?" * len(ignored_workspaces))
+        ws_clause = f" AND LOWER(workspace_name) NOT IN ({placeholders})"
+        ws_params = ignored_workspaces
     with db_connection(DB_PATH) as conn:
         if slack_user_id:
             rows = conn.execute(
-                """
+                f"""
                 SELECT reminder_id, reminder_message_text, should_post_on, state,
-                       assignee_id, original_sender_id
+                       assignee_id, original_sender_id,
+                       workspace_name, original_channel_id, target_channel_id,
+                       original_message_id, original_thread_ts
                 FROM sleuth_reminders
                 WHERE is_active = 1
                   AND (should_post_on IS NULL
                        OR should_post_on > datetime('now', '-2 days'))
                   AND (assignee_id = ? OR original_sender_id = ?)
+                  {ws_clause}
                 ORDER BY should_post_on ASC NULLS LAST
                 LIMIT ?
                 """,
-                (slack_user_id, slack_user_id, limit),
+                (slack_user_id, slack_user_id, *ws_params, limit),
             ).fetchall()
         else:
             rows = conn.execute(
-                """
+                f"""
                 SELECT reminder_id, reminder_message_text, should_post_on, state,
-                       assignee_id, original_sender_id
+                       assignee_id, original_sender_id,
+                       workspace_name, original_channel_id, target_channel_id,
+                       original_message_id, original_thread_ts
                 FROM sleuth_reminders
                 WHERE is_active = 1
                   AND (should_post_on IS NULL
                        OR should_post_on > datetime('now', '-2 days'))
+                  {ws_clause}
                 ORDER BY should_post_on ASC NULLS LAST
                 LIMIT ?
                 """,
-                (limit,),
+                (*ws_params, limit),
             ).fetchall()
     out = []
     for r in rows:

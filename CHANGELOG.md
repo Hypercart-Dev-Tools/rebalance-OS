@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.26.0] - 2026-05-12
+
+### Added
+
+- Pulse FastAPI server autostart at login. New LaunchAgent `com.rebalance-os.pulse-server` (managed at `~/Library/LaunchAgents/com.rebalance-os.pulse-server.plist`) runs `scripts/pulse_server.sh` with `RunAtLoad=true` + `KeepAlive=true` + `ThrottleInterval=30s`. Previously the server was on-demand only — the 30-minute `pulse-web-sync` job kept the static `web/pulse.html` fresh but the interactive Refresh/filter layer at `http://127.0.0.1:8767` only ran when a terminal was open. Logs to `temp/logs/pulse_server_stdout.log` and `pulse_server_stderr.log`.
+- Per-repo activity doughnut on the pulse page. New `fetch_repo_activity_counts(days=7, limit=12)` in `scripts/dashboard.py` returns a UNION-of-three-tables count (items + commits + comments) grouped by `repo_full_name` for the last N days, honoring the existing `github_ignored_repos` blocklist. `scripts/pulse_web.py` renders this as a Chart.js 4.4 doughnut (loaded from `cdn.jsdelivr.net` with `defer`) with per-slice colors from a 12-entry palette, an embedded JSON payload (`<script type="application/json" id="repo-pie-data">`) that the existing `PULSE_JS` IIFE reads on `load`, and tooltips showing count + percentage. The chart sits in the right column of the body grid (where Index Health used to live); Watched repos now stacks above it. Falls back to a friendly empty-state when no activity exists in the window.
+- Pulse page layout restructured to put Index Health on a full-width row beneath the two-column grid. The grid is now Recent Activity (left col, 2fr) / Watched + Repo Activity doughnut (right col, 1fr), with `<div class="full-row">` holding Index Health below. New CSS: `.full-row { margin-top: 16px }`, `.repo-pie .card-head { display: flex; justify-content: space-between }`, `.repo-pie-wrap { padding: 8px 14px 16px }`.
+- Slack deep links on Sleuth reminder rows in the pulse sidebar. New `build_slack_url(reminder)` helper in `scripts/pulse_web.py` constructs `https://<workspace>.slack.com/archives/<channel_id>/p<ts-no-dot>` from the reminder's own `workspace_name` + `original_channel_id` (falling back to `target_channel_id`) + `original_message_id` (falling back to `original_thread_ts`). macOS Slack registers `slack.com` as a Universal Link and opens these URLs directly in the desktop app when installed. Each sleuth row that resolves a URL now renders as `<li class="side-row has-link"><a class="side-row-link" target="_blank" rel="noopener noreferrer">…</a></li>`; rows without a usable channel degrade gracefully to the plain non-link form. New CSS rules: `.side-row.has-link { padding: 0 }`, `.side-row-link { display: block; padding: 7px 8px; color: inherit; text-decoration: none }`, `.side-row-link:hover { background: rgba(124,196,255,.10) }`, `.side-row-link:hover .side-row-title { color: var(--info) }`. `fetch_sleuth_due` in `scripts/dashboard.py` now selects `workspace_name`, `original_channel_id`, `target_channel_id`, `original_message_id`, `original_thread_ts` so the renderer has everything it needs.
+- Sleuth workspace blocklist. New `sleuth_ignored_workspaces` array key in `temp/rbos.config` (the same gitignored config file that holds `github_ignored_repos` and `calendar_ignored_summaries`) suppresses reminders from listed Slack workspaces. `get_pulse_config()` in `src/rebalance/ingest/config.py` now whitelists this key — previously the explicit-keys return dict silently dropped any unknown config keys, which caused the first iteration of the filter to no-op. `fetch_sleuth_due` reads the list and appends `AND LOWER(workspace_name) NOT IN (?, ?, …)` to both SQL branches (the `slack_user_id` one and the unauthenticated one). Edits take effect on the next render or refresh — no restart needed. Example:
+
+    ```json
+    {
+      "sleuth_ignored_workspaces": ["neochrome-dev"]
+    }
+    ```
+
+- Production Sleuth Web API support. `_load_sleuth_env(which="production")` in `src/rebalance/cli.py` now looks up `~/secrets/sleuth-web-api-{which}.env` first (default: production), falling back to the legacy `sleuth-web-api-development.env` if the requested file doesn't exist. Existing dev-only setups continue working without modification. Operator-side setup is unchanged: create the new env file (mode 600) with `SLEUTH_WEB_API_BASE_URL` / `SLEUTH_WEB_API_TOKEN` / `SLEUTH_WORKSPACE_NAME`. Because the prod Sleuth Web API typically only listens on the host's loopback (port 2020 firewalled from the public internet), `SLEUTH_WEB_API_BASE_URL` is usually a local port-forward target (e.g. `http://127.0.0.1:12020` with a separate SSH tunnel managed by a `com.rebalance-os.sleuth-tunnel` LaunchAgent).
+
+### Changed
+
+- `get_pulse_config()` whitelist now exposes `sleuth_ignored_workspaces` (defaults to `[]`). All other keys are unchanged. The new key documentation in the docstring explicitly mentions the `["neochrome-dev"]` blocklist pattern as the canonical example.
+
 ## [0.25.0] - 2026-05-07
 
 ### Added

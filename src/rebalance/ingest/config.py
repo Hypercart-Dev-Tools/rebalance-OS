@@ -441,6 +441,9 @@ def get_pulse_config() -> dict[str, Any]:
         repo (default: "live-pulse.md")
       - pulse_timezone: IANA timezone name for "today" / "yesterday" boundaries
         (default: read from CalendarConfig if available)
+      - sleuth_ignored_workspaces: list of Slack workspace_name values to
+        suppress from pulse Sleuth surfacing (e.g. ["neochrome-dev"] hides
+        test-bot reminders so only Sleuth AI v2 in `neochrome` appears).
     """
     config = _read_config()
     return {
@@ -449,6 +452,7 @@ def get_pulse_config() -> dict[str, Any]:
         "pulse_target_path": config.get("pulse_target_path"),
         "pulse_filename": config.get("pulse_filename", "live-pulse.md"),
         "pulse_timezone": config.get("pulse_timezone"),
+        "sleuth_ignored_workspaces": config.get("sleuth_ignored_workspaces") or [],
     }
 
 
