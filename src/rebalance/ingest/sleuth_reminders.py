@@ -6,9 +6,20 @@ HTTP layer mirrors github_scan.py: stdlib urllib, Bearer auth, a 30s timeout,
 single attempt (no retries).  Sleuth returns HTTP 200 even on auth/workspace
 errors — payload["success"] is the source of truth.
 
-Rows are upserted by reminder_id.  Rows that disappear from the server
-response are NOT deleted: we want history, and activeOnly=true responses
-omit completed reminders that we still want to keep.
+Rows are upserted by reminder_id.  Reconciliation rules for rows that
+disappear from the server response:
+
+* ``active_only=True``: rows are kept as-is.  We can't tell whether a
+  missing reminder is now completed or just filtered out, so preserve
+  history.
+* ``active_only=False``: any DB row currently ``is_active=1`` whose
+  ``reminder_id`` is not in the response is retired: ``is_active`` flips
+  to ``0`` and ``state`` is set to ``"stale"``.  Sleuth ages reminders out
+  of its own responses once they're done; without this sweep, our copies
+  would otherwise sit at ``state='scheduled', is_active=1`` indefinitely
+  and keep showing up in the pulse dashboard.  Rows are never deleted —
+  we only flip the active flag — so the audit trail (first_seen_at,
+  last_seen_at, message text) is preserved.
 """
 
 from __future__ import annotations
@@ -75,6 +86,7 @@ class SleuthSyncResult:
     inserted_count: int
     updated_count: int
     unchanged_count: int
+    retired_count: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -85,6 +97,7 @@ class SleuthSyncResult:
             "inserted_count": self.inserted_count,
             "updated_count": self.updated_count,
             "unchanged_count": self.unchanged_count,
+            "retired_count": self.retired_count,
         }
 
 
@@ -434,6 +447,29 @@ def sync_sleuth_reminders(
                     (now_iso, now_iso, r.reminder_id),
                 )
                 unchanged += 1
+
+        # Reconcile disappearances. When the caller asked for the full set
+        # (active_only=False), any row still marked is_active=1 that wasn't
+        # in the response has aged out of Sleuth — retire it locally.
+        retired = 0
+        if not active_only:
+            seen_ids = [r.reminder_id for r in reminders]
+            if seen_ids:
+                placeholders = ",".join("?" * len(seen_ids))
+                cur = conn.execute(
+                    f"UPDATE sleuth_reminders "
+                    f"SET is_active = 0, state = 'stale', last_synced_at = ? "
+                    f"WHERE is_active = 1 AND reminder_id NOT IN ({placeholders})",
+                    (now_iso, *seen_ids),
+                )
+            else:
+                cur = conn.execute(
+                    "UPDATE sleuth_reminders "
+                    "SET is_active = 0, state = 'stale', last_synced_at = ? "
+                    "WHERE is_active = 1",
+                    (now_iso,),
+                )
+            retired = cur.rowcount or 0
         conn.commit()
 
     return SleuthSyncResult(
@@ -448,4 +484,5 @@ def sync_sleuth_reminders(
         inserted_count=inserted,
         updated_count=updated,
         unchanged_count=unchanged,
+        retired_count=retired,
     )

@@ -428,6 +428,10 @@ def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any
 
 
 def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
+    # Belt-and-suspenders staleness guard: even if a row escaped the
+    # ingest-side reconciliation (sync_sleuth_reminders), don't surface
+    # reminders whose should_post_on is more than 2 days in the past.
+    # NULLs are kept so reminders without a scheduled time still show.
     slack_user_id = get_pulse_config().get("slack_user_id")
     with db_connection(DB_PATH) as conn:
         if slack_user_id:
@@ -437,6 +441,8 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
                        assignee_id, original_sender_id
                 FROM sleuth_reminders
                 WHERE is_active = 1
+                  AND (should_post_on IS NULL
+                       OR should_post_on > datetime('now', '-2 days'))
                   AND (assignee_id = ? OR original_sender_id = ?)
                 ORDER BY should_post_on ASC NULLS LAST
                 LIMIT ?
@@ -450,6 +456,8 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
                        assignee_id, original_sender_id
                 FROM sleuth_reminders
                 WHERE is_active = 1
+                  AND (should_post_on IS NULL
+                       OR should_post_on > datetime('now', '-2 days'))
                 ORDER BY should_post_on ASC NULLS LAST
                 LIMIT ?
                 """,

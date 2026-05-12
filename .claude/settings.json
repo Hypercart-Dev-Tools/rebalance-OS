@@ -35,7 +35,11 @@
       "Bash(xargs -r kill)",
       "Bash(echo \"new pid=$!\")",
       "Bash(curl -s -o /tmp/resp.json -w 'HTTP %{http_code}\\\\n' -X POST http://127.0.0.1:8767/api/goals/complete -H 'content-type: application/json' -d '{\"title\":\"__definitely_not_a_real_goal__\"}')",
-      "Bash(curl -s -o /tmp/resp.json -w 'HTTP %{http_code}\\\\n' -X POST http://127.0.0.1:8767/api/goals/complete -H 'content-type: application/json' -d '{\"title\":\"\"}')"
+      "Bash(curl -s -o /tmp/resp.json -w 'HTTP %{http_code}\\\\n' -X POST http://127.0.0.1:8767/api/goals/complete -H 'content-type: application/json' -d '{\"title\":\"\"}')",
+      "Bash(git -C /Users/noelsaw/Documents/rebalance-OS log -1 --stat)",
+      "mcp__rebalance__sleuth_sync_reminders",
+      "Bash(.venv/bin/python -m pytest tests/test_sleuth_reminders.py tests/test_pulse_sleuth_scope.py -q)",
+      "Bash(.venv/bin/python -m unittest tests.test_sleuth_reminders tests.test_pulse_sleuth_scope -v)"
     ],
     "additionalDirectories": [
       "/Users/noelsaw/Documents/rebalance-OS/.claude"
