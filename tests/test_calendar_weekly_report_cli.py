@@ -47,7 +47,7 @@ def _insert_events(database_path: Path, events: list[tuple], calendar_id: str = 
 
 
 WEEK_EVENTS = [
-    ("w1", "Binoid - SEO", "2026-03-30T17:00:00+00:00", "2026-03-30T19:00:00+00:00"),
+    ("w1", "AcmeCorp - SEO", "2026-03-30T17:00:00+00:00", "2026-03-30T19:00:00+00:00"),
     ("w2", "CR - CC", "2026-03-31T17:00:00+00:00", "2026-03-31T18:30:00+00:00"),
 ]
 

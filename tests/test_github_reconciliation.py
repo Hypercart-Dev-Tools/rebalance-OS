@@ -102,7 +102,7 @@ def _insert_pr(
 
 class GitHubReconciliationTests(unittest.TestCase):
     def test_explicit_closing_keyword_becomes_auto_close_recommendation(self) -> None:
-        repo = "BinoidCBD/universal-child-theme-oct-2024"
+        repo = "AcmeOrg/sample-child-theme-oct-2024"
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "rebalance.db"
             with db_connection(db_path, ensure_github_schema) as conn:
@@ -145,7 +145,7 @@ class GitHubReconciliationTests(unittest.TestCase):
             self.assertTrue(candidate.explicit_close)
 
     def test_inferred_branch_and_issue_reference_becomes_high_confidence_close(self) -> None:
-        repo = "BinoidCBD/universal-child-theme-oct-2024"
+        repo = "AcmeOrg/sample-child-theme-oct-2024"
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "rebalance.db"
             with db_connection(db_path, ensure_github_schema) as conn:
@@ -186,7 +186,7 @@ class GitHubReconciliationTests(unittest.TestCase):
             self.assertGreaterEqual(candidate.confidence, 0.85)
 
     def test_commit_message_plus_title_overlap_becomes_medium_confidence_review(self) -> None:
-        repo = "BinoidCBD/universal-child-theme-oct-2024"
+        repo = "AcmeOrg/sample-child-theme-oct-2024"
         with tempfile.TemporaryDirectory() as tmpdir:
             db_path = Path(tmpdir) / "rebalance.db"
             with db_connection(db_path, ensure_github_schema) as conn:

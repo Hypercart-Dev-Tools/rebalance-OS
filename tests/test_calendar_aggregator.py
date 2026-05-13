@@ -3,6 +3,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+from rebalance.ingest import config as config_module
 from rebalance.ingest.calendar import ensure_calendar_schema
 from rebalance.ingest.calendar_config import CalendarConfig, CalendarProject
 from rebalance.ingest.daily_report import group_similar_events
@@ -13,25 +14,43 @@ from rebalance.ingest.weekly_report import generate_weekly_report
 
 
 class CalendarAggregatorTests(unittest.TestCase):
+    """Aggregator + classifier tests using fictional projects.
+
+    All fixtures use placeholder names (AcmeCorp, BetaCorp, AcmeReg, DeltaApp,
+    GammaGardens) so the tests stay independent of the operator's real
+    project list. setUp redirects `config_module.CONFIG_PATH` at a
+    nonexistent temp file so `_build_matchers_from_priority_rules` cannot
+    silently pull operator-local priority rules into the test corpus.
+    """
+
+    def setUp(self) -> None:
+        self._tmp_config_dir = tempfile.TemporaryDirectory()
+        self._orig_config_path = config_module.CONFIG_PATH
+        config_module.CONFIG_PATH = Path(self._tmp_config_dir.name) / "rbos.config"
+
+    def tearDown(self) -> None:
+        config_module.CONFIG_PATH = self._orig_config_path
+        self._tmp_config_dir.cleanup()
+
     def test_group_similar_events_skips_common_verbs_and_config_tokens(self) -> None:
         events = [
             {
-                "summary": "CR - if I can make progress",
+                "summary": "AR - if I can make progress",
                 "start_time": "2026-03-31T16:00:00+00:00",
                 "end_time": "2026-03-31T16:30:00+00:00",
             },
             {
-                "summary": "BW - change test account bailiwik",
+                "summary": "BC - change test account betacorp",
                 "start_time": "2026-03-31T16:30:00+00:00",
                 "end_time": "2026-03-31T17:00:00+00:00",
             },
             {
-                "summary": "Check Slack Binoid handoff",
+                "summary": "Check Slack AcmeCorp handoff",
                 "start_time": "2026-03-31T17:00:00+00:00",
                 "end_time": "2026-03-31T17:30:00+00:00",
             },
             {
-                "summary": "Test new Smart Coupons code",
+                "summary": "Test new Tango Widgets code",
                 "start_time": "2026-03-31T17:30:00+00:00",
                 "end_time": "2026-03-31T18:00:00+00:00",
             },
@@ -39,10 +58,10 @@ class CalendarAggregatorTests(unittest.TestCase):
 
         groups = group_similar_events(events)
 
-        self.assertIn("Cr", groups)
-        self.assertIn("Bw", groups)
-        self.assertIn("Binoid", groups)
-        self.assertIn("Smart", groups)
+        self.assertIn("Ar", groups)
+        self.assertIn("Bc", groups)
+        self.assertIn("Acmecorp", groups)
+        self.assertIn("Tango", groups)
         self.assertNotIn("can", groups)
         self.assertNotIn("change", groups)
         self.assertNotIn("check", groups)
@@ -73,7 +92,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                 [
                     (
                         "event-1",
-                        "CR - if I can make progress",
+                        "AR - if I can make progress",
                         "2026-03-31T16:00:00+00:00",
                         "2026-03-31T16:30:00+00:00",
                         "",
@@ -85,7 +104,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                     ),
                     (
                         "event-2",
-                        "BW - change test account bailiwik",
+                        "BC - change test account betacorp",
                         "2026-04-01T16:00:00+00:00",
                         "2026-04-01T16:30:00+00:00",
                         "",
@@ -97,7 +116,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                     ),
                     (
                         "event-3",
-                        "Test new Smart Coupons code",
+                        "Test new Tango Widgets code",
                         "2026-04-02T16:00:00+00:00",
                         "2026-04-02T16:30:00+00:00",
                         "",
@@ -130,9 +149,9 @@ class CalendarAggregatorTests(unittest.TestCase):
                 config=config,
             )
 
-        self.assertIn("| Cr | 1 | 30m |", report)
-        self.assertIn("| Bw | 1 | 30m |", report)
-        self.assertIn("| Smart | 1 | 30m |", report)
+        self.assertIn("| Ar | 1 | 30m |", report)
+        self.assertIn("| Bc | 1 | 30m |", report)
+        self.assertIn("| Tango | 1 | 30m |", report)
         self.assertIn("| Timesheet | 1 | 30m |", report)
         self.assertNotIn("| Can |", report)
         self.assertNotIn("| Change |", report)
@@ -148,16 +167,16 @@ class CalendarAggregatorTests(unittest.TestCase):
                 {
                     "projects": [
                         {
-                            "name": "CreditRegistry",
+                            "name": "AcmeReg",
                             "status": "active",
                             "summary": "",
                             "value_level": None,
                             "priority_tier": 1,
                             "risk_level": None,
-                            "repos": ["credit-registry"],
-                            "tags": ["#project-credit-registry"],
+                            "repos": ["acme-reg"],
+                            "tags": ["#project-acme-reg"],
                             "custom_fields": {
-                                "calendar_aliases": ["CR"],
+                                "calendar_aliases": ["AR"],
                             },
                         }
                     ]
@@ -166,10 +185,10 @@ class CalendarAggregatorTests(unittest.TestCase):
 
             matchers = load_project_matchers(database_path)
 
-        self.assertEqual(classify_event_project("CR - CC", matchers), "CreditRegistry")
+        self.assertEqual(classify_event_project("AR - CC", matchers), "AcmeReg")
         self.assertEqual(
-            classify_event_project("Work on credit registry backlog", matchers),
-            "CreditRegistry",
+            classify_event_project("Work on acme reg backlog", matchers),
+            "AcmeReg",
         )
 
     def test_weekly_report_prefers_registry_project_names_before_heuristics(self) -> None:
@@ -189,26 +208,26 @@ class CalendarAggregatorTests(unittest.TestCase):
                 {
                     "projects": [
                         {
-                            "name": "CreditRegistry",
+                            "name": "AcmeReg",
                             "status": "active",
                             "summary": "",
                             "value_level": None,
                             "priority_tier": 1,
                             "risk_level": None,
-                            "repos": ["credit-registry"],
-                            "tags": ["#project-credit-registry"],
-                            "custom_fields": {"calendar_aliases": ["CR"]},
+                            "repos": ["acme-reg"],
+                            "tags": ["#project-acme-reg"],
+                            "custom_fields": {"calendar_aliases": ["AR"]},
                         },
                         {
-                            "name": "NeoNook",
+                            "name": "DeltaApp",
                             "status": "active",
                             "summary": "",
                             "value_level": None,
                             "priority_tier": 2,
                             "risk_level": None,
-                            "repos": ["neo-nook"],
-                            "tags": ["#project-neo-nook"],
-                            "custom_fields": {"calendar_aliases": ["NN"]},
+                            "repos": ["delta-app"],
+                            "tags": ["#project-delta-app"],
+                            "custom_fields": {"calendar_aliases": ["DA"]},
                         },
                     ]
                 },
@@ -225,7 +244,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                 [
                     (
                         "event-1",
-                        "CR - CC",
+                        "AR - CC",
                         "2026-03-31T16:00:00+00:00",
                         "2026-03-31T16:30:00+00:00",
                         "",
@@ -237,7 +256,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                     ),
                     (
                         "event-2",
-                        "NN - iOS React Native library update",
+                        "DA - iOS React Native library update",
                         "2026-04-01T16:00:00+00:00",
                         "2026-04-01T17:00:00+00:00",
                         "",
@@ -249,7 +268,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                     ),
                     (
                         "event-3",
-                        "Test new Smart Coupons code",
+                        "Test new Tango Widgets code",
                         "2026-04-02T16:00:00+00:00",
                         "2026-04-02T16:30:00+00:00",
                         "",
@@ -270,11 +289,11 @@ class CalendarAggregatorTests(unittest.TestCase):
                 config=config,
             )
 
-        self.assertIn("| CreditRegistry | 1 | 30m |", report)
-        self.assertIn("| NeoNook | 1 | 1h |", report)
-        self.assertIn("| Smart | 1 | 30m |", report)
-        self.assertNotIn("| Cr |", report)
-        self.assertNotIn("| Nn |", report)
+        self.assertIn("| AcmeReg | 1 | 30m |", report)
+        self.assertIn("| DeltaApp | 1 | 1h |", report)
+        self.assertIn("| Tango | 1 | 30m |", report)
+        self.assertNotIn("| Ar |", report)
+        self.assertNotIn("| Da |", report)
 
     def test_weekly_report_uses_calendar_config_projects_when_registry_is_missing(self) -> None:
         config = CalendarConfig(
@@ -283,8 +302,8 @@ class CalendarAggregatorTests(unittest.TestCase):
             aggregator_skip_words=[],
             timezone="America/Los_Angeles",
             projects=[
-                CalendarProject(name="Bailiwik", aliases=["BW"]),
-                CalendarProject(name="Normans Nursery", aliases=["NN", "Norman's Nursery"]),
+                CalendarProject(name="BetaCorp", aliases=["BC"]),
+                CalendarProject(name="GammaGardens", aliases=["GG", "Gamma's Gardens"]),
             ],
             hours_format="hm",
         )
@@ -303,7 +322,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                 [
                     (
                         "event-1",
-                        "BW - change account workflow",
+                        "BC - change account workflow",
                         "2026-03-31T16:00:00+00:00",
                         "2026-03-31T16:30:00+00:00",
                         "",
@@ -315,7 +334,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                     ),
                     (
                         "event-2",
-                        "NN - iOS React Native library update",
+                        "GG - iOS React Native library update",
                         "2026-04-01T16:00:00+00:00",
                         "2026-04-01T17:00:00+00:00",
                         "",
@@ -336,10 +355,10 @@ class CalendarAggregatorTests(unittest.TestCase):
                 config=config,
             )
 
-        self.assertIn("| Bailiwik | 1 | 30m |", report)
-        self.assertIn("| Normans Nursery | 1 | 1h |", report)
-        self.assertNotIn("| Bw |", report)
-        self.assertNotIn("| Nn |", report)
+        self.assertIn("| BetaCorp | 1 | 30m |", report)
+        self.assertIn("| GammaGardens | 1 | 1h |", report)
+        self.assertNotIn("| Bc |", report)
+        self.assertNotIn("| Gg |", report)
 
 
 if __name__ == "__main__":

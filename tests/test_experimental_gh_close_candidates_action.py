@@ -23,7 +23,7 @@ class ExperimentalCloseCandidatesActionTests(unittest.TestCase):
 
     def test_explicit_close_keyword_is_high_confidence(self) -> None:
         report = self.module.build_close_candidates_report(
-            "BinoidCBD/universal-child-theme-oct-2024",
+            "AcmeOrg/sample-child-theme-oct-2024",
             "development",
             [
                 {
@@ -54,7 +54,7 @@ class ExperimentalCloseCandidatesActionTests(unittest.TestCase):
 
     def test_branch_plus_issue_reference_can_be_medium_or_high(self) -> None:
         report = self.module.build_close_candidates_report(
-            "BinoidCBD/universal-child-theme-oct-2024",
+            "AcmeOrg/sample-child-theme-oct-2024",
             "development",
             [
                 {

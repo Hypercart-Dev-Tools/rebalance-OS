@@ -39,13 +39,13 @@ def _seed_dashboard_db(database_path: Path) -> None:
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
-                "Binoid",
+                "AcmeCorp",
                 "active",
                 "High-priority storefront and SEO work.",
                 None,
                 1,
                 "medium",
-                json.dumps(["BinoidCBD/universal-child-theme-oct-2024"]),
+                json.dumps(["AcmeOrg/sample-child-theme-oct-2024"]),
                 json.dumps(["source:github"]),
                 json.dumps({}),
             ),
@@ -59,7 +59,7 @@ def _seed_dashboard_db(database_path: Path) -> None:
             """,
             (
                 "tester",
-                "BinoidCBD/universal-child-theme-oct-2024",
+                "AcmeOrg/sample-child-theme-oct-2024",
                 "2999-04-28",
                 7,
                 3,
@@ -82,7 +82,7 @@ def _seed_dashboard_db(database_path: Path) -> None:
             [
                 (
                     "evt-1",
-                    "Binoid sprint review",
+                    "AcmeCorp sprint review",
                     "2026-04-28T10:00:00-07:00",
                     "2026-04-28T11:30:00-07:00",
                     "",
@@ -180,7 +180,7 @@ class DashboardRenderCliTests(unittest.TestCase):
             self.assertIn("_Last generated:", note_text)
             self.assertIn("Added inferred project registry.", note_text)
             self.assertIn("Generate the first dashboard note.", note_text)
-            self.assertIn("### Binoid", note_text)
+            self.assertIn("### AcmeCorp", note_text)
             self.assertIn("Mystery sync", note_text)
             self.assertIn("Dashboard written to", result.output)
 

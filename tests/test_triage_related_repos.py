@@ -82,7 +82,7 @@ class TriageRelatedReposTests(unittest.TestCase):
                     repo=central,
                     item_type="issue",
                     number=820,
-                    title="Tracking: Woo Order Monitor HPOS warning on Binoid",
+                    title="Tracking: Woo Order Monitor HPOS warning on AcmeCorp",
                     body=f"External implementation: https://github.com/{related}/issues/27",
                     updated_at="2026-05-05T17:00:00Z",
                 )

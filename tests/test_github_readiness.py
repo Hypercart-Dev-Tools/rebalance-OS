@@ -15,7 +15,7 @@ class GitHubReadinessTests(unittest.TestCase):
             db_path = Path(tmpdir) / "rebalance.db"
             result = infer_github_release_readiness(
                 database_path=db_path,
-                repo_full_name="BinoidCBD/universal-child-theme-oct-2024",
+                repo_full_name="AcmeOrg/sample-child-theme-oct-2024",
             )
 
             self.assertEqual(result.status, "no_local_data")
@@ -35,7 +35,7 @@ class GitHubReadinessTests(unittest.TestCase):
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        "BinoidCBD/universal-child-theme-oct-2024",
+                        "AcmeOrg/sample-child-theme-oct-2024",
                         "development",
                         "2026-04-17T12:00:00Z",
                         "2026-04-17T12:30:00Z",
@@ -54,7 +54,7 @@ class GitHubReadinessTests(unittest.TestCase):
                         VALUES (?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            "BinoidCBD/universal-child-theme-oct-2024",
+                            "AcmeOrg/sample-child-theme-oct-2024",
                             name,
                             f"sha-{name}",
                             1,
@@ -71,7 +71,7 @@ class GitHubReadinessTests(unittest.TestCase):
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        "BinoidCBD/universal-child-theme-oct-2024",
+                        "AcmeOrg/sample-child-theme-oct-2024",
                         6,
                         "Silver",
                         "Next release train",
@@ -105,7 +105,7 @@ class GitHubReadinessTests(unittest.TestCase):
                         VALUES (?, 'issue', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            "BinoidCBD/universal-child-theme-oct-2024",
+                            "AcmeOrg/sample-child-theme-oct-2024",
                             number,
                             f"ISSUE_{number}",
                             number + 1000,
@@ -163,7 +163,7 @@ class GitHubReadinessTests(unittest.TestCase):
                         VALUES (?, 'pull_request', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         """,
                         (
-                            "BinoidCBD/universal-child-theme-oct-2024",
+                            "AcmeOrg/sample-child-theme-oct-2024",
                             number,
                             f"PR_{number}",
                             number + 2000,
@@ -208,7 +208,7 @@ class GitHubReadinessTests(unittest.TestCase):
                         VALUES (?, 'pull_request', ?, 'issue', ?, ?)
                         """,
                         (
-                            "BinoidCBD/universal-child-theme-oct-2024",
+                            "AcmeOrg/sample-child-theme-oct-2024",
                             pr_number,
                             issue_number,
                             "closes",
@@ -223,7 +223,7 @@ class GitHubReadinessTests(unittest.TestCase):
                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        "BinoidCBD/universal-child-theme-oct-2024",
+                        "AcmeOrg/sample-child-theme-oct-2024",
                         5001,
                         "v3.5.2",
                         "v3.5.2",
@@ -241,7 +241,7 @@ class GitHubReadinessTests(unittest.TestCase):
 
             result = infer_github_release_readiness(
                 database_path=db_path,
-                repo_full_name="BinoidCBD/universal-child-theme-oct-2024",
+                repo_full_name="AcmeOrg/sample-child-theme-oct-2024",
                 milestone_title="Silver",
             )
 

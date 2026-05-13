@@ -55,7 +55,7 @@ class ProjectInferenceTests(unittest.TestCase):
                 """,
                 (
                     "tester",
-                    "BinoidCBD/universal-child-theme-oct-2024",
+                    "AcmeTeam/sample-child-theme-oct-2024",
                     "2026-04-28",
                     5,
                     5,
@@ -100,7 +100,7 @@ class ProjectInferenceTests(unittest.TestCase):
                 [
                     (
                         "evt-1",
-                        "Post Binoid Kanban screenshot for Elan",
+                        "Post Acme Kanban screenshot for Charlie",
                         "2026-04-28T11:00:00-07:00",
                         "2026-04-28T11:15:00-07:00",
                         "",
@@ -112,7 +112,7 @@ class ProjectInferenceTests(unittest.TestCase):
                     ),
                     (
                         "evt-2",
-                        "LTVera Weekly",
+                        "BetaReport Weekly",
                         "2026-04-24T14:00:00-07:00",
                         "2026-04-24T14:25:00-07:00",
                         "",
@@ -124,7 +124,7 @@ class ProjectInferenceTests(unittest.TestCase):
                     ),
                     (
                         "evt-3",
-                        "LTVera Weekly",
+                        "BetaReport Weekly",
                         "2026-04-17T14:00:00-07:00",
                         "2026-04-17T14:25:00-07:00",
                         "",
@@ -147,19 +147,19 @@ class ProjectInferenceTests(unittest.TestCase):
 
         self.assertEqual(summary.github_backed_count, 1)
         names = [project["name"] for project in projects]
-        self.assertIn("Binoid", names)
-        self.assertIn("LTVera", names)
+        self.assertIn("Acme", names)
+        self.assertIn("BetaReport", names)
         self.assertNotIn("Dlt", " ".join(names))
 
         by_name = {project["name"]: project for project in projects}
         self.assertEqual(
-            by_name["Binoid"]["repos"],
-            ["BinoidCBD/universal-child-theme-oct-2024"],
+            by_name["Acme"]["repos"],
+            ["AcmeTeam/sample-child-theme-oct-2024"],
         )
-        self.assertIn("source:github", by_name["Binoid"]["tags"])
-        self.assertIn("source:calendar", by_name["Binoid"]["tags"])
-        self.assertEqual(by_name["LTVera"]["repos"], [])
-        self.assertIn("source:calendar", by_name["LTVera"]["tags"])
+        self.assertIn("source:github", by_name["Acme"]["tags"])
+        self.assertIn("source:calendar", by_name["Acme"]["tags"])
+        self.assertEqual(by_name["BetaReport"]["repos"], [])
+        self.assertIn("source:calendar", by_name["BetaReport"]["tags"])
 
     def test_sync_replaces_stale_inferred_rows(self) -> None:
         db_path = Path(self._tmp.name) / "rebalance.db"

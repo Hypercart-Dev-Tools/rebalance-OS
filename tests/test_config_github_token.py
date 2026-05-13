@@ -145,20 +145,22 @@ class GitHubRelatedReposTests(unittest.TestCase):
 
     def test_round_trip_normalizes_dedupes_sorts_and_excludes_self(self) -> None:
         set_github_related_repos(
-            "BinoidCBD/universal-child-theme-oct-2024",
+            "AcmeOrg/sample-child-theme-oct-2024",
             [
                 "kissplugins/KISS-woo-order-monitoring-alerts",
-                "BinoidCBD/universal-child-theme-oct-2024",
+                "AcmeOrg/sample-child-theme-oct-2024",
                 "KISSPLUGINS/kiss-woo-order-monitoring-alerts",
             ],
         )
+        # Lowercase query verifies case-insensitive lookup against the
+        # mixed-case stored key.
         self.assertEqual(
-            get_github_related_repos("binoidcbd/universal-child-theme-oct-2024"),
+            get_github_related_repos("acmeorg/sample-child-theme-oct-2024"),
             ["kissplugins/kiss-woo-order-monitoring-alerts"],
         )
 
     def test_add_remove_related_repo(self) -> None:
-        central = "BinoidCBD/universal-child-theme-oct-2024"
+        central = "AcmeOrg/sample-child-theme-oct-2024"
         related = "kissplugins/KISS-woo-fast-search"
 
         self.assertTrue(add_github_related_repo(central, related))

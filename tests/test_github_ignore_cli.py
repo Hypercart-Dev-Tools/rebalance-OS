@@ -42,7 +42,7 @@ class GitHubIgnoreCliTests(unittest.TestCase):
         self.assertIn("dlt-hub/dlt", listed.stdout)
 
     def test_add_list_and_remove_related_repo(self) -> None:
-        central = "BinoidCBD/universal-child-theme-oct-2024"
+        central = "AcmeOrg/sample-child-theme-oct-2024"
         related = "kissplugins/KISS-woo-order-monitoring-alerts"
 
         result = self.runner.invoke(

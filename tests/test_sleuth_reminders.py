@@ -24,7 +24,7 @@ def _fixture_reminder(**overrides):
         "isActive": True,
         "createdOn": "2026-04-20T09:00:00Z",
         "shouldPostOn": "2026-04-22T15:30:00Z",
-        "reminderMessageText": "Review the Binoid PR",
+        "reminderMessageText": "Review the AcmeCorp PR",
         "ignoreSnooze": False,
         "assigneeId": "U123",
         "originalSenderId": "U999",

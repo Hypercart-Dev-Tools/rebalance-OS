@@ -63,11 +63,11 @@ class CalendarCreateEventCliTests(unittest.TestCase):
                     [
                         "calendar-create-event",
                         "--title",
-                        "Verify Binoid BQ candidate + staging dataset auto-deletion (2026-04-13 clone+swap cleanup)",
+                        "Verify AcmeCorp BQ candidate + staging dataset auto-deletion (2026-04-13 clone+swap cleanup)",
                         "--date",
                         "2026-04-21",
                         "--description",
-                        "Auto-cleanup expirationTime on Binoid candidate datasets is 2026-04-21 ~18:37 UTC.",
+                        "Auto-cleanup expirationTime on AcmeCorp candidate datasets is 2026-04-21 ~18:37 UTC.",
                         "--calendar-id",
                         "primary",
                         "--dry-run",
@@ -77,7 +77,7 @@ class CalendarCreateEventCliTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["calendar_id"], "primary")
-        self.assertEqual(payload["summary"], "Verify Binoid BQ candidate + staging dataset auto-deletion (2026-04-13 clone+swap cleanup)")
+        self.assertEqual(payload["summary"], "Verify AcmeCorp BQ candidate + staging dataset auto-deletion (2026-04-13 clone+swap cleanup)")
         self.assertEqual(payload["start_time"], "2026-04-21T00:00:00-07:00")
         self.assertEqual(payload["end_time"], "2026-04-22T00:00:00-07:00")
         self.assertEqual(payload["timezone_name"], "America/Los_Angeles")

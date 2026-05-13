@@ -7,6 +7,7 @@ import unittest
 from datetime import date
 from pathlib import Path
 
+from rebalance.ingest import config as config_module
 from rebalance.ingest.calendar import ensure_calendar_schema
 from rebalance.ingest.calendar_config import CalendarConfig, CalendarProject
 from rebalance.ingest.daily_report import (
@@ -21,6 +22,36 @@ from rebalance.ingest.weekly_report import (
     generate_weekly_report,
     week_note_filename,
 )
+
+
+# ── Module-level isolation from operator-local rbos.config ──────────────────
+#
+# `load_project_matchers` (called transitively by generate_daily_report and
+# generate_weekly_report) reads `project_priority_rules` from
+# `config_module.CONFIG_PATH`. The operator's real `temp/rbos.config` may
+# contain real client priority rules that would otherwise leak into the
+# classifier corpus and bend the aggregator output away from the fictional
+# project names this file pins via CalendarProject(...). Redirecting
+# CONFIG_PATH at a nonexistent temp file makes `_read_config` return `{}`,
+# which makes `get_project_priority_rules` return `[]`, which keeps the tests
+# fully isolated.
+
+_TMP_CONFIG_DIR: tempfile.TemporaryDirectory | None = None
+_ORIG_CONFIG_PATH: Path | None = None
+
+
+def setUpModule() -> None:
+    global _TMP_CONFIG_DIR, _ORIG_CONFIG_PATH
+    _TMP_CONFIG_DIR = tempfile.TemporaryDirectory()
+    _ORIG_CONFIG_PATH = config_module.CONFIG_PATH
+    config_module.CONFIG_PATH = Path(_TMP_CONFIG_DIR.name) / "rbos.config"
+
+
+def tearDownModule() -> None:
+    if _ORIG_CONFIG_PATH is not None:
+        config_module.CONFIG_PATH = _ORIG_CONFIG_PATH
+    if _TMP_CONFIG_DIR is not None:
+        _TMP_CONFIG_DIR.cleanup()
 
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
@@ -47,8 +78,8 @@ def _insert_events(database_path: Path, events: list[tuple], calendar_id: str = 
 
 
 SAMPLE_EVENTS = [
-    ("e1", "Binoid - SEO audit", "2026-03-31T17:00:00+00:00", "2026-03-31T19:15:00+00:00"),
-    ("e2", "CR - CC", "2026-03-31T19:30:00+00:00", "2026-03-31T20:00:00+00:00"),
+    ("e1", "AcmeCorp - SEO audit", "2026-03-31T17:00:00+00:00", "2026-03-31T19:15:00+00:00"),
+    ("e2", "AR - CC", "2026-03-31T19:30:00+00:00", "2026-03-31T20:00:00+00:00"),
     ("e3", "morning prep", "2026-03-31T16:45:00+00:00", "2026-03-31T17:00:00+00:00"),
 ]
 
@@ -164,7 +195,7 @@ class DailyReportTests(unittest.TestCase):
             # All-day event: date-only strings, no timezone
             ("ad1", "Company Holiday", "2026-03-31", "2026-04-01"),
             # Normal timed event
-            ("e1", "Binoid - SEO", "2026-03-31T17:00:00+00:00", "2026-03-31T19:00:00+00:00"),
+            ("e1", "AcmeCorp - SEO", "2026-03-31T17:00:00+00:00", "2026-03-31T19:00:00+00:00"),
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
@@ -196,13 +227,13 @@ class DailyReportTests(unittest.TestCase):
 
 WEEK_EVENTS = [
     # Monday 2026-03-30
-    ("w1", "Binoid - SEO", "2026-03-30T17:00:00+00:00", "2026-03-30T19:00:00+00:00"),
+    ("w1", "AcmeCorp - SEO", "2026-03-30T17:00:00+00:00", "2026-03-30T19:00:00+00:00"),
     # Tuesday 2026-03-31
-    ("w2", "CR - CC", "2026-03-31T17:00:00+00:00", "2026-03-31T18:30:00+00:00"),
+    ("w2", "AR - CC", "2026-03-31T17:00:00+00:00", "2026-03-31T18:30:00+00:00"),
     # Wednesday 2026-04-01
-    ("w3", "Binoid - theme update", "2026-04-01T17:00:00+00:00", "2026-04-01T18:00:00+00:00"),
+    ("w3", "AcmeCorp - theme update", "2026-04-01T17:00:00+00:00", "2026-04-01T18:00:00+00:00"),
     # Thursday 2026-04-02
-    ("w4", "BW - account change", "2026-04-02T17:00:00+00:00", "2026-04-02T17:45:00+00:00"),
+    ("w4", "BC - account change", "2026-04-02T17:00:00+00:00", "2026-04-02T17:45:00+00:00"),
 ]
 
 
@@ -237,7 +268,7 @@ class WeeklyReportTests(unittest.TestCase):
         config = _make_config(
             "decimal",
             projects=[
-                CalendarProject(name="Binoid - Bloomz", aliases=["Binoid"]),
+                CalendarProject(name="AcmeCorp - Mainline", aliases=["AcmeCorp"]),
             ],
         )
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -245,14 +276,14 @@ class WeeklyReportTests(unittest.TestCase):
             _insert_events(db, WEEK_EVENTS)
             report = generate_weekly_report(db, date(2026, 3, 31), config)
 
-        # Binoid: 2h + 1h = 3h
-        self.assertIn("| Binoid - Bloomz | 2 | 3.00h |", report)
+        # AcmeCorp: 2h + 1h = 3h
+        self.assertIn("| AcmeCorp - Mainline | 2 | 3.00h |", report)
 
     def test_weekly_project_aggregator_hm(self) -> None:
         config = _make_config(
             "hm",
             projects=[
-                CalendarProject(name="Binoid - Bloomz", aliases=["Binoid"]),
+                CalendarProject(name="AcmeCorp - Mainline", aliases=["AcmeCorp"]),
             ],
         )
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -260,7 +291,7 @@ class WeeklyReportTests(unittest.TestCase):
             _insert_events(db, WEEK_EVENTS)
             report = generate_weekly_report(db, date(2026, 3, 31), config)
 
-        self.assertIn("| Binoid - Bloomz | 2 | 3h |", report)
+        self.assertIn("| AcmeCorp - Mainline | 2 | 3h |", report)
 
     def test_weekly_report_empty_week(self) -> None:
         config = _make_config("decimal")
@@ -300,7 +331,7 @@ class WeeklyReportTests(unittest.TestCase):
         config = _make_config(
             "decimal",
             projects=[
-                CalendarProject(name="Binoid - Bloomz", aliases=["Binoid"]),
+                CalendarProject(name="AcmeCorp - Mainline", aliases=["AcmeCorp"]),
             ],
         )
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -179,10 +179,10 @@ class NeedsReviewTests(unittest.TestCase):
 
     def test_matched_events_not_in_needs_review(self) -> None:
         config = _make_config(
-            projects=[CalendarProject(name="Binoid - Bloomz", aliases=["Binoid"])],
+            projects=[CalendarProject(name="AcmeCorp - Mainline", aliases=["AcmeCorp"])],
         )
         events = [
-            ("e1", "Binoid - SEO audit", "2026-04-01T17:00:00+00:00", "2026-04-01T18:00:00+00:00"),
+            ("e1", "AcmeCorp - SEO audit", "2026-04-01T17:00:00+00:00", "2026-04-01T18:00:00+00:00"),
         ]
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
@@ -216,13 +216,13 @@ class ReviewDecisionsTests(unittest.TestCase):
             path = Path(tmpdir) / "decisions.json"
             save_review_decision("Task A", "include", path)
             save_review_decision("Task B", "exclude", path)
-            save_review_decision("Task C", "project:Binoid", path)
+            save_review_decision("Task C", "project:AcmeCorp", path)
             decisions = load_review_decisions(path)
 
         self.assertEqual(len(decisions), 3)
         self.assertEqual(decisions["task a"], "include")
         self.assertEqual(decisions["task b"], "exclude")
-        self.assertEqual(decisions["task c"], "project:Binoid")
+        self.assertEqual(decisions["task c"], "project:AcmeCorp")
 
 
 if __name__ == "__main__":

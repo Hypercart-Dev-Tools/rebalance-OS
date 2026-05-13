@@ -20,7 +20,7 @@ def _fake_github_api(url: str) -> object:
     if "page=2" in url:
         return []
 
-    if url == "https://api.github.com/repos/BinoidCBD/universal-child-theme-oct-2024":
+    if url == "https://api.github.com/repos/AcmeOrg/sample-child-theme-oct-2024":
         return {
             "default_branch": "development",
             "pushed_at": "2026-04-17T13:00:00Z",
@@ -262,7 +262,7 @@ class GitHubKnowledgeTests(unittest.TestCase):
             db_path = Path(tmpdir) / "rebalance.db"
             result = sync_github_repo(
                 database_path=db_path,
-                repo_full_name="BinoidCBD/universal-child-theme-oct-2024",
+                repo_full_name="AcmeOrg/sample-child-theme-oct-2024",
                 token="ghp_test",
                 since_days=30,
                 api_get_json=_fake_github_api,
@@ -283,7 +283,7 @@ class GitHubKnowledgeTests(unittest.TestCase):
                     FROM github_repo_meta
                     WHERE repo_full_name = ?
                     """,
-                    ("BinoidCBD/universal-child-theme-oct-2024",),
+                    ("AcmeOrg/sample-child-theme-oct-2024",),
                 ).fetchone()
                 self.assertIsNotNone(repo_meta)
                 self.assertEqual(repo_meta["default_branch"], "development")
@@ -297,7 +297,7 @@ class GitHubKnowledgeTests(unittest.TestCase):
                     ORDER BY name
                     """
                     ,
-                    ("BinoidCBD/universal-child-theme-oct-2024",),
+                    ("AcmeOrg/sample-child-theme-oct-2024",),
                 ).fetchall()
                 self.assertEqual(len(branch_rows), 2)
                 self.assertEqual(branch_rows[0]["name"], "development")
@@ -423,7 +423,7 @@ class GitHubKnowledgeTests(unittest.TestCase):
             db_path = Path(tmpdir) / "rebalance.db"
             sync_github_repo(
                 database_path=db_path,
-                repo_full_name="BinoidCBD/universal-child-theme-oct-2024",
+                repo_full_name="AcmeOrg/sample-child-theme-oct-2024",
                 token="ghp_test",
                 since_days=30,
                 api_get_json=_fake_github_api,
@@ -440,13 +440,13 @@ class GitHubKnowledgeTests(unittest.TestCase):
             results = query_github_documents(
                 database_path=db_path,
                 query_text="Which PR handles nonce security for checkout?",
-                repo_full_name="BinoidCBD/universal-child-theme-oct-2024",
+                repo_full_name="AcmeOrg/sample-child-theme-oct-2024",
                 top_k=3,
                 model_name="fake-model",
                 embed_texts=_fake_embed_texts,
             )
             self.assertGreaterEqual(len(results), 1)
-            self.assertEqual(results[0]["repo_full_name"], "BinoidCBD/universal-child-theme-oct-2024")
+            self.assertEqual(results[0]["repo_full_name"], "AcmeOrg/sample-child-theme-oct-2024")
             self.assertIn(results[0]["source_number"], {101, 202})
             self.assertGreater(results[0]["similarity_score"], 0.0)
 
