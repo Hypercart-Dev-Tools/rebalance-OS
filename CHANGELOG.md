@@ -37,6 +37,26 @@ If you already had launchd jobs or ask-self wrappers set up against the previous
 
 No DB or vault migration is required — only the install paths above change behavior.
 
+## [0.28.3] - 2026-05-13
+
+### Added
+
+- Single-command triage wrapper [experimental/triage/run_triage.py](experimental/triage/run_triage.py). Wraps the multi-step triage flow (github-sync, sleuth-sync, `spike.py`) into one invocation with flags for `--sync`, `--publish`, and `--dry-run`. Existing direct `spike.py` workflows are unchanged.
+- Two new triage buckets in [experimental/triage/spike.py](experimental/triage/spike.py): **close candidates** (scores open issues against merged PRs to surface issues likely already fixed) and **stale issues** (uses last-comment dates instead of `updated_at`, since the latter is bumped by edits/labels/assignee changes that don't indicate progress). A notes-section counter also surfaces orphaned remote branches whose `head_sha` matches a merged PR.
+
+### Changed
+
+- `load_project_matchers(db, config=None, *, priority_rules=None)` and `_build_matchers_from_priority_rules(rules=None)` now accept an explicit `priority_rules` override. `None` (default) preserves production behavior — read operator-local `project_priority_rules` from `temp/rbos.config`. `[]` skips operator rules entirely; a list of rule dicts injects test fixtures. Previously, any test exercising the classifier (directly or via `generate_daily_report` / `generate_weekly_report`) inherited whatever brand rules happened to be on the host machine, making test outcomes depend on the operator's local config. `tests/test_calendar_reports.py` drops its `setUpModule`/`tearDownModule` pair as a result; `tests/test_calendar_aggregator.py` shrinks similarly.
+
+### Fixed
+
+- The triage spike's **PRs unblocked** bucket now filters out merged PRs, requires CI-green status, excludes drafts, and adds a staleness warning when activity stalls. Previously merged PRs could appear because the filter relied on `state` alone.
+- The triage spike's **release blockers** bucket now joins `github_milestones` to surface due dates and flags overdue items. Previously the rendered table had no time signal.
+- The triage spike's **perf concrete** bucket now reads `labels_json` and warns on close-intent labels (`wontfix`, `duplicate`, etc.), reducing false-positive recommendations.
+- `bucket_client_visible` in [experimental/triage/spike.py](experimental/triage/spike.py) now handles a missing `sleuth_reminders` table gracefully — catches `sqlite3.OperationalError` and returns an empty bucket instead of crashing the whole triage run when Sleuth hasn't been synced on this checkout.
+- Eight test-suite failures carried over from pre-0.28 main are now resolved, restoring a fully green `pytest tests/` from a fresh clone.
+- Real client/org names were scrubbed from 15 test fixture files (`Binoid` → `AcmeCorp`, `Bloomz` → `Mainline`, `CreditRegistry` → `AcmeReg`, etc., with longest-match-first to preserve substring relationships). Test fixtures no longer advertise real client relationships, and the suite is portable to anyone running it without the operator's `temp/rbos.config` priority rules.
+
 ## [0.28.2] - 2026-05-13
 
 ### Changed
