@@ -145,13 +145,29 @@ def _parse_from(headers: dict[str, str]) -> tuple[str, str]:
 
 
 def _is_insufficient_scope_error(exc: Exception) -> bool:
-    """Detect Gmail's 403 insufficient-scope response."""
+    """Detect Gmail's 403 insufficient-scope response conservatively."""
     status = getattr(getattr(exc, "resp", None), "status", None)
     try:
         status_int = int(status) if status is not None else None
     except (TypeError, ValueError):
         status_int = None
-    return status_int == 403
+    if status_int != 403:
+        return False
+
+    content = getattr(exc, "content", b"")
+    if isinstance(content, bytes):
+        body = content.decode("utf-8", errors="ignore").lower()
+    else:
+        body = str(content).lower()
+
+    return any(
+        marker in body
+        for marker in (
+            "insufficient authentication scopes",
+            "access_token_scope_insufficient",
+            "insufficientpermissions",
+        )
+    )
 
 
 def sync_gmail(

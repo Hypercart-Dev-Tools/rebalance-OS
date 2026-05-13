@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.27.1] - 2026-05-12
+
+### Fixed
+
+- Gmail 403 handling is now conservative: only true insufficient-scope responses are rewritten into the `gcloud auth application-default login` remediation message. Other 403s, such as a disabled Gmail API, surface their original upstream error instead of being mislabeled as a scope problem.
+
 ## [0.27.0] - 2026-05-12
 
 ### Added

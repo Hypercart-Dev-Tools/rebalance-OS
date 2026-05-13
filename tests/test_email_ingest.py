@@ -234,6 +234,7 @@ class SyncGmailTests(unittest.TestCase):
 
         class _Http403Error(Exception):
             resp = _FakeResp()
+            content = b'{"error":{"message":"Request had insufficient authentication scopes.","status":"PERMISSION_DENIED"}}'
 
         class _FailingMessages:
             def list(self, **_kwargs):
@@ -257,6 +258,34 @@ class SyncGmailTests(unittest.TestCase):
         message = str(ctx.exception)
         self.assertIn("gcloud auth application-default login", message)
         self.assertIn("gmail.readonly", message)
+
+    def test_other_403s_are_not_rewritten_as_scope_errors(self) -> None:
+        class _FakeResp:
+            status = 403
+
+        class _Http403Error(Exception):
+            resp = _FakeResp()
+            content = b'{"error":{"message":"Gmail API has not been used in project yet","status":"PERMISSION_DENIED"}}'
+
+        class _FailingMessages:
+            def list(self, **_kwargs):
+                class _Req:
+                    def execute(self_inner):
+                        raise _Http403Error("api disabled")
+                return _Req()
+
+        class _FailingUsers:
+            def messages(self):
+                return _FailingMessages()
+
+        class _FailingService:
+            def users(self):
+                return _FailingUsers()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with self.assertRaises(_Http403Error):
+                sync_gmail(db_path, query_filter="in:inbox", service=_FailingService())
 
 
 # ---------------------------------------------------------------------------
