@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.27.1] - 2026-05-12
+
+### Fixed
+
+- Gmail 403 handling is now conservative: only true insufficient-scope responses are rewritten into the `gcloud auth application-default login` remediation message. Other 403s, such as a disabled Gmail API, surface their original upstream error instead of being mislabeled as a scope problem.
+
+## [0.27.0] - 2026-05-12
+
+### Added
+
+- Gmail inbox ingest via `refresh_index(scope=["email"])`. Phase 1 syncs the newest 100 inbox messages, stores message metadata plus Gmail-provided snippets in SQLite, and backfills them into the unified semantic index so email participates in default `semantic_query()` results.
+- New `gmail_query_filter` config key in `temp/rbos.config` to narrow the Gmail fetch scope without code changes. Defaults to `in:inbox`.
+- `index_status()` now reports an `email` source block with message count, last sync time, and newest received timestamp.
+
+### Fixed
+
+- Gmail auth failures caused by missing `gmail.readonly` scope now return an explicit remediation message with the exact `gcloud auth application-default login` command to rerun.
+
 ## [0.26.0] - 2026-05-12
 
 ### Added

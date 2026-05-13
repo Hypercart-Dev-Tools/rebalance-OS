@@ -144,7 +144,7 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [ ] Weekly rebalance note generation with verdicts, evidence, and next moves per project
 - [ ] Attention ledger contract (`project_targets`, `attention_events`, `attention_feedback`, rollups)
 - [ ] Narrower verdict-first MCP surface (`weekly_rebalance`, `project_attention`, unattributed review)
-- [ ] Email integration (Gmail API, starred/important threads only, forward-only)
+- [x] Gmail inbox integration (newest 100 inbox messages, semantic participation via subject + snippet)
 - [ ] Slack integration beyond reminder/task signals
 - [ ] Email → project auto-correlation (alias map + co-occurrence)
 
@@ -265,7 +265,45 @@ Edit `temp/calendar_config.json` with your preferences:
 
 For the full guide — including team setup, Claude Code prompts, and project definitions — see [GOOGLE_CALENDAR.md](./GOOGLE_CALENDAR.md).
 
-### Step 5 — Start using with Claude Code
+### Step 5 — Connect Gmail (optional)
+
+The Gmail ingest uses Google Application Default Credentials and stores
+message metadata plus Gmail-provided snippets only. It does not parse full
+message bodies in Phase 1.
+
+**5a. Enable the Gmail API once**
+
+```bash
+gcloud services enable gmail.googleapis.com
+```
+
+**5b. Authorize this device**
+
+```bash
+gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/cloud-platform
+```
+
+This stores the token at `~/.config/gcloud/application_default_credentials.json`.
+
+**5c. Optional: narrow the inbox query**
+
+Add a `gmail_query_filter` key to `temp/rbos.config`. Example:
+
+```json
+{
+  "gmail_query_filter": "in:inbox -category:promotions -category:social"
+}
+```
+
+If unset, rebalance defaults to `in:inbox`.
+
+**5d. Sync and verify**
+
+Call the MCP refresh entry point with `scope=["email"]`, then confirm the
+`email` block appears in `index_status()` and email hits show up in
+`semantic_query()`.
+
+### Step 6 — Start using with Claude Code
 
 The `.mcp.json` at the project root auto-registers the MCP server. Open the project in Claude Code:
 

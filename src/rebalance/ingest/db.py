@@ -240,6 +240,40 @@ def ensure_calendar_schema(conn: sqlite3.Connection) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Email schema
+# ---------------------------------------------------------------------------
+
+
+def ensure_email_schema(conn: sqlite3.Connection) -> None:
+    """Create email_messages table if it doesn't exist.
+
+    Phase 1 stores metadata + Gmail-provided snippet only — no MIME body
+    parsing. ``message_id`` is Gmail's globally unique id; ``INSERT OR
+    REPLACE`` keyed on this PK gives upsert behavior across runs.
+    """
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS email_messages (
+            message_id      TEXT PRIMARY KEY,
+            thread_id       TEXT,
+            from_address    TEXT,
+            from_name       TEXT,
+            subject         TEXT,
+            snippet         TEXT,
+            received_at     TEXT,
+            labels_json     TEXT,
+            synced_at       TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_email_received ON email_messages(received_at)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_email_thread ON email_messages(thread_id)"
+    )
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
 # GitHub activity schema
 # ---------------------------------------------------------------------------
 

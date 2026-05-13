@@ -511,11 +511,14 @@ def create_server(database_path: Path) -> FastMCP:
 
         Args:
             scope: Any combination of "vault", "github", "calendar", "sleuth",
-                "semantic", or "all". Defaults to ["all"].
+                "email", "semantic", or "all". Defaults to ["all"].
                 - vault: ingest vault notes -> embed chunks -> semantic backfill+embed (vault)
                 - github: github-scan -> sync artifacts per repo -> embed -> semantic backfill+embed (github)
                 - calendar: sync Google Calendar events
                 - sleuth: pull Slack/Sleuth reminders
+                - email: sync newest-100 inbox messages from Gmail (ADC auth)
+                  and backfill them into the semantic index. Configure scope
+                  via ``gmail_query_filter`` in temp/rbos.config.
                 - semantic: re-run unified backfill+embed only (assumes upstream syncs done)
             vault_path: Optional override; falls back to configured vault path.
             since_days: Lookback window for github-scan and calendar-sync (default 30).
@@ -643,7 +646,8 @@ def create_server(database_path: Path) -> FastMCP:
     ) -> list[dict[str, Any]]:
         """
         Vector search across the unified semantic index (vault chunks +
-        GitHub issues/PRs/comments in one ranked result set).
+        GitHub issues/PRs/comments, and Gmail subject/snippet documents in
+        one ranked result set).
 
         Prefer this over query_notes / query_github_context when you want a
         single ranked result set across every source. The older tools still
@@ -651,7 +655,8 @@ def create_server(database_path: Path) -> FastMCP:
 
         Args:
             query: Natural language query.
-            sources: Filter to ["vault"], ["github"], or both. Defaults to both.
+            sources: Filter to any of ["vault"], ["github"], ["email"], or
+                any combination of them. Defaults to all indexed sources.
             top_k: Number of results.
         """
         from rebalance.ingest.semantic_index import query as _semantic_query
