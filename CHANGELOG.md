@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.28.1] - 2026-05-13
+
+### Fixed
+
+- Pulse web now labels the main feed as `Recent GitHub activity` and shows one additional GitHub history row in that card.
+- The pulse web/dashboard data layer now treats missing optional SQLite tables such as `calendar_events` and `sleuth_reminders` as empty-state sources instead of aborting the whole page render.
+
 ## [0.28.0] - 2026-05-12
 
 ### Changed

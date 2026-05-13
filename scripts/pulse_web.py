@@ -556,7 +556,7 @@ def render_recent_activity(
         )
     return f"""
     <section class="card activity">
-      <header class="card-head"><h2>Recent activity</h2></header>
+      <header class="card-head"><h2>Recent GitHub activity</h2></header>
       <ol class="activity-list">{body}</ol>
       {foot}
     </section>
@@ -1424,7 +1424,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     obsidian_url = build_obsidian_url(vault_path, goals_path) if goals_path.exists() else None
 
     watched = fetch_watched_summary(now)
-    gh_rows = fetch_recent_github(limit=9)
+    gh_rows = fetch_recent_github(limit=10)
     vault_rows = fetch_vault_recent(limit=6)
     cal_rows = fetch_calendar_upcoming(now, limit=6)
     sleuth_rows = fetch_sleuth_due(limit=6)

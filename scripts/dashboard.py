@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import os
 import json
+import sqlite3
 import select
 import sys
 import termios
@@ -448,17 +449,20 @@ def fetch_vault_recent(limit: int = 6) -> list[dict[str, Any]]:
 def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any]]:
     ignored = [pat.lower() for pat in get_calendar_ignored_summaries()]
     overfetch = max(limit * 3, limit + len(ignored)) if ignored else limit
-    with db_connection(DB_PATH) as conn:
-        rows = conn.execute(
-            """
-            SELECT summary, start_time, end_time, location
-            FROM calendar_events
-            WHERE start_time >= ?
-            ORDER BY start_time ASC
-            LIMIT ?
-            """,
-            (now.isoformat(), overfetch),
-        ).fetchall()
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT summary, start_time, end_time, location
+                FROM calendar_events
+                WHERE start_time >= ?
+                ORDER BY start_time ASC
+                LIMIT ?
+                """,
+                (now.isoformat(), overfetch),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
     out = [dict(r) for r in rows]
     if ignored:
         out = [
@@ -485,42 +489,45 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
         placeholders = ",".join("?" * len(ignored_workspaces))
         ws_clause = f" AND LOWER(workspace_name) NOT IN ({placeholders})"
         ws_params = ignored_workspaces
-    with db_connection(DB_PATH) as conn:
-        if slack_user_id:
-            rows = conn.execute(
-                f"""
-                SELECT reminder_id, reminder_message_text, should_post_on, state,
-                       assignee_id, original_sender_id,
-                       workspace_name, original_channel_id, target_channel_id,
-                       original_message_id, original_thread_ts
-                FROM sleuth_reminders
-                WHERE is_active = 1
-                  AND (should_post_on IS NULL
-                       OR should_post_on > datetime('now', '-2 days'))
-                  AND (assignee_id = ? OR original_sender_id = ?)
-                  {ws_clause}
-                ORDER BY should_post_on ASC NULLS LAST
-                LIMIT ?
-                """,
-                (slack_user_id, slack_user_id, *ws_params, limit),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                f"""
-                SELECT reminder_id, reminder_message_text, should_post_on, state,
-                       assignee_id, original_sender_id,
-                       workspace_name, original_channel_id, target_channel_id,
-                       original_message_id, original_thread_ts
-                FROM sleuth_reminders
-                WHERE is_active = 1
-                  AND (should_post_on IS NULL
-                       OR should_post_on > datetime('now', '-2 days'))
-                  {ws_clause}
-                ORDER BY should_post_on ASC NULLS LAST
-                LIMIT ?
-                """,
-                (*ws_params, limit),
-            ).fetchall()
+    try:
+        with db_connection(DB_PATH) as conn:
+            if slack_user_id:
+                rows = conn.execute(
+                    f"""
+                    SELECT reminder_id, reminder_message_text, should_post_on, state,
+                           assignee_id, original_sender_id,
+                           workspace_name, original_channel_id, target_channel_id,
+                           original_message_id, original_thread_ts
+                    FROM sleuth_reminders
+                    WHERE is_active = 1
+                      AND (should_post_on IS NULL
+                           OR should_post_on > datetime('now', '-2 days'))
+                      AND (assignee_id = ? OR original_sender_id = ?)
+                      {ws_clause}
+                    ORDER BY should_post_on ASC NULLS LAST
+                    LIMIT ?
+                    """,
+                    (slack_user_id, slack_user_id, *ws_params, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    f"""
+                    SELECT reminder_id, reminder_message_text, should_post_on, state,
+                           assignee_id, original_sender_id,
+                           workspace_name, original_channel_id, target_channel_id,
+                           original_message_id, original_thread_ts
+                    FROM sleuth_reminders
+                    WHERE is_active = 1
+                      AND (should_post_on IS NULL
+                           OR should_post_on > datetime('now', '-2 days'))
+                      {ws_clause}
+                    ORDER BY should_post_on ASC NULLS LAST
+                    LIMIT ?
+                    """,
+                    (*ws_params, limit),
+                ).fetchall()
+    except sqlite3.OperationalError:
+        return []
     out = []
     for r in rows:
         row = dict(r)
