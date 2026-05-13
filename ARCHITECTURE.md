@@ -141,7 +141,7 @@ No changes needed to the query layer, LLM synthesis, or MCP transport.
 
 ## Storage Layer
 
-Single SQLite file at the path resolved from `REBALANCE_DB` env var. sqlite-vec extension loaded for vector operations.
+Single SQLite file resolved by `src/rebalance/paths.py::resolve_database_path()`. Default canonical location is `~/Library/Application Support/rebalance-os/rebalance.db` on macOS (or `$XDG_DATA_HOME/rebalance-os/rebalance.db` on Linux); `REBALANCE_DB` env var, an `--database` flag, or a user-config override all win against the canonical path when set. sqlite-vec extension loaded for vector operations.
 
 ### Tables by Domain
 

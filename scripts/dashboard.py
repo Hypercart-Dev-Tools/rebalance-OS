@@ -59,7 +59,12 @@ from rebalance.ingest.index_ops import (  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 
 
-DB_PATH = Path(os.environ.get("REBALANCE_DB", "rebalance.db")).expanduser().resolve()
+try:
+    from rebalance.paths import resolve_database_path as _resolve_db_path
+    DB_PATH = _resolve_db_path()
+except Exception:
+    # Fallback for unusual run contexts where the package isn't importable.
+    DB_PATH = Path(os.environ.get("REBALANCE_DB", "rebalance.db")).expanduser().resolve()
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 LOG_DIR = PROJECT_ROOT / "temp" / "logs"
 TZ = ZoneInfo(os.environ.get("REBALANCE_TZ", "America/Los_Angeles"))

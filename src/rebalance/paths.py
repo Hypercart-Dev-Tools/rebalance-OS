@@ -14,13 +14,26 @@ resolve_database_path(explicit) — find rebalance.db:
     1. ``explicit`` argument if non-None (e.g., ``--database /path/to/db``)
     2. ``REBALANCE_DB`` env var (used by launchd jobs, the MCP server, and
        any operator who exports it in their shell rc)
-    3. Walk up from the current working directory looking for a project
+    3. Canonical app-data location for this platform. On macOS that is
+       ``~/Library/Application Support/rebalance-os/rebalance.db``; on
+       Linux/other it is ``$XDG_DATA_HOME/rebalance-os/rebalance.db`` or
+       ``~/.local/share/rebalance-os/rebalance.db``. This is the default
+       resting place for the DB and is NOT TCC-protected on macOS, which
+       lets GUI clients (e.g., the SwiftUI dashboard) read it without an
+       Allow-prompt dance.
+    4. ``database_path`` field in the user-level config at
+       ``~/.config/rebalance-os/config.json``. Lets operators point at a
+       non-canonical location (e.g., legacy ``~/Documents/...`` checkout)
+       without shell-rc edits.
+    5. Walk up from the current working directory looking for a project
        marker (``.git`` or ``pyproject.toml``); if found, look for
        ``rebalance.db`` next to it. Lets developers run any command from
        anywhere inside the project tree.
-    4. ``database_path`` field in the user-level config at
-       ``~/.config/rebalance-os/config.json``. Lets operators run commands
-       from any directory on the machine without needing shell-rc edits.
+
+Note: ``migrate_database_to_canonical()`` will move an existing DB (plus its
+``-wal`` and ``-shm`` sidecars) from any of the legacy fallback layers into
+the canonical app-data location. Once moved, layer 3 above takes over and the
+other layers exist only for explicit overrides and dev-tree work.
 
 resolve_secret_path(name) — find ``~/secrets/<name>``:
     1. ``REBALANCE_SECRETS_DIR`` env var
@@ -39,6 +52,8 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
+import sys
 from pathlib import Path
 
 # Project markers used by the walk-up step — first match wins.
@@ -50,6 +65,30 @@ USER_CONFIG_DIR: Path = Path(
     os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
 ) / "rebalance-os"
 USER_CONFIG_FILE: Path = USER_CONFIG_DIR / "config.json"
+
+
+def canonical_database_dir() -> Path:
+    """Return the canonical app-data directory for this platform.
+
+    macOS: ``~/Library/Application Support/rebalance-os`` — NOT TCC-protected
+    when an app reads files inside its own bundle's data area, which removes
+    the Allow-prompt friction the SwiftUI dashboard hit when the DB lived
+    under ``~/Documents``.
+
+    Linux/other: ``$XDG_DATA_HOME/rebalance-os`` if set, else
+    ``~/.local/share/rebalance-os``. Matches XDG Base Directory spec.
+    """
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / "rebalance-os"
+    xdg_data = os.environ.get("XDG_DATA_HOME")
+    if xdg_data:
+        return Path(xdg_data).expanduser() / "rebalance-os"
+    return Path.home() / ".local" / "share" / "rebalance-os"
+
+
+def canonical_database_path() -> Path:
+    """Return the canonical full path to rebalance.db for this platform."""
+    return canonical_database_dir() / "rebalance.db"
 
 
 # ---------------------------------------------------------------------------
@@ -118,9 +157,7 @@ def resolve_database_path(explicit: Path | None = None) -> Path:
     if env_value:
         candidates.append((Path(env_value).expanduser().resolve(), "REBALANCE_DB env var"))
 
-    project_root = _walk_up_for_project_root()
-    if project_root is not None:
-        candidates.append((project_root / "rebalance.db", f"project root walk-up ({project_root})"))
+    candidates.append((canonical_database_path().resolve(), "canonical app-data path"))
 
     user_cfg = _load_user_config()
     if isinstance(user_cfg.get("database_path"), str) and user_cfg["database_path"]:
@@ -128,6 +165,10 @@ def resolve_database_path(explicit: Path | None = None) -> Path:
             Path(user_cfg["database_path"]).expanduser().resolve(),
             f"user config ({USER_CONFIG_FILE})",
         ))
+
+    project_root = _walk_up_for_project_root()
+    if project_root is not None:
+        candidates.append((project_root / "rebalance.db", f"project root walk-up ({project_root})"))
 
     for path, _source in candidates:
         if path.exists():
@@ -149,10 +190,114 @@ def build_database_help_message(candidates: list[tuple[Path, str]]) -> str:
         "Fix one of these:\n"
         "  1. Pass --database /path/to/rebalance.db on the command line\n"
         "  2. export REBALANCE_DB=/path/to/rebalance.db (e.g., in ~/.zshrc)\n"
-        "  3. Run from anywhere inside the project tree (any dir under a .git or pyproject.toml)\n"
+        f"  3. Place rebalance.db at the canonical location:\n"
+        f"       {canonical_database_path()}\n"
+        "     (or run ``python -m rebalance.paths --migrate`` to move an\n"
+        "      existing DB there)\n"
         "  4. Set a user-level default once:\n"
         "       rebalance config set-default-database /path/to/rebalance.db\n"
+        "  5. Run from anywhere inside the project tree (any dir under a .git or pyproject.toml)\n"
     )
+
+
+# ---------------------------------------------------------------------------
+# Database migration to canonical location
+# ---------------------------------------------------------------------------
+
+def migrate_database_to_canonical(*, dry_run: bool = False) -> dict:
+    """Move rebalance.db (and its WAL/SHM sidecars) to the canonical app-data
+    path returned by :func:`canonical_database_path`.
+
+    Idempotent: if the canonical file already exists, returns a noop result.
+    If no DB is resolvable from any layer, returns a noop result.
+
+    After a successful move, clears the user-config ``database_path`` field if
+    it pointed at the just-moved source path (so future resolves prefer the
+    canonical location rather than chasing a stale absolute path).
+
+    Returns a dict with keys: ``action`` (``moved`` | ``noop``), ``source``,
+    ``destination``, ``moved_files`` (list of resolved paths actually moved
+    on disk), ``cleared_user_config_key`` (bool), ``reason`` (str, when
+    ``action == "noop"``).
+    """
+    canonical = canonical_database_path().resolve()
+    result: dict = {
+        "action": "noop",
+        "source": None,
+        "destination": str(canonical),
+        "moved_files": [],
+        "cleared_user_config_key": False,
+        "reason": "",
+        "dry_run": dry_run,
+    }
+
+    if canonical.exists():
+        result["reason"] = "canonical path already exists"
+        return result
+
+    try:
+        source = resolve_database_path()
+    except DatabaseNotFoundError:
+        result["reason"] = "no existing DB to migrate"
+        return result
+
+    source = source.resolve()
+    result["source"] = str(source)
+
+    if source == canonical:
+        result["reason"] = "source already at canonical"
+        return result
+
+    moved: list[str] = []
+    if not dry_run:
+        canonical.parent.mkdir(parents=True, exist_ok=True)
+        for suffix in ("", "-wal", "-shm"):
+            src = source.parent / (source.name + suffix)
+            dst = canonical.parent / (canonical.name + suffix)
+            if src.exists():
+                shutil.move(str(src), str(dst))
+                moved.append(str(dst))
+
+        # If the user config explicitly pointed at the source path, clear it
+        # so the canonical layer wins on future resolves. Don't touch any
+        # other custom user paths.
+        user_cfg = _load_user_config()
+        cfg_db = user_cfg.get("database_path")
+        if isinstance(cfg_db, str) and cfg_db:
+            cfg_resolved = Path(cfg_db).expanduser().resolve()
+            if cfg_resolved == source:
+                user_cfg.pop("database_path", None)
+                _save_user_config(user_cfg)
+                result["cleared_user_config_key"] = True
+
+    result["action"] = "moved"
+    result["moved_files"] = moved
+    return result
+
+
+def _migrate_cli() -> int:
+    """Module-level entry: ``python -m rebalance.paths --migrate``."""
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python -m rebalance.paths",
+        description="Move rebalance.db to the canonical app-data location.",
+    )
+    parser.add_argument("--migrate", action="store_true", help="Run the migration.")
+    parser.add_argument("--dry-run", action="store_true", help="Show what would move without moving.")
+    args = parser.parse_args()
+
+    if not args.migrate:
+        parser.print_help()
+        return 2
+
+    result = migrate_database_to_canonical(dry_run=args.dry_run)
+    print(json.dumps(result, indent=2))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(_migrate_cli())
 
 
 # ---------------------------------------------------------------------------

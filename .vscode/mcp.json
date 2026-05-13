@@ -5,7 +5,7 @@
       "command": "${workspaceFolder}/.venv/bin/python",
       "args": ["-m", "rebalance.mcp_server"],
       "env": {
-        "REBALANCE_DB": "${workspaceFolder}/rebalance.db"
+        "REBALANCE_DB": "${userHome}/Library/Application Support/rebalance-os/rebalance.db"
       }
     }
   }

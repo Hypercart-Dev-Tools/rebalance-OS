@@ -1,0 +1,47 @@
+name: RebalanceDashboard
+options:
+  bundleIdPrefix: me.neochrome
+  deploymentTarget:
+    macOS: "14.0"
+  createIntermediateGroups: true
+
+packages:
+  HypercartMacOSDashboard:
+    path: "../../../GH Repos/Hypercart-Mac-Dashboard-framework"
+  GRDB:
+    url: https://github.com/groue/GRDB.swift
+    from: "6.0.0"
+
+targets:
+  RebalanceDashboard:
+    type: application
+    platform: macOS
+    sources:
+      - path: Sources/RebalanceDashboard
+    dependencies:
+      - package: HypercartMacOSDashboard
+        product: HypercartMacOSDashboard
+      - package: GRDB
+        product: GRDB
+    info:
+      path: Sources/RebalanceDashboard/Info.plist
+      properties:
+        CFBundleName: Rebalance
+        CFBundleDisplayName: Rebalance
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: ""
+        NSPrincipalClass: NSApplication
+        NSSupportsAutomaticTermination: true
+        NSSupportsSuddenTermination: true
+        NSDocumentsFolderUsageDescription: "Rebalance reads the local rebalance.db SQLite database (kept under ~/Documents/rebalance-OS) to render activity dashboards."
+        NSDesktopFolderUsageDescription: "Rebalance may read the local rebalance.db SQLite database. Approve once for the dashboard to load data."
+        NSDownloadsFolderUsageDescription: "Rebalance may read the local rebalance.db SQLite database. Approve once for the dashboard to load data."
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: me.neochrome.RebalanceDashboard
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_VERSION: "5.10"
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
+        GENERATE_INFOPLIST_FILE: NO

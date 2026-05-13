@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.28.0] - 2026-05-12
+
+### Changed
+
+- Canonical `rebalance.db` location moved from the project tree (`~/Documents/rebalance-OS/rebalance.db`) to `~/Library/Application Support/rebalance-os/rebalance.db` on macOS (or `$XDG_DATA_HOME/rebalance-os/` / `~/.local/share/rebalance-os/` on Linux). The new path is not TCC-protected, so the SwiftUI dashboard (and any other GUI consumer) can read it without an Allow-prompt dance on first launch.
+- `src/rebalance/paths.py::resolve_database_path()` gained a third resolution layer for the canonical path, inserted between the `REBALANCE_DB` env var and the user-config `database_path` field. Existing env-var and explicit-path overrides continue to win; stale paths simply fall through to the canonical location.
+- `scripts/dashboard.py` now resolves the DB via `rebalance.paths.resolve_database_path()` instead of reading `REBALANCE_DB` directly with a `"rebalance.db"` relative fallback. Survives running outside the project tree.
+- `.vscode/mcp.json` updated to point `REBALANCE_DB` at the canonical app-data location.
+
+### Added
+
+- `src/rebalance/paths.py::migrate_database_to_canonical()` — idempotent migration that moves `rebalance.db` plus its `-wal` and `-shm` sidecars to the canonical location, and clears the user-config `database_path` field when it was pointing at the just-migrated source. Run via `python -m rebalance.paths --migrate` (add `--dry-run` to preview).
+- Phase 0 of the Mac SwiftUI Dashboard port landed under `experimental/mac-dashboard/` — Xcode app project (xcodegen-generated) consuming `HypercartMacOSDashboard` and GRDB. Renders 23 GitHub-balance rows from the live SQLite in ~69 ms on the canonical path. See [PROJECT/2-WORKING/MAC-DASHBOARD-PORT.md](PROJECT/2-WORKING/MAC-DASHBOARD-PORT.md) for findings.
+
 ## [0.27.1] - 2026-05-12
 
 ### Fixed
