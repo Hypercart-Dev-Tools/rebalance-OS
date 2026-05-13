@@ -322,12 +322,23 @@ def generate_daily_report(
     database_path: Path,
     target_date: date,
     config: CalendarConfig,
+    *,
+    priority_rules: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Generate markdown report for a single day (convenience wrapper)."""
+    """Generate markdown report for a single day (convenience wrapper).
+
+    ``priority_rules`` is forwarded to :func:`load_project_matchers` — see
+    that function's docstring for the semantics. Tests should pass ``[]``
+    to isolate themselves from operator-local ``temp/rbos.config`` rules.
+    """
     day = get_day_data(
         database_path,
         target_date,
         config,
-        project_matchers=load_project_matchers(database_path, config=config),
+        project_matchers=load_project_matchers(
+            database_path,
+            config=config,
+            priority_rules=priority_rules,
+        ),
     )
     return format_daily_markdown(day, config)

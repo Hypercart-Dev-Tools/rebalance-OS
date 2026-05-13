@@ -7,7 +7,6 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from rebalance.ingest import config as config_module
 from rebalance.ingest.calendar import ensure_calendar_schema
 from rebalance.ingest.calendar_config import CalendarConfig, CalendarProject
 from rebalance.ingest.daily_report import (
@@ -24,35 +23,12 @@ from rebalance.ingest.weekly_report import (
 )
 
 
-# ── Module-level isolation from operator-local rbos.config ──────────────────
-#
-# `load_project_matchers` (called transitively by generate_daily_report and
-# generate_weekly_report) reads `project_priority_rules` from
-# `config_module.CONFIG_PATH`. The operator's real `temp/rbos.config` may
-# contain real client priority rules that would otherwise leak into the
-# classifier corpus and bend the aggregator output away from the fictional
-# project names this file pins via CalendarProject(...). Redirecting
-# CONFIG_PATH at a nonexistent temp file makes `_read_config` return `{}`,
-# which makes `get_project_priority_rules` return `[]`, which keeps the tests
-# fully isolated.
-
-_TMP_CONFIG_DIR: tempfile.TemporaryDirectory | None = None
-_ORIG_CONFIG_PATH: Path | None = None
-
-
-def setUpModule() -> None:
-    global _TMP_CONFIG_DIR, _ORIG_CONFIG_PATH
-    _TMP_CONFIG_DIR = tempfile.TemporaryDirectory()
-    _ORIG_CONFIG_PATH = config_module.CONFIG_PATH
-    config_module.CONFIG_PATH = Path(_TMP_CONFIG_DIR.name) / "rbos.config"
-
-
-def tearDownModule() -> None:
-    if _ORIG_CONFIG_PATH is not None:
-        config_module.CONFIG_PATH = _ORIG_CONFIG_PATH
-    if _TMP_CONFIG_DIR is not None:
-        _TMP_CONFIG_DIR.cleanup()
-
+# Tests in this module pass ``priority_rules=[]`` into every
+# ``generate_daily_report`` / ``generate_weekly_report`` call. That keeps
+# them fully isolated from the operator's real ``temp/rbos.config``
+# ``project_priority_rules`` list, which would otherwise let real brand
+# names bleed into the classifier corpus and bend aggregator output away
+# from the fictional projects pinned via ``CalendarProject(...)``.
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -148,7 +124,7 @@ class DailyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, SAMPLE_EVENTS)
-            report = generate_daily_report(db, date(2026, 3, 31), config)
+            report = generate_daily_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         self.assertIn("3 events", report)
         # 2h15m = 2.25h, 30m = 0.50h, 15m = 0.25h → total 3h
@@ -161,7 +137,7 @@ class DailyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, SAMPLE_EVENTS)
-            report = generate_daily_report(db, date(2026, 3, 31), config)
+            report = generate_daily_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         self.assertIn("3 events", report)
         self.assertIn("3h", report)
@@ -173,7 +149,7 @@ class DailyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, SAMPLE_EVENTS)
-            report = generate_daily_report(db, date(2026, 4, 15), config)
+            report = generate_daily_report(db, date(2026, 4, 15), config, priority_rules=[])
 
         self.assertIn("0 events", report)
         self.assertIn("0.00h", report)
@@ -183,7 +159,7 @@ class DailyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, SAMPLE_EVENTS)
-            report = generate_daily_report(db, date(2026, 3, 31), config)
+            report = generate_daily_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         self.assertIn("2 events", report)
         self.assertNotIn("morning prep", report)
@@ -200,7 +176,7 @@ class DailyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, all_day_plus_timed)
-            report = generate_daily_report(db, date(2026, 3, 31), config)
+            report = generate_daily_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         # Should not crash, and timed event hours should be counted
         self.assertIn("2.00h", report)
@@ -213,8 +189,8 @@ class DailyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, SAMPLE_EVENTS)
-            report_la = generate_daily_report(db, date(2026, 3, 31), config_la)
-            report_ny = generate_daily_report(db, date(2026, 3, 31), config_ny)
+            report_la = generate_daily_report(db, date(2026, 3, 31), config_la, priority_rules=[])
+            report_ny = generate_daily_report(db, date(2026, 3, 31), config_ny, priority_rules=[])
 
         # Same events should show different local times
         # 17:00 UTC = 10:00 AM LA = 1:00 PM NY
@@ -245,7 +221,7 @@ class WeeklyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, WEEK_EVENTS)
-            report = generate_weekly_report(db, date(2026, 3, 31), config)
+            report = generate_weekly_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         # Total: 2h + 1.5h + 1h + 0.75h = 5.25h
         self.assertIn("**5.25h**", report)
@@ -259,7 +235,7 @@ class WeeklyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, WEEK_EVENTS)
-            report = generate_weekly_report(db, date(2026, 3, 31), config)
+            report = generate_weekly_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         self.assertIn("**5h 15m**", report)
         self.assertNotIn("5.25h", report)
@@ -274,7 +250,7 @@ class WeeklyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, WEEK_EVENTS)
-            report = generate_weekly_report(db, date(2026, 3, 31), config)
+            report = generate_weekly_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         # AcmeCorp: 2h + 1h = 3h
         self.assertIn("| AcmeCorp - Mainline | 2 | 3.00h |", report)
@@ -289,7 +265,7 @@ class WeeklyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, WEEK_EVENTS)
-            report = generate_weekly_report(db, date(2026, 3, 31), config)
+            report = generate_weekly_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         self.assertIn("| AcmeCorp - Mainline | 2 | 3h |", report)
 
@@ -300,7 +276,7 @@ class WeeklyReportTests(unittest.TestCase):
             conn = get_connection(db)
             ensure_calendar_schema(conn)
             conn.close()
-            report = generate_weekly_report(db, date(2026, 5, 1), config)
+            report = generate_weekly_report(db, date(2026, 5, 1), config, priority_rules=[])
 
         self.assertIn("**0** | **0.00h**", report)
         self.assertNotIn("Weekly Project Aggregator", report)
@@ -310,7 +286,7 @@ class WeeklyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, WEEK_EVENTS)
-            report = generate_weekly_report(db, date(2026, 3, 31), config)
+            report = generate_weekly_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         self.assertIn("Working days: 4", report)
         # 315 total min / 4 = 78.75, int() truncates to 78 min = 1.30h
@@ -321,7 +297,7 @@ class WeeklyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, WEEK_EVENTS)
-            report = generate_weekly_report(db, date(2026, 3, 31), config)
+            report = generate_weekly_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         self.assertIn("Working days: 4", report)
         # 315 total min / 4 = 78.75 → int(78) = 1h 18m
@@ -337,7 +313,7 @@ class WeeklyReportTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, WEEK_EVENTS)
-            report = generate_weekly_report(db, date(2026, 3, 31), config)
+            report = generate_weekly_report(db, date(2026, 3, 31), config, priority_rules=[])
 
         self.assertIn("## End of Week Summary", report)
         self.assertIn("Week window: 2026-03-29 to 2026-04-04", report)
@@ -401,7 +377,7 @@ class CalendarIdFilterTests(unittest.TestCase):
             db = Path(tmpdir) / "cal.db"
             _insert_events(db, events_team, calendar_id="team-cal")
             _insert_events(db, events_personal, calendar_id="primary")
-            report = generate_daily_report(db, date(2026, 4, 1), config)
+            report = generate_daily_report(db, date(2026, 4, 1), config, priority_rules=[])
 
         self.assertIn("Team event", report)
         self.assertNotIn("Personal event", report)

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import date, timedelta
 from pathlib import Path
+from typing import Any
 
 from rebalance.ingest.daily_report import (
     DayData,
@@ -139,8 +140,15 @@ def generate_weekly_report(
     database_path: Path,
     target_date: date | None = None,
     config: CalendarConfig | None = None,
+    *,
+    priority_rules: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Generate markdown weekly report (Sun-Sat) with full summary."""
+    """Generate markdown weekly report (Sun-Sat) with full summary.
+
+    ``priority_rules`` is forwarded to :func:`load_project_matchers` — see
+    that function's docstring for the semantics. Tests should pass ``[]``
+    to isolate themselves from operator-local ``temp/rbos.config`` rules.
+    """
     if target_date is None:
         target_date = date.today()
     if config is None:
@@ -148,7 +156,11 @@ def generate_weekly_report(
 
     week_start = get_week_start(target_date)
     week_end = week_start + timedelta(days=6)
-    project_matchers = load_project_matchers(database_path, config=config)
+    project_matchers = load_project_matchers(
+        database_path,
+        config=config,
+        priority_rules=priority_rules,
+    )
 
     # ── Collect structured data for every day ──
     days: list[DayData] = []

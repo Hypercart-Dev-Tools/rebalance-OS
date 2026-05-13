@@ -121,10 +121,20 @@ def _build_matchers_from_config(config: CalendarConfig | None) -> list[ProjectMa
     return matchers
 
 
-def _build_matchers_from_priority_rules() -> list[ProjectMatcher]:
-    """Build matchers from operator-local priority rules."""
+def _build_matchers_from_priority_rules(
+    rules: list[dict[str, Any]] | None = None,
+) -> list[ProjectMatcher]:
+    """Build matchers from priority rules.
+
+    When ``rules`` is ``None`` (default) reads from
+    :func:`rebalance.ingest.config.get_project_priority_rules`, which loads
+    the operator-local ``temp/rbos.config``. Pass ``[]`` to skip operator
+    priority rules entirely — tests use this to isolate themselves from
+    whatever brand rules happen to live on the host machine.
+    """
+    source = rules if rules is not None else get_project_priority_rules()
     matchers: list[ProjectMatcher] = []
-    for rule in get_project_priority_rules():
+    for rule in source:
         aliases = _build_aliases(
             name=rule["name"],
             repos=[],
@@ -139,9 +149,17 @@ def _build_matchers_from_priority_rules() -> list[ProjectMatcher]:
 def load_project_matchers(
     database_path: Path,
     config: CalendarConfig | None = None,
+    *,
+    priority_rules: list[dict[str, Any]] | None = None,
 ) -> list[ProjectMatcher]:
-    """Load canonical project matchers from project_registry, or config fallback."""
-    priority_matchers = _build_matchers_from_priority_rules()
+    """Load canonical project matchers from project_registry, or config fallback.
+
+    ``priority_rules`` overrides the operator-local priority rules read from
+    ``temp/rbos.config``. Pass ``[]`` to skip operator rules entirely (tests
+    use this for isolation); pass a list of rule dicts to inject test
+    fixtures; leave ``None`` for the production default.
+    """
+    priority_matchers = _build_matchers_from_priority_rules(priority_rules)
     with db_connection(database_path) as conn:
         table_exists = conn.execute(
             """

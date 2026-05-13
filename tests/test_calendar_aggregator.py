@@ -3,7 +3,6 @@ import unittest
 from datetime import date
 from pathlib import Path
 
-from rebalance.ingest import config as config_module
 from rebalance.ingest.calendar import ensure_calendar_schema
 from rebalance.ingest.calendar_config import CalendarConfig, CalendarProject
 from rebalance.ingest.daily_report import group_similar_events
@@ -18,19 +17,10 @@ class CalendarAggregatorTests(unittest.TestCase):
 
     All fixtures use placeholder names (AcmeCorp, BetaCorp, AcmeReg, DeltaApp,
     GammaGardens) so the tests stay independent of the operator's real
-    project list. setUp redirects `config_module.CONFIG_PATH` at a
-    nonexistent temp file so `_build_matchers_from_priority_rules` cannot
-    silently pull operator-local priority rules into the test corpus.
+    project list. Each call into the classifier or a report generator
+    passes ``priority_rules=[]`` so `_build_matchers_from_priority_rules`
+    cannot silently pull operator-local priority rules into the test corpus.
     """
-
-    def setUp(self) -> None:
-        self._tmp_config_dir = tempfile.TemporaryDirectory()
-        self._orig_config_path = config_module.CONFIG_PATH
-        config_module.CONFIG_PATH = Path(self._tmp_config_dir.name) / "rbos.config"
-
-    def tearDown(self) -> None:
-        config_module.CONFIG_PATH = self._orig_config_path
-        self._tmp_config_dir.cleanup()
 
     def test_group_similar_events_skips_common_verbs_and_config_tokens(self) -> None:
         events = [
@@ -147,6 +137,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                 database_path,
                 target_date=date(2026, 3, 31),
                 config=config,
+                priority_rules=[],
             )
 
         self.assertIn("| Ar | 1 | 30m |", report)
@@ -183,7 +174,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                 },
             )
 
-            matchers = load_project_matchers(database_path)
+            matchers = load_project_matchers(database_path, priority_rules=[])
 
         self.assertEqual(classify_event_project("AR - CC", matchers), "AcmeReg")
         self.assertEqual(
@@ -287,6 +278,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                 database_path,
                 target_date=date(2026, 3, 31),
                 config=config,
+                priority_rules=[],
             )
 
         self.assertIn("| AcmeReg | 1 | 30m |", report)
@@ -353,6 +345,7 @@ class CalendarAggregatorTests(unittest.TestCase):
                 database_path,
                 target_date=date(2026, 3, 31),
                 config=config,
+                priority_rules=[],
             )
 
         self.assertIn("| BetaCorp | 1 | 30m |", report)
