@@ -5,6 +5,10 @@ PROJECT/.scrub-log.jsonl
 temp/rag/
 temp/ask-self-rag.env
 temp/ask-self*.log
+# ask-self portable DB sidecars (the *.sqlite itself is committed)
+ask_self/index/*__embed_cache.sqlite
+ask_self/index/*__events.jsonl
+ask_self/index/.DS_Store
 logs/
 __pycache__/
 *.pyc

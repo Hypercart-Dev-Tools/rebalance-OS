@@ -1,11 +1,16 @@
 {
   "repo_label": "rebalance OS",
   "repo_kind": "python-repo",
-  "db_filename": "rebalance-os-self-ask.sqlite",
+  "db_filename": "ask_self/index/rebalance-OS.sqlite",
   "system_instructions_path": "ask_self/ask_self_system_instructions.json",
   "env_file_path": "temp/ask-self-rag.env",
   "ingest_command": "./scripts/ask-self-ingest.sh",
   "tenancy_env_var": "REBALANCE_OS_SELF_ASK_TEAM_ID",
+  "embedding": {
+    "provider": "qwen-local",
+    "model": "Qwen/Qwen3-Embedding-0.6B",
+    "dim": 1024
+  },
   "github": {
     "owner": "Hypercart-Dev-Tools",
     "repo": "rebalance-OS",
@@ -39,7 +44,10 @@
       "^reports/",
       "^git-pulse-sync/",
       "^PROJECT/\\.scrub-",
-      "^scripts/__pycache__/"
+      "^scripts/__pycache__/",
+      "^ASK_SELF\\.md$",
+      "^ARCHITECTURE-BAK\\.md$",
+      "^ask_self/index/"
     ]
   },
   "source": {

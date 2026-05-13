@@ -7,6 +7,10 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ASK_SELF_PATH="${ASK_SELF_PATH:-/Users/noelsaw/Documents/GH Repos/ask-self}"
 HARNESS_CONFIG="$REPO_ROOT/ask_self/ask_self_harness.json"
 ENTRYPOINT="$ASK_SELF_PATH/ask_self_query.py"
+# Portable mode: query the committed DB so a fresh clone works with no ingest.
+# Note: --db-path conflicts with --target/--targets/--all-targets in ask_self_query.py;
+# use the upstream ask-self CLI directly for cross-repo registry queries.
+PORTABLE_DB="$REPO_ROOT/ask_self/index/rebalance-OS.sqlite"
 
 if [ ! -d "$ASK_SELF_PATH" ]; then
     echo "ask-self repo not found: $ASK_SELF_PATH" >&2
@@ -38,4 +42,5 @@ fi
 exec "$PYTHON_BIN" "$ENTRYPOINT" \
     --repo-root "$REPO_ROOT" \
     --harness-config "$HARNESS_CONFIG" \
+    --db-path "$PORTABLE_DB" \
     "$@"

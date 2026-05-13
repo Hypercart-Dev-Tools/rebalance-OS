@@ -364,21 +364,33 @@ The server works with any MCP-compatible client. Config files are provided for:
 
 ## Code Intelligence
 
-`ask-self` is an external RAG-based code and docs scanner that can build a local queryable index for this repository without vendoring its code here.
+`ask-self` is an external RAG-based code and docs scanner that builds a local queryable index for this repository without vendoring its code here.
 
-### Ingest this repo
+This repo runs ask-self in **portable mode** with **fully-local Qwen embeddings** — the SQLite index is committed at [ask_self/index/rebalance-OS.sqlite](ask_self/index/rebalance-OS.sqlite), so a fresh clone can query immediately with no ingest and no API keys.
 
-```bash
-./scripts/ask-self-ingest.sh
-```
+> Last ingested: see `git log -1 --format=%ai -- ask_self/index/rebalance-OS.sqlite`
 
-### Query this repo
+### Query this repo (no setup required)
 
 ```bash
 ./scripts/ask-self-query.sh "How does dashboard rendering work?"
 ```
 
-The wrappers point at `/Users/noelsaw/Documents/GH Repos/ask-self` by default. Override `ASK_SELF_PATH` if your `ask-self` checkout lives elsewhere.
+The query wrapper pins `--db-path` to the committed portable DB, so it works on a fresh clone.
+
+### Refresh the index (maintainers only)
+
+```bash
+TOKENIZERS_PARALLELISM=false ./scripts/ask-self-ingest.sh --mode all --no-architecture-md --concurrency 1
+```
+
+Notes:
+- `--no-architecture-md` is intentional: the curated [ARCHITECTURE.md](ARCHITECTURE.md) is hand-edited and should not be regenerated.
+- `--concurrency 1` and `TOKENIZERS_PARALLELISM=false` avoid a macOS fork+torch crash in `sentence-transformers`.
+- Embedding is local (Qwen3-Embedding-0.6B via `sentence-transformers`) — no Gemini API key needed for ingest or query.
+- Synthesis (the answer step) still defaults to Gemini unless you pass `--retrieval-only` or configure a local synthesis provider in [ask_self/ask_self_harness.json](ask_self/ask_self_harness.json).
+
+The wrappers point at `/Users/noelsaw/Documents/GH Repos/ask-self` by default. Override `ASK_SELF_PATH` if your ask-self checkout lives elsewhere.
 
 ### CLI reference
 

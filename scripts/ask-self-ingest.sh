@@ -7,6 +7,11 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 ASK_SELF_PATH="${ASK_SELF_PATH:-/Users/noelsaw/Documents/GH Repos/ask-self}"
 HARNESS_CONFIG="$REPO_ROOT/ask_self/ask_self_harness.json"
 ENTRYPOINT="$ASK_SELF_PATH/ask_self_ingest.py"
+# Portable mode: write the committed DB at a tracked path so a fresh clone can query
+# without running ingest. Pinned via --db-path; --no-register because committed DBs
+# are not registry entries (the multi-repo registry is for local working indexes).
+PORTABLE_DB="$REPO_ROOT/ask_self/index/rebalance-OS.sqlite"
+mkdir -p "$REPO_ROOT/ask_self/index"
 
 if [ ! -d "$ASK_SELF_PATH" ]; then
     echo "ask-self repo not found: $ASK_SELF_PATH" >&2
@@ -38,4 +43,6 @@ fi
 exec "$PYTHON_BIN" "$ENTRYPOINT" \
     --repo-root "$REPO_ROOT" \
     --harness-config "$HARNESS_CONFIG" \
+    --db-path "$PORTABLE_DB" \
+    --no-register \
     "$@"
