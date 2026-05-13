@@ -14,7 +14,7 @@ from typing import Any
 from rebalance.ingest.calendar_config import CalendarConfig, filter_events, load_review_decisions
 from rebalance.ingest.calendar_helpers import event_duration_minutes
 from rebalance.ingest.db import db_connection, ensure_calendar_schema
-from rebalance.ingest.tz_utils import local_tz
+from rebalance.tz_utils import local_tz
 from rebalance.ingest.github_scan import get_github_balance
 from rebalance.ingest.project_priority import apply_project_priorities
 from rebalance.ingest.project_classifier import annotate_events_with_projects, load_project_matchers

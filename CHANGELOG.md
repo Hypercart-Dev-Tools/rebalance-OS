@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.28.2] - 2026-05-13
+
+### Changed
+
+- Timezone handling centralized into `src/rebalance/tz_utils.py` (single source of truth). `local_tz()` resolves device timezone via `REBALANCE_TZ` env var → `/etc/localtime` symlink → UTC fallback. Stored timestamps remain UTC ISO 8601; conversion happens only at display.
+- **Behavior change:** operator-facing timestamps in the terminal dashboard, pulse, and calendar reports now default to the **OS-detected local timezone** instead of hardcoded fallbacks (`America/Los_Angeles` for `scripts/dashboard.py`, `America/New_York` for `CalendarConfig`). Set `REBALANCE_TZ` or pin a `timezone` value in `temp/calendar_config.json` to keep a specific zone regardless of host.
+- `src/rebalance/ingest/calendar_config.py` default `timezone` value changed from `"America/New_York"` to `""` — empty resolves to the device-local zone at load time via `local_tz().key`.
+- `src/rebalance/ingest/pulse.py` and `scripts/dashboard.py` drop their inline `_parse_iso()` / `ZoneInfo("America/Los_Angeles")` duplicates and route through `tz_utils`.
+- `src/rebalance/ingest/dashboard.py::_format_generated_at()` now renders in local zone with `%Z` suffix instead of forced UTC.
+
 ## [0.28.1] - 2026-05-13
 
 ### Fixed

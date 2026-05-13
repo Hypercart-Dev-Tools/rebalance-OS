@@ -34,7 +34,7 @@ from rebalance.ingest.agent_tags import classify as classify_source
 from rebalance.ingest.config import get_github_token, get_pulse_config
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.slack_users import compact_sleuth_reminder
-from rebalance.ingest.tz_utils import local_tz, parse_utc_iso
+from rebalance.tz_utils import local_tz, parse_utc_iso
 
 
 # Author logins of known cloud-agent bots. Mirrors agent_tags.py — kept here

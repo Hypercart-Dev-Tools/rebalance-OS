@@ -7,8 +7,8 @@ Schema:
     "calendar_id": "primary",
     "exclude_titles": ["Check Slack", "Post Daily Timesheet"],
     "aggregator_skip_words": ["wrap", "setup", "test"],
-    "timezone": "America/Los_Angeles",  // omit or leave blank to use device local timezone
-    "hours_format": "decimal",       # "decimal" = 1.75h  |  "hm" = 1h 45m
+    "timezone": "",
+    "hours_format": "decimal",
     "projects": [
       {
         "name": "CreditRegistry",
@@ -16,6 +16,12 @@ Schema:
       }
     ]
   }
+
+Field notes:
+  - ``timezone`` accepts any IANA name (e.g. "America/Los_Angeles"). If omitted
+    or left as an empty string, the device's local timezone is used (resolved
+    via REBALANCE_TZ env var, then /etc/localtime, then UTC fallback).
+  - ``hours_format``: "decimal" = 1.75h  |  "hm" = 1h 45m
 
 Legacy field "exclude_keywords" is accepted for backwards compatibility and
 mapped to exclude_titles.
@@ -28,7 +34,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from rebalance.ingest.tz_utils import local_tz
+from rebalance.tz_utils import local_tz
 
 # __file__ = src/rebalance/ingest/calendar_config.py
 # .parent (ingest) .parent (rebalance) .parent (src) .parent (repo root)
