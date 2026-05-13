@@ -22,7 +22,7 @@ from rebalance.ingest.db import db_connection, ensure_semantic_schema
 from rebalance.ingest.registry import get_projects
 
 
-SCOPE_VALUES = ("vault", "github", "calendar", "sleuth", "semantic", "all")
+SCOPE_VALUES = ("vault", "github", "calendar", "sleuth", "email", "semantic", "all")
 
 
 def _safe_count(conn: Any, table: str) -> int | None:
@@ -68,7 +68,7 @@ def _normalize_scope(scope: Iterable[str] | str | None) -> list[str]:
     if not cleaned:
         return ["all"]
     if "all" in cleaned:
-        return ["vault", "github", "calendar", "sleuth", "semantic"]
+        return ["vault", "github", "calendar", "sleuth", "email", "semantic"]
     return cleaned
 
 
@@ -117,6 +117,12 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
         payload["sources"]["sleuth"] = {
             "reminders": _safe_count(conn, "sleuth_reminders"),
             "last_synced_at": _safe_max(conn, "sleuth_reminders", "last_synced_at"),
+        }
+
+        payload["sources"]["email"] = {
+            "messages": _safe_count(conn, "email_messages"),
+            "last_synced_at": _safe_max(conn, "email_messages", "synced_at"),
+            "newest_received_at": _safe_max(conn, "email_messages", "received_at"),
         }
 
         # Semantic index
@@ -589,6 +595,41 @@ def _refresh_sleuth(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     return {"scope": "sleuth", "dry_run": False, **result.as_dict()}
 
 
+def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    if dry_run:
+        return {
+            "scope": "email",
+            "dry_run": True,
+            "steps": ["sync_gmail()", "semantic_backfill(email)"],
+        }
+
+    from rebalance.ingest.gmail import GmailAuthError, sync_gmail
+    from rebalance.ingest.semantic_index import backfill_semantic_documents
+
+    try:
+        sync_result = sync_gmail(database_path=database_path)
+    except GmailAuthError as exc:
+        return {"scope": "email", "dry_run": False, "error": str(exc)}
+
+    semantic = backfill_semantic_documents(database_path, source_types=["email"])
+    return {
+        "scope": "email",
+        "dry_run": False,
+        "messages_listed": sync_result.messages_listed,
+        "messages_stored": sync_result.messages_stored,
+        "messages_inserted": sync_result.messages_inserted,
+        "messages_updated": sync_result.messages_updated,
+        "query_filter": sync_result.query_filter,
+        "elapsed_seconds": sync_result.elapsed_seconds,
+        "semantic_backfill": {
+            "total": semantic.total_documents,
+            "inserted": semantic.inserted_count,
+            "updated": semantic.updated_count,
+            "elapsed_seconds": semantic.elapsed_seconds,
+        },
+    }
+
+
 def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     if dry_run:
         return {
@@ -600,8 +641,8 @@ def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, A
         backfill_semantic_documents,
         embed_pending,
     )
-    backfill = backfill_semantic_documents(database_path, source_types=["vault", "github"])
-    sem_embed = embed_pending(database_path, source_types=["vault", "github"])
+    backfill = backfill_semantic_documents(database_path, source_types=["vault", "github", "email"])
+    sem_embed = embed_pending(database_path, source_types=["vault", "github", "email"])
     return {
         "scope": "semantic",
         "dry_run": False,
@@ -713,12 +754,19 @@ def refresh_index(
     """Run the configured ingest pipelines for ``scope`` and return a summary.
 
     ``scope`` accepts any combination of ``vault``, ``github``, ``calendar``,
-    ``sleuth``, ``semantic``, or ``all``. ``dry_run=True`` returns the planned
-    steps without touching the DB or network.
+    ``sleuth``, ``email``, ``semantic``, or ``all``. ``dry_run=True`` returns
+    the planned steps without touching the DB or network.
     """
     db_path = Path(database_path).expanduser().resolve()
     requested_scopes = _normalize_scope(scope)
-    full_refresh_requested = set(requested_scopes) == {"vault", "github", "calendar", "sleuth", "semantic"}
+    full_refresh_requested = set(requested_scopes) == {
+        "vault",
+        "github",
+        "calendar",
+        "sleuth",
+        "email",
+        "semantic",
+    }
     started = time.monotonic()
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -771,6 +819,8 @@ def refresh_index(
                 results.append(_refresh_calendar(db_path, since_days=since_days, dry_run=dry_run))
             elif s == "sleuth":
                 results.append(_refresh_sleuth(db_path, dry_run=dry_run))
+            elif s == "email":
+                results.append(_refresh_email(db_path, dry_run=dry_run))
             elif s == "semantic":
                 results.append(_refresh_semantic_only(db_path, dry_run=dry_run))
         except Exception as e:

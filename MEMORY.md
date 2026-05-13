@@ -1,5 +1,6 @@
 # Memory
 
+- Phase 1 Gmail ingest uses Google Application Default Credentials (`gcloud auth application-default login` with `gmail.readonly`), stores subject + Gmail snippet only, and can be narrowed via `gmail_query_filter` in `temp/rbos.config`.
 - Bash-script RAG spike entrypoint: `temp/bash_script_rag_spike.py`.
 - Reusable spike artifacts: `temp/rag/bash-script-spike.sqlite` and `temp/logs/bash-script-spike.jsonl`.
 - The spike's default extra corpus includes wp-code-check scanner patterns from `../GH Repos/wp-code-check/dist/patterns/**/*.json` plus `PATTERN-LIBRARY.json` and `PATTERN-LIBRARY.md`.
