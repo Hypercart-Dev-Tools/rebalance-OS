@@ -314,10 +314,17 @@ CALENDAR_EVENT_LOG_PATH = Path("temp/logs/calendar-event-create.jsonl")
 # TODO: support sleuth-web-api-production.env once a prod Sleuth deployment
 # exists — likely via a --env name|production|development flag.
 
+# Module-level path for the Google Calendar env file. Resolved at import time
+# so tests can patch `rebalance.cli.GOOGLE_CALENDAR_ENV_PATH` to redirect
+# subsequent reads in `_load_google_calendar_env` without monkey-patching the
+# resolver itself.
+GOOGLE_CALENDAR_ENV_PATH = resolve_secret_path("google-calendar.env")
+
 
 def _load_google_calendar_env() -> dict[str, str]:
     """Load shared Google Calendar env metadata from the operator-owned file."""
-    path = resolve_secret_path("google-calendar.env")
+    # Read the module-level binding at call time so test patches take effect.
+    path = GOOGLE_CALENDAR_ENV_PATH
     if not path.exists():
         raise typer.BadParameter(f"Google Calendar env file not found: {path}")
 
@@ -1228,6 +1235,19 @@ def github_sync_artifacts(
 ) -> None:
     """Sync detailed GitHub issues, PRs, comments, reviews, checks, and releases."""
     from rebalance.ingest.github_knowledge import sync_github_repo
+
+    # When the caller pins explicit --repo values, validate them against the
+    # ignored list BEFORE resolving the DB. Catches "you told me to sync an
+    # ignored repo" with the right error, instead of letting a missing DB
+    # mask the misuse.
+    normalized_explicit = [r.strip() for r in (repos or []) if r.strip()]
+    if normalized_explicit:
+        explicit_normalized = [normalize_github_repo_name(r) for r in normalized_explicit]
+        ignored = set(get_github_ignored_repos())
+        ignored_explicit = [r for r in explicit_normalized if r in ignored]
+        if ignored_explicit:
+            typer.echo(f"GitHub repo is ignored: {', '.join(ignored_explicit)}")
+            raise typer.Exit(code=2)
 
     try:
         db_path = resolve_database_path(database)
@@ -2328,6 +2348,12 @@ def config_add_github_ignored_repo(
     if not purge and not dry_run:
         return
 
+    # Validate destructive-flag combination before touching the DB so missing
+    # databases don't mask user-facing argument errors.
+    if purge and not dry_run and not confirm:
+        typer.echo("Use --confirm with --purge to execute the destructive delete.")
+        raise typer.Exit(code=2)
+
     try:
         db_path = resolve_database_path(database)
     except DatabaseNotFoundError as exc:
@@ -2350,10 +2376,6 @@ def config_add_github_ignored_repo(
             f"({_format_purge_counts(purge_result.row_counts)})"
         )
         return
-
-    if not confirm:
-        typer.echo("Use --confirm with --purge to execute the destructive delete.")
-        raise typer.Exit(code=2)
 
     purge_result = purge_github_repo_data(db_path, normalized_repo, dry_run=False)
     append_audit_entry(

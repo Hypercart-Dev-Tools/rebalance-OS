@@ -173,6 +173,21 @@ class DashboardTerminalThemeTests(unittest.TestCase):
         self.assertEqual(snapshot["last_profile"]["slowest_repo"], "example/repo")
 
     def test_sleuth_panel_includes_reminders_assigned_by_me(self) -> None:
+        from datetime import datetime, timedelta, timezone
+
+        # Use relative timestamps so the test stays valid as wall-clock time
+        # advances: fetch_sleuth_due filters out reminders whose
+        # should_post_on is more than 2 days in the past. Hardcoded dates
+        # would silently rot.
+        now = datetime.now(timezone.utc)
+        created_iso = (now - timedelta(hours=1)).isoformat()
+        seen_iso = now.isoformat()
+        ordered_post_times = {
+            "to-me": (now + timedelta(hours=1)).isoformat(),
+            "by-me": (now + timedelta(hours=2)).isoformat(),
+            "not-mine": (now + timedelta(hours=3)).isoformat(),
+        }
+
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             db_path = root / "rebalance.db"
@@ -201,14 +216,14 @@ class DashboardTerminalThemeTests(unittest.TestCase):
                         """,
                         (
                             reminder_id,
-                            "2026-05-05T17:00:00+00:00",
-                            "2026-05-05T20:00:00+00:00",
+                            created_iso,
+                            ordered_post_times[reminder_id],
                             message,
                             assignee_id,
                             sender_id,
-                            "2026-05-05T18:00:00+00:00",
-                            "2026-05-05T18:00:00+00:00",
-                            "2026-05-05T18:00:00+00:00",
+                            seen_iso,
+                            seen_iso,
+                            seen_iso,
                         ),
                     )
                 conn.commit()
