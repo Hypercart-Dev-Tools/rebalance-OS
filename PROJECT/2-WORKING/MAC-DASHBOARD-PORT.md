@@ -120,6 +120,11 @@ After tracing entries in `/tmp/rebalance-dashboard.diag.log`, the call stack on 
 - **`UNUserNotificationCenter.current()` in `DashboardRuntimeEnvironment`'s default arg** was a real footgun for SwiftPM-executable consumers. Fixed upstream in framework PR #1; consumer code now safe regardless of bundle state.
 - **`web/pulse.html` retirement remains contingent on Phase 1 panel parity** — Phase 0 only ports one panel. The plan's Success Criteria stays gated on Phase 1.
 
+### Operator notes (added 2026-05-13)
+
+- **Launchd plists in `scripts/com.rebalance-os.*.plist` don't set `REBALANCE_DB`.** They rely on `src/rebalance/paths.py::resolve_database_path()` falling through to the canonical app-data location. When you add a new sync job, follow that pattern — omit the env var and the canonical path takes over automatically. Setting `REBALANCE_DB` in a plist is only useful when you want to force a specific non-canonical DB for that job alone (testing, isolated workspaces).
+- **`xcodegen generate` regenerates two artifacts in `experimental/mac-dashboard/`** — `RebalanceDashboard.xcodeproj/` (gitignored, regenerated freely) and `Sources/RebalanceDashboard/Info.plist` (committed; xcodegen rewrites it from the `info.properties` block in `project.yml`). The plist's source of truth is `project.yml` — never edit the plist directly. Workflow: edit `project.yml` → run `xcodegen generate` → commit the regenerated plist only if it actually differs.
+
 ### Measured first-paint (verified 2026-05-12)
 
 End-to-end timing from `DashboardDemoStore.refresh()` entry to `loadState = .loaded(items)` on the working `/tmp/rebalance-test.db` path: **4.5 ms** for 23 repos (per `/tmp/rebalance-dashboard.diag.log` — `refresh ok: 23 repos in 0.004498667 seconds`). Cold launch to first-paint completed well under the plan's < 100 ms re-render budget and the < 1 s cold-start budget — GRDB + SQLite on a local 180 MB DB is comfortably faster than the budget.

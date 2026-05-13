@@ -337,12 +337,14 @@ Claude Code calls the `ask` tool behind the scenes — it gathers your project r
          "command": "/absolute/path/to/rebalance-OS/.venv/bin/python",
          "args": ["-m", "rebalance.mcp_server"],
          "env": {
-           "REBALANCE_DB": "/absolute/path/to/rebalance-OS/rebalance.db"
+           "REBALANCE_DB": "/Users/<you>/Library/Application Support/rebalance-os/rebalance.db"
          }
        }
      }
    }
    ```
+
+   `REBALANCE_DB` is **optional** as of 0.28.0 — `src/rebalance/paths.py` defaults to the canonical app-data path (`~/Library/Application Support/rebalance-os/rebalance.db` on macOS, `$XDG_DATA_HOME/rebalance-os/rebalance.db` on Linux). Set it explicitly only when you want to override that default. Stale env-var values silently fall through to the canonical path, so updating `REBALANCE_DB` here is never urgent. To move an existing DB into the canonical location, run `python -m rebalance.paths --migrate` (idempotent; also moves the `-wal` and `-shm` sidecars). Launchd jobs in `scripts/com.rebalance-os.*.plist` don't set `REBALANCE_DB` at all — they rely on the same resolver fallback, so no plist edits are needed when the canonical path moves or new sync jobs are added.
 
 3. Quit and reopen Claude Desktop. The rebalance tools appear in the tool picker (hammer icon).
 4. Ask *"What should I work on today?"* to verify.
