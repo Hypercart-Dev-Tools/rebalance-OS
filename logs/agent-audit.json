@@ -49,5 +49,21 @@
     },
     "total_rows": 27620,
     "deleted_rows": 27620
+  },
+  {
+    "timestamp": "2026-05-13T02:39:18.586626+00:00",
+    "user": "noelsaw",
+    "action": "DELETE",
+    "target": "email_messages+semantic_documents(email)",
+    "database_path": "rebalance.db",
+    "retained_filter": "labels_json contains both STARRED and IMPORTANT",
+    "retained_email_rows": 2,
+    "deleted_email_rows": 179,
+    "deleted_semantic_documents": 179,
+    "before_email_rows": 181,
+    "after_email_rows": 2,
+    "before_semantic_documents": 181,
+    "after_semantic_documents": 2,
+    "one_time_cleanup": true
   }
 ]

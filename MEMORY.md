@@ -1,6 +1,10 @@
 # Memory
 
 - Phase 1 Gmail ingest uses Google Application Default Credentials (`gcloud auth application-default login` with `gmail.readonly`), stores subject + Gmail snippet only, and can be narrowed via `gmail_query_filter` in `temp/rbos.config`.
+- Operator-local Gmail auth now uses the shared Workspace Desktop OAuth client at `~/secrets/google-workspace-oauth-client.json`, with ADC cached at `~/.config/gcloud/application_default_credentials.json`; this survives reboot and is documented in `~/bin/servers.md` plus `~/secrets/google-calendar.env`.
+- The intended optional Secret Manager source of truth for the Workspace OAuth client is `google-workspace-oauth-client` in project `named-equator-493617-e5`; local refresh writes back to `~/secrets/google-workspace-oauth-client.json`.
+- Noel's current operator-local Gmail ingest filter is `in:inbox is:starred is:important`; the product default remains `in:inbox`, and narrowing the filter requires a one-time manual cleanup if the local DB should drop older broader-scope email rows.
+- The current-state Gmail project doc now lives at `PROJECT/1-INBOX/EMAIL-INGEST.md`; keep it aligned with shipped behavior on `main`, especially the Workspace custom OAuth route.
 - Bash-script RAG spike entrypoint: `temp/bash_script_rag_spike.py`.
 - Reusable spike artifacts: `temp/rag/bash-script-spike.sqlite` and `temp/logs/bash-script-spike.jsonl`.
 - The spike's default extra corpus includes wp-code-check scanner patterns from `../GH Repos/wp-code-check/dist/patterns/**/*.json` plus `PATTERN-LIBRARY.json` and `PATTERN-LIBRARY.md`.

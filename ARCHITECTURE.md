@@ -29,6 +29,23 @@ User (via MCP host: VS Code, Claude Desktop, etc.)
 
 Every data source follows the same pattern: **collect → normalize → store → query**. Adding a new source means implementing one collector and one `_gather_*` function. The query layer and LLM layers are source-agnostic.
 
+### Sync model (in plain English)
+
+Every `refresh_index` run is **incremental** — nothing is re-downloaded from scratch. What "incremental" means depends on what the upstream API lets us ask for cheaply, but three patterns cover every source:
+
+1. **Hash/ID delta** — only fetch or reprocess what actually changed. Used by: vault notes, GitHub artifacts, embeddings.
+2. **Window refetch + upsert** — refetch a bounded time-or-count window every run and upsert by ID; nothing is auto-deleted. Used by: GitHub activity (last 30d events), calendar (30d back / 7d forward), email (newest 100 `in:inbox` messages).
+3. **Full refetch + column-diff** — refetch the whole upstream set, compare row-by-row, and keep everything as history. Used by: sleuth reminders.
+
+A few caps to know about up-front:
+
+- **Email** is capped at the **newest 100 inbox messages per run** today (Phase 1, shipped 2026-05-12) — default filter `in:inbox`, overridable via `gmail_query_filter` in `temp/rbos.config`. Not "important and starred." See [PROJECT/1-INBOX/EMAIL-INGEST.md](PROJECT/1-INBOX/EMAIL-INGEST.md).
+- **Calendar** refetches a **30-day back / 7-day forward window** by default; a 365-day backfill is available on demand via the CLI.
+- **GitHub activity** is bounded by the GitHub Events API's own ~30-day retention.
+- **Vault, sleuth, embeddings** are unbounded — they cover everything they can see.
+
+Detailed per-source mechanics live in [Storage Layer → Sync semantics per source](#sync-semantics-per-source).
+
 ---
 
 ## Signal Sources
@@ -41,7 +58,7 @@ Each source has a priority, a collector module, and a target table. For detailed
 | P1 | Obsidian Vault | `note_ingester.py` + `embedder.py` | `vault_files`, `chunks`, `keywords`, `links`, `embeddings` | **Yes** — Qwen3-Embedding-0.6B, 1024-dim, sqlite-vec | Active |
 | P2 | Google Calendar | `calendar.py` | `calendar_events` table (default window 30d back / 7d forward; no auto-deletion) | No — structured event data | Active |
 | P3 | Sleuth reminders (Slack) | `sleuth_reminders.py` | `sleuth_reminders` table | No — structured reminder rows | Active |
-| P4 | Email | TBD | TBD | TBD | Planned |
+| P4 | Email (Gmail) | `gmail.py` + `semantic_index.py` | `email_messages` | Yes — subject + snippet participate in the unified semantic index | Active (Phase 1, shipped 2026-05-12): newest 100 `in:inbox` messages per run; metadata + snippet only, no body parsing yet |
 
 ### Source → Table fanout
 
@@ -71,11 +88,15 @@ Obsidian Vault ──────▶ note_ingester.py          walk *.md, chunk,
                                                    via mlx-embeddings
 
 Google Calendar ─────▶ calendar.py               OAuth pickled token,         ──▶ calendar_events
-  (Calendar API)                                   30d back / 14d forward
+  (Calendar API)                                   30d back / 7d forward
 
 Sleuth Web API ──────▶ sleuth_reminders.py       Bearer auth, stdlib urllib,  ──▶ sleuth_reminders
   (Vultr dev :2020)                                GET /workspace/<name>/
                                                    reminders?format=rebalance
+
+Gmail API ───────────▶ gmail.py                  Google ADC (gmail.readonly), ──▶ email_messages
+  (gmail.googleapis.com)                           filter in:inbox by default,
+                                                   newest 100 messages/run
 
 Project Registry ────▶ registry.py +              MD registry → projects.yaml ──▶ project_registry
   (vault markdown)     preflight.py                → SQLite projection
@@ -170,16 +191,17 @@ Sleuth reminders (writer: sleuth_reminders.py)
                                are mirrored as UPDATEs.
 ```
 
-### Delta Strategy
+### Sync semantics per source
 
-Each ingestor defines how it reconciles a fresh fetch with stored rows:
+Every source is incremental, but the meaning of "incremental" depends on what the upstream API supports. The three patterns from [Sync model](#sync-model-in-plain-english) map cleanly onto the table below:
 
-- **Vault notes**: SHA-256 of raw file bytes stored in `vault_files.content_hash`. On re-ingest, unchanged-content files have their `last_modified` refreshed if the on-disk mtime moved forward (a "touch") but skip all parsing and embedding work — surfaced as `touched_files` in the ingest result. Changed-content files are deleted (CASCADE clears chunks/keywords/links) and re-inserted.
-- **GitHub activity**: keyed by `(login, repo_full_name, scan_date)` with `ON CONFLICT REPLACE`. Each scan overwrites that day's data.
-- **GitHub artifacts**: keyed by `(repo_full_name, item_type, number)` for items; comments/commits/checks keyed by GitHub ID. `ON CONFLICT REPLACE` on every sync, with a `since_days` lookback to skip untouched artifacts.
-- **Embeddings**: chunks without a corresponding `embeddings` row get embedded. Model version change triggers full re-embed via `embedding_meta`.
-- **Calendar**: keyed by Google event ID with `INSERT OR REPLACE`. Re-sync overwrites existing events and adds new ones within the requested window (default 30d back / 7d forward; 365d on demand for backfill). No auto-deletion.
-- **Sleuth reminders**: keyed by `reminder_id`. Column-level diff against the stored row decides insert/update/unchanged; `first_seen_at` is set on insert and never overwritten; `last_seen_at` and `last_synced_at` refresh on every sync. Missing reminders are NOT deleted — terminal states (`completed`, `canceled`) remain as history.
+- **Vault notes** — *hash delta.* SHA-256 of raw file bytes stored in `vault_files.content_hash`. On re-ingest, unchanged-content files have their `last_modified` refreshed if the on-disk mtime moved forward (a "touch") but skip all parsing and embedding work — surfaced as `touched_files` in the ingest result. Changed-content files are deleted (CASCADE clears chunks/keywords/links) and re-inserted.
+- **GitHub activity** — *window refetch.* Keyed by `(login, repo_full_name, scan_date)` with `ON CONFLICT REPLACE`. Each scan re-pulls the user's last ~30 days of events and overwrites *today's* row only; older days are left alone.
+- **GitHub artifacts** — *hash/ID delta with window.* Keyed by `(repo_full_name, item_type, number)` for items; comments/commits/checks keyed by GitHub ID. `ON CONFLICT REPLACE` on every sync, with a `since_days` lookback to skip artifacts that haven't been touched in that window.
+- **Embeddings** — *hash delta.* Chunks (vault) or documents (GitHub corpus) without a corresponding embeddings row get embedded. A model-version change recorded in `embedding_meta` / `github_embedding_meta` triggers a full re-embed of that corpus.
+- **Calendar** — *window refetch.* Keyed by Google event ID with `INSERT OR REPLACE`. Re-sync overwrites existing events and adds new ones within the requested window (default 30d back / 7d forward; 365d on demand for backfill). No auto-deletion — events removed upstream stay in the local DB until manually pruned.
+- **Sleuth reminders** — *full refetch + column-diff.* Keyed by `reminder_id`. Column-level diff against the stored row decides insert/update/unchanged; `first_seen_at` is set on insert and never overwritten; `last_seen_at` and `last_synced_at` refresh on every sync. Missing reminders are NOT deleted — terminal states (`completed`, `canceled`) remain as history.
+- **Email (Gmail)** — *window refetch, count-bounded.* Keyed by Gmail `message_id` with upsert. Each run pulls the newest 100 messages matching the configured filter (default `in:inbox`, override via `gmail_query_filter` in `temp/rbos.config`). Phase 1 stores metadata + Gmail snippet only — no full body, no historical backfill, no auto-delete. See [PROJECT/1-INBOX/EMAIL-INGEST.md](PROJECT/1-INBOX/EMAIL-INGEST.md).
 
 ---
 
@@ -260,7 +282,7 @@ Four ways the pipeline runs:
 
 2. **Unattended scheduled syncs** — four launchd jobs cooperate:
 
-   - **Daily full sync** ([scripts/daily_sync.sh](scripts/daily_sync.sh) / [scripts/com.rebalance-os.daily-sync.plist](scripts/com.rebalance-os.daily-sync.plist)) at 06:30 local time, plus on boot/login if 06:30 was missed. Calls `refresh_index(scope=["all"])`, which runs vault → github → calendar → sleuth → unified semantic index. Per-scope failures are captured in the result's `errors` list rather than aborting the run.
+   - **Daily all-source sync** ([scripts/daily_sync.sh](scripts/daily_sync.sh) / [scripts/com.rebalance-os.daily-sync.plist](scripts/com.rebalance-os.daily-sync.plist)) at 06:30 local time, plus on boot/login if 06:30 was missed. Calls `refresh_index(scope=["all"])`, which walks every source: vault → github → calendar → sleuth → unified semantic index. "All" means *every source*, **not** a full re-download — each step uses its own incremental logic from [Sync semantics per source](#sync-semantics-per-source). Per-scope failures are captured in the result's `errors` list rather than aborting the run.
    - **Hourly vault refresh** ([scripts/vault_sync.sh](scripts/vault_sync.sh) / [scripts/com.rebalance-os.vault-sync.plist](scripts/com.rebalance-os.vault-sync.plist)) at HH:15 from 06:15 to 23:15. Calls `refresh_index(scope=["vault"])` only — keeps notes edited mid-day visible in the dashboard / pulse / semantic search without waiting for the next morning's full sync. Vault ingest is cheap (~0.02s with no changes) and fully offline.
    - **Hourly pulse publish** ([scripts/pulse_sync.sh](scripts/pulse_sync.sh) / [scripts/com.rebalance-os.pulse-sync.plist](scripts/com.rebalance-os.pulse-sync.plist)) on the hour, 06:00 to 23:00. Renders the operator pulse markdown and pushes it to the configured private repo, but only when the rendered content actually changed since the previous run.
    - **30-minute pulse-web refresh** ([scripts/pulse_web_sync.sh](scripts/pulse_web_sync.sh) / [scripts/com.rebalance-os.pulse-web-sync.plist](scripts/com.rebalance-os.pulse-web-sync.plist)) every 30 minutes from 06:00 to 23:30. Calls [scripts/pulse_web.py](scripts/pulse_web.py) to regenerate the local `web/pulse.html` mirror of the dashboard. Atomic via tmp+replace (a crashed run leaves the previous HTML intact). No network, no git push — separate from the markdown→private-repo flow above.
