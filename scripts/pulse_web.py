@@ -911,6 +911,9 @@ h2 { font-size: 14px; color: var(--fg); }
 .topbar .crumb { color: var(--fg-muted); font-weight: 500; }
 .synced { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); }
 .synced .ok-dot { width: 8px; height: 8px; background: var(--ok); border-radius: 50%; }
+.system-now { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; cursor: help; }
+.system-now .tz-key { color: var(--fg); }
+.system-now.tz-fallback { border-color: var(--warn, #c98a00); color: var(--warn, #c98a00); }
 .refresh-btn { font: inherit; padding: 6px 14px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font-weight: 500; }
 .refresh-btn:disabled { opacity: .55; cursor: progress; }
 .pulse-filter { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--fg); width: 220px; }
@@ -1411,6 +1414,19 @@ def render_page(*, title: str, body_html: str, now: datetime, refresh_seconds: i
 """
 
 
+def _resolve_tz_source() -> tuple[str, bool]:
+    """Mirror local_tz()'s resolution order. Returns (label, is_fallback)."""
+    if os.environ.get("REBALANCE_TZ"):
+        return (f"REBALANCE_TZ={os.environ['REBALANCE_TZ']}", False)
+    try:
+        lt = os.readlink("/etc/localtime")
+        if "zoneinfo/" in lt:
+            return ("/etc/localtime", False)
+    except OSError:
+        pass
+    return ("UTC fallback", True)
+
+
 def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: int) -> str:
     now = datetime.now(timezone.utc)
     local_now = now.astimezone(TZ)
@@ -1449,6 +1465,18 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     synced_ago = _ago(last_synced, now=now) if last_synced else "—"
     last_vault = vault_rows[0] if vault_rows else None
 
+    tz_source_label, tz_is_fallback = _resolve_tz_source()
+    offset = local_now.strftime("%z")
+    offset_pretty = f"{offset[:3]}:{offset[3:]}" if offset else ""
+    system_now_str = local_now.strftime("%a %b %-d · %H:%M:%S")
+    system_now_tz = f"{local_now.tzname() or ''} {offset_pretty}".strip()
+    system_now_title = (
+        f"System clock (resolved via: {tz_source_label})\n"
+        f"UTC now: {now.strftime('%Y-%m-%dT%H:%M:%SZ')}\n"
+        f"Resolution order: REBALANCE_TZ env → /etc/localtime → UTC fallback"
+    )
+    system_now_class = "system-now tz-fallback" if tz_is_fallback else "system-now"
+
     body = f"""
     <div class="app">
       {render_sidebar(
@@ -1466,6 +1494,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           <div class="crumb">Pulse <span style="color:var(--fg-dim); margin:0 4px">›</span> Today</div>
           <div style="display:flex; gap:10px; align-items:center;">
             <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
+            <span class="{system_now_class}" title="{_esc(system_now_title)}">System: {_esc(system_now_str)} <span class="tz-key">{_esc(system_now_tz)} · {_esc(TZ.key)}</span></span>
             <span class="synced"><span class="ok-dot"></span>Synced {_esc(synced_ago)}</span>
             <button id="pulse-refresh" class="refresh-btn">Refresh</button>
           </div>
