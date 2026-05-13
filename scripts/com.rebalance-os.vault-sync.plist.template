@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/noelsaw/Documents/rebalance-OS/scripts/vault_sync.sh</string>
+        <string>{{REBALANCE_DIR}}/scripts/vault_sync.sh</string>
     </array>
 
     <!-- Run every hour from 6 AM through 11 PM local time. Daily-sync
@@ -40,10 +40,10 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/Users/noelsaw/Documents/rebalance-OS/temp/logs/vault_stdout.log</string>
+    <string>{{REBALANCE_DIR}}/temp/logs/vault_stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/noelsaw/Documents/rebalance-OS/temp/logs/vault_stderr.log</string>
+    <string>{{REBALANCE_DIR}}/temp/logs/vault_stderr.log</string>
 
     <key>KeepAlive</key>
     <false/>

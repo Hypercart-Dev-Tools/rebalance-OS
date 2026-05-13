@@ -227,7 +227,7 @@ class HealthCheckCliTests(unittest.TestCase):
                 last_scan_utc: "{recent_scan.strftime('%Y-%m-%dT%H:%M:%SZ')}"
                 repo_scan_failures: "1"
                 scan_status: "degraded"
-                scan_failure_examples: "/Users/noelsaw/Documents/GH Repos/project-a"
+                scan_failure_examples: "/Users/operator/Documents/GH Repos/project-a"
                 """
             ),
         )

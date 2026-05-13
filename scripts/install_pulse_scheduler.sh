@@ -2,7 +2,8 @@
 # Install (or reinstall) the rebalance OS hourly pulse publisher.
 #
 # What this does:
-#   1. Copies com.rebalance-os.pulse-sync.plist to ~/Library/LaunchAgents/
+#   1. Renders com.rebalance-os.pulse-sync.plist.template (substituting the
+#      local checkout path for {{REBALANCE_DIR}}) into ~/Library/LaunchAgents/.
 #   2. Loads it so macOS runs pulse_sync.sh every hour from 6 AM to 11 PM.
 #
 # Pre-flight:
@@ -22,11 +23,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLIST_SRC="$SCRIPT_DIR/com.rebalance-os.pulse-sync.plist"
+REBALANCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLIST_TEMPLATE="$SCRIPT_DIR/com.rebalance-os.pulse-sync.plist.template"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.rebalance-os.pulse-sync.plist"
 PULSE_SCRIPT="$SCRIPT_DIR/pulse_sync.sh"
 
 echo "Installing rebalance OS hourly pulse scheduler..."
+echo "  REBALANCE_DIR=$REBALANCE_DIR"
 
 if [ ! -x "$PULSE_SCRIPT" ]; then
     chmod +x "$PULSE_SCRIPT"
@@ -38,8 +41,9 @@ if launchctl list | grep -q "com.rebalance-os.pulse-sync"; then
     launchctl unload "$PLIST_DEST" 2>/dev/null || true
 fi
 
-cp "$PLIST_SRC" "$PLIST_DEST"
-echo "  Copied plist to $PLIST_DEST"
+ESCAPED_DIR=$(printf '%s\n' "$REBALANCE_DIR" | sed 's/[\/&]/\\&/g')
+sed "s/{{REBALANCE_DIR}}/$ESCAPED_DIR/g" "$PLIST_TEMPLATE" > "$PLIST_DEST"
+echo "  Rendered plist to $PLIST_DEST"
 
 mkdir -p "$SCRIPT_DIR/../temp/logs"
 

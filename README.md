@@ -392,7 +392,11 @@ Notes:
 - Embedding is local (Qwen3-Embedding-0.6B via `sentence-transformers`) — no Gemini API key needed for ingest or query.
 - Synthesis (the answer step) still defaults to Gemini unless you pass `--retrieval-only` or configure a local synthesis provider in [ask_self/ask_self_harness.json](ask_self/ask_self_harness.json).
 
-The wrappers point at `/Users/noelsaw/Documents/GH Repos/ask-self` by default. Override `ASK_SELF_PATH` if your ask-self checkout lives elsewhere.
+The wrappers require `ASK_SELF_PATH` to point at your local `ask-self` checkout (no default — the scripts fail loudly if it isn't set):
+
+```bash
+export ASK_SELF_PATH="$HOME/Documents/GitHub/ask-self"
+```
 
 ### CLI reference
 

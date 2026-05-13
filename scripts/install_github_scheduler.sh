@@ -2,7 +2,8 @@
 # Install (or reinstall) the rebalance OS hourly github sync scheduler.
 #
 # What this does:
-#   1. Copies com.rebalance-os.github-sync.plist to ~/Library/LaunchAgents/
+#   1. Renders com.rebalance-os.github-sync.plist.template (substituting the
+#      local checkout path for {{REBALANCE_DIR}}) into ~/Library/LaunchAgents/.
 #   2. Loads it so macOS runs github_sync.sh at HH:45 from 06:45 through 23:45.
 #
 # Usage:
@@ -11,11 +12,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLIST_SRC="$SCRIPT_DIR/com.rebalance-os.github-sync.plist"
+REBALANCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLIST_TEMPLATE="$SCRIPT_DIR/com.rebalance-os.github-sync.plist.template"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.rebalance-os.github-sync.plist"
 SYNC_SCRIPT="$SCRIPT_DIR/github_sync.sh"
 
 echo "Installing rebalance OS hourly github scheduler..."
+echo "  REBALANCE_DIR=$REBALANCE_DIR"
 
 if [ ! -x "$SYNC_SCRIPT" ]; then
     chmod +x "$SYNC_SCRIPT"
@@ -27,10 +30,12 @@ if launchctl list | grep -q "com.rebalance-os.github-sync"; then
     launchctl unload "$PLIST_DEST" 2>/dev/null || true
 fi
 
-cp "$PLIST_SRC" "$PLIST_DEST"
-echo "  Copied plist to $PLIST_DEST"
+# Render template into LaunchAgents — escape '/' and '&' for sed.
+ESCAPED_DIR=$(printf '%s\n' "$REBALANCE_DIR" | sed 's/[\/&]/\\&/g')
+sed "s/{{REBALANCE_DIR}}/$ESCAPED_DIR/g" "$PLIST_TEMPLATE" > "$PLIST_DEST"
+echo "  Rendered plist to $PLIST_DEST"
 
-mkdir -p "$SCRIPT_DIR/../temp/logs"
+mkdir -p "$REBALANCE_DIR/temp/logs"
 
 launchctl load "$PLIST_DEST"
 echo "  Loaded scheduler"

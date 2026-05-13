@@ -4,7 +4,11 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
-ASK_SELF_PATH="${ASK_SELF_PATH:-/Users/noelsaw/Documents/GH Repos/ask-self}"
+if [ -z "${ASK_SELF_PATH:-}" ]; then
+    echo "ASK_SELF_PATH is not set. Point it at your ask-self checkout, e.g.:" >&2
+    echo "    export ASK_SELF_PATH=\"\$HOME/Documents/GitHub/ask-self\"" >&2
+    exit 1
+fi
 HARNESS_CONFIG="$REPO_ROOT/ask_self/ask_self_harness.json"
 ENTRYPOINT="$ASK_SELF_PATH/ask_self_ingest.py"
 # Portable mode: write the committed DB at a tracked path so a fresh clone can query
@@ -14,8 +18,7 @@ PORTABLE_DB="$REPO_ROOT/ask_self/index/rebalance-OS.sqlite"
 mkdir -p "$REPO_ROOT/ask_self/index"
 
 if [ ! -d "$ASK_SELF_PATH" ]; then
-    echo "ask-self repo not found: $ASK_SELF_PATH" >&2
-    echo "Set ASK_SELF_PATH to your ask-self checkout and retry." >&2
+    echo "ASK_SELF_PATH points at $ASK_SELF_PATH but no directory is there." >&2
     exit 1
 fi
 

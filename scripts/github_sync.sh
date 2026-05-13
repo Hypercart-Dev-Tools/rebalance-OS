@@ -4,7 +4,7 @@
 
 set -euo pipefail
 
-REBALANCE_DIR="/Users/noelsaw/Documents/rebalance-OS"
+REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="$REBALANCE_DIR/.venv/bin/python"
 DATABASE="$REBALANCE_DIR/rebalance.db"
 LOG_DIR="$REBALANCE_DIR/temp/logs"

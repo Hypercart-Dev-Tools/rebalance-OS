@@ -324,7 +324,7 @@ def resolve_secret_path(name: str) -> Path:
     """Return the resolved Path to a named secret file under the secrets dir.
 
     Example: ``resolve_secret_path("google-calendar.env")`` →
-        ``Path("/Users/noelsaw/secrets/google-calendar.env")`` by default,
+        ``Path.home() / "secrets" / "google-calendar.env"`` by default,
         respecting REBALANCE_SECRETS_DIR / user config when set.
     """
     return resolve_secrets_dir() / name

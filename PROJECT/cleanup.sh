@@ -888,7 +888,7 @@ for filepath in sorted(files):
     canonical['priority'] = existing.get('priority', infer_priority(filepath))
     canonical['created']  = existing.get('created', gd.get('created', str(date.today())))
     canonical['updated']  = existing.get('updated', gd.get('updated', str(date.today())))
-    canonical['author']   = existing.get('author') or gd.get('author') or 'noelsaw'
+    canonical['author']   = existing.get('author') or gd.get('author') or os.environ.get('USER', 'unknown')
     canonical['goal']     = existing.get('goal', '')
 
     # Normalize priority format (e.g. "high" → P1)
