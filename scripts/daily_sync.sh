@@ -12,7 +12,6 @@ set -euo pipefail
 
 REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="$REBALANCE_DIR/.venv/bin/python"
-DATABASE="$REBALANCE_DIR/rebalance.db"
 LOG_DIR="$REBALANCE_DIR/temp/logs"
 
 mkdir -p "$LOG_DIR"
@@ -25,18 +24,22 @@ log() {
 cd "$REBALANCE_DIR"
 
 log "=== rebalance daily sync starting ==="
-log "scope=all database=$DATABASE"
 
 # refresh_index orchestrates: vault ingest+embed -> github scan+sync+embed ->
 # calendar -> sleuth -> unified semantic backfill+embed. Per-scope failures
 # are captured in the result.errors list rather than aborting the run.
+# DB path resolves via rebalance.paths.resolve_database_path() so we hit the
+# same canonical location the dashboard/MCP reads from — never a stale
+# project-tree rebalance.db left behind by an older script.
 "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1
 import json
 import sys
-from pathlib import Path
 from rebalance.ingest.index_ops import refresh_index
+from rebalance.paths import resolve_database_path
 
-result = refresh_index(Path("rebalance.db").resolve(), scope=["all"])
+db_path = resolve_database_path()
+print(f"database={db_path}")
+result = refresh_index(db_path, scope=["all"])
 print(json.dumps(result, indent=2, default=str))
 sys.exit(1 if result.get("errors") else 0)
 PY

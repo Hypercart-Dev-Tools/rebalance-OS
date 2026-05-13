@@ -28,10 +28,12 @@ log "=== rebalance pulse sync starting ==="
 "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1
 import json
 import sys
-from pathlib import Path
 from rebalance.ingest.pulse import publish_pulse
+from rebalance.paths import resolve_database_path
 
-result = publish_pulse(Path("rebalance.db").resolve(), dry_run=False, push=True)
+db_path = resolve_database_path()
+print(f"database={db_path}")
+result = publish_pulse(db_path, dry_run=False, push=True)
 # Drop the rendered markdown from the log to keep it readable; the file on
 # disk is the artifact.
 result.pop("markdown", None)
