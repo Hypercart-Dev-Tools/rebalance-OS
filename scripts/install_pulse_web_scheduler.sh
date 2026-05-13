@@ -24,11 +24,13 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-PLIST_SRC="$SCRIPT_DIR/com.rebalance-os.pulse-web-sync.plist"
+REBALANCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+PLIST_TEMPLATE="$SCRIPT_DIR/com.rebalance-os.pulse-web-sync.plist.template"
 PLIST_DEST="$HOME/Library/LaunchAgents/com.rebalance-os.pulse-web-sync.plist"
 PULSE_WEB_SCRIPT="$SCRIPT_DIR/pulse_web_sync.sh"
 
 echo "Installing rebalance OS 30-minute pulse-web scheduler..."
+echo "  REBALANCE_DIR=$REBALANCE_DIR"
 
 if [ ! -x "$PULSE_WEB_SCRIPT" ]; then
     chmod +x "$PULSE_WEB_SCRIPT"
@@ -40,10 +42,12 @@ if launchctl list | grep -q "com.rebalance-os.pulse-web-sync"; then
     launchctl unload "$PLIST_DEST" 2>/dev/null || true
 fi
 
-cp "$PLIST_SRC" "$PLIST_DEST"
-echo "  Copied plist to $PLIST_DEST"
+# Render template into LaunchAgents — escape '/' and '&' for sed.
+ESCAPED_DIR=$(printf '%s\n' "$REBALANCE_DIR" | sed 's/[\/&]/\\&/g')
+sed "s/{{REBALANCE_DIR}}/$ESCAPED_DIR/g" "$PLIST_TEMPLATE" > "$PLIST_DEST"
+echo "  Rendered plist to $PLIST_DEST"
 
-mkdir -p "$SCRIPT_DIR/../temp/logs"
+mkdir -p "$REBALANCE_DIR/temp/logs"
 
 launchctl load "$PLIST_DEST"
 echo "  Loaded scheduler"

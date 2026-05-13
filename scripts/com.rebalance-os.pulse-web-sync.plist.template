@@ -7,7 +7,7 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/noelsaw/Documents/rebalance-OS/scripts/pulse_web_sync.sh</string>
+        <string>{{REBALANCE_DIR}}/scripts/pulse_web_sync.sh</string>
     </array>
 
     <!-- Run every 30 minutes from 6:00 AM through 11:30 PM local time.
@@ -58,10 +58,10 @@
     <false/>
 
     <key>StandardOutPath</key>
-    <string>/Users/noelsaw/Documents/rebalance-OS/temp/logs/pulse_web_stdout.log</string>
+    <string>{{REBALANCE_DIR}}/temp/logs/pulse_web_stdout.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/noelsaw/Documents/rebalance-OS/temp/logs/pulse_web_stderr.log</string>
+    <string>{{REBALANCE_DIR}}/temp/logs/pulse_web_stderr.log</string>
 
     <key>KeepAlive</key>
     <false/>
