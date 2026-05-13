@@ -530,6 +530,21 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
     return out
 
 
+def fetch_recent_emails(limit: int = 30) -> list[dict[str, Any]]:
+    with db_connection(DB_PATH) as conn:
+        rows = conn.execute(
+            """
+            SELECT message_id, thread_id, from_name, from_address, subject, snippet, received_at, labels_json
+            FROM email_messages
+            WHERE received_at IS NOT NULL
+            ORDER BY received_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
 # ---------------------------------------------------------------------------
 # Renderers
 # ---------------------------------------------------------------------------

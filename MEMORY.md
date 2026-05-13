@@ -4,6 +4,7 @@
 - Operator-local Gmail auth now uses the shared Workspace Desktop OAuth client at `~/secrets/google-workspace-oauth-client.json`, with ADC cached at `~/.config/gcloud/application_default_credentials.json`; this survives reboot and is documented in `~/bin/servers.md` plus `~/secrets/google-calendar.env`.
 - The intended optional Secret Manager source of truth for the Workspace OAuth client is `google-workspace-oauth-client` in project `named-equator-493617-e5`; local refresh writes back to `~/secrets/google-workspace-oauth-client.json`.
 - Noel's current operator-local Gmail ingest filter is `in:inbox is:starred is:important`; the product default remains `in:inbox`, and narrowing the filter requires a one-time manual cleanup if the local DB should drop older broader-scope email rows.
+- The local pulse web UI now keeps up to 3 recent goal completions in `temp/pulse_goal_history.json` and supports up to 3 step undo via `/api/goals/undo`; the Goals file remains the single source of truth and undo replays against the actual markdown checkbox lines.
 - The current-state Gmail project doc now lives at `PROJECT/1-INBOX/EMAIL-INGEST.md`; keep it aligned with shipped behavior on `main`, especially the Workspace custom OAuth route.
 - Bash-script RAG spike entrypoint: `temp/bash_script_rag_spike.py`.
 - Reusable spike artifacts: `temp/rag/bash-script-spike.sqlite` and `temp/logs/bash-script-spike.jsonl`.

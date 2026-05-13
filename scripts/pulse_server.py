@@ -35,7 +35,15 @@ PULSE_WEB_PY = PROJECT_ROOT / "scripts" / "pulse_web.py"
 PYTHON = sys.executable
 
 sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
-from pulse_web import complete_goal_in_file, resolve_goals_path  # noqa: E402
+from pulse_web import (  # noqa: E402
+    complete_goal_in_file,
+    forget_goal_completion,
+    _goal_completion_still_applied,
+    remember_goal_completion,
+    resolve_goals_path,
+    load_goal_history,
+    undo_goal_completion_in_file,
+)
 
 app = FastAPI(title="rebalance pulse (local)", docs_url=None, redoc_url=None)
 
@@ -103,6 +111,39 @@ class GoalCompleteRequest(BaseModel):
     title: str
 
 
+class GoalUndoRequest(BaseModel):
+    id: str
+
+
+def _history_payload(goals_path: Path) -> list[dict[str, str]]:
+    items = load_goal_history(goals_path=goals_path)
+    now = datetime.now(timezone.utc)
+    out: list[dict[str, str]] = []
+    for item in items:
+        completed_at = item.get("completed_at")
+        ago = "just now"
+        if isinstance(completed_at, str):
+            try:
+                dt = datetime.fromisoformat(completed_at.replace("Z", "+00:00"))
+                secs = max(0, int((now - dt).total_seconds()))
+                if secs < 60:
+                    ago = f"{secs}s ago"
+                elif secs < 3600:
+                    ago = f"{secs // 60}m ago"
+                elif secs < 86400:
+                    ago = f"{secs // 3600}h ago"
+                else:
+                    ago = f"{secs // 86400}d ago"
+            except ValueError:
+                ago = "just now"
+        out.append({
+            "id": str(item.get("id") or ""),
+            "title": str(item.get("title") or ""),
+            "completed_ago": ago,
+        })
+    return out
+
+
 @app.post("/api/goals/complete")
 def goals_complete(req: GoalCompleteRequest):
     goals_path = resolve_goals_path()
@@ -116,14 +157,15 @@ def goals_complete(req: GoalCompleteRequest):
     title = (req.title or "").strip()
     if not title:
         raise HTTPException(status_code=400, detail="title is required")
-    ok = complete_goal_in_file(goals_path, title)
-    if not ok:
+    completion = complete_goal_in_file(goals_path, title)
+    if not completion:
         # The most useful client-visible reason is that the title no longer
         # matches an unchecked line — file may have been edited since render.
         return JSONResponse(
             {"ok": False, "reason": "not_found", "title": title},
             status_code=404,
         )
+    remember_goal_completion(completion)
     # Regenerate the static HTML so a manual reload (or external file:// open)
     # reflects the new state without waiting for the launchd 30-min cycle.
     subprocess.Popen(
@@ -132,7 +174,69 @@ def goals_complete(req: GoalCompleteRequest):
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
     )
-    return {"ok": True, "title": title}
+    return {
+        "ok": True,
+        "title": title,
+        "history": _history_payload(goals_path),
+    }
+
+
+@app.post("/api/goals/undo")
+def goals_undo(req: GoalUndoRequest):
+    goals_path = resolve_goals_path()
+    if goals_path is None:
+        raise HTTPException(
+            status_code=503,
+            detail="goals path not resolvable (no PULSE_GOALS env and no vault_path in config)",
+        )
+    if not goals_path.exists():
+        raise HTTPException(status_code=404, detail=f"goals file missing: {goals_path}")
+    undo_id = (req.id or "").strip()
+    if not undo_id:
+        raise HTTPException(status_code=400, detail="id is required")
+
+    entries = load_goal_history(goals_path=goals_path)
+    entry = next((item for item in entries if item.get("id") == undo_id), None)
+    if entry is None:
+        return JSONResponse(
+            {"ok": False, "reason": "not_found", "id": undo_id},
+            status_code=404,
+        )
+
+    ok = undo_goal_completion_in_file(goals_path, entry)
+    if not ok:
+        if not _goal_completion_still_applied(goals_path, entry):
+            forget_goal_completion(undo_id)
+            subprocess.Popen(
+                [PYTHON, str(PULSE_WEB_PY)],
+                cwd=str(PROJECT_ROOT),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            return {
+                "ok": True,
+                "id": undo_id,
+                "title": str(entry.get("title") or ""),
+                "history": _history_payload(goals_path),
+                "stale_removed": True,
+            }
+        return JSONResponse(
+            {"ok": False, "reason": "undo_failed", "id": undo_id},
+            status_code=409,
+        )
+    forget_goal_completion(undo_id)
+    subprocess.Popen(
+        [PYTHON, str(PULSE_WEB_PY)],
+        cwd=str(PROJECT_ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return {
+        "ok": True,
+        "id": undo_id,
+        "title": str(entry.get("title") or ""),
+        "history": _history_payload(goals_path),
+    }
 
 
 def main() -> int:

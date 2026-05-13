@@ -26,9 +26,11 @@ import re
 import sys
 import time
 import urllib.parse
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -40,6 +42,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     DB_PATH,
     TZ,
     fetch_calendar_upcoming,
+    fetch_recent_emails,
     fetch_recent_github,
     fetch_repo_activity_counts,
     fetch_sleuth_due,
@@ -53,6 +56,8 @@ from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 
 CONFIG_PATH = PROJECT_ROOT / "temp" / "rbos.config"
 DEFAULT_OUT = PROJECT_ROOT / "web" / "pulse.html"
+GOAL_HISTORY_PATH = PROJECT_ROOT / "temp" / "pulse_goal_history.json"
+MAX_GOAL_HISTORY = 3
 
 
 # ---------------------------------------------------------------------------
@@ -115,20 +120,110 @@ def resolve_goals_path(explicit: Path | None = None) -> Path | None:
     return vault / "0. Goals.md"
 
 
-def complete_goal_in_file(path: Path, title: str) -> bool:
-    """Mark the first matching `- [ ] <title>` line as `- [x] <title>` in place.
+def _read_json_list(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    return data if isinstance(data, list) else []
 
-    Returns True if a line was rewritten, False if no unchecked line matched.
-    Write is atomic (tmp + replace). Comparison is on the stripped title text
-    so it survives surrounding whitespace differences.
-    """
+
+def _goal_completion_still_applied(path: Path, entry: dict[str, Any]) -> bool:
+    """Return True when the completion record still matches a checked line."""
     if not path.exists():
         return False
+    title = str(entry.get("title") or "").strip()
+    after_line = str(entry.get("after_line") or "")
+    if not title:
+        return False
+
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    line_index = entry.get("line_index")
+    if isinstance(line_index, int) and 0 <= line_index < len(lines):
+        raw = lines[line_index]
+        m = CHECKBOX_RE.match(raw.rstrip("\n"))
+        if m and m.group("mark").lower() == "x" and m.group("title").strip() == title:
+            if not after_line or raw == after_line:
+                return True
+
+    for raw in lines:
+        m = CHECKBOX_RE.match(raw.rstrip("\n"))
+        if not m or m.group("mark").lower() != "x":
+            continue
+        if m.group("title").strip() != title:
+            continue
+        if not after_line or raw == after_line:
+            return True
+    return False
+
+
+def load_goal_history(*, goals_path: Path | None = None, history_path: Path = GOAL_HISTORY_PATH) -> list[dict[str, Any]]:
+    entries = _read_json_list(history_path)
+    if goals_path is None:
+        return entries[:MAX_GOAL_HISTORY]
+    wanted = str(goals_path.expanduser().resolve())
+    kept = [
+        entry for entry in entries
+        if isinstance(entry, dict) and entry.get("goals_path") == wanted
+    ]
+    fresh = [entry for entry in kept if _goal_completion_still_applied(goals_path, entry)]
+    stale_ids = {str(entry.get("id") or "") for entry in kept if entry not in fresh}
+    if stale_ids:
+        remaining = [
+            entry for entry in entries
+            if isinstance(entry, dict) and str(entry.get("id") or "") not in stale_ids
+        ]
+        _write_goal_history(remaining, history_path=history_path)
+    return fresh[:MAX_GOAL_HISTORY]
+
+
+def _write_goal_history(entries: Iterable[dict[str, Any]], *, history_path: Path = GOAL_HISTORY_PATH) -> list[dict[str, Any]]:
+    compact = list(entries)[:MAX_GOAL_HISTORY]
+    history_path.parent.mkdir(parents=True, exist_ok=True)
+    history_path.write_text(json.dumps(compact, indent=2), encoding="utf-8")
+    return compact
+
+
+def remember_goal_completion(entry: dict[str, Any], *, history_path: Path = GOAL_HISTORY_PATH) -> list[dict[str, Any]]:
+    entries = [entry]
+    for existing in _read_json_list(history_path):
+        if not isinstance(existing, dict):
+            continue
+        if existing.get("id") == entry.get("id"):
+            continue
+        if (
+            existing.get("goals_path") == entry.get("goals_path")
+            and existing.get("title") == entry.get("title")
+        ):
+            continue
+        entries.append(existing)
+    return _write_goal_history(entries, history_path=history_path)
+
+
+def forget_goal_completion(entry_id: str, *, history_path: Path = GOAL_HISTORY_PATH) -> list[dict[str, Any]]:
+    kept = [
+        entry for entry in _read_json_list(history_path)
+        if isinstance(entry, dict) and entry.get("id") != entry_id
+    ]
+    return _write_goal_history(kept, history_path=history_path)
+
+
+def complete_goal_in_file(path: Path, title: str) -> dict[str, Any] | None:
+    """Mark the first matching `- [ ] <title>` line as `- [x] <title>` in place.
+
+    Returns a completion record describing the rewritten line, or ``None`` if
+    no unchecked line matched. Write is atomic (tmp + replace). Comparison is
+    on the stripped title text so it survives surrounding whitespace differences.
+    """
+    if not path.exists():
+        return None
     target = title.strip()
     if not target:
-        return False
+        return None
     lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    changed = False
+    record: dict[str, Any] | None = None
     for i, raw in enumerate(lines):
         m = CHECKBOX_RE.match(raw.rstrip("\n"))
         if not m or m.group("mark").lower() == "x":
@@ -144,15 +239,59 @@ def complete_goal_in_file(path: Path, title: str) -> bool:
         # Preserve indent + bullet by swapping only the marker character.
         body = raw[: -len(ending)] if ending else raw
         # body looks like "  - [ ] title…" — replace first "[ ]" with "[x]".
-        lines[i] = body.replace("[ ]", "[x]", 1) + ending
-        changed = True
+        updated = body.replace("[ ]", "[x]", 1) + ending
+        lines[i] = updated
+        record = {
+            "id": uuid4().hex,
+            "title": target,
+            "goals_path": str(path.expanduser().resolve()),
+            "line_index": i,
+            "before_line": raw,
+            "after_line": updated,
+            "completed_at": datetime.now(timezone.utc).isoformat(),
+        }
         break
-    if not changed:
-        return False
+    if record is None:
+        return None
     tmp = path.with_suffix(path.suffix + ".tmp")
     tmp.write_text("".join(lines), encoding="utf-8")
     tmp.replace(path)
-    return True
+    return record
+
+
+def undo_goal_completion_in_file(path: Path, entry: dict[str, Any]) -> bool:
+    """Revert one completion record back to an unchecked checkbox."""
+    if not path.exists():
+        return False
+    before_line = str(entry.get("before_line") or "")
+    after_line = str(entry.get("after_line") or "")
+    title = str(entry.get("title") or "").strip()
+    if not before_line or not title:
+        return False
+
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    candidate_indexes: list[int] = []
+    line_index = entry.get("line_index")
+    if isinstance(line_index, int) and 0 <= line_index < len(lines):
+        candidate_indexes.append(line_index)
+    candidate_indexes.extend(i for i in range(len(lines)) if i not in candidate_indexes)
+
+    for i in candidate_indexes:
+        raw = lines[i]
+        m = CHECKBOX_RE.match(raw.rstrip("\n"))
+        if not m or m.group("mark").lower() != "x":
+            continue
+        if m.group("title").strip() != title:
+            continue
+        if after_line and raw != after_line and i == line_index:
+            # The exact line changed under us; continue to the fallback scan.
+            continue
+        lines[i] = before_line
+        tmp = path.with_suffix(path.suffix + ".tmp")
+        tmp.write_text("".join(lines), encoding="utf-8")
+        tmp.replace(path)
+        return True
+    return False
 
 
 def load_vault_path() -> Path | None:
@@ -211,6 +350,10 @@ def _format_dt_short(value: str | datetime | None, *, tz: ZoneInfo) -> str:
     return dt.astimezone(tz).strftime("%a %-I:%M %p").lower().replace("am", "am").replace("pm", "pm")
 
 
+def _normalize_html_text(value: str | None) -> str:
+    return html.unescape((value or "").strip())
+
+
 def build_obsidian_url(vault_path: Path | None, file_path: Path) -> str | None:
     """Return an obsidian:// URL for file_path, or None if no vault is known.
 
@@ -249,6 +392,16 @@ def build_slack_url(reminder: dict[str, Any]) -> str | None:
     return base
 
 
+def build_gmail_thread_url(row: dict[str, Any]) -> str | None:
+    thread_id = (row.get("thread_id") or "").strip()
+    if thread_id:
+        return f"https://mail.google.com/mail/u/0/#all/{urllib.parse.quote(thread_id)}"
+    message_id = (row.get("message_id") or "").strip()
+    if message_id:
+        return f"https://mail.google.com/mail/u/0/#all/{urllib.parse.quote(message_id)}"
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Section renderers
 # ---------------------------------------------------------------------------
@@ -274,6 +427,7 @@ def render_hero(
     pulled_from: str,
     now: datetime,
     obsidian_url: str | None,
+    recent_completions: list[dict[str, Any]],
 ) -> str:
     done = sum(1 for g in goals if g["done"])
     in_progress = len(goals) - done
@@ -300,6 +454,31 @@ def render_hero(
         f'<a class="hero-open" href="{_esc(obsidian_url)}">Open in Obsidian ↗</a>'
         if obsidian_url else ""
     )
+    undo_html = ""
+    if recent_completions:
+        undo_rows = []
+        for item in recent_completions[:MAX_GOAL_HISTORY]:
+            title = str(item.get("title") or "").strip() or "completed task"
+            completed_at = item.get("completed_at")
+            ago = _ago(completed_at, now=now) if completed_at else "just now"
+            item_id = str(item.get("id") or "")
+            undo_rows.append(f"""
+            <li class="goal-undo-item">
+              <div class="goal-undo-copy">
+                <span class="goal-undo-title">{_esc(title)}</span>
+                <span class="goal-undo-meta">{_esc(ago)}</span>
+              </div>
+              <button class="goal-undo-btn" type="button" data-goal-undo-id="{_esc(item_id)}">Undo</button>
+            </li>
+            """)
+        undo_html = f"""
+        <div id="goal-undo-tray" class="goal-undo-tray">
+          <div class="goal-undo-label">Recently completed</div>
+          <ul class="goal-undo-list">{''.join(undo_rows)}</ul>
+        </div>
+        """
+    else:
+        undo_html = '<div id="goal-undo-tray" class="goal-undo-tray is-empty" hidden></div>'
     return f"""
     <section class="hero card">
       <header class="hero-head">
@@ -315,6 +494,7 @@ def render_hero(
         </div>
       </header>
       <ul class="goals">{''.join(rows)}</ul>
+      {undo_html}
     </section>
     """
 
@@ -415,7 +595,7 @@ def render_repo_pie(rows: list[dict[str, Any]], *, days: int) -> str:
         <span class="card-head-meta">{total} events · {len(rows)} repos</span>
       </header>
       <div class="repo-pie-wrap">
-        <canvas id="repo-pie-canvas" height="220"></canvas>
+        <canvas id="repo-pie-canvas" height="320"></canvas>
       </div>
       <script type="application/json" id="repo-pie-data">{payload}</script>
     </section>
@@ -455,6 +635,7 @@ def render_index_health(status: dict[str, Any], now: datetime) -> str:
         ("GitHub docs",      (sources.get("github")   or {}).get("documents"),             (sources.get("github")   or {}).get("documents_last_updated_at"), "warn"),
         ("Calendar events",  (sources.get("calendar") or {}).get("events"),                (sources.get("calendar") or {}).get("last_fetched_at"),           "info"),
         ("Sleuth reminders", (sources.get("sleuth")   or {}).get("reminders"),             (sources.get("sleuth")   or {}).get("last_synced_at"),            "info"),
+        ("Email messages",   (sources.get("email")    or {}).get("messages"),              (sources.get("email")    or {}).get("last_synced_at"),            "info"),
         ("Semantic docs",    semantic.get("total_documents"),                              semantic.get("last_embedded_at"),                                  "ok"),
     ]
     items = []
@@ -480,6 +661,84 @@ def render_index_health(status: dict[str, Any], now: datetime) -> str:
     <section class="card health">
       <header class="card-head"><h2>Index health</h2></header>
       <ul class="kv-list">{''.join(items)}</ul>
+    </section>
+    """
+
+
+def render_recent_emails(
+    rows: list[dict[str, Any]],
+    now: datetime,
+    *,
+    tz: ZoneInfo,
+    limit: int,
+    stored_total: int,
+) -> str:
+    if not rows:
+        return f"""
+    <section class="card recent-emails">
+      <header class="card-head">
+        <h2>Recent email</h2>
+        <span class="card-head-meta">0 messages</span>
+      </header>
+      <div class="empty">No stored email messages yet.</div>
+    </section>
+    """
+
+    items = []
+    for row in rows:
+        sender = _normalize_html_text(row.get("from_name") or "") or _normalize_html_text(row.get("from_address") or "") or "unknown sender"
+        subject = _normalize_html_text(row.get("subject") or "") or "(no subject)"
+        snippet = _truncate(_normalize_html_text(row.get("snippet") or ""), 180)
+        when = _ago(row.get("received_at"), now=now)
+        gmail_url = build_gmail_thread_url(row)
+        labels_raw = row.get("labels_json") or "[]"
+        try:
+            labels = json.loads(labels_raw)
+        except json.JSONDecodeError:
+            labels = []
+        label_bits = []
+        if "STARRED" in labels:
+            label_bits.append('<span class="mail-badge starred">starred</span>')
+        if "IMPORTANT" in labels:
+            label_bits.append('<span class="mail-badge important">important</span>')
+
+        subject_html = (
+            f'<a class="email-row-link" href="{_esc(gmail_url)}" target="_blank" rel="noopener noreferrer">{_esc(subject)}</a>'
+            if gmail_url else _esc(subject)
+        )
+        reply_html = (
+            f'<a class="email-row-open" href="{_esc(gmail_url)}" target="_blank" rel="noopener noreferrer" aria-label="Open email thread in Gmail" title="Open in Gmail">'
+            f'<span class="gmail-icon" aria-hidden="true">✉</span>'
+            f'</a>'
+            if gmail_url else ""
+        )
+
+        items.append(f"""
+        <li class="email-row">
+          <div class="email-row-main">
+            <div class="email-row-subject">{subject_html}</div>
+            <div class="email-row-meta">
+              <span class="email-row-from">{_esc(sender)}</span>
+              <span class="email-row-dot">·</span>
+              <span class="email-row-when">{_esc(when)}</span>
+              {f'<span class="email-row-dot">·</span>{"".join(label_bits)}' if label_bits else ""}
+            </div>
+            <div class="email-row-snippet">{_esc(snippet)}</div>
+          </div>
+          <div class="email-row-side">
+            <div class="email-row-time">{_esc(_format_dt_short(row.get("received_at"), tz=tz))}</div>
+            {reply_html}
+          </div>
+        </li>
+        """)
+
+    return f"""
+    <section class="card recent-emails">
+      <header class="card-head">
+        <h2>Recent email</h2>
+        <span class="card-head-meta">latest {min(len(rows), limit)} shown · {stored_total} stored</span>
+      </header>
+      <ol class="email-list">{''.join(items)}</ol>
     </section>
     """
 
@@ -688,6 +947,75 @@ h2 { font-size: 14px; color: var(--fg); }
 .goal-title a:hover, .goal-desc a:hover { text-decoration: underline; }
 .goal.done .goal-title { text-decoration: line-through; color: var(--fg-dim); }
 .goal.done .goal-desc { color: var(--fg-dim); }
+.goal-undo-tray {
+  border-top: 1px solid var(--border);
+  margin-top: 8px;
+  padding: 14px 6px 4px;
+}
+.goal-undo-tray.is-empty { display: none; }
+.goal-undo-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--fg-dim);
+  margin-bottom: 10px;
+}
+.goal-undo-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.goal-undo-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: rgba(0,0,0,.015);
+}
+.goal-undo-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.goal-undo-title {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.goal-undo-meta {
+  font-size: 11.5px;
+  color: var(--fg-dim);
+}
+.goal-undo-btn {
+  font: inherit;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--accent);
+  padding: 5px 11px;
+  cursor: pointer;
+  font-size: 11.5px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.goal-undo-btn:hover {
+  border-color: rgba(31,111,235,.28);
+  background: rgba(31,111,235,.07);
+}
+.goal-undo-btn:disabled {
+  opacity: .55;
+  cursor: progress;
+}
 
 /* Two-column body */
 .grid { display: grid; grid-template-columns: minmax(0,2fr) minmax(0,1fr); gap: 16px; }
@@ -713,6 +1041,111 @@ h2 { font-size: 14px; color: var(--fg); }
 .activity-row .who { color: var(--fg-dim); }
 .activity-row .detail { grid-column: 3 / -1; color: var(--fg-muted); font-size: 12.5px; }
 
+/* Recent email */
+.recent-emails .card-head { align-items: center; }
+.email-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 740px;
+  overflow-y: auto;
+}
+.email-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  align-items: start;
+}
+.email-row:first-child { border-top: 0; }
+.email-row-main { min-width: 0; }
+.email-row-subject {
+  font-weight: 600;
+  color: var(--fg);
+  margin-bottom: 3px;
+}
+.email-row-link {
+  color: inherit;
+  text-decoration: none;
+}
+.email-row-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.email-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  margin-bottom: 4px;
+}
+.email-row-from { color: var(--fg-muted); }
+.email-row-dot { color: var(--fg-dim); }
+.email-row-snippet {
+  color: var(--fg-muted);
+  font-size: 12.5px;
+  line-height: 1.4;
+}
+.email-row-time {
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.email-row-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.email-row-open {
+  width: 32px;
+  height: 32px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  text-decoration: none;
+  white-space: nowrap;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(0,0,0,.03);
+}
+.email-row-open:hover {
+  text-decoration: none;
+  border-color: rgba(31,111,235,.28);
+  background: rgba(31,111,235,.07);
+}
+.gmail-icon {
+  font-size: 14px;
+  line-height: 1;
+}
+.mail-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+.mail-badge.starred {
+  color: var(--warn);
+  border-color: rgba(166,95,0,.22);
+  background: rgba(166,95,0,.08);
+}
+.mail-badge.important {
+  color: var(--danger);
+  border-color: rgba(192,57,43,.20);
+  background: rgba(192,57,43,.08);
+}
+
 /* KV lists (watched / health) */
 .kv-list { list-style: none; padding: 6px 18px 10px; margin: 0; }
 .kv-list li { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; padding: 6px 0; align-items: baseline; }
@@ -734,14 +1167,64 @@ h2 { font-size: 14px; color: var(--fg); }
 .strip-label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); margin-bottom: 4px; }
 .strip-title { font-weight: 500; }
 .empty { color: var(--fg-dim); padding: 14px 18px; }
+
+@media (max-width: 1100px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
+  .grid { grid-template-columns: 1fr; }
+  .email-row { grid-template-columns: 1fr; }
+  .email-row-side { align-items: flex-start; }
+  .email-row-time { white-space: normal; }
+}
 """
 
 
 PULSE_JS = r"""
 (() => {
-  const FILTER_TARGETS = '.activity-row, .goal, .side-row, .strip > div, .kv-list li';
+  const FILTER_TARGETS = '.activity-row, .email-row, .goal, .side-row, .strip > div, .kv-list li';
   const input = document.getElementById('pulse-filter');
   const btn = document.getElementById('pulse-refresh');
+  const undoTray = document.getElementById('goal-undo-tray');
+
+  const escapeHtml = (value) => {
+    return String(value ?? '')
+      .replaceAll('&', '&amp;')
+      .replaceAll('<', '&lt;')
+      .replaceAll('>', '&gt;')
+      .replaceAll('"', '&quot;')
+      .replaceAll("'", '&#39;');
+  };
+
+  const renderUndoTray = (entries) => {
+    if (!undoTray) return;
+    if (!Array.isArray(entries) || entries.length === 0) {
+      undoTray.innerHTML = '';
+      undoTray.hidden = true;
+      undoTray.classList.add('is-empty');
+      return;
+    }
+    const items = entries.slice(0, 3).map((entry) => {
+      const title = escapeHtml(entry.title || 'completed task');
+      const ago = escapeHtml(entry.completed_ago || 'just now');
+      const entryId = escapeHtml(entry.id || '');
+      return `
+        <li class="goal-undo-item">
+          <div class="goal-undo-copy">
+            <span class="goal-undo-title">${title}</span>
+            <span class="goal-undo-meta">${ago}</span>
+          </div>
+          <button class="goal-undo-btn" type="button" data-goal-undo-id="${entryId}">Undo</button>
+        </li>
+      `;
+    });
+    undoTray.innerHTML = `
+      <div class="goal-undo-label">Recently completed</div>
+      <ul class="goal-undo-list">${items.join('')}</ul>
+    `;
+    undoTray.hidden = false;
+    undoTray.classList.remove('is-empty');
+    bindUndoButtons();
+  };
 
   if (input) {
     const rows = Array.from(document.querySelectorAll(FILTER_TARGETS));
@@ -775,6 +1258,7 @@ PULSE_JS = r"""
         body: JSON.stringify({ title }),
       });
       if (!res.ok) throw new Error('complete failed: ' + res.status);
+      const data = await res.json();
       if (check) check.classList.add('checked');
       // Brief tick, then collapse out.
       setTimeout(() => {
@@ -788,12 +1272,40 @@ PULSE_JS = r"""
         const n = parseInt(ipEl.textContent || '0', 10);
         if (!Number.isNaN(n) && n > 0) ipEl.textContent = String(n - 1);
       }
+      renderUndoTray(data.history || []);
     } catch (err) {
       console.warn('goal complete failed:', err);
       li.classList.remove('is-busy');
       alert('Could not mark goal complete — check the server log.');
     }
   };
+
+  const undoGoal = async (button) => {
+    const undoId = button?.dataset?.goalUndoId || '';
+    if (!undoId) return;
+    button.disabled = true;
+    try {
+      const res = await fetch('/api/goals/undo', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ id: undoId }),
+      });
+      if (!res.ok) throw new Error('undo failed: ' + res.status);
+      location.reload();
+    } catch (err) {
+      console.warn('goal undo failed:', err);
+      button.disabled = false;
+      alert('Could not undo completion — check the server log.');
+    }
+  };
+
+  function bindUndoButtons() {
+    document.querySelectorAll('.goal-undo-btn[data-goal-undo-id]').forEach((button) => {
+      if (button.dataset.undoBound === '1') return;
+      button.dataset.undoBound = '1';
+      button.addEventListener('click', () => undoGoal(button));
+    });
+  }
 
   document.querySelectorAll('.goal[data-goal-title] .check').forEach((el) => {
     el.addEventListener('click', () => completeGoal(el.closest('.goal')));
@@ -804,6 +1316,7 @@ PULSE_JS = r"""
       }
     });
   });
+  bindUndoButtons();
 
   if (btn) {
     btn.addEventListener('click', async () => {
@@ -855,7 +1368,7 @@ PULSE_JS = r"""
         plugins: {
           legend: {
             position: 'right',
-            labels: { color: '#cfd6e4', boxWidth: 10, boxHeight: 10, font: { size: 11 } },
+            labels: { color: '#1d2024', boxWidth: 10, boxHeight: 10, font: { size: 11 } },
           },
           tooltip: {
             callbacks: {
@@ -903,6 +1416,10 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     local_now = now.astimezone(TZ)
 
     goals = parse_goals(goals_path, limit=3)
+    recent_completions = load_goal_history(goals_path=goals_path)
+    for item in recent_completions:
+        completed_at = item.get("completed_at")
+        item["completed_ago"] = _ago(completed_at, now=now) if completed_at else "just now"
     pulled_from = goals_path.name if goals_path.exists() else f"missing: {goals_path}"
     obsidian_url = build_obsidian_url(vault_path, goals_path) if goals_path.exists() else None
 
@@ -911,6 +1428,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     vault_rows = fetch_vault_recent(limit=6)
     cal_rows = fetch_calendar_upcoming(now, limit=6)
     sleuth_rows = fetch_sleuth_due(limit=6)
+    email_rows = fetch_recent_emails(limit=30)
     repo_pie_days = 7
     repo_pie_rows = fetch_repo_activity_counts(days=repo_pie_days, limit=12)
     status = get_index_status(DB_PATH)
@@ -923,6 +1441,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
         "sleuth": len(sleuth_rows),
     }
     semantic_total = ((status.get("semantic_index") or {}).get("total_documents")) or 0
+    email_total = int(((status.get("sources") or {}).get("email") or {}).get("messages") or 0)
     freshness = status.get("freshness") or {}
     drift_total = sum(int(v) for v in freshness.values() if isinstance(v, int))
 
@@ -951,7 +1470,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
             <button id="pulse-refresh" class="refresh-btn">Refresh</button>
           </div>
         </div>
-        {render_hero(goals, pulled_from, local_now, obsidian_url)}
+        {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions)}
         <div class="grid">
           <div class="col">
             {render_recent_activity(gh_rows, now, last_vault=last_vault, vault_recent_count=len(vault_rows))}
@@ -960,6 +1479,9 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
             {render_watched(watched, now)}
             {render_repo_pie(repo_pie_rows, days=repo_pie_days)}
           </div>
+        </div>
+        <div class="full-row">
+          {render_recent_emails(email_rows, now, tz=TZ, limit=30, stored_total=email_total)}
         </div>
         <div class="full-row">
           {render_index_health(status, now)}
