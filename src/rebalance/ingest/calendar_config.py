@@ -7,8 +7,8 @@ Schema:
     "calendar_id": "primary",
     "exclude_titles": ["Check Slack", "Post Daily Timesheet"],
     "aggregator_skip_words": ["wrap", "setup", "test"],
-    "timezone": "America/New_York",
-    "hours_format": "decimal",       # "decimal" = 1.75h  |  "hm" = 1h 45m
+    "timezone": "",
+    "hours_format": "decimal",
     "projects": [
       {
         "name": "CreditRegistry",
@@ -16,6 +16,12 @@ Schema:
       }
     ]
   }
+
+Field notes:
+  - ``timezone`` accepts any IANA name (e.g. "America/Los_Angeles"). If omitted
+    or left as an empty string, the device's local timezone is used (resolved
+    via REBALANCE_TZ env var, then /etc/localtime, then UTC fallback).
+  - ``hours_format``: "decimal" = 1.75h  |  "hm" = 1h 45m
 
 Legacy field "exclude_keywords" is accepted for backwards compatibility and
 mapped to exclude_titles.
@@ -27,6 +33,8 @@ import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+
+from rebalance.tz_utils import local_tz
 
 # __file__ = src/rebalance/ingest/calendar_config.py
 # .parent (ingest) .parent (rebalance) .parent (src) .parent (repo root)
@@ -41,7 +49,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
         "Admin",
     ],
     "aggregator_skip_words": [],
-    "timezone": "America/New_York",
+    "timezone": "",  # empty → resolved to device local timezone at load time
     "projects": [],
     "hours_format": "decimal",
 }
@@ -131,7 +139,7 @@ class CalendarConfig:
             calendar_id=data.get("calendar_id", DEFAULT_CONFIG["calendar_id"]),
             exclude_titles=exclude_titles,
             aggregator_skip_words=aggregator_skip_words,
-            timezone=data.get("timezone", DEFAULT_CONFIG["timezone"]),
+            timezone=data.get("timezone") or local_tz().key,
             projects=cls._load_projects(data.get("projects", DEFAULT_CONFIG["projects"])),
             hours_format=hours_fmt,
         )

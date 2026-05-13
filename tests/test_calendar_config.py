@@ -20,9 +20,14 @@ class CalendarConfigLoadTests(unittest.TestCase):
     """Config loading from file, defaults, and field validation."""
 
     def test_load_returns_defaults_when_file_missing(self) -> None:
+        from rebalance.tz_utils import local_tz
+
         config = CalendarConfig.load(Path("/nonexistent/path/config.json"))
         self.assertEqual(config.calendar_id, "primary")
-        self.assertEqual(config.timezone, "America/New_York")
+        # DEFAULT_CONFIG["timezone"] is "" — resolves to the device's local
+        # zone at load time. Asserting against local_tz().key keeps this test
+        # platform-agnostic (CI runners are UTC; developer machines are not).
+        self.assertEqual(config.timezone, local_tz().key)
         self.assertEqual(config.hours_format, "decimal")
         self.assertEqual(config.projects, [])
         self.assertIn("Lunch", config.exclude_titles)

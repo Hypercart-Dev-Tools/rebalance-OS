@@ -34,6 +34,7 @@ from rebalance.ingest.agent_tags import classify as classify_source
 from rebalance.ingest.config import get_github_token, get_pulse_config
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.slack_users import compact_sleuth_reminder
+from rebalance.tz_utils import local_tz, parse_utc_iso
 
 
 # Author logins of known cloud-agent bots. Mirrors agent_tags.py — kept here
@@ -65,7 +66,7 @@ GITHUB_API_ROOT = "https://api.github.com"
 def _resolve_timezone(name: str | None) -> ZoneInfo:
     if name:
         return ZoneInfo(name)
-    return ZoneInfo("UTC")
+    return local_tz()
 
 
 def _local_day_bounds(tz: ZoneInfo, now: datetime | None = None) -> tuple[datetime, datetime, datetime]:
@@ -78,22 +79,14 @@ def _local_day_bounds(tz: ZoneInfo, now: datetime | None = None) -> tuple[dateti
 
 
 def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    text = value.strip().replace("Z", "+00:00")
-    try:
-        return datetime.fromisoformat(text)
-    except ValueError:
-        return None
+    return parse_utc_iso(value)
 
 
 def _in_window(value: str | None, start: datetime, end: datetime) -> bool:
     """True if *value* (ISO string with TZ) falls in [start, end)."""
-    parsed = _parse_iso(value)
+    parsed = parse_utc_iso(value)
     if parsed is None:
         return False
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
     return start <= parsed < end
 
 
