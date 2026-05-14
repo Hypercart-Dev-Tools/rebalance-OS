@@ -58,6 +58,8 @@ CONFIG_PATH = PROJECT_ROOT / "temp" / "rbos.config"
 DEFAULT_OUT = PROJECT_ROOT / "web" / "pulse.html"
 GOAL_HISTORY_PATH = PROJECT_ROOT / "temp" / "pulse_goal_history.json"
 MAX_GOAL_HISTORY = 3
+PRIMARY_GOAL_LIMIT = 3
+SECONDARY_TODO_LIMIT = 6
 
 
 # ---------------------------------------------------------------------------
@@ -422,19 +424,12 @@ def _linkify(text: str) -> str:
     return url_pattern.sub(replace_url, _esc(text))
 
 
-def render_hero(
-    goals: list[dict[str, Any]],
-    pulled_from: str,
-    now: datetime,
-    obsidian_url: str | None,
-    recent_completions: list[dict[str, Any]],
-) -> str:
-    done = sum(1 for g in goals if g["done"])
-    in_progress = len(goals) - done
-    pct = int((done / len(goals)) * 100) if goals else 0
+def _render_goal_rows(goals: list[dict[str, Any]], *, empty_html: str, compact: bool = False) -> str:
     rows = []
     for g in goals:
         cls = "done" if g["done"] else ""
+        if compact:
+            cls = f"{cls} goal-compact".strip()
         check = "checked" if g["done"] else ""
         title_html = _linkify(g['title'])
         desc_html = _linkify(g['description'])
@@ -448,7 +443,32 @@ def render_hero(
         </li>
         """)
     if not rows:
-        rows.append('<li class="goal empty"><div class="goal-body"><div class="goal-title">No goals found</div><div class="goal-desc">Add checklist items to your Goals file.</div></div></li>')
+        rows.append(empty_html)
+    return "".join(rows)
+
+
+def render_hero(
+    goals: list[dict[str, Any]],
+    pulled_from: str,
+    now: datetime,
+    obsidian_url: str | None,
+    recent_completions: list[dict[str, Any]],
+    secondary_todos: list[dict[str, Any]] | None = None,
+) -> str:
+    secondary_todos = secondary_todos or []
+    visible_goals = [*goals, *secondary_todos]
+    done = sum(1 for g in visible_goals if g["done"])
+    in_progress = len(visible_goals) - done
+    pct = int((done / len(visible_goals)) * 100) if visible_goals else 0
+    primary_rows = _render_goal_rows(
+        goals,
+        empty_html='<li class="goal empty"><div class="goal-body"><div class="goal-title">No goals found</div><div class="goal-desc">Add checklist items to your Goals file.</div></div></li>',
+    )
+    secondary_rows = _render_goal_rows(
+        secondary_todos,
+        empty_html='<li class="goal empty goal-compact"><div class="goal-body"><div class="goal-title">No more open todos</div><div class="goal-desc">Everything else is clear.</div></div></li>',
+        compact=True,
+    )
     date_str = now.strftime("%A, %B %-d")
     open_link = (
         f'<a class="hero-open" href="{_esc(obsidian_url)}">Open in Obsidian ↗</a>'
@@ -493,7 +513,15 @@ def render_hero(
           <div class="pct">{pct}%</div>
         </div>
       </header>
-      <ul class="goals">{''.join(rows)}</ul>
+      <div class="hero-goal-board">
+        <div class="hero-goal-column">
+          <ul class="goals">{primary_rows}</ul>
+        </div>
+        <div class="hero-goal-column hero-goal-column-secondary">
+          <div class="hero-column-label">Next open todos</div>
+          <ul class="goals goals-secondary">{secondary_rows}</ul>
+        </div>
+      </div>
       {undo_html}
     </section>
     """
@@ -934,6 +962,19 @@ h2 { font-size: 14px; color: var(--fg); }
 .hero-stats .bar span { display: block; height: 100%; background: var(--accent); }
 .hero-stats .pct { font-variant-numeric: tabular-nums; min-width: 32px; text-align: right; }
 
+.hero-goal-board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr); gap: 14px; align-items: stretch; }
+.hero-goal-column { min-width: 0; }
+.hero-goal-column-secondary {
+  border-left: 1px solid var(--border);
+  padding-left: 14px;
+}
+.hero-column-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--fg-dim);
+  margin: 0 6px 4px;
+}
 .goals { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
 .goal { display: flex; align-items: flex-start; gap: 14px; padding: 12px 6px; border-top: 1px solid var(--border); }
 .goal:first-child { border-top: 0; }
@@ -950,6 +991,11 @@ h2 { font-size: 14px; color: var(--fg); }
 .goal-title a:hover, .goal-desc a:hover { text-decoration: underline; }
 .goal.done .goal-title { text-decoration: line-through; color: var(--fg-dim); }
 .goal.done .goal-desc { color: var(--fg-dim); }
+.goal-compact { padding: 8px 6px; gap: 10px; }
+.goal-compact .check { width: 16px; height: 16px; border-radius: 4px; }
+.goal-compact .check.checked::after { left: 4px; top: 1px; width: 4px; height: 8px; }
+.goal-compact .goal-title { font-size: 13px; line-height: 1.3; }
+.goal-compact .goal-desc { font-size: 11.5px; }
 .goal-undo-tray {
   border-top: 1px solid var(--border);
   margin-top: 8px;
@@ -1175,6 +1221,8 @@ h2 { font-size: 14px; color: var(--fg); }
   .app { grid-template-columns: 1fr; }
   .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
   .grid { grid-template-columns: 1fr; }
+  .hero-goal-board { grid-template-columns: 1fr; }
+  .hero-goal-column-secondary { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: 10px; }
   .email-row { grid-template-columns: 1fr; }
   .email-row-side { align-items: flex-start; }
   .email-row-time { white-space: normal; }
@@ -1431,7 +1479,9 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     now = datetime.now(timezone.utc)
     local_now = now.astimezone(TZ)
 
-    goals = parse_goals(goals_path, limit=3)
+    all_goals = parse_goals(goals_path, limit=PRIMARY_GOAL_LIMIT + SECONDARY_TODO_LIMIT)
+    goals = all_goals[:PRIMARY_GOAL_LIMIT]
+    secondary_todos = all_goals[PRIMARY_GOAL_LIMIT:]
     recent_completions = load_goal_history(goals_path=goals_path)
     for item in recent_completions:
         completed_at = item.get("completed_at")
@@ -1499,7 +1549,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
             <button id="pulse-refresh" class="refresh-btn">Refresh</button>
           </div>
         </div>
-        {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions)}
+        {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
         <div class="grid">
           <div class="col">
             {render_recent_activity(gh_rows, now, last_vault=last_vault, vault_recent_count=len(vault_rows))}

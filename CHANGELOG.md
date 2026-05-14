@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.30.0] - 2026-05-14
+
+### Added
+
+- The goals panel now shows a second column with the next six uppermost open todos from the same goals source, while keeping the primary three goals on the left.
+
 ## [0.29.2] - 2026-05-14
 
 ### Fixed
