@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.29.1] - 2026-05-14
+
+### Fixed
+
+- The pulse-server launchd job is now template-managed like the other five jobs. Previously `com.rebalance-os.pulse-server.plist` lived only in `~/Library/LaunchAgents/` with four hardcoded `/Users/<name>/...` paths and no checked-in template or installer — the one launchd job PR #18 didn't reach. Added [scripts/com.rebalance-os.pulse-server.plist.template](scripts/com.rebalance-os.pulse-server.plist.template) with `{{REBALANCE_DIR}}` placeholders and [scripts/install_pulse_server_scheduler.sh](scripts/install_pulse_server_scheduler.sh) to render + load it. `pulse_server.sh` itself already derived `REBALANCE_DIR` from script location (0.29.0).
+- `install_pulse_server_scheduler.sh` always attempts an `launchctl unload` before `load`, rather than gating the unload behind a `launchctl list | grep` check. The grep check can miss a job that is loaded but momentarily absent from `launchctl list`, in which case `launchctl load` fails with an opaque `Input/output error` (observed reinstalling pulse-sync and github-sync). The other five installers still use the older gated pattern — a uniform fix across all six is a follow-up.
+
 ## [0.29.0] - 2026-05-13
 
 ### Changed
