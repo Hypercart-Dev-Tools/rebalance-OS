@@ -9,9 +9,11 @@ from unittest.mock import MagicMock, patch
 
 from rebalance.ingest import calendar
 from rebalance.ingest.calendar_helpers import (
+    calendar_dt_utc,
     calendar_connection,
     event_duration_minutes,
     parse_calendar_dt,
+    upcoming_calendar_rows,
 )
 
 
@@ -41,6 +43,38 @@ class ParseCalendarDtTests(unittest.TestCase):
     def test_invalid_string_raises(self) -> None:
         with self.assertRaises(Exception):
             parse_calendar_dt("not-a-date")
+
+
+class CalendarUpcomingRowsTests(unittest.TestCase):
+    def test_calendar_dt_utc_normalizes_offset_timestamp(self) -> None:
+        dt = calendar_dt_utc("2026-05-14T09:00:00-07:00")
+        self.assertEqual(dt, datetime(2026, 5, 14, 16, 0, tzinfo=timezone.utc))
+
+    def test_upcoming_rows_compare_absolute_time_not_iso_text(self) -> None:
+        now = datetime(2026, 5, 14, 15, 25, tzinfo=timezone.utc)
+        rows = [
+            {"summary": "Past local morning", "start_time": "2026-05-14T08:00:00-07:00"},
+            {"summary": "Next local morning", "start_time": "2026-05-14T09:00:00-07:00"},
+            {"summary": "End of day", "start_time": "2026-05-14T17:00:00-07:00"},
+        ]
+
+        upcoming = upcoming_calendar_rows(rows, now=now)
+
+        self.assertEqual(
+            [row["summary"] for row in upcoming],
+            ["Next local morning", "End of day"],
+        )
+
+    def test_upcoming_rows_roll_across_day_boundary_when_unbounded(self) -> None:
+        now = datetime(2026, 5, 15, 6, 30, tzinfo=timezone.utc)  # 11:30 PM Pacific
+        rows = [
+            {"summary": "Earlier tonight", "start_time": "2026-05-14T22:00:00-07:00"},
+            {"summary": "Tomorrow morning", "start_time": "2026-05-15T08:30:00-07:00"},
+        ]
+
+        upcoming = upcoming_calendar_rows(rows, now=now)
+
+        self.assertEqual([row["summary"] for row in upcoming], ["Tomorrow morning"])
 
 
 class EventDurationMinutesTests(unittest.TestCase):

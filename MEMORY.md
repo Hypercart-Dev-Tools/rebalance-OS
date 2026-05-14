@@ -1,5 +1,6 @@
 # Memory
 
+- Calendar viewer "upcoming" queries must compare offset-aware event starts by absolute UTC time, not raw ISO text; same-day Pacific morning events sort before UTC afternoon strings even when they are still upcoming.
 - Phase 1 Gmail ingest uses Google Application Default Credentials (`gcloud auth application-default login` with `gmail.readonly`), stores subject + Gmail snippet only, and can be narrowed via `gmail_query_filter` in `temp/rbos.config`.
 - Operator-local Gmail auth now uses the shared Workspace Desktop OAuth client at `~/secrets/google-workspace-oauth-client.json`, with ADC cached at `~/.config/gcloud/application_default_credentials.json`; this survives reboot and is documented in `~/bin/servers.md` plus `~/secrets/google-calendar.env`.
 - The intended optional Secret Manager source of truth for the Workspace OAuth client is `google-workspace-oauth-client` in project `named-equator-493617-e5`; local refresh writes back to `~/secrets/google-workspace-oauth-client.json`.

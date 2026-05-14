@@ -7,13 +7,14 @@ import os
 import sys
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
 from uuid import uuid4
 
 from rebalance.ingest import config as config_module
 from rebalance.ingest.config import set_github_ignored_repos, set_pulse_config
-from rebalance.ingest.db import db_connection, ensure_github_schema
+from rebalance.ingest.db import db_connection, ensure_calendar_schema, ensure_github_schema
 from rebalance.ingest.sleuth_reminders import ensure_sleuth_schema
 
 
@@ -144,6 +145,62 @@ class DashboardTerminalThemeTests(unittest.TestCase):
             rows = dashboard.fetch_recent_github(limit=10)
 
         self.assertEqual([row["repo_full_name"] for row in rows], ["kissplugins/KISS-woo-order-monitoring-alerts"])
+
+    def test_calendar_upcoming_uses_absolute_time_for_offset_rows(self) -> None:
+        now = datetime(2026, 5, 14, 15, 25, tzinfo=timezone.utc)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            db_path = root / "rebalance.db"
+            config_module.CONFIG_PATH = root / "rbos.config"
+
+            with db_connection(db_path, ensure_calendar_schema) as conn:
+                conn.executemany(
+                    """
+                    INSERT INTO calendar_events
+                        (id, summary, start_time, end_time, location, attendees_json,
+                         calendar_id, status, description, fetched_at)
+                    VALUES (?, ?, ?, ?, '', '[]', 'primary', 'confirmed', '', ?)
+                    """,
+                    [
+                        (
+                            "past-morning",
+                            "Past local morning",
+                            "2026-05-14T08:00:00-07:00",
+                            "2026-05-14T08:30:00-07:00",
+                            now.isoformat(),
+                        ),
+                        (
+                            "next-morning",
+                            "Next local morning",
+                            "2026-05-14T09:00:00-07:00",
+                            "2026-05-14T09:30:00-07:00",
+                            now.isoformat(),
+                        ),
+                        (
+                            "end-of-day",
+                            "End of day",
+                            "2026-05-14T17:00:00-07:00",
+                            "2026-05-14T17:30:00-07:00",
+                            now.isoformat(),
+                        ),
+                        (
+                            "tomorrow-morning",
+                            "Tomorrow morning",
+                            "2026-05-15T08:30:00-07:00",
+                            "2026-05-15T09:00:00-07:00",
+                            now.isoformat(),
+                        ),
+                    ],
+                )
+                conn.commit()
+
+            dashboard = _load_dashboard(inverse=False, database_path=db_path)
+            rows = dashboard.fetch_calendar_upcoming(now, limit=3)
+
+        self.assertEqual(
+            [row["summary"] for row in rows],
+            ["Next local morning", "End of day", "Tomorrow morning"],
+        )
 
     def test_dashboard_refresh_skips_semantic_embedding(self) -> None:
         dashboard = _load_dashboard(inverse=False)

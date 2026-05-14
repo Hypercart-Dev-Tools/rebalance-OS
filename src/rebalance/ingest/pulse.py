@@ -31,6 +31,7 @@ from zoneinfo import ZoneInfo
 import requests
 
 from rebalance.ingest.agent_tags import classify as classify_source
+from rebalance.ingest.calendar_helpers import calendar_dt_utc, normalize_aware_utc
 from rebalance.ingest.config import get_github_token, get_pulse_config
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.slack_users import compact_sleuth_reminder
@@ -315,26 +316,25 @@ def _query_calendar_upcoming(
     now: datetime,
 ) -> list[dict[str, Any]]:
     """Today's events with start_time >= now (i.e. still upcoming)."""
-    floor = _utc_iso_floor(today_start - timedelta(hours=2))
+    now_utc = normalize_aware_utc(now)
     rows = conn.execute(
         """
         SELECT summary, start_time, end_time, location, status
         FROM calendar_events
-        WHERE start_time >= ?
-        ORDER BY start_time
+        WHERE julianday(start_time) >= julianday(?)
+          AND julianday(start_time) < julianday(?)
+        ORDER BY julianday(start_time)
         """,
-        (floor,),
+        (today_start.isoformat(), tomorrow_start.isoformat()),
     ).fetchall()
     upcoming: list[dict[str, Any]] = []
     for r in rows:
-        start = _parse_iso(r["start_time"])
+        start = calendar_dt_utc(r["start_time"])
         if start is None:
             continue
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=timezone.utc)
-        if start < now or start >= tomorrow_start:
+        if start < now_utc:
             continue
-        end = _parse_iso(r["end_time"])
+        end = calendar_dt_utc(r["end_time"])
         upcoming.append({
             "summary": r["summary"] or "",
             "start_time": r["start_time"],

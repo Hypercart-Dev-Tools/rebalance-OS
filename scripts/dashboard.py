@@ -50,8 +50,9 @@ from rebalance.ingest.config import (  # noqa: E402
     get_github_ignored_repos,
     get_pulse_config,
 )
+from rebalance.ingest.calendar_helpers import upcoming_calendar_rows  # noqa: E402
 from rebalance.ingest.db import db_connection  # noqa: E402
-from rebalance.tz_utils import local_tz  # noqa: E402
+from rebalance.tz_utils import local_tz, parse_utc_iso  # noqa: E402
 from rebalance.ingest.index_ops import (  # noqa: E402
     get_index_status,
     get_watched_repos,
@@ -265,12 +266,7 @@ def _trigger_manual_refresh() -> None:
 
 
 def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
+    return parse_utc_iso(value)
 
 
 def _ago(value: str | datetime | None, now: datetime | None = None) -> str:
@@ -447,29 +443,28 @@ def fetch_vault_recent(limit: int = 6) -> list[dict[str, Any]]:
 
 
 def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any]]:
-    ignored = [pat.lower() for pat in get_calendar_ignored_summaries()]
-    overfetch = max(limit * 3, limit + len(ignored)) if ignored else limit
+    ignored = get_calendar_ignored_summaries()
+    overfetch = max(limit * 5, 50)
     try:
         with db_connection(DB_PATH) as conn:
+            # Keep this as an absolute-time prefilter only. Calendar start_time
+            # values preserve their source offset (for example -07:00), so raw
+            # ISO text comparisons will drop same-day local morning events once
+            # the UTC clock reaches afternoon. upcoming_calendar_rows() below is
+            # the authoritative rolling-window filter/sort.
             rows = conn.execute(
                 """
                 SELECT summary, start_time, end_time, location
                 FROM calendar_events
-                WHERE start_time >= ?
-                ORDER BY start_time ASC
+                WHERE julianday(start_time) >= julianday(?)
+                ORDER BY julianday(start_time) ASC
                 LIMIT ?
                 """,
                 (now.isoformat(), overfetch),
             ).fetchall()
     except sqlite3.OperationalError:
         return []
-    out = [dict(r) for r in rows]
-    if ignored:
-        out = [
-            r for r in out
-            if not any(pat in (r.get("summary") or "").lower() for pat in ignored)
-        ]
-    return out[:limit]
+    return upcoming_calendar_rows(rows, now=now, limit=limit, ignored_summaries=ignored)
 
 
 def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:

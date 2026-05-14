@@ -302,8 +302,9 @@ def get_upcoming_events(
         rows = conn.execute(
             """SELECT summary, start_time, end_time, location, attendees_json, description
                FROM calendar_events
-               WHERE start_time >= ? AND start_time <= ?
-               ORDER BY start_time ASC
+               WHERE julianday(start_time) >= julianday(?)
+                 AND julianday(start_time) <= julianday(?)
+               ORDER BY julianday(start_time) ASC
                LIMIT 30""",
             (now, cutoff),
         ).fetchall()
@@ -335,8 +336,9 @@ def get_recent_events(
         rows = conn.execute(
             """SELECT summary, start_time, end_time, location, attendees_json
                FROM calendar_events
-               WHERE start_time >= ? AND start_time < ?
-               ORDER BY start_time DESC
+               WHERE julianday(start_time) >= julianday(?)
+                 AND julianday(start_time) < julianday(?)
+               ORDER BY julianday(start_time) DESC
                LIMIT 50""",
             (cutoff, now),
         ).fetchall()

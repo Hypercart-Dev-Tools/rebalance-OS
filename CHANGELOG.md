@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.29.2] - 2026-05-14
+
+### Fixed
+
+- Calendar viewer upcoming-event lists now compare event starts by absolute time instead of raw ISO text, so offset-stamped morning events no longer disappear while they are still upcoming.
+
 ## [0.29.1] - 2026-05-14
 
 ### Fixed
