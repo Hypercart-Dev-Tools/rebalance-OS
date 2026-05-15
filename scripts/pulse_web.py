@@ -327,10 +327,10 @@ def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
-def _short_repo(full: str | None) -> str:
-    if not full:
-        return ""
-    return full.split("/", 1)[1] if "/" in full else full
+def _repo_label(full: str | None) -> str:
+  if not full:
+    return ""
+  return full
 
 
 def _truncate(text: str, n: int) -> str:
@@ -541,7 +541,7 @@ def render_recent_activity(
         glyph, color = KIND_GLYPH.get(kind, ("·", "muted"))
         if kind == "item" and sub in ITEM_SUB_GLYPH:
             glyph, color = ITEM_SUB_GLYPH[sub]
-        repo = _short_repo(r.get("repo_full_name"))
+        repo = _repo_label(r.get("repo_full_name"))
         num = r.get("num")
         detail = _truncate(r.get("detail") or "", 80)
         who = r.get("who") or ""
@@ -609,7 +609,7 @@ def render_repo_pie(rows: list[dict[str, Any]], *, days: int) -> str:
     </section>
     """
 
-    labels = [_short_repo(r.get("repo_full_name")) for r in rows]
+    labels = [_repo_label(r.get("repo_full_name")) for r in rows]
     values = [int(r.get("events") or 0) for r in rows]
     colors = [PIE_PALETTE[i % len(PIE_PALETTE)] for i in range(len(rows))]
     total = sum(values)
