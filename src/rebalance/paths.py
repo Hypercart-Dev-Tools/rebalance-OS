@@ -342,6 +342,52 @@ def set_user_config_value(key: str, value: str) -> Path:
     return USER_CONFIG_FILE
 
 
+# ---------------------------------------------------------------------------
+# CLI convenience: shared Typer option for the --database flag
+# ---------------------------------------------------------------------------
+
+_DB_OPTION_HELP = (
+    "SQLite database path (resolves via layered chain — see "
+    "`rebalance config show-defaults`)"
+)
+
+
+def DBOption(*flag_names: str, help: str = _DB_OPTION_HELP):  # noqa: N802 — Typer-style factory
+    """Return the shared ``typer.Option`` for the --database CLI flag.
+
+    Collapses the 23-site duplication of::
+
+        database: Path | None = typer.Option(None, envvar="REBALANCE_DB",
+            help="SQLite database path (resolves via layered chain — see ...)")
+
+    Used like::
+
+        from rebalance.paths import DBOption
+        @app.command()
+        def foo(database: Path | None = DBOption()): ...
+
+    Pass extra positional flag names to override the default flag::
+
+        database: Path | None = DBOption("--database-path")
+
+    Imported lazily so importing ``rebalance.paths`` works in contexts where
+    Typer isn't installed.
+    """
+    import typer  # local import: keeps paths.py importable without typer
+
+    return typer.Option(None, *flag_names, envvar="REBALANCE_DB", help=help)
+
+
+def resolve_db(explicit: Path | None = None) -> Path:
+    """Thin alias for :func:`resolve_database_path` with a shorter name.
+
+    The full function name remains the canonical API; ``resolve_db`` is the
+    one-liner CLI handlers and MCP tools reach for. Both raise
+    :class:`DatabaseNotFoundError` on failure.
+    """
+    return resolve_database_path(explicit)
+
+
 def get_user_config_summary() -> dict:
     """Return a dict suitable for ``rebalance config show-defaults`` output."""
     cfg = _load_user_config()
