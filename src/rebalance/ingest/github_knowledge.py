@@ -13,8 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +22,7 @@ import re
 
 from rebalance.ingest.config import get_github_ignored_repos, normalize_github_repo_name
 from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_semantic_schema
+from rebalance.ingest._http import GITHUB_API, GitHubClient, GitHubHTTPError
 from rebalance.ingest.embedder import (
     DEFAULT_MODEL as DEFAULT_EMBED_MODEL,
     EMBEDDING_DIM,
@@ -32,8 +31,6 @@ from rebalance.ingest.embedder import (
     _vec_to_bytes,
 )
 from rebalance.ingest.semantic_index import sync_github_documents
-
-GITHUB_API = "https://api.github.com"
 DEFAULT_SYNC_DAYS = 90
 MIN_EMBED_CHARS = 40
 _CLOSES_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", re.IGNORECASE)
@@ -79,22 +76,26 @@ class GitHubRepoPurgeResult:
 
 
 def _github_headers(token: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "rebalance-os/phase1",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
+    """Delegate to the shared GitHub client.
+
+    Retained as a module-level helper because some external callers (tests,
+    experimental scripts) imported it before the shared client existed.
+    """
+    return GitHubClient(token).headers()
 
 
 def _http_get_json(url: str, token: str) -> Any:
-    req = urllib.request.Request(url, headers=_github_headers(token))
+    """GET ``url`` as JSON; raise on non-2xx.
+
+    Thin wrapper over :class:`GitHubClient` so the legacy ``api_get`` callable
+    seam in :func:`sync_github_repo` keeps working. New code should construct
+    a client once and reuse it.
+    """
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode() if exc.fp else ""
-        raise RuntimeError(f"GitHub API request failed: {exc.code} {url} {body}") from exc
+        return GitHubClient(token).get_json(url)
+    except GitHubHTTPError as exc:
+        # Preserve legacy RuntimeError type — tests and callers expect it.
+        raise RuntimeError(f"GitHub API request failed: {exc.status} {url}") from exc
 
 
 def _build_url(base_url: str, **params: Any) -> str:
