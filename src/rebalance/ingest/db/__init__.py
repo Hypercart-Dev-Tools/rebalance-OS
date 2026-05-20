@@ -6,9 +6,13 @@ implementation is split into submodules:
 - ``connection`` — connection factory + ``db_connection`` context manager
 - ``schema``     — every ``CREATE TABLE`` statement, grouped by source
 - ``github``     — typed query helpers for the ``github_*`` tables
+- ``semantic``   — typed query helpers for the semantic-index tables
 
-Everything is re-exported here, so ``from rebalance.ingest.db import ...``
-keeps working unchanged regardless of which submodule a symbol lives in.
+The connection / schema / github symbols are re-exported here, so
+``from rebalance.ingest.db import ...`` keeps working unchanged. The
+``github`` and ``semantic`` query helpers are also reachable as submodules
+(``from rebalance.ingest.db import github``) for callers that want the
+namespaced form.
 """
 
 from __future__ import annotations

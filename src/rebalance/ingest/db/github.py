@@ -587,17 +587,3 @@ def delete_github_embeddings_for_docs(
         "DELETE FROM github_embeddings WHERE doc_id = ?",
         [(doc_id,) for doc_id in doc_ids],
     )
-
-
-def delete_semantic_rows_for_docs(
-    conn: sqlite3.Connection, semantic_doc_ids: list[int]
-) -> None:
-    """Delete ``semantic_embeddings`` + ``semantic_documents`` for the given ids."""
-    conn.executemany(
-        "DELETE FROM semantic_embeddings WHERE rowid = ?",
-        [(doc_id,) for doc_id in semantic_doc_ids],
-    )
-    conn.executemany(
-        "DELETE FROM semantic_documents WHERE id = ?",
-        [(doc_id,) for doc_id in semantic_doc_ids],
-    )

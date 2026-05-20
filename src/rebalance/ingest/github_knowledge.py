@@ -23,6 +23,7 @@ import re
 from rebalance.ingest.config import get_github_ignored_repos, normalize_github_repo_name
 from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_semantic_schema
 from rebalance.ingest.db import github as gh
+from rebalance.ingest.db import semantic as sem
 from rebalance.ingest._http import GITHUB_API, GitHubClient, GitHubHTTPError
 from rebalance.ingest.embedder import (
     DEFAULT_MODEL as DEFAULT_EMBED_MODEL,
@@ -300,7 +301,7 @@ def purge_github_repo_data(
             )
 
         if semantic_doc_ids:
-            gh.delete_semantic_rows_for_docs(conn, semantic_doc_ids)
+            sem.delete_semantic_documents(conn, semantic_doc_ids)
         if github_doc_ids:
             gh.delete_github_embeddings_for_docs(conn, github_doc_ids)
         for table_name in table_names:
