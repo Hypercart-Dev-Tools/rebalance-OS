@@ -309,23 +309,26 @@ def fetch_watched_summary(now: datetime) -> dict[str, Any]:
     fresh = stale = never = 0
     last_synced_overall: datetime | None = None
     if watched:
-        with db_connection(DB_PATH) as conn:
-            placeholders = ",".join("?" * len(watched))
-            rows = conn.execute(
-                f"""
-                SELECT repo_full_name, MAX(fetched_at) AS last_synced
-                FROM (
-                    SELECT repo_full_name, fetched_at FROM github_items
-                    UNION ALL
-                    SELECT repo_full_name, fetched_at FROM github_commits
-                    UNION ALL
-                    SELECT repo_full_name, fetched_at FROM github_repo_meta
-                )
-                WHERE LOWER(repo_full_name) IN ({placeholders})
-                GROUP BY LOWER(repo_full_name)
-                """,
-                tuple(r.lower() for r in watched),
-            ).fetchall()
+        try:
+            with db_connection(DB_PATH) as conn:
+                placeholders = ",".join("?" * len(watched))
+                rows = conn.execute(
+                    f"""
+                    SELECT repo_full_name, MAX(fetched_at) AS last_synced
+                    FROM (
+                        SELECT repo_full_name, fetched_at FROM github_items
+                        UNION ALL
+                        SELECT repo_full_name, fetched_at FROM github_commits
+                        UNION ALL
+                        SELECT repo_full_name, fetched_at FROM github_repo_meta
+                    )
+                    WHERE LOWER(repo_full_name) IN ({placeholders})
+                    GROUP BY LOWER(repo_full_name)
+                    """,
+                    tuple(r.lower() for r in watched),
+                ).fetchall()
+        except Exception:  # noqa: BLE001 — empty DB before first sync
+            rows = []
         seen = {r["repo_full_name"].lower(): r["last_synced"] for r in rows}
         for repo in watched:
             ts = seen.get(repo.lower())
@@ -362,33 +365,36 @@ def fetch_recent_github(limit: int = 9) -> list[dict[str, Any]]:
         ignored_clause = f"WHERE LOWER(repo_full_name) NOT IN ({placeholders})"
         params.extend(ignored)
 
-    with db_connection(DB_PATH) as conn:
-        rows = conn.execute(
-            f"""
-            SELECT kind, sub, repo_full_name, num, detail, ts, who, html_url FROM (
-                SELECT 'item' AS kind, item_type AS sub, repo_full_name,
-                       number AS num, title AS detail, updated_at AS ts,
-                       author_login AS who, html_url
-                FROM github_items
-                WHERE updated_at IS NOT NULL
-                UNION ALL
-                SELECT 'commit', '', repo_full_name, item_number, message,
-                       committed_at, author_login, html_url
-                FROM github_commits
-                WHERE committed_at IS NOT NULL
-                UNION ALL
-                SELECT 'comment', comment_type, repo_full_name, item_number,
-                       body, created_at, author_login, html_url
-                FROM github_comments
-                WHERE created_at IS NOT NULL
-            )
-            {ignored_clause}
-            ORDER BY ts DESC
-            LIMIT ?
-            """,
-            (*params, limit),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT kind, sub, repo_full_name, num, detail, ts, who, html_url FROM (
+                    SELECT 'item' AS kind, item_type AS sub, repo_full_name,
+                           number AS num, title AS detail, updated_at AS ts,
+                           author_login AS who, html_url
+                    FROM github_items
+                    WHERE updated_at IS NOT NULL
+                    UNION ALL
+                    SELECT 'commit', '', repo_full_name, item_number, message,
+                           committed_at, author_login, html_url
+                    FROM github_commits
+                    WHERE committed_at IS NOT NULL
+                    UNION ALL
+                    SELECT 'comment', comment_type, repo_full_name, item_number,
+                           body, created_at, author_login, html_url
+                    FROM github_comments
+                    WHERE created_at IS NOT NULL
+                )
+                {ignored_clause}
+                ORDER BY ts DESC
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:  # noqa: BLE001 — empty DB before first sync
+        return []
 
 
 def fetch_repo_activity_counts(days: int = 7, limit: int = 12) -> list[dict[str, Any]]:
@@ -401,45 +407,51 @@ def fetch_repo_activity_counts(days: int = 7, limit: int = 12) -> list[dict[str,
         ignored_clause = f"WHERE LOWER(repo_full_name) NOT IN ({placeholders})"
         params.extend(ignored)
     params.append(limit)
-    with db_connection(DB_PATH) as conn:
-        rows = conn.execute(
-            f"""
-            SELECT repo_full_name, COUNT(*) AS events FROM (
-                SELECT repo_full_name FROM github_items
-                  WHERE updated_at IS NOT NULL
-                    AND updated_at >= datetime('now', ?)
-                UNION ALL
-                SELECT repo_full_name FROM github_commits
-                  WHERE committed_at IS NOT NULL
-                    AND committed_at >= datetime('now', ?)
-                UNION ALL
-                SELECT repo_full_name FROM github_comments
-                  WHERE created_at IS NOT NULL
-                    AND created_at >= datetime('now', ?)
-            )
-            {ignored_clause}
-            GROUP BY repo_full_name
-            ORDER BY events DESC
-            LIMIT ?
-            """,
-            tuple(params),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT repo_full_name, COUNT(*) AS events FROM (
+                    SELECT repo_full_name FROM github_items
+                      WHERE updated_at IS NOT NULL
+                        AND updated_at >= datetime('now', ?)
+                    UNION ALL
+                    SELECT repo_full_name FROM github_commits
+                      WHERE committed_at IS NOT NULL
+                        AND committed_at >= datetime('now', ?)
+                    UNION ALL
+                    SELECT repo_full_name FROM github_comments
+                      WHERE created_at IS NOT NULL
+                        AND created_at >= datetime('now', ?)
+                )
+                {ignored_clause}
+                GROUP BY repo_full_name
+                ORDER BY events DESC
+                LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:  # noqa: BLE001 — empty DB before first sync
+        return []
 
 
 def fetch_vault_recent(limit: int = 6) -> list[dict[str, Any]]:
-    with db_connection(DB_PATH) as conn:
-        rows = conn.execute(
-            """
-            SELECT title, rel_path, last_modified
-            FROM vault_files
-            WHERE last_modified IS NOT NULL
-            ORDER BY last_modified DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT title, rel_path, last_modified
+                FROM vault_files
+                WHERE last_modified IS NOT NULL
+                ORDER BY last_modified DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:  # noqa: BLE001 — empty DB before first sync
+        return []
 
 
 def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any]]:
@@ -538,18 +550,21 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
 
 
 def fetch_recent_emails(limit: int = 30) -> list[dict[str, Any]]:
-    with db_connection(DB_PATH) as conn:
-        rows = conn.execute(
-            """
-            SELECT message_id, thread_id, from_name, from_address, subject, snippet, received_at, labels_json
-            FROM email_messages
-            WHERE received_at IS NOT NULL
-            ORDER BY received_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-    return [dict(r) for r in rows]
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT message_id, thread_id, from_name, from_address, subject, snippet, received_at, labels_json
+                FROM email_messages
+                WHERE received_at IS NOT NULL
+                ORDER BY received_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:  # noqa: BLE001 — empty DB before first sync
+        return []
 
 
 # ---------------------------------------------------------------------------

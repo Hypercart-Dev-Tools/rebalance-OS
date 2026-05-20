@@ -27,6 +27,10 @@ calendar = [
 embeddings = [
   "mlx-embeddings>=0.1.0",
 ]
+server = [
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.29.0",
+]
 
 [project.scripts]
 rebalance = "rebalance.cli:app"
