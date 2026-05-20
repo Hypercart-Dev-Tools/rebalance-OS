@@ -794,23 +794,9 @@ def _raw_summarize_event(event: dict[str, Any]) -> str:
 
 def _raw_get_top_active_repos(db_path: Path, top_n: int) -> list[str]:
     """Top N watched repos by 7-day activity score (commits + PRs + issues + comments + reviews)."""
-    import sqlite3 as _sqlite3
-    with _sqlite3.connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT repo_full_name,
-                   SUM(commits) + SUM(prs_opened) + SUM(prs_merged) +
-                   SUM(issues_opened) + SUM(issue_comments) + SUM(reviews) AS score
-            FROM github_activity
-            WHERE scan_date >= date('now', '-7 days')
-            GROUP BY repo_full_name
-            HAVING score > 0
-            ORDER BY score DESC
-            LIMIT ?
-            """,
-            (top_n,),
-        ).fetchall()
-    return [r[0] for r in rows]
+    from rebalance.ingest.db import db_connection, top_active_repos
+    with db_connection(db_path) as conn:
+        return top_active_repos(conn, top_n)
 
 
 def _raw_fetch_repo_events(repo: str, token: str, per_page: int = 30) -> list[dict[str, Any]]:
@@ -832,7 +818,6 @@ def _raw_gather_team_activity(
     N minutes and excluding the current user (those are already in the user-activity
     section).
     """
-    import sqlite3 as _sqlite3
     from datetime import datetime, timedelta, timezone
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
@@ -840,16 +825,10 @@ def _raw_gather_team_activity(
 
     last_active_map: dict[str, datetime] = {}
     if top_repos:
-        placeholders = ",".join("?" * len(top_repos))
-        with _sqlite3.connect(db_path) as conn:
-            rows = conn.execute(
-                f"SELECT repo_full_name, MAX(last_active_at) FROM github_activity "
-                f"WHERE repo_full_name IN ({placeholders}) "
-                f"AND last_active_at IS NOT NULL "
-                f"GROUP BY repo_full_name",
-                top_repos,
-            ).fetchall()
-        for repo, ts in rows:
+        from rebalance.ingest.db import db_connection, repo_last_active
+        with db_connection(db_path) as conn:
+            last_active_raw = repo_last_active(conn, top_repos)
+        for repo, ts in last_active_raw.items():
             try:
                 last_active_map[repo] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             except (AttributeError, ValueError):
@@ -955,7 +934,6 @@ def _raw_gather_unwatched_active_repos(
 
 def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, top_n: int) -> dict[str, Any]:
     """Fetch recent GH events and classify each against local pipeline state."""
-    import sqlite3 as _sqlite3
     from datetime import datetime, timedelta, timezone
 
     from rebalance.ingest.github_scan import _fetch_events
@@ -975,14 +953,12 @@ def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, to
             recent.append((t, e))
     recent.sort(key=lambda x: x[0], reverse=True)
 
-    with _sqlite3.connect(db_path) as conn:
-        watched = {row[0] for row in conn.execute("SELECT repo_full_name FROM github_repo_meta")}
-        last_active_rows = conn.execute(
-            "SELECT repo_full_name, MAX(last_active_at) FROM github_activity "
-            "WHERE last_active_at IS NOT NULL GROUP BY repo_full_name"
-        ).fetchall()
+    from rebalance.ingest.db import db_connection, repo_last_active, repo_meta_names
+    with db_connection(db_path) as conn:
+        watched = repo_meta_names(conn)
+        last_active_raw = repo_last_active(conn)
     last_active_map: dict[str, datetime] = {}
-    for repo, ts in last_active_rows:
+    for repo, ts in last_active_raw.items():
         try:
             last_active_map[repo] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         except (AttributeError, ValueError):
