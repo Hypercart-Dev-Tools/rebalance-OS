@@ -65,7 +65,7 @@ no row moved except intentionally.
       `delete_item_children`, `search_github_documents`, the embed helpers, and the
       `purge_github_repo_data` count/delete helpers. `github_items` uses named-parameter
       binding, killing the fragile `tuple(item_record.values())` dependency.
-      `github_knowledge.py` now has zero raw SQL. *(commit `f9e7462`)*
+      `github_knowledge.py` now has zero raw SQL. *(commit `49c6266`)*
 - [ ] **NEXT — Step C:** Pull raw SQL out of `src/rebalance/ingest/semantic_index.py`
       (23 statements) into a new `db/semantic.py`.
 
