@@ -32,6 +32,7 @@ from rebalance.ingest.config import (
 from rebalance.ingest.audit import append_audit_entry
 from rebalance.paths import (
     DatabaseNotFoundError,
+    DBOption,
     resolve_database_path,
     resolve_secret_path,
 )
@@ -672,7 +673,7 @@ def ingest_sync(
 
 @ingest_app.command("infer-project-registry")
 def ingest_infer_project_registry(
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     calendar_days_back: int = typer.Option(90, help="How many calendar days back to use for inference"),
     calendar_days_forward: int = typer.Option(14, help="How many calendar days forward to include for meeting signals"),
     dry_run: bool = typer.Option(False, help="Preview inferred project rows without writing to project_registry"),
@@ -726,9 +727,7 @@ def ingest_infer_project_registry(
 def github_scan(
     token: str = typer.Option(..., envvar="GITHUB_TOKEN", help="GitHub Personal Access Token"),
     days: int = typer.Option(30, help="Number of days to look back (supports 30-day A/B/C band classification)"),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
 ) -> None:
     """Fetch GitHub activity and persist to database for use by github_balance MCP tool."""
     from rebalance.ingest.github_scan import (
@@ -1156,9 +1155,7 @@ def raw(
         10, "--top",
         help="How many of the most-active watched repos to scan for team activity (cost: 1 GH API request per repo per probe).",
     ),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
 ) -> None:
     """Calibration view: GitHub events from the last N minutes vs local pipeline state.
 
@@ -1229,9 +1226,7 @@ def github_sync_artifacts(
     ),
     token: str = typer.Option("", envvar="GITHUB_TOKEN", help="GitHub Personal Access Token"),
     days: int = typer.Option(90, help="Lookback window for changed issues and PRs"),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
 ) -> None:
     """Sync detailed GitHub issues, PRs, comments, reviews, checks, and releases."""
     from rebalance.ingest.github_knowledge import sync_github_repo
@@ -1279,9 +1274,7 @@ def github_sync_artifacts(
 
 @app.command("github-embed")
 def github_embed(
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="HuggingFace model name"),
     batch_size: int = typer.Option(32, help="Batch size for embedding"),
     min_chars: int = typer.Option(40, help="Minimum document length to embed"),
@@ -1314,7 +1307,7 @@ def github_embed(
 @ingest_app.command("notes")
 def ingest_notes(
     vault: Path = typer.Option(..., exists=True, file_okay=False, dir_okay=True, help="Path to Obsidian vault"),
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     exclude: list[str] = typer.Option(
         [".obsidian/*", ".trash/*", "node_modules/*", ".git/*", ".venv/*", "*/.venv/*"],
         help="Glob patterns to exclude",
@@ -1347,7 +1340,7 @@ def ingest_notes(
 
 @ingest_app.command("embed")
 def ingest_embed(
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="HuggingFace model name"),
     batch_size: int = typer.Option(32, help="Batch size for embedding (lower = less memory)"),
     force: bool = typer.Option(False, help="Force re-embed all chunks (use after model change)"),
@@ -1378,7 +1371,7 @@ def ingest_embed(
 @app.command("query")
 def query_cmd(
     text: str = typer.Argument(..., help="Natural language query"),
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     top_k: int = typer.Option(10, help="Number of results to return"),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
 ) -> None:
@@ -1405,9 +1398,7 @@ def query_cmd(
 @app.command("github-query")
 def github_query_cmd(
     text: str = typer.Argument(..., help="Natural language query"),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
     repo: str = typer.Option("", help="Optional owner/name repo filter"),
     top_k: int = typer.Option(8, help="Number of results to return"),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
@@ -1460,9 +1451,7 @@ def semantic_backfill_cmd(
         "--repo",
         help="Optional owner/name filter when backfilling GitHub semantic documents.",
     ),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
 ) -> None:
     """Populate the unified semantic document layer from existing source tables."""
     from rebalance.ingest.semantic_index import backfill_semantic_documents
@@ -1494,9 +1483,7 @@ def semantic_embed_cmd(
         "--source",
         help="Source family to embed. Repeat for multiple values.",
     ),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="HuggingFace model name"),
     batch_size: int = typer.Option(32, help="Batch size for embedding"),
     min_chars: int = typer.Option(1, help="Minimum document length to embed"),
@@ -1539,9 +1526,7 @@ def semantic_query_cmd(
         "--source",
         help="Source family to search. Repeat for multiple values.",
     ),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
     top_k: int = typer.Option(10, help="Number of results to return"),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
 ) -> None:
@@ -1588,9 +1573,7 @@ def semantic_query_cmd(
 def github_release_readiness_cmd(
     repo: str = typer.Option(..., "--repo", help="Repo in owner/name form"),
     milestone: str = typer.Option("", "--milestone", help="Optional milestone title"),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
     output_format: str = typer.Option("text", "--output", help="Output format: text or json"),
 ) -> None:
     """Infer current release/readiness state from the local GitHub corpus."""
@@ -1643,9 +1626,7 @@ def github_release_readiness_cmd(
 @app.command("github-close-candidates")
 def github_close_candidates_cmd(
     repo: str = typer.Option(..., "--repo", help="Repo in owner/name form"),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"
-    ),
+    database: Path | None = DBOption(),
     output_format: str = typer.Option("text", "--output", help="Output format: text or json"),
 ) -> None:
     """Suggest open issues that likely map to merged PRs and may be ready to close."""
@@ -1704,7 +1685,7 @@ def github_close_candidates_cmd(
 @app.command("search")
 def search_cmd(
     keyword: str = typer.Argument(..., help="Keyword to search"),
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     limit: int = typer.Option(20, help="Max results"),
 ) -> None:
     """Full-text keyword search over vault files and chunks."""
@@ -1729,7 +1710,7 @@ def search_cmd(
 @app.command("ask")
 def ask_cmd(
     text: str = typer.Argument(..., help="Natural language question"),
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     days: int = typer.Option(7, help="Activity window in days"),
     no_llm: bool = typer.Option(False, help="Skip local LLM synthesis, return raw context only"),
     chat_model: str = typer.Option("Qwen/Qwen3-0.6B", help="Chat model for synthesis"),
@@ -1797,7 +1778,7 @@ def ask_cmd(
 
 @app.command("calendar-sync")
 def calendar_sync_cmd(
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     calendar_id: str = typer.Option("", help="Calendar ID or email (default: from config, then 'primary')"),
     days_back: int = typer.Option(30, help="Days back to fetch (use 365 for initial backfill)"),
     days_forward: int = typer.Option(7, help="Days forward to fetch"),
@@ -1937,7 +1918,7 @@ def calendar_create_event_cmd(
 
 @app.command("calendar-daily-totals")
 def calendar_daily_totals_cmd(
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     days_back: int = typer.Option(30, help="Days back to show"),
     days_forward: int = typer.Option(0, help="Days forward to show"),
 ) -> None:
@@ -2084,7 +2065,7 @@ def calendar_snap_edges_cmd(
 
 @app.command("calendar-daily-report")
 def calendar_daily_report_cmd(
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     date_str: str = typer.Option(None, "--date", help="Date to report on (YYYY-MM-DD, default: today)"),
     output: Path = typer.Option(None, "--output", "-o", help="Write report to a markdown file instead of stdout"),
 ) -> None:
@@ -2118,7 +2099,7 @@ def calendar_daily_report_cmd(
 
 @app.command("calendar-weekly-report")
 def calendar_weekly_report_cmd(
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     date_str: str = typer.Option(None, "--date", help="Date in target week (YYYY-MM-DD, default: today)"),
     output: Path = typer.Option(None, "--output", "-o", help="Write report to a markdown file instead of stdout"),
     vault: Path = typer.Option(None, "--vault", envvar="REBALANCE_VAULT", help="Obsidian vault path for weekly note write-back"),
@@ -2187,7 +2168,7 @@ def calendar_weekly_report_cmd(
 
 @app.command("dashboard-render")
 def dashboard_render_cmd(
-    database: Path | None = typer.Option(None, envvar="REBALANCE_DB", help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)"),
+    database: Path | None = DBOption(),
     date_str: str = typer.Option(None, "--date", help="Date anchoring the dashboard window (YYYY-MM-DD, default: today)"),
     since_days: int = typer.Option(14, "--since-days", min=1, help="Lookback window for recent signals"),
     vault: Path = typer.Option(None, "--vault", envvar="REBALANCE_VAULT", help="Obsidian vault path for dashboard note write-back"),
@@ -2280,12 +2261,7 @@ def sleuth_sync_cmd(
         "--active-only/--all",
         help="Only fetch currently active reminders (default: all)",
     ),
-    database: Path | None = typer.Option(
-        None,
-        "--database-path",
-        envvar="REBALANCE_DB",
-        help="SQLite database path (resolves via layered chain — see `rebalance config show-defaults`)",
-    ),
+    database: Path | None = DBOption("--database-path"),
     json_output: bool = typer.Option(False, "--json", help="Emit full sync result as JSON"),
 ) -> None:
     """Pull Slack reminders from the Sleuth Web API and upsert them into SQLite."""
@@ -2331,9 +2307,7 @@ def config_add_github_ignored_repo(
     purge: bool = typer.Option(False, help="Purge existing local GitHub rows for this repo"),
     dry_run: bool = typer.Option(False, help="Preview purge counts without deleting"),
     confirm: bool = typer.Option(False, help="Confirm destructive purge execution"),
-    database: Path | None = typer.Option(
-        None, envvar="REBALANCE_DB", help="SQLite database path for purge operations (resolves via layered chain)"
-    ),
+    database: Path | None = DBOption(help="SQLite database path for purge operations (resolves via layered chain)"),
 ) -> None:
     """Add one repo to the local GitHub ingest ignore list, with optional purge."""
     from rebalance.ingest.github_knowledge import purge_github_repo_data

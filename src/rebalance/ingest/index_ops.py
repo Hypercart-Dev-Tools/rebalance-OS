@@ -9,10 +9,12 @@ underlying ingest pipelines so callers do not have to know the order of
 
 from __future__ import annotations
 
+import logging
 import time
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 
 from rebalance.ingest.config import (
     get_github_token,
@@ -21,7 +23,80 @@ from rebalance.ingest.config import (
 from rebalance.ingest.db import db_connection, ensure_semantic_schema
 from rebalance.ingest.registry import get_projects
 
+logger = logging.getLogger(__name__)
 
+
+@dataclass(frozen=True)
+class Collector:
+    """A single data-source ingest pipeline registered with :data:`COLLECTORS`.
+
+    External integrators add new data sources by constructing a :class:`Collector`
+    and calling :func:`register_collector`. The dispatcher in :func:`refresh_index`
+    routes the user's ``scope=[...]`` list through the registry — no edits to
+    the dispatch chain are required.
+
+    Fields
+    ------
+    name:
+        The user-facing scope key. Must be unique. Reserved: ``"all"``.
+    refresh:
+        Callable executed for live runs. Receives ``(db_path, **opts)`` where
+        ``opts`` includes every refresh_index kwarg the collector might want
+        (since_days, vault_path, token, repos, include_semantic, ...). Unknown
+        keys must be ignored. Must return a ``dict`` whose first key is
+        ``"scope": "<name>"`` so the caller can correlate results.
+    requires:
+        Optional iterable of precondition names — currently ``"vault_path"``,
+        ``"github_token"``. Failures surface as structured errors rather than
+        exceptions, mirroring the legacy refresh_index error envelope.
+    included_in_all:
+        If True (default), the collector runs when the user requests
+        ``scope=["all"]``. Set False for opt-in collectors (e.g. heavy or
+        narrowly-scoped sources).
+    """
+
+    name: str
+    refresh: Callable[..., dict[str, Any]]
+    requires: tuple[str, ...] = ()
+    included_in_all: bool = True
+
+
+COLLECTORS: dict[str, Collector] = {}
+
+
+def register_collector(collector: Collector, *, replace: bool = False) -> None:
+    """Add a :class:`Collector` to the registry.
+
+    Set ``replace=True`` when an external integrator deliberately overrides a
+    built-in. Otherwise duplicate names raise to surface accidental shadowing.
+    """
+    if not collector.name or collector.name != collector.name.lower():
+        raise ValueError(
+            f"Collector name must be non-empty and lowercase: {collector.name!r}"
+        )
+    if collector.name == "all":
+        raise ValueError(f"Reserved collector name: {collector.name!r}")
+    if collector.name in COLLECTORS and not replace:
+        raise ValueError(
+            f"Collector {collector.name!r} already registered; pass replace=True to override."
+        )
+    COLLECTORS[collector.name] = collector
+    logger.debug("Registered collector: %s (requires=%s)", collector.name, collector.requires)
+
+
+def _scope_values() -> tuple[str, ...]:
+    """Return the supported scope keys, plus the meta-scope ``"all"``."""
+    return tuple(COLLECTORS.keys()) + ("all",)
+
+
+def _all_scope_names() -> list[str]:
+    """Return the collector names that run for ``scope=["all"]``."""
+    return [name for name, c in COLLECTORS.items() if c.included_in_all]
+
+
+# Legacy SCOPE_VALUES: retained so callers importing the constant continue to
+# work. New code should call _scope_values() since registered collectors may
+# extend the set at runtime.
 SCOPE_VALUES = ("vault", "github", "calendar", "sleuth", "email", "semantic", "all")
 
 
@@ -57,18 +132,19 @@ def _normalize_scope(scope: Iterable[str] | str | None) -> list[str]:
     else:
         items = list(scope)
     cleaned: list[str] = []
+    valid = _scope_values()
     for raw in items:
         v = (raw or "").strip().lower()
         if not v:
             continue
-        if v not in SCOPE_VALUES:
-            raise ValueError(f"Unsupported scope: {raw!r}. Expected one of {SCOPE_VALUES}.")
+        if v not in valid:
+            raise ValueError(f"Unsupported scope: {raw!r}. Expected one of {valid}.")
         if v not in cleaned:
             cleaned.append(v)
     if not cleaned:
         return ["all"]
     if "all" in cleaned:
-        return ["vault", "github", "calendar", "sleuth", "email", "semantic"]
+        return _all_scope_names()
     return cleaned
 
 
@@ -801,29 +877,33 @@ def refresh_index(
 
     repos_list = list(repos or [])
 
+    # Per-collector kwargs bundle. Each collector ignores keys it doesn't need.
+    collector_opts: dict[str, Any] = {
+        "vault_path": resolved_vault,
+        "token": resolved_token,
+        "since_days": since_days,
+        "repos": repos_list,
+        "dry_run": dry_run,
+        "include_semantic": include_semantic,
+    }
+
     for s in requested_scopes:
+        collector = COLLECTORS.get(s)
+        if collector is None:
+            errors.append({"scope": s, "error": f"no collector registered for scope {s!r}"})
+            continue
+        # Enforce declared preconditions.
+        missing_reqs: list[str] = []
+        if "vault_path" in collector.requires and not collector_opts.get("vault_path"):
+            missing_reqs.append("vault_path")
+        if "github_token" in collector.requires and not collector_opts.get("token"):
+            missing_reqs.append("github_token")
+        if missing_reqs:
+            errors.append({"scope": s, "error": f"missing required options: {missing_reqs}"})
+            continue
         try:
-            if s == "vault":
-                assert resolved_vault is not None
-                results.append(_refresh_vault(db_path, resolved_vault, dry_run=dry_run))
-            elif s == "github":
-                results.append(_refresh_github(
-                    db_path,
-                    token=resolved_token,
-                    since_days=since_days,
-                    repos=repos_list,
-                    dry_run=dry_run,
-                    include_semantic=include_semantic,
-                ))
-            elif s == "calendar":
-                results.append(_refresh_calendar(db_path, since_days=since_days, dry_run=dry_run))
-            elif s == "sleuth":
-                results.append(_refresh_sleuth(db_path, dry_run=dry_run))
-            elif s == "email":
-                results.append(_refresh_email(db_path, dry_run=dry_run))
-            elif s == "semantic":
-                results.append(_refresh_semantic_only(db_path, dry_run=dry_run))
-        except Exception as e:
+            results.append(collector.refresh(db_path, **collector_opts))
+        except Exception as e:  # noqa: BLE001 — error envelope mirrors legacy contract
             errors.append({"scope": s, "error": str(e)})
 
     if update_dashboard_note and full_refresh_requested and resolved_vault is not None:
@@ -853,3 +933,54 @@ def refresh_index(
         "errors": errors,
         "elapsed_seconds": round(time.monotonic() - started, 2),
     }
+
+
+# ---------------------------------------------------------------------------
+# Built-in collectors
+# ---------------------------------------------------------------------------
+#
+# Adapter functions normalize each per-source refresh function to the Collector
+# signature (db_path, **opts). Unknown keys are ignored; required keys are
+# extracted by name. The legacy ``_refresh_*`` private functions remain the
+# single source of truth for the ingest pipelines — these adapters are 3-line
+# shims.
+
+def _vault_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    vault_path = opts.get("vault_path")
+    assert vault_path is not None, "vault collector requires vault_path"
+    return _refresh_vault(db_path, vault_path, dry_run=opts["dry_run"])
+
+
+def _github_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_github(
+        db_path,
+        token=opts["token"],
+        since_days=opts["since_days"],
+        repos=opts.get("repos") or [],
+        dry_run=opts["dry_run"],
+        include_semantic=opts.get("include_semantic", True),
+    )
+
+
+def _calendar_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_calendar(db_path, since_days=opts["since_days"], dry_run=opts["dry_run"])
+
+
+def _sleuth_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_sleuth(db_path, dry_run=opts["dry_run"])
+
+
+def _email_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_email(db_path, dry_run=opts["dry_run"])
+
+
+def _semantic_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_semantic_only(db_path, dry_run=opts["dry_run"])
+
+
+register_collector(Collector("vault", _vault_adapter, requires=("vault_path",)))
+register_collector(Collector("github", _github_adapter, requires=("github_token",)))
+register_collector(Collector("calendar", _calendar_adapter))
+register_collector(Collector("sleuth", _sleuth_adapter))
+register_collector(Collector("email", _email_adapter))
+register_collector(Collector("semantic", _semantic_adapter))

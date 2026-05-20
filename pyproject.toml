@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rebalance-os"
-version = "0.30.0"
+version = "0.31.0"
 description = "Local-first workday operating system with MCP tools and Obsidian ingest"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,6 +26,10 @@ calendar = [
 ]
 embeddings = [
   "mlx-embeddings>=0.1.0",
+]
+server = [
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.29.0",
 ]
 
 [project.scripts]
