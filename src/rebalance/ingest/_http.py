@@ -132,7 +132,7 @@ class GitHubClient:
             "X-GitHub-Api-Version": _API_VERSION,
         }
 
-    def _request(self, url: str) -> tuple[int, Any, dict[str, str]]:
+    def _request(self, url: str) -> tuple[int, Any, dict[str, str], str]:
         last_status = 0
         last_body = ""
         last_headers: dict[str, str] = {}
@@ -142,7 +142,7 @@ class GitHubClient:
                 with urllib.request.urlopen(req, timeout=self.timeout) as resp:
                     body = resp.read().decode()
                     parsed = json.loads(body) if body else None
-                    return resp.status, parsed, {k.lower(): v for k, v in resp.headers.items()}
+                    return resp.status, parsed, {k.lower(): v for k, v in resp.headers.items()}, ""
             except urllib.error.HTTPError as exc:
                 last_status = exc.code
                 last_headers = {k.lower(): v for k, v in (exc.headers or {}).items()}
@@ -153,17 +153,17 @@ class GitHubClient:
 
                 retryable = last_status >= 500 or _is_rate_limit(last_status, last_headers)
                 if not retryable or attempt + 1 >= self.retries:
-                    return last_status, None, last_headers
+                    return last_status, None, last_headers, last_body
 
                 delay = _retry_after_seconds(last_headers, attempt)
                 logger.info("GitHub %s -> %s, retrying in %.1fs (attempt %d/%d)", url, last_status, delay, attempt + 1, self.retries)
                 self._sleep(delay)
-        return last_status, None, last_headers
+        return last_status, None, last_headers, last_body
 
     def get(self, path_or_url: str) -> tuple[int, Any]:
         """Return ``(status, parsed_json_or_None)``. Mirrors github_scan._get."""
         url = path_or_url if path_or_url.startswith("http") else f"{GITHUB_API}{path_or_url}"
-        status, data, _ = self._request(url)
+        status, data, _, _body = self._request(url)
         return status, data
 
     def get_with_headers(self, path_or_url: str) -> tuple[int, Any, dict[str, str]]:
@@ -173,7 +173,8 @@ class GitHubClient:
         ``X-OAuth-Scopes`` on ``/user``). Headers are lowercased.
         """
         url = path_or_url if path_or_url.startswith("http") else f"{GITHUB_API}{path_or_url}"
-        return self._request(url)
+        status, data, headers, _body = self._request(url)
+        return status, data, headers
 
     def get_json(self, path_or_url: str) -> Any:
         """Return parsed JSON or raise :class:`GitHubHTTPError`.
@@ -181,7 +182,7 @@ class GitHubClient:
         Mirrors github_knowledge._http_get_json.
         """
         url = path_or_url if path_or_url.startswith("http") else f"{GITHUB_API}{path_or_url}"
-        status, data, headers = self._request(url)
+        status, data, headers, body = self._request(url)
         if 200 <= status < 300:
             return data
         rate_limit = _is_rate_limit(status, headers)
@@ -189,7 +190,7 @@ class GitHubClient:
             f"GitHub API request failed: {status} {url}",
             status=status,
             url=url,
-            body="",
+            body=body,
             is_rate_limit=rate_limit,
         )
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
 from typing import Any, Callable, Iterable
@@ -70,7 +70,11 @@ def register_collector(collector: Collector, *, replace: bool = False) -> None:
     Set ``replace=True`` when an external integrator deliberately overrides a
     built-in. Otherwise duplicate names raise to surface accidental shadowing.
     """
-    if collector.name in ("all", ""):
+    if not collector.name or collector.name != collector.name.lower():
+        raise ValueError(
+            f"Collector name must be non-empty and lowercase: {collector.name!r}"
+        )
+    if collector.name == "all":
         raise ValueError(f"Reserved collector name: {collector.name!r}")
     if collector.name in COLLECTORS and not replace:
         raise ValueError(
@@ -887,6 +891,15 @@ def refresh_index(
         collector = COLLECTORS.get(s)
         if collector is None:
             errors.append({"scope": s, "error": f"no collector registered for scope {s!r}"})
+            continue
+        # Enforce declared preconditions.
+        missing_reqs: list[str] = []
+        if "vault_path" in collector.requires and not collector_opts.get("vault_path"):
+            missing_reqs.append("vault_path")
+        if "github_token" in collector.requires and not collector_opts.get("token"):
+            missing_reqs.append("github_token")
+        if missing_reqs:
+            errors.append({"scope": s, "error": f"missing required options: {missing_reqs}"})
             continue
         try:
             results.append(collector.refresh(db_path, **collector_opts))
