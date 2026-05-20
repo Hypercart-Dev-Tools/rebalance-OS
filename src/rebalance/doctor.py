@@ -3,7 +3,8 @@
 Inspects the live configuration and environment for the class of problem a
 unit test cannot catch: which database is actually in use, whether the GitHub
 token is reachable by background (launchd) jobs, schema version, registered
-projects, GitHub data freshness, and scheduled-job exit status.
+projects, GitHub data freshness, the credentials for each external integration
+(Sleuth/Slack, Gmail, Google Calendar), and scheduled-job exit status.
 
 ``run_doctor()`` returns a structured :class:`DoctorReport`; the CLI renders it.
 """
@@ -256,6 +257,82 @@ def _check_launchd() -> list[Check]:
 
 
 # ---------------------------------------------------------------------------
+# Integration credential checks
+#
+# These verify that each external integration's credentials are *present and
+# well-formed* — the class of "improper config" that otherwise fails silently
+# inside a launchd sync. They are deliberately offline: presence, not liveness.
+# ---------------------------------------------------------------------------
+
+
+def _check_sleuth() -> Check:
+    """Sleuth/Slack reminders — the operator-owned Sleuth Web API env file."""
+    from rebalance.paths import resolve_secret_path
+
+    primary = resolve_secret_path("sleuth-web-api-production.env")
+    fallback = resolve_secret_path("sleuth-web-api-development.env")
+    path = primary if primary.exists() else (fallback if fallback.exists() else None)
+    if path is None:
+        return Check(
+            "sleuth", WARN,
+            f"no Sleuth Web API env file ({primary})",
+            "create it with SLEUTH_WEB_API_BASE_URL / SLEUTH_WEB_API_TOKEN / "
+            "SLEUTH_WORKSPACE_NAME — without it the Slack-reminders sync fails every run",
+        )
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return Check("sleuth", FAIL, f"cannot read {path}: {exc}")
+    present = {
+        line.split("=", 1)[0].strip()
+        for line in text.splitlines()
+        if "=" in line and not line.strip().startswith("#")
+    }
+    required = {"SLEUTH_WEB_API_BASE_URL", "SLEUTH_WEB_API_TOKEN", "SLEUTH_WORKSPACE_NAME"}
+    missing = required - present
+    if missing:
+        return Check(
+            "sleuth", WARN,
+            f"{path.name} is missing keys: {', '.join(sorted(missing))}",
+            "add the missing keys to the Sleuth env file",
+        )
+    return Check("sleuth", OK, f"configured ({path.name})")
+
+
+def _check_gmail() -> Check:
+    """Gmail ingest — Google Application Default Credentials with the Gmail scope."""
+    try:
+        from rebalance.ingest.gmail import GmailAuthError, _load_adc_credentials
+    except Exception as exc:  # noqa: BLE001 — doctor must never crash
+        return Check("gmail", WARN, f"gmail module unavailable: {exc}")
+    try:
+        _load_adc_credentials()
+    except GmailAuthError as exc:
+        return Check(
+            "gmail", WARN, str(exc).splitlines()[0],
+            "run `gcloud auth application-default login` with the Gmail readonly scope",
+        )
+    except Exception as exc:  # noqa: BLE001
+        return Check("gmail", WARN, f"could not load ADC: {exc}")
+    return Check("gmail", OK, "Application Default Credentials present")
+
+
+def _check_calendar() -> Check:
+    """Google Calendar — the OAuth token file."""
+    try:
+        from rebalance.ingest.calendar import TOKEN_PATH
+    except Exception as exc:  # noqa: BLE001
+        return Check("calendar", WARN, f"calendar module unavailable: {exc}")
+    if not TOKEN_PATH.exists():
+        return Check(
+            "calendar", WARN,
+            f"OAuth token not found at {TOKEN_PATH}",
+            "run the Calendar OAuth flow (scripts/setup_calendar_oauth.py)",
+        )
+    return Check("calendar", OK, f"OAuth token present ({TOKEN_PATH})")
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -277,6 +354,11 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
         report.checks.append(_check_schema(db_path))
         report.checks.append(_check_projects(db_path))
         report.checks.append(_check_github_data(db_path))
+
+    # Integration credentials — Sleuth/Slack, Gmail, Google Calendar.
+    report.checks.append(_check_sleuth())
+    report.checks.append(_check_gmail())
+    report.checks.append(_check_calendar())
 
     report.checks.extend(_check_launchd())
     return report
