@@ -1,10 +1,11 @@
 ---
 title: Rebalance-OS Codebase Refactor
 status: in-progress
-updated: 2026-05-19
+updated: 2026-05-20
 branch: claude/refactor-codebase-tl4PQ
 phases_done: 1, 2, 4
-phases_pending: 3a, 3b, 6, 5, 7, 9, 10
+phases_in_progress: 3a (3 of 5 steps done — github_knowledge.py + semantic_index.py eviction remain)
+phases_pending: 3b, 6, 5, 7, 9, 10
 phases_skipped: 8
 ---
 
@@ -50,17 +51,24 @@ no row moved except intentionally.
 > inheriting the raw-SQL sprawl in both. **Do this first.** Pure mechanical /
 > behavior-preserving work; fully covered by the existing suite.
 
-- [ ] Split the ~312-line `ensure_github_schema` in `src/rebalance/ingest/db.py` into
-      per-table-group helpers (`activity` / `repo` / `artifact` / `knowledge`). Public
-      `ensure_github_schema()` stays as the unchanged entry point that calls them.
-- [ ] Pull raw SQL out of `src/rebalance/cli.py` (`_raw_*` helpers) into typed `db.py`
-      helpers.
-- [ ] Pull raw SQL out of `src/rebalance/ingest/github_knowledge.py` into typed `db.py`
-      helpers. **Note:** this file is 1,177 lines — the largest non-CLI module in the
-      repo. SQL eviction is the 3a scope; flag whether a broader decomposition belongs
-      in its own phase.
-- [ ] Pull raw SQL out of `src/rebalance/ingest/semantic_index.py` into typed `db.py`
-      helpers.
+- [x] Split the ~312-line `ensure_github_schema` into per-table-group helpers
+      (`activity` / `repo` / `artifact` / `knowledge`). Public `ensure_github_schema()`
+      stays as the unchanged entry point. *(commit `e7eb40b`)*
+- [x] Pull raw SQL out of `src/rebalance/cli.py` (`_raw_*` helpers) into typed db
+      helpers (`top_active_repos`, `repo_last_active`, `repo_meta_names`). `cli.py` now
+      has zero raw `sqlite3`. *(commit `e7eb40b`)*
+- [x] Convert the single `db.py` into a `db/` package — `connection.py` / `schema.py` /
+      `github.py`, with `db/__init__.py` re-exporting the full public API so all 40+
+      importers keep working unchanged. *(commit `bd330c0`)*
+- [ ] **NEXT — Step B:** Pull raw SQL out of `src/rebalance/ingest/github_knowledge.py`
+      (45 statements) into `db/github.py`. Plan: ~12 `upsert_*` helpers (one per
+      `github_*` table), `insert_document`, `delete_item_children`, plus the
+      `purge_github_repo_data` count/delete helpers. Use named-parameter binding for
+      `github_items` to kill the fragile `tuple(item_record.values())` ordering
+      dependency. **Note:** this file is 1,177 lines — largest non-CLI module; SQL
+      eviction is the 3a scope, broader decomposition is a separate phase.
+- [ ] **Step C:** Pull raw SQL out of `src/rebalance/ingest/semantic_index.py`
+      (23 statements) into a new `db/semantic.py`.
 
 ---
 
