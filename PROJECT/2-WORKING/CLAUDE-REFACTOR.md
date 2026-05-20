@@ -31,13 +31,15 @@ Captured 2026-05-19 on `claude/refactor-codebase-tl4PQ` (`.venv/bin/python -m py
 --continue-on-collection-errors`). Every phase is behavior-preserving: it must leave
 this exactly as-is — no *new* failures.
 
-- **285 passed.**
-- **1 pre-existing failure** (also fails on `main`, not introduced by this refactor):
-  `tests/test_github_knowledge.py::test_sync_persists_github_artifacts_and_documents`
-  — `prs_synced 0 != 1`. Real bug, out of refactor scope; triage separately.
-- **1 pre-existing collection error**: `tests/test_pulse_sleuth_scope.py` — `pulse.py`
-  imports `requests`, which is **not** a declared dependency in `pyproject.toml`.
-  Undeclared-dependency bug → folded into Phase 10.
+- **285 passed** at capture. Now **290 passed** — Phase 3b added 4 migration tests
+  and the `prs_synced` failure below was fixed (1 more test now runs green).
+- ~~**1 pre-existing failure**: `test_github_knowledge::test_sync_persists_…` —
+  `prs_synced 0 != 1`.~~ **Resolved** — it was a time-fragile fixture (a hardcoded
+  April-2026 PR date drifted past the 30-day cutoff), not a product bug. The fixture
+  date is now computed relative to now.
+- **1 pre-existing collection error** *(still open)*: `tests/test_pulse_sleuth_scope.py`
+  — `pulse.py` imports `requests`, which is **not** a declared dependency in
+  `pyproject.toml`. Undeclared-dependency bug → Phase 10.
 
 Acceptance for every phase: run the full suite, diff against this baseline, and confirm
 no row moved except intentionally.
@@ -145,9 +147,9 @@ no row moved except intentionally.
 - [ ] Add / pin lockfile
 - [ ] Declare `requests` in `pyproject.toml` (or remove the import from `pulse.py`) —
       see Baseline. This currently breaks `test_pulse_sleuth_scope.py` collection.
-- [ ] Fix `tests/test_github_knowledge.py::test_sync_persists_github_artifacts_and_documents`
-      — `prs_synced 0 != 1`. Pre-existing on `main`, independent of this refactor;
-      triage whether the bug is in PR sync logic or a stale fixture.
+- [x] Fix `tests/test_github_knowledge.py::test_sync_persists_github_artifacts_and_documents`
+      — `prs_synced 0 != 1`. **Done** — it was a stale (time-fragile) fixture, not a
+      PR-sync bug; the PR-summary date is now computed relative to now.
 - [ ] Audit and update docs for accuracy post-refactor
 
 ---
