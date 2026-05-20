@@ -60,14 +60,13 @@ no row moved except intentionally.
 - [x] Convert the single `db.py` into a `db/` package — `connection.py` / `schema.py` /
       `github.py`, with `db/__init__.py` re-exporting the full public API so all 40+
       importers keep working unchanged. *(commit `bd330c0`)*
-- [ ] **NEXT — Step B:** Pull raw SQL out of `src/rebalance/ingest/github_knowledge.py`
-      (45 statements) into `db/github.py`. Plan: ~12 `upsert_*` helpers (one per
-      `github_*` table), `insert_document`, `delete_item_children`, plus the
-      `purge_github_repo_data` count/delete helpers. Use named-parameter binding for
-      `github_items` to kill the fragile `tuple(item_record.values())` ordering
-      dependency. **Note:** this file is 1,177 lines — largest non-CLI module; SQL
-      eviction is the 3a scope, broader decomposition is a separate phase.
-- [ ] **Step C:** Pull raw SQL out of `src/rebalance/ingest/semantic_index.py`
+- [x] **Step B:** Pull raw SQL out of `src/rebalance/ingest/github_knowledge.py`
+      (47 statements) into `db/github.py` — 10 `upsert_*` helpers, `insert_github_document`,
+      `delete_item_children`, `search_github_documents`, the embed helpers, and the
+      `purge_github_repo_data` count/delete helpers. `github_items` uses named-parameter
+      binding, killing the fragile `tuple(item_record.values())` dependency.
+      `github_knowledge.py` now has zero raw SQL. *(commit `f9e7462`)*
+- [ ] **NEXT — Step C:** Pull raw SQL out of `src/rebalance/ingest/semantic_index.py`
       (23 statements) into a new `db/semantic.py`.
 
 ---
@@ -140,6 +139,9 @@ no row moved except intentionally.
 - [ ] Add / pin lockfile
 - [ ] Declare `requests` in `pyproject.toml` (or remove the import from `pulse.py`) —
       see Baseline. This currently breaks `test_pulse_sleuth_scope.py` collection.
+- [ ] Fix `tests/test_github_knowledge.py::test_sync_persists_github_artifacts_and_documents`
+      — `prs_synced 0 != 1`. Pre-existing on `main`, independent of this refactor;
+      triage whether the bug is in PR sync logic or a stale fixture.
 - [ ] Audit and update docs for accuracy post-refactor
 
 ---

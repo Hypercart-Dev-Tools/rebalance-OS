@@ -1,12 +1,20 @@
 """Typed query helpers for the ``github_*`` tables.
 
 These keep raw SQL out of the CLI and ingest modules — callers work with
-plain Python values and let this module own the column layout.
+plain Python values and let this module own the column layout. Upsert
+helpers take the value tuple in the documented column order (``github_items``
+takes a column-keyed dict, bound by name, since it has 35 columns).
 """
 
 from __future__ import annotations
 
 import sqlite3
+from typing import Any
+
+
+# ---------------------------------------------------------------------------
+# Activity queries
+# ---------------------------------------------------------------------------
 
 
 def top_active_repos(
@@ -70,3 +78,526 @@ def repo_meta_names(conn: sqlite3.Connection) -> set[str]:
     ``github_repo_meta`` row after a complete artifact sync.
     """
     return {r[0] for r in conn.execute("SELECT repo_full_name FROM github_repo_meta")}
+
+
+# ---------------------------------------------------------------------------
+# Artifact upserts — one helper per github_* table; this module owns the
+# column layout so ingest code never embeds INSERT SQL.
+# ---------------------------------------------------------------------------
+
+
+def upsert_repo_meta(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace one ``github_repo_meta`` row.
+
+    *values*: repo_full_name, default_branch, pushed_at, updated_at,
+    open_issues_count, has_issues, has_projects, fetched_at.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_repo_meta
+            (repo_full_name, default_branch, pushed_at, updated_at, open_issues_count,
+             has_issues, has_projects, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+
+def upsert_branch(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace one ``github_branches`` row.
+
+    *values*: repo_full_name, name, head_sha, is_protected, is_default, fetched_at.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_branches
+            (repo_full_name, name, head_sha, is_protected, is_default, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+
+def upsert_label(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace one ``github_labels`` row.
+
+    *values*: repo_full_name, name, color, description, is_default.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_labels
+            (repo_full_name, name, color, description, is_default)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+
+def upsert_milestone(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace one ``github_milestones`` row.
+
+    *values*: repo_full_name, number, title, description, state, open_issues,
+    closed_issues, due_on, created_at, updated_at, closed_at, html_url.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_milestones
+            (repo_full_name, number, title, description, state, open_issues,
+             closed_issues, due_on, created_at, updated_at, closed_at, html_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+
+def upsert_release(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace one ``github_releases`` row.
+
+    *values*: repo_full_name, github_id, tag_name, name, target_commitish,
+    is_draft, is_prerelease, body, created_at, published_at, html_url.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_releases
+            (repo_full_name, github_id, tag_name, name, target_commitish, is_draft,
+             is_prerelease, body, created_at, published_at, html_url)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+
+def upsert_item(conn: sqlite3.Connection, record: dict[str, Any]) -> None:
+    """Insert-or-replace one ``github_items`` row from a column-keyed dict.
+
+    Bound by name — *record* must carry every github_items column as a key.
+    Extra keys are ignored by sqlite3. Named binding (rather than positional)
+    removes any dependence on dict iteration order.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_items
+            (repo_full_name, item_type, number, node_id, github_id, title, body, state,
+             state_reason, author_login, assignees_json, labels_json, milestone_number,
+             milestone_title, is_draft, is_merged, base_ref, head_ref, head_sha,
+             mergeable_state, review_decision, check_status, requested_reviewers_json,
+             comments_count, review_comments_count, commits_count, additions, deletions,
+             changed_files, html_url, created_at, updated_at, closed_at, merged_at, fetched_at)
+        VALUES (:repo_full_name, :item_type, :number, :node_id, :github_id, :title, :body,
+                :state, :state_reason, :author_login, :assignees_json, :labels_json,
+                :milestone_number, :milestone_title, :is_draft, :is_merged, :base_ref,
+                :head_ref, :head_sha, :mergeable_state, :review_decision, :check_status,
+                :requested_reviewers_json, :comments_count, :review_comments_count,
+                :commits_count, :additions, :deletions, :changed_files, :html_url,
+                :created_at, :updated_at, :closed_at, :merged_at, :fetched_at)
+        """,
+        record,
+    )
+
+
+def upsert_comment(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace one ``github_comments`` row.
+
+    *values*: repo_full_name, item_type, item_number, comment_type,
+    github_comment_id, author_login, author_association, body, review_state,
+    in_reply_to_id, html_url, created_at, updated_at, fetched_at.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_comments
+            (repo_full_name, item_type, item_number, comment_type, github_comment_id,
+             author_login, author_association, body, review_state, in_reply_to_id,
+             html_url, created_at, updated_at, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+
+def upsert_link(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace one ``github_links`` row.
+
+    *values*: repo_full_name, source_type, source_number, target_type,
+    target_number, link_kind.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_links
+            (repo_full_name, source_type, source_number, target_type, target_number, link_kind)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+
+def upsert_commit(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace one ``github_commits`` row.
+
+    *values*: repo_full_name, item_type, item_number, sha, author_login,
+    message, committed_at, html_url, fetched_at.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_commits
+            (repo_full_name, item_type, item_number, sha, author_login,
+             message, committed_at, html_url, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+
+def upsert_check_run(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace one ``github_check_runs`` row.
+
+    *values*: repo_full_name, item_type, item_number, head_sha, name, status,
+    conclusion, details_url, started_at, completed_at, fetched_at.
+    """
+    conn.execute(
+        """
+        INSERT OR REPLACE INTO github_check_runs
+            (repo_full_name, item_type, item_number, head_sha, name, status,
+             conclusion, details_url, started_at, completed_at, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """,
+        values,
+    )
+
+
+def delete_repo_table(
+    conn: sqlite3.Connection, table: str, repo_full_name: str
+) -> None:
+    """Delete every row of *table* for an exact ``repo_full_name`` match.
+
+    Used to clear branches/labels/milestones/releases before a fresh sync.
+    *table* must be a trusted constant — it is interpolated, not bound.
+    """
+    conn.execute(f"DELETE FROM {table} WHERE repo_full_name = ?", (repo_full_name,))
+
+
+# ---------------------------------------------------------------------------
+# Document corpus
+# ---------------------------------------------------------------------------
+
+
+def insert_github_document(
+    conn: sqlite3.Connection,
+    *,
+    repo_full_name: str,
+    source_type: str,
+    source_number: int,
+    doc_type: str,
+    source_key: str,
+    title: str,
+    body: str,
+    content_hash: str,
+    updated_at: str,
+    fetched_at: str,
+) -> int:
+    """Insert one ``github_documents`` row (``embedded_hash`` starts NULL).
+
+    Returns the new row id. Content hashing is the caller's job — pass the
+    precomputed *content_hash*.
+    """
+    conn.execute(
+        """
+        INSERT INTO github_documents
+            (repo_full_name, source_type, source_number, doc_type, source_key,
+             title, body, content_hash, embedded_hash, updated_at, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        """,
+        (
+            repo_full_name,
+            source_type,
+            source_number,
+            doc_type,
+            source_key,
+            title,
+            body,
+            content_hash,
+            updated_at,
+            fetched_at,
+        ),
+    )
+    return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+
+
+def delete_item_children(
+    conn: sqlite3.Connection,
+    repo_full_name: str,
+    item_type: str,
+    item_number: int,
+) -> None:
+    """Delete one item's derived rows (documents, embeddings, comments,
+    commits, check runs, links) before the item is re-synced."""
+    doc_ids = [
+        row["id"]
+        for row in conn.execute(
+            """
+            SELECT id
+            FROM github_documents
+            WHERE repo_full_name = ? AND source_type = ? AND source_number = ?
+            """,
+            (repo_full_name, item_type, item_number),
+        ).fetchall()
+    ]
+    if doc_ids:
+        conn.executemany(
+            "DELETE FROM github_embeddings WHERE doc_id = ?",
+            [(doc_id,) for doc_id in doc_ids],
+        )
+    conn.execute(
+        """
+        DELETE FROM github_documents
+        WHERE repo_full_name = ? AND source_type = ? AND source_number = ?
+        """,
+        (repo_full_name, item_type, item_number),
+    )
+    conn.execute(
+        """
+        DELETE FROM github_comments
+        WHERE repo_full_name = ? AND item_type = ? AND item_number = ?
+        """,
+        (repo_full_name, item_type, item_number),
+    )
+    conn.execute(
+        """
+        DELETE FROM github_commits
+        WHERE repo_full_name = ? AND item_type = ? AND item_number = ?
+        """,
+        (repo_full_name, item_type, item_number),
+    )
+    conn.execute(
+        """
+        DELETE FROM github_check_runs
+        WHERE repo_full_name = ? AND item_type = ? AND item_number = ?
+        """,
+        (repo_full_name, item_type, item_number),
+    )
+    conn.execute(
+        """
+        DELETE FROM github_links
+        WHERE repo_full_name = ? AND source_type = ? AND source_number = ?
+        """,
+        (repo_full_name, item_type, item_number),
+    )
+
+
+def search_github_documents(
+    conn: sqlite3.Connection,
+    query_vec: bytes,
+    top_k: int,
+    repo_full_name: str = "",
+) -> list[sqlite3.Row]:
+    """Vector search over ``github_embeddings``, nearest first.
+
+    Returns raw rows joined to ``github_documents`` and (left) ``github_items``.
+    Pass *repo_full_name* to restrict results to a single repo.
+    """
+    repo = repo_full_name.strip()
+    base = """
+        SELECT
+            ge.doc_id,
+            ge.distance,
+            gd.repo_full_name,
+            gd.source_type,
+            gd.source_number,
+            gd.doc_type,
+            gd.title,
+            SUBSTR(gd.body, 1, 400) AS body_preview,
+            gi.state,
+            gi.milestone_title,
+            gi.labels_json,
+            gi.review_decision,
+            gi.check_status,
+            gi.html_url
+        FROM github_embeddings ge
+        JOIN github_documents gd ON gd.id = ge.doc_id
+        LEFT JOIN github_items gi
+          ON gi.repo_full_name = gd.repo_full_name
+         AND gi.item_type = gd.source_type
+         AND gi.number = gd.source_number
+        WHERE ge.embedding MATCH ? AND ge.k = ?{repo_clause}
+        ORDER BY ge.distance
+    """
+    if repo:
+        sql = base.format(repo_clause=" AND gd.repo_full_name = ?")
+        return conn.execute(sql, (query_vec, top_k, repo)).fetchall()
+    sql = base.format(repo_clause="")
+    return conn.execute(sql, (query_vec, top_k)).fetchall()
+
+
+# ---------------------------------------------------------------------------
+# Embeddings
+# ---------------------------------------------------------------------------
+
+
+def clear_github_embeddings(conn: sqlite3.Connection) -> None:
+    """Drop every row from ``github_embeddings`` (used by force-reembed)."""
+    conn.execute("DELETE FROM github_embeddings")
+
+
+def reset_github_embedded_hashes(conn: sqlite3.Connection) -> None:
+    """Null out every ``github_documents.embedded_hash`` (used by force-reembed)."""
+    conn.execute("UPDATE github_documents SET embedded_hash = NULL")
+
+
+def github_documents_pending_embed(
+    conn: sqlite3.Connection, min_chars: int
+) -> list[sqlite3.Row]:
+    """Rows (id, body, content_hash) for documents needing (re-)embedding.
+
+    A document qualifies when its body is at least *min_chars* long and its
+    ``embedded_hash`` is missing or stale relative to ``content_hash``.
+    """
+    return conn.execute(
+        """
+        SELECT id, body, content_hash
+        FROM github_documents
+        WHERE LENGTH(body) >= ?
+          AND (embedded_hash IS NULL OR embedded_hash != content_hash)
+        ORDER BY id
+        """,
+        (min_chars,),
+    ).fetchall()
+
+
+def count_embeddable_github_documents(
+    conn: sqlite3.Connection, min_chars: int
+) -> int:
+    """Count documents whose body is at least *min_chars* long."""
+    return conn.execute(
+        "SELECT COUNT(*) FROM github_documents WHERE LENGTH(body) >= ?",
+        (min_chars,),
+    ).fetchone()[0]
+
+
+def upsert_github_embedding(
+    conn: sqlite3.Connection, doc_id: int, embedding: bytes
+) -> None:
+    """Insert-or-replace one ``github_embeddings`` vector row."""
+    conn.execute(
+        "INSERT OR REPLACE INTO github_embeddings (doc_id, embedding) VALUES (?, ?)",
+        (doc_id, embedding),
+    )
+
+
+def mark_github_document_embedded(conn: sqlite3.Connection, doc_id: int) -> None:
+    """Mark a document fresh by copying ``content_hash`` into ``embedded_hash``."""
+    conn.execute(
+        "UPDATE github_documents SET embedded_hash = content_hash WHERE id = ?",
+        (doc_id,),
+    )
+
+
+def set_github_embedding_meta(
+    conn: sqlite3.Connection, key: str, value: str
+) -> None:
+    """Insert-or-replace one ``github_embedding_meta`` key/value row."""
+    conn.execute(
+        "INSERT OR REPLACE INTO github_embedding_meta (key, value) VALUES (?, ?)",
+        (key, value),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Per-repo purge
+# ---------------------------------------------------------------------------
+
+
+def count_repo_rows(
+    conn: sqlite3.Connection, table: str, repo_name_lower: str
+) -> int:
+    """Count rows of *table* for a case-insensitive ``repo_full_name`` match.
+
+    *table* must be a trusted constant — it is interpolated, not bound.
+    """
+    return conn.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE LOWER(repo_full_name) = ?",
+        (repo_name_lower,),
+    ).fetchone()[0]
+
+
+def delete_repo_rows(
+    conn: sqlite3.Connection, table: str, repo_name_lower: str
+) -> None:
+    """Delete rows of *table* for a case-insensitive ``repo_full_name`` match.
+
+    *table* must be a trusted constant — it is interpolated, not bound.
+    """
+    conn.execute(
+        f"DELETE FROM {table} WHERE LOWER(repo_full_name) = ?",
+        (repo_name_lower,),
+    )
+
+
+def github_document_ids(
+    conn: sqlite3.Connection, repo_name_lower: str
+) -> list[int]:
+    """Ids of ``github_documents`` for a case-insensitive repo match."""
+    return [
+        int(row["id"])
+        for row in conn.execute(
+            "SELECT id FROM github_documents WHERE LOWER(repo_full_name) = ?",
+            (repo_name_lower,),
+        ).fetchall()
+    ]
+
+
+def semantic_doc_ids_for_github_repo(
+    conn: sqlite3.Connection, repo_name_lower: str
+) -> list[int]:
+    """Ids of ``semantic_documents`` projected from one GitHub repo's docs."""
+    return [
+        int(row["id"])
+        for row in conn.execute(
+            """
+            SELECT sd.id
+            FROM semantic_documents sd
+            JOIN github_documents gd ON gd.source_key = sd.source_pk
+            WHERE sd.source_type = 'github'
+              AND LOWER(gd.repo_full_name) = ?
+            """,
+            (repo_name_lower,),
+        ).fetchall()
+    ]
+
+
+def count_ids_in(
+    conn: sqlite3.Connection, table: str, id_column: str, ids: list[int]
+) -> int:
+    """Count rows of *table* whose *id_column* is in *ids* (0 for an empty list).
+
+    *table* and *id_column* must be trusted constants — interpolated, not bound.
+    """
+    if not ids:
+        return 0
+    placeholders = ", ".join("?" for _ in ids)
+    return conn.execute(
+        f"SELECT COUNT(*) FROM {table} WHERE {id_column} IN ({placeholders})",
+        list(ids),
+    ).fetchone()[0]
+
+
+def delete_github_embeddings_for_docs(
+    conn: sqlite3.Connection, doc_ids: list[int]
+) -> None:
+    """Delete ``github_embeddings`` rows for the given document ids."""
+    conn.executemany(
+        "DELETE FROM github_embeddings WHERE doc_id = ?",
+        [(doc_id,) for doc_id in doc_ids],
+    )
+
+
+def delete_semantic_rows_for_docs(
+    conn: sqlite3.Connection, semantic_doc_ids: list[int]
+) -> None:
+    """Delete ``semantic_embeddings`` + ``semantic_documents`` for the given ids."""
+    conn.executemany(
+        "DELETE FROM semantic_embeddings WHERE rowid = ?",
+        [(doc_id,) for doc_id in semantic_doc_ids],
+    )
+    conn.executemany(
+        "DELETE FROM semantic_documents WHERE id = ?",
+        [(doc_id,) for doc_id in semantic_doc_ids],
+    )
