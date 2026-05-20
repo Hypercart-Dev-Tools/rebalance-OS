@@ -2,6 +2,7 @@
 
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from rebalance.ingest import config as config_module
@@ -14,6 +15,15 @@ from rebalance.ingest.github_knowledge import (
 )
 from rebalance.ingest.config import add_github_ignored_repo
 from rebalance.ingest.embedder import _vec_to_bytes
+
+
+# sync_github_repo filters the /pulls list client-side via stop_updated_before,
+# so the PR-summary updated_at must stay inside the since_days window. Computed
+# relative to now so the fixture never ages out — a hardcoded April-2026 date
+# previously drifted past a 30-day cutoff and silently zeroed prs_synced.
+_RECENT_ISO = (datetime.now(timezone.utc) - timedelta(days=1)).strftime(
+    "%Y-%m-%dT%H:%M:%SZ"
+)
 
 
 def _fake_github_api(url: str) -> object:
@@ -113,7 +123,7 @@ def _fake_github_api(url: str) -> object:
         return [
             {
                 "number": 202,
-                "updated_at": "2026-04-17T13:00:00Z",
+                "updated_at": _RECENT_ISO,
             }
         ]
 

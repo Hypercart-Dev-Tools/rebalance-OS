@@ -1,5 +1,21 @@
 # Changelog
 
+## [0.31.0] - 2026-05-19
+
+### Added
+
+- `Collector` dataclass and `COLLECTORS` source registry in `src/rebalance/ingest/index_ops.py`. `refresh_index` now routes `scope=[...]` through the registry instead of a hard-coded dispatch chain. External integrators can call `register_collector()` to add new data sources without editing the dispatcher. `included_in_all=False` marks opt-in collectors that are skipped by `scope=["all"]`.
+- Shared GitHub HTTP client (`src/rebalance/ingest/_http.py`) extracted from the duplicated `urlopen` + retry + pagination logic in `github_scan.py` and `github_knowledge.py`. Single entry point with 30 s timeout, exponential backoff on 429/5xx, and `per_page=100` automatic pagination.
+- `[project.optional-dependencies] server` group in `pyproject.toml` — `pip install -e '.[server]'` installs `fastapi>=0.110.0` and `uvicorn[standard]>=0.29.0` so the pulse-server venv is reproducible from a fresh clone without manual installs.
+
+### Changed
+
+- Logging bootstrap consolidated: `ingest/` modules now use `logging.getLogger(__name__)` via a shared setup path; the 24 duplicate `Path("rebalance.db"), envvar="REBALANCE_DB"` option declarations across the CLI were deduplicated through the shared `DBOption`.
+
+### Fixed
+
+- `scripts/dashboard.py` data-fetch functions (`fetch_recent_github`, `fetch_repo_activity_counts`, `fetch_vault_recent`, `fetch_recent_emails`, `fetch_watched_summary`) now return empty lists instead of raising when the DB is absent or has no tables yet. Prevents `pulse_web.py` and the terminal dashboard from crashing on a fresh checkout before the first sync.
+
 ## [0.30.0] - 2026-05-14
 
 ### Added

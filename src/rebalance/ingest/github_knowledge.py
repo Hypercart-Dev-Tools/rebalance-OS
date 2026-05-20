@@ -13,8 +13,6 @@ from __future__ import annotations
 import hashlib
 import json
 import time
-import urllib.error
-import urllib.request
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -24,6 +22,9 @@ import re
 
 from rebalance.ingest.config import get_github_ignored_repos, normalize_github_repo_name
 from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_semantic_schema
+from rebalance.ingest.db import github as gh
+from rebalance.ingest.db import semantic as sem
+from rebalance.ingest._http import GITHUB_API, GitHubClient, GitHubHTTPError
 from rebalance.ingest.embedder import (
     DEFAULT_MODEL as DEFAULT_EMBED_MODEL,
     EMBEDDING_DIM,
@@ -32,8 +33,6 @@ from rebalance.ingest.embedder import (
     _vec_to_bytes,
 )
 from rebalance.ingest.semantic_index import sync_github_documents
-
-GITHUB_API = "https://api.github.com"
 DEFAULT_SYNC_DAYS = 90
 MIN_EMBED_CHARS = 40
 _CLOSES_RE = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", re.IGNORECASE)
@@ -79,22 +78,26 @@ class GitHubRepoPurgeResult:
 
 
 def _github_headers(token: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "User-Agent": "rebalance-os/phase1",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
+    """Delegate to the shared GitHub client.
+
+    Retained as a module-level helper because some external callers (tests,
+    experimental scripts) imported it before the shared client existed.
+    """
+    return GitHubClient(token).headers()
 
 
 def _http_get_json(url: str, token: str) -> Any:
-    req = urllib.request.Request(url, headers=_github_headers(token))
+    """GET ``url`` as JSON; raise on non-2xx.
+
+    Thin wrapper over :class:`GitHubClient` so the legacy ``api_get`` callable
+    seam in :func:`sync_github_repo` keeps working. New code should construct
+    a client once and reuse it.
+    """
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode() if exc.fp else ""
-        raise RuntimeError(f"GitHub API request failed: {exc.code} {url} {body}") from exc
+        return GitHubClient(token).get_json(url)
+    except GitHubHTTPError as exc:
+        # Preserve legacy RuntimeError type — tests and callers expect it.
+        raise RuntimeError(f"GitHub API request failed: {exc.status} {url}") from exc
 
 
 def _build_url(base_url: str, **params: Any) -> str:
@@ -216,57 +219,6 @@ def _commit_doc_text(item_type: str, item_number: int, sha: str, message: str) -
     return f"Commit {sha[:7]} on {item_type} #{item_number}\n\n{first_line}".strip()
 
 
-def _delete_item_children(conn: Any, repo_full_name: str, item_type: str, item_number: int) -> None:
-    doc_ids = [
-        row["id"]
-        for row in conn.execute(
-            """
-            SELECT id
-            FROM github_documents
-            WHERE repo_full_name = ? AND source_type = ? AND source_number = ?
-            """,
-            (repo_full_name, item_type, item_number),
-        ).fetchall()
-    ]
-    if doc_ids:
-        conn.executemany("DELETE FROM github_embeddings WHERE doc_id = ?", [(doc_id,) for doc_id in doc_ids])
-    conn.execute(
-        """
-        DELETE FROM github_documents
-        WHERE repo_full_name = ? AND source_type = ? AND source_number = ?
-        """,
-        (repo_full_name, item_type, item_number),
-    )
-    conn.execute(
-        """
-        DELETE FROM github_comments
-        WHERE repo_full_name = ? AND item_type = ? AND item_number = ?
-        """,
-        (repo_full_name, item_type, item_number),
-    )
-    conn.execute(
-        """
-        DELETE FROM github_commits
-        WHERE repo_full_name = ? AND item_type = ? AND item_number = ?
-        """,
-        (repo_full_name, item_type, item_number),
-    )
-    conn.execute(
-        """
-        DELETE FROM github_check_runs
-        WHERE repo_full_name = ? AND item_type = ? AND item_number = ?
-        """,
-        (repo_full_name, item_type, item_number),
-    )
-    conn.execute(
-        """
-        DELETE FROM github_links
-        WHERE repo_full_name = ? AND source_type = ? AND source_number = ?
-        """,
-        (repo_full_name, item_type, item_number),
-    )
-
-
 def _insert_document(
     conn: Any,
     *,
@@ -280,27 +232,19 @@ def _insert_document(
     updated_at: str,
     fetched_at: str,
 ) -> int:
-    conn.execute(
-        """
-        INSERT INTO github_documents
-            (repo_full_name, source_type, source_number, doc_type, source_key,
-             title, body, content_hash, embedded_hash, updated_at, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
-        """,
-        (
-            repo_full_name,
-            source_type,
-            source_number,
-            doc_type,
-            source_key,
-            title,
-            body,
-            _content_hash(body),
-            updated_at,
-            fetched_at,
-        ),
+    return gh.insert_github_document(
+        conn,
+        repo_full_name=repo_full_name,
+        source_type=source_type,
+        source_number=source_number,
+        doc_type=doc_type,
+        source_key=source_key,
+        title=title,
+        body=body,
+        content_hash=_content_hash(body),
+        updated_at=updated_at,
+        fetched_at=fetched_at,
     )
-    return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
 
 def purge_github_repo_data(
@@ -330,55 +274,21 @@ def purge_github_repo_data(
         ensure_github_schema(conn)
         ensure_semantic_schema(conn)
 
-        row_counts: dict[str, int] = {}
-        for table_name in table_names:
-            row_counts[table_name] = conn.execute(
-                f"SELECT COUNT(*) FROM {table_name} WHERE LOWER(repo_full_name) = ?",
-                (normalized_repo,),
-            ).fetchone()[0]
+        row_counts: dict[str, int] = {
+            table_name: gh.count_repo_rows(conn, table_name, normalized_repo)
+            for table_name in table_names
+        }
 
-        github_doc_ids = [
-            int(row["id"])
-            for row in conn.execute(
-                """
-                SELECT id
-                FROM github_documents
-                WHERE LOWER(repo_full_name) = ?
-                """,
-                (normalized_repo,),
-            ).fetchall()
-        ]
-        if github_doc_ids:
-            placeholders = ", ".join("?" for _ in github_doc_ids)
-            row_counts["github_embeddings"] = conn.execute(
-                f"SELECT COUNT(*) FROM github_embeddings WHERE doc_id IN ({placeholders})",
-                github_doc_ids,
-            ).fetchone()[0]
-        else:
-            row_counts["github_embeddings"] = 0
+        github_doc_ids = gh.github_document_ids(conn, normalized_repo)
+        row_counts["github_embeddings"] = gh.count_ids_in(
+            conn, "github_embeddings", "doc_id", github_doc_ids
+        )
 
-        semantic_doc_ids = [
-            int(row["id"])
-            for row in conn.execute(
-                """
-                SELECT sd.id
-                FROM semantic_documents sd
-                JOIN github_documents gd ON gd.source_key = sd.source_pk
-                WHERE sd.source_type = 'github'
-                  AND LOWER(gd.repo_full_name) = ?
-                """,
-                (normalized_repo,),
-            ).fetchall()
-        ]
+        semantic_doc_ids = gh.semantic_doc_ids_for_github_repo(conn, normalized_repo)
         row_counts["semantic_documents"] = len(semantic_doc_ids)
-        if semantic_doc_ids:
-            placeholders = ", ".join("?" for _ in semantic_doc_ids)
-            row_counts["semantic_embeddings"] = conn.execute(
-                f"SELECT COUNT(*) FROM semantic_embeddings WHERE rowid IN ({placeholders})",
-                semantic_doc_ids,
-            ).fetchone()[0]
-        else:
-            row_counts["semantic_embeddings"] = 0
+        row_counts["semantic_embeddings"] = gh.count_ids_in(
+            conn, "semantic_embeddings", "rowid", semantic_doc_ids
+        )
 
         total_rows = sum(row_counts.values())
         if dry_run:
@@ -391,12 +301,11 @@ def purge_github_repo_data(
             )
 
         if semantic_doc_ids:
-            conn.executemany("DELETE FROM semantic_embeddings WHERE rowid = ?", [(doc_id,) for doc_id in semantic_doc_ids])
-            conn.executemany("DELETE FROM semantic_documents WHERE id = ?", [(doc_id,) for doc_id in semantic_doc_ids])
+            sem.delete_semantic_documents(conn, semantic_doc_ids)
         if github_doc_ids:
-            conn.executemany("DELETE FROM github_embeddings WHERE doc_id = ?", [(doc_id,) for doc_id in github_doc_ids])
+            gh.delete_github_embeddings_for_docs(conn, github_doc_ids)
         for table_name in table_names:
-            conn.execute(f"DELETE FROM {table_name} WHERE LOWER(repo_full_name) = ?", (normalized_repo,))
+            gh.delete_repo_rows(conn, table_name, normalized_repo)
         conn.commit()
 
     return GitHubRepoPurgeResult(
@@ -458,18 +367,13 @@ def sync_github_repo(
     docs_built = 0
 
     with db_connection(database_path, ensure_github_schema) as conn:
-        conn.execute("DELETE FROM github_branches WHERE repo_full_name = ?", (repo_full_name,))
-        conn.execute("DELETE FROM github_labels WHERE repo_full_name = ?", (repo_full_name,))
-        conn.execute("DELETE FROM github_milestones WHERE repo_full_name = ?", (repo_full_name,))
-        conn.execute("DELETE FROM github_releases WHERE repo_full_name = ?", (repo_full_name,))
+        gh.delete_repo_table(conn, "github_branches", repo_full_name)
+        gh.delete_repo_table(conn, "github_labels", repo_full_name)
+        gh.delete_repo_table(conn, "github_milestones", repo_full_name)
+        gh.delete_repo_table(conn, "github_releases", repo_full_name)
 
-        conn.execute(
-            """
-            INSERT OR REPLACE INTO github_repo_meta
-                (repo_full_name, default_branch, pushed_at, updated_at, open_issues_count,
-                 has_issues, has_projects, fetched_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
+        gh.upsert_repo_meta(
+            conn,
             (
                 repo_full_name,
                 repo_meta.get("default_branch", "") if isinstance(repo_meta, dict) else "",
@@ -484,12 +388,8 @@ def sync_github_repo(
 
         default_branch = repo_meta.get("default_branch", "") if isinstance(repo_meta, dict) else ""
         for branch in branches:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO github_branches
-                    (repo_full_name, name, head_sha, is_protected, is_default, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
+            gh.upsert_branch(
+                conn,
                 (
                     repo_full_name,
                     branch.get("name", ""),
@@ -501,12 +401,8 @@ def sync_github_repo(
             )
 
         for label in labels:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO github_labels
-                    (repo_full_name, name, color, description, is_default)
-                VALUES (?, ?, ?, ?, ?)
-                """,
+            gh.upsert_label(
+                conn,
                 (
                     repo_full_name,
                     label.get("name", ""),
@@ -517,13 +413,8 @@ def sync_github_repo(
             )
 
         for milestone in milestones:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO github_milestones
-                    (repo_full_name, number, title, description, state, open_issues,
-                     closed_issues, due_on, created_at, updated_at, closed_at, html_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            gh.upsert_milestone(
+                conn,
                 (
                     repo_full_name,
                     milestone.get("number"),
@@ -541,13 +432,8 @@ def sync_github_repo(
             )
 
         for release in releases:
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO github_releases
-                    (repo_full_name, github_id, tag_name, name, target_commitish, is_draft,
-                     is_prerelease, body, created_at, published_at, html_url)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
+            gh.upsert_release(
+                conn,
                 (
                     repo_full_name,
                     release.get("id"),
@@ -567,7 +453,7 @@ def sync_github_repo(
             item_type = "issue"
             item_number = int(issue["number"])
             milestone = issue.get("milestone") or {}
-            _delete_item_children(conn, repo_full_name, item_type, item_number)
+            gh.delete_item_children(conn, repo_full_name, item_type, item_number)
 
             item_record = {
                 "repo_full_name": repo_full_name,
@@ -607,31 +493,13 @@ def sync_github_repo(
                 "fetched_at": fetched_at,
             }
 
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO github_items
-                    (repo_full_name, item_type, number, node_id, github_id, title, body, state,
-                     state_reason, author_login, assignees_json, labels_json, milestone_number,
-                     milestone_title, is_draft, is_merged, base_ref, head_ref, head_sha,
-                     mergeable_state, review_decision, check_status, requested_reviewers_json,
-                     comments_count, review_comments_count, commits_count, additions, deletions,
-                     changed_files, html_url, created_at, updated_at, closed_at, merged_at, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                tuple(item_record.values()),
-            )
+            gh.upsert_item(conn, item_record)
 
             issue_comments = _paginate_list(f"{repo_base}/issues/{item_number}/comments", api_get)
             for comment in issue_comments:
                 body = comment.get("body", "") or ""
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO github_comments
-                        (repo_full_name, item_type, item_number, comment_type, github_comment_id,
-                         author_login, author_association, body, review_state, in_reply_to_id,
-                         html_url, created_at, updated_at, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                gh.upsert_comment(
+                    conn,
                     (
                         repo_full_name,
                         item_type,
@@ -698,7 +566,7 @@ def sync_github_repo(
                 else []
             )
             milestone = pr.get("milestone") or {}
-            _delete_item_children(conn, repo_full_name, item_type, item_number)
+            gh.delete_item_children(conn, repo_full_name, item_type, item_number)
 
             item_record = {
                 "repo_full_name": repo_full_name,
@@ -738,41 +606,19 @@ def sync_github_repo(
                 "fetched_at": fetched_at,
             }
 
-            conn.execute(
-                """
-                INSERT OR REPLACE INTO github_items
-                    (repo_full_name, item_type, number, node_id, github_id, title, body, state,
-                     state_reason, author_login, assignees_json, labels_json, milestone_number,
-                     milestone_title, is_draft, is_merged, base_ref, head_ref, head_sha,
-                     mergeable_state, review_decision, check_status, requested_reviewers_json,
-                     comments_count, review_comments_count, commits_count, additions, deletions,
-                     changed_files, html_url, created_at, updated_at, closed_at, merged_at, fetched_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                tuple(item_record.values()),
-            )
+            gh.upsert_item(conn, item_record)
 
             combined_text = "\n".join(filter(None, [item_record["title"], item_record["body"]]))
             for link_kind, issue_number in _parse_links(combined_text):
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO github_links
-                        (repo_full_name, source_type, source_number, target_type, target_number, link_kind)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                    """,
+                gh.upsert_link(
+                    conn,
                     (repo_full_name, item_type, item_number, "issue", issue_number, link_kind),
                 )
 
             for comment in issue_comments:
                 body = comment.get("body", "") or ""
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO github_comments
-                        (repo_full_name, item_type, item_number, comment_type, github_comment_id,
-                         author_login, author_association, body, review_state, in_reply_to_id,
-                         html_url, created_at, updated_at, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                gh.upsert_comment(
+                    conn,
                     (
                         repo_full_name,
                         item_type,
@@ -808,14 +654,8 @@ def sync_github_repo(
 
             for review in reviews:
                 body = review.get("body", "") or ""
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO github_comments
-                        (repo_full_name, item_type, item_number, comment_type, github_comment_id,
-                         author_login, author_association, body, review_state, in_reply_to_id,
-                         html_url, created_at, updated_at, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                gh.upsert_comment(
+                    conn,
                     (
                         repo_full_name,
                         item_type,
@@ -857,14 +697,8 @@ def sync_github_repo(
 
             for comment in review_comments:
                 body = comment.get("body", "") or ""
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO github_comments
-                        (repo_full_name, item_type, item_number, comment_type, github_comment_id,
-                         author_login, author_association, body, review_state, in_reply_to_id,
-                         html_url, created_at, updated_at, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                gh.upsert_comment(
+                    conn,
                     (
                         repo_full_name,
                         item_type,
@@ -901,13 +735,8 @@ def sync_github_repo(
             for commit in commits:
                 sha = commit.get("sha", "")
                 message = ((commit.get("commit") or {}).get("message") or "").strip()
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO github_commits
-                        (repo_full_name, item_type, item_number, sha, author_login,
-                         message, committed_at, html_url, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                gh.upsert_commit(
+                    conn,
                     (
                         repo_full_name,
                         item_type,
@@ -937,13 +766,8 @@ def sync_github_repo(
                     docs_built += 1
 
             for run in check_runs:
-                conn.execute(
-                    """
-                    INSERT OR REPLACE INTO github_check_runs
-                        (repo_full_name, item_type, item_number, head_sha, name, status,
-                         conclusion, details_url, started_at, completed_at, fetched_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
+                gh.upsert_check_run(
+                    conn,
                     (
                         repo_full_name,
                         item_type,
@@ -1015,24 +839,12 @@ def embed_github_documents(
 
     with db_connection(database_path, ensure_github_schema) as conn:
         if force_reembed:
-            conn.execute("DELETE FROM github_embeddings")
-            conn.execute("UPDATE github_documents SET embedded_hash = NULL")
+            gh.clear_github_embeddings(conn)
+            gh.reset_github_embedded_hashes(conn)
             conn.commit()
 
-        rows = conn.execute(
-            """
-            SELECT id, body, content_hash
-            FROM github_documents
-            WHERE LENGTH(body) >= ?
-              AND (embedded_hash IS NULL OR embedded_hash != content_hash)
-            ORDER BY id
-            """,
-            (min_chars,),
-        ).fetchall()
-        total_docs = conn.execute(
-            "SELECT COUNT(*) FROM github_documents WHERE LENGTH(body) >= ?",
-            (min_chars,),
-        ).fetchone()[0]
+        rows = gh.github_documents_pending_embed(conn, min_chars)
+        total_docs = gh.count_embeddable_github_documents(conn, min_chars)
 
         if not rows:
             return GitHubEmbedResult(
@@ -1050,14 +862,8 @@ def embed_github_documents(
             texts = [row["body"][:4000] for row in batch]
             vectors = embed_fn(texts, model_name)
             for row, vec in zip(batch, vectors):
-                conn.execute(
-                    "INSERT OR REPLACE INTO github_embeddings (doc_id, embedding) VALUES (?, ?)",
-                    (row["id"], _vec_to_bytes(vec)),
-                )
-                conn.execute(
-                    "UPDATE github_documents SET embedded_hash = content_hash WHERE id = ?",
-                    (row["id"],),
-                )
+                gh.upsert_github_embedding(conn, row["id"], _vec_to_bytes(vec))
+                gh.mark_github_document_embedded(conn, row["id"])
                 embedded += 1
             conn.commit()
 
@@ -1067,10 +873,7 @@ def embed_github_documents(
             ("embedding_dim", str(EMBEDDING_DIM)),
             ("last_embed_at", now_iso),
         ]:
-            conn.execute(
-                "INSERT OR REPLACE INTO github_embedding_meta (key, value) VALUES (?, ?)",
-                (key, value),
-            )
+            gh.set_github_embedding_meta(conn, key, value)
         conn.commit()
 
     return GitHubEmbedResult(
@@ -1096,64 +899,9 @@ def query_github_documents(
     query_vec = _vec_to_bytes(embed_fn([query_text], model_name)[0])
 
     with db_connection(database_path, ensure_github_schema) as conn:
-        if repo_full_name.strip():
-            rows = conn.execute(
-                """
-                SELECT
-                    ge.doc_id,
-                    ge.distance,
-                    gd.repo_full_name,
-                    gd.source_type,
-                    gd.source_number,
-                    gd.doc_type,
-                    gd.title,
-                    SUBSTR(gd.body, 1, 400) AS body_preview,
-                    gi.state,
-                    gi.milestone_title,
-                    gi.labels_json,
-                    gi.review_decision,
-                    gi.check_status,
-                    gi.html_url
-                FROM github_embeddings ge
-                JOIN github_documents gd ON gd.id = ge.doc_id
-                LEFT JOIN github_items gi
-                  ON gi.repo_full_name = gd.repo_full_name
-                 AND gi.item_type = gd.source_type
-                 AND gi.number = gd.source_number
-                WHERE ge.embedding MATCH ? AND ge.k = ? AND gd.repo_full_name = ?
-                ORDER BY ge.distance
-                """,
-                (query_vec, top_k, repo_full_name.strip()),
-            ).fetchall()
-        else:
-            rows = conn.execute(
-                """
-                SELECT
-                    ge.doc_id,
-                    ge.distance,
-                    gd.repo_full_name,
-                    gd.source_type,
-                    gd.source_number,
-                    gd.doc_type,
-                    gd.title,
-                    SUBSTR(gd.body, 1, 400) AS body_preview,
-                    gi.state,
-                    gi.milestone_title,
-                    gi.labels_json,
-                    gi.review_decision,
-                    gi.check_status,
-                    gi.html_url
-                FROM github_embeddings ge
-                JOIN github_documents gd ON gd.id = ge.doc_id
-                LEFT JOIN github_items gi
-                  ON gi.repo_full_name = gd.repo_full_name
-                 AND gi.item_type = gd.source_type
-                 AND gi.number = gd.source_number
-                WHERE ge.embedding MATCH ? AND ge.k = ?
-                ORDER BY ge.distance
-                """,
-                (query_vec, top_k),
-            ).fetchall()
+        rows = gh.search_github_documents(
+            conn, query_vec, top_k, repo_full_name=repo_full_name
+        )
 
     return [
         {

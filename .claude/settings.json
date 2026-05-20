@@ -37,7 +37,27 @@
       "Skill(update-config)",
       "Skill(update-config:*)",
       "Bash(.venv/bin/python -m pytest tests/test_calendar_create_event_cli.py tests/test_git_pulse_health_check.py tests/test_dashboard_terminal_theme.py -q)",
-      "Bash(python3 -m py_compile src/rebalance/cli.py tests/test_git_pulse_health_check.py tests/test_calendar_create_event_cli.py)"
+      "Bash(python3 -m py_compile src/rebalance/cli.py tests/test_git_pulse_health_check.py tests/test_calendar_create_event_cli.py)",
+      "Bash(.venv/bin/python -m pytest:*)",
+      "Bash(.venv/bin/python -m py_compile:*)",
+      "Bash(python3 -m py_compile:*)",
+      "Bash(.venv/bin/python -c:*)",
+      "Bash(grep:*)",
+      "Bash(rg:*)",
+      "Bash(find:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)",
+      "Bash(git diff:*)",
+      "Bash(git status:*)",
+      "Bash(git log:*)",
+      "Bash(git show:*)",
+      "Bash(git add:*)",
+      "Edit(src/**)",
+      "Edit(tests/**)",
+      "Edit(PROJECT/**)",
+      "Write(src/**)",
+      "Write(tests/**)",
+      "Write(PROJECT/**)"
     ]
   }
 }

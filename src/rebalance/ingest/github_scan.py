@@ -15,17 +15,13 @@ Usage:
 
 from __future__ import annotations
 
-import urllib.request
-import urllib.error
-import json
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.config import normalize_github_repo_name
-
-GITHUB_API = "https://api.github.com"
+from rebalance.ingest._http import GITHUB_API, GitHubClient
 MAX_EVENT_PAGES = 3  # Hard limit documented by GitHub
 
 # Activity band definitions — shared with preflight.py for segmentation.
@@ -100,22 +96,18 @@ class GitHubApiError(Exception):
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _headers(token: str) -> dict[str, str]:
-    return {
-        "Authorization": f"token {token}",
-        "Accept": "application/vnd.github.v3+json",
-        "User-Agent": "rebalance-os/0.1",
-    }
+def _client(token: str) -> GitHubClient:
+    """Return a GitHubClient — wrapper kept so callers needn't import the type."""
+    return GitHubClient(token)
 
 
 def _get(url: str, token: str) -> tuple[int, Any]:
-    """Minimal HTTP GET — returns (status_code, parsed_json_or_None)."""
-    req = urllib.request.Request(url, headers=_headers(token))
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            return resp.status, json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        return exc.code, None
+    """Minimal HTTP GET — returns (status_code, parsed_json_or_None).
+
+    Thin wrapper retained for callers within this module; new code should use
+    a long-lived :class:`GitHubClient` instead.
+    """
+    return _client(token).get(url)
 
 
 def _cutoff_key(days: int) -> str:
@@ -310,17 +302,13 @@ def validate_github_token(token: str) -> dict[str, Any]:
         {"valid": True, "login": "...", "scopes": ["repo", ...]}
         or {"valid": False, "login": "", "scopes": [], "error": "..."}
     """
-    req = urllib.request.Request(f"{GITHUB_API}/user", headers=_headers(token))
-    try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
-            scopes_header = resp.headers.get("X-OAuth-Scopes", "")
-            scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
-            return {"valid": True, "login": data.get("login", ""), "scopes": scopes}
-    except urllib.error.HTTPError as exc:
-        if exc.code in (401, 403):
-            return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {exc.code}"}
-        return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {exc.code}"}
+    # No retries: a bad token should fail fast for the onboarding flow.
+    status, data, headers = GitHubClient(token, retries=1).get_with_headers("/user")
+    if status == 200 and isinstance(data, dict):
+        scopes_header = headers.get("x-oauth-scopes", "")
+        scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
+        return {"valid": True, "login": data.get("login", ""), "scopes": scopes}
+    return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {status}"}
 
 
 def scan_github(token: str, days: int = 30) -> GitHubScanResult:
