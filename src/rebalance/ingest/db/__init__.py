@@ -23,7 +23,10 @@ from rebalance.ingest.db.github import (
     repo_meta_names,
     top_active_repos,
 )
+from rebalance.ingest.db.migrate import current_schema_version, run_migrations
 from rebalance.ingest.db.schema import (
+    BASELINE_SCHEMA_VERSION,
+    ensure_baseline_schema,
     ensure_calendar_schema,
     ensure_email_schema,
     ensure_github_schema,
@@ -41,7 +44,11 @@ __all__ = [
     "ensure_email_schema",
     "ensure_github_schema",
     "ensure_project_schema",
+    "ensure_baseline_schema",
     "top_active_repos",
     "repo_last_active",
     "repo_meta_names",
+    "run_migrations",
+    "current_schema_version",
+    "BASELINE_SCHEMA_VERSION",
 ]

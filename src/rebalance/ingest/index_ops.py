@@ -20,7 +20,7 @@ from rebalance.ingest.config import (
     get_github_token,
     get_vault_path,
 )
-from rebalance.ingest.db import db_connection, ensure_semantic_schema
+from rebalance.ingest.db import db_connection, ensure_semantic_schema, run_migrations
 from rebalance.ingest.registry import get_projects
 
 logger = logging.getLogger(__name__)
@@ -886,6 +886,15 @@ def refresh_index(
         "dry_run": dry_run,
         "include_semantic": include_semantic,
     }
+
+    # Bring the database schema to the latest version before any collector
+    # writes to it. Skipped on dry runs, which must not touch the DB.
+    if not dry_run:
+        try:
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+        except Exception as e:  # noqa: BLE001 — error envelope mirrors collector contract
+            errors.append({"scope": "migrations", "error": str(e)})
 
     for s in requested_scopes:
         collector = COLLECTORS.get(s)

@@ -558,3 +558,47 @@ def ensure_project_schema(conn: sqlite3.Connection) -> None:
         )
     """)
     conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Schema versioning
+# ---------------------------------------------------------------------------
+
+# The baseline schema — everything the ensure_*_schema functions above create.
+# A database that has run those functions is, by definition, at this version.
+# Schema changes from here on are forward-only migration files in db/migrations/
+# (applied by db/migrate.py). This number never changes and the ensure_*_schema
+# functions stay frozen at the baseline — see db/migrations/README.md.
+BASELINE_SCHEMA_VERSION = 1
+
+
+def ensure_baseline_schema(conn: sqlite3.Connection) -> None:
+    """Create every baseline (version 1) table if it doesn't exist.
+
+    Runs all six ``ensure_*_schema`` functions — the full version-1 shape.
+    Idempotent; safe to call on an already-populated database. The migration
+    runner calls this first so that migrations always have their tables.
+    """
+    ensure_schema(conn)
+    ensure_semantic_schema(conn)
+    ensure_calendar_schema(conn)
+    ensure_email_schema(conn)
+    ensure_github_schema(conn)
+    ensure_project_schema(conn)
+
+
+def ensure_schema_version_table(conn: sqlite3.Connection) -> None:
+    """Create the ``schema_version`` ledger if it doesn't exist.
+
+    One row per applied version; the current version is ``MAX(version)``.
+    An empty table means no version has been recorded yet.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version    INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
+    conn.commit()
