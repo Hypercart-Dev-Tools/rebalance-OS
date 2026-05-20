@@ -3,9 +3,8 @@ title: Rebalance-OS Codebase Refactor
 status: in-progress
 updated: 2026-05-20
 branch: claude/refactor-codebase-tl4PQ
-phases_done: 1, 2, 4
-phases_in_progress: 3a (3 of 5 steps done — github_knowledge.py + semantic_index.py eviction remain)
-phases_pending: 3b, 6, 5, 7, 9, 10
+phases_done: 1, 2, 3, 4
+phases_pending: 6, 5, 7, 9, 10
 phases_skipped: 8
 ---
 
@@ -47,9 +46,10 @@ no row moved except intentionally.
 
 ## Phase 3a — Raw-SQL eviction + schema decomposition
 
-> Highest leverage, lowest glamour. Foundation for phases 5 and 6 — skipping this means
-> inheriting the raw-SQL sprawl in both. **Do this first.** Pure mechanical /
-> behavior-preserving work; fully covered by the existing suite.
+> ✅ **Done.** `cli.py`, `github_knowledge.py`, and `semantic_index.py` all hold
+> zero raw SQL; persistence lives entirely in the `db/` package. Highest leverage,
+> lowest glamour — the foundation for phases 5 and 6. Behavior-preserving throughout;
+> full suite held at baseline across all four steps.
 
 - [x] Split the ~312-line `ensure_github_schema` into per-table-group helpers
       (`activity` / `repo` / `artifact` / `knowledge`). Public `ensure_github_schema()`
@@ -66,25 +66,31 @@ no row moved except intentionally.
       `purge_github_repo_data` count/delete helpers. `github_items` uses named-parameter
       binding, killing the fragile `tuple(item_record.values())` dependency.
       `github_knowledge.py` now has zero raw SQL. *(commit `49c6266`)*
-- [ ] **NEXT — Step C:** Pull raw SQL out of `src/rebalance/ingest/semantic_index.py`
-      (23 statements) into a new `db/semantic.py`.
+- [x] **Step C:** Pull raw SQL out of `src/rebalance/ingest/semantic_index.py`
+      (23 statements) into a new `db/semantic.py` (19 helpers). `semantic_index.py`
+      now has zero raw SQL; the duplicate `delete_semantic_rows_for_docs` was
+      removed from `db/github.py` in favour of the canonical `db/semantic.py`
+      helper. *(commit `c9bea2d`)*
 
 ---
 
 ## Phase 3b — schema_version + migrations
 
-> Depends on 3a. **Not mechanical** — this is a design decision and must be settled
-> before any code is written.
+> ✅ **Done** *(commit `c02f88d`)*.
 
-- [ ] **Decide the migration model first.** The DB has no `schema_version` mechanism
-      today; schema is created entirely by seven idempotent `ensure_*_schema`
-      (`CREATE TABLE IF NOT EXISTS`) functions plus `ON CONFLICT REPLACE` upserts. That
-      *is* the current de-facto migration layer. Resolve explicitly: do the `ensure_*`
-      functions **stay alongside** numbered migrations, or get **replaced** by them?
-      Leaving both is the failure mode. Also pick: hand-rolled runner vs. a library
-      (e.g. `yoyo`).
-- [ ] Add a `schema_version` table + `migrations/` directory so external tools reading
-      `rebalance.db` don't break silently on column changes.
+**Decided model** (documented in `db/migrations/README.md`):
+
+- **Version 1 is the baseline** — everything the `ensure_*_schema` functions create.
+- The `ensure_*_schema` functions **stay** (not replaced by numbered migrations), so
+  all 40+ call sites are untouched. `schema.py` is frozen at the baseline; every
+  change from v2 onward is a forward-only `NNNN_*.sql` file in `db/migrations/`.
+- **Hand-rolled runner** — no new dependency; `rebalance.db` is a single local cache.
+
+- [x] Migration model decided and documented (see above).
+- [x] Added `schema_version` table, `db/migrate.py` runner (`run_migrations`,
+      `current_schema_version`, `discover_migrations`), `db/migrations/` with README,
+      and wheel `package-data` for the `.sql` files. `run_migrations` runs at the
+      start of every non-dry-run `refresh_index()`. 4 tests in `test_db_migrations.py`.
 
 ---
 
