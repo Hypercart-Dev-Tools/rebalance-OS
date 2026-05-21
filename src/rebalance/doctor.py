@@ -299,8 +299,39 @@ def _check_sleuth() -> Check:
     return Check("sleuth", OK, f"configured ({path.name})")
 
 
-def _check_gmail() -> Check:
-    """Gmail ingest — Google Application Default Credentials with the Gmail scope."""
+def _check_gmail(db_path: Path | None) -> Check:
+    """Gmail ingest — ADC (``oauth`` mode) or the Gmail MCP connector (``mcp`` mode)."""
+    from rebalance.ingest.config import get_gmail_ingest_method
+
+    if get_gmail_ingest_method() == "mcp":
+        # MCP mode — credentials live in the agent's Gmail connector, not here.
+        # Report how much email has actually been ingested instead.
+        if db_path is not None:
+            try:
+                from rebalance.ingest.db import db_connection
+
+                with db_connection(db_path) as conn:
+                    has_table = conn.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' "
+                        "AND name='email_messages'"
+                    ).fetchone()
+                    count = (
+                        conn.execute("SELECT COUNT(*) FROM email_messages").fetchone()[0]
+                        if has_table
+                        else 0
+                    )
+            except Exception as exc:  # noqa: BLE001
+                return Check("gmail", WARN, f"MCP mode — could not read email_messages: {exc}")
+            if count == 0:
+                return Check(
+                    "gmail", WARN, "MCP mode — no email ingested yet",
+                    "have an agent fetch via the Gmail MCP connector and call "
+                    "`ingest_gmail_messages`",
+                )
+            return Check("gmail", OK, f"MCP mode — {count} messages ingested")
+        return Check("gmail", OK, "MCP mode — email ingested via the Gmail MCP connector")
+
+    # oauth mode — Google Application Default Credentials.
     try:
         from rebalance.ingest.gmail import GmailAuthError, _load_adc_credentials
     except Exception as exc:  # noqa: BLE001 — doctor must never crash
@@ -310,7 +341,8 @@ def _check_gmail() -> Check:
     except GmailAuthError as exc:
         return Check(
             "gmail", WARN, str(exc).splitlines()[0],
-            "run `gcloud auth application-default login` with the Gmail readonly scope",
+            "run `gcloud auth application-default login` with the Gmail readonly "
+            "scope, or switch to MCP mode (`gmail_ingest_method=mcp`)",
         )
     except Exception as exc:  # noqa: BLE001
         return Check("gmail", WARN, f"could not load ADC: {exc}")
@@ -357,7 +389,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
 
     # Integration credentials — Sleuth/Slack, Gmail, Google Calendar.
     report.checks.append(_check_sleuth())
-    report.checks.append(_check_gmail())
+    report.checks.append(_check_gmail(db_path))
     report.checks.append(_check_calendar())
 
     report.checks.extend(_check_launchd())

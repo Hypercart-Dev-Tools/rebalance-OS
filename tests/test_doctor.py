@@ -180,9 +180,9 @@ class IntegrationCheckTests(unittest.TestCase):
                 cal_mod.TOKEN_PATH = original
 
     def test_gmail_check_never_crashes(self) -> None:
-        # ADC state is machine-dependent; assert only that the check is
+        # ADC / MCP state is machine-dependent; assert only that the check is
         # well-formed and never raises.
-        check = _check_gmail()
+        check = _check_gmail(None)
         self.assertEqual(check.name, "gmail")
         self.assertIn(check.status, (OK, WARN, FAIL))
 

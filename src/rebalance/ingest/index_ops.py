@@ -672,6 +672,24 @@ def _refresh_sleuth(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
 
 
 def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    from rebalance.ingest.config import get_gmail_ingest_method
+
+    if get_gmail_ingest_method() == "mcp":
+        # MCP mode: email_messages is populated by an agent via the Gmail MCP
+        # connector. A scheduled (launchd) job cannot reach an MCP connector,
+        # so this step is a deliberate no-op — reported honestly, neither as a
+        # success nor as an error.
+        return {
+            "scope": "email",
+            "dry_run": dry_run,
+            "method": "mcp",
+            "skipped": True,
+            "note": (
+                "Gmail is in MCP mode — email_messages is ingested by an agent "
+                "via the Gmail MCP connector, not by this job."
+            ),
+        }
+
     if dry_run:
         return {
             "scope": "email",

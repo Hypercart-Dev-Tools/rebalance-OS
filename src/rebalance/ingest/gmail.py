@@ -282,3 +282,67 @@ def sync_gmail(
         query_filter=query_filter,
         elapsed_seconds=round(time.monotonic() - start, 2),
     )
+
+
+def ingest_email_messages(
+    database_path: Path,
+    messages: list[dict[str, Any]],
+) -> GmailSyncResult:
+    """Upsert already-fetched email messages into ``email_messages``.
+
+    The MCP-path counterpart to :func:`sync_gmail`. Instead of fetching from the
+    Gmail API via ADC, the caller supplies messages already fetched by some
+    other route — e.g. an agent using the Gmail MCP connector. This keeps the
+    ``email_messages`` write path identical regardless of how the data arrived.
+
+    Each *message* dict accepts: ``message_id`` (required), ``thread_id``,
+    ``from_address``, ``from_name``, ``subject``, ``snippet``, ``received_at``,
+    and ``labels`` (list of label strings). Missing keys default to empty.
+    Messages without a ``message_id`` are skipped.
+    """
+    from rebalance.ingest.db import db_connection, ensure_email_schema
+
+    start = time.monotonic()
+    synced_at = datetime.now(timezone.utc).isoformat()
+    inserted = updated = stored = 0
+
+    with db_connection(database_path, ensure_email_schema) as conn:
+        for m in messages:
+            msg_id = str(m.get("message_id") or "").strip()
+            if not msg_id:
+                continue
+            existed = conn.execute(
+                "SELECT 1 FROM email_messages WHERE message_id = ?", (msg_id,)
+            ).fetchone() is not None
+            conn.execute(
+                """INSERT OR REPLACE INTO email_messages
+                   (message_id, thread_id, from_address, from_name, subject,
+                    snippet, received_at, labels_json, synced_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    msg_id,
+                    str(m.get("thread_id") or ""),
+                    str(m.get("from_address") or ""),
+                    str(m.get("from_name") or ""),
+                    str(m.get("subject") or ""),
+                    str(m.get("snippet") or ""),
+                    str(m.get("received_at") or ""),
+                    json.dumps(list(m.get("labels") or [])),
+                    synced_at,
+                ),
+            )
+            if existed:
+                updated += 1
+            else:
+                inserted += 1
+            stored += 1
+        conn.commit()
+
+    return GmailSyncResult(
+        messages_listed=len(messages),
+        messages_stored=stored,
+        messages_inserted=inserted,
+        messages_updated=updated,
+        query_filter="mcp",
+        elapsed_seconds=round(time.monotonic() - start, 2),
+    )
