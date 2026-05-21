@@ -177,6 +177,32 @@ def create_server(database_path: Path) -> FastMCP:
             "sync_ok": result.sync_ok,
         }
 
+    @mcp.tool()
+    def ingest_gmail_messages(messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Ingest pre-fetched Gmail messages into the local ``email_messages`` table.
+
+        The MCP-path Gmail ingest, for installs configured with
+        ``gmail_ingest_method=mcp``. An agent fetches messages via the Gmail
+        MCP connector and pushes them here — a launchd job cannot reach an MCP
+        connector, so this is the supported way to keep email fresh in MCP mode.
+
+        Each *messages* dict accepts: ``message_id`` (required), ``thread_id``,
+        ``from_address``, ``from_name``, ``subject``, ``snippet``,
+        ``received_at``, and ``labels`` (list of label strings). The new rows
+        are also projected into the semantic index.
+        """
+        from rebalance.ingest.gmail import ingest_email_messages
+        from rebalance.ingest.semantic_index import backfill_semantic_documents
+
+        result = ingest_email_messages(database_path, messages)
+        backfill_semantic_documents(database_path, source_types=["email"])
+        return {
+            "messages_listed": result.messages_listed,
+            "messages_stored": result.messages_stored,
+            "messages_inserted": result.messages_inserted,
+            "messages_updated": result.messages_updated,
+        }
+
     # ------------------------------------------------------------------
     # Retrieval tools
     # ------------------------------------------------------------------
