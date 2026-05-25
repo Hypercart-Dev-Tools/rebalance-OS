@@ -372,13 +372,36 @@ class EmailIndexStatusTests(unittest.TestCase):
 
 
 class RefreshEmailDryRunTests(unittest.TestCase):
-    def test_dry_run_lists_steps_without_touching_network(self) -> None:
+    def setUp(self) -> None:
+        # Isolate the config so the test does not depend on the machine's
+        # gmail_ingest_method setting.
+        from rebalance.ingest import config as config_module
+
+        self._config_module = config_module
+        self._orig_config_path = config_module.CONFIG_PATH
+        self._tmp = tempfile.TemporaryDirectory()
+        config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+
+    def tearDown(self) -> None:
+        self._config_module.CONFIG_PATH = self._orig_config_path
+        self._tmp.cleanup()
+
+    def test_dry_run_lists_steps_in_oauth_mode(self) -> None:
+        # Empty config -> default oauth method.
         with tempfile.TemporaryDirectory() as tmpdir:
             result = _refresh_email(Path(tmpdir) / "rebalance.db", dry_run=True)
         self.assertEqual(result["scope"], "email")
         self.assertTrue(result["dry_run"])
         self.assertIn("sync_gmail()", result["steps"])
         self.assertIn("semantic_backfill(email)", result["steps"])
+
+    def test_dry_run_reports_mcp_mode(self) -> None:
+        self._config_module.set_gmail_ingest_method("mcp")
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = _refresh_email(Path(tmpdir) / "rebalance.db", dry_run=True)
+        self.assertEqual(result["scope"], "email")
+        self.assertEqual(result["method"], "mcp")
+        self.assertTrue(result["skipped"])
 
 
 if __name__ == "__main__":

@@ -40,3 +40,7 @@ package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# Ship SQL migration files inside the wheel so run_migrations() can find them.
+"rebalance.ingest.db" = ["migrations/*.sql"]

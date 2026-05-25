@@ -20,7 +20,7 @@ from rebalance.ingest.config import (
     get_github_token,
     get_vault_path,
 )
-from rebalance.ingest.db import db_connection, ensure_semantic_schema
+from rebalance.ingest.db import db_connection, ensure_semantic_schema, run_migrations
 from rebalance.ingest.registry import get_projects
 
 logger = logging.getLogger(__name__)
@@ -672,6 +672,24 @@ def _refresh_sleuth(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
 
 
 def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    from rebalance.ingest.config import get_gmail_ingest_method
+
+    if get_gmail_ingest_method() == "mcp":
+        # MCP mode: email_messages is populated by an agent via the Gmail MCP
+        # connector. A scheduled (launchd) job cannot reach an MCP connector,
+        # so this step is a deliberate no-op — reported honestly, neither as a
+        # success nor as an error.
+        return {
+            "scope": "email",
+            "dry_run": dry_run,
+            "method": "mcp",
+            "skipped": True,
+            "note": (
+                "Gmail is in MCP mode — email_messages is ingested by an agent "
+                "via the Gmail MCP connector, not by this job."
+            ),
+        }
+
     if dry_run:
         return {
             "scope": "email",
@@ -886,6 +904,15 @@ def refresh_index(
         "dry_run": dry_run,
         "include_semantic": include_semantic,
     }
+
+    # Bring the database schema to the latest version before any collector
+    # writes to it. Skipped on dry runs, which must not touch the DB.
+    if not dry_run:
+        try:
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+        except Exception as e:  # noqa: BLE001 — error envelope mirrors collector contract
+            errors.append({"scope": "migrations", "error": str(e)})
 
     for s in requested_scopes:
         collector = COLLECTORS.get(s)

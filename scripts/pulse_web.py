@@ -776,6 +776,7 @@ def render_sidebar(
     in_progress: int,
     cal_rows: list[dict[str, Any]],
     sleuth_rows: list[dict[str, Any]],
+    sleuth_synced: bool,
     streams: dict[str, int],
     drift_total: int,
     semantic_total: int,
@@ -821,7 +822,17 @@ def render_sidebar(
           <li class="side-row">{body}</li>
             """)
     if not sleuth_items:
-        sleuth_items.append('<li class="side-row empty"><div class="side-row-meta">Inbox clear.</div></li>')
+        if sleuth_synced:
+            # Genuinely empty — Sleuth synced and there is nothing pending.
+            sleuth_items.append(
+                '<li class="side-row empty"><div class="side-row-meta">Inbox clear.</div></li>'
+            )
+        else:
+            # Sleuth has never synced — do not pass this off as "all clear".
+            sleuth_items.append(
+                '<li class="side-row empty"><div class="side-row-meta">'
+                'Sleuth not synced — run <code>rebalance doctor</code></div></li>'
+            )
 
     return f"""
     <aside class="sidebar">
@@ -1498,6 +1509,12 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     repo_pie_days = 7
     repo_pie_rows = fetch_repo_activity_counts(days=repo_pie_days, limit=12)
     status = get_index_status(DB_PATH)
+    # Sleuth has synced at least once iff sources.sleuth.last_synced_at is set.
+    # Lets the sidebar tell a genuinely empty inbox apart from a sync that has
+    # never run (e.g. missing Sleuth credentials) — no false "Inbox clear".
+    sleuth_synced = bool(
+        ((status.get("sources") or {}).get("sleuth") or {}).get("last_synced_at")
+    )
 
     in_progress = sum(1 for g in goals if not g["done"])
     streams = {
@@ -1533,6 +1550,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           in_progress=in_progress,
           cal_rows=cal_rows,
           sleuth_rows=sleuth_rows,
+          sleuth_synced=sleuth_synced,
           streams=streams,
           drift_total=drift_total,
           semantic_total=semantic_total,

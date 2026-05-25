@@ -161,6 +161,38 @@ def set_gmail_query_filter(query: str) -> None:
     _write_config(config)
 
 
+GMAIL_INGEST_METHODS = ("oauth", "mcp")
+
+
+def get_gmail_ingest_method() -> str:
+    """Return how Gmail is ingested: ``oauth`` (default) or ``mcp``.
+
+    Config key: ``gmail_ingest_method``.
+
+    - ``oauth`` — the autonomous path: ``sync_gmail`` fetches via Google ADC.
+    - ``mcp``   — email_messages is populated externally by an agent using the
+      Gmail MCP connector (see ``ingest_email_messages``). The launchd email
+      job does not fetch in this mode — it cannot reach an MCP connector.
+    """
+    config = _read_config()
+    value = config.get("gmail_ingest_method")
+    if isinstance(value, str) and value.strip().lower() in GMAIL_INGEST_METHODS:
+        return value.strip().lower()
+    return "oauth"
+
+
+def set_gmail_ingest_method(method: str) -> None:
+    """Store the Gmail ingest method (``oauth`` or ``mcp``)."""
+    normalized = method.strip().lower()
+    if normalized not in GMAIL_INGEST_METHODS:
+        raise ValueError(
+            f"gmail_ingest_method must be one of {GMAIL_INGEST_METHODS}, got {method!r}"
+        )
+    config = _read_config()
+    config["gmail_ingest_method"] = normalized
+    _write_config(config)
+
+
 def get_github_ignored_repos() -> list[str]:
     """Return the locally configured GitHub repos to skip across ingest."""
     config = _read_config()

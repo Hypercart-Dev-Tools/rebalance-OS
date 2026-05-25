@@ -17,6 +17,7 @@ from rebalance.ingest.db import (
     ensure_schema,
     ensure_semantic_schema,
 )
+from rebalance.ingest.db import semantic as sem
 from rebalance.ingest.embedder import (
     DEFAULT_MODEL as DEFAULT_EMBED_MODEL,
     EMBEDDING_DIM,
@@ -99,38 +100,23 @@ def upsert_document(
     """
     metadata_json = _json_dumps(metadata or {})
     content_hash = _content_hash(body)
-    existing = conn.execute(
-        """
-        SELECT id, source_table, doc_kind, title, body, content_hash, metadata_json, updated_at
-        FROM semantic_documents
-        WHERE source_type = ? AND source_pk = ?
-        """,
-        (source_type, source_pk),
-    ).fetchone()
+    existing = sem.find_semantic_document(conn, source_type, source_pk)
 
     if existing is None:
-        conn.execute(
-            """
-            INSERT INTO semantic_documents
-                (source_type, source_table, source_pk, doc_kind, title, body, content_hash,
-                 embedded_hash, embedded_model_version, embedded_at, metadata_json,
-                 created_at, updated_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, ?, ?)
-            """,
-            (
-                source_type,
-                source_table,
-                source_pk,
-                doc_kind,
-                title,
-                body,
-                content_hash,
-                metadata_json,
-                created_at,
-                updated_at,
-            ),
+        doc_id = sem.insert_semantic_document(
+            conn,
+            source_type=source_type,
+            source_table=source_table,
+            source_pk=source_pk,
+            doc_kind=doc_kind,
+            title=title,
+            body=body,
+            content_hash=content_hash,
+            metadata_json=metadata_json,
+            created_at=created_at,
+            updated_at=updated_at,
         )
-        return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0]), "inserted"
+        return doc_id, "inserted"
 
     has_changed = any(
         [
@@ -146,28 +132,16 @@ def upsert_document(
     if not has_changed:
         return int(existing["id"]), "unchanged"
 
-    conn.execute(
-        """
-        UPDATE semantic_documents
-        SET source_table = ?,
-            doc_kind = ?,
-            title = ?,
-            body = ?,
-            content_hash = ?,
-            metadata_json = ?,
-            updated_at = ?
-        WHERE id = ?
-        """,
-        (
-            source_table,
-            doc_kind,
-            title,
-            body,
-            content_hash,
-            metadata_json,
-            updated_at,
-            existing["id"],
-        ),
+    sem.update_semantic_document(
+        conn,
+        int(existing["id"]),
+        source_table=source_table,
+        doc_kind=doc_kind,
+        title=title,
+        body=body,
+        content_hash=content_hash,
+        metadata_json=metadata_json,
+        updated_at=updated_at,
     )
     return int(existing["id"]), "updated"
 
@@ -179,58 +153,22 @@ def _delete_missing_docs(
     seen_source_pks: set[str],
     source_pk_prefix: str = "",
 ) -> int:
-    if source_pk_prefix:
-        rows = conn.execute(
-            """
-            SELECT id, source_pk
-            FROM semantic_documents
-            WHERE source_type = ? AND SUBSTR(source_pk, 1, ?) = ?
-            """,
-            (source_type, len(source_pk_prefix), source_pk_prefix),
-        ).fetchall()
-    else:
-        rows = conn.execute(
-            """
-            SELECT id, source_pk
-            FROM semantic_documents
-            WHERE source_type = ?
-            """,
-            (source_type,),
-        ).fetchall()
+    rows = sem.semantic_documents_for_source(
+        conn, source_type, source_pk_prefix=source_pk_prefix
+    )
 
     to_delete = [int(row["id"]) for row in rows if row["source_pk"] not in seen_source_pks]
     if not to_delete:
         return 0
 
-    conn.executemany("DELETE FROM semantic_embeddings WHERE rowid = ?", [(doc_id,) for doc_id in to_delete])
-    conn.executemany("DELETE FROM semantic_documents WHERE id = ?", [(doc_id,) for doc_id in to_delete])
+    sem.delete_semantic_documents(conn, to_delete)
     return len(to_delete)
 
 
 def sync_vault_documents(conn: Any) -> dict[str, int]:
     """Backfill semantic documents from the current ``chunks`` table."""
     ensure_semantic_schema(conn)
-    rows = conn.execute(
-        """
-        SELECT
-            c.id,
-            c.file_id,
-            c.chunk_index,
-            c.heading,
-            c.heading_level,
-            c.body,
-            c.char_count,
-            c.content_hash,
-            vf.rel_path,
-            vf.title,
-            vf.tags_json,
-            vf.ingested_at,
-            vf.last_modified
-        FROM chunks c
-        JOIN vault_files vf ON vf.id = c.file_id
-        ORDER BY c.id
-        """
-    ).fetchall()
+    rows = sem.vault_chunks_for_semantic(conn)
 
     inserted = updated = unchanged = 0
     seen_source_pks: set[str] = set()
@@ -282,49 +220,9 @@ def sync_github_documents(conn: Any, *, repo_full_name: str = "") -> dict[str, i
     if normalized_repo and normalized_repo in ignored_repos:
         return {"total": 0, "inserted": 0, "updated": 0, "unchanged": 0, "deleted": 0}
 
-    params: tuple[Any, ...]
-    where_sql = ""
-    if normalized_repo:
-        where_sql = "WHERE LOWER(gd.repo_full_name) = ?"
-        params = (normalized_repo,)
-    else:
-        ignored_placeholders = ", ".join("?" for _ in ignored_repos)
-        if ignored_placeholders:
-            where_sql = f"WHERE LOWER(gd.repo_full_name) NOT IN ({ignored_placeholders})"
-            params = tuple(sorted(ignored_repos))
-        else:
-            params = ()
-
-    rows = conn.execute(
-        f"""
-        SELECT
-            gd.id,
-            gd.repo_full_name,
-            gd.source_type AS github_source_type,
-            gd.source_number,
-            gd.doc_type,
-            gd.source_key,
-            gd.title,
-            gd.body,
-            gd.content_hash,
-            gd.updated_at,
-            gd.fetched_at,
-            gi.state,
-            gi.milestone_title,
-            gi.labels_json,
-            gi.review_decision,
-            gi.check_status,
-            gi.html_url
-        FROM github_documents gd
-        LEFT JOIN github_items gi
-          ON gi.repo_full_name = gd.repo_full_name
-         AND gi.item_type = gd.source_type
-         AND gi.number = gd.source_number
-        {where_sql}
-        ORDER BY gd.id
-        """,
-        params,
-    ).fetchall()
+    rows = sem.github_documents_for_semantic(
+        conn, normalized_repo=normalized_repo, ignored_repos=ignored_repos
+    )
 
     inserted = updated = unchanged = 0
     seen_source_pks: set[str] = set()
@@ -385,14 +283,7 @@ def sync_email_documents(conn: Any) -> dict[str, int]:
     email row that drops out of the fetch window stays in the index.
     """
     ensure_semantic_schema(conn)
-    rows = conn.execute(
-        """
-        SELECT message_id, thread_id, from_address, from_name, subject,
-               snippet, received_at, labels_json, synced_at
-        FROM email_messages
-        ORDER BY received_at DESC
-        """
-    ).fetchall()
+    rows = sem.email_messages_for_semantic(conn)
 
     inserted = updated = unchanged = 0
     for row in rows:
@@ -509,67 +400,20 @@ def embed_pending(
     with db_connection(database_path, ensure_semantic_schema) as conn:
         if force_reembed:
             if set(selected_sources) == {"vault", "github", "email"} and len(selected_sources) == 3:
-                conn.execute("DELETE FROM semantic_embeddings")
-                conn.execute(
-                    """
-                    UPDATE semantic_documents
-                    SET embedded_hash = NULL,
-                        embedded_model_version = NULL,
-                        embedded_at = NULL
-                    """
-                )
+                sem.clear_semantic_embeddings(conn)
+                sem.reset_semantic_embedded_state(conn)
             else:
-                placeholders = ", ".join("?" for _ in selected_sources)
-                row_ids = [
-                    int(row["id"])
-                    for row in conn.execute(
-                        f"""
-                        SELECT id
-                        FROM semantic_documents
-                        WHERE source_type IN ({placeholders})
-                        """,
-                        selected_sources,
-                    ).fetchall()
-                ]
-                conn.executemany("DELETE FROM semantic_embeddings WHERE rowid = ?", [(row_id,) for row_id in row_ids])
-                conn.execute(
-                    f"""
-                    UPDATE semantic_documents
-                    SET embedded_hash = NULL,
-                        embedded_model_version = NULL,
-                        embedded_at = NULL
-                    WHERE source_type IN ({placeholders})
-                    """,
-                    selected_sources,
-                )
+                row_ids = sem.semantic_doc_ids_for_sources(conn, selected_sources)
+                sem.delete_semantic_embeddings_for_docs(conn, row_ids)
+                sem.reset_semantic_embedded_state(conn, selected_sources)
             conn.commit()
 
-        placeholders = ", ".join("?" for _ in selected_sources)
-        params: list[Any] = [*selected_sources, min_chars, current_model_version]
-        rows = conn.execute(
-            f"""
-            SELECT id, body, content_hash
-            FROM semantic_documents
-            WHERE source_type IN ({placeholders})
-              AND LENGTH(body) >= ?
-              AND (
-                    embedded_hash IS NULL
-                 OR embedded_hash != content_hash
-                 OR embedded_model_version IS NULL
-                 OR embedded_model_version != ?
-              )
-            ORDER BY id
-            """,
-            params,
-        ).fetchall()
-        total_docs = conn.execute(
-            f"""
-            SELECT COUNT(*)
-            FROM semantic_documents
-            WHERE source_type IN ({placeholders}) AND LENGTH(body) >= ?
-            """,
-            [*selected_sources, min_chars],
-        ).fetchone()[0]
+        rows = sem.semantic_documents_pending_embed(
+            conn, selected_sources, min_chars, current_model_version
+        )
+        total_docs = sem.count_embeddable_semantic_documents(
+            conn, selected_sources, min_chars
+        )
 
         if not rows:
             return SemanticEmbedResult(
@@ -588,20 +432,10 @@ def embed_pending(
             vectors = embed_fn(texts, model_name)
             now_iso = datetime.now(timezone.utc).isoformat()
             for row, vec in zip(batch, vectors):
-                conn.execute("DELETE FROM semantic_embeddings WHERE rowid = ?", (row["id"],))
-                conn.execute(
-                    "INSERT INTO semantic_embeddings (rowid, embedding) VALUES (?, ?)",
-                    (row["id"], _vec_to_bytes(vec)),
-                )
-                conn.execute(
-                    """
-                    UPDATE semantic_documents
-                    SET embedded_hash = content_hash,
-                        embedded_model_version = ?,
-                        embedded_at = ?
-                    WHERE id = ?
-                    """,
-                    (current_model_version, now_iso, row["id"]),
+                sem.delete_semantic_embedding(conn, row["id"])
+                sem.insert_semantic_embedding(conn, row["id"], _vec_to_bytes(vec))
+                sem.mark_semantic_document_embedded(
+                    conn, row["id"], current_model_version, now_iso
                 )
                 embedded += 1
             conn.commit()
@@ -613,10 +447,7 @@ def embed_pending(
             ("embedder_version", current_model_version),
             ("last_embed_at", now_iso),
         ]:
-            conn.execute(
-                "INSERT OR REPLACE INTO semantic_embedding_meta (key, value) VALUES (?, ?)",
-                (key, value),
-            )
+            sem.set_semantic_embedding_meta(conn, key, value)
         conn.commit()
 
     return SemanticEmbedResult(
@@ -644,28 +475,7 @@ def query(
     query_vec = _vec_to_bytes(embed_fn([query_text], model_name)[0])
 
     with db_connection(database_path, ensure_semantic_schema) as conn:
-        placeholders = ", ".join("?" for _ in selected_sources)
-        rows = conn.execute(
-            f"""
-            SELECT
-                se.rowid AS doc_id,
-                se.distance,
-                sd.source_type,
-                sd.source_table,
-                sd.source_pk,
-                sd.doc_kind,
-                sd.title,
-                SUBSTR(sd.body, 1, 400) AS body_preview,
-                sd.metadata_json,
-                sd.updated_at
-            FROM semantic_embeddings se
-            JOIN semantic_documents sd ON sd.id = se.rowid
-            WHERE se.embedding MATCH ? AND se.k = ?
-              AND sd.source_type IN ({placeholders})
-            ORDER BY se.distance
-            """,
-            [query_vec, top_k, *selected_sources],
-        ).fetchall()
+        rows = sem.search_semantic_documents(conn, query_vec, top_k, selected_sources)
 
     results: list[dict[str, Any]] = []
     for row in rows:

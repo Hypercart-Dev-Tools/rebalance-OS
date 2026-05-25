@@ -33,6 +33,7 @@ from rebalance.ingest.audit import append_audit_entry
 from rebalance.paths import (
     DatabaseNotFoundError,
     DBOption,
+    canonical_database_path,
     resolve_database_path,
     resolve_secret_path,
 )
@@ -67,9 +68,10 @@ def _launch_dashboard() -> None:
         typer.echo(f"dashboard script not found: {dashboard_path}", err=True)
         raise typer.Exit(1)
 
-    # Default REBALANCE_DB so `rebalance` works from any cwd, not just
-    # the project root.
-    os.environ.setdefault("REBALANCE_DB", str(_PROJECT_ROOT / "rebalance.db"))
+    # Default REBALANCE_DB to the canonical app-data location so `rebalance`
+    # works from any cwd and agrees with the MCP server / launchd jobs. (Do
+    # not point this at the repo root — that reintroduces the DB-path split.)
+    os.environ.setdefault("REBALANCE_DB", str(canonical_database_path()))
     os.execv(sys.executable, [sys.executable, str(dashboard_path)])
 
 
@@ -93,6 +95,186 @@ def dashboard_cmd() -> None:
     explicitly so it shows up in ``--help``.
     """
     _launch_dashboard()
+
+
+@app.command("doctor")
+def doctor_cmd(database: Path | None = DBOption()) -> None:
+    """Health check — database, token, schema, projects, GitHub data, scheduled jobs.
+
+    Read-only. Surfaces the class of problem a test suite cannot: which database
+    is actually in use, whether the GitHub token is reachable by launchd jobs,
+    schema version, registered projects, data freshness, and job exit status.
+    """
+    from rich.console import Console
+
+    from rebalance.doctor import FAIL, OK, WARN, run_doctor
+
+    console = Console()
+    report = run_doctor(database)
+    label = {
+        OK: "[green] OK [/green]",
+        WARN: "[yellow]WARN[/yellow]",
+        FAIL: "[red]FAIL[/red]",
+    }
+    console.print("\n[bold]rebalance doctor[/bold]\n")
+    for c in report.checks:
+        console.print(f"  {label[c.status]}  [bold]{c.name}[/bold] — {c.detail}")
+        if c.hint and c.status != OK:
+            console.print(f"         [dim]{c.hint}[/dim]")
+    console.print()
+    if report.failed:
+        console.print("[red]Health check found failures.[/red]")
+        raise typer.Exit(1)
+    if report.warned:
+        console.print("[yellow]Health check passed with warnings.[/yellow]")
+    else:
+        console.print("[green]All checks passed.[/green]")
+
+
+@app.command("onboard")
+def onboard_cmd(
+    vault_path: str = typer.Option(
+        "", "--vault-path", help="Obsidian vault path (default: the configured one)."
+    ),
+    yes: bool = typer.Option(
+        False, "--yes", "-y",
+        help="Register every discovered active project without prompting.",
+    ),
+    skip_refresh: bool = typer.Option(
+        False, "--skip-refresh", help="Skip the initial data refresh."
+    ),
+    database: Path | None = DBOption(),
+) -> None:
+    """Guided onboarding: persist the GitHub token, discover & register projects, refresh.
+
+    One command for the sequence that was previously only an agent-driven MCP
+    flow — so it doesn't fall between the cracks. Idempotent: safe to re-run.
+    """
+    from dataclasses import asdict, is_dataclass
+
+    from rebalance.ingest.config import (
+        get_github_token_with_source,
+        get_vault_path,
+        set_github_token,
+    )
+    from rebalance.ingest.index_ops import refresh_index
+    from rebalance.ingest.preflight import confirm_and_write, discover_candidates
+
+    # 1. Vault path.
+    vault = (vault_path or "").strip() or (get_vault_path() or "")
+    if not vault:
+        typer.echo("No vault path configured. Run: rebalance config set-vault-path <path>", err=True)
+        raise typer.Exit(1)
+    vp = Path(vault).expanduser().resolve()
+    if not vp.exists():
+        typer.echo(f"Vault path does not exist: {vp}", err=True)
+        raise typer.Exit(1)
+
+    # 2. Token — persist into config if it only resolves via gh/env, so the
+    #    launchd sync jobs (which run with a minimal environment) can reach it.
+    token, source = get_github_token_with_source()
+    if not token:
+        typer.echo(
+            "No GitHub token configured. Run: rebalance config set-github-token", err=True
+        )
+        raise typer.Exit(1)
+    if source != "config":
+        set_github_token(token)
+        typer.echo(f"Persisted GitHub token to config (was reachable only via '{source}').")
+    else:
+        typer.echo("GitHub token already stored in config.")
+
+    # 3. Discover candidates.
+    registry_path = vp / "Projects" / "00-project-registry.md"
+    typer.echo("Discovering project candidates from vault + GitHub activity...")
+    discovery = discover_candidates(
+        vault_path=vp, registry_path=registry_path, github_token=token
+    )
+    if getattr(discovery, "github_error", None):
+        typer.echo(f"  ! GitHub discovery error: {discovery.github_error}", err=True)
+
+    candidates = [
+        c
+        for bucket in (
+            discovery.most_likely_active_projects,
+            discovery.semi_active_projects,
+            discovery.dormant_projects,
+        )
+        for c in bucket
+    ]
+    if not candidates:
+        typer.echo("No GitHub-active project candidates found — nothing to register.")
+        raise typer.Exit(0)
+
+    def _as_dict(c: Any) -> dict[str, Any]:
+        return asdict(c) if is_dataclass(c) else dict(c)
+
+    # 4. Select which to register.
+    if yes:
+        chosen = candidates
+    else:
+        import questionary
+
+        active_names = {_as_dict(c)["name"] for c in discovery.most_likely_active_projects}
+        picked = questionary.checkbox(
+            "Select projects to register (space to toggle, enter to confirm):",
+            choices=[
+                questionary.Choice(
+                    _as_dict(c)["name"], checked=_as_dict(c)["name"] in active_names
+                )
+                for c in candidates
+            ],
+        ).ask()
+        if picked is None:
+            typer.echo("Cancelled.")
+            raise typer.Exit(1)
+        chosen = [c for c in candidates if _as_dict(c)["name"] in set(picked)]
+    if not chosen:
+        typer.echo("No projects selected — nothing to register.")
+        raise typer.Exit(0)
+
+    # 5. Register.
+    projects = [
+        {
+            "name": d["name"],
+            "status": "active",
+            "summary": d.get("summary", ""),
+            "repos": d.get("repos", []),
+            "priority_tier": d.get("priority_tier") or 3,
+            "tags": d.get("tags", []),
+        }
+        for d in (_as_dict(c) for c in chosen)
+    ]
+    try:
+        db = database or resolve_database_path()
+    except DatabaseNotFoundError:
+        db = canonical_database_path()
+    result = confirm_and_write(
+        projects=projects,
+        vault_path=vp,
+        registry_path=registry_path,
+        projects_yaml_path=vp / "projects.yaml",
+        database_path=db,
+    )
+    typer.echo(
+        f"Registered {result.project_count} project(s) -> {result.registry_path}"
+    )
+
+    # 6. Initial refresh.
+    if skip_refresh:
+        typer.echo("Skipped initial refresh (--skip-refresh). Run `rebalance refresh` later.")
+    else:
+        typer.echo("Running initial data refresh (this can take a few minutes)...")
+        refresh = refresh_index(db, scope=["all"])
+        errors = refresh.get("errors", [])
+        if errors:
+            typer.echo(f"  Refresh finished with {len(errors)} error(s):", err=True)
+            for e in errors:
+                typer.echo(f"    - {e.get('scope')}: {e.get('error')}", err=True)
+        else:
+            typer.echo("Initial refresh complete.")
+
+    typer.echo("\nOnboarding done. Run `rebalance doctor` to verify the install.")
 
 
 @app.command("refresh")
@@ -794,23 +976,9 @@ def _raw_summarize_event(event: dict[str, Any]) -> str:
 
 def _raw_get_top_active_repos(db_path: Path, top_n: int) -> list[str]:
     """Top N watched repos by 7-day activity score (commits + PRs + issues + comments + reviews)."""
-    import sqlite3 as _sqlite3
-    with _sqlite3.connect(db_path) as conn:
-        rows = conn.execute(
-            """
-            SELECT repo_full_name,
-                   SUM(commits) + SUM(prs_opened) + SUM(prs_merged) +
-                   SUM(issues_opened) + SUM(issue_comments) + SUM(reviews) AS score
-            FROM github_activity
-            WHERE scan_date >= date('now', '-7 days')
-            GROUP BY repo_full_name
-            HAVING score > 0
-            ORDER BY score DESC
-            LIMIT ?
-            """,
-            (top_n,),
-        ).fetchall()
-    return [r[0] for r in rows]
+    from rebalance.ingest.db import db_connection, top_active_repos
+    with db_connection(db_path) as conn:
+        return top_active_repos(conn, top_n)
 
 
 def _raw_fetch_repo_events(repo: str, token: str, per_page: int = 30) -> list[dict[str, Any]]:
@@ -832,7 +1000,6 @@ def _raw_gather_team_activity(
     N minutes and excluding the current user (those are already in the user-activity
     section).
     """
-    import sqlite3 as _sqlite3
     from datetime import datetime, timedelta, timezone
 
     cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
@@ -840,16 +1007,10 @@ def _raw_gather_team_activity(
 
     last_active_map: dict[str, datetime] = {}
     if top_repos:
-        placeholders = ",".join("?" * len(top_repos))
-        with _sqlite3.connect(db_path) as conn:
-            rows = conn.execute(
-                f"SELECT repo_full_name, MAX(last_active_at) FROM github_activity "
-                f"WHERE repo_full_name IN ({placeholders}) "
-                f"AND last_active_at IS NOT NULL "
-                f"GROUP BY repo_full_name",
-                top_repos,
-            ).fetchall()
-        for repo, ts in rows:
+        from rebalance.ingest.db import db_connection, repo_last_active
+        with db_connection(db_path) as conn:
+            last_active_raw = repo_last_active(conn, top_repos)
+        for repo, ts in last_active_raw.items():
             try:
                 last_active_map[repo] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
             except (AttributeError, ValueError):
@@ -955,7 +1116,6 @@ def _raw_gather_unwatched_active_repos(
 
 def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, top_n: int) -> dict[str, Any]:
     """Fetch recent GH events and classify each against local pipeline state."""
-    import sqlite3 as _sqlite3
     from datetime import datetime, timedelta, timezone
 
     from rebalance.ingest.github_scan import _fetch_events
@@ -975,14 +1135,12 @@ def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, to
             recent.append((t, e))
     recent.sort(key=lambda x: x[0], reverse=True)
 
-    with _sqlite3.connect(db_path) as conn:
-        watched = {row[0] for row in conn.execute("SELECT repo_full_name FROM github_repo_meta")}
-        last_active_rows = conn.execute(
-            "SELECT repo_full_name, MAX(last_active_at) FROM github_activity "
-            "WHERE last_active_at IS NOT NULL GROUP BY repo_full_name"
-        ).fetchall()
+    from rebalance.ingest.db import db_connection, repo_last_active, repo_meta_names
+    with db_connection(db_path) as conn:
+        watched = repo_meta_names(conn)
+        last_active_raw = repo_last_active(conn)
     last_active_map: dict[str, datetime] = {}
-    for repo, ts in last_active_rows:
+    for repo, ts in last_active_raw.items():
         try:
             last_active_map[repo] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         except (AttributeError, ValueError):

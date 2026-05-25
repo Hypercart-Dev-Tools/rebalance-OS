@@ -1,84 +1,14 @@
-"""
-Shared database layer for rebalance — connection factory, schema creation,
-sqlite-vec extension loading, and context managers.
+"""All CREATE TABLE statements for rebalance, grouped by source.
 
-All CREATE TABLE statements live here so the full DB shape is visible in
-one place.  Individual modules call the appropriate ensure_*_schema()
-function (or use the db_connection context manager) rather than carrying
+Keeping every DDL statement in one module means the full DB shape is visible
+in one place; individual modules call the appropriate ``ensure_*_schema()``
+function (or use the ``db_connection`` context manager) rather than carrying
 their own DDL.
 """
 
 from __future__ import annotations
 
 import sqlite3
-from contextlib import contextmanager
-from pathlib import Path
-from typing import Callable, Generator
-
-try:
-    import sqlite_vec
-except Exception:  # pragma: no cover - import guard for environments without sqlite-vec
-    sqlite_vec = None
-
-
-# ---------------------------------------------------------------------------
-# Connection factory
-# ---------------------------------------------------------------------------
-
-
-def get_connection(database_path: Path) -> sqlite3.Connection:
-    """Open a SQLite connection with WAL mode, foreign keys, and sqlite-vec loaded.
-
-    Note: sqlite-vec may not load on all Python builds (e.g., system Python without
-    extension support). The connection will still work for basic queries.
-    """
-    database_path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(database_path))
-    conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA foreign_keys=ON")
-    # Wait up to 30s for a writer slot before raising "database is locked".
-    # Background refreshes from the TUI can briefly overlap launchd jobs;
-    # without this they fail instantly. See git history for the 2026-05 incident.
-    conn.execute("PRAGMA busy_timeout=30000")
-
-    # Try to load sqlite-vec, but gracefully fall back if unavailable
-    try:
-        if sqlite_vec is not None and hasattr(conn, 'enable_load_extension'):
-            conn.enable_load_extension(True)
-            sqlite_vec.load(conn)
-            conn.enable_load_extension(False)
-    except (AttributeError, Exception):
-        # sqlite-vec not available on this Python build; continue without it
-        pass
-
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-@contextmanager
-def db_connection(
-    database_path: Path,
-    ensure_fn: Callable[[sqlite3.Connection], None] | None = None,
-) -> Generator[sqlite3.Connection, None, None]:
-    """Context-managed database connection with optional schema setup.
-
-    Usage::
-
-        with db_connection(db_path, ensure_schema) as conn:
-            rows = conn.execute("SELECT ...").fetchall()
-
-    The connection is always closed on exit — even if the caller raises.
-    Pass *ensure_fn* to guarantee a specific set of tables exists (e.g.
-    ``ensure_schema``, ``ensure_calendar_schema``).  Omit it when you only
-    need a bare connection.
-    """
-    conn = get_connection(database_path)
-    if ensure_fn is not None:
-        ensure_fn(conn)
-    try:
-        yield conn
-    finally:
-        conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -278,8 +208,8 @@ def ensure_email_schema(conn: sqlite3.Connection) -> None:
 # ---------------------------------------------------------------------------
 
 
-def ensure_github_schema(conn: sqlite3.Connection) -> None:
-    """Create GitHub activity and local knowledge tables if they don't exist."""
+def _ensure_github_activity_schema(conn: sqlite3.Connection) -> None:
+    """Daily per-repo/login activity rollups (powers ``github_balance``)."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS github_activity (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -298,6 +228,10 @@ def ensure_github_schema(conn: sqlite3.Connection) -> None:
             UNIQUE(login, repo_full_name, scan_date) ON CONFLICT REPLACE
         )
     """)
+
+
+def _ensure_github_repo_schema(conn: sqlite3.Connection) -> None:
+    """Repo-level metadata: labels, repo meta, push-discovery cache, branches."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS github_labels (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -362,6 +296,9 @@ def ensure_github_schema(conn: sqlite3.Connection) -> None:
         "ON github_branches(repo_full_name)"
     )
 
+
+def _ensure_github_artifact_schema(conn: sqlite3.Connection) -> None:
+    """Issue/PR corpus: milestones, releases, items, comments, commits, checks, links."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS github_milestones (
             id              INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -544,6 +481,9 @@ def ensure_github_schema(conn: sqlite3.Connection) -> None:
         "ON github_links(repo_full_name, source_type, source_number)"
     )
 
+
+def _ensure_github_knowledge_schema(conn: sqlite3.Connection) -> None:
+    """Embeddable GitHub documents + their vector index."""
     conn.execute("""
         CREATE TABLE IF NOT EXISTS github_documents (
             id                  INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -582,6 +522,18 @@ def ensure_github_schema(conn: sqlite3.Connection) -> None:
             value   TEXT NOT NULL
         )
     """)
+
+
+def ensure_github_schema(conn: sqlite3.Connection) -> None:
+    """Create GitHub activity and local knowledge tables if they don't exist.
+
+    Decomposed into per-table-group helpers for readability; the public
+    contract is unchanged — every group is created, then committed once.
+    """
+    _ensure_github_activity_schema(conn)
+    _ensure_github_repo_schema(conn)
+    _ensure_github_artifact_schema(conn)
+    _ensure_github_knowledge_schema(conn)
     conn.commit()
 
 
@@ -605,4 +557,48 @@ def ensure_project_schema(conn: sqlite3.Connection) -> None:
             custom_fields_json TEXT
         )
     """)
+    conn.commit()
+
+
+# ---------------------------------------------------------------------------
+# Schema versioning
+# ---------------------------------------------------------------------------
+
+# The baseline schema — everything the ensure_*_schema functions above create.
+# A database that has run those functions is, by definition, at this version.
+# Schema changes from here on are forward-only migration files in db/migrations/
+# (applied by db/migrate.py). This number never changes and the ensure_*_schema
+# functions stay frozen at the baseline — see db/migrations/README.md.
+BASELINE_SCHEMA_VERSION = 1
+
+
+def ensure_baseline_schema(conn: sqlite3.Connection) -> None:
+    """Create every baseline (version 1) table if it doesn't exist.
+
+    Runs all six ``ensure_*_schema`` functions — the full version-1 shape.
+    Idempotent; safe to call on an already-populated database. The migration
+    runner calls this first so that migrations always have their tables.
+    """
+    ensure_schema(conn)
+    ensure_semantic_schema(conn)
+    ensure_calendar_schema(conn)
+    ensure_email_schema(conn)
+    ensure_github_schema(conn)
+    ensure_project_schema(conn)
+
+
+def ensure_schema_version_table(conn: sqlite3.Connection) -> None:
+    """Create the ``schema_version`` ledger if it doesn't exist.
+
+    One row per applied version; the current version is ``MAX(version)``.
+    An empty table means no version has been recorded yet.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS schema_version (
+            version    INTEGER PRIMARY KEY,
+            applied_at TEXT NOT NULL
+        )
+        """
+    )
     conn.commit()
