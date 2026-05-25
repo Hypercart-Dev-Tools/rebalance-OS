@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.31.1] - 2026-05-25
+
+### Fixed
+
+- `rebalance github-sync-artifacts --repo owner/name` can now proceed without a PAT when you explicitly target a public repo. The shared GitHub client omits the `Authorization` header when no token is present, and the CLI keeps the token requirement for implicit/project-derived repo sets where a PAT is still the expected path.
+- The ask-self portable ingest wrapper now defaults to `--mode all` when no explicit mode is passed, so repo-local refreshes and future slash-command integrations rebuild the full code+docs index instead of silently falling back to ask-self's upstream docs-only default.
+- The ask-self portable ingest wrapper now fails fast when PR ingestion is enabled but no valid local GitHub auth source is available. It promotes `SLEUTH_RAG_GITHUB_PAT` into `GITHUB_TOKEN`, otherwise falls back to a healthy `gh` login, and tells the operator to re-auth or pass `--no-prs` instead of quietly omitting the remote PR slice.
+
 ## [0.31.0] - 2026-05-19
 
 ### Added

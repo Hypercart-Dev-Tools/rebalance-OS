@@ -72,8 +72,9 @@ ask-self splits embeddings (retrieval) and answer generation (synthesis) into tw
 
 Embedding provider (`embedding.provider` in the harness):
 
-- `gemini` (default) — requires a Gemini API key
+- `gemini` (default) — requires a Gemini API key. Uses `gemini-embedding-001`, which natively outputs **3072 dims**. ask-self passes `outputDimensionality=dim` in every request, so the API truncates to whatever `dim` is set to. The default `dim: 768` is intentional — it produces ~4× smaller indexes with negligible quality loss for most retrieval tasks. **Do not "fix" this to 3072** after seeing a raw curl response return 3072 dims — the templates are correct. Only raise it if you need full native precision and accept the storage cost.
 - `qwen-local` — runs `sentence-transformers` locally; no API key needed for ingest or retrieval. Install requirement: `pip install sentence-transformers`. Common model: `Qwen/Qwen3-Embedding-0.6B` at `dim: 1024`.
+- `qwen-mlx` — **recommended on Mac** — runs the same Qwen models via Apple's MLX framework instead of `sentence-transformers`, avoiding the MPS compatibility issues seen with the PyTorch path. Install requirement: `pip install mlx-lm`. Same model and `dim` values apply.
 
 Synthesis provider (`synthesis.provider` in the harness, optional block):
 
@@ -87,25 +88,36 @@ Resulting modes:
 | Mode | `embedding.provider` | Synthesis | Needs Gemini key? |
 |---|---|---|---|
 | Default | `gemini` | `gemini` | yes |
-| Local retrieval only | `qwen-local` | n/a (`--retrieval-only`) | no |
-| Fully local | `qwen-local` | `ollama` or `openai_compatible` | no |
-| Hybrid | `qwen-local` | `gemini` | yes (for synthesis only) |
+| Local retrieval only | `qwen-local` / `qwen-mlx` ¹ | n/a (`--retrieval-only`) | no |
+| Fully local | `qwen-local` / `qwen-mlx` ¹ | `ollama` or `openai_compatible` | no |
+| Hybrid | `qwen-local` / `qwen-mlx` ¹ | `gemini` | yes (for synthesis only) |
+
+¹ Use `qwen-mlx` on Mac for better performance (`pip install mlx-lm`).
 
 CLI gates on the query path:
 
 - `--retrieval-only` skips synthesis and returns the retrieved context as the answer
 - `--local-only` refuses to run if either retrieval or synthesis would touch a remote API given the current harness — useful as a hard sanity check
 
-Ingest does **not** require `GOOGLE_API_KEY` when `embedding.provider = "qwen-local"`. The check fires only when the provider is `gemini`.
+Ingest does **not** require `GOOGLE_API_KEY` when `embedding.provider` is `qwen-local` or `qwen-mlx`. The check fires only when the provider is `gemini`.
 
 The architecture-narrative generator (the "How it fits together" section in `ARCHITECTURE.md`) also honors `synthesis.provider`. With a local synthesis backend configured, the entire ingest path can run with no Gemini key.
 
-Concrete fully-local harness snippet:
+**Tuning local Qwen embeddings** (both providers):
+
+| Env var | Default | Effect |
+|---|---|---|
+| `ASK_SELF_QWEN_BATCH_SIZE` | `8` | Texts per `model.encode()` call. Raise on CPU or MLX; keep at 8 on MPS. |
+| `ASK_SELF_QWEN_MAX_TOKENS` | `2048` | Chunks above this (4-char estimate) are silently truncated before embedding. Prevents hangs on large changelogs or generated files. |
+
+See [TROUBLESHOOTING.md](TROUBLESHOOTING.md) for the full Mac MPS hang runbook and other common failure modes.
+
+Concrete fully-local harness snippet (Mac — recommended):
 
 ```json
 {
    "embedding": {
-      "provider": "qwen-local",
+      "provider": "qwen-mlx",
       "model": "Qwen/Qwen3-Embedding-0.6B",
       "dim": 1024
    },
@@ -116,7 +128,9 @@ Concrete fully-local harness snippet:
 }
 ```
 
-If you only want local retrieval, keep the `embedding` block above and either omit `synthesis` entirely or leave it on Gemini and query with `--retrieval-only`. When switching to `qwen-local`, set `model` and `dim` explicitly; if you only change `provider`, the current defaults remain Gemini-oriented (`gemini-embedding-001`, `dim: 768`).
+On non-Mac or if you prefer the PyTorch path, swap `"qwen-mlx"` for `"qwen-local"` and install `sentence-transformers` instead of `mlx-lm`.
+
+If you only want local retrieval, keep the `embedding` block above and either omit `synthesis` entirely or leave it on Gemini and query with `--retrieval-only`. When switching to any local Qwen provider, set `model` and `dim` explicitly; if you only change `provider`, the current defaults remain Gemini-oriented (`gemini-embedding-001`, `dim: 768`).
 
 ### Index placement modes
 
@@ -131,7 +145,7 @@ ask-self supports three placement modes for the per-repo SQLite vector DB. **Ask
 Tradeoffs to surface explicitly when proposing **portable**:
 
 - **Size**: vector DBs run hundreds of MB to GBs depending on chunk count. Recommend Git LFS for any DB above ~100 MB. Run `du -sh ask_self/index/` before each commit.
-- **Embedding lock-in**: anyone refreshing the DB needs the same `embedding.provider` + `model` + `dim` as the one that built it. **Strongly recommend `qwen-local`** for portable mode so no teammate needs a Gemini API key just to regenerate.
+- **Embedding lock-in**: anyone refreshing the DB needs the same `embedding.provider` + `model` + `dim` as the one that built it. **Use a local Qwen provider** for portable mode so no teammate needs a Gemini API key to regenerate — `qwen-mlx` on Mac (`pip install mlx-lm`), `qwen-local` on non-Mac (`pip install sentence-transformers`).
 - **Privacy**: embeddings encode the indexed source text and are partially reconstructable. For public repos or repos with restricted-distribution code, a committed DB effectively exposes everything indexed. Surface this risk to the user before choosing portable.
 - **Staleness**: committed DBs go stale as fast as the code changes. Add a "last ingested" line to the README and a one-liner refresh command. Consider a CI job that regenerates on `main`.
 - **Sidecar files**: ask-self derives `<db-stem>__embed_cache.sqlite` and `<db-stem>__events.jsonl` alongside the DB. **Do not commit these in any mode**; gitignore them by name.
@@ -218,7 +232,7 @@ Tune carefully:
 
 Set deliberately if relevant:
 
-- `embedding.provider` (`gemini` or `qwen-local`), plus `model` and `dim` to match the chosen embedder
+- `embedding.provider` (`gemini`, `qwen-local`, or `qwen-mlx`), plus `model` and `dim` to match the chosen embedder
 - `embedding.requests_per_minute` and `embedding.tokens_per_minute` (set to `0` to explicitly disable throttling; both `None` falls back to defaults)
 - `synthesis.provider` if the repo wants fully-local answers (`ollama` or `openai_compatible`); leave unset for default Gemini synthesis
 
@@ -233,7 +247,7 @@ Important:
 - Decide deliberately whether `ARCHITECTURE.md` itself should be indexed.
 - For Swift sources, set `chunker: "swift"` on the relevant source bucket so chunks land on top-level declaration boundaries instead of generic text windows.
 - For **shared baseline** mode, set `shared_index.enabled: true` and point `shared_index.path` at a tracked location such as `ask_self/index/<repo>-shared.sqlite`. `shared_index.prefer_for_query` may remain in older harnesses, but the default query happy path no longer auto-selects the shared index.
-- For **portable** mode, you don't need `shared_index` — the committed DB at `ask_self/index/<repo>.sqlite` is the canonical query target via wrapper-injected `--db-path`. Set `embedding.provider = "qwen-local"` so teammates can refresh without a Gemini key.
+- For **portable** mode, you don't need `shared_index` — the committed DB at `ask_self/index/<repo>.sqlite` is the canonical query target via wrapper-injected `--db-path`. Set `embedding.provider` to a local Qwen provider (`qwen-mlx` on Mac, `qwen-local` on non-Mac) so teammates can refresh without a Gemini key.
 
 #### `ask_self/ask_self_system_instructions.json`
 
@@ -248,11 +262,52 @@ Create:
 
 (Or use the repo's existing script location if there is a stronger local convention.)
 
+#### Claude Code slash command (VS Code / Claude Code users)
+
+Also copy the backslash slash commands into the target repo:
+
+```
+mkdir -p .claude/commands
+cp "$ASK_SELF_PATH/.claude/commands/reingest.md" .claude/commands/reingest.md
+cp "$ASK_SELF_PATH/.claude/commands/ask_self.md" .claude/commands/ask_self.md
+```
+
+This creates two commands (typed with a leading `\` in VS Code) that users can trigger directly from the Claude Code panel:
+
+- `/reingest` — rebuild the RAG index.
+- `/ask_self <question>` — query the index and get a citation-grounded answer.
+
+Both auto-detect the entry point — they prefer the `scripts/ask-self-ingest.sh` / `scripts/ask-self-query.sh` wrappers created above, then fall back through `ASK_SELF_PATH`, then local `ask_self/`, then repo root. No edits to the copied files are needed for a standard integration layout.
+
+Commit the copied files; teammates get the shortcuts automatically on clone.
+
+Note: these are copies, not links — they will not pick up fixes made to the commands in the ask-self repo. When you upgrade ask-self, re-run the `cp` commands above to refresh `.claude/commands/` in the target repo.
+
+##### One-time per-device setup
+
+Copying the command files into a repo only makes the commands *appear*. For them to actually run, each developer's machine also needs ask-self installed and a resolvable Gemini key. This is a one-time per-device setup, independent of any single repo:
+
+1. Install ask-self: clone it, then `python3 -m venv .venv && source .venv/bin/activate && pip install .`.
+2. Authenticate `gcloud` with an account that has read access to the shared Gemini key secret (`gcloud auth login`).
+3. Make the key resolvable in every shell — append to `~/.zshenv` (zsh) or `~/.bashrc` (bash):
+   ```sh
+   export GOOGLE_API_KEY_SECRET_NAME=<secret-name>
+   export GOOGLE_API_KEY_SECRET_PROJECT=<gcloud-project>
+   ```
+4. Optional — install the commands at user scope so they appear in every repo without a per-repo copy:
+   ```sh
+   mkdir -p ~/.claude/commands
+   cp "$ASK_SELF_PATH/.claude/commands/reingest.md" "$ASK_SELF_PATH/.claude/commands/ask_self.md" ~/.claude/commands/
+   ```
+
+The ask-self README's **Claude Code slash commands** section has the full runbook with the concrete shared-secret values. Note that a user-scope install makes the commands visible in every repo, but they only return useful answers where an ask-self index actually exists.
+
 Each wrapper should:
 
 - resolve `ASK_SELF_PATH` (default `/path/to/ask-self`)
 - resolve `ASK_SELF_PYTHON` if provided; otherwise prefer `"$ASK_SELF_PATH/.venv/bin/python"` when it exists; otherwise fall back to `python3`
 - fail loudly if the external repo or entry points are missing
+- in the **ingest** wrapper, if PR ingestion is enabled (i.e. `github.owner` / `github.repo` are set in the harness and `--no-prs` is not passed): resolve `GITHUB_TOKEN` if not already set by trying `gh auth token 2>/dev/null`; export it before invoking the Python script; if neither source yields a token, print a clear error (`GITHUB_TOKEN not set and gh CLI not authorized — run 'gh auth login' or export GITHUB_TOKEN`) and exit non-zero
 - invoke the external entry points through Python, not as executable scripts:
   - `"$PYTHON_BIN" "$ASK_SELF_PATH/ask_self_ingest.py"`
   - `"$PYTHON_BIN" "$ASK_SELF_PATH/ask_self_query.py"`
@@ -314,7 +369,7 @@ Mode-specific additions:
 
 - **Local-only**: note that each developer must run `./scripts/ask-self-ingest.sh` once before querying; the index lives under `temp/rag/` and is gitignored
 - **Shared baseline**: note how to publish — `./scripts/ask-self-ingest.sh --shared-index --mode all` — and that the default query path still prefers a fresh local index; pass `--db-path ask_self/index/<repo>-shared.sqlite` to hit the shared one explicitly
-- **Portable**: state that no setup is required to query — clone and run. Add a "last ingested" line (date + git SHA) that gets updated when the DB is refreshed. Include the refresh command (`./scripts/ask-self-ingest.sh`) and call out the embedding provider (`qwen-local`, requires `pip install sentence-transformers` only when refreshing). If the DB is large, mention the Git LFS requirement.
+- **Portable**: state that no setup is required to query — clone and run. Add a "last ingested" line (date + git SHA) that gets updated when the DB is refreshed. Include the refresh command (`./scripts/ask-self-ingest.sh`) and call out the embedding provider (`qwen-mlx` on Mac / `qwen-local` on non-Mac, with the relevant `pip install` only needed when refreshing). If the DB is large, mention the Git LFS requirement.
 
 Optional but useful in all modes: a one-line note that indexes reflect the last ingest, not current uncommitted changes.
 
@@ -377,6 +432,61 @@ All integration changes belong in the target repo, not in `/path/to/ask-self`.
 - harness exclude patterns must not silently exclude the entire repo
 - `AGENTS.md` edits must be append-only relative to existing content
 
+## Pre-flight Questions
+
+**Stop here.** Before writing any files or running any commands, ask the user these questions explicitly. Do not proceed until you have answers — the responses determine the harness config, wrapper logic, gitignore rules, README wording, and whether any credentials are required at all.
+
+### Q1 — Embedding provider
+
+> Which embedding provider do you want?
+>
+> - **Gemini** (`gemini-embedding-001`) — cloud, requires `GOOGLE_API_KEY`; produces a ~4× smaller index at the default `dim: 768`
+> - **Qwen local** — no API key needed for ingest or retrieval; `qwen-mlx` on Mac (`pip install mlx-lm`), `qwen-local` on non-Mac (`pip install sentence-transformers`)
+
+If the user picks **Qwen local**, ask the synthesis follow-up immediately before moving on:
+
+> For answer synthesis (query responses and the "How it fits together" architecture doc), do you want:
+>
+> - **Gemini** — cloud, requires `GOOGLE_API_KEY` (hybrid mode: local retrieval + cloud answers)
+> - **Local** (Ollama / OpenAI-compatible) — fully offline; requires a running Ollama daemon or local OpenAI-compatible server
+
+This follow-up is required because retrieval and synthesis are independent providers. Picking Qwen embeddings does not imply local synthesis — but together the two answers fully determine whether any Google credential is needed.
+
+### Q2 — Index placement / portability
+
+> Where should the vector index live?
+>
+> - **Local-only** (default) — `temp/rag/`, gitignored; each developer runs ingest once before querying. No committed DB, no size or privacy risk.
+> - **Shared baseline** — `ask_self/index/<repo>-shared.sqlite`, committed; a lightweight team snapshot. The default query path still prefers a fresh local index; the shared DB is an explicit `--db-path` override.
+> - **Portable** — `ask_self/index/<repo>.sqlite`, committed; teammates clone and query immediately with no ingest. Requires a local Qwen provider (see Q1) so anyone can refresh without an API key.
+
+Surface these tradeoffs before the user answers:
+
+- **Portable**: vector DBs can be hundreds of MB — Git LFS may be required above ~100 MB. Embeddings are partially reconstructable; for public repos or restricted-distribution code, a committed DB effectively ships the indexed source. The DB goes stale as code changes and needs a manual or CI-triggered refresh.
+- **Shared baseline**: lighter commitment than portable, but the default query path ignores it unless the user passes `--db-path` explicitly.
+- **Local-only**: safest default; no committed DB, no size concerns, no privacy exposure from a committed index.
+
+### Q3 — PR ingestion
+
+> Should the integration index GitHub pull requests alongside source files?
+>
+> - **Yes** — ask-self calls the GitHub API (read-only) during ingest to fetch PR titles, descriptions, and review comments, then chunks and embeds them alongside source files. Requires filling in `github.owner` and `github.repo` in the harness. No writes to GitHub are made.
+> - **No** (default) — source and docs only; no GitHub credentials needed at ingest time.
+
+**Credential for PR ingestion:** The ingest wrapper resolves a `GITHUB_TOKEN` in this order:
+
+1. `GITHUB_TOKEN` already set in the environment — used as-is.
+2. `gh` CLI available and authorized (`gh auth token`) — the wrapper exports the token automatically; no manual setup required.
+3. Neither — ingest will fail if PR ingestion is enabled; the wrapper should print a clear error and suggest running `gh auth login`.
+
+If `gh` is pre-installed and authorized on every device in your team, PR ingestion effectively requires no credential management — the wrapper handles it silently.
+
+For private repos or repos that do not rely on PR discussions as documentation, default to **No** and note it can be enabled later by updating the harness.
+
+---
+
+Once you have answers to Q1–Q3 (plus the synthesis follow-up if Q1 was Qwen), proceed to the **Detection Step** and then the rest of the **Order of Operations**.
+
 ## Before You Start
 
 1. Inspect the target repo:
@@ -397,7 +507,7 @@ All integration changes belong in the target repo, not in `/path/to/ask-self`.
    - Ingest: `--db-path`, `--harness-config`, `--mode`, `--no-prs`, `--no-register`, `--no-architecture-md`, `--shared-index`, `--cache-path`, `--no-cache`, `--events-file`, `--no-events`, `--dashboard`, `--embed-rpm`, `--embed-tpm`
    - Query: `--harness-config`, `--db-path`, `--retrieval-only`, `--local-only`, `--json`, `--target`, `--targets`, `--all-targets`
    - Credential resolution: `GOOGLE_API_KEY`, `GOOGLE_API_KEY_FILE`, `GOOGLE_API_KEY_SECRET_NAME` (+ `gcloud` for Secret Manager)
-   - Local providers: `sentence-transformers` for `qwen-local` embeddings; a running Ollama daemon or OpenAI-compatible server for local synthesis
+   - Local providers: `mlx-lm` for `qwen-mlx` (Mac), `sentence-transformers` for `qwen-local` (non-Mac); a running Ollama daemon or OpenAI-compatible server for local synthesis
 5. Ask before finalizing if any of these are ambiguous:
    - repo kind
    - whether PR ingestion should be enabled
@@ -467,7 +577,7 @@ See the **Index placement modes** table in Background for the high-level shape. 
 - DB lives at `ask_self/index/<repo>.sqlite`, committed, full coverage
 - Query wrapper injects `--db-path ask_self/index/<repo>.sqlite` so a fresh clone queries immediately, no ingest required
 - Ingest wrapper writes to the same path (use `--db-path` or pin `db_filename` in the harness) and injects `--no-register`
-- Use `embedding.provider = "qwen-local"` so teammates can refresh without a Gemini key
+- Use a local Qwen provider (`qwen-mlx` on Mac, `qwen-local` on non-Mac) so teammates can refresh without a Gemini key
 - Add a "last ingested: <date> @ <git SHA>" line to the README (or to a tracked `ask_self/index/STATUS.md`) and update it on each refresh
 - Run `du -sh ask_self/index/` before committing. Above ~100 MB, set up [Git LFS](https://git-lfs.com) for `ask_self/index/*.sqlite` and document the `git lfs install` step in the README
 - Do **not** register the portable index in the multi-repo registry
@@ -484,7 +594,7 @@ If the target repo already has an older ask-self integration, do not rebuild it 
 - keep full local working indexes in `temp/rag/*.sqlite`; that remains the right place for fresh per-user or per-branch ingests
 - decide which **index placement mode** the repo should be on (local-only / shared baseline / portable) and configure accordingly — ask the user before promoting a repo from local-only to a committed-DB mode
 - if the repo wants a committed team baseline, add a `shared_index` block and place that light shared index in a tracked path such as `ask_self/index/<repo>-shared.sqlite`
-- if the repo wants portable mode, switch `embedding.provider` to `qwen-local` (if not already), point the ingest DB at `ask_self/index/<repo>.sqlite`, and have the query wrapper inject `--db-path` at that path
+- if the repo wants portable mode, switch `embedding.provider` to a local Qwen provider (`qwen-mlx` on Mac, `qwen-local` on non-Mac), point the ingest DB at `ask_self/index/<repo>.sqlite`, and have the query wrapper inject `--db-path` at that path
 - in portable mode, make the ingest wrapper inject `--no-register`; committed portable DBs are not registry entries
 - update legacy wrappers so they always pass `--harness-config`, resolve `ASK_SELF_PYTHON` or `"$ASK_SELF_PATH/.venv/bin/python"`, and invoke ask-self through Python
 - if a harness sets `embedding.requests_per_minute: 0` or `tokens_per_minute: 0` expecting that to disable throttling: this now works as intended (`0` is treated as "explicitly disabled"; only `None`/missing falls back to defaults)
@@ -524,12 +634,9 @@ Structure the wrapper scripts to make this swap small and obvious.
 ## Order of Operations
 
 1. Detect repo kind and inventory files.
-2. Ask about any ambiguities before finalizing:
-   - repo kind, GitHub identity, PR ingestion
-   - **credential mode**: Gemini / hybrid / fully-local
-   - **index placement mode**: local-only (default) / shared baseline / portable — surface the size / privacy / staleness tradeoffs before defaulting to portable
+2. Ask the **Pre-flight Questions** (Q1 embedding provider + synthesis follow-up, Q2 index placement, Q3 PR ingestion) before writing any files. Also confirm repo kind and GitHub identity if still ambiguous after detection.
 3. Create the local harness and verify its patterns against real files.
-4. Set `embedding.provider` / `synthesis.provider` per the chosen credential mode. For portable, force `embedding.provider = "qwen-local"`.
+4. Set `embedding.provider` / `synthesis.provider` per the chosen credential mode. For portable, force a local Qwen provider: `qwen-mlx` on Mac, `qwen-local` on non-Mac.
 5. Configure the chosen index placement mode: `shared_index` block for shared baseline; harness `db_filename` + wrapper-injected `--db-path` for portable.
 6. Set registration behavior for that mode: local/full working indexes register by default; shared baselines skip registry updates via `--shared-index`; portable committed DBs inject `--no-register`.
 7. Add wrapper scripts and local system instructions. Portable mode: query wrapper injects `--db-path` to the committed DB and ingest injects `--no-register`.

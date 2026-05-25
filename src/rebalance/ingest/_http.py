@@ -125,12 +125,14 @@ class GitHubClient:
         self._user_agent = user_agent
 
     def headers(self) -> dict[str, str]:
-        return {
-            "Authorization": f"Bearer {self.token}",
+        headers = {
             "Accept": "application/vnd.github+json",
             "User-Agent": self._user_agent,
             "X-GitHub-Api-Version": _API_VERSION,
         }
+        if self.token.strip():
+            headers["Authorization"] = f"Bearer {self.token}"
+        return headers
 
     def _request(self, url: str) -> tuple[int, Any, dict[str, str], str]:
         last_status = 0

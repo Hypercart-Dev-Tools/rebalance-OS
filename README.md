@@ -387,9 +387,11 @@ TOKENIZERS_PARALLELISM=false ./scripts/ask-self-ingest.sh --mode all --no-archit
 ```
 
 Notes:
+- The wrapper now defaults to `--mode all` if you omit `--mode`, but keeping it explicit in maintainer docs is still clearer.
 - `--no-architecture-md` is intentional: the curated [ARCHITECTURE.md](ARCHITECTURE.md) is hand-edited and should not be regenerated.
 - `--concurrency 1` and `TOKENIZERS_PARALLELISM=false` avoid a macOS fork+torch crash in `sentence-transformers`.
 - Embedding is local (Qwen3-Embedding-0.6B via `sentence-transformers`) — no Gemini API key needed for ingest or query.
+- PR ingestion now fails loudly if neither `GITHUB_TOKEN` / `SLEUTH_RAG_GITHUB_PAT` nor a healthy `gh auth login` is available. Pass `--no-prs` only if you intentionally want a files-only refresh.
 - Synthesis (the answer step) still defaults to Gemini unless you pass `--retrieval-only` or configure a local synthesis provider in [ask_self/ask_self_harness.json](ask_self/ask_self_harness.json).
 
 The wrappers require `ASK_SELF_PATH` to point at your local `ask-self` checkout (no default — the scripts fail loudly if it isn't set):

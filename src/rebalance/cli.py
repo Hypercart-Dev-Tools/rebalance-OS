@@ -1252,8 +1252,12 @@ def github_sync_artifacts(
     target_repos = _resolve_github_repos(db_path, repos or [])
     resolved_token = token.strip() or (get_github_token() or "")
     if not resolved_token:
-        raise typer.BadParameter(
-            "GitHub token not configured. Use --token, GITHUB_TOKEN, or `rebalance config set-github-token`."
+        if not normalized_explicit:
+            raise typer.BadParameter(
+                "GitHub token not configured. Use --token, GITHUB_TOKEN, or `rebalance config set-github-token`."
+            )
+        typer.echo(
+            "GitHub token not configured; attempting unauthenticated sync for explicit public repo targets."
         )
 
     for repo in target_repos:
