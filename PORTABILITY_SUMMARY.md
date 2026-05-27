@@ -13,7 +13,7 @@ The calendar daily/weekly report feature is **production-ready for distribution*
 | **Code** | ✅ Shared | All in `src/`, `scripts/`, shared across users |
 | **Dependencies** | ✅ Pinned | Listed in `pyproject.toml`, installable via `pip` |
 | **OAuth app** | ✅ Per-user | Each user creates own credentials in Google Cloud |
-| **OAuth token** | ✅ Device-local | Stored at `~/.config/gcalcli/oauth`, never in repo |
+| **OAuth token** | ✅ Device-local | Stored at `~/.config/rebalance-os/google-calendar-oauth`, never in repo |
 | **Config** | ✅ User-editable | `temp/calendar_config.json` (gitignored, template provided) |
 | **Database** | ✅ Generated locally | `rebalance.db` created by user, never shared |
 | **Documentation** | ✅ Complete | Setup guides provided for each step |
@@ -124,7 +124,7 @@ For each new user:
 - [ ] `pip install -e .` successful
 - [ ] OAuth script runs, opens browser
 - [ ] User consents in Google auth screen
-- [ ] Token saved to `~/.config/gcalcli/oauth`
+- [ ] Token saved to `~/.config/rebalance-os/google-calendar-oauth`
 - [ ] Config file created at `temp/calendar_config.json`
 - [ ] `calendar-sync` completes without errors
 - [ ] `calendar-daily-report` shows events

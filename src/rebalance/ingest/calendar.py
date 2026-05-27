@@ -7,7 +7,7 @@ provides context for the ask tool.
 Uses the google-api-python-client directly (not gcalcli) for reliable
 non-interactive usage.
 
-OAuth token stored at ~/.config/gcalcli/oauth (pickle format).
+OAuth token stored at ~/.config/rebalance-os/google-calendar-oauth (pickle format).
 Not embedded — structured data only. Calendar events are low-signal
 for vector search but high-signal for scheduling context.
 """
@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 
-TOKEN_PATH = Path.home() / ".config" / "gcalcli" / "oauth"
+TOKEN_PATH = Path.home() / ".config" / "rebalance-os" / "google-calendar-oauth"
 CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 CALENDAR_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
 

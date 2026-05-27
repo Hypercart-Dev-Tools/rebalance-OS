@@ -14,7 +14,7 @@ Host / Client Adapter          Any MCP-enabled app that calls server tools
          ↕  JSON-RPC (stdio)
 MCP Server (rebalance)         Tool interfaces + business logic over local data
          ↕
-SQLite / filesystem / GitHub API / gcalcli
+SQLite / filesystem / GitHub API / Google Calendar API
          ↕  (optional, future)
 Local Inference Runtime        mlx-embeddings (Qwen3) for embed queries; Ollama/LM Studio for synthesis
 ```

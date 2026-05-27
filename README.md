@@ -224,7 +224,7 @@ OAuth Desktop app credentials are already bundled in the repo. You do **not** ne
 .venv/bin/python scripts/setup_calendar_oauth.py --test
 ```
 
-A browser window opens — log in with your Google account and click **Allow**. The script prints your available calendars and their IDs. Your token is saved locally at `~/.config/gcalcli/oauth` (never in the repo).
+A browser window opens — log in with your Google account and click **Allow**. The script prints your available calendars and their IDs. Your token is saved locally at `~/.config/rebalance-os/google-calendar-oauth` (never in the repo).
 
 If you want MCP agents to create events, re-run auth with write access:
 
