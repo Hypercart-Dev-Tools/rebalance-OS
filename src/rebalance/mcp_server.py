@@ -833,17 +833,20 @@ def create_server(database_path: Path) -> FastMCP:
 
 
 def main() -> None:
-    from rebalance.paths import DatabaseNotFoundError, resolve_database_path
+    from rebalance.paths import DatabaseNotFoundError, canonical_database_path, resolve_database_path
 
     try:
         database_path = resolve_database_path()
-    except DatabaseNotFoundError as exc:
-        # MCP servers are usually launched by a host (Claude Desktop / VS Code)
-        # with REBALANCE_DB set in mcp.json. Surface the structured error to
-        # stderr so the operator sees how to fix it on first launch.
+    except DatabaseNotFoundError:
+        # First run: no database exists yet. Create the canonical path so
+        # MCP-driven onboarding can proceed — the onboarding tools need
+        # the server to be running before any data exists.
+        database_path = canonical_database_path()
+        database_path.parent.mkdir(parents=True, exist_ok=True)
+        import sqlite3
+        sqlite3.connect(database_path).close()
         import sys as _sys
-        print(str(exc), file=_sys.stderr)
-        raise SystemExit(2) from exc
+        print(f"Created empty database at {database_path}", file=_sys.stderr)
     server = create_server(database_path=database_path)
     server.run()
 
