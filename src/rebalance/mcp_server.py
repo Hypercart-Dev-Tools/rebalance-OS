@@ -6,7 +6,7 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from rebalance.ingest.config import get_github_token, set_github_token, get_config_path
+from rebalance.ingest.config import get_github_token, set_github_token, set_vault_path, get_config_path
 from rebalance.ingest.github_scan import get_github_balance, validate_github_token
 from rebalance.ingest.preflight import discover_candidates, confirm_and_write
 from rebalance.ingest.registry import get_projects
@@ -170,6 +170,8 @@ def create_server(database_path: Path) -> FastMCP:
             projects_yaml_path=projects_yaml_path,
             database_path=database_path,
         )
+
+        set_vault_path(str(vp))
 
         return {
             "registry_path": result.registry_path,
