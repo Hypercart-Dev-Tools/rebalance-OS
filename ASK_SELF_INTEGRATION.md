@@ -215,7 +215,7 @@ Update at minimum:
 
 - `repo_label`
 - `repo_kind`
-- `db_filename`
+- `db_path` — use `ask_self/index/<repo>.sqlite` for shared/portable modes. For local-only temp indexes use `db_filename` with a bare filename (routes to `temp/rag/<filename>` automatically). Never put a committed index path in `db_filename` — it silently looks in the wrong place at query time.
 - `tenancy_env_var`
 - `ingest_command`
 - `github.owner`
@@ -576,7 +576,7 @@ See the **Index placement modes** table in Background for the high-level shape. 
 
 - DB lives at `ask_self/index/<repo>.sqlite`, committed, full coverage
 - Query wrapper injects `--db-path ask_self/index/<repo>.sqlite` so a fresh clone queries immediately, no ingest required
-- Ingest wrapper writes to the same path (use `--db-path` or pin `db_filename` in the harness) and injects `--no-register`
+- Ingest wrapper writes to the same path (use `--db-path` or set `db_path: "ask_self/index/<repo>.sqlite"` in the harness — do not use `db_filename` here, it routes to `temp/rag/` instead) and injects `--no-register`
 - Use a local Qwen provider (`qwen-mlx` on Mac, `qwen-local` on non-Mac) so teammates can refresh without a Gemini key
 - Add a "last ingested: <date> @ <git SHA>" line to the README (or to a tracked `ask_self/index/STATUS.md`) and update it on each refresh
 - Run `du -sh ask_self/index/` before committing. Above ~100 MB, set up [Git LFS](https://git-lfs.com) for `ask_self/index/*.sqlite` and document the `git lfs install` step in the README
@@ -637,7 +637,7 @@ Structure the wrapper scripts to make this swap small and obvious.
 2. Ask the **Pre-flight Questions** (Q1 embedding provider + synthesis follow-up, Q2 index placement, Q3 PR ingestion) before writing any files. Also confirm repo kind and GitHub identity if still ambiguous after detection.
 3. Create the local harness and verify its patterns against real files.
 4. Set `embedding.provider` / `synthesis.provider` per the chosen credential mode. For portable, force a local Qwen provider: `qwen-mlx` on Mac, `qwen-local` on non-Mac.
-5. Configure the chosen index placement mode: `shared_index` block for shared baseline; harness `db_filename` + wrapper-injected `--db-path` for portable.
+5. Configure the chosen index placement mode: `shared_index` block for shared baseline; harness `db_path: "ask_self/index/<repo>.sqlite"` + wrapper-injected `--db-path` for portable. (`db_filename` routes to `temp/rag/` — correct for local-only, wrong for any committed index.)
 6. Set registration behavior for that mode: local/full working indexes register by default; shared baselines skip registry updates via `--shared-index`; portable committed DBs inject `--no-register`.
 7. Add wrapper scripts and local system instructions. Portable mode: query wrapper injects `--db-path` to the committed DB and ingest injects `--no-register`.
 8. Update `.gitignore` per the mode (ignore sidecars always; ignore `ask_self/index/*.sqlite` only in local-only mode).
