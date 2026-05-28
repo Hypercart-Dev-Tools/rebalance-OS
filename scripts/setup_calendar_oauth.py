@@ -23,7 +23,7 @@ from google_auth_oauthlib.flow import InstalledAppFlow
 
 READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
-TOKEN_PATH = Path.home() / ".config" / "gcalcli" / "oauth"
+TOKEN_PATH = Path.home() / ".config" / "rebalance-os" / "google-calendar-oauth"
 
 # Desktop app credentials (Base64-encoded to avoid overly-broad secret scanners).
 # These are NOT sensitive — see Google OAuth 2.0 for Installed Apps documentation.

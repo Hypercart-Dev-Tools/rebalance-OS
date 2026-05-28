@@ -67,6 +67,16 @@ if ! has_flag "--mode" "$@"; then
     DEFAULT_ARGS+=(--mode all)
 fi
 
+EMBED_PROVIDER="$(read_harness_json "((data.get('embedding') or {}).get('provider'))")"
+if [ "$EMBED_PROVIDER" = "qwen-local" ]; then
+    export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+    export ASK_SELF_QWEN_BATCH_SIZE="${ASK_SELF_QWEN_BATCH_SIZE:-8}"
+    export ASK_SELF_QWEN_MAX_TOKENS="${ASK_SELF_QWEN_MAX_TOKENS:-2048}"
+    if ! has_flag "--concurrency" "$@"; then
+        DEFAULT_ARGS+=(--concurrency 1)
+    fi
+fi
+
 GITHUB_OWNER="$(read_harness_json "((data.get('github') or {}).get('owner'))")"
 GITHUB_REPO="$(read_harness_json "((data.get('github') or {}).get('repo'))")"
 
@@ -90,10 +100,21 @@ if [ -n "$GITHUB_OWNER" ] && [ -n "$GITHUB_REPO" ] && ! has_flag "--no-prs" "$@"
     fi
 fi
 
-exec "$PYTHON_BIN" "$ENTRYPOINT" \
-    --repo-root "$REPO_ROOT" \
-    --harness-config "$HARNESS_CONFIG" \
-    --db-path "$PORTABLE_DB" \
-    --no-register \
-    "${DEFAULT_ARGS[@]}" \
-    "$@"
+CMD=(
+    "$PYTHON_BIN"
+    "$ENTRYPOINT"
+    --repo-root "$REPO_ROOT"
+    --harness-config "$HARNESS_CONFIG"
+    --db-path "$PORTABLE_DB"
+    --no-register
+)
+
+if [ "${#DEFAULT_ARGS[@]}" -gt 0 ]; then
+    CMD+=("${DEFAULT_ARGS[@]}")
+fi
+
+if [ "$#" -gt 0 ]; then
+    CMD+=("$@")
+fi
+
+exec "${CMD[@]}"
