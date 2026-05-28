@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.31.2] - 2026-05-28
+
+### Changed
+
+- The committed portable ask-self index was refreshed in fully portable local-Qwen mode. A fresh clone still queries immediately from the tracked SQLite baseline, while maintainers rebuild it with the same on-device embedding setup instead of a hosted embedding dependency.
+
+### Fixed
+
+- Portable ask-self harnesses now point committed indexes through the dedicated committed-index path setting instead of the temp-index filename setting. This keeps the portable query and refresh path aligned with the current integration contract and avoids silently routing a committed index through the wrong lookup path.
+- The portable ask-self ingest wrapper no longer crashes under macOS Bash when `set -u` is enabled and an explicit ingest mode is passed. It now builds the final argv incrementally instead of expanding an empty optional array directly into `exec`.
+- The Mac portable ask-self maintainer path no longer depends on operator memory for the fragile `qwen-local` settings. The ingest wrapper now auto-applies the stable macOS defaults for this repo's local-Qwen harness: `TOKENIZERS_PARALLELISM=false`, `ASK_SELF_QWEN_BATCH_SIZE=8`, `ASK_SELF_QWEN_MAX_TOKENS=2048`, and `--concurrency 1` unless the operator overrides them.
+
 ## [0.31.1] - 2026-05-25
 
 ### Fixed

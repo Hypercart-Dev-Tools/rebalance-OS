@@ -370,7 +370,7 @@ The server works with any MCP-compatible client. Config files are provided for:
 
 This repo runs ask-self in **portable mode** with **fully-local Qwen embeddings** — the SQLite index is committed at [ask_self/index/rebalance-OS.sqlite](ask_self/index/rebalance-OS.sqlite), so a fresh clone can query immediately with no ingest and no API keys.
 
-> Last ingested: see `git log -1 --format=%ai -- ask_self/index/rebalance-OS.sqlite`
+> Last ingested: 2026-05-28 on `fix/28-dev-install-fixes` after the hardened portable `qwen-local` refresh
 
 ### Query this repo (no setup required)
 
@@ -383,14 +383,14 @@ The query wrapper pins `--db-path` to the committed portable DB, so it works on 
 ### Refresh the index (maintainers only)
 
 ```bash
-TOKENIZERS_PARALLELISM=false ./scripts/ask-self-ingest.sh --mode all --no-architecture-md --concurrency 1
+./scripts/ask-self-ingest.sh --mode all --no-architecture-md
 ```
 
 Notes:
 - The wrapper now defaults to `--mode all` if you omit `--mode`, but keeping it explicit in maintainer docs is still clearer.
 - `--no-architecture-md` is intentional: the curated [ARCHITECTURE.md](ARCHITECTURE.md) is hand-edited and should not be regenerated.
-- `--concurrency 1` and `TOKENIZERS_PARALLELISM=false` avoid a macOS fork+torch crash in `sentence-transformers`.
-- Embedding is local (Qwen3-Embedding-0.6B via `sentence-transformers`) — no Gemini API key needed for ingest or query.
+- For this repo's `qwen-local` harness, the wrapper now auto-applies the stable macOS settings: `TOKENIZERS_PARALLELISM=false`, `ASK_SELF_QWEN_BATCH_SIZE=8`, `ASK_SELF_QWEN_MAX_TOKENS=2048`, and `--concurrency 1` when you do not pass one explicitly.
+- Embedding is local (`qwen-local` with Qwen3-Embedding-0.6B via `sentence-transformers`) — no Gemini API key needed for ingest or query. Install `sentence-transformers` in the external ask-self venv if you are refreshing from a new machine.
 - PR ingestion now fails loudly if neither `GITHUB_TOKEN` / `SLEUTH_RAG_GITHUB_PAT` nor a healthy `gh auth login` is available. Pass `--no-prs` only if you intentionally want a files-only refresh.
 - Synthesis (the answer step) still defaults to Gemini unless you pass `--retrieval-only` or configure a local synthesis provider in [ask_self/ask_self_harness.json](ask_self/ask_self_harness.json).
 
