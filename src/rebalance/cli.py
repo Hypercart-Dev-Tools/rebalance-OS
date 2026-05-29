@@ -2145,16 +2145,18 @@ def calendar_snap_edges_cmd(
     days: int = typer.Option(1, "--days", help="Number of consecutive days to process (1-7)"),
     calendar_id: str = typer.Option("", "--calendar-id", help="Calendar ID (default: from config)"),
     timezone_name: str = typer.Option("", "--timezone", help="IANA timezone (default: from config)"),
-    apply: bool = typer.Option(False, "--apply", help="Actually patch Google Calendar (default: dry-run)"),
     output_format: str = typer.Option("text", "--output", "-o", help="Output format: text or json"),
 ) -> None:
-    """Detect and fix slightly overlapping calendar events.
+    """Report slightly overlapping calendar events and a clean boundary.
 
-    Trims Event 1's end to 1 minute before Event 2's start so adjacent
-    events have clean edges.  Skips all-day events and clusters of 3+
-    overlapping events (manual resolution required).
+    Read-only: this never modifies your calendar. The calendar is the system of
+    record for time tracking, so overlaps are surfaced for you to fix directly.
+    Skips all-day events and clusters of 3+ overlapping events (manual
+    resolution required).
 
-    Dry-run by default — re-run with --apply to patch Google Calendar.
+    The suggested boundary is gapless by default (snap_gap_minutes=0 in
+    calendar config). A positive snap_gap_minutes understates tracked time and
+    prints a warning.
     """
     from rebalance.ingest.calendar_config import CalendarConfig
     from rebalance.ingest.calendar_snap import snap_edges
@@ -2165,10 +2167,6 @@ def calendar_snap_edges_cmd(
 
     if not 1 <= days <= 7:
         raise typer.BadParameter("--days must be between 1 and 7.")
-
-    env_data = _load_google_calendar_env()
-    if apply:
-        _require_calendar_write_scope(env_data)
 
     config = CalendarConfig.load()
     resolved_calendar_id = calendar_id.strip() or config.calendar_id
@@ -2185,7 +2183,7 @@ def calendar_snap_edges_cmd(
         start_date=start_date,
         num_days=days,
         timezone_name=resolved_timezone,
-        apply=apply,
+        gap_minutes=config.snap_gap_minutes,
     )
 
     if normalized_output == "json":
@@ -2194,8 +2192,10 @@ def calendar_snap_edges_cmd(
         return
 
     # Text output
-    mode_label = "APPLIED" if result.applied else "DRY RUN"
-    typer.echo(f"\n--- Calendar Edge Snap ({mode_label}) ---\n")
+    typer.echo("\n--- Calendar Edge Overlaps (report only) ---\n")
+
+    if result.warning:
+        typer.echo(f"  ⚠️  {result.warning}\n")
 
     for day in result.days:
         typer.echo(f"  {day.date}  ({day.total_events_examined} events examined, {day.skipped_allday} all-day skipped)")
@@ -2205,9 +2205,8 @@ def calendar_snap_edges_cmd(
             continue
 
         for pair in day.snapped:
-            action = "Snapped" if result.applied else "Would snap"
             typer.echo(
-                f"    {action}: \"{pair.event1_summary}\" end {pair.event1_original_end} -> {pair.event1_new_end}"
+                f"    Suggested: \"{pair.event1_summary}\" end {pair.event1_original_end} -> {pair.event1_new_end}"
                 f"  (overlapped \"{pair.event2_summary}\" by {pair.overlap_minutes}m)"
             )
 
@@ -2217,12 +2216,10 @@ def calendar_snap_edges_cmd(
 
         typer.echo()
 
-    typer.echo(f"  Total snapped: {result.total_snapped}")
+    typer.echo(f"  Total overlaps: {result.total_snapped}")
     typer.echo(f"  Total skipped clusters: {result.total_skipped_clusters}")
     typer.echo(f"  Elapsed: {result.elapsed_seconds}s\n")
-
-    if not result.applied:
-        typer.echo("  Dry run — no changes applied. Re-run with --apply to patch Google Calendar.\n")
+    typer.echo("  Report only — your calendar was not modified. Resolve overlaps in the calendar directly.\n")
 
 
 @app.command("calendar-daily-report")

@@ -459,21 +459,26 @@ def create_server(database_path: Path) -> FastMCP:
         days: int = 1,
         calendar_id: str = "",
         timezone_name: str = "",
-        apply: bool = False,
     ) -> dict[str, Any]:
         """
-        Detect and fix slightly overlapping calendar events by trimming
-        Event 1's end to 1 minute before Event 2's start.
+        Report slightly overlapping calendar events and a clean boundary
+        between each overlapping pair.
 
-        Dry-run by default — set apply=True to actually patch Google Calendar.
-        Skips all-day events and clusters of 3+ overlapping events.
+        Read-only: this tool never modifies your calendar. The calendar is the
+        system of record for time tracking, so overlaps are surfaced for you to
+        fix directly rather than patched automatically. Skips all-day events
+        and clusters of 3+ overlapping events (manual resolution required).
+
+        The suggested boundary is gapless by default (snap_gap_minutes=0 in
+        calendar config). A positive snap_gap_minutes leaves an unrecorded gap
+        on every overlap and understates tracked time; when set, the result
+        includes a `warning`.
 
         Args:
             date_str: Start date (YYYY-MM-DD). Defaults to today.
             days: Number of consecutive days to process (1-7).
             calendar_id: Calendar ID. Defaults to config calendar.
             timezone_name: IANA timezone. Defaults to config timezone.
-            apply: If True, patches Google Calendar. Default False (dry-run).
         """
         import dataclasses
         from datetime import date as date_cls, datetime
@@ -496,7 +501,7 @@ def create_server(database_path: Path) -> FastMCP:
             start_date=start_date,
             num_days=days,
             timezone_name=resolved_timezone,
-            apply=apply,
+            gap_minutes=config.snap_gap_minutes,
         )
         return dataclasses.asdict(result)
 
