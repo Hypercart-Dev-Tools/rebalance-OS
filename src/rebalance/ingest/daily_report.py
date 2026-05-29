@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from collections import Counter
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -213,16 +213,35 @@ def get_day_data(
     project_matchers: list[ProjectMatcher] | None = None,
 ) -> DayData:
     """Fetch and filter events for a single day. Returns structured data for reuse."""
+    # Store UTC, compute "the day" in the user's local timezone. SQLite's
+    # DATE(start_time) coerces the stored offset to UTC, which would bucket a
+    # user's evening events into the next day. So we fetch a coarse ±1-day
+    # range (cheap), then bucket precisely by the configured-timezone local
+    # date in Python below.
+    tz = ZoneInfo(config.timezone)
+    lo = (target_date - timedelta(days=1)).isoformat()
+    hi = (target_date + timedelta(days=1)).isoformat()
     with calendar_connection(database_path) as conn:
-        date_str = target_date.isoformat()
-        rows = conn.execute(
+        candidate_rows = conn.execute(
             """SELECT summary, start_time, end_time
                FROM calendar_events
-               WHERE DATE(start_time) = ?
+               WHERE DATE(start_time) >= ? AND DATE(start_time) <= ?
                  AND calendar_id = ?
                ORDER BY start_time ASC""",
-            (date_str, config.calendar_id),
+            (lo, hi, config.calendar_id),
         ).fetchall()
+
+    def _local_date(raw: str) -> date | None:
+        try:
+            dt = parse_calendar_dt(raw)
+        except Exception:
+            return None
+        # All-day / date-only events are naive: their date is already the local day.
+        if dt.tzinfo is None:
+            return dt.date()
+        return dt.astimezone(tz).date()
+
+    rows = [r for r in candidate_rows if _local_date(r["start_time"]) == target_date]
 
     events = [
         {
