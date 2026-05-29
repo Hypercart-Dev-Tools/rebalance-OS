@@ -6,6 +6,8 @@ This project is an MCP server. When a user opens this workspace, you have access
 
 **Do not scan the repo for `rebalance ...` CLI scripts.** Every refresh and query path is exposed through MCP tools below — reach for those first.
 
+> **One exception — Calendar & Gmail setup.** `refresh_index(scope=["calendar"])` and Gmail ingest only work *after* a one-time OAuth authorization, which needs a browser and is therefore not an MCP tool. Run `python scripts/setup_calendar_oauth.py --test` (add `--write-access` for event creation), then create `temp/calendar_config.json`. Full steps: [GOOGLE_CALENDAR.md](GOOGLE_CALENDAR.md). After that, refresh and query stay on the MCP path.
+
 ### Single-entry-point tools (use these first)
 
 For "what data is available?" or "is the index fresh?" call `index_status()`. For "refresh the local DB" call `refresh_index(scope=[...], dry_run=True)` to preview the plan, then re-call without `dry_run` to execute. For "search across vault + GitHub in one ranked list" call `semantic_query(query, sources=["vault","github"])`.
