@@ -33,3 +33,6 @@ rebalance.db-wal
 
 # Rendered launchd plists — generated from .plist.template by scripts/install_*_scheduler.sh
 scripts/com.rebalance-os.*.plist
+
+# Local beta-test working notes (kept locally, not part of the product)
+test-notes/
