@@ -52,6 +52,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     _ago,
     _parse_iso,
 )
+from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
 from rebalance.ingest.index_ops import get_index_status  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 
@@ -400,6 +401,199 @@ def _format_dt_short(value: str | datetime | None, *, tz: ZoneInfo) -> str:
 
 def _normalize_html_text(value: str | None) -> str:
     return html.unescape((value or "").strip())
+
+
+def _compact_whitespace(text: str | None) -> str:
+    return " ".join((text or "").split())
+
+
+def _short_text(text: str | None, n: int) -> str:
+    compact = _compact_whitespace(text)
+    return compact if len(compact) <= n else compact[: n - 1] + "…"
+
+
+def _health_banner_copy_text(
+    problems: list[Check],
+    *,
+    status_text: str,
+    activity_text: str,
+) -> str:
+    lines = [
+        f"Collector attention needed",
+        f"Status: {status_text}",
+        f"Last collector activity: {activity_text}",
+    ]
+    for check in problems:
+        lines.append(f"{check.name}: {_compact_whitespace(check.detail)}")
+        if check.hint:
+            lines.append(f"Hint: {_compact_whitespace(check.hint)}")
+    return "\n".join(lines)
+
+
+def _clipboard_icon_svg() -> str:
+    return (
+        '<svg class="health-banner-copy-icon" viewBox="0 0 20 20" fill="none" '
+        'xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+        '<path d="M7 3.5H6.25A2.25 2.25 0 0 0 4 5.75v8A2.25 2.25 0 0 0 6.25 16h7.5A2.25 2.25 0 0 0 16 13.75v-8A2.25 2.25 0 0 0 13.75 3.5H13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M8 3h4a1 1 0 0 1 1 1v1.25H7V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M8 8.5h4M8 11h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
+        "</svg>"
+    )
+
+
+def _latest_collector_activity(status: dict[str, Any]) -> str | None:
+    sources = status.get("sources") or {}
+    semantic = status.get("semantic_index") or {}
+    candidates = [
+        (sources.get("vault") or {}).get("last_ingested_at"),
+        (sources.get("github") or {}).get("activity_last_scanned_at"),
+        (sources.get("github") or {}).get("documents_last_fetched_at"),
+        (sources.get("calendar") or {}).get("last_fetched_at"),
+        (sources.get("sleuth") or {}).get("last_synced_at"),
+        (sources.get("email") or {}).get("last_synced_at"),
+        semantic.get("last_embedded_at"),
+    ]
+    latest: datetime | None = None
+    latest_raw: str | None = None
+    for raw in candidates:
+        dt = _parse_iso(raw)
+        if dt is None:
+            continue
+        if latest is None or dt > latest:
+            latest = dt
+            latest_raw = raw
+    return latest_raw
+
+
+def _status_timestamp(status: dict[str, Any], key: str) -> str | None:
+    sources = status.get("sources") or {}
+    semantic = status.get("semantic_index") or {}
+    mapping = {
+        "vault": (sources.get("vault") or {}).get("last_ingested_at"),
+        "github data": (sources.get("github") or {}).get("activity_last_scanned_at")
+        or (sources.get("github") or {}).get("documents_last_fetched_at"),
+        "calendar": (sources.get("calendar") or {}).get("last_fetched_at"),
+        "sleuth": (sources.get("sleuth") or {}).get("last_synced_at"),
+        "gmail": (sources.get("email") or {}).get("last_synced_at"),
+        "semantic": semantic.get("last_embedded_at"),
+    }
+    return mapping.get(key)
+
+
+def _source_recently_succeeded(status: dict[str, Any], key: str, now: datetime, *, within_hours: int = 36) -> bool:
+    raw = _status_timestamp(status, key)
+    dt = _parse_iso(raw)
+    if dt is None:
+        return False
+    return (now - dt).total_seconds() <= within_hours * 3600
+
+
+def _visible_problem_checks(checks: list[Check], status: dict[str, Any], now: datetime) -> list[Check]:
+    visible: list[Check] = []
+    for check in checks:
+        if check.status not in {FAIL, WARN}:
+            continue
+        if (
+            check.status == WARN
+            and check.name in {"vault", "calendar", "gmail", "sleuth"}
+            and _source_recently_succeeded(status, check.name, now)
+        ):
+            continue
+        visible.append(check)
+    return visible
+
+
+def _ordered_problem_checks(checks: list[Check], status: dict[str, Any], now: datetime) -> list[Check]:
+    def priority(check: Check) -> tuple[int, int, str]:
+        severity = 0 if check.status == FAIL else 1
+        launchd = 1 if check.name.startswith("launchd:") else 0
+        return (severity, launchd, check.name)
+
+    return sorted(
+        _visible_problem_checks(checks, status, now),
+        key=priority,
+    )
+
+
+def render_health_banner(
+    checks: list[Check],
+    status: dict[str, Any],
+    now: datetime,
+    last_activity: str | None,
+) -> str:
+    problems = _ordered_problem_checks(checks, status, now)
+    if not problems:
+        return ""
+
+    failures = [check for check in problems if check.status == FAIL]
+    warnings = [check for check in problems if check.status == WARN]
+    tone = "danger" if failures else "warn"
+    status_text = (
+        f"{len(failures)} error{'s' if len(failures) != 1 else ''}"
+        if failures
+        else f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}"
+    )
+    activity_text = _ago(last_activity, now=now) if last_activity else "never"
+    copy_text = _health_banner_copy_text(
+        problems,
+        status_text=status_text,
+        activity_text=activity_text,
+    )
+
+    items = []
+    for check in problems[:4]:
+        items.append(
+            f'<span class="health-banner-item">'
+            f'<span class="health-banner-name">{_esc(check.name)}</span>'
+            f'<span class="health-banner-detail">{_esc(_short_text(check.detail, 120))}</span>'
+            f"</span>"
+        )
+    if len(problems) > 4:
+        items.append(
+            f'<span class="health-banner-item more">+{len(problems) - 4} more</span>'
+        )
+
+    return f"""
+    <section class="health-banner health-banner-{tone}" aria-live="polite">
+      <div class="health-banner-lead">
+        <span class="health-banner-badge">{_esc(status_text)}</span>
+        <span class="health-banner-summary">Collector attention needed</span>
+        <span class="health-banner-activity">Last collector activity {_esc(activity_text)}</span>
+        <button
+          type="button"
+          class="health-banner-copy-btn"
+          data-copy-text="{_esc(copy_text)}"
+          aria-label="Copy collector warning text"
+          title="Copy collector warning text"
+        >{_clipboard_icon_svg()}<span class="visually-hidden">Copy collector warning text</span></button>
+      </div>
+      <div class="health-banner-items">{''.join(items)}</div>
+    </section>
+    """
+
+
+def render_sync_chip(
+    checks: list[Check],
+    status: dict[str, Any],
+    last_activity: str | None,
+    now: datetime,
+) -> str:
+    problems = _ordered_problem_checks(checks, status, now)
+    activity_text = _ago(last_activity, now=now) if last_activity else "—"
+    if any(check.status == FAIL for check in problems):
+        tone = "danger"
+        label = f"Collector degraded · {activity_text}"
+    elif problems:
+        tone = "warn"
+        label = f"Collector warnings · {activity_text}"
+    else:
+        tone = "ok"
+        label = f"Collector active {activity_text}"
+    return (
+        f'<span class="synced synced-{tone}">'
+        f'<span class="ok-dot"></span>{_esc(label)}'
+        f"</span>"
+    )
 
 
 def build_obsidian_url(vault_path: Path | None, file_path: Path) -> str | None:
@@ -1066,6 +1260,10 @@ h2 { font-size: 14px; color: var(--fg); }
 .topbar-row { display: flex; gap: 10px; align-items: center; }
 .synced { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); }
 .synced .ok-dot { width: 8px; height: 8px; background: var(--ok); border-radius: 50%; }
+.synced.synced-warn { border-color: rgba(166,95,0,.22); color: var(--warn); background: rgba(166,95,0,.08); }
+.synced.synced-warn .ok-dot { background: var(--warn); }
+.synced.synced-danger { border-color: rgba(192,57,43,.18); color: var(--danger); background: rgba(192,57,43,.08); }
+.synced.synced-danger .ok-dot { background: var(--danger); }
 
 /* Status dot glow pulse */
 @keyframes glow-ok {
@@ -1087,6 +1285,127 @@ h2 { font-size: 14px; color: var(--fg); }
 .pulse-filter { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--fg); width: 220px; }
 .pulse-filter:focus { outline: none; border-color: var(--accent); }
 .is-hidden-by-filter { display: none !important; }
+.health-banner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.health-banner-warn {
+  border-color: rgba(166,95,0,.22);
+  background: linear-gradient(90deg, rgba(166,95,0,.10), rgba(255,255,255,.96));
+}
+.health-banner-danger {
+  border-color: rgba(192,57,43,.18);
+  background: linear-gradient(90deg, rgba(192,57,43,.11), rgba(255,255,255,.96));
+}
+.health-banner-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+.health-banner-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.88);
+  border: 1px solid rgba(0,0,0,.06);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.health-banner-summary {
+  font-weight: 700;
+  color: var(--fg);
+}
+.health-banner-activity {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.health-banner-copy-btn {
+  font: inherit;
+  border: 1px solid rgba(0,0,0,.08);
+  border-radius: 999px;
+  background: rgba(255,255,255,.92);
+  color: var(--fg);
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.health-banner-copy-btn:hover {
+  background: #fff;
+}
+.health-banner-copy-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.health-banner-copy-icon {
+  width: 16px;
+  height: 16px;
+}
+.health-banner-copy-btn.is-copied {
+  color: var(--ok);
+  border-color: rgba(47,111,61,.18);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.health-banner-items {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.health-banner-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.78);
+  border: 1px solid rgba(0,0,0,.05);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.health-banner-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--fg);
+}
+.health-banner-detail {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.health-banner-item.more {
+  color: var(--fg-muted);
+  font-weight: 600;
+}
 
 /* Card */
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
@@ -1366,6 +1685,10 @@ h2 { font-size: 14px; color: var(--fg); }
   .email-row { grid-template-columns: 1fr; }
   .email-row-side { align-items: flex-start; }
   .email-row-time { white-space: normal; }
+  .topbar { flex-direction: column; align-items: stretch; gap: 12px; }
+  .topbar > div:last-child { flex-wrap: wrap; }
+  .health-banner { grid-template-columns: 1fr; }
+  .health-banner-lead { flex-wrap: wrap; white-space: normal; }
 }
 
 /* Open PRs card */
@@ -1432,6 +1755,7 @@ PULSE_JS = r"""
   const input = document.getElementById('pulse-filter');
   const btn = document.getElementById('pulse-refresh');
   const undoTray = document.getElementById('goal-undo-tray');
+  const copyBtn = document.querySelector('.health-banner-copy-btn[data-copy-text]');
 
   const escapeHtml = (value) => {
     return String(value ?? '')
@@ -1471,6 +1795,36 @@ PULSE_JS = r"""
     undoTray.hidden = false;
     undoTray.classList.remove('is-empty');
     bindUndoButtons();
+  };
+
+  const copyTextToClipboard = async (text) => {
+    if (!text) return false;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    const probe = document.createElement('textarea');
+    probe.value = text;
+    probe.setAttribute('readonly', '');
+    probe.style.position = 'absolute';
+    probe.style.left = '-9999px';
+    document.body.appendChild(probe);
+    probe.select();
+    probe.setSelectionRange(0, probe.value.length);
+    try {
+      return document.execCommand('copy');
+    } finally {
+      document.body.removeChild(probe);
+    }
+  };
+
+  const setCopyButtonStatus = (label, copied = false) => {
+    if (!copyBtn) return;
+    copyBtn.setAttribute('aria-label', label);
+    copyBtn.setAttribute('title', label);
+    const sr = copyBtn.querySelector('.visually-hidden');
+    if (sr) sr.textContent = label;
+    copyBtn.classList.toggle('is-copied', copied);
   };
 
   if (input) {
@@ -1564,6 +1918,25 @@ PULSE_JS = r"""
     });
   });
   bindUndoButtons();
+
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      try {
+        const ok = await copyTextToClipboard(copyBtn.dataset.copyText || '');
+        if (!ok) throw new Error('clipboard copy returned false');
+        setCopyButtonStatus('Copied collector warning text', true);
+        window.setTimeout(() => {
+          setCopyButtonStatus('Copy collector warning text');
+        }, 1500);
+      } catch (err) {
+        console.warn('copy banner text failed:', err);
+        setCopyButtonStatus('Copy failed', false);
+        window.setTimeout(() => {
+          setCopyButtonStatus('Copy collector warning text');
+        }, 1800);
+      }
+    });
+  }
 
   if (btn) {
     btn.addEventListener('click', async () => {
@@ -1708,6 +2081,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     repo_pie_days = 7
     repo_pie_rows = fetch_repo_activity_counts(days=repo_pie_days, limit=12)
     status = get_index_status(DB_PATH)
+    doctor_report = run_doctor(DB_PATH)
     # Sleuth has synced at least once iff sources.sleuth.last_synced_at is set.
     # Lets the sidebar tell a genuinely empty inbox apart from a sync that has
     # never run (e.g. missing Sleuth credentials) — no false "Inbox clear".
@@ -1727,8 +2101,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     freshness = status.get("freshness") or {}
     drift_total = sum(int(v) for v in freshness.values() if isinstance(v, int))
 
-    last_synced = watched.get("last_synced")
-    synced_ago = _ago(last_synced, now=now) if last_synced else "—"
+    last_activity = _latest_collector_activity(status)
     last_vault = vault_rows[0] if vault_rows else None
     health_filed_30d = fetch_health_filed_count(days=30)
 
@@ -1766,7 +2139,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
               <span class="{system_now_class}" title="{_esc(system_now_title)}">System: {_esc(system_now_str)} <span class="tz-key">{_esc(system_now_tz)} · {_esc(TZ.key)}</span></span>
             </div>
             <div class="topbar-row">
-              <span class="synced"><span class="ok-dot"></span>Synced {_esc(synced_ago)}</span>
+              {render_sync_chip(doctor_report.checks, status, last_activity, now)}
               <a href="{_esc(HEALTH_ISSUES_URL)}" target="_blank" rel="noopener noreferrer"
                  class="health-pill{' has-issues' if health_filed_30d else ''}"
                  title="Health issues filed in the last 30 days — click to view on GitHub">
@@ -1777,6 +2150,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
             </div>
           </div>
         </div>
+        {render_health_banner(doctor_report.checks, status, now, last_activity)}
         {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
         <div class="grid">
           <div class="col">

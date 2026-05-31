@@ -17,6 +17,7 @@ from rebalance.doctor import (
     DoctorReport,
     _check_calendar,
     _check_gmail,
+    _check_pulse,
     _check_sleuth,
     run_doctor,
 )
@@ -178,6 +179,19 @@ class IntegrationCheckTests(unittest.TestCase):
                 self.assertEqual(_check_calendar().status, OK)
             finally:
                 cal_mod.TOKEN_PATH = original
+
+    def test_pulse_missing_config_warns(self) -> None:
+        import rebalance.ingest.config as config_mod
+
+        original = config_mod.CONFIG_PATH
+        with tempfile.TemporaryDirectory() as tmp:
+            config_mod.CONFIG_PATH = Path(tmp) / "rbos.config"
+            try:
+                check = _check_pulse()
+            finally:
+                config_mod.CONFIG_PATH = original
+        self.assertEqual(check.status, WARN)
+        self.assertIn("pulse config missing keys", check.detail)
 
     def test_gmail_check_never_crashes(self) -> None:
         # ADC / MCP state is machine-dependent; assert only that the check is
