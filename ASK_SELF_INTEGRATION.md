@@ -1,11 +1,12 @@
 ---
 title: Integrate ask-self into This Repo
-last_updated: 2026-05-11
+last_updated: 2026-05-22
 audience: integrating agent (Claude Code / VS Code agent / Cursor / etc.) in another repo
 ---
 
 <!--
 Revision history:
+- 2026-05-22: Document the revision-aware index (additive doc retention, overwrite for code), the `retention` field on classification rules, the new `--doc-history` / `--as-of` query flags, the `ask-self history` / `ask-self prune-history` maintenance commands, and the migration behavior on first ingest after upgrading.
 - 2026-05-11: Add concrete local-provider JSON snippets, make the first smoke-test ingest explicitly use `--mode all`, and note that bundled templates should already exclude generated ask-self docs by default.
 - 2026-05-11: Clarify current CLI surfaces and registry behavior: separate true Python entry points from supporting files, treat the root `ask_self_harness.json` as a repo-specific Python example rather than a neutral template, document portable-mode `--no-register`, and call out the `--db-path` vs `--target*` query conflict.
 - 2026-05-10: Generalize validation-checklist examples beyond WordPress (GraphQL/tRPC, Redis/keychain/localStorage, Node/Python route registration, node_modules/.venv exclusions). Clarify the "hand-edit and detach" consequence.
@@ -49,7 +50,9 @@ Canonical ask-self repo:
   - `wp_plugin_harness.json`
   - `js_ts_generic_harness.json`
    - `ask_self_harness.json` (Python-first example; in this repo it is the repo's own tuned harness, not a neutral drop-in template)
-- Global CLI: `bin/ask-self` exposes `ask-self ask|ingest|register|dashboard|warm-cache`. The wrapper scripts in the target repo still invoke the Python entry points directly so they can pin `--harness-config` to the local file. Treat `bin/ask-self` as an internal convenience, not the integration contract.
+- Global CLI: `bin/ask-self` exposes `ask-self ask|ingest|register|dashboard|warm-cache|history|prune-history`. The wrapper scripts in the target repo still invoke the Python entry points directly so they can pin `--harness-config` to the local file. Treat `bin/ask-self` as an internal convenience, not the integration contract.
+  - `ask-self history <path>` — list every revision recorded for a doc (id, first/last seen, chunks, git_sha, current flag). Useful for confirming additive ingest is preserving state.
+  - `ask-self prune-history --older-than 90d` / `--keep-last K --per-path` — drop old additive revisions. Always retains `is_current = 1`. Add `--dry-run` to preview.
 - Shared registry: `temp/rag/ask_self_registry.json`
 - Internal runtime defaults may still assume `ask_self/ask_self_harness.json` and `ask_self/ask_self_system_instructions.json`, so external wrappers must always pass an explicit `--harness-config`.
 
@@ -63,6 +66,8 @@ In order:
 2. `GOOGLE_API_KEY_FILE` or `ASK_SELF_GOOGLE_API_KEY_FILE` (raw key file or env-style file)
 3. `gcloud secrets versions access latest` when `GOOGLE_API_KEY_SECRET_NAME` or `ASK_SELF_GOOGLE_API_KEY_SECRET` is set
    - optional project override: `GOOGLE_API_KEY_SECRET_PROJECT` or `ASK_SELF_GOOGLE_API_KEY_SECRET_PROJECT`
+4. `GEMINI_API_KEY` (alias; matches the `google-genai` convention, so apps that already export `GEMINI_API_KEY` work without a wrapper)
+5. `gcloud secrets versions access <ref>` when `GEMINI_API_KEY_SECRET_REF` or `ASK_SELF_GOOGLE_API_KEY_SECRET_REF` holds a fully-qualified ref (e.g. `projects/123456789/secrets/gemini-api-key/versions/latest`), which resolves regardless of the active `gcloud` project
 
 Recommend Google Secret Manager over a committed or long-lived local file.
 
@@ -131,6 +136,36 @@ Concrete fully-local harness snippet (Mac — recommended):
 On non-Mac or if you prefer the PyTorch path, swap `"qwen-mlx"` for `"qwen-local"` and install `sentence-transformers` instead of `mlx-lm`.
 
 If you only want local retrieval, keep the `embedding` block above and either omit `synthesis` entirely or leave it on Gemini and query with `--retrieval-only`. When switching to any local Qwen provider, set `model` and `dim` explicitly; if you only change `provider`, the current defaults remain Gemini-oriented (`gemini-embedding-001`, `dim: 768`).
+
+### Retention model (additive for docs, overwrite for code)
+
+As of v0.5, the index is **revision-aware**. Every ingest writes a `file_revisions` row per observed `(path, file_hash)`, and chunks are content-addressed via `(content_hash, structural_key)` so unchanged content is never re-embedded. Files carry a `retention` mode resolved by `classify_path`:
+
+| Retention | Behavior on re-ingest | Default sources |
+|---|---|---|
+| **additive** | Prior revisions are kept; the new revision becomes `is_current = 1` and older ones are demoted to history. | `doc`, `policy`, `changelog`, `strategy`, `pattern`, `feature_map` |
+| **overwrite** | Prior non-current revisions are pruned in the same transaction; only the latest survives. | `module`, `script`, `test`, `config`, `pr`, `overview` |
+
+Unmatched files (no classification rule fires) default to **overwrite** — never silently accumulating history. A harness JSON can override per rule via an explicit `retention` field, e.g.:
+
+```json
+{
+  "pattern": "^decisions\\.json$",
+  "source": "config",
+  "chunker": "text",
+  "retention": "additive"
+}
+```
+
+Practical consequences for an integrator:
+
+- **No special action needed for new repos.** The DEFAULT_HARNESS classification rules + retention defaults already cover `.md` / `.markdown` / `.txt` (additive) and `.py` / `.js` / `.ts` / `.php` / etc. (overwrite). Verify by running `ask-self ingest` twice in a row — the second run should report `chunks_embedded: 0` and only refresh `last_seen_at`.
+- **Pre-existing indexes auto-migrate on first ingest after upgrade.** `open_db` detects pre-v2 schemas and rebuilds (matching today's behaviour, which already wipes on every ingest). Cost: one full re-embed; cost again is zero.
+- **Doc history is queryable.** Default queries filter to `is_current = 1`. Pass `--doc-history` to widen the candidate pool to historical revisions, or `--as-of YYYY-MM-DD` to time-travel. Both flags carry the `first_seen_at` / `last_seen_at` / `git_sha` of each revision through to the LLM context.
+- **Maintenance is opt-in.** Doc history grows over time. Run `ask-self prune-history --older-than 90d --dry-run` (then drop `--dry-run`) to drop additive revisions older than the cutoff. `--keep-last K --per-path` retains the K most-recent historical revisions per doc. Current revisions are never deleted.
+- **Deleted files behave differently by retention.** A removed `.py` is swept on the next ingest. A removed `.md` keeps its last revision as the current one — so a query without `--doc-history` will still surface the doc as it existed at last sighting.
+
+When choosing classification rules in a fresh harness, prefer explicit per-bucket retention if your project disagrees with the defaults. The `retention_defaults` block in DEFAULT_HARNESS shows the canonical mapping; harness JSONs can override the whole block or set retention per-rule.
 
 ### Index placement modes
 
@@ -505,7 +540,8 @@ Once you have answers to Q1–Q3 (plus the synthesis follow-up if Q1 was Qwen), 
    - `/path/to/ask-self/ask_self_query.py`
 4. Confirm relevant CLI flags and runtime requirements:
    - Ingest: `--db-path`, `--harness-config`, `--mode`, `--no-prs`, `--no-register`, `--no-architecture-md`, `--shared-index`, `--cache-path`, `--no-cache`, `--events-file`, `--no-events`, `--dashboard`, `--embed-rpm`, `--embed-tpm`
-   - Query: `--harness-config`, `--db-path`, `--retrieval-only`, `--local-only`, `--json`, `--target`, `--targets`, `--all-targets`
+   - Query: `--harness-config`, `--db-path`, `--retrieval-only`, `--local-only`, `--json`, `--target`, `--targets`, `--all-targets`, `--doc-history` (widen the candidate pool to additive history), `--as-of YYYY-MM-DD` (time-travel additive revisions)
+   - History: `ask-self history <path>`, `ask-self prune-history --older-than 30d|--keep-last K --per-path [--dry-run]`
    - Credential resolution: `GOOGLE_API_KEY`, `GOOGLE_API_KEY_FILE`, `GOOGLE_API_KEY_SECRET_NAME` (+ `gcloud` for Secret Manager)
    - Local providers: `mlx-lm` for `qwen-mlx` (Mac), `sentence-transformers` for `qwen-local` (non-Mac); a running Ollama daemon or OpenAI-compatible server for local synthesis
 5. Ask before finalizing if any of these are ambiguous:
