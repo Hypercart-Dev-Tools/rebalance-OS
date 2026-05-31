@@ -13,6 +13,7 @@ set -euo pipefail
 
 REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="$REBALANCE_DIR/.venv/bin/python"
+export PYTHONPATH="$REBALANCE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 PORT="${PULSE_PORT:-8767}"
 
 cd "$REBALANCE_DIR"

@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.31.4] - 2026-05-28
+
+### Changed
+
+- The Pulse health banner copy action now uses a dependency-free inline SVG clipboard icon instead of visible button text or an icon-font dependency. The button keeps the existing clipboard behavior, exposes accessible labels for screen readers, and stays self-contained within the static page.
+
+## [0.31.3] - 2026-05-28
+
+### Changed
+
+- Background collector wrappers and MCP launch configs now force the repo checkout's `src/` tree onto `PYTHONPATH`, so launchd jobs and local MCP clients execute the live code in this repo instead of a stale wheel copy in `.venv/site-packages`.
+
+### Fixed
+
+- Rebalance config discovery now resolves `temp/rbos.config` from the active checkout or an explicit `REBALANCE_CONFIG` override, even when Python imported `rebalance` from `site-packages`. This restores vault path, GitHub token, and pulse config visibility for background jobs that previously looked under `.venv/lib/.../temp/rbos.config`.
+- The Pulse web app top bar no longer treats GitHub watched-repo freshness as the entire collector status. It now computes collector-wide activity from all sources, renders a prominent one-row warning/error banner at the top of the page using `rebalance doctor`, and marks the collector pill degraded when background checks are failing.
+
 ## [0.31.2] - 2026-05-28
 
 ### Changed

@@ -378,10 +378,43 @@ def _check_calendar() -> Check:
     if not TOKEN_PATH.exists():
         return Check(
             "calendar", WARN,
-            f"OAuth token not found at {TOKEN_PATH}",
-            "run the Calendar OAuth flow (scripts/setup_calendar_oauth.py)",
+            "Cached data showing. Calendar needs to be re-setup.",
+            "🔧 run the Calendar OAuth flow (scripts/setup_calendar_oauth.py)",
         )
     return Check("calendar", OK, f"OAuth token present ({TOKEN_PATH})")
+
+
+def _check_pulse() -> Check:
+    """Pulse publish config — warn when the hourly publisher cannot run."""
+    from rebalance.ingest.config import get_pulse_config
+
+    cfg = get_pulse_config()
+    required = ("github_login", "pulse_target_path")
+    missing = [key for key in required if not str(cfg.get(key) or "").strip()]
+    if missing:
+        return Check(
+            "pulse",
+            WARN,
+            f"pulse config missing keys: {', '.join(missing)}",
+            "set the missing pulse config values in temp/rbos.config so hourly "
+            "pulse-sync can render and push",
+        )
+    target = Path(str(cfg.get("pulse_target_path"))).expanduser()
+    if not target.exists():
+        return Check(
+            "pulse",
+            WARN,
+            f"pulse_target_path does not exist: {target}",
+            "point pulse_target_path at a local clone of the destination git repo",
+        )
+    if not (target / ".git").exists():
+        return Check(
+            "pulse",
+            WARN,
+            f"pulse_target_path is not a git repo: {target}",
+            "point pulse_target_path at the root of the destination git repo",
+        )
+    return Check("pulse", OK, f"configured ({target})")
 
 
 # ---------------------------------------------------------------------------
@@ -459,6 +492,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     report.checks.append(_check_sleuth())
     report.checks.append(_check_gmail(db_path))
     report.checks.append(_check_calendar())
+    report.checks.append(_check_pulse())
 
     report.checks.extend(_check_launchd())
     return report

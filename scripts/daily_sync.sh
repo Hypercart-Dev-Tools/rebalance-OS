@@ -12,6 +12,7 @@ set -euo pipefail
 
 REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PYTHON="$REBALANCE_DIR/.venv/bin/python"
+export PYTHONPATH="$REBALANCE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 LOG_DIR="$REBALANCE_DIR/temp/logs"
 
 mkdir -p "$LOG_DIR"
@@ -31,7 +32,7 @@ log "=== rebalance daily sync starting ==="
 # DB path resolves via rebalance.paths.resolve_database_path() so we hit the
 # same canonical location the dashboard/MCP reads from — never a stale
 # project-tree rebalance.db left behind by an older script.
-"$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1
+if "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1
 import json
 import sys
 from rebalance.ingest.index_ops import refresh_index
@@ -43,7 +44,11 @@ result = refresh_index(db_path, scope=["all"])
 print(json.dumps(result, indent=2, default=str))
 sys.exit(1 if result.get("errors") else 0)
 PY
-EXIT_CODE=$?
+then
+    EXIT_CODE=0
+else
+    EXIT_CODE=$?
+fi
 
 if [ $EXIT_CODE -eq 0 ]; then
     log "=== rebalance daily sync complete ==="
