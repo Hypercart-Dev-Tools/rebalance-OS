@@ -479,11 +479,58 @@ def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any
     return upcoming_calendar_rows(rows, now=now, limit=limit, ignored_summaries=ignored)
 
 
+def fetch_open_prs(limit: int = 10, stale_days: int = 2) -> list[dict[str, Any]]:
+    """Return the *limit* most recently opened PRs that are still open.
+
+    Each row gets an ``age_days`` int and a ``is_stale`` bool (age > stale_days).
+    Closed PRs drop off automatically since we filter on state='open'.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT repo_full_name, number, title, author_login,
+                       created_at, updated_at, is_draft,
+                       review_decision, html_url
+                FROM github_items
+                WHERE item_type = 'pull_request' AND state = 'open'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    now = datetime.now(timezone.utc)
+    out = []
+    for r in rows:
+        try:
+            dt = datetime.fromisoformat(str(r[4]).replace("Z", "+00:00"))
+            age_days = (now - dt).days
+        except (TypeError, ValueError):
+            age_days = 0
+        out.append({
+            "repo_full_name": r[0],
+            "number":         r[1],
+            "title":          r[2],
+            "author_login":   r[3],
+            "created_at":     r[4],
+            "updated_at":     r[5],
+            "is_draft":       bool(r[6]),
+            "review_decision": r[7] or "",
+            "html_url":       r[8] or "",
+            "age_days":       age_days,
+            "is_stale":       age_days > stale_days,
+        })
+    return out
+
+
 def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
-    # Belt-and-suspenders staleness guard: even if a row escaped the
-    # ingest-side reconciliation (sync_sleuth_reminders), don't surface
-    # reminders whose should_post_on is more than 2 days in the past.
-    # NULLs are kept so reminders without a scheduled time still show.
+    # Rely on is_active=0 (set by sync_sleuth_reminders reconciliation) as the
+    # sole staleness gate. A date-based cutoff caused all reminders to silently
+    # disappear when the Sleuth sync fell behind by more than 2 days.
     pulse_config = get_pulse_config()
     slack_user_id = pulse_config.get("slack_user_id")
     ignored_workspaces = [
@@ -507,8 +554,6 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
                            original_message_id, original_thread_ts
                     FROM sleuth_reminders
                     WHERE is_active = 1
-                      AND (should_post_on IS NULL
-                           OR should_post_on > datetime('now', '-2 days'))
                       AND (assignee_id = ? OR original_sender_id = ?)
                       {ws_clause}
                     ORDER BY should_post_on ASC NULLS LAST
@@ -525,8 +570,6 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
                            original_message_id, original_thread_ts
                     FROM sleuth_reminders
                     WHERE is_active = 1
-                      AND (should_post_on IS NULL
-                           OR should_post_on > datetime('now', '-2 days'))
                       {ws_clause}
                     ORDER BY should_post_on ASC NULLS LAST
                     LIMIT ?

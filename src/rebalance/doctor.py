@@ -192,38 +192,58 @@ def _check_projects(db_path: Path) -> Check:
     return Check("projects", OK, f"{count} registered")
 
 
-def _check_github_data(db_path: Path) -> Check:
+
+def _check_collector_freshness(
+    db_path: Path,
+    *,
+    name: str,
+    table: str,
+    ts_col: str,
+    warn_days: int,
+    empty_hint: str,
+    stale_hint: str,
+) -> Check:
+    """Generic data-freshness check for any collector table.
+
+    Warns when the most recent *ts_col* value is older than *warn_days* days,
+    or when the table is empty.  Used for Sleuth, Calendar, and Email — the
+    collectors that previously had credential checks but no freshness checks.
+    """
     from rebalance.ingest.db import db_connection
 
     try:
         with db_connection(db_path) as conn:
             has_table = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='github_activity'"
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
             ).fetchone()
             if not has_table:
-                return Check("github data", WARN, "github_activity table not present")
-            count = conn.execute("SELECT COUNT(*) FROM github_activity").fetchone()[0]
-            latest = conn.execute("SELECT MAX(scan_date) FROM github_activity").fetchone()[0]
+                return Check(name, WARN, f"{table} table not present")
+            count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
+            latest = conn.execute(
+                f"SELECT MAX({ts_col}) FROM {table}"  # noqa: S608
+            ).fetchone()[0]
     except Exception as exc:  # noqa: BLE001
-        return Check("github data", FAIL, f"could not read github_activity: {exc}")
+        return Check(name, FAIL, f"could not read {table}: {exc}")
 
     if count == 0:
-        return Check(
-            "github data", WARN, "no GitHub activity ingested",
-            "run `rebalance refresh` (scope github) — check that projects are "
-            "registered and the token is in config",
-        )
-    stale = ""
+        return Check(name, WARN, f"no {name} data ingested", empty_hint)
+
     if latest:
         try:
-            age_days = (datetime.now(timezone.utc).date()
-                        - datetime.fromisoformat(latest).date()).days
-            if age_days > 2:
-                stale = f" — last scan {age_days} days ago (stale)"
+            age_days = (
+                datetime.now(timezone.utc).date()
+                - datetime.fromisoformat(str(latest)).date()
+            ).days
+            if age_days > warn_days:
+                return Check(
+                    name, WARN,
+                    f"{count} rows, last sync {age_days} days ago (stale > {warn_days}d)",
+                    stale_hint,
+                )
         except (TypeError, ValueError):
             pass
-    status = WARN if stale else OK
-    return Check("github data", status, f"{count} activity rows, latest {latest}{stale}")
+
+    return Check(name, OK, f"{count} rows, last sync {latest}")
 
 
 def _check_launchd() -> list[Check]:
@@ -365,6 +385,53 @@ def _check_calendar() -> Check:
 
 
 # ---------------------------------------------------------------------------
+# Collector freshness registry
+#
+# To add a new collector: append one entry.  No other code needs to change.
+# Fields: name (Check label), table, ts_col (MAX'd for age), warn_days,
+#         empty_hint, stale_hint.
+# ---------------------------------------------------------------------------
+
+_COLLECTOR_FRESHNESS: list[dict] = [
+    dict(
+        name="github data",
+        table="github_activity",
+        ts_col="scan_date",
+        warn_days=2,
+        empty_hint=(
+            "run `rebalance refresh` (scope github) — check that projects are "
+            "registered and the token is in config"
+        ),
+        stale_hint="run `rebalance refresh` (scope github)",
+    ),
+    dict(
+        name="sleuth data",
+        table="sleuth_reminders",
+        ts_col="last_synced_at",
+        warn_days=2,
+        empty_hint="run the Sleuth sync job or check Sleuth credentials",
+        stale_hint="run `rebalance refresh` (scope sleuth) — check the launchd sync job",
+    ),
+    dict(
+        name="calendar data",
+        table="calendar_events",
+        ts_col="fetched_at",
+        warn_days=2,
+        empty_hint="run the calendar sync or complete the OAuth flow",
+        stale_hint="run `rebalance refresh` (scope calendar) — check the launchd sync job",
+    ),
+    dict(
+        name="email data",
+        table="email_messages",
+        ts_col="received_at",
+        warn_days=7,
+        empty_hint="ingest email via the Gmail MCP connector or ADC",
+        stale_hint="no new email ingested in 7+ days — ask Claude to call `ingest_gmail_messages` (MCP mode) or check ADC credentials",
+    ),
+]
+
+
+# ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
 
@@ -385,7 +452,8 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     if db_path is not None:
         report.checks.append(_check_schema(db_path))
         report.checks.append(_check_projects(db_path))
-        report.checks.append(_check_github_data(db_path))
+        for collector in _COLLECTOR_FRESHNESS:
+            report.checks.append(_check_collector_freshness(db_path, **collector))
 
     # Integration credentials — Sleuth/Slack, Gmail, Google Calendar.
     report.checks.append(_check_sleuth())

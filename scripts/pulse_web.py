@@ -42,6 +42,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     DB_PATH,
     TZ,
     fetch_calendar_upcoming,
+    fetch_open_prs,
     fetch_recent_emails,
     fetch_recent_github,
     fetch_repo_activity_counts,
@@ -57,6 +58,11 @@ from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 CONFIG_PATH = PROJECT_ROOT / "temp" / "rbos.config"
 DEFAULT_OUT = PROJECT_ROOT / "web" / "pulse.html"
 GOAL_HISTORY_PATH = PROJECT_ROOT / "temp" / "pulse_goal_history.json"
+HEALTH_LOG_PATH = PROJECT_ROOT / "temp" / "health-reporter.log.jsonl"
+HEALTH_ISSUES_URL = (
+    "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues"
+    "?labels=rebalance-health&state=open"
+)
 MAX_GOAL_HISTORY = 3
 PRIMARY_GOAL_LIMIT = 3
 SECONDARY_TODO_LIMIT = 6
@@ -305,6 +311,46 @@ def load_vault_path() -> Path | None:
         return None
     vp = data.get("vault_path")
     return Path(vp).expanduser() if vp else None
+
+
+# ---------------------------------------------------------------------------
+# Health report counter — reads local JSONL log, no GitHub API call
+# ---------------------------------------------------------------------------
+
+def fetch_health_filed_count(days: int = 30) -> int:
+    """Count distinct checks that had a 'filed' action in the last *days* days.
+
+    Reads temp/health-reporter.log.jsonl locally so the dashboard never makes
+    a live API call. Returns 0 if the log doesn't exist yet.
+    """
+    from datetime import timedelta  # noqa: PLC0415
+    if not HEALTH_LOG_PATH.exists():
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    seen: set[str] = set()
+    try:
+        for raw in HEALTH_LOG_PATH.read_text(encoding="utf-8").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            run_id = record.get("run_id", "")
+            try:
+                run_dt = datetime.fromisoformat(run_id.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            if run_dt < cutoff:
+                continue
+            if record.get("dry_run"):
+                continue
+            for action in record.get("actions", []):
+                if action.get("action") == "filed":
+                    seen.add(action.get("check", ""))
+    except OSError:
+        return 0
+    return len(seen)
 
 
 # ---------------------------------------------------------------------------
@@ -630,6 +676,73 @@ def render_repo_pie(rows: list[dict[str, Any]], *, days: int) -> str:
     """
 
 
+def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
+    if not rows:
+        return """
+    <section class="card open-prs">
+      <header class="card-head"><h2>Open PRs</h2></header>
+      <div class="empty">No open pull requests found.</div>
+    </section>
+    """
+    items = []
+    for pr in rows:
+        age = pr["age_days"]
+        if age <= 2:
+            age_cls = "fresh"
+        elif age <= 7:
+            age_cls = "stale"
+        else:
+            age_cls = "danger"
+        age_label = f"{age}d"
+
+        title = _truncate(pr["title"], 72)
+        url = _esc(pr["html_url"])
+        repo = _esc(pr["repo_full_name"].split("/")[-1])  # short repo name
+        num = pr["number"]
+        author = _esc(pr["author_login"] or "")
+
+        badges = []
+        if pr["is_draft"]:
+            badges.append('<span class="pr-badge draft">draft</span>')
+        rd = (pr["review_decision"] or "").lower()
+        if rd == "approved":
+            badges.append('<span class="pr-badge approved">approved</span>')
+        elif rd in ("changes_requested", "review_required"):
+            badges.append('<span class="pr-badge review">review</span>')
+
+        badge_html = " ".join(badges)
+        title_html = f'<a href="{url}" target="_blank" rel="noopener noreferrer">#{num} {_esc(title)}</a>'
+
+        fresh_attr = ' data-fresh' if not pr["is_stale"] else ''
+        items.append(f"""
+        <li class="pr-row"{fresh_attr}>
+          <span class="pr-age {age_cls}">{age_label}</span>
+          <div>
+            <div class="pr-title">{title_html} {badge_html}</div>
+            <div class="pr-repo">{_esc(pr["repo_full_name"])}</div>
+          </div>
+          <span class="pr-meta">{author}</span>
+          <span class="pr-meta">{_esc(_ago(pr["updated_at"], now=now))}</span>
+        </li>
+        """)
+
+    stale_count = sum(1 for pr in rows if pr["is_stale"])
+    stale_btn = (
+        f' · <button class="pr-filter-btn" data-pr-filter>'
+        f'{stale_count} stale</button>'
+        if stale_count else ""
+    )
+    return f"""
+    <section class="card open-prs" id="open-prs-card">
+      <header class="card-head">
+        <h2>Open PRs</h2>
+        <span class="card-head-meta">{len(rows)} newest{stale_btn}</span>
+      </header>
+      <ol class="open-prs-list">{''.join(items)}</ol>
+    </section>
+    """
+
+
 def render_watched(summary: dict[str, Any], now: datetime) -> str:
     last = _ago(summary.get("last_synced"), now=now) if summary.get("last_synced") else "—"
     rows = [
@@ -830,8 +943,9 @@ def render_sidebar(
         else:
             # Sleuth has never synced — do not pass this off as "all clear".
             sleuth_items.append(
-                '<li class="side-row empty"><div class="side-row-meta">'
-                'Sleuth not synced — run <code>rebalance doctor</code></div></li>'
+                '<li class="side-row empty">'
+                '<div class="side-row-meta warn">Not configured 🛠️</div>'
+                '</li>'
             )
 
     return f"""
@@ -946,10 +1060,25 @@ h2 { font-size: 14px; color: var(--fg); }
 
 /* Main */
 .main { padding: 22px 28px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-.topbar { display: flex; align-items: center; justify-content: space-between; }
-.topbar .crumb { color: var(--fg-muted); font-weight: 500; }
+.topbar { display: flex; align-items: flex-start; justify-content: space-between; }
+.topbar .crumb { color: var(--fg-muted); font-weight: 500; padding-top: 4px; }
+.topbar-right { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.topbar-row { display: flex; gap: 10px; align-items: center; }
 .synced { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); }
 .synced .ok-dot { width: 8px; height: 8px; background: var(--ok); border-radius: 50%; }
+
+/* Status dot glow pulse */
+@keyframes glow-ok {
+  0%, 100% { box-shadow: 0 0 0   0   rgba(47,116,55,0); }
+  50%       { box-shadow: 0 0 5px 3px rgba(47,116,55,.40); }
+}
+@keyframes glow-warn {
+  0%, 100% { box-shadow: 0 0 0   0   rgba(166,95,0,0); }
+  50%       { box-shadow: 0 0 5px 3px rgba(166,95,0,.40); }
+}
+.ok-dot                        { animation: glow-ok   2.8s ease-in-out infinite; }
+.health-dot                    { animation: glow-ok   2.8s ease-in-out infinite; }
+.health-pill.has-issues .health-dot { animation: glow-warn 2.8s ease-in-out infinite; }
 .system-now { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; cursor: help; }
 .system-now .tz-key { color: var(--fg); }
 .system-now.tz-fallback { border-color: var(--warn, #c98a00); color: var(--warn, #c98a00); }
@@ -1238,6 +1367,62 @@ h2 { font-size: 14px; color: var(--fg); }
   .email-row-side { align-items: flex-start; }
   .email-row-time { white-space: normal; }
 }
+
+/* Open PRs card */
+.open-prs-list { list-style: none; margin: 0; padding: 0; }
+.pr-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0,1fr) 80px 90px;
+  gap: 10px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+  align-items: baseline;
+}
+.pr-row:first-child { border-top: 0; }
+.pr-age { font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; }
+.pr-age.fresh  { color: var(--ok); }
+.pr-age.stale  { color: var(--warn); }
+.pr-age.danger { color: var(--danger); }
+.pr-title { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-title a { color: var(--fg); text-decoration: none; }
+.pr-title a:hover { color: var(--accent); text-decoration: underline; }
+.pr-repo { font-size: 11.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-meta { font-size: 11.5px; color: var(--fg-dim); text-align: right; }
+.pr-badge {
+  display: inline-block; padding: 1px 6px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600; border: 1px solid var(--border);
+  background: #fff; color: var(--fg-muted); vertical-align: middle;
+}
+.pr-badge.draft  { color: var(--fg-dim); border-color: var(--border); }
+.pr-badge.review { color: var(--warn); border-color: rgba(166,95,0,.25); background: rgba(166,95,0,.07); }
+.pr-badge.approved { color: var(--ok); border-color: rgba(47,116,55,.25); background: rgba(47,116,55,.07); }
+/* Stale filter toggle */
+.pr-filter-btn {
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 2px 8px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(166,95,0,.30); background: rgba(166,95,0,.08);
+  color: var(--warn); transition: background .12s, color .12s;
+}
+.pr-filter-btn:hover  { background: rgba(166,95,0,.16); }
+.pr-filter-btn.active { background: var(--warn); color: #fff; border-color: var(--warn); }
+.open-prs.filter-stale .pr-row[data-fresh] { display: none; }
+
+/* Health pill */
+.health-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border); background: #fff;
+  color: var(--fg-muted); text-decoration: none;
+  font-variant-numeric: tabular-nums;
+  transition: border-color .12s, background .12s;
+}
+.health-pill:hover { border-color: rgba(31,111,235,.28); background: rgba(31,111,235,.06); }
+.health-pill .health-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ok); flex-shrink: 0;
+}
+.health-pill.has-issues .health-dot { background: var(--warn); }
+.health-pill.has-issues { border-color: rgba(166,95,0,.25); color: var(--warn); }
 """
 
 
@@ -1450,6 +1635,19 @@ PULSE_JS = r"""
     // Chart.js still loading (defer) — retry once on window load.
     window.addEventListener('load', initRepoPie, { once: true });
   }
+
+  // PR stale filter toggle
+  const prCard = document.getElementById('open-prs-card');
+  const prFilterBtn = prCard && prCard.querySelector('[data-pr-filter]');
+  if (prFilterBtn) {
+    prFilterBtn.addEventListener('click', () => {
+      const active = prCard.classList.toggle('filter-stale');
+      prFilterBtn.classList.toggle('active', active);
+      prFilterBtn.textContent = active
+        ? prFilterBtn.textContent.replace('stale', 'stale ✕')
+        : prFilterBtn.textContent.replace(' ✕', '');
+    });
+  }
 })();
 """
 
@@ -1501,6 +1699,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     obsidian_url = build_obsidian_url(vault_path, goals_path) if goals_path.exists() else None
 
     watched = fetch_watched_summary(now)
+    open_pr_rows = fetch_open_prs(limit=10, stale_days=2)
     gh_rows = fetch_recent_github(limit=10)
     vault_rows = fetch_vault_recent(limit=6)
     cal_rows = fetch_calendar_upcoming(now, limit=6)
@@ -1531,6 +1730,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     last_synced = watched.get("last_synced")
     synced_ago = _ago(last_synced, now=now) if last_synced else "—"
     last_vault = vault_rows[0] if vault_rows else None
+    health_filed_30d = fetch_health_filed_count(days=30)
 
     tz_source_label, tz_is_fallback = _resolve_tz_source()
     offset = local_now.strftime("%z")
@@ -1560,11 +1760,21 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
       <main class="main">
         <div class="topbar">
           <div class="crumb">Pulse <span style="color:var(--fg-dim); margin:0 4px">›</span> Today</div>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
-            <span class="{system_now_class}" title="{_esc(system_now_title)}">System: {_esc(system_now_str)} <span class="tz-key">{_esc(system_now_tz)} · {_esc(TZ.key)}</span></span>
-            <span class="synced"><span class="ok-dot"></span>Synced {_esc(synced_ago)}</span>
-            <button id="pulse-refresh" class="refresh-btn">Refresh</button>
+          <div class="topbar-right">
+            <div class="topbar-row">
+              <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
+              <span class="{system_now_class}" title="{_esc(system_now_title)}">System: {_esc(system_now_str)} <span class="tz-key">{_esc(system_now_tz)} · {_esc(TZ.key)}</span></span>
+            </div>
+            <div class="topbar-row">
+              <span class="synced"><span class="ok-dot"></span>Synced {_esc(synced_ago)}</span>
+              <a href="{_esc(HEALTH_ISSUES_URL)}" target="_blank" rel="noopener noreferrer"
+                 class="health-pill{' has-issues' if health_filed_30d else ''}"
+                 title="Health issues filed in the last 30 days — click to view on GitHub">
+                <span class="health-dot"></span>
+                Health: {health_filed_30d} report{'s' if health_filed_30d != 1 else ''} filed (30d)
+              </a>
+              <button id="pulse-refresh" class="refresh-btn">Refresh</button>
+            </div>
           </div>
         </div>
         {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
@@ -1576,6 +1786,9 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
             {render_watched(watched, now)}
             {render_repo_pie(repo_pie_rows, days=repo_pie_days)}
           </div>
+        </div>
+        <div class="full-row">
+          {render_open_prs(open_pr_rows, now)}
         </div>
         <div class="full-row">
           {render_recent_emails(email_rows, now, tz=TZ, limit=30, stored_total=email_total)}
