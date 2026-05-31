@@ -174,7 +174,13 @@ class IntegrationCheckTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             cal_mod.TOKEN_PATH = Path(tmp) / "oauth"
             try:
-                self.assertEqual(_check_calendar().status, WARN)
+                calendar_check = _check_calendar()
+                self.assertEqual(calendar_check.status, WARN)
+                self.assertEqual(
+                    calendar_check.detail,
+                    "Cached data showing. Calendar needs to be re-setup.",
+                )
+                self.assertTrue(calendar_check.hint.startswith("🔧 "))
                 cal_mod.TOKEN_PATH.write_bytes(b"token-bytes")
                 self.assertEqual(_check_calendar().status, OK)
             finally:

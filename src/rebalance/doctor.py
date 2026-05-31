@@ -378,8 +378,8 @@ def _check_calendar() -> Check:
     if not TOKEN_PATH.exists():
         return Check(
             "calendar", WARN,
-            f"OAuth token not found at {TOKEN_PATH}",
-            "run the Calendar OAuth flow (scripts/setup_calendar_oauth.py)",
+            "Cached data showing. Calendar needs to be re-setup.",
+            "🔧 run the Calendar OAuth flow (scripts/setup_calendar_oauth.py)",
         )
     return Check("calendar", OK, f"OAuth token present ({TOKEN_PATH})")
 
