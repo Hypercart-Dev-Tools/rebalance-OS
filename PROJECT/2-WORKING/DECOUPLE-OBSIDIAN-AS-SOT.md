@@ -121,29 +121,64 @@ All Obsidian vault content continues to be ingested into the vector index. This 
 
 ---
 
+## Code Audit Results (completed 2026-05-31)
+
+Full grep across `src/`, `tests/`, docs for all `repos_json` / `project_registry` consumers.
+
+### Consumer map
+
+| File | Role | Gate? |
+|---|---|---|
+| `ingest/dashboard.py:270,324` | Reads `project.get("repos")` to count `repos_linked` and filter GitHub activity per project row | **YES — this is the actual display gate** |
+| `ingest/project_classifier.py:176-188` | Loads `repos_json` to build text aliases for **calendar event** classification | No — calendar only, not GitHub |
+| `ingest/registry.py:136,252` | Reads/writes `repos_json` from Obsidian sync → populates table | Source, not consumer |
+| `ingest/github_scan.py:629` | Outputs `repos_linked` count in scan results | Downstream display only |
+| `mcp_server.py:26` | MCP `list_projects` tool returns project data | No filtering |
+| `doctor.py:179` | Health check warns if table missing | No filtering |
+| `tests/*` | Fixture references | No prod impact |
+
+### Key finding: blast radius is one file
+
+**The display gate lives entirely in `ingest/dashboard.py` at lines 270 and 324.** Everything else reads `repos_json` for enrichment or calendar text matching — not to filter which repos appear in the GitHub activity feed. Phase 1 is a targeted two-line change, not a broad refactor.
+
+### Key finding: auto-discovery already exists
+
+`ingest/project_inference.py` contains `infer_project_registry()` — it reads `github_activity` and calendar events, infers project rows from actual activity, and writes them back to `project_registry` (including `repos_json`). Auto-discovery is already built. The problem is it feeds back into the gate in `dashboard.py`. Removing the gate in `dashboard.py` makes the existing inference machinery work correctly with zero additional changes.
+
+### Q2 design decision (confirmed 2026-05-31)
+
+**Per-repo granular view — no auto-combining.** Each repo is its own row in the activity feed. Grouped under its GitHub org for visual organization but never merged. No `repos_linked` rollup. Developers do their own mental math when they want to combine related repos. If they want auto-combining, they can modify the open-source code.
+
+This replaces the earlier "org-level rollup" framing. The org grouping is a visual header/separator only, not an aggregation.
+
+---
+
 ## What Could Fall Apart
 
 This is the section to read if something breaks after the decouple.
 
 | Risk | Likelihood | Impact | Mitigation |
 |---|---|---|---|
-| Dashboard gets noisy — too many repos visible at once | High | Medium | Add a "min commits in window" threshold (e.g. only show repos with ≥1 commit in 14d); this is a display filter, not a gate |
-| `Hypercart-Dev-Tools` org becomes a wall of unrelated items | High | Low | Phase 2 bi-directional page lets user add `project:` labels; no urgency |
-| Something downstream joins `project_registry.repos_json` we haven't found | Medium | High | Audit before shipping Phase 1 — grep codebase for `repos_json` to find all consumers |
-| Auto-generated `GitHub Repos.md` overwrites user edits | Medium | High | Write to a temp page first; only replace repo list lines (keyed by `repo_full_name`), preserve user annotation lines |
-| `project_registry` is still read by a scheduled report we forgot about | Low | Medium | Phase 1 is "comment out, observe" — run for 1 week before deleting anything |
+| Dashboard gets noisy — too many repos at once | High | Medium | Add a "min commits in window" threshold (e.g. ≥1 commit in 14d); display filter, not a gate |
+| `Hypercart-Dev-Tools` shows 12 unrelated repos as a flat list | High | Low | Org header + sort by `last_active_at` keeps the most relevant at top; Phase 2 page lets user sub-label |
+| Calendar event attribution breaks | Low | Medium | `project_classifier.py` uses `repos_json` for alias-building but falls back gracefully if empty — already tested |
+| `project_inference.py` re-populates `repos_json` after we comment out the gate | Low | Low | The inference writes to `repos_json` but `dashboard.py` stops reading it — both can coexist |
+| Auto-generated `GitHub Repos.md` overwrites user edits | Medium | High | Write additive only: update existing repo lines, never delete user annotation lines |
+| `project_registry` read by a scheduled report we missed | Low | Medium | Phase 1 is observe-only — run 1 week before deleting anything |
 | Obsidian vault path changes across devices | Low | Low | Already handled by `REBALANCE_SECRETS_DIR` resolver |
 
 ---
 
 ## Phased Plan
 
-### Phase 1 — Comment out, observe (immediate, low risk)
+### Phase 1 — Targeted comment-out in `dashboard.py` (immediate, low risk)
 
-- [ ] Grep codebase for all consumers of `project_registry.repos_json` — list every query and report that uses it
-- [ ] Comment out (do not delete) the `repos_json` filter in those queries; replace with "show all repos in `github_activity`"
-- [ ] Add org-based grouping to the activity feed query (`SUBSTR(repo_full_name, 1, INSTR(repo_full_name, '/') - 1) AS org`)
-- [ ] Run for 1 week; observe what appears, check for noise
+The audit confirmed Phase 1 is a two-line change:
+
+- [ ] In `ingest/dashboard.py:270` — comment out `"repos_linked": project.get("repos") or []`; replace with query against `github_activity` for all repos under the org
+- [ ] In `ingest/dashboard.py:324` — comment out `len(project.get("repos") or [])` count; replace with count of distinct repos in `github_activity` for that org
+- [ ] Change activity feed display: per-repo rows (not per-project), grouped under org name as a visual header, sorted by `last_active_at` DESC
+- [ ] Run for 1 week; confirm `BinoidCBD/LTVera-Pandas` appears without any Obsidian action
 - [ ] Note anything that breaks or looks wrong
 
 ### Phase 2 — Bi-directional Obsidian page
