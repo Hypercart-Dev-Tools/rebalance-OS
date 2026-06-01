@@ -24,7 +24,7 @@ AI assistants could help — but they can't see your Obsidian vault, your GitHub
 
 ## What it does
 
-**rebalance OS** is a local-first work operating system that ingests your Obsidian vault, GitHub activity and artifacts, recent git history, and calendar into a queryable SQLite database — then lets any MCP-capable host or agent (ChatGPT, Gemini, Claude, Copilot, Cursor, Continue, and others where MCP is supported) answer questions about your own work, flag over-investment in specific projects, and move toward explicit weekly rebalance verdicts instead of vague retrieval.
+**rebalance OS** is a local-first work operating system that ingests your Obsidian vault, GitHub activity and artifacts, recent git history, calendar, and email into a queryable SQLite database — then lets any MCP-capable host or agent (ChatGPT, Gemini, Claude, Copilot, Cursor, Continue, and others where MCP is supported) answer questions about your own work, surface where your attention is actually going across projects, and trigger self-repairing background collectors when something goes wrong — all from your local machine, without sending private data to a cloud service.
 
 ---
 
@@ -43,10 +43,10 @@ Ask "What's my day look like?" and get today's meetings, yesterday's commit acti
 "Summarize everything I know about Project Y" pulls notes, recent commits, and open issues into a coherent brief — useful for client updates, team handoffs, or just getting back up to speed after a break.
 
 **Weekly rebalance**
-"Where did my attention actually go this week, and what should change next week?" is the direction of travel: verdict-first summaries grounded in notes, calendar, git-pulse history, GitHub activity, and reminder signals.
+"Where did my attention actually go this week?" — calendar hours, email threads, Slack mentions, and GitHub activity are all indexed per project. The signal-agnostic prioritization layer (in progress) will aggregate these into a transparent per-project count, narrated by AI summary rather than hard-coded verdict labels.
 
-**Coming soon: reminder-driven follow-up**
-Sleuth reminder ingestion is live as structured data and is intended to become another attention signal alongside calendar and git history.
+**Self-repairing background jobs**
+Background collectors (pulse sync, GitHub scan) now use a finite-state-machine repair loop (`src/rebalance/repair.py`). When a job fails with a recoverable error — e.g., a push conflict on the pulse repo — it retries automatically with `pull --rebase`. If deterministic repair is exhausted, Haiku is consulted to pick from a bounded action menu before the job files a GitHub issue and stops. Destructive actions require explicit operator authorization and are never selected autonomously.
 
 ---
 
@@ -60,25 +60,30 @@ Data sources
   Git pulse history ──┤──▶  scheduler / on-demand sync ──▶ SQLite + sqlite-vec
   Obsidian vault    ──┤      (launchd on macOS,           (vault chunks,
   Sleuth reminders  ──┤       Task Scheduler on            github_activity,
-  Slack [planned]   ──┤       Windows, cron on Linux)      github_artifacts,
-  Email [planned]   ──┘                                     calendar_events,
+  Gmail inbox       ──┤       Windows, cron on Linux)      github_artifacts,
+  Slack [planned]   ──┘                                     calendar_events,
+                                                              email_messages,
                                                               git-pulse reports,
                                                               semantic_documents)
                                      │
                                      ▼
-                           MCP server (Python)
-                           rebalance tools:
-                             ask
-                             query_notes
-                             query_github_context
-                             search_vault
-                             github_balance
-                             github_release_readiness
-                             github_close_candidates
-                             review_timesheet
-                             classify_event
-                             sleuth_sync_reminders
-                             audit_modules
+                           MCP server — src/rebalance/mcp/
+                           25 tools across 7 domains:
+                             Projects  list_projects · github_balance
+                             Onboarding  onboarding_status · setup_github_token
+                                         run_preflight · confirm_projects
+                                         ingest_gmail_messages
+                             Retrieval  ask · query_notes · search_vault
+                                        query_github_context
+                                        github_release_readiness
+                                        github_close_candidates
+                             Calendar  create_calendar_event · review_timesheet
+                                       classify_event · snap_calendar_edges
+                             Index  index_status · refresh_index · diagnose_repo
+                                    list_watched_repos · publish_pulse
+                                    semantic_query
+                             Hygiene  audit_modules
+                             Sleuth   sleuth_sync_reminders
                                      │
              ┌───────────────────────┼────────────────────────┐
              ▼                       ▼                        ▼
@@ -114,7 +119,8 @@ The result is an AI assistant that actually knows your work — because it's rea
 | Calendar | Google Calendar API (direct client, OAuth2) |
 | GitHub | GitHub REST API + PAT |
 | Reminders | Sleuth Web API (structured sync) |
-| MCP server | Python `mcp` SDK (FastMCP, stdio) |
+| MCP server | Python `mcp` SDK (FastMCP, stdio) — decomposed into `src/rebalance/mcp/` (7 domain modules, 25 tools) |
+| Repair loop | `src/rebalance/repair.py` — `RepairFSM` (PENDING → REPAIRED \| ESCALATED → REPAIRED \| DEAD) with Haiku escalation and bounded action menu |
 | LLM clients | Any MCP host (Claude Code, Copilot, Cursor, Continue, Claude Desktop, and others) |
 
 ---
@@ -141,12 +147,14 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [x] Agent review layer for calendar events (`review_timesheet`, `classify_event` MCP tools)
 - [x] DRY calendar helpers (shared datetime parsing, duration calc, connection setup)
 - [x] CI test suite (GitHub Actions, Python 3.12/3.13)
-- [ ] Weekly rebalance note generation with verdicts, evidence, and next moves per project
-- [ ] Attention ledger contract (`project_targets`, `attention_events`, `attention_feedback`, rollups)
-- [ ] Narrower verdict-first MCP surface (`weekly_rebalance`, `project_attention`, unattributed review)
-- [x] Gmail inbox integration (newest 100 inbox messages, semantic participation via subject + snippet)
+- [x] Gmail inbox integration (newest 100 inbox messages, semantic index via subject + snippet)
+- [x] MCP server decomposed — `src/rebalance/mcp/` package with 7 domain modules, 25 tools, 5-line backward-compat shim
+- [x] Display-layer simplification — dead code removed, registry-gated path eliminated, `ingest/dashboard.py` renamed `note_builder.py`, ignored-repos filter added to org-activity query
+- [x] `RepairFSM` (`src/rebalance/repair.py`) — deterministic repair loop with bounded Haiku escalation, circuit breakers, and unrecoverable-error short-circuiting; pulse self-repair is the first consumer
+- [ ] Signal-agnostic project prioritization — multi-source attribution (calendar + email + Slack + GitHub) feeding transparent per-project counts; `GitHub Repos.md` annotation surface with `#tag` write-back
+- [ ] Weekly rebalance note generation grounded in multi-signal counts rather than hard-coded verdict labels
 - [ ] Slack integration beyond reminder/task signals
-- [ ] Email → project auto-correlation (alias map + co-occurrence)
+- [ ] Email → project auto-correlation (classifier already applied to calendar; extending to `gmail_messages`)
 
 ## Getting Started
 
