@@ -43,9 +43,78 @@ if [ -z "$PYTHON_BIN" ]; then
     fi
 fi
 
-exec "$PYTHON_BIN" "$ENTRYPOINT" \
-    --repo-root "$REPO_ROOT" \
-    --harness-config "$HARNESS_CONFIG" \
-    --db-path "$PORTABLE_DB" \
-    --no-register \
-    "$@"
+has_flag() {
+    local needle="$1"
+    shift
+    local arg
+    for arg in "$@"; do
+        case "$arg" in
+            "$needle"|"$needle="*)
+                return 0
+                ;;
+        esac
+    done
+    return 1
+}
+
+read_harness_json() {
+    local expr="$1"
+    "$PYTHON_BIN" -c "import json, sys; data=json.load(open(sys.argv[1], encoding='utf-8')); value=${expr}; print(value if value is not None else '')" "$HARNESS_CONFIG"
+}
+
+DEFAULT_ARGS=()
+if ! has_flag "--mode" "$@"; then
+    DEFAULT_ARGS+=(--mode all)
+fi
+
+EMBED_PROVIDER="$(read_harness_json "((data.get('embedding') or {}).get('provider'))")"
+if [ "$EMBED_PROVIDER" = "qwen-local" ]; then
+    export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+    export ASK_SELF_QWEN_BATCH_SIZE="${ASK_SELF_QWEN_BATCH_SIZE:-8}"
+    export ASK_SELF_QWEN_MAX_TOKENS="${ASK_SELF_QWEN_MAX_TOKENS:-2048}"
+    if ! has_flag "--concurrency" "$@"; then
+        DEFAULT_ARGS+=(--concurrency 1)
+    fi
+fi
+
+GITHUB_OWNER="$(read_harness_json "((data.get('github') or {}).get('owner'))")"
+GITHUB_REPO="$(read_harness_json "((data.get('github') or {}).get('repo'))")"
+
+if [ -n "$GITHUB_OWNER" ] && [ -n "$GITHUB_REPO" ] && ! has_flag "--no-prs" "$@"; then
+    if [ -z "${GITHUB_TOKEN:-}" ] && [ -n "${SLEUTH_RAG_GITHUB_PAT:-}" ]; then
+        export GITHUB_TOKEN="$SLEUTH_RAG_GITHUB_PAT"
+    fi
+
+    if [ -z "${GITHUB_TOKEN:-}" ]; then
+        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+            GH_TOKEN="$(gh auth token 2>/dev/null || true)"
+            if [ -n "$GH_TOKEN" ]; then
+                export GITHUB_TOKEN="$GH_TOKEN"
+            fi
+        fi
+    fi
+
+    if [ -z "${GITHUB_TOKEN:-}" ]; then
+        echo "GITHUB_TOKEN not set and gh CLI not authorized — run 'gh auth login', export GITHUB_TOKEN, or pass --no-prs." >&2
+        exit 1
+    fi
+fi
+
+CMD=(
+    "$PYTHON_BIN"
+    "$ENTRYPOINT"
+    --repo-root "$REPO_ROOT"
+    --harness-config "$HARNESS_CONFIG"
+    --db-path "$PORTABLE_DB"
+    --no-register
+)
+
+if [ "${#DEFAULT_ARGS[@]}" -gt 0 ]; then
+    CMD+=("${DEFAULT_ARGS[@]}")
+fi
+
+if [ "$#" -gt 0 ]; then
+    CMD+=("$@")
+fi
+
+exec "${CMD[@]}"

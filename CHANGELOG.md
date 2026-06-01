@@ -1,5 +1,72 @@
 # Changelog
 
+## [0.31.5] - 2026-06-01
+
+### Added
+
+- **`src/rebalance/repair.py` — `RepairFSM`** — lightweight finite-state-machine
+  for deterministic repair with bounded Haiku escalation. States: `PENDING →
+  REPAIRED | ESCALATED → REPAIRED | DEAD`. Circuit breakers: unrecoverable error
+  class exits immediately; `max_deterministic_attempts` (default 2) and
+  `max_haiku_attempts` (default 1) cap retries; Haiku picks from a bounded action
+  menu by name — no free-form execution. 17 unit tests in `tests/test_repair_fsm.py`.
+- **Pulse self-repair loop** (first FSM consumer) — `publish_pulse` now runs the
+  FSM on non-fast-forward push rejections. Autonomous action menu: `pull_rebase`
+  (preferred), `abort_rebase`, `notify_only`. `reset_hard` excluded from autonomous
+  menu — it discards the local commit containing the new content and reports a false
+  success. Post-repair content verification confirms the remote HEAD matches the
+  rendered output before returning `pushed=True`. Result dict carries `repaired`,
+  `repair_log`, `repair_status`, and `repair_error` fields. 6 hermetic tests in
+  `tests/test_pulse_self_repair.py` including content-preservation and menu-boundary
+  assertions.
+
+### Refactored
+
+- **MCP server decomposed** — the 857-line `create_server()` god-function split into
+  `src/rebalance/mcp/` package: `server.py` (thin orchestrator) + `tools/` with 7
+  modules by domain (`projects`, `onboarding`, `retrieval`, `calendar`, `index`,
+  `hygiene`, `sleuth`). `mcp_server.py` kept as a 5-line backward-compatibility shim.
+- **Org activity chart** — replaced broken list view (repo names wrapping
+  character-by-character in a 56px grid column) with a Chart.js doughnut where each
+  org is one slice sized by combined commit+PR+issue count.
+
+## [0.31.4] - 2026-05-28
+
+### Changed
+
+- The Pulse health banner copy action now uses a dependency-free inline SVG clipboard icon instead of visible button text or an icon-font dependency. The button keeps the existing clipboard behavior, exposes accessible labels for screen readers, and stays self-contained within the static page.
+
+## [0.31.3] - 2026-05-28
+
+### Changed
+
+- Background collector wrappers and MCP launch configs now force the repo checkout's `src/` tree onto `PYTHONPATH`, so launchd jobs and local MCP clients execute the live code in this repo instead of a stale wheel copy in `.venv/site-packages`.
+
+### Fixed
+
+- Rebalance config discovery now resolves `temp/rbos.config` from the active checkout or an explicit `REBALANCE_CONFIG` override, even when Python imported `rebalance` from `site-packages`. This restores vault path, GitHub token, and pulse config visibility for background jobs that previously looked under `.venv/lib/.../temp/rbos.config`.
+- The Pulse web app top bar no longer treats GitHub watched-repo freshness as the entire collector status. It now computes collector-wide activity from all sources, renders a prominent one-row warning/error banner at the top of the page using `rebalance doctor`, and marks the collector pill degraded when background checks are failing.
+
+## [0.31.2] - 2026-05-28
+
+### Changed
+
+- The committed portable ask-self index was refreshed in fully portable local-Qwen mode. A fresh clone still queries immediately from the tracked SQLite baseline, while maintainers rebuild it with the same on-device embedding setup instead of a hosted embedding dependency.
+
+### Fixed
+
+- Portable ask-self harnesses now point committed indexes through the dedicated committed-index path setting instead of the temp-index filename setting. This keeps the portable query and refresh path aligned with the current integration contract and avoids silently routing a committed index through the wrong lookup path.
+- The portable ask-self ingest wrapper no longer crashes under macOS Bash when `set -u` is enabled and an explicit ingest mode is passed. It now builds the final argv incrementally instead of expanding an empty optional array directly into `exec`.
+- The Mac portable ask-self maintainer path no longer depends on operator memory for the fragile `qwen-local` settings. The ingest wrapper now auto-applies the stable macOS defaults for this repo's local-Qwen harness: `TOKENIZERS_PARALLELISM=false`, `ASK_SELF_QWEN_BATCH_SIZE=8`, `ASK_SELF_QWEN_MAX_TOKENS=2048`, and `--concurrency 1` unless the operator overrides them.
+
+## [0.31.1] - 2026-05-25
+
+### Fixed
+
+- `rebalance github-sync-artifacts --repo owner/name` can now proceed without a PAT when you explicitly target a public repo. The shared GitHub client omits the `Authorization` header when no token is present, and the CLI keeps the token requirement for implicit/project-derived repo sets where a PAT is still the expected path.
+- The ask-self portable ingest wrapper now defaults to `--mode all` when no explicit mode is passed, so repo-local refreshes and future slash-command integrations rebuild the full code+docs index instead of silently falling back to ask-self's upstream docs-only default.
+- The ask-self portable ingest wrapper now fails fast when PR ingestion is enabled but no valid local GitHub auth source is available. It promotes `SLEUTH_RAG_GITHUB_PAT` into `GITHUB_TOKEN`, otherwise falls back to a healthy `gh` login, and tells the operator to re-auth or pass `--no-prs` instead of quietly omitting the remote PR slice.
+
 ## [0.31.0] - 2026-05-19
 
 ### Added
@@ -173,7 +240,7 @@ No DB or vault migration is required — only the install paths above change beh
 - `audit_modules` MCP tool (registered in `src/rebalance/mcp_server.py`). Wraps `scripts/audit_modules.py --json` for host agents (Claude Code / Claude Desktop). Parameters mirror the CLI: `init`, `commits_window`, `include_uncommitted`. Returns the same stable JSON schema as the CLI, with subprocess-launch errors surfaced as `passed: False, exit_code: 2` and diagnostic fields rather than raised exceptions.
 - Audit script scope expansion. `scripts/audit_modules.py` now also scans top-level `src/rebalance/*.py` files (cli.py, mcp_server.py, paths.py) — previously the discovery was limited to `src/rebalance/ingest/*.py` + `scripts/*.py`, which silently let new top-level modules slip past. `__main__.py` was added to IGNORED_FILES alongside the existing `__init__.py` since both are package shims. The substring mention check is now case-insensitive so docs can talk about a module using capitalized prose ("the CLI", "the MCP server") and still satisfy the audit; trades a small false-positive risk (English word matching a stem) for catching the previously-silent false-negative class.
 - `rebalance raw` calibration command. Shows GitHub events from the last N minutes (default 30) and classifies each against local pipeline state: ✓ captured (`last_active_at >= event_time` for that repo), ⏳ pending (repo watched but pipeline hasn't caught up yet), ✗ unwatched (repo not in `github_repo_meta` — silently missing from the pipeline). The output now includes a second **team activity** table that fetches per-repo events for the top N most-active watched repos (default 10, tunable with `--top`) and filters out the current user's own actions — surfaces teammate activity that `/users/{login}/events` alone cannot see (the same gap that motivated the "use PAT + per-repo branch queries" calibration practice). A third **unwatched repos with recent pushes** section uses `/user/repos?sort=pushed` to compare your accessible repos against `github_repo_meta` independent of the events feed — surfaces freshly-created or low-event repos (default 7-day push threshold) that the time-bounded event sections can't see, so a new repo you push to once and forget no longer slips past calibration. Honors the configured ignored-repos list and skips archived/disabled repos. Total cost: 1 + N + 1 GH API requests per invocation. `--watch N` re-runs every N seconds (recommended floor 30s due to GH events API ~30s eventual consistency); `--json` emits a structured snapshot for orchestration with `events` (your activity), `team_activity.events`, and `unwatched_active_repos.repos` arrays. Used to verify that recent commits/PRs/issues — yours and your team's — are making it into rebalanceOS, and that no accessible repo is silently missing from the watch list.
-- Project plan doc [PROJECT/1-INBOX/P3-MODULE-REGISTRY.md](PROJECT/1-INBOX/P3-MODULE-REGISTRY.md) covering three approaches to drift control (post-hoc audit / proactive registry / SOP-only), with empirical findings from the Approach A prototype and an explicit recommendation to revisit a declarative registry only if drift recurs after this round.
+- Project plan doc [PROJECT/2-WORKING/P1-MODULE-REGISTRY.md](PROJECT/2-WORKING/P1-MODULE-REGISTRY.md) (created as `1-INBOX/P3-MODULE-REGISTRY.md`; promoted P3→P1 and moved to `2-WORKING` on 2026-05-31) covering three approaches to drift control (post-hoc audit / proactive registry / SOP-only), with empirical findings from the Approach A prototype and an explicit recommendation to revisit a declarative registry only if drift recurs after this round.
 - Static web mirror of the terminal pulse dashboard. `scripts/pulse_web.py` renders a self-contained `web/pulse.html` from the same SQLite knowledge base the TUI reads, with an "Open in Obsidian" link in the hero, a left sidebar that surfaces the next 6 calendar events and 6 Sleuth reminders, and meta-refresh-driven auto-reload. Run one-shot via `./.venv/bin/python scripts/pulse_web.py`, or in `--watch` mode for continuous regeneration. Goals are pulled from `{vault_path}/0. Goals.md` by default; override with `--goals` or `PULSE_GOALS`.
 - Calendar ignore list. Add a `calendar_ignored_summaries` array to `temp/rbos.config` (the same gitignored config file that holds `github_ignored_repos`) to suppress recurring events from both the web mirror and the terminal dashboard. Patterns are matched case-insensitively as substrings against `calendar_events.summary` — no glob or regex syntax. Example:
 

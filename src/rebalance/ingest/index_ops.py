@@ -782,7 +782,7 @@ def _refresh_dashboard_note(
         return plan
 
     from rebalance.ingest.calendar_config import CalendarConfig
-    from rebalance.ingest.dashboard import build_dashboard_note_content, write_dashboard_note
+    from rebalance.ingest.note_builder import build_dashboard_note_content, write_dashboard_note
     from rebalance.ingest.embedder import embed_chunks
     from rebalance.ingest.note_ingester import ingest_vault
     from rebalance.ingest.semantic_index import backfill_semantic_documents, embed_pending

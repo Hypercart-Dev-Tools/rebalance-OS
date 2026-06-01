@@ -1,6 +1,7 @@
 """Tests for GitHub token resolution: config first, gh CLI fallback."""
 
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -208,6 +209,37 @@ class ProjectPriorityRulesTests(unittest.TestCase):
             set_project_priority_rule(name="Client Alpha", priority_tier=6)
         with self.assertRaises(ValueError):
             set_project_priority_rule(name="Client Alpha", value_score=11)
+
+
+class ConfigPathResolutionTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self._orig_path = config_module.CONFIG_PATH
+        self._orig_env = os.environ.get("REBALANCE_CONFIG")
+        config_module.CONFIG_PATH = None
+
+    def tearDown(self) -> None:
+        config_module.CONFIG_PATH = self._orig_path
+        if self._orig_env is None:
+            os.environ.pop("REBALANCE_CONFIG", None)
+        else:
+            os.environ["REBALANCE_CONFIG"] = self._orig_env
+
+    def test_env_override_wins(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            override = Path(tmpdir) / "override.json"
+            os.environ["REBALANCE_CONFIG"] = str(override)
+            self.assertEqual(config_module.get_config_path(), override.resolve())
+
+    def test_repo_root_is_discovered_from_cwd(self) -> None:
+        os.environ.pop("REBALANCE_CONFIG", None)
+        repo_root = Path(__file__).resolve().parents[1]
+        expected = repo_root / "temp" / "rbos.config"
+        original_cwd = Path.cwd()
+        os.chdir(repo_root)
+        try:
+            self.assertEqual(config_module.get_config_path(), expected.resolve())
+        finally:
+            os.chdir(original_cwd)
 
 
 if __name__ == "__main__":

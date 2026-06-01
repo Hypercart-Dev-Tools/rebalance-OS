@@ -1,0 +1,63 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rebalance-os.health-check-triage</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{PYTHON}}</string>
+        <string>{{REBALANCE_DIR}}/scripts/health_issue_reporter.py</string>
+        <string>--warn</string>
+        <string>--close</string>
+        <string>--llm-triage</string>
+        <string>--llm-daily-limit</string>
+        <string>8</string>
+        <string>--llm-max-per-run</string>
+        <string>5</string>
+    </array>
+
+    <!-- 3× per day: 8 AM, 2 PM, 8 PM local time — adjust Hour values to taste.
+         The --llm-daily-limit 8 cap is the backstop; CB-2 will cut off the third
+         run if the first two exhausted the quota. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <!--
+        !! NEVER put a real API key in this template file. It is tracked in git. !!
+
+        To pass ANTHROPIC_API_KEY to launchd, copy the rendered plist to
+        ~/Library/LaunchAgents/ (already gitignored as *.plist) and add the key
+        there, or set it in your shell profile (~/.zshrc) before loading the job.
+
+        Example for the rendered plist only (not this template):
+            <key>ANTHROPIC_API_KEY</key><string>sk-ant-YOUR-KEY-HERE</string>
+
+        CB-1: uncomment in the rendered plist to disable LLM calls from this job:
+            <key>HEALTH_LLM_DISABLE</key><string>1</string>
+        -->
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>{{REBALANCE_DIR}}/temp/logs/health-check-triage-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{REBALANCE_DIR}}/temp/logs/health-check-triage-stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

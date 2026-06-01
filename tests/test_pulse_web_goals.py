@@ -8,6 +8,8 @@ import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
+from rebalance.doctor import Check, FAIL, WARN
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS_DIR = ROOT / "scripts"
@@ -55,6 +57,42 @@ class PulseWebGoalTests(unittest.TestCase):
         self.assertIn("Open item 9", html)
         self.assertIn("<b>9</b> in progress", html)
         self.assertEqual(html.count('class="goal goal-compact"'), 6)
+
+    def test_render_health_banner_prioritizes_failures(self) -> None:
+        checks = [
+            Check("launchd:github-sync", WARN, "last run exited with status 1"),
+            Check("gmail", WARN, "ADC token is missing the Gmail readonly scope"),
+            Check("github token", FAIL, "no GitHub token configured"),
+            Check("vault", FAIL, "no vault path configured"),
+            Check("sleuth", WARN, "no Sleuth Web API env file"),
+        ]
+
+        html = pulse_web.render_health_banner(
+            checks,
+            {"sources": {}},
+            datetime(2026, 5, 28, 18, 0, tzinfo=timezone.utc),
+            "2026-05-28T17:55:00+00:00",
+        )
+
+        self.assertIn("2 errors", html)
+        self.assertIn("Collector attention needed", html)
+        self.assertIn("github token", html)
+        self.assertIn("vault", html)
+        self.assertIn("+1 more", html)
+        self.assertIn("health-banner-copy-btn", html)
+        self.assertIn("data-copy-text=", html)
+        self.assertNotIn("launchd:github-sync</span><span class=\"health-banner-detail\"", html)
+
+    def test_render_sync_chip_uses_warning_state(self) -> None:
+        chip = pulse_web.render_sync_chip(
+            [Check("gmail", WARN, "scope missing")],
+            {"sources": {}},
+            "2026-05-28T17:55:00+00:00",
+            datetime(2026, 5, 28, 18, 0, tzinfo=timezone.utc),
+        )
+
+        self.assertIn("synced-warn", chip)
+        self.assertIn("Collector warnings", chip)
 
 
 if __name__ == "__main__":

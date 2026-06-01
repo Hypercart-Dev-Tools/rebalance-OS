@@ -1,7 +1,7 @@
 {
   "repo_label": "rebalance OS",
   "repo_kind": "python-repo",
-  "db_filename": "ask_self/index/rebalance-OS.sqlite",
+  "db_path": "ask_self/index/rebalance-OS.sqlite",
   "system_instructions_path": "ask_self/ask_self_system_instructions.json",
   "env_file_path": "temp/ask-self-rag.env",
   "ingest_command": "./scripts/ask-self-ingest.sh",

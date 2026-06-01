@@ -90,7 +90,7 @@ python scripts/setup_calendar_oauth.py --write-access --test
 
 After clicking Allow, the script prints a list of your Google Calendars and their IDs. **Copy the ID** of the calendar you want to use — you'll need it in the next step.
 
-> Your login token is saved locally at `~/.config/gcalcli/oauth` and is never stored in the repo.
+> Your login token is saved locally at `~/.config/rebalance-os/google-calendar-oauth` and is never stored in the repo.
 > The OAuth token belongs to the authorizing user account on that machine. It is separate from the bundled Desktop app client configuration.
 
 ---
@@ -176,7 +176,7 @@ rebalance calendar-daily-report
 
 You're done. The config already has the shared `calendar_id`, projects, and timezone — you only authorize once so the app can read your calendar on your behalf.
 
-> **Why does each person need to authorize?** The repo includes the shared OAuth Desktop app credentials, but each person must grant consent for their own Google account. Your token is saved locally at `~/.config/gcalcli/oauth` and never stored in the repo.
+> **Why does each person need to authorize?** The repo includes the shared OAuth Desktop app credentials, but each person must grant consent for their own Google account. Your token is saved locally at `~/.config/rebalance-os/google-calendar-oauth` and never stored in the repo.
 
 ---
 

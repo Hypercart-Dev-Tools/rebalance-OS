@@ -1410,8 +1410,12 @@ def github_sync_artifacts(
     target_repos = _resolve_github_repos(db_path, repos or [])
     resolved_token = token.strip() or (get_github_token() or "")
     if not resolved_token:
-        raise typer.BadParameter(
-            "GitHub token not configured. Use --token, GITHUB_TOKEN, or `rebalance config set-github-token`."
+        if not normalized_explicit:
+            raise typer.BadParameter(
+                "GitHub token not configured. Use --token, GITHUB_TOKEN, or `rebalance config set-github-token`."
+            )
+        typer.echo(
+            "GitHub token not configured; attempting unauthenticated sync for explicit public repo targets."
         )
 
     for repo in target_repos:
@@ -2341,7 +2345,7 @@ def dashboard_render_cmd(
 ) -> None:
     """Generate the Obsidian dashboard note from recent local signals."""
     from datetime import date
-    from rebalance.ingest.dashboard import build_dashboard_note_content, write_dashboard_note
+    from rebalance.ingest.note_builder import build_dashboard_note_content, write_dashboard_note
     from rebalance.ingest.calendar_config import CalendarConfig
 
     try:

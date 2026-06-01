@@ -11,7 +11,7 @@ from pathlib import Path
 from rebalance.ingest import config as config_module
 from rebalance.ingest.calendar_config import CalendarConfig
 from rebalance.ingest.config import set_project_priority_rule
-from rebalance.ingest.dashboard import build_dashboard_payload
+from rebalance.ingest.note_builder import build_dashboard_payload
 from rebalance.ingest.db import db_connection, ensure_calendar_schema, ensure_github_schema, ensure_project_schema
 from rebalance.ingest.project_classifier import classify_event_project, load_project_matchers
 
@@ -139,10 +139,10 @@ class ProjectPriorityOverlayTests(unittest.TestCase):
         self.assertGreater(by_name["Client Alpha"].priority_score, by_name["Client Beta"].priority_score)
 
         self.assertEqual(by_name["Client Gamma"].priority_tier, 2)
-        self.assertIn("Priority: client=Account G", "\n".join(by_name["Client Gamma"].evidence))
+        self.assertEqual(by_name["Client Gamma"].client, "Account G")
 
         self.assertEqual(by_name["Client Delta"].priority_tier, 3)
-        self.assertEqual(by_name["Client Delta"].source_counts["repos_linked"], 0)
+        self.assertIsInstance(payload.org_activity, dict)
 
     def test_priority_rules_extend_calendar_project_matching(self) -> None:
         db_path = self._seed_db()

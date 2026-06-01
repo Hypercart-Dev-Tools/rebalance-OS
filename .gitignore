@@ -7,8 +7,13 @@ temp/ask-self-rag.env
 temp/ask-self*.log
 # ask-self portable DB sidecars (the *.sqlite itself is committed)
 ask_self/index/*__embed_cache.sqlite
+ask_self/index/*__embed_cache.sqlite-shm
+ask_self/index/*__embed_cache.sqlite-wal
 ask_self/index/*__events.jsonl
 ask_self/index/.DS_Store
+# transient scratch from ask-self ingest runs
+/ask_self_ingest.out
+/ask_self_ingest.err
 logs/
 __pycache__/
 *.pyc
@@ -33,3 +38,13 @@ rebalance.db-wal
 
 # Rendered launchd plists — generated from .plist.template by scripts/install_*_scheduler.sh
 scripts/com.rebalance-os.*.plist
+
+# Secret / credential files — never commit these
+.env
+.env.*
+*.env
+*secrets*
+*credentials*
+*.pem
+*.key
+*.p12

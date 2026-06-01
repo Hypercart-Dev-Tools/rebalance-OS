@@ -4,7 +4,8 @@
       "command": ".venv/bin/python",
       "args": ["-m", "rebalance.mcp_server"],
       "env": {
-        "REBALANCE_DB": "rebalance.db"
+        "REBALANCE_DB": "~/Library/Application Support/rebalance-os/rebalance.db",
+        "PYTHONPATH": "src"
       }
     }
   }

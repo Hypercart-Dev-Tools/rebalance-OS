@@ -10,29 +10,59 @@ Future: Migrate sensitive fields to keyring library when multi-user or complianc
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 from pathlib import Path
 from typing import Any
 
 
-# Resolve to repo root: __file__ is src/rebalance/ingest/config.py
-# Parent chain: config.py -> ingest -> rebalance -> src -> rebalance-OS (root)
-CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "temp" / "rbos.config"
+# Override seam for tests. When None, resolve from the active checkout/env.
+CONFIG_PATH: Path | None = None
+CONFIG_ENV_VAR = "REBALANCE_CONFIG"
+_PROJECT_MARKERS = (".git", "pyproject.toml")
 _GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
+
+
+def _project_root_from(start: Path) -> Path | None:
+    current = start.resolve()
+    for candidate in (current, *current.parents):
+        if any((candidate / marker).exists() for marker in _PROJECT_MARKERS):
+            return candidate
+    return None
+
+
+def _resolved_config_path() -> Path:
+    if CONFIG_PATH is not None:
+        return CONFIG_PATH.expanduser().resolve()
+
+    env_path = os.environ.get(CONFIG_ENV_VAR)
+    if env_path:
+        return Path(env_path).expanduser().resolve()
+
+    cwd_root = _project_root_from(Path.cwd())
+    if cwd_root is not None:
+        return cwd_root / "temp" / "rbos.config"
+
+    module_root = _project_root_from(Path(__file__).resolve())
+    if module_root is not None:
+        return module_root / "temp" / "rbos.config"
+
+    return Path.cwd() / "temp" / "rbos.config"
 
 
 def _ensure_config_dir() -> None:
     """Create temp/ dir if missing."""
-    CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _resolved_config_path().parent.mkdir(parents=True, exist_ok=True)
 
 
 def _read_config() -> dict[str, Any]:
     """Load config from disk; return {} if missing."""
-    if not CONFIG_PATH.exists():
+    config_path = _resolved_config_path()
+    if not config_path.exists():
         return {}
     try:
-        return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
+        return json.loads(config_path.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, IOError):
         return {}
 
@@ -40,7 +70,7 @@ def _read_config() -> dict[str, Any]:
 def _write_config(config: dict[str, Any]) -> None:
     """Write config to disk with .gitignore safety."""
     _ensure_config_dir()
-    CONFIG_PATH.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    _resolved_config_path().write_text(json.dumps(config, indent=2), encoding="utf-8")
 
 
 def normalize_github_repo_name(repo: str) -> str:
@@ -474,7 +504,7 @@ def remove_project_priority_rule(name: str) -> bool:
 
 def get_config_path() -> Path:
     """Return the config file path (for user reference)."""
-    return CONFIG_PATH
+    return _resolved_config_path()
 
 
 # ---------------------------------------------------------------------------

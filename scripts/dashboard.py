@@ -398,32 +398,23 @@ def fetch_recent_github(limit: int = 9) -> list[dict[str, Any]]:
 
 
 def fetch_repo_activity_counts(days: int = 7, limit: int = 12) -> list[dict[str, Any]]:
-    """Per-repo event counts (items + commits + comments) over the last N days."""
+    """Per-repo event counts (commits + PRs + issues) over the last N days."""
     ignored = get_github_ignored_repos()
     ignored_clause = ""
-    params: list[Any] = [f"-{int(days)} days"] * 3
+    params: list[Any] = [f"-{int(days)} days"]
     if ignored:
         placeholders = ",".join("?" * len(ignored))
-        ignored_clause = f"WHERE LOWER(repo_full_name) NOT IN ({placeholders})"
+        ignored_clause = f"AND LOWER(repo_full_name) NOT IN ({placeholders})"
         params.extend(ignored)
     params.append(limit)
     try:
         with db_connection(DB_PATH) as conn:
             rows = conn.execute(
                 f"""
-                SELECT repo_full_name, COUNT(*) AS events FROM (
-                    SELECT repo_full_name FROM github_items
-                      WHERE updated_at IS NOT NULL
-                        AND updated_at >= datetime('now', ?)
-                    UNION ALL
-                    SELECT repo_full_name FROM github_commits
-                      WHERE committed_at IS NOT NULL
-                        AND committed_at >= datetime('now', ?)
-                    UNION ALL
-                    SELECT repo_full_name FROM github_comments
-                      WHERE created_at IS NOT NULL
-                        AND created_at >= datetime('now', ?)
-                )
+                SELECT repo_full_name,
+                       SUM(commits + prs_opened + prs_merged + issues_opened) AS events
+                FROM github_activity
+                WHERE scan_date >= date('now', ?)
                 {ignored_clause}
                 GROUP BY repo_full_name
                 ORDER BY events DESC
@@ -434,6 +425,60 @@ def fetch_repo_activity_counts(days: int = 7, limit: int = 12) -> list[dict[str,
         return [dict(r) for r in rows]
     except Exception:  # noqa: BLE001 — empty DB before first sync
         return []
+
+
+def fetch_org_activity(days: int = 14, limit: int = 100) -> dict[str, list[dict[str, Any]]]:
+    """Per-repo summary from github_activity, grouped by GitHub org, sorted by last_active_at DESC.
+
+    Queries the aggregate table directly — no project_registry join, so every repo with
+    any push/PR activity in the window appears regardless of Obsidian registration.
+    """
+    ignored = get_github_ignored_repos()
+    ignored_clause = ""
+    params: list[Any] = [f"-{int(days)} days"]
+    if ignored:
+        placeholders = ",".join("?" * len(ignored))
+        ignored_clause = f"AND LOWER(repo_full_name) NOT IN ({placeholders})"
+        params.extend(ignored)
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT repo_full_name,
+                       SUM(commits)        AS commits,
+                       SUM(prs_opened)     AS prs_opened,
+                       SUM(prs_merged)     AS prs_merged,
+                       SUM(issues_opened)  AS issues_opened,
+                       MAX(last_active_at) AS last_active_at
+                FROM github_activity
+                WHERE scan_date >= date('now', ?)
+                {ignored_clause}
+                GROUP BY repo_full_name
+                ORDER BY last_active_at DESC
+                LIMIT {int(limit)}
+                """,
+                tuple(params),
+            ).fetchall()
+    except Exception:  # noqa: BLE001
+        return {}
+
+    by_org: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        repo = row["repo_full_name"]
+        org = repo.split("/")[0] if "/" in repo else repo
+        by_org.setdefault(org, []).append({
+            "repo_full_name": repo,
+            "commits": int(row["commits"] or 0),
+            "prs_opened": int(row["prs_opened"] or 0),
+            "prs_merged": int(row["prs_merged"] or 0),
+            "issues_opened": int(row["issues_opened"] or 0),
+            "last_active_at": row["last_active_at"],
+        })
+
+    for org_repos in by_org.values():
+        org_repos.sort(key=lambda r: r["last_active_at"] or "", reverse=True)
+
+    return by_org
 
 
 def fetch_vault_recent(limit: int = 6) -> list[dict[str, Any]]:
@@ -479,11 +524,58 @@ def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any
     return upcoming_calendar_rows(rows, now=now, limit=limit, ignored_summaries=ignored)
 
 
+def fetch_open_prs(limit: int = 10, stale_days: int = 2) -> list[dict[str, Any]]:
+    """Return the *limit* most recently opened PRs that are still open.
+
+    Each row gets an ``age_days`` int and a ``is_stale`` bool (age > stale_days).
+    Closed PRs drop off automatically since we filter on state='open'.
+    """
+    from datetime import datetime, timezone  # noqa: PLC0415
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT repo_full_name, number, title, author_login,
+                       created_at, updated_at, is_draft,
+                       review_decision, html_url
+                FROM github_items
+                WHERE item_type = 'pull_request' AND state = 'open'
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+
+    now = datetime.now(timezone.utc)
+    out = []
+    for r in rows:
+        try:
+            dt = datetime.fromisoformat(str(r[4]).replace("Z", "+00:00"))
+            age_days = (now - dt).days
+        except (TypeError, ValueError):
+            age_days = 0
+        out.append({
+            "repo_full_name": r[0],
+            "number":         r[1],
+            "title":          r[2],
+            "author_login":   r[3],
+            "created_at":     r[4],
+            "updated_at":     r[5],
+            "is_draft":       bool(r[6]),
+            "review_decision": r[7] or "",
+            "html_url":       r[8] or "",
+            "age_days":       age_days,
+            "is_stale":       age_days > stale_days,
+        })
+    return out
+
+
 def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
-    # Belt-and-suspenders staleness guard: even if a row escaped the
-    # ingest-side reconciliation (sync_sleuth_reminders), don't surface
-    # reminders whose should_post_on is more than 2 days in the past.
-    # NULLs are kept so reminders without a scheduled time still show.
+    # Rely on is_active=0 (set by sync_sleuth_reminders reconciliation) as the
+    # sole staleness gate. A date-based cutoff caused all reminders to silently
+    # disappear when the Sleuth sync fell behind by more than 2 days.
     pulse_config = get_pulse_config()
     slack_user_id = pulse_config.get("slack_user_id")
     ignored_workspaces = [
@@ -507,8 +599,6 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
                            original_message_id, original_thread_ts
                     FROM sleuth_reminders
                     WHERE is_active = 1
-                      AND (should_post_on IS NULL
-                           OR should_post_on > datetime('now', '-2 days'))
                       AND (assignee_id = ? OR original_sender_id = ?)
                       {ws_clause}
                     ORDER BY should_post_on ASC NULLS LAST
@@ -525,8 +615,6 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
                            original_message_id, original_thread_ts
                     FROM sleuth_reminders
                     WHERE is_active = 1
-                      AND (should_post_on IS NULL
-                           OR should_post_on > datetime('now', '-2 days'))
                       {ws_clause}
                     ORDER BY should_post_on ASC NULLS LAST
                     LIMIT ?
@@ -785,7 +873,7 @@ def render_vault_calendar(
     sections.append(Text("sleuth reminders", style=f"bold {PALETTE['accent']}"))
     sections.append(sleuth_table)
 
-    body = Group(*[Group(s, Text("")) for s in _interleave(sections)])
+    body = Group(*[Group(s, Text("")) for s in sections])
     return Panel(
         body,
         title=_title("vault · calendar · reminders"),
@@ -794,11 +882,6 @@ def render_vault_calendar(
         padding=(1, 1),
         **_panel_style(),
     )
-
-
-def _interleave(items: list[Any]) -> list[Any]:
-    """Pair (header, table) groups but skip the trailing blank line."""
-    return items
 
 
 def render_index_health(status: dict[str, Any]) -> Panel:

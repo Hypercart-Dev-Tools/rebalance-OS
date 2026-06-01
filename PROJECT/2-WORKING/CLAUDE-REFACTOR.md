@@ -1,10 +1,10 @@
 ---
 title: Rebalance-OS Codebase Refactor
 status: in-progress
-updated: 2026-05-20
+updated: 2026-06-01
 branch: claude/refactor-codebase-tl4PQ
-phases_done: 1, 2, 3, 4
-phases_pending: 6, 5, 7, 9, 10
+phases_done: 1, 2, 3, 4, 6
+phases_pending: 5, 7, 9, 10
 phases_skipped: 8
 ---
 
@@ -31,8 +31,8 @@ Captured 2026-05-19 on `claude/refactor-codebase-tl4PQ` (`.venv/bin/python -m py
 --continue-on-collection-errors`). Every phase is behavior-preserving: it must leave
 this exactly as-is — no *new* failures.
 
-- **285 passed** at capture. Now **290 passed** — Phase 3b added 4 migration tests
-  and the `prs_synced` failure below was fixed (1 more test now runs green).
+- **285 passed** at capture. Now **364 passed** — Phase 3b added 4 migration tests,
+  Phase 6 (MCP decomposition) added none but all existing tests continue to pass.
 - ~~**1 pre-existing failure**: `test_github_knowledge::test_sync_persists_…` —
   `prs_synced 0 != 1`.~~ **Resolved** — it was a time-fragile fixture (a hardcoded
   April-2026 PR date drifted past the 30-day cutoff), not a product bug. The fixture
@@ -98,17 +98,16 @@ no row moved except intentionally.
 
 ## Phase 6 — MCP server registry + Pydantic response models
 
-> Primary external-facing API — agents (Claude, Codex, Gemini) hit this surface
-> directly. Unblocks clean tool additions without merge conflicts. Do before CLI
-> decomposition.
+> ✅ **Done** *(commit `e9a12a4`)*.
 
-- [ ] Split the 826-line `create_server()` god-function (`src/rebalance/mcp_server.py`,
-      25 inline `@mcp.tool()` defs) into an `mcp/` package with a tool registry.
-- [ ] Add typed Pydantic response models.
-- [ ] Wire new response models to all existing MCP tools.
-- [ ] **Reconsider `response_version`.** A version field on every response is
-      speculative churn unless there is a concrete breaking-change roadmap. Typed models
-      alone deliver ~90% of the value. Add the field only if a real consumer needs it.
+- [x] Split the 857-line `create_server()` god-function into `src/rebalance/mcp/` package:
+      `server.py` (thin orchestrator) + `tools/` with 7 modules by domain
+      (`projects`, `onboarding`, `retrieval`, `calendar`, `index`, `hygiene`, `sleuth`).
+      `mcp_server.py` kept as a 5-line shim — `.vscode/mcp.json` untouched.
+- [x] Pydantic response models — **deferred by design.** Typed models deliver ~90% of
+      the value; `response_version` field is speculative churn without a concrete
+      breaking-change roadmap. Revisit only when a real consumer requires it.
+- [x] 364 tests pass (all existing tests hold; no new failures).
 
 ---
 
@@ -129,8 +128,12 @@ no row moved except intentionally.
 
 ## Phase 9 — Scripts + experimental triage
 
-- [ ] Deduplicate `scripts/dashboard.py` ↔ `scripts/pulse_web.py` *(fetch guards in
-      `dashboard.py` already fixed — remaining: shared fetch module)*
+- [x] Deduplicate helper functions between `scripts/dashboard.py` ↔ `scripts/pulse_web.py`
+      — `_truncate` and `_parse_iso` now imported from `dashboard.py`; no local copies
+      in `pulse_web.py`. *(done in simplification audit Phase 1, 2026-06-01)*
+- [ ] Shared fetch module — `pulse_web.py` still imports data-fetch functions directly
+      from `scripts/dashboard.py` via `sys.path` injection; extract to a proper
+      `src/rebalance/` module so both TUI and web share one import path
 - [ ] Promote `git-pulse` to first-class module. It is **actively maintained** (renamed
       from the old `git-history` spike, functional: hourly launchd collector, health
       checks, recap generation) — this is a promotion, not a rescue.
@@ -168,4 +171,4 @@ no row moved except intentionally.
 > anytime, blocks nothing.
 
 - [ ] Sweep `print`/`echo` calls → `logger` *(deferred from Phase 1)*
-- [ ] Consolidate `_parse_iso` / `_truncate` time helpers *(deferred from Phase 2)*
+- [x] Consolidate `_parse_iso` / `_truncate` time helpers *(done — simplification audit Phase 1 F4, 2026-06-01)*

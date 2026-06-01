@@ -42,6 +42,8 @@ from dashboard import (  # type: ignore  # noqa: E402
     DB_PATH,
     TZ,
     fetch_calendar_upcoming,
+    fetch_open_prs,
+    fetch_org_activity,
     fetch_recent_emails,
     fetch_recent_github,
     fetch_repo_activity_counts,
@@ -50,13 +52,20 @@ from dashboard import (  # type: ignore  # noqa: E402
     fetch_watched_summary,
     _ago,
     _parse_iso,
+    _truncate,
 )
+from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
 from rebalance.ingest.index_ops import get_index_status  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 
 CONFIG_PATH = PROJECT_ROOT / "temp" / "rbos.config"
 DEFAULT_OUT = PROJECT_ROOT / "web" / "pulse.html"
 GOAL_HISTORY_PATH = PROJECT_ROOT / "temp" / "pulse_goal_history.json"
+HEALTH_LOG_PATH = PROJECT_ROOT / "temp" / "health-reporter.log.jsonl"
+HEALTH_ISSUES_URL = (
+    "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues"
+    "?labels=rebalance-health&state=open"
+)
 MAX_GOAL_HISTORY = 3
 PRIMARY_GOAL_LIMIT = 3
 SECONDARY_TODO_LIMIT = 6
@@ -308,6 +317,46 @@ def load_vault_path() -> Path | None:
 
 
 # ---------------------------------------------------------------------------
+# Health report counter — reads local JSONL log, no GitHub API call
+# ---------------------------------------------------------------------------
+
+def fetch_health_filed_count(days: int = 30) -> int:
+    """Count distinct checks that had a 'filed' action in the last *days* days.
+
+    Reads temp/health-reporter.log.jsonl locally so the dashboard never makes
+    a live API call. Returns 0 if the log doesn't exist yet.
+    """
+    from datetime import timedelta  # noqa: PLC0415
+    if not HEALTH_LOG_PATH.exists():
+        return 0
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    seen: set[str] = set()
+    try:
+        for raw in HEALTH_LOG_PATH.read_text(encoding="utf-8").splitlines():
+            if not raw.strip():
+                continue
+            try:
+                record = json.loads(raw)
+            except json.JSONDecodeError:
+                continue
+            run_id = record.get("run_id", "")
+            try:
+                run_dt = datetime.fromisoformat(run_id.replace("Z", "+00:00"))
+            except (ValueError, AttributeError):
+                continue
+            if run_dt < cutoff:
+                continue
+            if record.get("dry_run"):
+                continue
+            for action in record.get("actions", []):
+                if action.get("action") == "filed":
+                    seen.add(action.get("check", ""))
+    except OSError:
+        return 0
+    return len(seen)
+
+
+# ---------------------------------------------------------------------------
 # Render helpers
 # ---------------------------------------------------------------------------
 
@@ -327,17 +376,6 @@ def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
-def _repo_label(full: str | None) -> str:
-  if not full:
-    return ""
-  return full
-
-
-def _truncate(text: str, n: int) -> str:
-    text = (text or "").splitlines()[0] if text else ""
-    return text if len(text) <= n else text[: n - 1] + "…"
-
-
 def _format_dt(value: str | datetime | None, *, tz: ZoneInfo) -> str:
     dt = _parse_iso(value) if isinstance(value, str) else value
     if dt is None:
@@ -354,6 +392,199 @@ def _format_dt_short(value: str | datetime | None, *, tz: ZoneInfo) -> str:
 
 def _normalize_html_text(value: str | None) -> str:
     return html.unescape((value or "").strip())
+
+
+def _compact_whitespace(text: str | None) -> str:
+    return " ".join((text or "").split())
+
+
+def _short_text(text: str | None, n: int) -> str:
+    compact = _compact_whitespace(text)
+    return compact if len(compact) <= n else compact[: n - 1] + "…"
+
+
+def _health_banner_copy_text(
+    problems: list[Check],
+    *,
+    status_text: str,
+    activity_text: str,
+) -> str:
+    lines = [
+        f"Collector attention needed",
+        f"Status: {status_text}",
+        f"Last collector activity: {activity_text}",
+    ]
+    for check in problems:
+        lines.append(f"{check.name}: {_compact_whitespace(check.detail)}")
+        if check.hint:
+            lines.append(f"Hint: {_compact_whitespace(check.hint)}")
+    return "\n".join(lines)
+
+
+def _clipboard_icon_svg() -> str:
+    return (
+        '<svg class="health-banner-copy-icon" viewBox="0 0 20 20" fill="none" '
+        'xmlns="http://www.w3.org/2000/svg" aria-hidden="true">'
+        '<path d="M7 3.5H6.25A2.25 2.25 0 0 0 4 5.75v8A2.25 2.25 0 0 0 6.25 16h7.5A2.25 2.25 0 0 0 16 13.75v-8A2.25 2.25 0 0 0 13.75 3.5H13" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M8 3h4a1 1 0 0 1 1 1v1.25H7V4a1 1 0 0 1 1-1Z" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>'
+        '<path d="M8 8.5h4M8 11h3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>'
+        "</svg>"
+    )
+
+
+def _latest_collector_activity(status: dict[str, Any]) -> str | None:
+    sources = status.get("sources") or {}
+    semantic = status.get("semantic_index") or {}
+    candidates = [
+        (sources.get("vault") or {}).get("last_ingested_at"),
+        (sources.get("github") or {}).get("activity_last_scanned_at"),
+        (sources.get("github") or {}).get("documents_last_fetched_at"),
+        (sources.get("calendar") or {}).get("last_fetched_at"),
+        (sources.get("sleuth") or {}).get("last_synced_at"),
+        (sources.get("email") or {}).get("last_synced_at"),
+        semantic.get("last_embedded_at"),
+    ]
+    latest: datetime | None = None
+    latest_raw: str | None = None
+    for raw in candidates:
+        dt = _parse_iso(raw)
+        if dt is None:
+            continue
+        if latest is None or dt > latest:
+            latest = dt
+            latest_raw = raw
+    return latest_raw
+
+
+def _status_timestamp(status: dict[str, Any], key: str) -> str | None:
+    sources = status.get("sources") or {}
+    semantic = status.get("semantic_index") or {}
+    mapping = {
+        "vault": (sources.get("vault") or {}).get("last_ingested_at"),
+        "github data": (sources.get("github") or {}).get("activity_last_scanned_at")
+        or (sources.get("github") or {}).get("documents_last_fetched_at"),
+        "calendar": (sources.get("calendar") or {}).get("last_fetched_at"),
+        "sleuth": (sources.get("sleuth") or {}).get("last_synced_at"),
+        "gmail": (sources.get("email") or {}).get("last_synced_at"),
+        "semantic": semantic.get("last_embedded_at"),
+    }
+    return mapping.get(key)
+
+
+def _source_recently_succeeded(status: dict[str, Any], key: str, now: datetime, *, within_hours: int = 36) -> bool:
+    raw = _status_timestamp(status, key)
+    dt = _parse_iso(raw)
+    if dt is None:
+        return False
+    return (now - dt).total_seconds() <= within_hours * 3600
+
+
+def _visible_problem_checks(checks: list[Check], status: dict[str, Any], now: datetime) -> list[Check]:
+    visible: list[Check] = []
+    for check in checks:
+        if check.status not in {FAIL, WARN}:
+            continue
+        if (
+            check.status == WARN
+            and check.name in {"vault", "calendar", "gmail", "sleuth"}
+            and _source_recently_succeeded(status, check.name, now)
+        ):
+            continue
+        visible.append(check)
+    return visible
+
+
+def _ordered_problem_checks(checks: list[Check], status: dict[str, Any], now: datetime) -> list[Check]:
+    def priority(check: Check) -> tuple[int, int, str]:
+        severity = 0 if check.status == FAIL else 1
+        launchd = 1 if check.name.startswith("launchd:") else 0
+        return (severity, launchd, check.name)
+
+    return sorted(
+        _visible_problem_checks(checks, status, now),
+        key=priority,
+    )
+
+
+def render_health_banner(
+    checks: list[Check],
+    status: dict[str, Any],
+    now: datetime,
+    last_activity: str | None,
+) -> str:
+    problems = _ordered_problem_checks(checks, status, now)
+    if not problems:
+        return ""
+
+    failures = [check for check in problems if check.status == FAIL]
+    warnings = [check for check in problems if check.status == WARN]
+    tone = "danger" if failures else "warn"
+    status_text = (
+        f"{len(failures)} error{'s' if len(failures) != 1 else ''}"
+        if failures
+        else f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}"
+    )
+    activity_text = _ago(last_activity, now=now) if last_activity else "never"
+    copy_text = _health_banner_copy_text(
+        problems,
+        status_text=status_text,
+        activity_text=activity_text,
+    )
+
+    items = []
+    for check in problems[:4]:
+        items.append(
+            f'<span class="health-banner-item">'
+            f'<span class="health-banner-name">{_esc(check.name)}</span>'
+            f'<span class="health-banner-detail">{_esc(_short_text(check.detail, 120))}</span>'
+            f"</span>"
+        )
+    if len(problems) > 4:
+        items.append(
+            f'<span class="health-banner-item more">+{len(problems) - 4} more</span>'
+        )
+
+    return f"""
+    <section class="health-banner health-banner-{tone}" aria-live="polite">
+      <div class="health-banner-lead">
+        <span class="health-banner-badge">{_esc(status_text)}</span>
+        <span class="health-banner-summary">Collector attention needed</span>
+        <span class="health-banner-activity">Last collector activity {_esc(activity_text)}</span>
+        <button
+          type="button"
+          class="health-banner-copy-btn"
+          data-copy-text="{_esc(copy_text)}"
+          aria-label="Copy collector warning text"
+          title="Copy collector warning text"
+        >{_clipboard_icon_svg()}<span class="visually-hidden">Copy collector warning text</span></button>
+      </div>
+      <div class="health-banner-items">{''.join(items)}</div>
+    </section>
+    """
+
+
+def render_sync_chip(
+    checks: list[Check],
+    status: dict[str, Any],
+    last_activity: str | None,
+    now: datetime,
+) -> str:
+    problems = _ordered_problem_checks(checks, status, now)
+    activity_text = _ago(last_activity, now=now) if last_activity else "—"
+    if any(check.status == FAIL for check in problems):
+        tone = "danger"
+        label = f"Collector degraded · {activity_text}"
+    elif problems:
+        tone = "warn"
+        label = f"Collector warnings · {activity_text}"
+    else:
+        tone = "ok"
+        label = f"Collector active {activity_text}"
+    return (
+        f'<span class="synced synced-{tone}">'
+        f'<span class="ok-dot"></span>{_esc(label)}'
+        f"</span>"
+    )
 
 
 def build_obsidian_url(vault_path: Path | None, file_path: Path) -> str | None:
@@ -541,7 +772,7 @@ def render_recent_activity(
         glyph, color = KIND_GLYPH.get(kind, ("·", "muted"))
         if kind == "item" and sub in ITEM_SUB_GLYPH:
             glyph, color = ITEM_SUB_GLYPH[sub]
-        repo = _repo_label(r.get("repo_full_name"))
+        repo = r.get("repo_full_name") or ""
         num = r.get("num")
         detail = _truncate(r.get("detail") or "", 80)
         who = r.get("who") or ""
@@ -591,6 +822,46 @@ def render_recent_activity(
     """
 
 
+def render_org_activity(by_org: dict[str, list[dict[str, Any]]], *, days: int) -> str:
+    """Doughnut chart of per-repo event counts, sourced from github_activity (no project_registry gate)."""
+    if not by_org:
+        return ""
+
+    flat: list[tuple[str, int]] = []
+    for org, repos in by_org.items():
+        total = sum(
+            int(r.get("commits") or 0)
+            + int(r.get("prs_opened") or 0)
+            + int(r.get("prs_merged") or 0)
+            + int(r.get("issues_opened") or 0)
+            for r in repos
+        )
+        flat.append((org, total))
+    flat.sort(key=lambda t: t[1], reverse=True)
+
+    if not flat:
+        return ""
+
+    labels = [t[0] for t in flat]
+    values = [t[1] for t in flat]
+    colors = [PIE_PALETTE[i % len(PIE_PALETTE)] for i in range(len(flat))]
+    total = sum(values)
+    payload = json.dumps({"labels": labels, "values": values, "colors": colors})
+
+    return f"""
+    <section class="card repo-pie">
+      <header class="card-head">
+        <h2>GitHub activity by org <span class="subtle">({days}d)</span></h2>
+        <span class="card-head-meta">{total} events · {len(flat)} orgs</span>
+      </header>
+      <div class="repo-pie-wrap">
+        <canvas id="org-activity-canvas" height="320"></canvas>
+      </div>
+      <script type="application/json" id="org-activity-data">{payload}</script>
+    </section>
+    """
+
+
 # Stable, accessible palette — repeats if there are more repos than colors.
 PIE_PALETTE = [
     "#7cc4ff", "#b388ff", "#ffb86b", "#7be08a", "#ff8aa1",
@@ -609,7 +880,7 @@ def render_repo_pie(rows: list[dict[str, Any]], *, days: int) -> str:
     </section>
     """
 
-    labels = [_repo_label(r.get("repo_full_name")) for r in rows]
+    labels = [r.get("repo_full_name") or "" for r in rows]
     values = [int(r.get("events") or 0) for r in rows]
     colors = [PIE_PALETTE[i % len(PIE_PALETTE)] for i in range(len(rows))]
     total = sum(values)
@@ -626,6 +897,73 @@ def render_repo_pie(rows: list[dict[str, Any]], *, days: int) -> str:
         <canvas id="repo-pie-canvas" height="320"></canvas>
       </div>
       <script type="application/json" id="repo-pie-data">{payload}</script>
+    </section>
+    """
+
+
+def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
+    if not rows:
+        return """
+    <section class="card open-prs">
+      <header class="card-head"><h2>Open PRs</h2></header>
+      <div class="empty">No open pull requests found.</div>
+    </section>
+    """
+    items = []
+    for pr in rows:
+        age = pr["age_days"]
+        if age <= 2:
+            age_cls = "fresh"
+        elif age <= 7:
+            age_cls = "stale"
+        else:
+            age_cls = "danger"
+        age_label = f"{age}d"
+
+        title = _truncate(pr["title"], 72)
+        url = _esc(pr["html_url"])
+        repo = _esc(pr["repo_full_name"].split("/")[-1])  # short repo name
+        num = pr["number"]
+        author = _esc(pr["author_login"] or "")
+
+        badges = []
+        if pr["is_draft"]:
+            badges.append('<span class="pr-badge draft">draft</span>')
+        rd = (pr["review_decision"] or "").lower()
+        if rd == "approved":
+            badges.append('<span class="pr-badge approved">approved</span>')
+        elif rd in ("changes_requested", "review_required"):
+            badges.append('<span class="pr-badge review">review</span>')
+
+        badge_html = " ".join(badges)
+        title_html = f'<a href="{url}" target="_blank" rel="noopener noreferrer">#{num} {_esc(title)}</a>'
+
+        fresh_attr = ' data-fresh' if not pr["is_stale"] else ''
+        items.append(f"""
+        <li class="pr-row"{fresh_attr}>
+          <span class="pr-age {age_cls}">{age_label}</span>
+          <div>
+            <div class="pr-title">{title_html} {badge_html}</div>
+            <div class="pr-repo">{_esc(pr["repo_full_name"])}</div>
+          </div>
+          <span class="pr-meta">{author}</span>
+          <span class="pr-meta">{_esc(_ago(pr["updated_at"], now=now))}</span>
+        </li>
+        """)
+
+    stale_count = sum(1 for pr in rows if pr["is_stale"])
+    stale_btn = (
+        f' · <button class="pr-filter-btn" data-pr-filter>'
+        f'{stale_count} stale</button>'
+        if stale_count else ""
+    )
+    return f"""
+    <section class="card open-prs" id="open-prs-card">
+      <header class="card-head">
+        <h2>Open PRs</h2>
+        <span class="card-head-meta">{len(rows)} newest{stale_btn}</span>
+      </header>
+      <ol class="open-prs-list">{''.join(items)}</ol>
     </section>
     """
 
@@ -830,8 +1168,9 @@ def render_sidebar(
         else:
             # Sleuth has never synced — do not pass this off as "all clear".
             sleuth_items.append(
-                '<li class="side-row empty"><div class="side-row-meta">'
-                'Sleuth not synced — run <code>rebalance doctor</code></div></li>'
+                '<li class="side-row empty">'
+                '<div class="side-row-meta warn">Not configured 🛠️</div>'
+                '</li>'
             )
 
     return f"""
@@ -946,10 +1285,29 @@ h2 { font-size: 14px; color: var(--fg); }
 
 /* Main */
 .main { padding: 22px 28px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
-.topbar { display: flex; align-items: center; justify-content: space-between; }
-.topbar .crumb { color: var(--fg-muted); font-weight: 500; }
+.topbar { display: flex; align-items: flex-start; justify-content: space-between; }
+.topbar .crumb { color: var(--fg-muted); font-weight: 500; padding-top: 4px; }
+.topbar-right { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+.topbar-row { display: flex; gap: 10px; align-items: center; }
 .synced { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); }
 .synced .ok-dot { width: 8px; height: 8px; background: var(--ok); border-radius: 50%; }
+.synced.synced-warn { border-color: rgba(166,95,0,.22); color: var(--warn); background: rgba(166,95,0,.08); }
+.synced.synced-warn .ok-dot { background: var(--warn); }
+.synced.synced-danger { border-color: rgba(192,57,43,.18); color: var(--danger); background: rgba(192,57,43,.08); }
+.synced.synced-danger .ok-dot { background: var(--danger); }
+
+/* Status dot glow pulse */
+@keyframes glow-ok {
+  0%, 100% { box-shadow: 0 0 0   0   rgba(47,116,55,0); }
+  50%       { box-shadow: 0 0 5px 3px rgba(47,116,55,.40); }
+}
+@keyframes glow-warn {
+  0%, 100% { box-shadow: 0 0 0   0   rgba(166,95,0,0); }
+  50%       { box-shadow: 0 0 5px 3px rgba(166,95,0,.40); }
+}
+.ok-dot                        { animation: glow-ok   2.8s ease-in-out infinite; }
+.health-dot                    { animation: glow-ok   2.8s ease-in-out infinite; }
+.health-pill.has-issues .health-dot { animation: glow-warn 2.8s ease-in-out infinite; }
 .system-now { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; cursor: help; }
 .system-now .tz-key { color: var(--fg); }
 .system-now.tz-fallback { border-color: var(--warn, #c98a00); color: var(--warn, #c98a00); }
@@ -958,6 +1316,127 @@ h2 { font-size: 14px; color: var(--fg); }
 .pulse-filter { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--fg); width: 220px; }
 .pulse-filter:focus { outline: none; border-color: var(--accent); }
 .is-hidden-by-filter { display: none !important; }
+.health-banner {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 14px;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: 12px;
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+.health-banner-warn {
+  border-color: rgba(166,95,0,.22);
+  background: linear-gradient(90deg, rgba(166,95,0,.10), rgba(255,255,255,.96));
+}
+.health-banner-danger {
+  border-color: rgba(192,57,43,.18);
+  background: linear-gradient(90deg, rgba(192,57,43,.11), rgba(255,255,255,.96));
+}
+.health-banner-lead {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+.health-banner-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.88);
+  border: 1px solid rgba(0,0,0,.06);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+}
+.health-banner-summary {
+  font-weight: 700;
+  color: var(--fg);
+}
+.health-banner-activity {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.health-banner-copy-btn {
+  font: inherit;
+  border: 1px solid rgba(0,0,0,.08);
+  border-radius: 999px;
+  background: rgba(255,255,255,.92);
+  color: var(--fg);
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+.health-banner-copy-btn:hover {
+  background: #fff;
+}
+.health-banner-copy-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.health-banner-copy-icon {
+  width: 16px;
+  height: 16px;
+}
+.health-banner-copy-btn.is-copied {
+  color: var(--ok);
+  border-color: rgba(47,111,61,.18);
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+.health-banner-items {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 2px;
+}
+.health-banner-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,.78);
+  border: 1px solid rgba(0,0,0,.05);
+  white-space: nowrap;
+  flex: 0 0 auto;
+}
+.health-banner-name {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .05em;
+  color: var(--fg);
+}
+.health-banner-detail {
+  color: var(--fg-muted);
+  font-size: 12px;
+}
+.health-banner-item.more {
+  color: var(--fg-muted);
+  font-weight: 600;
+}
 
 /* Card */
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
@@ -1237,7 +1716,67 @@ h2 { font-size: 14px; color: var(--fg); }
   .email-row { grid-template-columns: 1fr; }
   .email-row-side { align-items: flex-start; }
   .email-row-time { white-space: normal; }
+  .topbar { flex-direction: column; align-items: stretch; gap: 12px; }
+  .topbar > div:last-child { flex-wrap: wrap; }
+  .health-banner { grid-template-columns: 1fr; }
+  .health-banner-lead { flex-wrap: wrap; white-space: normal; }
 }
+
+/* Open PRs card */
+.open-prs-list { list-style: none; margin: 0; padding: 0; }
+.pr-row {
+  display: grid;
+  grid-template-columns: 48px minmax(0,1fr) 80px 90px;
+  gap: 10px;
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+  align-items: baseline;
+}
+.pr-row:first-child { border-top: 0; }
+.pr-age { font-variant-numeric: tabular-nums; font-size: 12px; font-weight: 600; text-align: right; }
+.pr-age.fresh  { color: var(--ok); }
+.pr-age.stale  { color: var(--warn); }
+.pr-age.danger { color: var(--danger); }
+.pr-title { font-size: 13px; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-title a { color: var(--fg); text-decoration: none; }
+.pr-title a:hover { color: var(--accent); text-decoration: underline; }
+.pr-repo { font-size: 11.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pr-meta { font-size: 11.5px; color: var(--fg-dim); text-align: right; }
+.pr-badge {
+  display: inline-block; padding: 1px 6px; border-radius: 999px;
+  font-size: 10.5px; font-weight: 600; border: 1px solid var(--border);
+  background: #fff; color: var(--fg-muted); vertical-align: middle;
+}
+.pr-badge.draft  { color: var(--fg-dim); border-color: var(--border); }
+.pr-badge.review { color: var(--warn); border-color: rgba(166,95,0,.25); background: rgba(166,95,0,.07); }
+.pr-badge.approved { color: var(--ok); border-color: rgba(47,116,55,.25); background: rgba(47,116,55,.07); }
+/* Stale filter toggle */
+.pr-filter-btn {
+  font: inherit; font-size: 12px; font-weight: 600;
+  padding: 2px 8px; border-radius: 999px; cursor: pointer;
+  border: 1px solid rgba(166,95,0,.30); background: rgba(166,95,0,.08);
+  color: var(--warn); transition: background .12s, color .12s;
+}
+.pr-filter-btn:hover  { background: rgba(166,95,0,.16); }
+.pr-filter-btn.active { background: var(--warn); color: #fff; border-color: var(--warn); }
+.open-prs.filter-stale .pr-row[data-fresh] { display: none; }
+
+/* Health pill */
+.health-pill {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px; border-radius: 999px; font-size: 12px;
+  border: 1px solid var(--border); background: #fff;
+  color: var(--fg-muted); text-decoration: none;
+  font-variant-numeric: tabular-nums;
+  transition: border-color .12s, background .12s;
+}
+.health-pill:hover { border-color: rgba(31,111,235,.28); background: rgba(31,111,235,.06); }
+.health-pill .health-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ok); flex-shrink: 0;
+}
+.health-pill.has-issues .health-dot { background: var(--warn); }
+.health-pill.has-issues { border-color: rgba(166,95,0,.25); color: var(--warn); }
 """
 
 
@@ -1247,6 +1786,7 @@ PULSE_JS = r"""
   const input = document.getElementById('pulse-filter');
   const btn = document.getElementById('pulse-refresh');
   const undoTray = document.getElementById('goal-undo-tray');
+  const copyBtn = document.querySelector('.health-banner-copy-btn[data-copy-text]');
 
   const escapeHtml = (value) => {
     return String(value ?? '')
@@ -1286,6 +1826,36 @@ PULSE_JS = r"""
     undoTray.hidden = false;
     undoTray.classList.remove('is-empty');
     bindUndoButtons();
+  };
+
+  const copyTextToClipboard = async (text) => {
+    if (!text) return false;
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+    const probe = document.createElement('textarea');
+    probe.value = text;
+    probe.setAttribute('readonly', '');
+    probe.style.position = 'absolute';
+    probe.style.left = '-9999px';
+    document.body.appendChild(probe);
+    probe.select();
+    probe.setSelectionRange(0, probe.value.length);
+    try {
+      return document.execCommand('copy');
+    } finally {
+      document.body.removeChild(probe);
+    }
+  };
+
+  const setCopyButtonStatus = (label, copied = false) => {
+    if (!copyBtn) return;
+    copyBtn.setAttribute('aria-label', label);
+    copyBtn.setAttribute('title', label);
+    const sr = copyBtn.querySelector('.visually-hidden');
+    if (sr) sr.textContent = label;
+    copyBtn.classList.toggle('is-copied', copied);
   };
 
   if (input) {
@@ -1380,6 +1950,25 @@ PULSE_JS = r"""
   });
   bindUndoButtons();
 
+  if (copyBtn) {
+    copyBtn.addEventListener('click', async () => {
+      try {
+        const ok = await copyTextToClipboard(copyBtn.dataset.copyText || '');
+        if (!ok) throw new Error('clipboard copy returned false');
+        setCopyButtonStatus('Copied collector warning text', true);
+        window.setTimeout(() => {
+          setCopyButtonStatus('Copy collector warning text');
+        }, 1500);
+      } catch (err) {
+        console.warn('copy banner text failed:', err);
+        setCopyButtonStatus('Copy failed', false);
+        window.setTimeout(() => {
+          setCopyButtonStatus('Copy collector warning text');
+        }, 1800);
+      }
+    });
+  }
+
   if (btn) {
     btn.addEventListener('click', async () => {
       const original = btn.textContent;
@@ -1447,8 +2036,70 @@ PULSE_JS = r"""
     return true;
   };
   if (!initRepoPie()) {
-    // Chart.js still loading (defer) — retry once on window load.
     window.addEventListener('load', initRepoPie, { once: true });
+  }
+
+  // Org activity doughnut — same pattern, different canvas/data IDs.
+  const initOrgPie = () => {
+    const canvas = document.getElementById('org-activity-canvas');
+    const dataEl = document.getElementById('org-activity-data');
+    if (!canvas || !dataEl || typeof Chart === 'undefined') return false;
+    let payload;
+    try { payload = JSON.parse(dataEl.textContent || '{}'); }
+    catch (e) { console.warn('org-activity payload parse failed', e); return true; }
+    const { labels = [], values = [], colors = [] } = payload;
+    if (!labels.length) return true;
+    const total = values.reduce((a, b) => a + b, 0) || 1;
+    new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          backgroundColor: colors,
+          borderColor: 'rgba(0,0,0,0.25)',
+          borderWidth: 1,
+          hoverOffset: 6,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '58%',
+        plugins: {
+          legend: {
+            position: 'right',
+            labels: { color: '#1d2024', boxWidth: 10, boxHeight: 10, font: { size: 11 } },
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const v = ctx.parsed || 0;
+                const pct = ((v / total) * 100).toFixed(1);
+                return `${ctx.label}: ${v} (${pct}%)`;
+              },
+            },
+          },
+        },
+      },
+    });
+    return true;
+  };
+  if (!initOrgPie()) {
+    window.addEventListener('load', initOrgPie, { once: true });
+  }
+
+  // PR stale filter toggle
+  const prCard = document.getElementById('open-prs-card');
+  const prFilterBtn = prCard && prCard.querySelector('[data-pr-filter]');
+  if (prFilterBtn) {
+    prFilterBtn.addEventListener('click', () => {
+      const active = prCard.classList.toggle('filter-stale');
+      prFilterBtn.classList.toggle('active', active);
+      prFilterBtn.textContent = active
+        ? prFilterBtn.textContent.replace('stale', 'stale ✕')
+        : prFilterBtn.textContent.replace(' ✕', '');
+    });
   }
 })();
 """
@@ -1501,7 +2152,10 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     obsidian_url = build_obsidian_url(vault_path, goals_path) if goals_path.exists() else None
 
     watched = fetch_watched_summary(now)
+    open_pr_rows = fetch_open_prs(limit=10, stale_days=2)
     gh_rows = fetch_recent_github(limit=10)
+    org_activity_days = 14
+    org_activity_rows = fetch_org_activity(days=org_activity_days)
     vault_rows = fetch_vault_recent(limit=6)
     cal_rows = fetch_calendar_upcoming(now, limit=6)
     sleuth_rows = fetch_sleuth_due(limit=6)
@@ -1509,6 +2163,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     repo_pie_days = 7
     repo_pie_rows = fetch_repo_activity_counts(days=repo_pie_days, limit=12)
     status = get_index_status(DB_PATH)
+    doctor_report = run_doctor(DB_PATH)
     # Sleuth has synced at least once iff sources.sleuth.last_synced_at is set.
     # Lets the sidebar tell a genuinely empty inbox apart from a sync that has
     # never run (e.g. missing Sleuth credentials) — no false "Inbox clear".
@@ -1528,9 +2183,9 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     freshness = status.get("freshness") or {}
     drift_total = sum(int(v) for v in freshness.values() if isinstance(v, int))
 
-    last_synced = watched.get("last_synced")
-    synced_ago = _ago(last_synced, now=now) if last_synced else "—"
+    last_activity = _latest_collector_activity(status)
     last_vault = vault_rows[0] if vault_rows else None
+    health_filed_30d = fetch_health_filed_count(days=30)
 
     tz_source_label, tz_is_fallback = _resolve_tz_source()
     offset = local_now.strftime("%z")
@@ -1560,13 +2215,24 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
       <main class="main">
         <div class="topbar">
           <div class="crumb">Pulse <span style="color:var(--fg-dim); margin:0 4px">›</span> Today</div>
-          <div style="display:flex; gap:10px; align-items:center;">
-            <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
-            <span class="{system_now_class}" title="{_esc(system_now_title)}">System: {_esc(system_now_str)} <span class="tz-key">{_esc(system_now_tz)} · {_esc(TZ.key)}</span></span>
-            <span class="synced"><span class="ok-dot"></span>Synced {_esc(synced_ago)}</span>
-            <button id="pulse-refresh" class="refresh-btn">Refresh</button>
+          <div class="topbar-right">
+            <div class="topbar-row">
+              <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
+              <span class="{system_now_class}" title="{_esc(system_now_title)}">System: {_esc(system_now_str)} <span class="tz-key">{_esc(system_now_tz)} · {_esc(TZ.key)}</span></span>
+            </div>
+            <div class="topbar-row">
+              {render_sync_chip(doctor_report.checks, status, last_activity, now)}
+              <a href="{_esc(HEALTH_ISSUES_URL)}" target="_blank" rel="noopener noreferrer"
+                 class="health-pill{' has-issues' if health_filed_30d else ''}"
+                 title="Health issues filed in the last 30 days — click to view on GitHub">
+                <span class="health-dot"></span>
+                Health: {health_filed_30d} report{'s' if health_filed_30d != 1 else ''} filed (30d)
+              </a>
+              <button id="pulse-refresh" class="refresh-btn">Refresh</button>
+            </div>
           </div>
         </div>
+        {render_health_banner(doctor_report.checks, status, now, last_activity)}
         {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
         <div class="grid">
           <div class="col">
@@ -1576,6 +2242,12 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
             {render_watched(watched, now)}
             {render_repo_pie(repo_pie_rows, days=repo_pie_days)}
           </div>
+        </div>
+        <div class="full-row">
+          {render_org_activity(org_activity_rows, days=org_activity_days)}
+        </div>
+        <div class="full-row">
+          {render_open_prs(open_pr_rows, now)}
         </div>
         <div class="full-row">
           {render_recent_emails(email_rows, now, tz=TZ, limit=30, stored_total=email_total)}
