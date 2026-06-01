@@ -828,17 +828,16 @@ def render_org_activity(by_org: dict[str, list[dict[str, Any]]], *, days: int) -
         return ""
 
     flat: list[tuple[str, int]] = []
-    for repos in by_org.values():
-        for repo in repos:
-            events = (
-                int(repo.get("commits") or 0)
-                + int(repo.get("prs_opened") or 0)
-                + int(repo.get("prs_merged") or 0)
-                + int(repo.get("issues_opened") or 0)
-            )
-            flat.append((repo["repo_full_name"] or "", events))
+    for org, repos in by_org.items():
+        total = sum(
+            int(r.get("commits") or 0)
+            + int(r.get("prs_opened") or 0)
+            + int(r.get("prs_merged") or 0)
+            + int(r.get("issues_opened") or 0)
+            for r in repos
+        )
+        flat.append((org, total))
     flat.sort(key=lambda t: t[1], reverse=True)
-    flat = flat[:14]
 
     if not flat:
         return ""
@@ -853,7 +852,7 @@ def render_org_activity(by_org: dict[str, list[dict[str, Any]]], *, days: int) -
     <section class="card repo-pie">
       <header class="card-head">
         <h2>GitHub activity by org <span class="subtle">({days}d)</span></h2>
-        <span class="card-head-meta">{total} events · {len(flat)} repos</span>
+        <span class="card-head-meta">{total} events · {len(flat)} orgs</span>
       </header>
       <div class="repo-pie-wrap">
         <canvas id="org-activity-canvas" height="320"></canvas>
