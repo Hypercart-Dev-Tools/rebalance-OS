@@ -14,6 +14,8 @@ ask_self/index/.DS_Store
 # transient scratch from ask-self ingest runs
 /ask_self_ingest.out
 /ask_self_ingest.err
+# generated arch-doc fallback (ARCHITECTURE.md is hand-maintained; ask-self writes here)
+/ASK_SELF.md
 logs/
 __pycache__/
 *.pyc

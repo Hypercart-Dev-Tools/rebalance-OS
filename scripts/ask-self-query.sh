@@ -42,6 +42,17 @@ if [ -z "$PYTHON_BIN" ]; then
     fi
 fi
 
+# ask-self disables local Qwen providers by default (gemini-first upstream). This
+# repo is a portable local-Qwen index, so re-enable Qwen on the query path when
+# the harness uses a local provider — otherwise retrieval errors out demanding a
+# Gemini key. Honors an explicit override if the caller already set the flag.
+EMBED_PROVIDER="$("$PYTHON_BIN" -c "import json,sys; print((json.load(open(sys.argv[1])).get('embedding') or {}).get('provider') or '')" "$HARNESS_CONFIG" 2>/dev/null || true)"
+case "$EMBED_PROVIDER" in
+    qwen-local|qwen-mlx)
+        export ASK_SELF_ENABLE_QWEN="${ASK_SELF_ENABLE_QWEN:-1}"
+        ;;
+esac
+
 exec "$PYTHON_BIN" "$ENTRYPOINT" \
     --repo-root "$REPO_ROOT" \
     --harness-config "$HARNESS_CONFIG" \
