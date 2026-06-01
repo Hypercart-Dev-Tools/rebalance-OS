@@ -42,10 +42,9 @@ Each row covers one unnecessary layer or duplicate. Risk is relative to the sing
 | F1 | `src/rebalance/ingest/dashboard.py:326,381` | Stale commented-out code | Two comment lines (`# PHASE 1: removed Obsidian gate`) left over from a previous pass | Delete the comment lines | **Zero** | 1 |
 | F2 | `scripts/dashboard.py:896-898` | `_interleave()` no-op | Returns its input unchanged; named like a utility but does nothing. **Verified: body is `return items`.** | Delete function + its single call site on line 885 | **Zero** | 1 |
 | F3 | `scripts/pulse_web.py:378-381` | `_repo_label()` identity function | Returns `full` unchanged after a falsy check. **Verified: body is `if not full: return ""; return full`.** 3 call sites confirmed. | Delete + inline at 3 call sites | **Zero** | 1 |
-| F4 | `scripts/pulse_web.py:384-386` + `scripts/dashboard.py:684-688` | Duplicate `_truncate()` | Identical 3-line helper defined independently in both files | `pulse_web.py` already imports from `dashboard.py` on line 53; import `_truncate` from there and remove the local copy | **Zero** | 1 |
+| F4 | `scripts/pulse_web.py:384-386` + `scripts/dashboard.py:684-688` | Duplicate `_truncate()` | Identical 3-line helper defined independently in both files | `pulse_web.py` already imports from `dashboard.py` on line 53; import `_truncate` from there and remove the local copy | **Low (unverified)** — verify both bodies are identical before executing; any difference in max-length default, ellipsis char, or `None` handling changes rendered output in both TUI and web simultaneously | 1 |
 | F5 | `scripts/dashboard.py:439-490` + `src/rebalance/ingest/dashboard.py:29-78` | `fetch_org_activity()` / `get_all_repo_activity_by_org()` near-duplicate | Same query (`github_activity GROUP BY repo_full_name`), same return shape, same org-split logic. Only difference: `fetch_org_activity` applies the ignored-repos filter; `get_all_repo_activity_by_org` uses `ensure_github_schema` and no filter | One function in `scripts/dashboard.py` with optional `ignored` param; remove from `src/rebalance/ingest/dashboard.py` and update its one import site in `build_dashboard_payload()` | **Low** — one consumer; unit tests don't cover it by name | 2 |
-| F6 | `src/rebalance/ingest/dashboard.py:299-304` | Parallel `repo_map` + `get_github_balance()` path | Builds `{project_name: [repos]}` from project_registry, then calls `get_github_balance()` — the old registry-gated path — on every Obsidian note build, in parallel with the already-working direct `get_all_repo_activity_by_org()` call on line 305 | Remove the `repo_map` build and `get_github_balance()` call from this function. Adapt `_determine_verdict()` to use per-repo data from `get_all_repo_activity_by_org()` instead, OR drop the per-project verdict section from the Obsidian note (it's stale anyway) | **Medium** — verdict labels (Active / Heavy focus / Quiet) would lose project granularity; calendar attribution still needs registry | 3 |
-| F7 | `src/rebalance/ingest/github_scan.py:557-641` | `get_github_balance()` in Obsidian note build | Requires a manually-curated `{project: [repos]}` map to aggregate activity; returns zero for any repo not registered in Obsidian | Already bypassed for display; preserved in MCP server (`mcp_server.py:40`) where per-project aggregation is genuinely useful for agents | **Medium** — MCP tool `github_balance` depends on it; changing semantics affects agent consumers | 3 |
+| F6/F7 | `src/rebalance/ingest/dashboard.py:299-304` + `github_scan.py:557-641` | Remove `get_github_balance()` from Obsidian note build | `build_dashboard_payload()` builds a `{project_name: [repos]}` map from project_registry and passes it to `get_github_balance()` — the old registry-gated path — in parallel with the already-working `get_all_repo_activity_by_org()` call. These are the same code location: F6 is the call site, F7 is the function being called. One Phase 3A task removes both. `get_github_balance()` is preserved in `mcp_server.py:40` where per-project aggregation is genuinely useful for agents. | Remove `repo_map` construction and `get_github_balance()` call from `build_dashboard_payload()`; choose Option A or B for verdict section (see Phase 3A). | **Medium** — verdict labels lose project granularity; MCP tool `github_balance` is unaffected (separate call site) | 3 |
 | F8 | `scripts/dashboard.py:400-436` | `fetch_repo_activity_counts()` union query | Counts events by unioning `github_items + github_commits + github_comments` to drive the repo pie chart. Same totals could come from `github_activity` aggregate columns | Replace with: `SELECT repo_full_name, SUM(commits+prs_opened+prs_merged+issues_opened) FROM github_activity WHERE scan_date >= ? GROUP BY repo_full_name ORDER BY total DESC LIMIT ?` | **Low** — semantics shift slightly (no comment counts) but pie chart purpose unchanged | 3 |
 | F9 | `src/rebalance/ingest/registry.py:27-36` | 6-list `Registry` model | `Registry` has `active_projects`, `most_likely_active_projects`, `semi_active_projects`, `dormant_projects`, `potential_projects`, `archived_projects`. The display layer only ever calls `get_projects(db, status="active")` — a flat SQLite query that ignores this model entirely | The model is only needed for the Obsidian markdown ↔ YAML sync path. If that path is removed in Phase 4, the entire `Registry`/`load_registry`/`save_registry`/`sync_registry` stack collapses to a no-op | **Medium** — MCP `confirm_projects` writes via `save_registry`; until Phase 4 is decided, leave the model alone | 4 |
 | F10 | `src/rebalance/ingest/registry.py:195-223` | `sync_registry()` 3-way pull/push/check | Provides a pull/push/check sync between Obsidian markdown and SQLite. In the decoupled architecture, the Obsidian note is the *output*, not the source of truth | After Phase 3 confirms nothing breaks, the `pull` mode (Obsidian → SQLite) can be removed; `push` mode (SQLite → Obsidian) is the future direction | **Medium** — CLI and MCP use it today | 4 |
@@ -73,7 +72,7 @@ No logic changes. No tests need updating. Safe to do in one commit.
   - `pulse_web.py:785` `repo = _repo_label(r.get("repo_full_name"))` → `repo = r.get("repo_full_name") or ""`
   - `pulse_web.py:853` `repo_label = _repo_label(repo["repo_full_name"])` → `repo_label = repo["repo_full_name"] or ""`
   - `pulse_web.py:894` `repo_label = _repo_label(repo["repo_full_name"])` → same
-- [ ] **F4** — `scripts/pulse_web.py:384-386`: delete local `_truncate()` definition. Add `_truncate` to the import from `dashboard` on line 41-55 (already in that import block). Verify no other local shadow.
+- [ ] **F4** — Before touching anything: read both `_truncate()` bodies and confirm they are identical (max-length default, ellipsis character, `None` handling). If they differ, note the difference and leave both in place. If identical, mark as **Zero** and proceed: delete the local definition in `scripts/pulse_web.py:384-386` and add `_truncate` to the import from `dashboard` (already in that import block). Verify no other local shadow.
 - [ ] Run tests to confirm green: `uv run pytest tests/test_dashboard_terminal_theme.py tests/test_pulse_web_goals.py -x -q`
 
 ---
@@ -87,7 +86,8 @@ One data layer per output format. Rename the collision.
   - `tests/test_dashboard_cli.py:14` (`from rebalance.ingest.dashboard import build_dashboard_payload`)
   - `tests/test_project_priority.py:14` (same)
   - Any other grep hit: `grep -r "from rebalance.ingest.dashboard" src/ tests/`
-- [ ] **F5** — Remove `get_all_repo_activity_by_org()` from `src/rebalance/ingest/note_builder.py`. Extract a single canonical implementation to `src/rebalance/ingest/github_queries.py` (new file) with the ignored-repos filter included. Both `scripts/dashboard.py:fetch_org_activity` and `note_builder.py:build_dashboard_payload` then import from there. Do not import across the `scripts/` ↔ `src/` boundary — cross-package imports are fragile.
+  - Entry points and re-exports (often missed): `grep -r "ingest.dashboard\|ingest/dashboard" pyproject.toml src/rebalance/__init__.py`
+- [ ] **F5** — Add the ignored-repos filter to `get_all_repo_activity_by_org()` in `note_builder.py` (a 2-line change, same pattern as `fetch_org_activity`). Leave both functions in place for now. Defer full extraction to Phase 4, after the "retire the Obsidian note?" decision is made — if the note is retired, `note_builder.py` disappears and there is nothing to consolidate. If it stays, extract then with confidence both consumers will coexist long-term. _Note on import direction: `scripts/ → src/rebalance/` (the existing direction `pulse_web.py` already uses) is fine. The forbidden direction is `src/ → scripts/` — package code must not import from the scripts layer._
 - [ ] Run tests: `uv run pytest tests/test_dashboard_cli.py tests/test_project_priority.py -x -q`
 
 ---
@@ -101,14 +101,12 @@ This is the highest-value phase but has the most moving parts.
 - [ ] In `src/rebalance/ingest/note_builder.py:build_dashboard_payload()` (currently lines 299-304):
   Delete the `repo_map` construction and the `github_rows` dict built from `get_github_balance()`.
   The `org_activity` dict (from `get_all_repo_activity_by_org` / unified function) already covers all repos.
-- [ ] **Decision required before writing code:** `_determine_verdict()` currently receives per-project commit totals. After removing `get_github_balance()`, there is no project-to-repo mapping to sum from. Two options — pick one before starting:
-  - **Option A (recommended):** Drop the per-project verdict section from the Obsidian note entirely. The web dashboard is the live view; the note is stale anyway (last generated May 12). Replace with a flat org-activity table using `org_activity` data already in the payload. Eliminates the ambiguity entirely.
-  - **Option B:** Keep verdicts, derive stats by summing all repos in `org_activity` whose `repo_full_name` starts with the project's primary org (heuristic, not a join). Works for `BinoidCBD` → `LTVera`; fails for cross-org projects. Needs an explicit owner decision on which org maps to which project name.
-- [ ] Once the option is chosen, update `_determine_verdict()` accordingly and update evidence strings (currently near lines 338-346) to reflect the new data source.
-- [ ] Update `build_dashboard_payload()` to pass org-derived stats into `_determine_verdict()`.
-- [ ] Update evidence strings (currently lines 338-346) to reflect org-based data, not `github_rows`.
-- [ ] Update `tests/test_project_priority.py` — the test verifies per-project commit counts attributed via `repos_json`; rewrite to verify activity is attributed via org membership.
-- [ ] Update `tests/test_dashboard_cli.py` — verify the note still renders correctly; the key assertions (project names, verdict labels) should still pass.
+- [ ] **Record decision before writing any code** (owner must confirm): Option A is recommended — delete `_determine_verdict()` and the per-project verdict section entirely. The note was last generated May 12 (19 days stale). No one is reading verdict labels from a stale note. Option B's org-prefix heuristic fails silently for cross-org projects and would be retired two phases later anyway. Simpler replacement: a last-sync timestamp line + the org-activity table already in the payload. If owner prefers Option B, document why here before proceeding.
+  > **Owner decision recorded:** _______________ (Option A / Option B)
+- [ ] Delete `_determine_verdict()` and its call site in `build_dashboard_payload()`. Replace the verdict block in the rendered note with a brief last-sync timestamp and the org-activity table (data already in `org_activity`).
+- [ ] Update evidence strings (currently near lines 338-346) — remove `github_rows` references entirely.
+- [ ] Update `tests/test_project_priority.py` — **scope is smaller than "rewrite":** delete the verdict-assertion block (lines 122–145 per current numbering), add one assertion that `payload.org_activity` is a non-empty dict keyed by org name. Fixture setup, DB scaffolding, and `build_dashboard_payload()` call structure are unchanged.
+- [ ] Update `tests/test_dashboard_cli.py` — verify the note still renders without error; verdict assertions can be removed if verdict section is gone.
 
 **3B — Assess `fetch_repo_activity_counts()` (F8)**
 
@@ -123,7 +121,7 @@ This is the highest-value phase but has the most moving parts.
   LIMIT ?
   ```
   Apply the ignored-repos filter the same way as the rest of the function.
-- [ ] Confirm the pie chart in `pulse_web.py` renders correctly with the new data shape (same dict keys, different counts — visual comparison only).
+- [ ] Confirm the pie chart in `pulse_web.py` renders correctly with the new data shape (same dict keys, different counts — visual comparison only). **Expected: per-repo event counts will be lower than before because comment events are no longer counted. This is intentional — the chart shows commit/PR/issue activity, not comment volume.**
 
 **3C — Assess `github_commits` / `github_items` table necessity (context, not action)**
 
@@ -173,7 +171,7 @@ This phase is an architectural decision, not a refactor. It should be treated as
 
 | Test file | What it covers | Survives Phase 3? |
 |---|---|---|
-| `tests/test_project_priority.py` | `build_dashboard_payload()` + `get_github_balance()` via `repos_json` | Needs rewrite in Phase 3A |
+| `tests/test_project_priority.py` | `build_dashboard_payload()` + `get_github_balance()` via `repos_json` | Phase 3A: delete verdict-assertion block (lines 122–145), add one `org_activity` assertion. Fixture and call structure unchanged — smaller than "rewrite." |
 | `tests/test_dashboard_cli.py` | CLI `dashboard-render` command end-to-end | Update assertions; structure stays |
 | `tests/test_github_scan.py` | `scan_github()`, `upsert_github_activity()`, `discover_repos_from_activity()` | Unchanged — ingest only |
 | `tests/test_project_inference.py` | `infer_project_registry()` auto-inference | Unchanged — ingest only |
@@ -186,7 +184,7 @@ This phase is an architectural decision, not a refactor. It should be treated as
 
 | Original symptom | Root cause finding(s) | Phase that fixes it |
 |---|---|---|
-| SYMPTOM 1 — `repos_json` gate silently hides repos from dashboards | F6 (parallel paths), F7 (get_github_balance still called), F5 (duplicate org-activity functions) | Phase 3A removes the call; Phase 1+2 reduce noise |
+| SYMPTOM 1 — `repos_json` gate silently hides repos from dashboards | F6/F7 (parallel `repo_map` + `get_github_balance()` path), F5 (duplicate org-activity functions) | Phase 3A removes the call; Phase 1+2 reduce noise |
 | SYMPTOM 2 — Two `dashboard.py` files with overlapping concerns | F5 (duplicate query function), F12 (name collision) | Phase 2 |
 | Downstream: `fetch_repo_activity_counts()` hitting wrong tables | F8 | Phase 3B |
 | calendar classifier's last dependency on `repos_json` | F11 | flag only — graceful degradation, no action needed |
