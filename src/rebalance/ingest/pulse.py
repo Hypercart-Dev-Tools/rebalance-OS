@@ -22,13 +22,14 @@ import hashlib
 import json
 import subprocess
 import time
+import urllib.error
+import urllib.parse
+import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
-
-import requests
 
 from rebalance.repair import RepairFSM, RepairResult, RepairStatus
 from rebalance.ingest.agent_tags import classify as classify_source
@@ -371,16 +372,16 @@ def fetch_assigned_issues(
         "Accept": "application/vnd.github+json",
         "X-GitHub-Api-Version": "2022-11-28",
     }
-    response = requests.get(
-        f"{GITHUB_API_ROOT}/search/issues",
-        params=params,
-        headers=headers,
-        timeout=timeout_seconds,
-    )
-    if response.status_code == 403 and "rate limit" in response.text.lower():
-        raise RuntimeError("GitHub search rate limit hit")
-    response.raise_for_status()
-    payload = response.json()
+    url = f"{GITHUB_API_ROOT}/search/issues?{urllib.parse.urlencode(params)}"
+    req = urllib.request.Request(url, headers=headers)
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
+            payload = json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        if exc.code == 403 and "rate limit" in body.lower():
+            raise RuntimeError("GitHub search rate limit hit") from exc
+        raise
     items = payload.get("items") or []
     out: list[dict[str, Any]] = []
     for item in items:

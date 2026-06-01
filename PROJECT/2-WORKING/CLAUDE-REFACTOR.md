@@ -4,7 +4,8 @@ status: in-progress
 updated: 2026-06-01
 branch: claude/refactor-codebase-tl4PQ
 phases_done: 1, 2, 3, 4, 6
-phases_pending: 5, 7, 9, 10
+phases_pending: 10 (partial), 7, issue-39, 5, 9
+execution_order: Phase 10 quick-fix → Phase 7 → Issue #39 (multi-device sync) → Phase 5 → Phase 9
 phases_skipped: 8
 ---
 
@@ -148,8 +149,9 @@ no row moved except intentionally.
 
 - [ ] Reconcile `manifest.json` against installed package versions
 - [ ] Add / pin lockfile
-- [ ] Declare `requests` in `pyproject.toml` (or remove the import from `pulse.py`) —
-      see Baseline. This currently breaks `test_pulse_sleuth_scope.py` collection.
+- [x] Remove undeclared `requests` dependency from `pulse.py` — replaced `requests.get()`
+      with `urllib.request` (stdlib, consistent with `repair.py` and `note_builder.py`).
+      `test_pulse_sleuth_scope.py` now collects and passes. Suite: 382 tests. *(2026-06-01)*
 - [x] Fix `tests/test_github_knowledge.py::test_sync_persists_github_artifacts_and_documents`
       — `prs_synced 0 != 1`. **Done** — it was a stale (time-fragile) fixture, not a
       PR-sync bug; the PR-summary date is now computed relative to now.
