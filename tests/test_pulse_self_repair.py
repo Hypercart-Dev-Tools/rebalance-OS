@@ -15,8 +15,6 @@ import subprocess
 import tempfile
 from pathlib import Path
 
-import pytest
-
 from rebalance.ingest.pulse import _commit_and_push_if_changed
 
 
