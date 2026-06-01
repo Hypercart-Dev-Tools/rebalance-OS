@@ -1,6 +1,6 @@
 ---
 title: Morning Briefing
-status: Planning
+status: Phase 0 complete (GO) — 2026-05-31
 priority: P1
 owner: Noel
 created: 2026-05-31
@@ -23,7 +23,7 @@ design_principle: >
 
 # Morning Briefing
 
-> Status: **Planning.** No code yet. Phase 0 is a single-shot spike to see a real briefing *today*, not after a build-out.
+> Status: **Phase 0 complete (GO).** Single-shot collector spike runs in ~0.04s and produces a real multi-source briefing; see Phase 0 findings. Synthesis seam wired for Haiku (pending API key). Next: Phase 1 deterministic collector + closing the sleuth/calendar/email sync gaps.
 > Goal: every morning, surface what to pick back up, what's due, and what came in overnight — a forward-looking sibling of the backward-looking Git Pulse recap. Suggestions are grounded in the high-quality signals the apps already produce (project priority tiers, GitHub momentum, Sleuth/Slack tasks, important email, calendar).
 > Reading order: Phase 0 → gate → Phase 1 → Phase 2 → delivery (Phase 3 GitPulse README, Phase 4 dashboard). Each phase has a go/no-go gate; nothing downstream starts until the prior phase lands and this doc is updated with findings.
 > Architecture in one line: **deterministic collector (facts) → ranked candidate JSON → Haiku synthesis (judgment + prose) → render target.**
@@ -75,13 +75,29 @@ Why this split: determinism where correctness matters (deadlines, senders, overd
 
 **Intent:** prove the whole idea end-to-end *today*, in one shot, using existing data + the smallest possible glue. Treat "today's activity" as the stand-in for "what you'd see tomorrow morning." Optimize for seeing a real briefing in **under a minute**, not for clean code. Throwaway-friendly.
 
-- [ ] Write a scratch collector (`scripts/spike_morning_brief.py`) that, in a single run, pulls **today's** signals from already-populated local SQLite + live tool calls: top projects by `list_projects()` priority ⨯ `github_balance(since_days=1)`, open/overdue `sleuth_sync_reminders`, last-24h high-signal `ingest_gmail_messages`, and today's `list_events`.
-- [ ] Dump the assembled candidate set to a single `temp/morning-brief-candidates.json` and eyeball it — confirm the rows are real and non-empty for each source (or explicitly note which source is dry today).
-- [ ] Pipe that JSON to a one-shot Claude **Haiku** call with a draft synthesis prompt (group + suggest focus order + cite sources) and print the briefing to stdout.
-- [ ] **Observe wall-clock:** confirm total run is seconds, not the 30–40 min the scheduled pulse path takes. Record the actual time in this doc.
-- [ ] **Quality read:** does the briefing surface things you'd genuinely act on this morning? Note hits, misses, and any hallucinated/uncited lines.
-- [ ] **Tune the "continue working on" heuristic** once against real output (priority-weighted vs recency-weighted vs nearly-shippable) and record which felt right.
-- [ ] **Go/no-go gate:** update this doc with findings and a GO/NO-GO for Phase 1. Capture the winning candidate-JSON shape — it becomes the Phase 1 contract.
+- [x] Write a scratch collector ([scripts/spike_morning_brief.py](../../scripts/spike_morning_brief.py)) that, in a single run, pulls signals from local SQLite via the canonical read paths: `registry.get_projects` ⨯ `github_scan.get_github_balance`, `sleuth_reminders` table, `email_messages` table, `calendar.get_upcoming_events`.
+- [x] Dump the assembled candidate set to `temp/morning-brief-candidates.json` and eyeball it — rows confirmed real; dry/stale sources flagged explicitly (not silently emptied).
+- [~] Pipe that JSON to a one-shot Claude **Haiku** call — **blocked**: no `anthropic` SDK / `ANTHROPIC_API_KEY` / `claude` CLI in this environment. The script has the Haiku seam wired (`render_haiku`, model `claude-haiku-4-5`) and falls back to a deterministic grouped render. Synthesis was validated by an agent acting as the Haiku stand-in.
+- [x] **Observe wall-clock:** collector runs in **~0.03–0.04s** (vs the 30–40 min scheduled pulse path). Goal met decisively.
+- [x] **Quality read:** with a 14-day window the briefing surfaced 12 projects + 30 emails (42 candidates) and correctly elevated real open PRs (sleuth-app-wp-plugin #1/#2, queryguard #34) and a Basecamp @mention. No hallucinated/uncited lines.
+- [x] **Tune the "continue working on" heuristic:** momentum (commits+PRs) is currently doing all the ranking work because **every active project is `priority_tier 3`** — the tier signal isn't differentiated in the registry yet. Recorded below as the top Phase 1 knob.
+- [x] **Go/no-go gate:** see findings below.
+
+### Phase 0 findings (2026-05-31)
+
+**Recommendation: GO for Phase 1.** The collector→candidate→render pipeline works end-to-end in well under a second; the architecture holds.
+
+What works now:
+- `github_activity` (131 rows, scanned today) + `project_registry` (12 active) → real project momentum ranking.
+- `email_messages` path works; important/starred GitHub-PR notifications and @mentions surface correctly.
+
+Gaps to close before this is a *daily* briefing (data freshness, not spike-code bugs):
+- **Sleuth reminders: 0 rows** — never synced locally. "Due today / overdue" is empty. Needs `sleuth_sync_reminders` running on a schedule.
+- **Calendar: 0 rows** — never synced. "On your calendar" is empty.
+- **Email is stale** — latest `received_at` is 2026-05-21 (10 days old). Needs the Gmail ingest running fresh for a true overnight view.
+- **Priority tiers undifferentiated** — all active projects are tier 3, so momentum dominates. Pinning a real "continue working on" score (priority ⨯ momentum ⨯ nearly-shippable) is the highest-leverage Phase 1 task.
+
+Candidate-JSON shape (the Phase 1 contract): top-level `generated_at` / `reference_date` / `timezone` / `since_days` / `counts` / `dropped` / `source_errors` / `candidates[]`, where each candidate is `{source, id, label, salience, timestamp, detail{}}`, sorted by `salience` desc. `source_errors` is always present and explicit so a broken source is never read as "nothing to do."
 
 ## Phase 1 — Deterministic collector (`rebalance morning-brief --json`)
 
