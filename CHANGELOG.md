@@ -1,5 +1,27 @@
 # Changelog
 
+## [0.31.5] - 2026-06-01
+
+### Added
+
+- **Pulse self-repair loop** — `publish_pulse` now detects non-fast-forward push
+  rejections (`fetch first` / `rejected`) and automatically runs `git pull --rebase`
+  then retries the push once. Result includes `repaired: true` on success or
+  `repair_error` on failure. Covers the multi-machine divergence case where two
+  devices push to the same pulse repo concurrently. 4 hermetic tests in
+  `tests/test_pulse_self_repair.py` (bare-remote divergence simulation, clean push,
+  no-op on unchanged content, conflict propagation).
+
+### Refactored
+
+- **MCP server decomposed** — the 857-line `create_server()` god-function split into
+  `src/rebalance/mcp/` package: `server.py` (thin orchestrator) + `tools/` with 7
+  modules by domain (`projects`, `onboarding`, `retrieval`, `calendar`, `index`,
+  `hygiene`, `sleuth`). `mcp_server.py` kept as a 5-line backward-compatibility shim.
+- **Org activity chart** — replaced broken list view (repo names wrapping
+  character-by-character in a 56px grid column) with a Chart.js doughnut where each
+  org is one slice sized by combined commit+PR+issue count.
+
 ## [0.31.4] - 2026-05-28
 
 ### Changed

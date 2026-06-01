@@ -795,8 +795,29 @@ def _commit_and_push_if_changed(
 
     rc, out, err = _run_git(["push"], cwd=target_repo)
     if rc != 0:
-        return {"wrote_file": True, "committed": True, "pushed": False, "git_error": err or out}
+        git_error = err or out
+        # Non-fast-forward rejection: remote has commits we don't — pull --rebase and retry once.
+        if "fetch first" in git_error or "rejected" in git_error:
+            repair = _pull_rebase_and_push(target_repo)
+            if repair["repaired"]:
+                return {"wrote_file": True, "committed": True, "pushed": True, "repaired": True}
+            return {
+                "wrote_file": True, "committed": True, "pushed": False,
+                "git_error": git_error, "repair_error": repair["repair_error"],
+            }
+        return {"wrote_file": True, "committed": True, "pushed": False, "git_error": git_error}
     return {"wrote_file": True, "committed": True, "pushed": True}
+
+
+def _pull_rebase_and_push(target_repo: Path) -> dict[str, Any]:
+    """Recover from a non-fast-forward push rejection: pull --rebase then retry push."""
+    rc, out, err = _run_git(["pull", "--rebase"], cwd=target_repo)
+    if rc != 0:
+        return {"repaired": False, "repair_error": err or out}
+    rc, out, err = _run_git(["push"], cwd=target_repo)
+    if rc != 0:
+        return {"repaired": False, "repair_error": err or out}
+    return {"repaired": True}
 
 
 # ---------------------------------------------------------------------------
