@@ -14,11 +14,14 @@ from rebalance.ingest.config import (
     add_github_related_repo,
     add_github_ignored_repo,
     clear_github_token,
+    get_anthropic_api_key,
+    get_gemini_api_key,
     get_github_related_repos,
     get_github_token,
     get_github_token_with_source,
     get_github_ignored_repos,
     get_project_priority_rules,
+    get_sleuth_credentials,
     set_github_token,
     set_project_priority_rule,
     get_vault_path,
@@ -522,39 +525,12 @@ def _load_google_calendar_env() -> dict[str, str]:
 
 
 def _load_sleuth_env(which: str = "production") -> dict[str, str]:
-    """Load Sleuth Web API connection details from the operator-owned env file.
-
-    Looks up `sleuth-web-api-{which}.env` (default: production). Falls back to
-    the development env file if the requested one doesn't exist — keeps the
-    older dev-only setup working until production is configured.
-    """
-    primary = resolve_secret_path(f"sleuth-web-api-{which}.env")
-    fallback = resolve_secret_path("sleuth-web-api-development.env")
-    if primary.exists():
-        path = primary
-    elif fallback.exists():
-        path = fallback
-    else:
-        raise typer.BadParameter(
-            f"Sleuth env file not found: tried {primary} then {fallback}"
-        )
-
-    values: dict[str, str] = {}
-    for raw_line in path.read_text(encoding="utf-8").splitlines():
-        line = raw_line.strip()
-        if not line or line.startswith("#") or "=" not in line:
-            continue
-        key, value = line.split("=", 1)
-        values[key.strip()] = value.strip()
-
-    required = ("SLEUTH_WEB_API_BASE_URL", "SLEUTH_WEB_API_TOKEN", "SLEUTH_WORKSPACE_NAME")
-    missing = [k for k in required if not values.get(k)]
-    if missing:
-        raise typer.BadParameter(
-            f"Sleuth env file missing required keys: {', '.join(missing)} "
-            f"(expected in {path})"
-        )
-    return values
+    """Thin CLI wrapper — converts config.get_sleuth_credentials() errors to typer.BadParameter."""
+    from rebalance.ingest.config import get_sleuth_credentials
+    try:
+        return get_sleuth_credentials(which)
+    except (FileNotFoundError, ValueError) as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 def _load_calendar_credentials_from_env(env_data: dict[str, str]) -> object:
@@ -2654,6 +2630,69 @@ def config_list_project_priorities() -> None:
         if rule.get("aliases"):
             pieces.append(f"aliases={', '.join(rule['aliases'])}")
         typer.echo(" | ".join(pieces))
+
+
+@config_app.command("doctor")
+def config_doctor() -> None:
+    """Show the status of every credential and config source — with live GitHub validation."""
+    from rebalance.ingest.github_scan import validate_github_token
+    from rebalance.paths import resolve_database_path, DatabaseNotFoundError, resolve_secret_path
+
+    ok = "✓"
+    missing = "✗"
+
+    def row(label: str, status: bool, detail: str = "") -> None:
+        sym = ok if status else missing
+        line = f"  {sym}  {label}"
+        if detail:
+            line += f"  ({detail})"
+        typer.echo(line)
+
+    typer.echo("\n── Config file ─────────────────────────────")
+    cfg_path = get_config_path()
+    row("temp/rbos.config", cfg_path.exists(), str(cfg_path))
+
+    typer.echo("\n── GitHub ───────────────────────────────────")
+    token, source = get_github_token_with_source()
+    if token:
+        result = validate_github_token(token)
+        if result["valid"]:
+            row("GitHub token", True, f"source={source}  login={result.get('login')}  scopes={result.get('scopes')}")
+        else:
+            row("GitHub token", False, f"source={source}  invalid — {result.get('error', 'unknown error')}")
+    else:
+        row("GitHub token", False, "not configured — run: rebalance config set-github-token <PAT>")
+
+    typer.echo("\n── Vault & database ─────────────────────────")
+    vault = get_vault_path()
+    row("Vault path", bool(vault), vault or "not set — run: rebalance config set-vault-path <path>")
+    try:
+        db = resolve_database_path()
+        row("Database", True, str(db))
+    except DatabaseNotFoundError:
+        row("Database", False, "not found — run: rebalance refresh-index")
+
+    typer.echo("\n── LLM API keys (env vars) ──────────────────")
+    row("ANTHROPIC_API_KEY", bool(get_anthropic_api_key()), "used by RepairFSM Haiku escalation")
+    row("GEMINI_API_KEY / GOOGLE_API_KEY", bool(get_gemini_api_key()), "used by dashboard narrative synthesis")
+
+    typer.echo("\n── Sleuth credentials ───────────────────────")
+    try:
+        get_sleuth_credentials()
+        sleuth_path = resolve_secret_path("sleuth-web-api-production.env")
+        if not sleuth_path.exists():
+            sleuth_path = resolve_secret_path("sleuth-web-api-development.env")
+        row("Sleuth env file", True, str(sleuth_path))
+    except FileNotFoundError as exc:
+        row("Sleuth env file", False, str(exc))
+    except ValueError as exc:
+        row("Sleuth env file (found but invalid)", False, str(exc))
+
+    typer.echo("\n── Google Calendar OAuth ────────────────────")
+    cal_path = resolve_secret_path("google-calendar.env")
+    row("google-calendar.env", cal_path.exists(), str(cal_path))
+
+    typer.echo("")
 
 
 @config_app.command("set-github-token")

@@ -32,11 +32,12 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import os
 import urllib.error
 import urllib.request
 from enum import Enum
 from typing import Any, Callable
+
+from rebalance.ingest.config import get_anthropic_api_key
 
 
 # ---------------------------------------------------------------------------
@@ -125,7 +126,7 @@ class RepairFSM:
         self.preferred_action = preferred_action or next(iter(actions))
         self.max_deterministic_attempts = max_deterministic_attempts
         self.max_haiku_attempts = max_haiku_attempts
-        self.haiku_api_key = haiku_api_key or os.environ.get("ANTHROPIC_API_KEY")
+        self.haiku_api_key = haiku_api_key or get_anthropic_api_key()
 
     def run(self, initial_error: str) -> RepairState:
         state = RepairState(status=RepairStatus.PENDING, final_error=initial_error)

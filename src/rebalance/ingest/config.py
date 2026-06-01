@@ -551,3 +551,62 @@ def set_pulse_config(**values: Any) -> None:
             continue
         config[key] = str(value).strip() if isinstance(value, str) else value
     _write_config(config)
+
+
+# ---------------------------------------------------------------------------
+# LLM API keys
+# ---------------------------------------------------------------------------
+
+def get_anthropic_api_key() -> str | None:
+    """Return the Anthropic API key from the environment, or None if absent."""
+    return os.environ.get("ANTHROPIC_API_KEY")
+
+
+def get_gemini_api_key() -> str | None:
+    """Return the Gemini/Google API key from the environment, or None if absent."""
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+
+# ---------------------------------------------------------------------------
+# Sleuth credentials
+# ---------------------------------------------------------------------------
+
+_SLEUTH_REQUIRED = ("SLEUTH_WEB_API_BASE_URL", "SLEUTH_WEB_API_TOKEN", "SLEUTH_WORKSPACE_NAME")
+
+
+def get_sleuth_credentials(which: str = "production") -> dict[str, str]:
+    """Load Sleuth Web API connection details from the operator-owned env file.
+
+    Looks up ``sleuth-web-api-{which}.env`` (default: production). Falls back
+    to the development env file if the requested one doesn't exist.
+
+    Raises FileNotFoundError if neither file exists.
+    Raises ValueError if required keys are missing from the file.
+    """
+    from rebalance.paths import resolve_secret_path
+
+    primary = resolve_secret_path(f"sleuth-web-api-{which}.env")
+    fallback = resolve_secret_path("sleuth-web-api-development.env")
+    if primary.exists():
+        path = primary
+    elif fallback.exists():
+        path = fallback
+    else:
+        raise FileNotFoundError(
+            f"Sleuth env file not found: tried {primary} then {fallback}"
+        )
+
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+
+    missing = [k for k in _SLEUTH_REQUIRED if not values.get(k)]
+    if missing:
+        raise ValueError(
+            f"Sleuth env file missing required keys: {', '.join(missing)} (in {path})"
+        )
+    return values

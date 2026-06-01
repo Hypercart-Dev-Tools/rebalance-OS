@@ -17,10 +17,10 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         currently active reminders; default pulls all states so completed
         reminders get their terminal state mirrored.
         """
-        from rebalance.cli import _load_sleuth_env
+        from rebalance.ingest.config import get_sleuth_credentials
         from rebalance.ingest.sleuth_reminders import sync_sleuth_reminders
 
-        env_data = _load_sleuth_env()
+        env_data = get_sleuth_credentials()
         result = sync_sleuth_reminders(
             base_url=env_data["SLEUTH_WEB_API_BASE_URL"],
             token=env_data["SLEUTH_WEB_API_TOKEN"],

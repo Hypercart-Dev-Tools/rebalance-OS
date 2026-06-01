@@ -3,9 +3,9 @@ title: Rebalance-OS Codebase Refactor
 status: in-progress
 updated: 2026-06-01
 branch: claude/refactor-codebase-tl4PQ
-phases_done: 1, 2, 3, 4, 6
-phases_pending: 10 (partial), 7, issue-39, 5, 9
-execution_order: Phase 10 quick-fix → Phase 7 → Issue #39 (multi-device sync) → Phase 5 → Phase 9
+phases_done: 1, 2, 3, 4, 6, 7, 10 (partial)
+phases_pending: issue-39, 5, 9, 10 (remaining)
+execution_order: Issue #39 (multi-device sync) → Phase 5 → Phase 9 → Phase 10 (remaining)
 phases_skipped: 8
 ---
 
@@ -120,10 +120,20 @@ no row moved except intentionally.
 
 ---
 
-## Phase 7 — Config + secrets consolidation
+## Phase 7 — Config + secrets consolidation ✅
 
-- [ ] Route all credential reads through `config.py`
-- [ ] Add `rebalance config doctor` command
+- [x] Route all credential reads through `config.py`:
+      - `get_gemini_api_key()` moved from `note_builder.py` → `config.py`; `os` import removed from note_builder
+      - `get_anthropic_api_key()` added to `config.py`; `repair.py` now calls it instead of `os.environ.get`
+      - `get_sleuth_credentials()` added to `config.py` (raises `FileNotFoundError`/`ValueError`);
+        `cli._load_sleuth_env()` reduced to a thin wrapper converting errors to `typer.BadParameter`;
+        `mcp/tools/sleuth.py` now calls `config.get_sleuth_credentials()` directly — bad `mcp → cli` import direction eliminated
+      - Calendar OAuth and Gmail ADC left as-is (complex auth flows, not simple key lookups)
+      - Keyring deferred to Issue #39 Phase 0 (multi-device sync prerequisite)
+- [x] Add `rebalance config doctor` command — shows live status of all credential sources:
+      config file, GitHub token (live validation + login + scopes), vault path, DB path,
+      ANTHROPIC_API_KEY, GEMINI_API_KEY, Sleuth env file, Google Calendar env file.
+- [x] 382 tests pass.
 
 ---
 

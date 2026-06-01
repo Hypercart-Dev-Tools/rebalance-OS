@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
@@ -13,6 +12,7 @@ from typing import Any
 
 from rebalance.ingest.calendar_config import CalendarConfig, filter_events, load_review_decisions
 from rebalance.ingest.calendar_helpers import event_duration_minutes
+from rebalance.ingest.config import get_gemini_api_key
 from rebalance.ingest.db import db_connection, ensure_calendar_schema
 from rebalance.tz_utils import local_tz
 from rebalance.ingest.project_priority import apply_project_priorities
@@ -312,9 +312,6 @@ def build_dashboard_payload(
     )
 
 
-def get_gemini_api_key() -> str | None:
-    """Resolve Gemini API key from environment."""
-    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 
 def synthesize_dashboard_narrative(
