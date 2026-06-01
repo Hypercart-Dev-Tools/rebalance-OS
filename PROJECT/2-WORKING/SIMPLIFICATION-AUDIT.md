@@ -28,8 +28,8 @@ The rule: if you can tick a box and forget it, you're doing it right. If you nee
 
 | Column | Value |
 |---|---|
-| **Last completed phase** | Phase 2 ✅ — F12 rename + all import sites updated, F5 ignored-repos filter added, 4 tests green |
-| **What's next** | Phase 3A — owner decision required: Option A (delete verdict section) vs Option B (org-prefix heuristic). Record decision, then remove `get_github_balance()` call from `build_dashboard_payload()` |
+| **Last completed phase** | Phase 3 ✅ — `_determine_verdict()` + registry-gated path deleted; pie chart query simplified; 14 tests green |
+| **What's next** | Phase 4 — architectural decisions required (Obsidian note retirement?, MCP `github_balance` semantics?, registry/sync_registry audit) |
 
 ---
 
@@ -87,36 +87,23 @@ One data layer per output format. Rename the collision.
 
 ---
 
-### Phase 3 — Eliminate get_github_balance() from the Obsidian note build; reassess github_items/github_commits tables
+### Phase 3 — Eliminate get_github_balance() from the Obsidian note build; reassess github_items/github_commits tables ✅
 
 This is the highest-value phase but has the most moving parts.
 
 **3A — Remove the parallel registry-gated path from `build_dashboard_payload()`**
 
-- [ ] In `src/rebalance/ingest/note_builder.py:build_dashboard_payload()` (currently lines 299-304):
-  Delete the `repo_map` construction and the `github_rows` dict built from `get_github_balance()`.
-  The `org_activity` dict (from `get_all_repo_activity_by_org` / unified function) already covers all repos.
-- [ ] **Record decision before writing any code** (owner must confirm): Option A is recommended — delete `_determine_verdict()` and the per-project verdict section entirely. The note was last generated May 12 (19 days stale). No one is reading verdict labels from a stale note. Option B's org-prefix heuristic fails silently for cross-org projects and would be retired two phases later anyway. Simpler replacement: a last-sync timestamp line + the org-activity table already in the payload. If owner prefers Option B, document why here before proceeding.
-  > **Owner decision recorded:** _______________ (Option A / Option B)
-- [ ] Delete `_determine_verdict()` and its call site in `build_dashboard_payload()`. Replace the verdict block in the rendered note with a brief last-sync timestamp and the org-activity table (data already in `org_activity`).
-- [ ] Update evidence strings (currently near lines 338-346) — remove `github_rows` references entirely.
-- [ ] Update `tests/test_project_priority.py` — **scope is smaller than "rewrite":** delete the verdict-assertion block (lines 122–145 per current numbering), add one assertion that `payload.org_activity` is a non-empty dict keyed by org name. Fixture setup, DB scaffolding, and `build_dashboard_payload()` call structure are unchanged.
-- [ ] Update `tests/test_dashboard_cli.py` — verify the note still renders without error; verdict assertions can be removed if verdict section is gone.
+- [x] Removed `repo_map` construction and `github_rows` dict from `build_dashboard_payload()`.
+- [x] **Owner decision recorded:** Option A — delete `_determine_verdict()` and per-project verdict section entirely; replace with org-activity table (already in payload).
+- [x] Deleted `_determine_verdict()` and all its call sites. Simplified `DashboardProjectRow` (removed `verdict`, `confidence`, `evidence`, `next_move`, `source_counts`, `activity_score`). Project section in rendered note now shows tier, client, value, risk, and summary only.
+- [x] Removed `github_rows` references from evidence strings (entire evidence list deleted with those fields).
+- [x] Updated `tests/test_project_priority.py` — replaced verdict/source_counts assertions with `client` and `org_activity` isinstance check.
+- [x] Updated `tests/test_dashboard_cli.py` — note renders without error; verdict assertions absent (section removed).
 
 **3B — Assess `fetch_repo_activity_counts()` (F8)**
 
-- [ ] Replace the union query in `scripts/dashboard.py:400-436` with a direct `github_activity` query:
-  ```sql
-  SELECT repo_full_name,
-         SUM(commits + prs_opened + prs_merged + issues_opened) AS events
-  FROM github_activity
-  WHERE scan_date >= date('now', ?)
-  GROUP BY repo_full_name
-  ORDER BY events DESC
-  LIMIT ?
-  ```
-  Apply the ignored-repos filter the same way as the rest of the function.
-- [ ] Confirm the pie chart in `pulse_web.py` renders correctly with the new data shape (same dict keys, different counts — visual comparison only). **Expected: per-repo event counts will be lower than before because comment events are no longer counted. This is intentional — the chart shows commit/PR/issue activity, not comment volume.**
+- [x] Replaced 3-table union query in `scripts/dashboard.py` with direct `github_activity` query using `SUM(commits+prs_opened+prs_merged+issues_opened)`. Same ignored-repos filter applied. Comment counts intentionally excluded.
+- [x] Data shape unchanged (`repo_full_name`, `events` keys); pie chart consumers unaffected.
 
 **3C — Assess `github_commits` / `github_items` table necessity (context, not action)**
 

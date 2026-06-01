@@ -398,32 +398,23 @@ def fetch_recent_github(limit: int = 9) -> list[dict[str, Any]]:
 
 
 def fetch_repo_activity_counts(days: int = 7, limit: int = 12) -> list[dict[str, Any]]:
-    """Per-repo event counts (items + commits + comments) over the last N days."""
+    """Per-repo event counts (commits + PRs + issues) over the last N days."""
     ignored = get_github_ignored_repos()
     ignored_clause = ""
-    params: list[Any] = [f"-{int(days)} days"] * 3
+    params: list[Any] = [f"-{int(days)} days"]
     if ignored:
         placeholders = ",".join("?" * len(ignored))
-        ignored_clause = f"WHERE LOWER(repo_full_name) NOT IN ({placeholders})"
+        ignored_clause = f"AND LOWER(repo_full_name) NOT IN ({placeholders})"
         params.extend(ignored)
     params.append(limit)
     try:
         with db_connection(DB_PATH) as conn:
             rows = conn.execute(
                 f"""
-                SELECT repo_full_name, COUNT(*) AS events FROM (
-                    SELECT repo_full_name FROM github_items
-                      WHERE updated_at IS NOT NULL
-                        AND updated_at >= datetime('now', ?)
-                    UNION ALL
-                    SELECT repo_full_name FROM github_commits
-                      WHERE committed_at IS NOT NULL
-                        AND committed_at >= datetime('now', ?)
-                    UNION ALL
-                    SELECT repo_full_name FROM github_comments
-                      WHERE created_at IS NOT NULL
-                        AND created_at >= datetime('now', ?)
-                )
+                SELECT repo_full_name,
+                       SUM(commits + prs_opened + prs_merged + issues_opened) AS events
+                FROM github_activity
+                WHERE scan_date >= date('now', ?)
                 {ignored_clause}
                 GROUP BY repo_full_name
                 ORDER BY events DESC

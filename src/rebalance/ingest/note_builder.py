@@ -15,7 +15,6 @@ from rebalance.ingest.calendar_config import CalendarConfig, filter_events, load
 from rebalance.ingest.calendar_helpers import event_duration_minutes
 from rebalance.ingest.db import db_connection, ensure_calendar_schema
 from rebalance.tz_utils import local_tz
-from rebalance.ingest.github_scan import get_github_balance
 from rebalance.ingest.project_priority import apply_project_priorities
 from rebalance.ingest.project_classifier import annotate_events_with_projects, load_project_matchers
 from rebalance.ingest.registry import get_projects
@@ -93,17 +92,11 @@ class DashboardProjectRow:
     name: str
     summary: str
     priority_tier: int | None
-    verdict: str
-    confidence: str
     priority_score: int = 0
     client: str = ""
     value_level: str | None = None
     value_score: int | None = None
     risk_level: str | None = None
-    evidence: list[str] = field(default_factory=list)
-    next_move: str = ""
-    source_counts: dict[str, int] = field(default_factory=dict)
-    activity_score: int = 0
 
 
 @dataclass
@@ -245,56 +238,6 @@ def _load_recent_calendar_activity(
     return project_stats, needs_review[:10]
 
 
-def _determine_verdict(
-    *,
-    priority_tier: int | None,
-    calendar_minutes: int,
-    github_stats: dict[str, Any],
-) -> tuple[str, str, str, int]:
-    """Return verdict, confidence, next move, and activity score."""
-    commits = int(github_stats.get("total_commits") or 0)
-    prs_opened = int(github_stats.get("prs_opened") or 0)
-    repos_touched = len(github_stats.get("repos_touched") or [])
-    calendar_hours = calendar_minutes / 60
-    source_count = int(calendar_minutes > 0) + int(repos_touched > 0)
-    tier = priority_tier or 99
-
-    if tier <= 2 and calendar_minutes == 0 and repos_touched == 0:
-        return (
-            "Needs attention",
-            "medium",
-            "Schedule one concrete work block or define the next deliverable this week.",
-            0,
-        )
-    if calendar_hours >= 6 or commits >= 8 or prs_opened >= 2:
-        return (
-            "Heavy focus",
-            "high" if source_count == 2 else "medium",
-            "Protect momentum, but confirm this level of attention still matches current priorities.",
-            4,
-        )
-    if calendar_hours >= 2 or commits >= 2 or repos_touched > 0:
-        return (
-            "Active",
-            "high" if source_count == 2 else "medium",
-            "Keep the thread moving and capture the next explicit step before context decays.",
-            3,
-        )
-    if tier <= 2:
-        return (
-            "Quiet",
-            "low",
-            "Decide whether this is intentionally parked or needs a small restart move.",
-            1,
-        )
-    return (
-        "Quiet",
-        "low",
-        "Leave parked unless another signal raises its priority this week.",
-        0,
-    )
-
-
 def build_dashboard_payload(
     database_path: Path,
     *,
@@ -307,11 +250,6 @@ def build_dashboard_payload(
     """Build the structured payload that drives the dashboard markdown."""
     config = config or CalendarConfig.load()
     projects = apply_project_priorities(get_projects(database_path, status="active"))
-    repo_map = {project["name"]: list(project.get("repos") or []) for project in projects}
-    github_rows = {
-        row["project_name"]: row
-        for row in get_github_balance(database_path, repo_map, since_days=since_days)
-    }
     org_activity = get_all_repo_activity_by_org(database_path, since_days=since_days)
     calendar_stats, needs_review = _load_recent_calendar_activity(
         database_path,
@@ -325,52 +263,8 @@ def build_dashboard_payload(
         name = project["name"]
         custom_fields = project.get("custom_fields") or {}
         display_name = str(custom_fields.get("priority_display_name") or name)
-        github_stats = github_rows.get(
-            name,
-            {
-                "total_commits": 0,
-                "prs_opened": 0,
-                "prs_merged": 0,
-                "issues_opened": 0,
-                "repos_touched": [],
-                "repos_linked": [],
-            },
-        )
-        default_calendar_row = {"event_count": 0, "total_minutes": 0, "sample_titles": []}
-        calendar_row = calendar_stats.get(display_name) or calendar_stats.get(name) or default_calendar_row
-        verdict, confidence, next_move, activity_score = _determine_verdict(
-            priority_tier=project.get("priority_tier"),
-            calendar_minutes=int(calendar_row["total_minutes"]),
-            github_stats=github_stats,
-        )
-        evidence = [
-            (
-                f"Calendar: {calendar_row['total_minutes'] / 60:.2f}h across "
-                f"{calendar_row['event_count']} event(s) in the last {since_days} days."
-            ),
-            (
-                f"GitHub: {int(github_stats.get('total_commits') or 0)} commits, "
-                f"{int(github_stats.get('prs_opened') or 0)} PR(s) opened, "
-                f"{int(github_stats.get('prs_merged') or 0)} PR(s) merged across "
-                f"{len(github_stats.get('repos_touched') or [])} touched repo(s)."
-            ),
-        ]
-        if calendar_row["sample_titles"]:
-            evidence.append("Recent calendar titles: " + "; ".join(calendar_row["sample_titles"]))
-        if project.get("summary"):
-            evidence.append(f"Registry summary: {project['summary']}")
         client = str(custom_fields.get("client") or "")
         value_score = custom_fields.get("value_score")
-        if client or project.get("value_level") or value_score is not None:
-            parts = []
-            if client:
-                parts.append(f"client={client}")
-            if project.get("value_level"):
-                parts.append(f"value_level={project['value_level']}")
-            if value_score is not None:
-                parts.append(f"value_score={value_score}/10")
-            evidence.append("Priority: " + ", ".join(parts))
-
         project_rows.append(
             DashboardProjectRow(
                 name=display_name,
@@ -381,16 +275,6 @@ def build_dashboard_payload(
                 value_level=project.get("value_level"),
                 value_score=value_score if isinstance(value_score, int) else None,
                 risk_level=project.get("risk_level"),
-                verdict=verdict,
-                confidence=confidence,
-                evidence=evidence,
-                next_move=next_move,
-                source_counts={
-                    "calendar_events": int(calendar_row["event_count"]),
-                    "repos_linked": len(github_stats.get("repos_touched") or []),
-                    "repos_touched": len(github_stats.get("repos_touched") or []),
-                },
-                activity_score=activity_score,
             )
         )
 
@@ -398,17 +282,15 @@ def build_dashboard_payload(
         key=lambda row: (
             -row.priority_score,
             row.priority_tier if row.priority_tier is not None else 99,
-            -row.activity_score,
             row.name.lower(),
         )
     )
 
-    needs_attention = sum(1 for row in project_rows if row.verdict == "Needs attention")
-    heavy_focus = sum(1 for row in project_rows if row.verdict == "Heavy focus")
+    total_repos = sum(len(repos) for repos in org_activity.values())
     operator_summary = (
-        f"{len(project_rows)} active project(s); {heavy_focus} in heavy focus, "
-        f"{needs_attention} needing attention, and {len(needs_review)} unattributed item(s) "
-        f"still waiting for review."
+        f"{len(project_rows)} active project(s); {total_repos} repo(s) with activity across "
+        f"{len(org_activity)} org(s) in the last {since_days} days; "
+        f"{len(needs_review)} unattributed calendar item(s) waiting for review."
     )
 
     return DashboardPayload(
@@ -444,7 +326,7 @@ def synthesize_dashboard_narrative(
 ) -> str:
     """Generate a concise operator summary via the Gemini REST API."""
     project_lines = [
-        f"- {project.name}: {project.verdict}; confidence={project.confidence}; next={project.next_move}"
+        f"- {project.name} (tier {project.priority_tier or 'n/a'}): {project.summary or '(no summary)'}"
         for project in payload.projects[:8]
     ]
     prompt_parts = [
@@ -556,26 +438,21 @@ def render_dashboard_markdown(
     else:
         for project in payload.projects:
             tier = project.priority_tier if project.priority_tier is not None else "n/a"
+            value_str = project.value_level or "n/a"
+            if project.value_score is not None:
+                value_str += f" ({project.value_score}/10)"
             lines.extend(
                 [
                     "",
                     f"### {project.name}",
-                    f"- Verdict: {project.verdict}",
-                    f"- Confidence: {project.confidence}",
                     f"- Priority tier: {tier}",
-                    f"- Priority score: {project.priority_score}",
                     f"- Client: {project.client or 'n/a'}",
-                    f"- Value: {project.value_level or 'n/a'}"
-                    + (f" ({project.value_score}/10)" if project.value_score is not None else ""),
+                    f"- Value: {value_str}",
                     f"- Risk: {project.risk_level or 'n/a'}",
-                    f"- Source counts: calendar_events={project.source_counts.get('calendar_events', 0)}, "
-                    f"repos_linked={project.source_counts.get('repos_linked', 0)}, "
-                    f"repos_touched={project.source_counts.get('repos_touched', 0)}",
-                    "- Evidence:",
                 ]
             )
-            lines.extend([f"  - {item}" for item in project.evidence])
-            lines.append(f"- Next move: {project.next_move}")
+            if project.summary:
+                lines.append(f"- Summary: {project.summary}")
 
     lines.extend(["", "## Recent GitHub Activity"])
     if payload.org_activity:
