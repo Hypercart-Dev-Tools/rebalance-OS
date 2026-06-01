@@ -24,6 +24,60 @@ from rebalance.ingest.registry import get_projects
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
 DEFAULT_CHANGELOG_PATH = REPO_ROOT / "CHANGELOG.md"
 DEFAULT_4X4_PATH = REPO_ROOT / "4X4.md"
+
+
+def get_all_repo_activity_by_org(
+    database_path: Path,
+    since_days: int = 14,
+) -> dict[str, list[dict[str, Any]]]:
+    """
+    Return all github_activity rows grouped by GitHub org, with no project_registry filter.
+
+    Every repo that had any activity in the window appears regardless of whether it is
+    registered in Obsidian. Repos within each org are sorted by last_active_at DESC.
+    """
+    if not database_path.exists():
+        return {}
+
+    from rebalance.ingest.db import db_connection, ensure_github_schema
+
+    since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
+
+    with db_connection(database_path, ensure_github_schema) as conn:
+        rows = conn.execute(
+            """
+            SELECT repo_full_name,
+                   SUM(commits)        AS commits,
+                   SUM(prs_opened)     AS prs_opened,
+                   SUM(prs_merged)     AS prs_merged,
+                   SUM(issues_opened)  AS issues_opened,
+                   MAX(last_active_at) AS last_active_at
+            FROM github_activity
+            WHERE scan_date >= ?
+            GROUP BY repo_full_name
+            """,
+            (since_date,),
+        ).fetchall()
+
+    by_org: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        repo = row["repo_full_name"]
+        org = repo.split("/")[0] if "/" in repo else repo
+        by_org.setdefault(org, []).append({
+            "repo_full_name": repo,
+            "commits": int(row["commits"] or 0),
+            "prs_opened": int(row["prs_opened"] or 0),
+            "prs_merged": int(row["prs_merged"] or 0),
+            "issues_opened": int(row["issues_opened"] or 0),
+            "last_active_at": row["last_active_at"],
+        })
+
+    for org_repos in by_org.values():
+        org_repos.sort(key=lambda r: r["last_active_at"] or "", reverse=True)
+
+    return by_org
+
+
 @dataclass
 class DashboardProjectRow:
     name: str
@@ -53,6 +107,7 @@ class DashboardPayload:
     needs_review: list[str]
     source_window: dict[str, str]
     operator_summary: str
+    org_activity: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
 
 
 def read_recent_changelog_highlights(path: Path, *, max_versions: int = 2, max_bullets: int = 8) -> list[str]:
@@ -247,6 +302,7 @@ def build_dashboard_payload(
         row["project_name"]: row
         for row in get_github_balance(database_path, repo_map, since_days=since_days)
     }
+    org_activity = get_all_repo_activity_by_org(database_path, since_days=since_days)
     calendar_stats, needs_review = _load_recent_calendar_activity(
         database_path,
         target_date=target_date,
@@ -267,7 +323,8 @@ def build_dashboard_payload(
                 "prs_merged": 0,
                 "issues_opened": 0,
                 "repos_touched": [],
-                "repos_linked": project.get("repos") or [],
+                # "repos_linked": project.get("repos") or [],  # PHASE 1: removed Obsidian gate
+                "repos_linked": [],
             },
         )
         default_calendar_row = {"event_count": 0, "total_minutes": 0, "sample_titles": []}
@@ -321,7 +378,8 @@ def build_dashboard_payload(
                 next_move=next_move,
                 source_counts={
                     "calendar_events": int(calendar_row["event_count"]),
-                    "repos_linked": len(project.get("repos") or []),
+                    # "repos_linked": len(project.get("repos") or []),  # PHASE 1: removed Obsidian gate
+                    "repos_linked": len(github_stats.get("repos_touched") or []),
                     "repos_touched": len(github_stats.get("repos_touched") or []),
                 },
                 activity_score=activity_score,
@@ -360,6 +418,7 @@ def build_dashboard_payload(
             "goals_path": str(goals_path),
         },
         operator_summary=operator_summary,
+        org_activity=org_activity,
     )
 
 
@@ -460,6 +519,7 @@ def render_dashboard_markdown(
         "- [Recent Highlights](#recent-highlights)",
         "- [Current Focus](#current-focus)",
         "- [Project Rebalance](#project-rebalance)",
+        "- [Recent GitHub Activity](#recent-github-activity)",
         "- [Needs Review](#needs-review)",
         "- [Source Window](#source-window)",
         "",
@@ -508,6 +568,23 @@ def render_dashboard_markdown(
             )
             lines.extend([f"  - {item}" for item in project.evidence])
             lines.append(f"- Next move: {project.next_move}")
+
+    lines.extend(["", "## Recent GitHub Activity"])
+    if payload.org_activity:
+        for org, repos in sorted(payload.org_activity.items()):
+            lines.append(f"\n### {org}")
+            for repo in repos:
+                commits = repo["commits"]
+                last_active = (repo["last_active_at"] or "")[:10]
+                prs = repo["prs_merged"]
+                parts = [f"{commits} commit(s)"]
+                if prs:
+                    parts.append(f"{prs} PR(s) merged")
+                if last_active:
+                    parts.append(f"last active {last_active}")
+                lines.append(f"- {repo['repo_full_name']} — {' · '.join(parts)}")
+    else:
+        lines.append(f"- No GitHub activity in the last {payload.since_days} days.")
 
     lines.extend(["", "## Needs Review"])
     if payload.needs_review:

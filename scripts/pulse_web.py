@@ -43,6 +43,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     TZ,
     fetch_calendar_upcoming,
     fetch_open_prs,
+    fetch_org_activity,
     fetch_recent_emails,
     fetch_recent_github,
     fetch_repo_activity_counts,
@@ -827,6 +828,47 @@ def render_recent_activity(
       <header class="card-head"><h2>Recent GitHub activity</h2></header>
       <ol class="activity-list">{body}</ol>
       {foot}
+    </section>
+    """
+
+
+def render_org_activity(by_org: dict[str, list[dict[str, Any]]], *, days: int) -> str:
+    """Org-grouped repo activity card sourced from github_activity — no project_registry gate."""
+    if not by_org:
+        return ""
+    sections: list[str] = []
+    for org in sorted(by_org):
+        rows_html: list[str] = []
+        for repo in by_org[org]:
+            parts: list[str] = []
+            if repo["commits"]:
+                parts.append(f"{repo['commits']} commit(s)")
+            if repo["prs_merged"]:
+                parts.append(f"{repo['prs_merged']} PR(s) merged")
+            if repo["prs_opened"] and not repo["prs_merged"]:
+                parts.append(f"{repo['prs_opened']} PR(s) opened")
+            last = (repo["last_active_at"] or "")[:10]
+            if last:
+                parts.append(f"last active {last}")
+            repo_label = _repo_label(repo["repo_full_name"])
+            detail = " · ".join(parts) if parts else "no activity detail"
+            rows_html.append(
+                f'<li class="activity-row">'
+                f'<span class="repo">{_esc(repo_label)}</span>'
+                f'<span class="detail">{_esc(detail)}</span>'
+                f"</li>"
+            )
+        sections.append(
+            f'<li class="org-group">'
+            f'<span class="label muted">{_esc(org)}</span>'
+            f'<ol class="activity-list">' + "".join(rows_html) + "</ol>"
+            f"</li>"
+        )
+    body = "".join(sections)
+    return f"""
+    <section class="card activity">
+      <header class="card-head"><h2>GitHub activity by org <span class="subtle">({days}d)</span></h2></header>
+      <ol class="activity-list">{body}</ol>
     </section>
     """
 
@@ -2074,6 +2116,8 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     watched = fetch_watched_summary(now)
     open_pr_rows = fetch_open_prs(limit=10, stale_days=2)
     gh_rows = fetch_recent_github(limit=10)
+    org_activity_days = 14
+    org_activity_rows = fetch_org_activity(days=org_activity_days)
     vault_rows = fetch_vault_recent(limit=6)
     cal_rows = fetch_calendar_upcoming(now, limit=6)
     sleuth_rows = fetch_sleuth_due(limit=6)
@@ -2160,6 +2204,9 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
             {render_watched(watched, now)}
             {render_repo_pie(repo_pie_rows, days=repo_pie_days)}
           </div>
+        </div>
+        <div class="full-row">
+          {render_org_activity(org_activity_rows, days=org_activity_days)}
         </div>
         <div class="full-row">
           {render_open_prs(open_pr_rows, now)}

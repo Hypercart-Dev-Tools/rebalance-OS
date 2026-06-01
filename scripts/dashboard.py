@@ -436,6 +436,60 @@ def fetch_repo_activity_counts(days: int = 7, limit: int = 12) -> list[dict[str,
         return []
 
 
+def fetch_org_activity(days: int = 14, limit: int = 100) -> dict[str, list[dict[str, Any]]]:
+    """Per-repo summary from github_activity, grouped by GitHub org, sorted by last_active_at DESC.
+
+    Queries the aggregate table directly — no project_registry join, so every repo with
+    any push/PR activity in the window appears regardless of Obsidian registration.
+    """
+    ignored = get_github_ignored_repos()
+    ignored_clause = ""
+    params: list[Any] = [f"-{int(days)} days"]
+    if ignored:
+        placeholders = ",".join("?" * len(ignored))
+        ignored_clause = f"AND LOWER(repo_full_name) NOT IN ({placeholders})"
+        params.extend(ignored)
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                f"""
+                SELECT repo_full_name,
+                       SUM(commits)        AS commits,
+                       SUM(prs_opened)     AS prs_opened,
+                       SUM(prs_merged)     AS prs_merged,
+                       SUM(issues_opened)  AS issues_opened,
+                       MAX(last_active_at) AS last_active_at
+                FROM github_activity
+                WHERE scan_date >= date('now', ?)
+                {ignored_clause}
+                GROUP BY repo_full_name
+                ORDER BY last_active_at DESC
+                LIMIT {int(limit)}
+                """,
+                tuple(params),
+            ).fetchall()
+    except Exception:  # noqa: BLE001
+        return {}
+
+    by_org: dict[str, list[dict[str, Any]]] = {}
+    for row in rows:
+        repo = row["repo_full_name"]
+        org = repo.split("/")[0] if "/" in repo else repo
+        by_org.setdefault(org, []).append({
+            "repo_full_name": repo,
+            "commits": int(row["commits"] or 0),
+            "prs_opened": int(row["prs_opened"] or 0),
+            "prs_merged": int(row["prs_merged"] or 0),
+            "issues_opened": int(row["issues_opened"] or 0),
+            "last_active_at": row["last_active_at"],
+        })
+
+    for org_repos in by_org.values():
+        org_repos.sort(key=lambda r: r["last_active_at"] or "", reverse=True)
+
+    return by_org
+
+
 def fetch_vault_recent(limit: int = 6) -> list[dict[str, Any]]:
     try:
         with db_connection(DB_PATH) as conn:
