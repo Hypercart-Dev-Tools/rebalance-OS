@@ -22,15 +22,50 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 | `list_watched_repos(since_days=?)` | Show the merged set of GitHub repos being monitored — project registry ∪ recent `github_activity` − ignored. Same set `refresh_index(scope=["github"])` syncs. Use this to debug coverage gaps |
 | `publish_pulse(dry_run=?, push=?)` | Render today's + yesterday's activity into a markdown status page and publish it to a private pulse repo. Each row tagged by source (`claude-cloud` / `codex-cloud` / `lovable` / `local-vscode` / `human`) via `src/rebalance/ingest/agent_tags.py`. Reusable: every per-user value (`github_login`, `slack_user_id`, `pulse_target_path`, `pulse_filename`, `pulse_timezone`) lives in `temp/rbos.config` |
 
-**Onboarding & projects:** `onboarding_status`, `setup_github_token`, `run_preflight`, `confirm_projects`, `list_projects`, `github_balance`. See [CLAUDE.md](CLAUDE.md) for the full onboarding flow.
+**On first interaction:** call `onboarding_status(vault_path)` to check setup state. If any steps are incomplete, walk the user through them in order. If you don't know the vault path, ask: "Where is your Obsidian vault? (absolute path)"
 
-**Targeted retrieval (older, per-source — still valid):** `query_notes`, `search_vault`, `query_github_context`, `ask`, `github_release_readiness`, `github_close_candidates`.
+**Onboarding flow:**
+
+1. **Check state:** `onboarding_status(vault_path)` — shows which steps are done/pending.
+2. **GitHub PAT:** If `github_token_set` is false, ask the user for a PAT with `repo:read` scope. Call `setup_github_token(token)`. If it returns `valid: false`, ask for a corrected token.
+3. **Discover projects:** Call `run_preflight(vault_path)`. Present results using friendly labels: "Most active" = `most_likely_active_projects` (last 14 days), "Semi-active" = `semi_active_projects` (15–30 days), "Dormant" = `dormant_projects` (31+ days), "Vault only" = `potential_projects`. If `github_error` is set, inform the user that GitHub discovery failed. Ask which to keep, remove, or merge. For each kept project, collect: short summary (2–3 sentences) and priority tier (1–5).
+4. **Confirm:** Call `confirm_projects(projects, vault_path)`. Each project dict **must** include `status: "active"`. Minimum shape: `{name, status: "active", summary, repos: [], priority_tier: int, tags: []}`.
+5. **Verify:** Call `list_projects()` to confirm projects are queryable.
+6. **Initial refresh:** Call `refresh_index(scope=["all"])` to populate the SQLite knowledge base. Use `dry_run=True` first for a preview. After it completes, `github_balance()` will return per-project commit/PR/issue counts.
+
+**Onboarding & project tools:**
+
+| Tool | Purpose |
+|---|---|
+| `onboarding_status(vault_path)` | Check which setup steps are complete |
+| `setup_github_token(token)` | Validate and store a GitHub PAT |
+| `run_preflight(vault_path)` | Discover project candidates (read-only) |
+| `confirm_projects(projects, vault_path)` | Write registry and sync to DB |
+| `list_projects(status?)` | Query projects (default: active) |
+| `github_balance(since_days?)` | GitHub activity per project (requires prior refresh) |
+
+**Targeted retrieval (older, per-source — still valid):**
+
+| Tool | Purpose |
+|---|---|
+| `query_notes(query, top_k?)` | Vault-only vector search (legacy `embeddings` table) |
+| `search_vault(keyword, limit?)` | Full-text/keyword search over vault |
+| `query_github_context(query, repo?, top_k?)` | GitHub-only vector search (legacy `github_embeddings`) |
+| `ask(query, since_days?, skip_synthesis?)` | Combined context + optional local LLM synthesis |
+| `github_release_readiness(repo, milestone?)` | Milestone readiness inferred from local corpus |
+| `github_close_candidates(repo)` | Issues likely closed by merged PRs |
+
+**Key paths:**
+- Registry: `{vault_path}/Projects/00-project-registry.md`
+- Config: `temp/rbos.config` (gitignored, repo root)
+- Database: resolved from `REBALANCE_DB` env var (set in `.vscode/mcp.json`)
+- Architecture docs: `PROJECT.md`, `MCP.md`
 
 **Background refresh.** A launchd job (`com.rebalance-os.daily-sync`) runs [scripts/daily_sync.sh](scripts/daily_sync.sh) at 6:30 AM daily and on boot. The script invokes the same `refresh_index(scope=["all"])` orchestration, so the cron and the MCP tool share one code path. If the index looks stale, check `temp/logs/daily_sync_YYYY-MM-DD.log` before manually re-running.
 
 **Hourly pulse publish.** A second launchd job (`com.rebalance-os.pulse-sync`) runs [scripts/pulse_sync.sh](scripts/pulse_sync.sh) on the hour, every hour from 6 AM to 11 PM local. It calls the same `publish_pulse()` orchestration the MCP tool exposes — render markdown, commit + push to the configured private pulse repo only when content actually changed. Logs in `temp/logs/pulse_sync_YYYY-MM-DD.log`. Install via `bash scripts/install_pulse_scheduler.sh`. Public users wanting to reuse this only need to populate the pulse keys in their own `temp/rbos.config` and point at their own private clone.
 
-**Source of truth for the orchestration:** [src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py). Only edit there if you need to change refresh behavior — the MCP wrappers in `src/rebalance/mcp_server.py` and `daily_sync.sh` are thin and should stay that way.
+**Source of truth for the orchestration:** [src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py). Only edit there if you need to change refresh behavior — the MCP wrappers in `src/rebalance/mcp/` (25 tools across 7 domain modules; `mcp_server.py` is a 5-line backward-compat shim) and `daily_sync.sh` are thin and should stay that way.
 
 **Repo coverage.** `refresh_index(scope=["github"])` no longer requires every monitored repo to be in the active project registry. It auto-merges `project_repos ∪ activity_repos` (from `github_activity`, last 14 days) and skips `github_ignored_repos`. Use `list_watched_repos()` for the canonical view. The `refresh_index` orchestration and the `pulse` renderer both consume the same set, so a repo only has to appear once for everything downstream to see it.
 
@@ -125,6 +160,21 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 - Phase 0 should test: API availability, DB connectivity, performance baseline, and blocking dependencies.
 - If Phase 0 surfaces blockers or contradicts assumptions, pause and escalate; do not proceed to Phase 1.
 - Document Phase 0 findings in spike report before committing to later phases.
+
+---
+
+## Agent rulebooks (read before editing generated docs)
+
+Some generated artifacts in this repo ship with placeholder prose that any agent
+(Claude Code, Codex, Copilot, Gemini) is expected to fill in. Each has an
+authoritative rulebook that should be read first.
+
+| Artifact | Rulebook | Notes |
+|---|---|---|
+| Git Pulse Executive Recap (`reports/YYYY-MM-*.md`) | [experimental/git-pulse/EXEC-SUMMARY.md](experimental/git-pulse/EXEC-SUMMARY.md) | Claude Code skill `git-pulse-exec-recap` via `.claude/skills/` |
+| Git Pulse Team Recap (`team-reports/YYYY-MM-*.md`) | [experimental/git-pulse/TEAM-EXEC-SUMMARY.md](experimental/git-pulse/TEAM-EXEC-SUMMARY.md) | Claude Code skill `git-pulse-team-recap` via `.claude/skills/` |
+
+The generated recap itself carries the same pointer in its top-of-file instructions block, so agents that open the file directly will also find the rulebook without needing this index.
 
 ---
 
