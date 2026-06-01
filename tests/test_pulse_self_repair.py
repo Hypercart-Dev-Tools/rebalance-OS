@@ -137,3 +137,44 @@ class TestPulseSelfRepair:
         # or we get repair_error. Either way, we must not raise an exception.
         assert "pushed" in result
         assert "git_error" in result or result["pushed"] is True
+
+    def test_content_survives_repair(self) -> None:
+        """The exact rendered content must be present on the remote after a successful repair."""
+        expected_content = "# pulse 2026-06-01\nsome rendered markdown\n"
+        with tempfile.TemporaryDirectory() as td:
+            tmp = Path(td)
+            remote, local = _make_repos(tmp)
+            _push_competing_commit(remote, tmp)
+
+            result = _commit_and_push_if_changed(
+                local, "pulse.md", expected_content,
+                push=True, commit_message="test: content preservation",
+            )
+
+            assert result["pushed"] is True, f"expected pushed=True, got: {result}"
+            assert result.get("repaired") is True
+
+            # Verify the content actually landed on the remote — not silently dropped.
+            # Must stay inside the with-block: tempdir is cleaned up on exit.
+            remote_content = subprocess.run(
+                ["git", "show", "origin/HEAD:pulse.md"],
+                cwd=str(local),
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout
+            assert remote_content.strip() == expected_content.strip(), (
+                f"remote content does not match rendered output:\n"
+                f"expected: {expected_content!r}\n"
+                f"actual:   {remote_content!r}"
+            )
+
+    def test_reset_hard_not_in_autonomous_menu(self) -> None:
+        """reset_hard must not be in the bounded action menu exposed to autonomous repair."""
+        from rebalance.ingest.pulse import _push_repair_actions
+        from pathlib import Path
+        actions = _push_repair_actions(Path("/tmp"))
+        assert "reset_hard" not in actions, (
+            "reset_hard must be excluded from the autonomous menu — "
+            "it discards unpushed content and reports a false success"
+        )

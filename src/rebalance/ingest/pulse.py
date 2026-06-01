@@ -807,6 +807,13 @@ def _commit_and_push_if_changed(
             repair_state = fsm.run(git_error)
             base = {"wrote_file": True, "committed": True, "repair_log": repair_state.log}
             if repair_state.status == RepairStatus.REPAIRED:
+                if not _verify_remote_content(target_repo, file_rel, new_content):
+                    return {
+                        **base,
+                        "pushed": False,
+                        "git_error": "repair reported success but remote content does not match",
+                        "repair_status": "content_mismatch",
+                    }
                 return {**base, "pushed": True, "repaired": True}
             return {
                 **base,
@@ -819,16 +826,22 @@ def _commit_and_push_if_changed(
     return {"wrote_file": True, "committed": True, "pushed": True}
 
 
+# reset_hard is intentionally absent from the autonomous menu — it discards the
+# local commit that contains the new pulse content, producing a false "pushed=True"
+# while silently dropping the update. Destructive repairs require explicit operator action.
 _PUSH_ACTION_DESCRIPTIONS: dict[str, str] = {
     "pull_rebase": "run git pull --rebase to integrate remote commits, then retry push",
     "abort_rebase": "abort a stuck rebase with git rebase --abort, then pull --rebase and push",
-    "reset_hard": "fetch origin and hard-reset to origin/HEAD to discard diverged local state, then push (destructive — loses unpushed commits)",
     "notify_only": "do not attempt further repair — report the failure and stop",
 }
 
 
 def _push_repair_actions(target_repo: Path) -> dict[str, Any]:
-    """Build the bounded action menu for push-failure repair."""
+    """Build the bounded action menu for autonomous push-failure repair.
+
+    reset_hard is excluded: it would discard the local commit containing the
+    new pulse content and report a false success. Operator must handle that case.
+    """
 
     def pull_rebase() -> RepairResult:
         rc, _, err = _run_git(["pull", "--rebase"], cwd=target_repo)
@@ -845,25 +858,20 @@ def _push_repair_actions(target_repo: Path) -> dict[str, Any]:
         rc, _, err = _run_git(["push"], cwd=target_repo)
         return RepairResult(ok=rc == 0, error=err if rc != 0 else "")
 
-    def reset_hard() -> RepairResult:
-        rc, _, err = _run_git(["fetch", "origin"], cwd=target_repo)
-        if rc != 0:
-            return RepairResult(ok=False, error=err)
-        rc, _, err = _run_git(["reset", "--hard", "origin/HEAD"], cwd=target_repo)
-        if rc != 0:
-            return RepairResult(ok=False, error=err)
-        rc, _, err = _run_git(["push"], cwd=target_repo)
-        return RepairResult(ok=rc == 0, error=err if rc != 0 else "")
-
     def notify_only() -> RepairResult:
         return RepairResult(ok=False, error="notify_only: repair deferred to operator")
 
     return {
         "pull_rebase": pull_rebase,
         "abort_rebase": abort_rebase,
-        "reset_hard": reset_hard,
         "notify_only": notify_only,
     }
+
+
+def _verify_remote_content(target_repo: Path, file_rel: str, expected: str) -> bool:
+    """Return True if origin/HEAD now contains exactly the expected file content."""
+    rc, out, _ = _run_git(["show", f"origin/HEAD:{file_rel}"], cwd=target_repo)
+    return rc == 0 and out == expected.strip()
 
 
 # ---------------------------------------------------------------------------

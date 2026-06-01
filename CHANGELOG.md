@@ -11,11 +11,14 @@
   `max_haiku_attempts` (default 1) cap retries; Haiku picks from a bounded action
   menu by name — no free-form execution. 17 unit tests in `tests/test_repair_fsm.py`.
 - **Pulse self-repair loop** (first FSM consumer) — `publish_pulse` now runs the
-  FSM on non-fast-forward push rejections. Action menu: `pull_rebase` (preferred,
-  deterministic), `abort_rebase`, `reset_hard`, `notify_only`. Haiku escalates if
-  `ANTHROPIC_API_KEY` is present and deterministic repair is exhausted. Result dict
-  carries `repaired`, `repair_log`, `repair_status`, and `repair_error` fields.
-  4 hermetic integration tests in `tests/test_pulse_self_repair.py`.
+  FSM on non-fast-forward push rejections. Autonomous action menu: `pull_rebase`
+  (preferred), `abort_rebase`, `notify_only`. `reset_hard` excluded from autonomous
+  menu — it discards the local commit containing the new content and reports a false
+  success. Post-repair content verification confirms the remote HEAD matches the
+  rendered output before returning `pushed=True`. Result dict carries `repaired`,
+  `repair_log`, `repair_status`, and `repair_error` fields. 6 hermetic tests in
+  `tests/test_pulse_self_repair.py` including content-preservation and menu-boundary
+  assertions.
 
 ### Refactored
 
