@@ -30,6 +30,7 @@ from zoneinfo import ZoneInfo
 
 import requests
 
+from rebalance.repair import RepairFSM, RepairResult, RepairStatus
 from rebalance.ingest.agent_tags import classify as classify_source
 from rebalance.ingest.calendar_helpers import calendar_dt_utc, normalize_aware_utc
 from rebalance.ingest.config import get_github_token, get_pulse_config
@@ -796,28 +797,73 @@ def _commit_and_push_if_changed(
     rc, out, err = _run_git(["push"], cwd=target_repo)
     if rc != 0:
         git_error = err or out
-        # Non-fast-forward rejection: remote has commits we don't — pull --rebase and retry once.
         if "fetch first" in git_error or "rejected" in git_error:
-            repair = _pull_rebase_and_push(target_repo)
-            if repair["repaired"]:
-                return {"wrote_file": True, "committed": True, "pushed": True, "repaired": True}
+            fsm = RepairFSM(
+                actions=_push_repair_actions(target_repo),
+                action_descriptions=_PUSH_ACTION_DESCRIPTIONS,
+                error_context="git push to pulse target repo failed with non-fast-forward rejection",
+                preferred_action="pull_rebase",
+            )
+            repair_state = fsm.run(git_error)
+            base = {"wrote_file": True, "committed": True, "repair_log": repair_state.log}
+            if repair_state.status == RepairStatus.REPAIRED:
+                return {**base, "pushed": True, "repaired": True}
             return {
-                "wrote_file": True, "committed": True, "pushed": False,
-                "git_error": git_error, "repair_error": repair["repair_error"],
+                **base,
+                "pushed": False,
+                "git_error": git_error,
+                "repair_status": repair_state.status.value,
+                "repair_error": repair_state.final_error,
             }
         return {"wrote_file": True, "committed": True, "pushed": False, "git_error": git_error}
     return {"wrote_file": True, "committed": True, "pushed": True}
 
 
-def _pull_rebase_and_push(target_repo: Path) -> dict[str, Any]:
-    """Recover from a non-fast-forward push rejection: pull --rebase then retry push."""
-    rc, out, err = _run_git(["pull", "--rebase"], cwd=target_repo)
-    if rc != 0:
-        return {"repaired": False, "repair_error": err or out}
-    rc, out, err = _run_git(["push"], cwd=target_repo)
-    if rc != 0:
-        return {"repaired": False, "repair_error": err or out}
-    return {"repaired": True}
+_PUSH_ACTION_DESCRIPTIONS: dict[str, str] = {
+    "pull_rebase": "run git pull --rebase to integrate remote commits, then retry push",
+    "abort_rebase": "abort a stuck rebase with git rebase --abort, then pull --rebase and push",
+    "reset_hard": "fetch origin and hard-reset to origin/HEAD to discard diverged local state, then push (destructive — loses unpushed commits)",
+    "notify_only": "do not attempt further repair — report the failure and stop",
+}
+
+
+def _push_repair_actions(target_repo: Path) -> dict[str, Any]:
+    """Build the bounded action menu for push-failure repair."""
+
+    def pull_rebase() -> RepairResult:
+        rc, _, err = _run_git(["pull", "--rebase"], cwd=target_repo)
+        if rc != 0:
+            return RepairResult(ok=False, error=err)
+        rc, _, err = _run_git(["push"], cwd=target_repo)
+        return RepairResult(ok=rc == 0, error=err if rc != 0 else "")
+
+    def abort_rebase() -> RepairResult:
+        _run_git(["rebase", "--abort"], cwd=target_repo)  # best-effort
+        rc, _, err = _run_git(["pull", "--rebase"], cwd=target_repo)
+        if rc != 0:
+            return RepairResult(ok=False, error=err)
+        rc, _, err = _run_git(["push"], cwd=target_repo)
+        return RepairResult(ok=rc == 0, error=err if rc != 0 else "")
+
+    def reset_hard() -> RepairResult:
+        rc, _, err = _run_git(["fetch", "origin"], cwd=target_repo)
+        if rc != 0:
+            return RepairResult(ok=False, error=err)
+        rc, _, err = _run_git(["reset", "--hard", "origin/HEAD"], cwd=target_repo)
+        if rc != 0:
+            return RepairResult(ok=False, error=err)
+        rc, _, err = _run_git(["push"], cwd=target_repo)
+        return RepairResult(ok=rc == 0, error=err if rc != 0 else "")
+
+    def notify_only() -> RepairResult:
+        return RepairResult(ok=False, error="notify_only: repair deferred to operator")
+
+    return {
+        "pull_rebase": pull_rebase,
+        "abort_rebase": abort_rebase,
+        "reset_hard": reset_hard,
+        "notify_only": notify_only,
+    }
 
 
 # ---------------------------------------------------------------------------

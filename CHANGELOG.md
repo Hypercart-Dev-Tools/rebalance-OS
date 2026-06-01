@@ -4,13 +4,18 @@
 
 ### Added
 
-- **Pulse self-repair loop** — `publish_pulse` now detects non-fast-forward push
-  rejections (`fetch first` / `rejected`) and automatically runs `git pull --rebase`
-  then retries the push once. Result includes `repaired: true` on success or
-  `repair_error` on failure. Covers the multi-machine divergence case where two
-  devices push to the same pulse repo concurrently. 4 hermetic tests in
-  `tests/test_pulse_self_repair.py` (bare-remote divergence simulation, clean push,
-  no-op on unchanged content, conflict propagation).
+- **`src/rebalance/repair.py` — `RepairFSM`** — lightweight finite-state-machine
+  for deterministic repair with bounded Haiku escalation. States: `PENDING →
+  REPAIRED | ESCALATED → REPAIRED | DEAD`. Circuit breakers: unrecoverable error
+  class exits immediately; `max_deterministic_attempts` (default 2) and
+  `max_haiku_attempts` (default 1) cap retries; Haiku picks from a bounded action
+  menu by name — no free-form execution. 17 unit tests in `tests/test_repair_fsm.py`.
+- **Pulse self-repair loop** (first FSM consumer) — `publish_pulse` now runs the
+  FSM on non-fast-forward push rejections. Action menu: `pull_rebase` (preferred,
+  deterministic), `abort_rebase`, `reset_hard`, `notify_only`. Haiku escalates if
+  `ANTHROPIC_API_KEY` is present and deterministic repair is exhausted. Result dict
+  carries `repaired`, `repair_log`, `repair_status`, and `repair_error` fields.
+  4 hermetic integration tests in `tests/test_pulse_self_repair.py`.
 
 ### Refactored
 
