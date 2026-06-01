@@ -6,7 +6,11 @@ This project is an MCP server. When a user opens this workspace, you have access
 
 **Do not scan the repo for `rebalance ...` CLI scripts.** Every refresh and query path is exposed through MCP tools below — reach for those first.
 
-> **One exception — Calendar & Gmail setup.** `refresh_index(scope=["calendar"])` and Gmail ingest only work *after* a one-time OAuth authorization, which needs a browser and is therefore not an MCP tool. Run `python scripts/setup_calendar_oauth.py --test` (add `--write-access` for event creation), then create `temp/calendar_config.json`. Full steps: [GOOGLE_CALENDAR.md](GOOGLE_CALENDAR.md). After that, refresh and query stay on the MCP path.
+> **One exception — Calendar & Gmail setup (different flows).**
+> - **Calendar:** `refresh_index(scope=["calendar"])` works *after* a one-time browser OAuth via the bundled client — run `python scripts/setup_calendar_oauth.py --test` (add `--write-access` for event creation), then create `temp/calendar_config.json`. Full steps: [GOOGLE_CALENDAR.md](GOOGLE_CALENDAR.md).
+> - **Gmail:** `refresh_index(scope=["email"])` uses Google Application Default Credentials (ADC), *not* the calendar OAuth client — it needs `gcloud` + a GCP project (`gcloud services enable gmail.googleapis.com`, then `gcloud auth application-default login --scopes=…gmail.readonly,…cloud-platform`). See README "Step 5 — Connect Gmail". Lighter alternative: set `gmail_ingest_method=mcp` and push messages via the `ingest_gmail_messages` tool (no gcloud, but not autonomous).
+>
+> After setup, refresh and query stay on the MCP path.
 
 ### Single-entry-point tools (use these first)
 

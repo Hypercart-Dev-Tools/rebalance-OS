@@ -1,6 +1,6 @@
 ## Working with the rebalance MCP server (Codex, Gemini, Claude, others)
 
-This repo **is** an MCP server. Every refresh and query path is exposed through MCP tools — do not scan the codebase for `rebalance ...` CLI commands or write ad-hoc shell pipelines. Reach for the tools first. (One exception: the *one-time* OAuth setup for Calendar/Gmail is a CLI step — see **Calendar & Gmail setup** below.)
+This repo **is** an MCP server. Every refresh and query path is exposed through MCP tools — do not scan the codebase for `rebalance ...` CLI commands or write ad-hoc shell pipelines. Reach for the tools first. (One exception: the *one-time* auth setup for Calendar and Gmail is a CLI step — see **Calendar setup** and **Gmail setup** below.)
 
 **Connection.** The repo ships two equivalent configs: [.vscode/mcp.json](.vscode/mcp.json) for VS Code agents and [.mcp.json](.mcp.json) at the repo root for tools that look there. Both launch `.venv/bin/python -m rebalance.mcp_server` over stdio with `REBALANCE_DB` set to the repo's `rebalance.db`.
 
@@ -18,7 +18,9 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 
 **Targeted retrieval (older, per-source — still valid):** `query_notes`, `search_vault`, `query_github_context`, `ask`, `github_release_readiness`, `github_close_candidates`.
 
-**Calendar & Gmail setup (one-time, CLI).** `refresh_index(scope=["calendar"])` and Gmail ingest only work *after* a one-time OAuth authorization. That flow needs a browser, so it is intentionally not an MCP tool: run `python scripts/setup_calendar_oauth.py --test` (add `--write-access` if agents should create/edit events), then create `temp/calendar_config.json` (calendar_id + timezone). Full steps and troubleshooting: [GOOGLE_CALENDAR.md](GOOGLE_CALENDAR.md). After setup, refresh and query stay on the MCP path (`refresh_index(scope=["calendar"])`, `review_timesheet`, etc.). The OAuth token is per-user at `~/.config/rebalance-os/` and is never committed.
+**Calendar setup (one-time, CLI).** `refresh_index(scope=["calendar"])` only works *after* a one-time OAuth authorization. That flow needs a browser, so it is intentionally not an MCP tool: run `python scripts/setup_calendar_oauth.py --test` (add `--write-access` if agents should create/edit events), then create `temp/calendar_config.json` (calendar_id + timezone). Full steps and troubleshooting: [GOOGLE_CALENDAR.md](GOOGLE_CALENDAR.md). After setup, refresh and query stay on the MCP path (`refresh_index(scope=["calendar"])`, `review_timesheet`, etc.). The OAuth token is per-user at `~/.config/rebalance-os/` and is never committed.
+
+**Gmail setup (one-time, CLI — different from calendar).** `refresh_index(scope=["email"])` uses Google Application Default Credentials (ADC), *not* the calendar's bundled OAuth client. It requires the `gcloud` CLI and a Google Cloud project: `gcloud services enable gmail.googleapis.com` then `gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/cloud-platform`. See README "Step 5 — Connect Gmail". An alternative, lighter path sets `gmail_ingest_method=mcp` in `temp/rbos.config`, where an agent fetches messages via a Gmail MCP connector and pushes them through the `ingest_gmail_messages` tool (no gcloud/ADC, but not autonomous).
 
 **Background refresh.** A launchd job (`com.rebalance-os.daily-sync`) runs [scripts/daily_sync.sh](scripts/daily_sync.sh) at 6:30 AM daily and on boot. The script invokes the same `refresh_index(scope=["all"])` orchestration, so the cron and the MCP tool share one code path. If the index looks stale, check `temp/logs/daily_sync_YYYY-MM-DD.log` before manually re-running.
 
