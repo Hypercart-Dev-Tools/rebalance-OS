@@ -36,12 +36,14 @@ from __future__ import annotations
 
 import json
 import socket
+import subprocess
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.db.schema import ensure_calendar_schema, ensure_email_schema
+from rebalance.repair import RepairFSM, RepairResult, RepairStatus
 
 SCHEMA_VERSION = 1
 DEFAULT_CALENDAR_WINDOW_DAYS = 90
@@ -213,6 +215,84 @@ def _update_latest_pointer(source_dir: Path, device_id: str, generated_at: str) 
     tmp = latest_path.with_suffix(".tmp")
     tmp.write_text(json.dumps(pointer, indent=2, ensure_ascii=False), encoding="utf-8")
     tmp.replace(latest_path)
+
+
+# ---------------------------------------------------------------------------
+# Git commit + push for the sync directory
+# ---------------------------------------------------------------------------
+
+def _run_git(args: list[str], *, cwd: Path) -> tuple[int, str, str]:
+    proc = subprocess.run(
+        ["git", *args], cwd=str(cwd), capture_output=True, text=True, check=False,
+    )
+    return proc.returncode, proc.stdout.strip(), proc.stderr.strip()
+
+
+def commit_and_push_sync(
+    target_repo: Path,
+    sync_subdir: str,
+    *,
+    device_id: str,
+    generated_at: str,
+) -> dict[str, Any]:
+    """Stage ``sync_subdir/``, commit, and push to the remote.
+
+    Uses RepairFSM for non-fast-forward push failures (same circuit breakers
+    as pulse). Returns a structured result dict.
+    """
+    rc, _, err = _run_git(["add", sync_subdir], cwd=target_repo)
+    if rc != 0:
+        return {"committed": False, "pushed": False, "git_error": err}
+
+    rc_status, status_out, _ = _run_git(
+        ["status", "--porcelain", sync_subdir], cwd=target_repo
+    )
+    if rc_status != 0 or not status_out:
+        return {"committed": False, "pushed": False, "reason": "no changes to sync"}
+
+    msg = f"sync: {device_id} {generated_at[:19]}Z"
+    rc, _, err = _run_git(["commit", "-m", msg], cwd=target_repo)
+    if rc != 0:
+        return {"committed": False, "pushed": False, "git_error": err}
+
+    rc, _, err = _run_git(["push"], cwd=target_repo)
+    if rc == 0:
+        return {"committed": True, "pushed": True}
+
+    git_error = err
+    if "fetch first" in git_error or "rejected" in git_error:
+        def pull_rebase() -> RepairResult:
+            rc2, _, e2 = _run_git(["pull", "--rebase"], cwd=target_repo)
+            if rc2 != 0:
+                return RepairResult(ok=False, error=e2)
+            rc3, _, e3 = _run_git(["push"], cwd=target_repo)
+            return RepairResult(ok=rc3 == 0, error=e3 if rc3 != 0 else "")
+
+        def notify_only() -> RepairResult:
+            return RepairResult(ok=False, error="notify_only: repair deferred to operator")
+
+        fsm = RepairFSM(
+            actions={"pull_rebase": pull_rebase, "notify_only": notify_only},
+            action_descriptions={
+                "pull_rebase": "pull --rebase to integrate remote commits then retry push",
+                "notify_only": "do not repair — report failure and stop",
+            },
+            preferred_action="pull_rebase",
+            error_context=f"sync push to {target_repo} rejected",
+        )
+        state = fsm.run(git_error)
+        base = {"committed": True, "repair_log": state.log}
+        if state.status == RepairStatus.REPAIRED:
+            return {**base, "pushed": True, "repaired": True}
+        return {
+            **base,
+            "pushed": False,
+            "git_error": git_error,
+            "repair_status": state.status.value,
+            "repair_error": state.final_error,
+        }
+
+    return {"committed": True, "pushed": False, "git_error": git_error}
 
 
 def read_latest_snapshot(sync_dir: Path, source: str) -> dict[str, Any] | None:

@@ -853,14 +853,7 @@ def refresh_index(
     """
     db_path = Path(database_path).expanduser().resolve()
     requested_scopes = _normalize_scope(scope)
-    full_refresh_requested = set(requested_scopes) == {
-        "vault",
-        "github",
-        "calendar",
-        "sleuth",
-        "email",
-        "semantic",
-    }
+    full_refresh_requested = scope is None or "all" in (scope or [])
     started = time.monotonic()
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -1005,9 +998,71 @@ def _semantic_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_semantic_only(db_path, dry_run=opts["dry_run"])
 
 
+def _refresh_sync(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Export calendar + email snapshots to the sync subfolder in the pulse repo."""
+    from rebalance.ingest.config import get_pulse_config, get_sync_subdir
+    from rebalance.ingest.sync_snapshot import (
+        commit_and_push_sync,
+        export_calendar_snapshot,
+        export_email_snapshot,
+        get_device_id,
+    )
+
+    cfg = get_pulse_config()
+    pulse_target = cfg.get("pulse_target_path", "")
+    if not pulse_target:
+        return {
+            "scope": "sync",
+            "dry_run": dry_run,
+            "error": "pulse_target_path not configured — run: rebalance config set-pulse-config pulse_target_path=<path>",
+        }
+
+    target_repo = Path(pulse_target).expanduser().resolve()
+    sync_subdir = get_sync_subdir()
+    sync_dir = target_repo / sync_subdir
+    device_id = get_device_id()
+
+    if dry_run:
+        return {
+            "scope": "sync",
+            "dry_run": True,
+            "steps": [
+                f"export_calendar_snapshot(window_days=90) → {sync_dir}/calendar/{device_id}.json",
+                f"export_email_snapshot(limit=1000) → {sync_dir}/email/{device_id}.json",
+                f"git add {sync_subdir}/ && git commit && git push → {target_repo}",
+            ],
+        }
+
+    import time
+    started = time.monotonic()
+    cal_path = export_calendar_snapshot(database_path, sync_dir, device_id=device_id)
+    email_path = export_email_snapshot(database_path, sync_dir, device_id=device_id)
+
+    import json as _json
+    generated_at = _json.loads(cal_path.read_text(encoding="utf-8"))["generated_at"]
+    git_result = commit_and_push_sync(
+        target_repo, sync_subdir, device_id=device_id, generated_at=generated_at
+    )
+
+    return {
+        "scope": "sync",
+        "dry_run": False,
+        "device_id": device_id,
+        "calendar_snapshot": str(cal_path.relative_to(target_repo)),
+        "email_snapshot": str(email_path.relative_to(target_repo)),
+        "git": git_result,
+        "elapsed_seconds": round(time.monotonic() - started, 2),
+    }
+
+
+def _sync_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_sync(db_path, dry_run=opts["dry_run"])
+
+
 register_collector(Collector("vault", _vault_adapter, requires=("vault_path",)))
 register_collector(Collector("github", _github_adapter, requires=("github_token",)))
 register_collector(Collector("calendar", _calendar_adapter))
 register_collector(Collector("sleuth", _sleuth_adapter))
 register_collector(Collector("email", _email_adapter))
 register_collector(Collector("semantic", _semantic_adapter))
+register_collector(Collector("sync", _sync_adapter))

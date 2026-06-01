@@ -19,20 +19,20 @@ from rebalance.ingest.index_ops import (
 
 class CollectorRegistryTests(unittest.TestCase):
     def test_builtin_collectors_registered(self) -> None:
-        for name in ("vault", "github", "calendar", "sleuth", "email", "semantic"):
+        for name in ("vault", "github", "calendar", "sleuth", "email", "semantic", "sync"):
             self.assertIn(name, COLLECTORS, f"missing built-in collector {name}")
 
     def test_scope_values_includes_all(self) -> None:
         values = _scope_values()
         self.assertIn("all", values)
-        for name in ("vault", "github", "calendar"):
+        for name in ("vault", "github", "calendar", "sync"):
             self.assertIn(name, values)
 
     def test_all_scope_includes_default_built_ins(self) -> None:
         names = _all_scope_names()
         self.assertEqual(
             sorted(names),
-            sorted(["vault", "github", "calendar", "sleuth", "email", "semantic"]),
+            sorted(["vault", "github", "calendar", "sleuth", "email", "semantic", "sync"]),
         )
 
     def test_register_new_collector_then_unregister(self) -> None:
