@@ -28,8 +28,8 @@ The rule: if you can tick a box and forget it, you're doing it right. If you nee
 
 | Column | Value |
 |---|---|
-| **Last completed phase** | Phase 3 ✅ — `_determine_verdict()` + registry-gated path deleted; pie chart query simplified; 14 tests green |
-| **What's next** | Phase 4 — architectural decisions required (Obsidian note retirement?, MCP `github_balance` semantics?, registry/sync_registry audit) |
+| **Last completed phase** | Phase 4 ✅ — all architectural decisions recorded; no code changes required |
+| **What's next** | Audit complete. Move to `PROJECT/3-DONE/`. Next feature: prefix-cluster auto-grouping (display-layer only, no schema change). |
 
 ---
 
@@ -120,32 +120,22 @@ Verdict: `github_items` and `github_commits` earn their keep. The only query tha
 
 ---
 
-### Phase 4 — Evaluate project_registry, priority tiers, and onboarding flow
+### Phase 4 — Evaluate project_registry, priority tiers, and onboarding flow ✅
 
-This phase is an architectural decision, not a refactor. It should be treated as an owner decision, not a code cleanup.
+This phase is architectural decisions only — no code changes required.
 
-- [ ] **Inventory load-bearing uses of `project_registry`** after Phase 3 completes:
-  - MCP `list_projects` — returns project names, summaries, priorities. Still useful for agents.
-  - MCP `github_balance` — uses `{project: [repos]}` map from registry. After Phase 3, the Obsidian note no longer needs this, but the MCP tool still calls it. Decision: keep for agents, or replace with org-grouped view?
-  - MCP `confirm_projects` / `onboarding_status` — write to registry via `save_registry()`. Load-bearing for onboarding flow.
-  - Calendar classifier (`project_classifier.py`) — uses `repos_json` for alias building (F11). Low-risk if empty.
-  - `apply_project_priorities()` — reads priority tiers from registry rows to sort projects in the Obsidian note. If the Obsidian note is removed in a future phase, this becomes dead code.
+- [x] **Inventory load-bearing uses of `project_registry`** — all confirmed load-bearing, keep everything:
+  - MCP `list_projects`, `github_balance`, `confirm_projects`, `onboarding_status` — active
+  - Calendar classifier `repos_json` alias-building (F11) — graceful degradation, no action needed
+  - `apply_project_priorities()` — needed while Obsidian note lives
 
-- [ ] **Decision point: does the Obsidian note (`rebalanceOS Dashboard.md`) still serve a purpose?**
-  - As of the last known state (May 12), it was stale.
-  - The web dashboard (`pulse_web.py`) and TUI (`scripts/dashboard.py`) are the live views.
-  - If the Obsidian note is retired: `src/rebalance/ingest/note_builder.py` (Phase 2 renamed) and all its supporting machinery (`read_current_goals`, `read_recent_changelog_highlights`, `build_dashboard_note_content`, `synthesize_dashboard_narrative`, `DashboardProjectRow`, `DashboardPayload`) can be archived.
-  - If it stays: keep everything, but eliminate the `get_github_balance()` call from it (Phase 3A).
+- [x] **Decision: Obsidian note stays.** Owner wants Obsidian-based project prioritization (#tags, priority tiers) as a future input surface. `note_builder.py` and its machinery are kept. Phase 3 already cleaned it up (org-activity view, no verdict labels) — it's now at the correct "read-only floor" described in CLAUDE-ONBOARDING.md, ready to accept annotation later.
 
-- [ ] **Decision point: replace `get_github_balance()` MCP semantics with org-grouped view?**
-  - Current: returns `[{project_name, total_commits, repos_linked, repos_touched, is_idle}]` — per manually-registered project.
-  - Alternative: `[{org, repo, commits, prs_opened, prs_merged, last_active_at}]` — per discovered repo, no registration required.
-  - The agent-facing use case may genuinely prefer per-project names ("how is the LTVera project doing?") over per-org grouping. If project names matter to agents, keep `get_github_balance()` as-is.
+- [x] **Decision: keep `github_balance` MCP semantics as-is.** Per-project names ("how is LTVera doing?") are the right agent-facing surface. When prefix-clustering or #tag annotation populates `repos_json`, this tool becomes the payoff. Switching to org-grouped now would require re-adding it later.
 
-- [ ] **`Registry` model and `sync_registry()` audit (F9, F10)**
-  - After Phase 3, determine whether `sync_registry(mode='pull')` (Obsidian → SQLite) is still called.
-  - If not: remove `pull` mode from `sync_registry()`; keep `push` mode (or replace with a simpler writer).
-  - `_default_registry_markdown()`, `_extract_yaml_block()`, `YAML_BLOCK_PATTERN` are only needed by `load_registry()` / `save_registry()`. If those are removed, these helpers go too.
+- [x] **Decision: keep `sync_registry()` pull-mode (F9, F10).** It is the exact read-path the future annotation system needs (Obsidian edit → pull → SQLite). Removing it now would mean re-implementing it when #tag parsing is built. Cost of keeping: ~30 lines. Cost of removing: a future rewrite blocker.
+
+**Forward-looking note (not a Phase 4 task):** prefix-cluster auto-grouping (`LTVera-Pandas`, `LTVera-API` → `LTVera` sub-group) is the next high-value feature. It is a pure display-layer transform on top of `get_all_repo_activity_by_org()` — no DB schema change, no ingest change, no MCP signature change. Can be added to `note_builder.py` and the TUI/web renderers independently when ready.
 
 ---
 
