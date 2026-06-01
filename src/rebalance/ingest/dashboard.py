@@ -323,7 +323,6 @@ def build_dashboard_payload(
                 "prs_merged": 0,
                 "issues_opened": 0,
                 "repos_touched": [],
-                # "repos_linked": project.get("repos") or [],  # PHASE 1: removed Obsidian gate
                 "repos_linked": [],
             },
         )
@@ -378,7 +377,6 @@ def build_dashboard_payload(
                 next_move=next_move,
                 source_counts={
                     "calendar_events": int(calendar_row["event_count"]),
-                    # "repos_linked": len(project.get("repos") or []),  # PHASE 1: removed Obsidian gate
                     "repos_linked": len(github_stats.get("repos_touched") or []),
                     "repos_touched": len(github_stats.get("repos_touched") or []),
                 },

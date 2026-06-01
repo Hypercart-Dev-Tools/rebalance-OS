@@ -882,7 +882,7 @@ def render_vault_calendar(
     sections.append(Text("sleuth reminders", style=f"bold {PALETTE['accent']}"))
     sections.append(sleuth_table)
 
-    body = Group(*[Group(s, Text("")) for s in _interleave(sections)])
+    body = Group(*[Group(s, Text("")) for s in sections])
     return Panel(
         body,
         title=_title("vault · calendar · reminders"),
@@ -891,11 +891,6 @@ def render_vault_calendar(
         padding=(1, 1),
         **_panel_style(),
     )
-
-
-def _interleave(items: list[Any]) -> list[Any]:
-    """Pair (header, table) groups but skip the trailing blank line."""
-    return items
 
 
 def render_index_health(status: dict[str, Any]) -> Panel:

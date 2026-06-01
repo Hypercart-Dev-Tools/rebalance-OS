@@ -28,8 +28,8 @@ The rule: if you can tick a box and forget it, you're doing it right. If you nee
 
 | Column | Value |
 |---|---|
-| **Last completed phase** | _DECOUPLE-OBSIDIAN Phase 1_ complete (repos_json display gate removed, org-grouped view added) — this audit's Phase 1 not yet started |
-| **What's next** | This audit's Phase 1 — zero-risk deletions listed below |
+| **Last completed phase** | Phase 1 ✅ — F1–F4 dead code deleted, tests green (10 passed) |
+| **What's next** | Phase 2 — rename `src/rebalance/ingest/dashboard.py` → `note_builder.py` (F12), then F5 filter consolidation |
 
 ---
 
@@ -56,24 +56,24 @@ Each row covers one unnecessary layer or duplicate. Risk is relative to the sing
 
 ## Phased Plan
 
-### Phase 1 — Zero-risk deletions (dead code, duplicate helpers)
+### Phase 1 — Zero-risk deletions (dead code, duplicate helpers) ✅
 
 No logic changes. No tests need updating. Safe to do in one commit.
 
-- [ ] **F1** — `src/rebalance/ingest/dashboard.py:326,381`: delete the two comment lines tagged `# PHASE 1: removed Obsidian gate` (lines 326-327 and 381-382 as of last read). The surrounding live code stays.
-- [ ] **F2** — `scripts/dashboard.py:884-898`: delete `_interleave()` (lines 896-898) and replace the call on line 885 with just `sections` directly.
+- [x] **F1** — `src/rebalance/ingest/dashboard.py:326,381`: delete the two comment lines tagged `# PHASE 1: removed Obsidian gate` (lines 326-327 and 381-382 as of last read). The surrounding live code stays.
+- [x] **F2** — `scripts/dashboard.py:884-898`: delete `_interleave()` (lines 896-898) and replace the call on line 885 with just `sections` directly.
   ```python
   # Before:
   body = Group(*[Group(s, Text("")) for s in _interleave(sections)])
   # After:
   body = Group(*[Group(s, Text("")) for s in sections])
   ```
-- [ ] **F3** — `scripts/pulse_web.py:378-381`: delete `_repo_label()`. Inline the null check at its 3 call sites:
+- [x] **F3** — `scripts/pulse_web.py:378-381`: delete `_repo_label()`. Inline the null check at its 3 call sites:
   - `pulse_web.py:785` `repo = _repo_label(r.get("repo_full_name"))` → `repo = r.get("repo_full_name") or ""`
   - `pulse_web.py:853` `repo_label = _repo_label(repo["repo_full_name"])` → `repo_label = repo["repo_full_name"] or ""`
   - `pulse_web.py:894` `repo_label = _repo_label(repo["repo_full_name"])` → same
-- [ ] **F4** — Before touching anything: read both `_truncate()` bodies and confirm they are identical (max-length default, ellipsis character, `None` handling). If they differ, note the difference and leave both in place. If identical, mark as **Zero** and proceed: delete the local definition in `scripts/pulse_web.py:384-386` and add `_truncate` to the import from `dashboard` (already in that import block). Verify no other local shadow.
-- [ ] Run tests to confirm green: `uv run pytest tests/test_dashboard_terminal_theme.py tests/test_pulse_web_goals.py -x -q`
+- [x] **F4** — Bodies confirmed identical (same semantics, different style). Deleted local definition in `scripts/pulse_web.py` and added `_truncate` to the import from `dashboard`.
+- [x] Run tests to confirm green: `uv run pytest tests/test_dashboard_terminal_theme.py tests/test_pulse_web_goals.py -x -q` — **10 passed, 16 subtests passed**
 
 ---
 
