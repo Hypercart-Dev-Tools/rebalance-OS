@@ -1,7 +1,7 @@
 ---
 title: Rebalance-OS Codebase Refactor
 status: in-progress
-updated: 2026-05-20
+updated: 2026-06-01
 branch: claude/refactor-codebase-tl4PQ
 phases_done: 1, 2, 3, 4
 phases_pending: 6, 5, 7, 9, 10
@@ -129,8 +129,12 @@ no row moved except intentionally.
 
 ## Phase 9 — Scripts + experimental triage
 
-- [ ] Deduplicate `scripts/dashboard.py` ↔ `scripts/pulse_web.py` *(fetch guards in
-      `dashboard.py` already fixed — remaining: shared fetch module)*
+- [x] Deduplicate helper functions between `scripts/dashboard.py` ↔ `scripts/pulse_web.py`
+      — `_truncate` and `_parse_iso` now imported from `dashboard.py`; no local copies
+      in `pulse_web.py`. *(done in simplification audit Phase 1, 2026-06-01)*
+- [ ] Shared fetch module — `pulse_web.py` still imports data-fetch functions directly
+      from `scripts/dashboard.py` via `sys.path` injection; extract to a proper
+      `src/rebalance/` module so both TUI and web share one import path
 - [ ] Promote `git-pulse` to first-class module. It is **actively maintained** (renamed
       from the old `git-history` spike, functional: hourly launchd collector, health
       checks, recap generation) — this is a promotion, not a rescue.
@@ -168,4 +172,4 @@ no row moved except intentionally.
 > anytime, blocks nothing.
 
 - [ ] Sweep `print`/`echo` calls → `logger` *(deferred from Phase 1)*
-- [ ] Consolidate `_parse_iso` / `_truncate` time helpers *(deferred from Phase 2)*
+- [x] Consolidate `_parse_iso` / `_truncate` time helpers *(done — simplification audit Phase 1 F4, 2026-06-01)*
