@@ -823,42 +823,42 @@ def render_recent_activity(
 
 
 def render_org_activity(by_org: dict[str, list[dict[str, Any]]], *, days: int) -> str:
-    """Org-grouped repo activity card sourced from github_activity — no project_registry gate."""
+    """Doughnut chart of per-repo event counts, sourced from github_activity (no project_registry gate)."""
     if not by_org:
         return ""
-    sections: list[str] = []
-    for org in sorted(by_org):
-        rows_html: list[str] = []
-        for repo in by_org[org]:
-            parts: list[str] = []
-            if repo["commits"]:
-                parts.append(f"{repo['commits']} commit(s)")
-            if repo["prs_merged"]:
-                parts.append(f"{repo['prs_merged']} PR(s) merged")
-            if repo["prs_opened"] and not repo["prs_merged"]:
-                parts.append(f"{repo['prs_opened']} PR(s) opened")
-            last = (repo["last_active_at"] or "")[:10]
-            if last:
-                parts.append(f"last active {last}")
-            repo_label = repo["repo_full_name"] or ""
-            detail = " · ".join(parts) if parts else "no activity detail"
-            rows_html.append(
-                f'<li class="activity-row">'
-                f'<span class="repo">{_esc(repo_label)}</span>'
-                f'<span class="detail">{_esc(detail)}</span>'
-                f"</li>"
+
+    flat: list[tuple[str, int]] = []
+    for repos in by_org.values():
+        for repo in repos:
+            events = (
+                int(repo.get("commits") or 0)
+                + int(repo.get("prs_opened") or 0)
+                + int(repo.get("prs_merged") or 0)
+                + int(repo.get("issues_opened") or 0)
             )
-        sections.append(
-            f'<li class="org-group">'
-            f'<span class="label muted">{_esc(org)}</span>'
-            f'<ol class="activity-list">' + "".join(rows_html) + "</ol>"
-            f"</li>"
-        )
-    body = "".join(sections)
+            flat.append((repo["repo_full_name"] or "", events))
+    flat.sort(key=lambda t: t[1], reverse=True)
+    flat = flat[:14]
+
+    if not flat:
+        return ""
+
+    labels = [t[0] for t in flat]
+    values = [t[1] for t in flat]
+    colors = [PIE_PALETTE[i % len(PIE_PALETTE)] for i in range(len(flat))]
+    total = sum(values)
+    payload = json.dumps({"labels": labels, "values": values, "colors": colors})
+
     return f"""
-    <section class="card activity">
-      <header class="card-head"><h2>GitHub activity by org <span class="subtle">({days}d)</span></h2></header>
-      <ol class="activity-list">{body}</ol>
+    <section class="card repo-pie">
+      <header class="card-head">
+        <h2>GitHub activity by org <span class="subtle">({days}d)</span></h2>
+        <span class="card-head-meta">{total} events · {len(flat)} repos</span>
+      </header>
+      <div class="repo-pie-wrap">
+        <canvas id="org-activity-canvas" height="320"></canvas>
+      </div>
+      <script type="application/json" id="org-activity-data">{payload}</script>
     </section>
     """
 
@@ -2037,8 +2037,57 @@ PULSE_JS = r"""
     return true;
   };
   if (!initRepoPie()) {
-    // Chart.js still loading (defer) — retry once on window load.
     window.addEventListener('load', initRepoPie, { once: true });
+  }
+
+  // Org activity doughnut — same pattern, different canvas/data IDs.
+  const initOrgPie = () => {
+    const canvas = document.getElementById('org-activity-canvas');
+    const dataEl = document.getElementById('org-activity-data');
+    if (!canvas || !dataEl || typeof Chart === 'undefined') return false;
+    let payload;
+    try { payload = JSON.parse(dataEl.textContent || '{}'); }
+    catch (e) { console.warn('org-activity payload parse failed', e); return true; }
+    const { labels = [], values = [], colors = [] } = payload;
+    if (!labels.length) return true;
+    const total = values.reduce((a, b) => a + b, 0) || 1;
+    new Chart(canvas, {
+      type: 'doughnut',
+      data: {
+        labels,
+        datasets: [{
+          data: values,
+          backgroundColor: colors,
+          borderColor: 'rgba(0,0,0,0.25)',
+          borderWidth: 1,
+          hoverOffset: 6,
+        }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        cutout: '58%',
+        plugins: {
+          legend: {
+            position: 'right',
+            labels: { color: '#1d2024', boxWidth: 10, boxHeight: 10, font: { size: 11 } },
+          },
+          tooltip: {
+            callbacks: {
+              label: (ctx) => {
+                const v = ctx.parsed || 0;
+                const pct = ((v / total) * 100).toFixed(1);
+                return `${ctx.label}: ${v} (${pct}%)`;
+              },
+            },
+          },
+        },
+      },
+    });
+    return true;
+  };
+  if (!initOrgPie()) {
+    window.addEventListener('load', initOrgPie, { once: true });
   }
 
   // PR stale filter toggle
