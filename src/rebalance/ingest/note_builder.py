@@ -39,13 +39,22 @@ def get_all_repo_activity_by_org(
     if not database_path.exists():
         return {}
 
+    from rebalance.ingest.config import get_github_ignored_repos
     from rebalance.ingest.db import db_connection, ensure_github_schema
 
     since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
 
+    ignored = get_github_ignored_repos()
+    params: list[Any] = [since_date]
+    ignored_clause = ""
+    if ignored:
+        placeholders = ",".join("?" * len(ignored))
+        ignored_clause = f"AND LOWER(repo_full_name) NOT IN ({placeholders})"
+        params.extend(ignored)
+
     with db_connection(database_path, ensure_github_schema) as conn:
         rows = conn.execute(
-            """
+            f"""
             SELECT repo_full_name,
                    SUM(commits)        AS commits,
                    SUM(prs_opened)     AS prs_opened,
@@ -54,9 +63,10 @@ def get_all_repo_activity_by_org(
                    MAX(last_active_at) AS last_active_at
             FROM github_activity
             WHERE scan_date >= ?
+            {ignored_clause}
             GROUP BY repo_full_name
             """,
-            (since_date,),
+            tuple(params),
         ).fetchall()
 
     by_org: dict[str, list[dict[str, Any]]] = {}

@@ -2345,7 +2345,7 @@ def dashboard_render_cmd(
 ) -> None:
     """Generate the Obsidian dashboard note from recent local signals."""
     from datetime import date
-    from rebalance.ingest.dashboard import build_dashboard_note_content, write_dashboard_note
+    from rebalance.ingest.note_builder import build_dashboard_note_content, write_dashboard_note
     from rebalance.ingest.calendar_config import CalendarConfig
 
     try:

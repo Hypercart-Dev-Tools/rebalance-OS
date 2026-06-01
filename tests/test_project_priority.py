@@ -11,7 +11,7 @@ from pathlib import Path
 from rebalance.ingest import config as config_module
 from rebalance.ingest.calendar_config import CalendarConfig
 from rebalance.ingest.config import set_project_priority_rule
-from rebalance.ingest.dashboard import build_dashboard_payload
+from rebalance.ingest.note_builder import build_dashboard_payload
 from rebalance.ingest.db import db_connection, ensure_calendar_schema, ensure_github_schema, ensure_project_schema
 from rebalance.ingest.project_classifier import classify_event_project, load_project_matchers
 

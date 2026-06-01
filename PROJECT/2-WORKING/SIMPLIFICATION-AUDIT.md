@@ -28,8 +28,8 @@ The rule: if you can tick a box and forget it, you're doing it right. If you nee
 
 | Column | Value |
 |---|---|
-| **Last completed phase** | Phase 1 ✅ — F1–F4 dead code deleted, tests green (10 passed) |
-| **What's next** | Phase 2 — rename `src/rebalance/ingest/dashboard.py` → `note_builder.py` (F12), then F5 filter consolidation |
+| **Last completed phase** | Phase 2 ✅ — F12 rename + all import sites updated, F5 ignored-repos filter added, 4 tests green |
+| **What's next** | Phase 3A — owner decision required: Option A (delete verdict section) vs Option B (org-prefix heuristic). Record decision, then remove `get_github_balance()` call from `build_dashboard_payload()` |
 
 ---
 
@@ -77,18 +77,13 @@ No logic changes. No tests need updating. Safe to do in one commit.
 
 ---
 
-### Phase 2 — Consolidate the two dashboard.py files
+### Phase 2 — Consolidate the two dashboard.py files ✅
 
 One data layer per output format. Rename the collision.
 
-- [ ] **F12** — Rename `src/rebalance/ingest/dashboard.py` → `src/rebalance/ingest/note_builder.py`. Update all import sites:
-  - `src/rebalance/cli.py` (search: `from rebalance.ingest.dashboard import`)
-  - `tests/test_dashboard_cli.py:14` (`from rebalance.ingest.dashboard import build_dashboard_payload`)
-  - `tests/test_project_priority.py:14` (same)
-  - Any other grep hit: `grep -r "from rebalance.ingest.dashboard" src/ tests/`
-  - Entry points and re-exports (often missed): `grep -r "ingest.dashboard\|ingest/dashboard" pyproject.toml src/rebalance/__init__.py`
-- [ ] **F5** — Add the ignored-repos filter to `get_all_repo_activity_by_org()` in `note_builder.py` (a 2-line change, same pattern as `fetch_org_activity`). Leave both functions in place for now. Defer full extraction to Phase 4, after the "retire the Obsidian note?" decision is made — if the note is retired, `note_builder.py` disappears and there is nothing to consolidate. If it stays, extract then with confidence both consumers will coexist long-term. _Note on import direction: `scripts/ → src/rebalance/` (the existing direction `pulse_web.py` already uses) is fine. The forbidden direction is `src/ → scripts/` — package code must not import from the scripts layer._
-- [ ] Run tests: `uv run pytest tests/test_dashboard_cli.py tests/test_project_priority.py -x -q`
+- [x] **F12** — Renamed `src/rebalance/ingest/dashboard.py` → `src/rebalance/ingest/note_builder.py`. Updated all import sites: `cli.py`, `index_ops.py`, `test_project_priority.py`, `test_dashboard_cli.py` (all 3 `patch()` paths).
+- [x] **F5** — Added ignored-repos filter to `get_all_repo_activity_by_org()` in `note_builder.py`. Same pattern as `fetch_org_activity` (f-string SQL clause + param extension). Both functions left in place pending Phase 4 decision.
+- [x] Run tests: `uv run pytest tests/test_dashboard_cli.py tests/test_project_priority.py -x -q` — **4 passed**
 
 ---
 

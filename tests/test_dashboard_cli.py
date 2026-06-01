@@ -153,7 +153,7 @@ class DashboardRenderCliTests(unittest.TestCase):
 
             with (
                 patch("rebalance.ingest.calendar_config.CalendarConfig.load", return_value=_calendar_config()),
-                patch("rebalance.ingest.dashboard.load_review_decisions", return_value={}),
+                patch("rebalance.ingest.note_builder.load_review_decisions", return_value={}),
             ):
                 result = self.runner.invoke(
                     app,
@@ -197,9 +197,9 @@ class DashboardRenderCliTests(unittest.TestCase):
 
             with (
                 patch("rebalance.ingest.calendar_config.CalendarConfig.load", return_value=_calendar_config()),
-                patch("rebalance.ingest.dashboard.load_review_decisions", return_value={}),
-                patch("rebalance.ingest.dashboard.get_gemini_api_key", return_value="test-key"),
-                patch("rebalance.ingest.dashboard.synthesize_dashboard_narrative", return_value="Short operator summary.") as mock_synth,
+                patch("rebalance.ingest.note_builder.load_review_decisions", return_value={}),
+                patch("rebalance.ingest.note_builder.get_gemini_api_key", return_value="test-key"),
+                patch("rebalance.ingest.note_builder.synthesize_dashboard_narrative", return_value="Short operator summary.") as mock_synth,
             ):
                 result = self.runner.invoke(
                     app,
