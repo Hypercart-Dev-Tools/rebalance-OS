@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+from mcp.server.fastmcp import FastMCP
+
+from rebalance.ingest.config import get_config_path, get_github_token, set_github_token, set_vault_path
+from rebalance.ingest.github_scan import validate_github_token
+from rebalance.ingest.preflight import confirm_and_write, discover_candidates
+from rebalance.ingest.registry import get_projects
+
+
+def register(mcp: FastMCP, database_path: Path) -> None:
+    @mcp.tool()
+    def onboarding_status(vault_path: str) -> dict[str, Any]:
+        """
+        Check which onboarding steps are complete.
+
+        Returns a list of steps with completion status so the host agent
+        knows where to resume.  DB path is resolved from REBALANCE_DB
+        (same as all server tools).
+        """
+        vp = Path(vault_path).expanduser().resolve()
+        registry_path = vp / "Projects" / "00-project-registry.md"
+        projects_yaml_path = vp / "projects.yaml"
+
+        steps: list[dict[str, Any]] = []
+
+        config_path = get_config_path()
+        steps.append({
+            "name": "config_exists",
+            "complete": config_path.exists(),
+            "detail": str(config_path),
+        })
+
+        token = get_github_token()
+        steps.append({
+            "name": "github_token_set",
+            "complete": token is not None,
+            "detail": "Token is configured" if token else "No token found",
+        })
+
+        steps.append({
+            "name": "registry_exists",
+            "complete": registry_path.exists(),
+            "detail": str(registry_path),
+        })
+
+        steps.append({
+            "name": "projection_exists",
+            "complete": projects_yaml_path.exists(),
+            "detail": str(projects_yaml_path),
+        })
+
+        db_has_rows = False
+        if database_path.exists():
+            try:
+                db_has_rows = len(get_projects(database_path)) > 0
+            except Exception:
+                pass
+        steps.append({
+            "name": "db_synced",
+            "complete": db_has_rows,
+            "detail": str(database_path),
+        })
+
+        return {"steps": steps}
+
+    @mcp.tool()
+    def setup_github_token(token: str) -> dict[str, Any]:
+        """
+        Validate a GitHub PAT against the /user endpoint and store it.
+
+        Returns validation result with login and scopes.  If invalid,
+        the token is not stored.
+        """
+        result = validate_github_token(token)
+        if result["valid"]:
+            set_github_token(token)
+        return result
+
+    @mcp.tool()
+    def run_preflight(vault_path: str) -> dict[str, Any]:
+        """
+        Discover project candidates from vault note titles and GitHub
+        activity.  Read-only — does not write to the registry.
+
+        Returns candidates segmented by activity recency.  The host agent
+        presents these to the user, then sends the curated list to
+        confirm_projects.
+        """
+        vp = Path(vault_path).expanduser().resolve()
+        registry_path = vp / "Projects" / "00-project-registry.md"
+        token = get_github_token()
+
+        discovery = discover_candidates(
+            vault_path=vp,
+            registry_path=registry_path,
+            github_token=token,
+        )
+        return discovery
+
+    @mcp.tool()
+    def confirm_projects(projects: list[dict[str, Any]], vault_path: str) -> dict[str, Any]:
+        """
+        Write confirmed projects to the canonical registry and run pull
+        sync to materialize projects.yaml and the SQLite project_registry
+        table.  Creates standard vault directories if missing.
+
+        Pass the curated project list from run_preflight (with any
+        user-edited fields like summary, priority_tier, tags).
+        """
+        vp = Path(vault_path).expanduser().resolve()
+        registry_path = vp / "Projects" / "00-project-registry.md"
+        projects_yaml_path = vp / "projects.yaml"
+
+        result = confirm_and_write(
+            projects=projects,
+            vault_path=vp,
+            registry_path=registry_path,
+            projects_yaml_path=projects_yaml_path,
+            database_path=database_path,
+        )
+
+        set_vault_path(str(vp))
+
+        return {
+            "registry_path": result.registry_path,
+            "project_count": result.project_count,
+            "sync_ok": result.sync_ok,
+        }
+
+    @mcp.tool()
+    def ingest_gmail_messages(messages: list[dict[str, Any]]) -> dict[str, Any]:
+        """Ingest pre-fetched Gmail messages into the local ``email_messages`` table.
+
+        The MCP-path Gmail ingest, for installs configured with
+        ``gmail_ingest_method=mcp``. An agent fetches messages via the Gmail
+        MCP connector and pushes them here — a launchd job cannot reach an MCP
+        connector, so this is the supported way to keep email fresh in MCP mode.
+
+        Each *messages* dict accepts: ``message_id`` (required), ``thread_id``,
+        ``from_address``, ``from_name``, ``subject``, ``snippet``,
+        ``received_at``, and ``labels`` (list of label strings). The new rows
+        are also projected into the semantic index.
+        """
+        from rebalance.ingest.gmail import ingest_email_messages
+        from rebalance.ingest.semantic_index import backfill_semantic_documents
+
+        result = ingest_email_messages(database_path, messages)
+        backfill_semantic_documents(database_path, source_types=["email"])
+        return {
+            "messages_listed": result.messages_listed,
+            "messages_stored": result.messages_stored,
+            "messages_inserted": result.messages_inserted,
+            "messages_updated": result.messages_updated,
+        }
