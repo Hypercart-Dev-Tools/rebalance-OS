@@ -1868,7 +1868,7 @@ wheels = [
 
 [[package]]
 name = "rebalance-os"
-version = "0.31.2"
+version = "0.31.4"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
