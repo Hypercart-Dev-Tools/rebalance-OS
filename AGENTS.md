@@ -2,6 +2,14 @@
 
 This repo **is** an MCP server. Every refresh and query path is exposed through MCP tools — do not scan the codebase for `rebalance ...` CLI commands or write ad-hoc shell pipelines. Reach for the tools first.
 
+> ### 🧭 Start here — the central orchestrator (the data-plane spine)
+>
+> Every data source — `vault`, `github`, `calendar`, `sleuth`, `email`, `semantic` — is registered as a `Collector` in **[src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py)** (`register_collector` / `COLLECTORS`). That registry **is** the central orchestrator of the system: `refresh_index`, `index_status`, and the daily-sync cron all dispatch through it, and adding a source is one `register_collector(...)` call — no edits to the dispatch chain. **To understand or extend this system, read `index_ops.py` first.**
+>
+> - **Setup / health / "why is X empty?"** → run `rebalance doctor` (it names the exact remediation, e.g. a missing calendar OAuth token → `scripts/setup_calendar_oauth.py`). Don't grep for setup scripts.
+> - **Orientation** → [ARCHITECTURE.md](ARCHITECTURE.md) (Signal Sources table, Source→Table fanout, "Adding a New Source"). Read it at session start.
+> - **`querier.py`** is the read-side orchestrator (retrieval + synthesis); `index_ops.py` is the source/refresh orchestrator. Both consume the same source set — the direction to make `doctor`, the morning brief, and `querier` all iterate the one registry is in [PROJECT/2-WORKING/P1-MODULE-REGISTRY.md](PROJECT/2-WORKING/P1-MODULE-REGISTRY.md).
+
 **Connection.** The repo ships two equivalent configs: [.vscode/mcp.json](.vscode/mcp.json) for VS Code agents and [.mcp.json](.mcp.json) at the repo root for tools that look there. Both launch `.venv/bin/python -m rebalance.mcp_server` over stdio with `REBALANCE_DB` set to the repo's `rebalance.db`.
 
 **Single entry points (use these first):**

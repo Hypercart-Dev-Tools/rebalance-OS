@@ -34,8 +34,7 @@ from typing import Any
 # --- repo imports (canonical read paths, same as MCP server / querier) --------
 from rebalance.ingest.registry import get_projects
 from rebalance.ingest.github_scan import get_github_balance
-from rebalance.ingest.calendar import get_upcoming_events
-from rebalance.ingest.db import db_connection, ensure_email_schema
+from rebalance.ingest.db import db_connection, ensure_email_schema, ensure_calendar_schema
 from rebalance.ingest.sleuth_reminders import ensure_sleuth_schema
 
 CANDIDATES_PATH = Path("temp/morning-brief-candidates.json")
@@ -196,26 +195,36 @@ def collect_emails(db: Path, since_days: int) -> tuple[list[dict[str, Any]], str
 
 
 def collect_calendar(db: Path) -> tuple[list[dict[str, Any]], str | None]:
-    """Today's calendar events (time-bound -> high salience)."""
+    """The whole of TODAY's calendar (00:00-23:59 local), not now->forward.
+
+    A morning briefing wants the full day ahead, including events earlier than
+    the moment the briefing is generated. (`calendar.get_upcoming_events` filters
+    from `now`, which drops the morning's events once the day is underway.)
+    """
     try:
-        now = _now_local()
-        end_of_today = now.replace(hour=23, minute=59, second=59, microsecond=0)
+        today = _now_local().date().isoformat()
         rows: list[dict[str, Any]] = []
-        for ev in get_upcoming_events(db, days_forward=1):
-            start = _parse_iso(ev.get("start_time"))
-            if start is None or start.astimezone() > end_of_today:
-                continue  # only today
+        with db_connection(db, ensure_calendar_schema) as conn:
+            recs = conn.execute(
+                """SELECT id, summary, start_time, end_time, location, attendees_json
+                   FROM calendar_events
+                   WHERE date(start_time) = ?
+                   ORDER BY start_time ASC""",
+                (today,),
+            ).fetchall()
+        for ev in recs:
+            attendees = json.loads(ev["attendees_json"] or "[]")
             rows.append({
                 "source": "calendar",
-                "id": ev.get("id") or ev.get("summary"),
-                "label": (ev.get("summary") or "(busy)").strip()[:160],
+                "id": ev["id"] or ev["summary"],
+                "label": (ev["summary"] or "(busy)").strip()[:160],
                 "salience": 75.0,
-                "timestamp": ev.get("start_time"),
+                "timestamp": ev["start_time"],
                 "detail": {
-                    "start": ev.get("start_time"),
-                    "end": ev.get("end_time"),
-                    "location": ev.get("location"),
-                    "attendees": len(ev.get("attendees") or []),
+                    "start": ev["start_time"],
+                    "end": ev["end_time"],
+                    "location": ev["location"],
+                    "attendees": len(attendees),
                 },
             })
         return rows, None

@@ -1,11 +1,18 @@
-# P3 Module Registry
+# P1 Module Registry
 
-> **Status:** Open proposal — written 2026-05-08 to be reviewed by another agent.
-> **Decision needed:** which (if any) of three approaches to take, and at what priority.
-> **Author note:** this doc is intentionally balanced. Pros and cons are listed for each approach. The recommended-step section at the end gives my read, but the goal is to surface the decision, not pre-empt it.
+> **Priority:** Promoted P3 → **P1** and moved to `2-WORKING` on 2026-05-31 (was `1-INBOX/P3-MODULE-REGISTRY.md`).
+> **Status:** Decision taken 2026-05-31 — adopt **Approach B′ (extend the existing `index_ops` collector registry)**, incrementally, descriptor-first. Supersedes the 2026-05-08 "defer B" recommendation; see [Update 2026-05-31](#update-2026-05-31--the-registry-already-exists-extend-index_ops). Original balanced analysis (Approaches A/B/C) retained below unchanged for provenance.
+> **Original status (2026-05-08):** Open proposal — written to be reviewed by another agent.
+> **Author note:** the original doc is intentionally balanced. Pros and cons are listed for each approach. The 2026-05-31 update lands the decision the original deferred, on the strength of new evidence.
 
 ## TOC
 
+- [Update 2026-05-31 — the registry already exists (extend index_ops)](#update-2026-05-31--the-registry-already-exists-extend-index_ops)
+- [Why the 2026-05-08 verdict changed](#why-the-2026-05-08-verdict-changed)
+- [Approach B′ — extend the runtime collector registry](#approach-b--extend-the-runtime-collector-registry)
+- [Phased plan](#phased-plan)
+- [What this explicitly does not do](#what-this-explicitly-does-not-do)
+- --- original 2026-05-08 proposal below ---
 - Trigger
 - Problem statement
 - Required fan-out (shared by every approach)
@@ -16,6 +23,68 @@
 - Findings from Approach A prototype (2026-05-08)
 - Open questions
 - Recommended next step
+
+## Update 2026-05-31 — the registry already exists (extend index_ops)
+
+The 2026-05-08 analysis deferred Approach B (proactive registry) as premature: "N=1 drift, ~600–1000 lines of scaffolding, forces a uniform shape on eight heterogeneous collectors." Two things have changed that flip that cost-benefit.
+
+**1. A runtime collector registry already exists — we don't have to build one.** Since the original doc was written, [src/rebalance/ingest/index_ops.py](../../src/rebalance/ingest/index_ops.py) grew a `Collector` registry (`register_collector`, `COLLECTORS`) that already declares every ingest source — `vault`, `github`, `calendar`, `sleuth`, `email`, `semantic` (lines ~1008–1013) — and dispatches `refresh_index` / `index_status` / `scope=["all"]` through it. Crucially it sidesteps Approach B's worst Con: each collector supplies an arbitrary `refresh` callable, so the registry does **not** force a uniform module shape — it accommodates the heterogeneity (different secrets, concurrency, delta strategies) the original doc worried about. The expensive part of B (build a registry from scratch + a scaffolder/codegen) is no longer on the table. What remains is cheap and additive: give the descriptor a few more optional fields.
+
+**2. The drift/implicit-classification cost (original finding #5) has recurred — and now bites agents, not just docs.** Concrete evidence from 2026-05-31:
+
+- The same source set (`vault/github/calendar/sleuth/email/semantic`) is **re-enumerated independently in four places** — `index_ops.COLLECTORS` (registry ✅), [doctor.py](../../src/rebalance/doctor.py) (hardcoded `_check_*` + manual appends ❌), `querier.ask` (`_gather_*_context` ❌), and the new morning-brief collector ([scripts/spike_morning_brief.py](../../scripts/spike_morning_brief.py), its own hardcoded reads ❌). Adding a source means editing four lists that drift.
+- An agent setting up Google Calendar had to **grep** the repo for `setup_calendar_oauth.py` because `rebalance doctor` already knew the remediation but is **CLI-only — not exposed as an MCP tool**, and `onboarding_status` doesn't check calendar OAuth. The right knowledge existed in one enumeration (doctor) and was unreachable from the surface the agent is told to use (MCP). That is exactly the "data wanting to be a field / fanout drift" failure, now manifesting as an agent dead-end rather than a stale doc.
+
+This is the "recurred at least once more" trigger the original doc named as the condition for revisiting B.
+
+## Why the 2026-05-08 verdict changed
+
+| Original Con of Approach B | Status as of 2026-05-31 |
+|---|---|
+| "~600–1000 LOC to build a registry + scaffolder" | **Gone.** The registry exists (`index_ops.COLLECTORS`). No scaffolder/codegen is proposed. Work is additive optional fields + pointing existing consumers at it. |
+| "Forces uniform shape on heterogeneous collectors" | **Gone.** Collectors already register an arbitrary `refresh` callable; new fields are optional callables too. No shape is imposed. |
+| "Premature at N=1 drift" | **Resolved.** Drift recurred (4-way re-enumeration + the calendar-OAuth agent dead-end). Finding #5 (implicit classification) is now load-bearing, as predicted. |
+| "Registry itself can drift; still needs an audit (A)" | **Still true** — and fine. Approach A's [audit_modules](../../scripts/audit_modules.py) becomes the verifier of the registry (Phase 5), which is where the original doc said A naturally lives. |
+
+Net: this is not the original Approach B (new `module_registry.yaml` + `scaffold-module` codegen). It is **B′** — extend the registry that already exists. Smaller, additive, reversible per phase.
+
+## Approach B′ — extend the runtime collector registry
+
+Promote `index_ops.Collector` from a *refresh-only* descriptor into the **one place a source is declared**, by adding optional fields (defaults preserve today's behavior — existing collectors keep working un-touched):
+
+- `health_check: Callable | None` — returns a doctor `Check` (credential present? token valid? table fresh?). When absent, doctor falls back to a generic freshness check derived from `storage_tables`.
+- `read_for_brief: Callable | None` — returns the source's morning-brief candidate rows. When absent, the source simply doesn't contribute to the briefing.
+- Classification metadata (the data that finding #5 showed "wants to be a field"): `module_class: "source" | "render" | "helper"`, `storage_tables: tuple[str, ...]`, `secrets: tuple[str, ...]`, `scheduler: "own" | "piggyback" | None`, `user_facing: bool`, `strategic_alignment: str | None`.
+
+Then the four consumers stop hardcoding and **iterate the registry**:
+
+- `refresh_index` / `index_status` — already do (no change).
+- `doctor` — iterate `COLLECTORS`, call each `health_check`; expose as a new MCP `health_check()` tool so MCP-first agents reach remediation hints (closes the calendar-OAuth gap).
+- morning brief — iterate `COLLECTORS`, call each `read_for_brief`; a newly-registered source auto-appears in the briefing.
+- `querier.ask` — iterate `COLLECTORS` for `_gather_*_context`.
+
+Registering one `Collector` then wires a source into refresh, status, health, briefing, and read — instead of five separate edits that drift.
+
+## Phased plan
+
+Each phase is independently shippable and reversible (new fields are optional; nothing breaks if a phase stops here).
+
+- [ ] **Phase 1 — Extend the descriptor.** Add the optional fields above to `Collector` in [index_ops.py](../../src/rebalance/ingest/index_ops.py). Backfill `module_class` / `storage_tables` / `secrets` on the existing 6 collectors. No consumer changes yet. Gate: `refresh_index`/`index_status` behavior byte-identical.
+- [ ] **Phase 2 — Doctor consumes the registry + MCP `health_check()`.** Move `_check_calendar`/`_check_sleuth`/`_check_gmail`/freshness onto each collector's `health_check`; have [doctor.py](../../src/rebalance/doctor.py) iterate `COLLECTORS`. Add a `health_check()` MCP tool in [mcp_server.py](../../src/rebalance/mcp_server.py) returning the structured report. Gate: `rebalance doctor` output unchanged; the new source's setup hint is now reachable via MCP. **This is the slice that fixes the gap that triggered this update.**
+- [ ] **Phase 3 — Morning brief consumes the registry.** Replace the spike's hardcoded source reads with `read_for_brief` on each collector (folds into P1 Morning Briefing, Phase 1). Gate: brief output matches the spike for the current sources; a test source auto-appears.
+- [ ] **Phase 4 — querier consumes the registry.** Drive `_gather_*_context` from `COLLECTORS`. Gate: `ask` answers unchanged on a fixed query set.
+- [ ] **Phase 5 — audit + doc fanout from the registry.** Point [audit_modules](../../scripts/audit_modules.py) at the registry as source-of-truth (closes prototype findings #4/#5/#6 — classification is now a field, not an ignore-list). Optional: registry-driven ARCHITECTURE.md Signal-Sources / module-map writers. Update the ARCHITECTURE.md "Adding a New Source" SOP to "register a `Collector`, fill its fields" instead of the prose 8 steps.
+
+## What this explicitly does not do
+
+- **No scaffolder / codegen.** That was the heavy half of the original Approach B; it is not proposed. Authors still write collectors by hand; they just register one descriptor.
+- **No uniform-shape mandate.** All new descriptor fields are optional callables/metadata. A collector that only refreshes (no brief read, no custom health check) stays a one-liner.
+- **No blocking CI gate (yet).** Phase 5's audit stays advisory unless/until CI exists for this repo (original Open Question #4 is unchanged).
+- **No 4X4/README auto-spam.** `strategic_alignment` / `user_facing` remain explicit opt-in fields, per the original "Required fan-out" caution.
+
+---
+
+> The sections below are the original 2026-05-08 proposal, retained verbatim for provenance. The 2026-05-31 update above supersedes the "Recommended next step."
 
 ## Trigger
 
