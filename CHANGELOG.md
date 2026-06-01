@@ -1,5 +1,28 @@
 # Changelog
 
+## [0.31.6] - 2026-06-01
+
+### Added
+
+- **`keyring` integration (Issue #39 Phase 0)** — secrets now stored in the OS keyring
+  (macOS Keychain, Windows Credential Locker) via the `keyring` library.
+  Resolution order: keyring → `rbos.config` (legacy, auto-migrated on first read) → `gh-cli`.
+  `set_github_token()` writes to keyring and removes any legacy plaintext copy from
+  `rbos.config`. `clear_github_token()` clears both. Keyring unavailable (headless CI,
+  no backend) silently falls back to `rbos.config` — no behaviour change on those hosts.
+- **Calendar OAuth keyring support** — `get/set/clear_calendar_oauth_token_json()` in
+  `config.py` for storing serialized Google OAuth2 token in keyring; existing pickle
+  fallback preserved until migration is complete.
+- **`sync_subdir` config key** — `get_sync_subdir()` / `set_sync_subdir()` in `config.py`
+  (default `"sync"`). Foundation for Issue #39 device snapshot sharing within the existing
+  pulse repo: `{pulse_target_path}/sync/calendar/<device_id>.json`, etc.
+- **`rebalance config doctor` keyring section** — shows OS keyring backend, GitHub token
+  source (`keyring` / `config` / `gh-cli`), and Calendar OAuth keyring status.
+
+### Changed
+
+- `keyring>=25.0.0` added to core dependencies in `pyproject.toml`.
+
 ## [0.31.5] - 2026-06-01
 
 ### Added

@@ -1,10 +1,14 @@
 """
 Configuration loader for rebalance — secrets, API credentials, etc.
 
-Storage path: temp/rbos.config (gitignored, at workspace root)
-Format: JSON
+Non-secret config:  temp/rbos.config (gitignored, JSON)
+Secrets:            OS keyring via the `keyring` library
+                    (macOS Keychain, Windows Credential Locker, etc.)
+                    Service name: KEYRING_SERVICE = "rebalance-os"
 
-Future: Migrate sensitive fields to keyring library when multi-user or compliance required.
+Migration: any secret still in rbos.config is silently moved to keyring
+on first read and removed from the file.  The rbos.config legacy path
+serves as a fallback when keyring is unavailable (e.g. headless CI).
 """
 
 from __future__ import annotations
@@ -21,6 +25,54 @@ from typing import Any
 CONFIG_PATH: Path | None = None
 CONFIG_ENV_VAR = "REBALANCE_CONFIG"
 _PROJECT_MARKERS = (".git", "pyproject.toml")
+
+# Keyring service name — all secrets stored under this service.
+KEYRING_SERVICE = "rebalance-os"
+
+
+def _keyring_get(key: str) -> str | None:
+    """Return a secret from the OS keyring, or None if unavailable/unset."""
+    try:
+        import keyring  # noqa: PLC0415
+        return keyring.get_password(KEYRING_SERVICE, key)
+    except Exception:  # noqa: BLE001 — keyring backend missing or locked
+        return None
+
+
+def _keyring_set(key: str, value: str) -> bool:
+    """Write a secret to the OS keyring. Returns True on success."""
+    try:
+        import keyring  # noqa: PLC0415
+        keyring.set_password(KEYRING_SERVICE, key, value)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _keyring_delete(key: str) -> bool:
+    """Delete a secret from the OS keyring. Returns True on success."""
+    try:
+        import keyring  # noqa: PLC0415
+        import keyring.errors  # noqa: PLC0415
+        keyring.delete_password(KEYRING_SERVICE, key)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _migrate_to_keyring(config_key: str) -> str | None:
+    """If *config_key* is in rbos.config but not keyring, move it to keyring silently.
+
+    Returns the migrated value, or None if nothing to migrate.
+    """
+    config = _read_config()
+    value = config.get(config_key)
+    if not value:
+        return None
+    if _keyring_set(config_key, value):
+        del config[config_key]
+        _write_config(config)
+    return value
 _GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
@@ -109,16 +161,19 @@ def _try_gh_cli_token() -> str | None:
 def get_github_token_with_source() -> tuple[str | None, str | None]:
     """
     Resolve a GitHub token. Returns (token, source) where source is one of:
-      "config"  — token came from temp/rbos.config
+      "keyring" — token stored in the OS keyring (preferred)
+      "config"  — token still in temp/rbos.config (legacy; auto-migrated on read)
       "gh-cli"  — fell back to `gh auth token`
-      None      — neither available
+      None      — not available
 
-    Resolution order is config first, then gh CLI. This keeps explicit
-    PATs authoritative when both are present, so a user who set a token
-    deliberately won't be silently overridden by an ambient gh login.
+    Resolution order: keyring → rbos.config (with auto-migration) → gh-cli.
+    Explicit PATs always win over the ambient gh login.
     """
-    config = _read_config()
-    token = config.get("github_token")
+    token = _keyring_get("github_token")
+    if token:
+        return token, "keyring"
+    # Legacy path — auto-migrate to keyring on first read
+    token = _migrate_to_keyring("github_token")
     if token:
         return token, "config"
     token = _try_gh_cli_token()
@@ -128,24 +183,30 @@ def get_github_token_with_source() -> tuple[str | None, str | None]:
 
 
 def get_github_token() -> str | None:
-    """
-    Get GitHub token. Falls back to `gh auth token` if no PAT is in config.
-
-    Config key: github_token
-    """
+    """Get GitHub token (keyring → rbos.config → gh-cli)."""
     token, _source = get_github_token_with_source()
     return token
 
 
 def set_github_token(token: str) -> None:
-    """Store GitHub PAT in config."""
+    """Store GitHub PAT in the OS keyring; remove any legacy copy from rbos.config."""
+    cleaned = token.strip()
+    if not _keyring_set("github_token", cleaned):
+        # Keyring unavailable — fall back to rbos.config
+        config = _read_config()
+        config["github_token"] = cleaned
+        _write_config(config)
+        return
+    # Remove legacy copy from rbos.config if present
     config = _read_config()
-    config["github_token"] = token.strip()
-    _write_config(config)
+    if "github_token" in config:
+        del config["github_token"]
+        _write_config(config)
 
 
 def clear_github_token() -> None:
-    """Remove the stored GitHub PAT from config (e.g. to switch to `gh auth token`)."""
+    """Remove the stored GitHub PAT from both keyring and rbos.config."""
+    _keyring_delete("github_token")
     config = _read_config()
     if "github_token" in config:
         del config["github_token"]
@@ -550,6 +611,51 @@ def set_pulse_config(**values: Any) -> None:
         if value is None:
             continue
         config[key] = str(value).strip() if isinstance(value, str) else value
+    _write_config(config)
+
+
+# ---------------------------------------------------------------------------
+# Calendar OAuth token (keyring-backed)
+# ---------------------------------------------------------------------------
+
+def get_calendar_oauth_token_json() -> str | None:
+    """Return the serialized Google OAuth2 token JSON from keyring, or None if absent."""
+    return _keyring_get("calendar_oauth_token")
+
+
+def set_calendar_oauth_token_json(token_json: str) -> bool:
+    """Store the serialized Google OAuth2 token JSON in keyring.
+
+    Returns True on success. If keyring is unavailable, returns False and the
+    caller should fall back to the existing pickle-file storage path.
+    """
+    return _keyring_set("calendar_oauth_token", token_json)
+
+
+def clear_calendar_oauth_token() -> None:
+    """Remove the Calendar OAuth token from keyring."""
+    _keyring_delete("calendar_oauth_token")
+
+
+# ---------------------------------------------------------------------------
+# Sync repo config (Issue #39 — multi-device snapshot sharing)
+# ---------------------------------------------------------------------------
+
+def get_sync_subdir() -> str:
+    """Return the subfolder within pulse_target_path used for device snapshots.
+
+    Defaults to 'sync'. Snapshots are written as:
+      {pulse_target_path}/{sync_subdir}/calendar/{device_id}.json
+      {pulse_target_path}/{sync_subdir}/email/{device_id}.json
+    """
+    config = _read_config()
+    return str(config.get("sync_subdir") or "sync")
+
+
+def set_sync_subdir(subdir: str) -> None:
+    """Override the sync subfolder name (default: 'sync')."""
+    config = _read_config()
+    config["sync_subdir"] = subdir.strip()
     _write_config(config)
 
 

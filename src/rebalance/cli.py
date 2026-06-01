@@ -2648,9 +2648,19 @@ def config_doctor() -> None:
             line += f"  ({detail})"
         typer.echo(line)
 
+    from rebalance.ingest.config import KEYRING_SERVICE, _keyring_get
+
     typer.echo("\n── Config file ─────────────────────────────")
     cfg_path = get_config_path()
     row("temp/rbos.config", cfg_path.exists(), str(cfg_path))
+
+    typer.echo("\n── Keyring ──────────────────────────────────")
+    try:
+        import keyring as _kr
+        _kr.get_password(KEYRING_SERVICE, "__probe__")
+        row("OS keyring", True, f"service={KEYRING_SERVICE}  backend={type(_kr.get_keyring()).__name__}")
+    except Exception as exc:
+        row("OS keyring", False, f"unavailable — secrets fall back to rbos.config ({exc})")
 
     typer.echo("\n── GitHub ───────────────────────────────────")
     token, source = get_github_token_with_source()
@@ -2662,6 +2672,11 @@ def config_doctor() -> None:
             row("GitHub token", False, f"source={source}  invalid — {result.get('error', 'unknown error')}")
     else:
         row("GitHub token", False, "not configured — run: rebalance config set-github-token <PAT>")
+
+    typer.echo("\n── Calendar OAuth ───────────────────────────")
+    from rebalance.ingest.config import get_calendar_oauth_token_json
+    cal_token_json = get_calendar_oauth_token_json()
+    row("Calendar OAuth (keyring)", bool(cal_token_json), "token stored in keyring" if cal_token_json else "not in keyring — using pickle fallback")
 
     typer.echo("\n── Vault & database ─────────────────────────")
     vault = get_vault_path()

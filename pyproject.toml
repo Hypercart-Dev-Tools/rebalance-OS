@@ -16,6 +16,7 @@ dependencies = [
   "questionary>=2.0.1",
   "mcp>=1.0.0",
   "sqlite-vec>=0.1.6",
+  "keyring>=25.0.0",
 ]
 
 [project.optional-dependencies]
