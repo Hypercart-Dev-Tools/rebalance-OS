@@ -2185,7 +2185,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
 
     last_activity = _latest_collector_activity(status)
     last_vault = vault_rows[0] if vault_rows else None
-    health_filed_30d = fetch_health_filed_count(days=30)
+    health_filed_30d = fetch_health_filed_count(days=1)
 
     tz_source_label, tz_is_fallback = _resolve_tz_source()
     offset = local_now.strftime("%z")
@@ -2226,7 +2226,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
                  class="health-pill{' has-issues' if health_filed_30d else ''}"
                  title="Health issues filed in the last 30 days — click to view on GitHub">
                 <span class="health-dot"></span>
-                Health: {health_filed_30d} report{'s' if health_filed_30d != 1 else ''} filed (30d)
+                Health: {health_filed_30d} report{'s' if health_filed_30d != 1 else ''} filed (1d)
               </a>
               <button id="pulse-refresh" class="refresh-btn">Refresh</button>
             </div>
