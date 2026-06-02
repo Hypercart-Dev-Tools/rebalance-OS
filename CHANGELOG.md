@@ -4,6 +4,8 @@
 
 ### Added
 
+- Added a Figma comments collector that syncs configured file comments into the local knowledge base and unified semantic index.
+
 - **`src/rebalance/repair.py` — `RepairFSM`** — lightweight finite-state-machine
   for deterministic repair with bounded Haiku escalation. States: `PENDING →
   REPAIRED | ESCALATED → REPAIRED | DEAD`. Circuit breakers: unrecoverable error

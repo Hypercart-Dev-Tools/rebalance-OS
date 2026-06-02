@@ -37,7 +37,7 @@ def register(mcp: FastMCP, database_path: Path) -> None:
 
         Args:
             scope: Any combination of "vault", "github", "calendar", "sleuth",
-                "email", "semantic", or "all". Defaults to ["all"].
+                "email", "figma", "semantic", or "all". Defaults to ["all"].
                 - vault: ingest vault notes -> embed chunks -> semantic backfill+embed (vault)
                 - github: github-scan -> sync artifacts per repo -> embed -> semantic backfill+embed (github)
                 - calendar: sync Google Calendar events
@@ -45,6 +45,9 @@ def register(mcp: FastMCP, database_path: Path) -> None:
                 - email: sync newest-100 inbox messages from Gmail (ADC auth)
                   and backfill them into the semantic index. Configure scope
                   via ``gmail_query_filter`` in temp/rbos.config.
+                - figma: sync comments for configured Figma file keys and
+                  backfill them into the semantic index. Configure via
+                  ``figma_token`` and ``figma_file_keys`` in temp/rbos.config.
                 - semantic: re-run unified backfill+embed only (assumes upstream syncs done)
             vault_path: Optional override; falls back to configured vault path.
             since_days: Lookback window for github-scan and calendar-sync (default 30).

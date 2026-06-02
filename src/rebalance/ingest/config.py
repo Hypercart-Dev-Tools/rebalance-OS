@@ -169,6 +169,58 @@ def set_vault_path(path: str) -> None:
     _write_config(config)
 
 
+def get_figma_token() -> str | None:
+    """Return the configured Figma personal access token, if present.
+
+    Config key: ``figma_token``. Kept in gitignored ``temp/rbos.config``.
+    """
+    config = _read_config()
+    value = config.get("figma_token")
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def set_figma_token(token: str) -> None:
+    """Store a Figma personal access token in local config."""
+    config = _read_config()
+    config["figma_token"] = token.strip()
+    _write_config(config)
+
+
+def get_figma_file_keys() -> list[str]:
+    """Return configured Figma file keys to scan for comments.
+
+    Config key: ``figma_file_keys``. The Figma comments API is file-scoped, so
+    the collector needs this explicit allow-list.
+    """
+    config = _read_config()
+    value = config.get("figma_file_keys")
+    if not isinstance(value, list):
+        return []
+    keys: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        key = item.strip()
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def set_figma_file_keys(file_keys: list[str]) -> None:
+    """Store the Figma file keys scanned by the Figma comments collector."""
+    config = _read_config()
+    keys: list[str] = []
+    for item in file_keys:
+        key = str(item or "").strip()
+        if key and key not in keys:
+            keys.append(key)
+    config["figma_file_keys"] = keys
+    _write_config(config)
+
+
 def get_gmail_query_filter() -> str | None:
     """Return the configured Gmail search query, or None if unset.
 

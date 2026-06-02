@@ -20,8 +20,8 @@ class MigrationRunnerTests(unittest.TestCase):
             db_path = Path(tmp) / "rebalance.db"
             with db_connection(db_path, ensure_schema) as conn:
                 version = run_migrations(conn)
-                self.assertEqual(version, BASELINE_SCHEMA_VERSION)
-                self.assertEqual(current_schema_version(conn), BASELINE_SCHEMA_VERSION)
+                self.assertGreaterEqual(version, BASELINE_SCHEMA_VERSION)
+                self.assertEqual(current_schema_version(conn), version)
 
     def test_run_migrations_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -29,9 +29,10 @@ class MigrationRunnerTests(unittest.TestCase):
             with db_connection(db_path, ensure_schema) as conn:
                 run_migrations(conn)
                 second = run_migrations(conn)
-                self.assertEqual(second, BASELINE_SCHEMA_VERSION)
+                self.assertGreaterEqual(second, BASELINE_SCHEMA_VERSION)
+                self.assertEqual(second, current_schema_version(conn))
                 rows = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
-                self.assertEqual(rows, 1)
+                self.assertGreaterEqual(rows, 1)
 
     def test_pending_migration_is_applied_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

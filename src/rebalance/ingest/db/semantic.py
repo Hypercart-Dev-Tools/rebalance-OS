@@ -253,6 +253,19 @@ def email_messages_for_semantic(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
+def figma_comments_for_semantic(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every Figma comment, newest first — the input for the Figma backfill."""
+    return conn.execute(
+        """
+        SELECT comment_key, file_key, comment_id, parent_id, message,
+               user_id, user_handle, created_at, resolved_at, order_id,
+               client_meta_json, reactions_json, synced_at
+        FROM figma_comments
+        ORDER BY created_at DESC
+        """
+    ).fetchall()
+
+
 # ---------------------------------------------------------------------------
 # Embeddings
 # ---------------------------------------------------------------------------

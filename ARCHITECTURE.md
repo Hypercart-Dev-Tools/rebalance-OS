@@ -59,6 +59,7 @@ Each source has a priority, a collector module, and a target table. For detailed
 | P2 | Google Calendar | `calendar.py` | `calendar_events` table (default window 30d back / 7d forward; no auto-deletion) | No — structured event data | Active |
 | P3 | Sleuth reminders (Slack) | `sleuth_reminders.py` | `sleuth_reminders` table | No — structured reminder rows | Active |
 | P4 | Email (Gmail) | `gmail.py` + `semantic_index.py` | `email_messages` | Yes — subject + snippet participate in the unified semantic index | Active (Phase 1, shipped 2026-05-12): newest 100 `in:inbox` messages per run; metadata + snippet only, no body parsing yet |
+| P4 | Figma comments | `figma.py` + `semantic_index.py` | `figma_comments` | Yes — comments participate in the unified semantic index | Active: file-scoped comment fetch for configured `figma_file_keys` using a local `figma_token` in `temp/rbos.config` |
 
 ### Source → Table fanout
 

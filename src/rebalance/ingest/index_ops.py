@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from rebalance.ingest.config import (
+    get_figma_file_keys,
+    get_figma_token,
     get_github_token,
     get_vault_path,
 )
@@ -97,7 +99,7 @@ def _all_scope_names() -> list[str]:
 # Legacy SCOPE_VALUES: retained so callers importing the constant continue to
 # work. New code should call _scope_values() since registered collectors may
 # extend the set at runtime.
-SCOPE_VALUES = ("vault", "github", "calendar", "sleuth", "email", "semantic", "all")
+SCOPE_VALUES = ("vault", "github", "calendar", "sleuth", "email", "figma", "semantic", "all")
 
 
 def _safe_count(conn: Any, table: str) -> int | None:
@@ -199,6 +201,12 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "messages": _safe_count(conn, "email_messages"),
             "last_synced_at": _safe_max(conn, "email_messages", "synced_at"),
             "newest_received_at": _safe_max(conn, "email_messages", "received_at"),
+        }
+
+        payload["sources"]["figma"] = {
+            "comments": _safe_count(conn, "figma_comments"),
+            "last_synced_at": _safe_max(conn, "figma_comments", "synced_at"),
+            "newest_comment_at": _safe_max(conn, "figma_comments", "created_at"),
         }
 
         # Semantic index
@@ -724,6 +732,76 @@ def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     }
 
 
+def _refresh_figma(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    file_keys = get_figma_file_keys()
+    if dry_run:
+        return {
+            "scope": "figma",
+            "dry_run": True,
+            "file_keys": file_keys,
+            "steps": [
+                f"sync_figma_comments(files={len(file_keys)})",
+                "semantic_backfill(source=['figma'])",
+                "semantic_embed(source=['figma'])",
+            ],
+        }
+
+    token = (get_figma_token() or "").strip()
+    if not token:
+        return {
+            "scope": "figma",
+            "dry_run": False,
+            "error": "Figma token not configured. Set figma_token in temp/rbos.config.",
+        }
+    if not file_keys:
+        return {
+            "scope": "figma",
+            "dry_run": False,
+            "skipped": True,
+            "reason": "No Figma file keys configured. Set figma_file_keys in temp/rbos.config.",
+        }
+
+    from rebalance.ingest.figma import sync_figma_comments
+    from rebalance.ingest.semantic_index import (
+        backfill_semantic_documents,
+        embed_pending,
+    )
+
+    sync_result = sync_figma_comments(
+        database_path=database_path,
+        file_keys=file_keys,
+        token=token,
+    )
+    backfill = backfill_semantic_documents(database_path, source_types=["figma"])
+    sem_embed = embed_pending(database_path, source_types=["figma"])
+
+    return {
+        "scope": "figma",
+        "dry_run": False,
+        "files_requested": sync_result.files_requested,
+        "files_synced": sync_result.files_synced,
+        "comments_fetched": sync_result.comments_fetched,
+        "comments_inserted": sync_result.comments_inserted,
+        "comments_updated": sync_result.comments_updated,
+        "comments_unchanged": sync_result.comments_unchanged,
+        "errors": sync_result.errors,
+        "elapsed_seconds": sync_result.elapsed_seconds,
+        "semantic_backfill": {
+            "total": backfill.total_documents,
+            "inserted": backfill.inserted_count,
+            "updated": backfill.updated_count,
+            "deleted": backfill.deleted_count,
+            "elapsed_seconds": backfill.elapsed_seconds,
+        },
+        "semantic_embed": {
+            "total": sem_embed.total_docs,
+            "embedded": sem_embed.embedded_docs,
+            "skipped_unchanged": sem_embed.skipped_unchanged,
+            "elapsed_seconds": sem_embed.elapsed_seconds,
+        },
+    }
+
+
 def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     if dry_run:
         return {
@@ -735,8 +813,8 @@ def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, A
         backfill_semantic_documents,
         embed_pending,
     )
-    backfill = backfill_semantic_documents(database_path, source_types=["vault", "github", "email"])
-    sem_embed = embed_pending(database_path, source_types=["vault", "github", "email"])
+    backfill = backfill_semantic_documents(database_path, source_types=["vault", "github", "email", "figma"])
+    sem_embed = embed_pending(database_path, source_types=["vault", "github", "email", "figma"])
     return {
         "scope": "semantic",
         "dry_run": False,
@@ -859,6 +937,7 @@ def refresh_index(
         "calendar",
         "sleuth",
         "email",
+        "figma",
         "semantic",
     }
     started = time.monotonic()
@@ -1001,6 +1080,10 @@ def _email_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_email(db_path, dry_run=opts["dry_run"])
 
 
+def _figma_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_figma(db_path, dry_run=opts["dry_run"])
+
+
 def _semantic_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_semantic_only(db_path, dry_run=opts["dry_run"])
 
@@ -1010,4 +1093,5 @@ register_collector(Collector("github", _github_adapter, requires=("github_token"
 register_collector(Collector("calendar", _calendar_adapter))
 register_collector(Collector("sleuth", _sleuth_adapter))
 register_collector(Collector("email", _email_adapter))
+register_collector(Collector("figma", _figma_adapter))
 register_collector(Collector("semantic", _semantic_adapter))

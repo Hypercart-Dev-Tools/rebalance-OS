@@ -16,6 +16,7 @@ from rebalance.ingest.db import (
     ensure_github_schema,
     ensure_schema,
     ensure_semantic_schema,
+    run_migrations,
 )
 from rebalance.ingest.db import semantic as sem
 from rebalance.ingest.embedder import (
@@ -65,15 +66,15 @@ def _json_dumps(value: Any) -> str:
 
 def _normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
     if source_types is None:
-        return ("vault", "github", "email")
+        return ("vault", "github", "email", "figma")
     normalized = []
     for value in source_types:
         item = value.strip().lower()
         if not item:
             continue
         if item == "all":
-            return ("vault", "github", "email")
-        if item not in {"vault", "github", "calendar", "sleuth", "email"}:
+            return ("vault", "github", "email", "figma")
+        if item not in {"vault", "github", "calendar", "sleuth", "email", "figma"}:
             raise ValueError(f"Unsupported source type: {value}")
         if item not in normalized:
             normalized.append(item)
@@ -274,6 +275,60 @@ def sync_github_documents(conn: Any, *, repo_full_name: str = "") -> dict[str, i
     }
 
 
+def sync_figma_documents(conn: Any) -> dict[str, int]:
+    """Backfill semantic documents from ``figma_comments``."""
+    ensure_semantic_schema(conn)
+    rows = sem.figma_comments_for_semantic(conn)
+
+    inserted = updated = unchanged = 0
+    for row in rows:
+        message = row["message"] or ""
+        if not message.strip():
+            continue
+
+        author = row["user_handle"] or row["user_id"] or "Figma user"
+        created_at = row["created_at"] or row["synced_at"]
+        title = f"Figma comment by {author}"
+
+        _, state = upsert_document(
+            conn,
+            source_type="figma",
+            source_table="figma_comments",
+            source_pk=row["comment_key"],
+            doc_kind="comment",
+            title=title,
+            body=message,
+            metadata={
+                "file_key": row["file_key"],
+                "comment_id": row["comment_id"],
+                "parent_id": row["parent_id"] or "",
+                "user_id": row["user_id"] or "",
+                "user_handle": row["user_handle"] or "",
+                "created_at": created_at,
+                "resolved_at": row["resolved_at"] or "",
+                "order_id": row["order_id"],
+                "client_meta": json.loads(row["client_meta_json"]) if row["client_meta_json"] else {},
+                "reactions": json.loads(row["reactions_json"]) if row["reactions_json"] else [],
+            },
+            created_at=created_at,
+            updated_at=row["synced_at"],
+        )
+        if state == "inserted":
+            inserted += 1
+        elif state == "updated":
+            updated += 1
+        else:
+            unchanged += 1
+
+    return {
+        "total": len(rows),
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "deleted": 0,
+    }
+
+
 def sync_email_documents(conn: Any) -> dict[str, int]:
     """Backfill semantic documents from ``email_messages``.
 
@@ -368,6 +423,14 @@ def backfill_semantic_documents(
             unchanged += result["unchanged"]
             deleted += result["deleted"]
             total += result["total"]
+        if "figma" in selected_sources:
+            run_migrations(conn)
+            result = sync_figma_documents(conn)
+            inserted += result["inserted"]
+            updated += result["updated"]
+            unchanged += result["unchanged"]
+            deleted += result["deleted"]
+            total += result["total"]
         conn.commit()
 
     return SemanticBackfillResult(
@@ -399,7 +462,7 @@ def embed_pending(
 
     with db_connection(database_path, ensure_semantic_schema) as conn:
         if force_reembed:
-            if set(selected_sources) == {"vault", "github", "email"} and len(selected_sources) == 3:
+            if set(selected_sources) == {"vault", "github", "email", "figma"} and len(selected_sources) == 4:
                 sem.clear_semantic_embeddings(conn)
                 sem.reset_semantic_embedded_state(conn)
             else:
