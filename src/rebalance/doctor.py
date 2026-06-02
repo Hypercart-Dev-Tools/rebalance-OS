@@ -384,6 +384,106 @@ def _check_calendar() -> Check:
     return Check("calendar", OK, f"OAuth token present ({TOKEN_PATH})")
 
 
+_AUTH_FAIL_HINT = {
+    "github": "PAT revoked, expired, or lost a scope — run "
+              "`rebalance config set-github-token` with a fresh token",
+    "calendar": "re-run the Calendar OAuth flow "
+                "(scripts/setup_calendar_oauth.py)",
+    "gmail": "re-run `gcloud auth application-default login` with the Gmail "
+             "readonly scope, or switch to MCP mode (`gmail_ingest_method=mcp`)",
+}
+
+
+def _check_auth_failures() -> list[Check]:
+    """Surface the last auth failure per integration from the unified auth log.
+
+    Reads ``ingest/auth_log`` (``temp/logs/auth_activity.jsonl``). A source
+    whose *most recent* event is a failure is in an active failed-auth state
+    and gets a WARN; a later success means it recovered, so it is not flagged.
+    When there is auth history and nothing is currently failing, emit a single
+    positive check so "no recent deauth" is visible rather than merely absent.
+    """
+    try:
+        from rebalance.ingest import auth_log
+    except Exception:  # noqa: BLE001 — doctor must never crash
+        return []
+
+    try:
+        latest = auth_log.latest_event_by_source()
+    except Exception:  # noqa: BLE001
+        return []
+
+    if not latest:
+        return []  # no auth events recorded yet — nothing to surface
+
+    checks: list[Check] = []
+    for source in sorted(latest):
+        entry = latest[source]
+        if entry.get("event") not in auth_log.FAILURE_EVENTS:
+            continue
+        event = entry.get("event", "")
+        ts = str(entry.get("ts", ""))[:19].replace("T", " ")
+        device = entry.get("device", "")
+        where = f" on {device}" if device else ""
+        checks.append(
+            Check(
+                f"auth:{source}",
+                WARN,
+                f"last auth event was a failure — {event} at {ts} UTC{where}",
+                _AUTH_FAIL_HINT.get(source, "re-authenticate this integration"),
+            )
+        )
+
+    if not checks:
+        return [Check("auth log", OK, "no active auth failures across collectors")]
+    return checks
+
+
+def _diagnostics_index() -> list[Check]:
+    """Map every observability surface so ``rebalance doctor`` is the single
+    place that points at all of them.
+
+    Diagnostics in this project are deliberately spread across purpose-built
+    tools (live auth trail, git-pulse collector health, per-repo probes, the
+    issue-filing reporter). Rather than fragilely importing each — git-pulse
+    in particular lives behind a not-yet-importable ``experimental/`` path
+    until its Phase 9 promotion — doctor enumerates where each one lives and
+    how to reach it. All entries are informational (OK); the actionable health
+    checks above are what gate exit status.
+    """
+    checks: list[Check] = []
+
+    # Auth-event trail (this module's sibling) — live count + how to view it.
+    try:
+        from rebalance.ingest import auth_log
+
+        sources = sorted(auth_log.latest_event_by_source().keys())
+        n = len(auth_log.read_log(limit=2000))
+        where = f"{n} events across {', '.join(sources)}" if sources else "no events yet"
+        checks.append(Check(
+            "diagnostics: auth log", OK,
+            f"{where} · temp/logs/auth_activity.jsonl · web: `rebalance serve` → /auth-log",
+        ))
+    except Exception:  # noqa: BLE001 — doctor must never crash
+        pass
+
+    checks.append(Check(
+        "diagnostics: git-pulse", OK,
+        "collector ALIVE/DEGRADED/STALE: `python experimental/git-pulse/health-check.py` "
+        "(first-class module + direct doctor wiring tracked in Phase 9)",
+    ))
+    checks.append(Check(
+        "diagnostics: repo probes", OK,
+        "live PAT/repo visibility & commit existence: the `diagnose_repo` MCP tool",
+    ))
+    checks.append(Check(
+        "diagnostics: health reporter", OK,
+        "launchd issue-filer (runs this doctor + git-pulse, opens GitHub issues): "
+        "temp/health-reporter.log.jsonl",
+    ))
+    return checks
+
+
 def _check_pulse() -> Check:
     """Pulse publish config — warn when the hourly publisher cannot run."""
     from rebalance.ingest.config import get_pulse_config
@@ -494,5 +594,13 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     report.checks.append(_check_calendar())
     report.checks.append(_check_pulse())
 
+    # Auth-event log — last deauth/auth failure per integration (calendar,
+    # github, gmail), read from the unified temp/logs/auth_activity.jsonl.
+    report.checks.extend(_check_auth_failures())
+
     report.checks.extend(_check_launchd())
+
+    # Final section: a map of every diagnostics surface, so this one command
+    # is the single entry point into the project's observability.
+    report.checks.extend(_diagnostics_index())
     return report

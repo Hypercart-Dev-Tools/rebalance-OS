@@ -204,8 +204,8 @@ def read_log(limit: int = 200) -> list[dict[str, Any]]:
 def latest_failure_by_source(sources: list[str] | None = None) -> dict[str, dict[str, Any]]:
     """Return the most recent *failure* event per source.
 
-    Used by ``rebalance config doctor`` to surface "last auth failure" for
-    each integration. Pass *sources* to restrict the result; omit for all.
+    Used by ``rebalance doctor`` to surface "last auth failure" for each
+    integration. Pass *sources* to restrict the result; omit for all.
     """
     wanted = set(sources) if sources else None
     latest: dict[str, dict[str, Any]] = {}
@@ -216,5 +216,23 @@ def latest_failure_by_source(sources: list[str] | None = None) -> dict[str, dict
         if wanted is not None and source not in wanted:
             continue
         # newest-first iteration → first seen per source is the most recent
+        latest.setdefault(source, entry)
+    return latest
+
+
+def latest_event_by_source(sources: list[str] | None = None) -> dict[str, dict[str, Any]]:
+    """Return the most recent event (any type) per source.
+
+    Lets a reader tell whether a collector is *currently* in a failed auth
+    state (its latest event ∈ :data:`FAILURE_EVENTS`) or has since recovered
+    (a later success superseded the failure) — which a failure-only view
+    cannot distinguish. Pass *sources* to restrict the result; omit for all.
+    """
+    wanted = set(sources) if sources else None
+    latest: dict[str, dict[str, Any]] = {}
+    for entry in read_log(limit=2000):  # newest-first
+        source = entry.get("source", "")
+        if wanted is not None and source not in wanted:
+            continue
         latest.setdefault(source, entry)
     return latest

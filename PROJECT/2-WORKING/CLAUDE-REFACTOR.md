@@ -138,16 +138,31 @@ no row moved except intentionally.
       (token validate/invalid, live 401 deauth) and Gmail (ADC missing, insufficient
       scope) now emit events. Web dashboard (`web.py`) gained a Source column.
       *(2026-06-02)*
-- [ ] **Wire `doctor.py` to read from the unified auth log** — surface "last auth
-      failure" per integration in `rebalance config doctor` output (use
-      `auth_log.latest_failure_by_source()`; show the failing event + timestamp +
-      device next to each integration's credential check).
+- [x] **Wire `doctor.py` to read from the unified auth log** — `_check_auth_failures()`
+      surfaces the last auth failure per integration via
+      `auth_log.latest_event_by_source()` (event + timestamp + device + a per-source
+      remediation hint). A source whose *most recent* event is a failure is flagged
+      WARN; a later success means it recovered (not flagged). Wired into both
+      `run_doctor()` (→ `rebalance doctor`) and `rebalance config doctor` (new "Auth
+      activity" section). Added `latest_event_by_source()` to `auth_log.py`.
+      **Live-verified:** immediately caught a real GitHub `auth_failed` (401) and a
+      Gmail `scope_insufficient` already in the log. *(2026-06-02)*
+- [x] **`rebalance doctor` is now the single observability entry point** —
+      `_diagnostics_index()` appends a map of every diagnostics surface (auth-log
+      JSONL + `/auth-log` dashboard, git-pulse collector health command, `diagnose_repo`
+      MCP probes, the health-reporter log) so one command points at all of them.
+      *(2026-06-02)*
+- [ ] **Deferred to Phase 9 — direct git-pulse health in doctor.** Surfacing
+      ALIVE/DEGRADED/STALE collector states *inside* `run_doctor()` (vs. just pointing
+      at the command) needs `experimental/git-pulse/health-check.py`'s
+      `collect_statuses()`/`classify()` and `pulse_common.load_sync_repo_dir`, which
+      live behind a hyphenated, not-yet-importable `experimental/` path. Wiring it now
+      means `importlib` hacks that Phase 9's git-pulse promotion would undo — so it
+      waits for that promotion. (`health_issue_reporter.py` already merges doctor +
+      git-pulse via CLI-text parsing; replace that with the structured import in P9.)
 - [ ] Sweep remaining `print`/`echo` diagnostics → the `rebalance` logger
       *(also tracked in the P1/P2 tail below)*; pick one home for run-summary JSONL
       vs. the stderr logger so "where do logs go?" has a single answer.
-- [ ] Consolidate the scattered diagnostics surfaces (`doctor.py`, `diagnose.py`,
-      `repair.py`, `health_issue_reporter.py`) behind one observability entry point
-      so a broken/de-authorized collector is visible from a single command.
 
 ---
 

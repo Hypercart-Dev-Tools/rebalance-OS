@@ -8,6 +8,7 @@ DB) and the report aggregation logic.
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rebalance.doctor import (
     FAIL,
@@ -15,10 +16,12 @@ from rebalance.doctor import (
     WARN,
     Check,
     DoctorReport,
+    _check_auth_failures,
     _check_calendar,
     _check_gmail,
     _check_pulse,
     _check_sleuth,
+    _diagnostics_index,
     run_doctor,
 )
 from rebalance.ingest.db import db_connection, ensure_baseline_schema, run_migrations
@@ -205,6 +208,72 @@ class IntegrationCheckTests(unittest.TestCase):
         check = _check_gmail(None)
         self.assertEqual(check.name, "gmail")
         self.assertIn(check.status, (OK, WARN, FAIL))
+
+
+class AuthFailureCheckTests(unittest.TestCase):
+    """_check_auth_failures reads the unified auth log via auth_log."""
+
+    def test_no_history_emits_no_checks(self) -> None:
+        with patch("rebalance.ingest.auth_log.latest_event_by_source", return_value={}):
+            self.assertEqual(_check_auth_failures(), [])
+
+    def test_all_recovered_emits_single_ok(self) -> None:
+        latest = {
+            "github": {"event": "token_validated", "ts": "2026-06-02T10:00:00+00:00", "device": "mac"},
+            "calendar": {"event": "token_refreshed", "ts": "2026-06-02T09:00:00+00:00", "device": "mac"},
+        }
+        with patch("rebalance.ingest.auth_log.latest_event_by_source", return_value=latest):
+            checks = _check_auth_failures()
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0].status, OK)
+        self.assertEqual(checks[0].name, "auth log")
+
+    def test_active_failure_warns_per_source(self) -> None:
+        latest = {
+            # github's latest event is a failure → active deauth
+            "github": {"event": "auth_failed", "ts": "2026-06-02T12:00:00+00:00", "device": "studio"},
+            # calendar recovered → no warn
+            "calendar": {"event": "flow_succeeded", "ts": "2026-06-02T11:00:00+00:00", "device": "studio"},
+        }
+        with patch("rebalance.ingest.auth_log.latest_event_by_source", return_value=latest):
+            checks = _check_auth_failures()
+        names = {c.name: c for c in checks}
+        self.assertIn("auth:github", names)
+        self.assertEqual(names["auth:github"].status, WARN)
+        self.assertIn("auth_failed", names["auth:github"].detail)
+        self.assertIn("studio", names["auth:github"].detail)
+        self.assertTrue(names["auth:github"].hint)  # per-source remediation hint
+        self.assertNotIn("auth:calendar", names)  # recovered, not flagged
+
+    def test_never_crashes_on_reader_error(self) -> None:
+        with patch(
+            "rebalance.ingest.auth_log.latest_event_by_source",
+            side_effect=RuntimeError("boom"),
+        ):
+            self.assertEqual(_check_auth_failures(), [])
+
+
+class DiagnosticsIndexTests(unittest.TestCase):
+    """_diagnostics_index maps every observability surface as OK info rows."""
+
+    def test_index_lists_surfaces_and_is_informational(self) -> None:
+        checks = _diagnostics_index()
+        names = {c.name for c in checks}
+        # The map always includes the static surfaces.
+        self.assertIn("diagnostics: git-pulse", names)
+        self.assertIn("diagnostics: repo probes", names)
+        self.assertIn("diagnostics: health reporter", names)
+        # All informational — never gate exit status.
+        self.assertTrue(all(c.status == OK for c in checks))
+
+    def test_index_never_raises_if_auth_log_unavailable(self) -> None:
+        with patch(
+            "rebalance.ingest.auth_log.latest_event_by_source",
+            side_effect=RuntimeError("boom"),
+        ):
+            checks = _diagnostics_index()
+        # auth-log row is skipped on error, but the static surfaces remain.
+        self.assertTrue(any(c.name == "diagnostics: git-pulse" for c in checks))
 
 
 if __name__ == "__main__":
