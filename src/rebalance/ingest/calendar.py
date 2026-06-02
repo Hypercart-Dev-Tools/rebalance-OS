@@ -79,7 +79,13 @@ def _credentials_have_scopes(creds: Any, required_scopes: list[str]) -> bool:
 
 def _load_credentials(required_scopes: list[str] | None = None) -> Any:
     """Load OAuth2 credentials from the stored token file."""
+    from rebalance.ingest.auth_log import (
+        log_token_missing,
+        log_token_refresh_failed,
+        log_token_refreshed,
+    )
     if not TOKEN_PATH.exists():
+        log_token_missing(str(TOKEN_PATH))
         raise FileNotFoundError(
             f"Calendar OAuth token not found at {TOKEN_PATH}. "
             "Run the OAuth flow first (see PROJECT.md — P2 Google Calendar)."
@@ -90,9 +96,17 @@ def _load_credentials(required_scopes: list[str] | None = None) -> Any:
     # Refresh if expired
     if creds.expired and creds.refresh_token:
         from google.auth.transport.requests import Request
-        creds.refresh(Request())
-        with open(TOKEN_PATH, "wb") as f:
-            pickle.dump(creds, f)
+        try:
+            creds.refresh(Request())
+            with open(TOKEN_PATH, "wb") as f:
+                pickle.dump(creds, f)
+            log_token_refreshed(
+                expiry=creds.expiry.isoformat() if creds.expiry else None,
+                token_path=str(TOKEN_PATH),
+            )
+        except Exception as exc:
+            log_token_refresh_failed(error=str(exc), token_path=str(TOKEN_PATH))
+            raise
 
     if required_scopes and not _credentials_have_scopes(creds, required_scopes):
         raise PermissionError(

@@ -20,6 +20,11 @@ import argparse
 from pathlib import Path
 
 from google_auth_oauthlib.flow import InstalledAppFlow
+from rebalance.ingest.auth_log import (
+    log_flow_started,
+    log_flow_succeeded,
+    log_flow_failed,
+)
 
 READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
@@ -54,12 +59,22 @@ def authorize_calendar(scopes: list[str]) -> None:
         scopes=scopes,
     )
 
+    log_flow_started(scopes)
     print("\n🔐 Opening browser for Google OAuth consent...\n")
-    creds = flow.run_local_server(port=0, open_browser=True)
+    try:
+        creds = flow.run_local_server(port=0, open_browser=True)
+    except Exception as exc:
+        log_flow_failed(str(exc))
+        raise
 
     with open(TOKEN_PATH, "wb") as f:
         pickle.dump(creds, f)
 
+    log_flow_succeeded(
+        expiry=creds.expiry.isoformat() if creds.expiry else None,
+        scopes=list(scopes),
+        token_path=str(TOKEN_PATH),
+    )
     print(f"\n✅ Token saved to: {TOKEN_PATH}")
     print(f"   Expires: {creds.expiry}")
     print(f"   Scopes:  {', '.join(scopes)}")
