@@ -1,7 +1,7 @@
 ---
 title: Rebalance-OS Codebase Refactor
 status: in-progress
-updated: 2026-06-01
+updated: 2026-06-02
 branch: claude/refactor-codebase-tl4PQ
 phases_done: 1, 2, 3, 4, 6, 7, 10 (partial)
 phases_pending: issue-39, 5, 9, 10 (remaining)
@@ -17,7 +17,7 @@ phases_skipped: 8
 - [Phase 3a — Raw-SQL eviction + schema decomposition](#phase-3a--raw-sql-eviction--schema-decomposition)
 - [Phase 3b — schema_version + migrations](#phase-3b--schema_version--migrations)
 - [Phase 6 — MCP server registry + Pydantic response models](#phase-6--mcp-server-registry--pydantic-response-models)
-- [Phase 5 — CLI decomposition](#phase-5--cli-decomposition)
+- [Phase 5 — CLI decomposition + logging/observability cleanup](#phase-5--cli-decomposition--loggingobservability-cleanup)
 - [Phase 7 — Config + secrets consolidation](#phase-7--config--secrets-consolidation)
 - [Phase 9 — Scripts + experimental triage](#phase-9--scripts--experimental-triage)
 - [Phase 10 — Docs + manifest + lockfile reconcile](#phase-10--docs--manifest--lockfile-reconcile)
@@ -112,11 +112,42 @@ no row moved except intentionally.
 
 ---
 
-## Phase 5 — CLI decomposition
+## Phase 5 — CLI decomposition + logging/observability cleanup
+
+> **Expanded scope (2026-06-02):** Phase 5 now also covers **unifying logging and
+> improving observability**. Diagnostics are currently spread across `doctor.py`
+> (credential presence), `diagnose.py` (live repo probes), `repair.py` (FSM
+> circuit-breaker keywords), the stderr `logging` handler in `__init__.py`, and
+> several JSONL files under `temp/logs/`. Collectors break or get de-authorized
+> with no single place to see *which* one, *when*, or *why*. The CLI decomposition
+> is the natural moment to wire per-collector auth/error logging cleanly instead of
+> cramming it into the 2,626-line god-function.
+
+**CLI decomposition**
 
 - [ ] Split `cli.py` (~2,626 lines) into a `cli/` package — one subcommand group per
       file (`refresh.py`, `github.py`, `calendar.py`, `semantic.py`, `raw.py`, etc.)
 - [ ] Shrink the 186-line `refresh_cmd` by delegating to `refresh_index()`
+
+**Logging + observability**
+
+- [x] Unified auth-event log — `ingest/auth_log.py` now covers **all** collectors
+      (calendar / github / gmail), not just calendar. Single JSONL at
+      `temp/logs/auth_activity.jsonl` with a `source` field, a generic `log_event()`,
+      a `FAILURE_EVENTS` set, and `latest_failure_by_source()` for readers. GitHub
+      (token validate/invalid, live 401 deauth) and Gmail (ADC missing, insufficient
+      scope) now emit events. Web dashboard (`web.py`) gained a Source column.
+      *(2026-06-02)*
+- [ ] **Wire `doctor.py` to read from the unified auth log** — surface "last auth
+      failure" per integration in `rebalance config doctor` output (use
+      `auth_log.latest_failure_by_source()`; show the failing event + timestamp +
+      device next to each integration's credential check).
+- [ ] Sweep remaining `print`/`echo` diagnostics → the `rebalance` logger
+      *(also tracked in the P1/P2 tail below)*; pick one home for run-summary JSONL
+      vs. the stderr logger so "where do logs go?" has a single answer.
+- [ ] Consolidate the scattered diagnostics surfaces (`doctor.py`, `diagnose.py`,
+      `repair.py`, `health_issue_reporter.py`) behind one observability entry point
+      so a broken/de-authorized collector is visible from a single command.
 
 ---
 

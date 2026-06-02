@@ -7,7 +7,7 @@ Start with:
 Routes
 ------
 GET /              — index with links to all pages
-GET /auth-log      — Google Calendar OAuth activity log (HTML table)
+GET /auth-log      — unified auth-activity log across all collectors (HTML table)
 GET /auth-log/raw  — raw JSONL file download
 """
 
@@ -21,12 +21,26 @@ from rebalance.ingest.auth_log import read_log, _log_path
 app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
 
 _EVENT_BADGE = {
+    # calendar
     "flow_started":         ("#1a73e8", "▶ flow started"),
     "flow_succeeded":       ("#34a853", "✓ flow succeeded"),
     "flow_failed":          ("#ea4335", "✗ flow failed"),
     "token_missing":        ("#fbbc05", "⚠ token missing"),
     "token_refreshed":      ("#34a853", "↻ token refreshed"),
     "token_refresh_failed": ("#ea4335", "✗ refresh failed"),
+    # github
+    "token_validated":      ("#34a853", "✓ token validated"),
+    "token_invalid":        ("#ea4335", "✗ token invalid"),
+    "auth_failed":          ("#ea4335", "✗ auth failed (401)"),
+    # gmail
+    "adc_missing":          ("#fbbc05", "⚠ ADC missing"),
+    "scope_insufficient":   ("#ea4335", "✗ scope insufficient"),
+}
+
+_SOURCE_BADGE = {
+    "calendar": ("#1a73e8", "calendar"),
+    "github":   ("#24292f", "github"),
+    "gmail":    ("#d93025", "gmail"),
 }
 
 _CSS = """
@@ -82,9 +96,10 @@ def index() -> HTMLResponse:
 <h2>Local dashboards</h2>
 <ul style="margin-top:16px;line-height:2;list-style:none;">
   <li><a href="/auth-log" style="color:#1a73e8;font-size:15px;">
-      📋 Google Calendar OAuth Activity Log</a>
+      📋 Auth Activity Log</a>
       <span style="color:#5f6368;font-size:13px;margin-left:8px;">
-      — per-device auth events (flow start/success/failure, token refresh)</span>
+      — per-device auth events across all collectors (calendar, github, gmail):
+      flow start/success/failure, token refresh, validation, deauthorization</span>
   </li>
 </ul>"""
     return _page("Home", body)
@@ -98,7 +113,7 @@ def auth_log_page() -> HTMLResponse:
     raw_link = '<a class="raw-link" href="/auth-log/raw">⬇ raw JSONL</a>'
 
     if not entries:
-        body = f"<h2>OAuth Activity Log {raw_link}</h2><div class='empty'>No entries yet. Run the OAuth flow or a calendar sync to populate this log.</div>"
+        body = f"<h2>Auth Activity Log {raw_link}</h2><div class='empty'>No entries yet. Run an OAuth flow, validate the GitHub token, or run a collector sync to populate this log.</div>"
         return _page("Auth Log", body)
 
     rows = []
@@ -106,12 +121,16 @@ def auth_log_page() -> HTMLResponse:
         event = e.get("event", "unknown")
         color, label = _EVENT_BADGE.get(event, ("#9aa0a6", event))
         badge = f'<span class="badge" style="background:{color}">{label}</span>'
+        source = e.get("source", "")
+        s_color, s_label = _SOURCE_BADGE.get(source, ("#9aa0a6", source or "—"))
+        source_badge = f'<span class="badge" style="background:{s_color}">{s_label}</span>'
         detail = e.get("detail", {})
         detail_str = "<br>".join(f"<b>{k}</b>: {v}" for k, v in detail.items()) if detail else "—"
         rows.append(
             f"<tr>"
             f"<td>{e.get('ts','')[:19].replace('T',' ')}</td>"
             f"<td>{e.get('device','')}</td>"
+            f"<td>{source_badge}</td>"
             f"<td>{badge}</td>"
             f"<td class='detail'>{detail_str}</td>"
             f"</tr>"
@@ -119,10 +138,10 @@ def auth_log_page() -> HTMLResponse:
 
     table = (
         f"<table><thead><tr>"
-        f"<th>Timestamp (UTC)</th><th>Device</th><th>Event</th><th>Detail</th>"
+        f"<th>Timestamp (UTC)</th><th>Device</th><th>Source</th><th>Event</th><th>Detail</th>"
         f"</tr></thead><tbody>{''.join(rows)}</tbody></table>"
     )
-    body = f"<h2>OAuth Activity Log {raw_link}</h2>{table}"
+    body = f"<h2>Auth Activity Log {raw_link}</h2>{table}"
     return _page("Auth Log", body)
 
 

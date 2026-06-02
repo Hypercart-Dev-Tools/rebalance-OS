@@ -79,6 +79,8 @@ def _load_adc_credentials() -> Any:
     try:
         creds, _project = google.auth.default(scopes=[GMAIL_READONLY_SCOPE])
     except DefaultCredentialsError as exc:
+        from rebalance.ingest import auth_log
+        auth_log.log_gmail_adc_missing(str(exc))
         raise GmailAuthError(
             "No Application Default Credentials found. Run:\n"
             f"  {GCLOUD_LOGIN_HINT}"
@@ -206,6 +208,8 @@ def sync_gmail(
         ).execute()
     except Exception as exc:
         if _is_insufficient_scope_error(exc):
+            from rebalance.ingest import auth_log
+            auth_log.log_gmail_scope_insufficient(str(exc))
             raise GmailAuthError(
                 "ADC token is missing the Gmail readonly scope. Re-run:\n"
                 f"  {GCLOUD_LOGIN_HINT}\n"

@@ -157,6 +157,11 @@ def _get_login(token: str) -> str:
     status, data = _get(f"{GITHUB_API}/user", token)
     if status == 403 or status == 429:
         raise GitHubApiError("Rate limited fetching /user", status, is_rate_limit=True)
+    if status == 401:
+        # Authoritative deauth signal: the PAT was revoked, expired, or lost a
+        # required scope. Log it to the unified auth trail before raising.
+        from rebalance.ingest import auth_log
+        auth_log.log_github_auth_failed(status, endpoint="/user")
     if status != 200 or not isinstance(data, dict):
         raise GitHubApiError(f"Failed to fetch /user: HTTP {status}", status)
     login = data.get("login")
@@ -303,11 +308,16 @@ def validate_github_token(token: str) -> dict[str, Any]:
         or {"valid": False, "login": "", "scopes": [], "error": "..."}
     """
     # No retries: a bad token should fail fast for the onboarding flow.
+    from rebalance.ingest import auth_log
+
     status, data, headers = GitHubClient(token, retries=1).get_with_headers("/user")
     if status == 200 and isinstance(data, dict):
         scopes_header = headers.get("x-oauth-scopes", "")
         scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
-        return {"valid": True, "login": data.get("login", ""), "scopes": scopes}
+        login = data.get("login", "")
+        auth_log.log_github_token_validated(login, scopes)
+        return {"valid": True, "login": login, "scopes": scopes}
+    auth_log.log_github_token_invalid(status)
     return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {status}"}
 
 
