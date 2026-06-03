@@ -52,6 +52,12 @@ from rebalance.cli import calendar as _calendar  # noqa: F401,E402
 from rebalance.cli import github as _github  # noqa: F401,E402
 from rebalance.cli import query as _query  # noqa: F401,E402
 from rebalance.cli import ingest_cmds as _ingest_cmds  # noqa: F401,E402
+from rebalance.cli import dashboard as _dashboard  # noqa: F401,E402
+from rebalance.cli import sleuth as _sleuth  # noqa: F401,E402
+from rebalance.cli import serve as _serve  # noqa: F401,E402
+
+# Re-exported for ingest.index_ops, which imports `from rebalance.cli import _load_sleuth_env`.
+from rebalance.cli.sleuth import _load_sleuth_env  # noqa: F401,E402
 
 
 def _launch_dashboard() -> None:
@@ -494,181 +500,6 @@ def profile_sync_cmd(
     )
     if exit_code:
         raise typer.Exit(exit_code)
-
-# Secret env files resolve via rebalance.paths.resolve_secret_path which honors
-# REBALANCE_SECRETS_DIR, ~/.config/rebalance-os/config.json (set via
-# `rebalance config set-secrets-dir`), and ~/secrets as the legacy default.
-# TODO: support sleuth-web-api-production.env once a prod Sleuth deployment
-# exists — likely via a --env name|production|development flag.
-#
-# Resolved at import time so tests can patch `rebalance.cli.SLEUTH_ENV_PATH` to
-# redirect subsequent reads. (GOOGLE_CALENDAR_ENV_PATH / CALENDAR_EVENT_LOG_PATH
-# moved to rebalance.cli.calendar.)
-SLEUTH_ENV_PATH = resolve_secret_path("sleuth-web-api-development.env")
-
-
-def _load_sleuth_env(which: str = "production") -> dict[str, str]:
-    """Thin CLI wrapper — converts config.get_sleuth_credentials() errors to typer.BadParameter."""
-    from rebalance.ingest.config import get_sleuth_credentials
-    try:
-        return get_sleuth_credentials(which)
-    except (FileNotFoundError, ValueError) as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-
-@app.command("dashboard-render")
-def dashboard_render_cmd(
-    database: Path | None = DBOption(),
-    date_str: str = typer.Option(None, "--date", help="Date anchoring the dashboard window (YYYY-MM-DD, default: today)"),
-    since_days: int = typer.Option(14, "--since-days", min=1, help="Lookback window for recent signals"),
-    vault: Path = typer.Option(None, "--vault", envvar="REBALANCE_VAULT", help="Obsidian vault path for dashboard note write-back"),
-    note_path: str = typer.Option("Dashboards/rebalanceOS Dashboard.md", "--note-path", help="Vault-relative dashboard note path"),
-    output: Path = typer.Option(None, "--output", "-o", help="Write dashboard markdown to an explicit path"),
-    gemini_synthesis: bool = typer.Option(False, "--gemini-synthesis", help="Add a Gemini-written operator summary"),
-    cleanup: bool = typer.Option(False, "--cleanup", help="Tighten the Gemini-written summary to reduce redundancy"),
-    gemini_model: str = typer.Option("gemini-2.5-flash", "--gemini-model", help="Gemini model for optional synthesis"),
-    reingest_note: bool = typer.Option(False, "--reingest-note/--no-reingest-note", help="When writing into the vault, re-ingest and embed the updated note"),
-    changelog_path: Path = typer.Option(Path("CHANGELOG.md"), "--changelog-path", help="Path to the changelog source"),
-    goals_path: Path = typer.Option(Path("4X4.md"), "--goals-path", help="Path to the 4X4 source"),
-) -> None:
-    """Generate the Obsidian dashboard note from recent local signals."""
-    from datetime import date
-    from rebalance.ingest.note_builder import build_dashboard_note_content, write_dashboard_note
-    from rebalance.ingest.calendar_config import CalendarConfig
-
-    try:
-        db_path = resolve_database_path(database)
-    except DatabaseNotFoundError as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(2) from exc
-    config = CalendarConfig.load()
-
-    if date_str:
-        target_date = date.fromisoformat(date_str)
-    else:
-        target_date = date.today()
-
-    resolved_output: Path | None = output.expanduser().resolve() if output else None
-    resolved_vault: Path | None = None
-    if vault is not None:
-        resolved_vault = vault.expanduser().resolve()
-    elif not resolved_output:
-        configured_vault = get_vault_path()
-        if configured_vault:
-            resolved_vault = Path(configured_vault).expanduser().resolve()
-
-    if resolved_output is None:
-        if resolved_vault is None:
-            raise typer.BadParameter("--vault, REBALANCE_VAULT, configured vault path, or --output is required.")
-        if not resolved_vault.exists() or not resolved_vault.is_dir():
-            raise typer.BadParameter(f"Vault path does not exist or is not a directory: {resolved_vault}")
-        resolved_output = (resolved_vault / note_path).resolve()
-
-    if reingest_note and resolved_vault is None:
-        raise typer.BadParameter("--reingest-note requires a vault path.")
-
-    try:
-        markdown = build_dashboard_note_content(
-            db_path,
-            target_date=target_date,
-            since_days=since_days,
-            config=config,
-            changelog_path=changelog_path.expanduser().resolve(),
-            goals_path=goals_path.expanduser().resolve(),
-            gemini_synthesis=gemini_synthesis,
-            gemini_model=gemini_model,
-            cleanup=cleanup,
-        )
-    except RuntimeError as exc:
-        raise typer.BadParameter(str(exc)) from exc
-
-    note_file = write_dashboard_note(resolved_output, markdown)
-    typer.echo(f"Dashboard written to {note_file}")
-
-    if reingest_note:
-        from rebalance.ingest.note_ingester import ingest_vault
-        from rebalance.ingest.embedder import embed_chunks
-
-        ingest_result = ingest_vault(vault_path=resolved_vault, database_path=db_path)
-        typer.echo(
-            "Vault ingest complete: "
-            f"new={ingest_result.new_files}, updated={ingest_result.updated_files}, "
-            f"unchanged={ingest_result.unchanged_files}, deleted={ingest_result.deleted_files} "
-            f"({ingest_result.elapsed_seconds}s)"
-        )
-        embed_result = embed_chunks(database_path=db_path)
-        typer.echo(
-            "Embed complete: "
-            f"embedded={embed_result.embedded_chunks}, skipped={embed_result.skipped_unchanged}, "
-            f"total_chunks={embed_result.total_chunks} ({embed_result.elapsed_seconds}s)"
-        )
-
-
-@app.command("sleuth-sync")
-def sleuth_sync_cmd(
-    active_only: bool = typer.Option(
-        False,
-        "--active-only/--all",
-        help="Only fetch currently active reminders (default: all)",
-    ),
-    database: Path | None = DBOption("--database-path"),
-    json_output: bool = typer.Option(False, "--json", help="Emit full sync result as JSON"),
-) -> None:
-    """Pull Slack reminders from the Sleuth Web API and upsert them into SQLite."""
-    from rebalance.ingest.sleuth_reminders import sync_sleuth_reminders
-
-    env_data = _load_sleuth_env()
-    try:
-        db_path = resolve_database_path(database)
-    except DatabaseNotFoundError as exc:
-        typer.echo(str(exc))
-        raise typer.Exit(2) from exc
-    result = sync_sleuth_reminders(
-        base_url=env_data["SLEUTH_WEB_API_BASE_URL"],
-        token=env_data["SLEUTH_WEB_API_TOKEN"],
-        workspace_name=env_data["SLEUTH_WORKSPACE_NAME"],
-        database_path=db_path,
-        active_only=active_only,
-    )
-
-    if json_output:
-        typer.echo(json.dumps(result.as_dict(), ensure_ascii=False))
-        return
-
-    typer.echo(
-        f"Sleuth sync: workspace={result.workspace_name}, "
-        f"returned={result.returned_reminder_count}/{result.total_reminder_count}, "
-        f"inserted={result.inserted_count}, updated={result.updated_count}, "
-        f"unchanged={result.unchanged_count}"
-    )
-
-
-@app.command("serve")
-def serve_cmd(
-    port: int = typer.Option(8787, "--port", "-p", help="Port to listen on"),
-    host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
-) -> None:
-    """Start the local web dashboard (auth log, future dashboards).
-
-    Opens http://localhost:<port>/auth-log in your browser automatically.
-    Requires: pip install 'rebalance-os[server]'
-    """
-    try:
-        import uvicorn
-    except ImportError:
-        typer.echo("uvicorn not installed. Run: pip install 'rebalance-os[server]'")
-        raise typer.Exit(1)
-
-    import webbrowser
-    import threading
-
-    url = f"http://{host}:{port}"
-    typer.echo(f"Starting rebalance web server at {url}")
-    typer.echo(f"  Auth log: {url}/auth-log")
-    threading.Timer(0.8, lambda: webbrowser.open(f"{url}/auth-log")).start()
-
-    from rebalance.web import app as web_app
-    uvicorn.run(web_app, host=host, port=port, log_level="warning")
 
 
 @app.command("version")
