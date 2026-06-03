@@ -55,6 +55,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     _truncate,
 )
 from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
+from rebalance.health import HealthStatus, compute_health_status  # noqa: E402
 from rebalance.ingest.index_ops import get_index_status  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 
@@ -456,89 +457,17 @@ def _latest_collector_activity(status: dict[str, Any]) -> str | None:
     return latest_raw
 
 
-def _status_timestamp(status: dict[str, Any], key: str) -> str | None:
-    sources = status.get("sources") or {}
-    semantic = status.get("semantic_index") or {}
-    mapping = {
-        "vault": (sources.get("vault") or {}).get("last_ingested_at"),
-        "github data": (sources.get("github") or {}).get("activity_last_scanned_at")
-        or (sources.get("github") or {}).get("documents_last_fetched_at"),
-        "calendar": (sources.get("calendar") or {}).get("last_fetched_at"),
-        "sleuth": (sources.get("sleuth") or {}).get("last_synced_at"),
-        "gmail": (sources.get("email") or {}).get("last_synced_at"),
-        "semantic": semantic.get("last_embedded_at"),
-    }
-    return mapping.get(key)
-
-
-# Suppression window per credential-check source name.
-# Contract: must equal the corresponding doctor.py warn_days * 24 for each source,
-# so that a successful sync within the stale window always clears the credential WARN.
-# Update both doctor.py warn_days and this table together.
-_SUPPRESSION_HOURS: dict[str, int] = {
-    "vault":    48,   # no freshness check; 2d safe default
-    "calendar": 72,   # calendar data warn_days=3
-    "gmail":   168,   # email data warn_days=7
-    "sleuth":   48,   # sleuth data warn_days=2
-}
-
-
-def _source_recently_succeeded(status: dict[str, Any], key: str, now: datetime, *, within_hours: int = 48) -> bool:
-    raw = _status_timestamp(status, key)
-    dt = _parse_iso(raw)
-    if dt is None:
-        return False
-    return (now - dt).total_seconds() <= within_hours * 3600
-
-
-def _visible_problem_checks(checks: list[Check], status: dict[str, Any], now: datetime) -> list[Check]:
-    visible: list[Check] = []
-    for check in checks:
-        if check.status not in {FAIL, WARN}:
-            continue
-        if (
-            check.status == WARN
-            and check.name in _SUPPRESSION_HOURS
-            and _source_recently_succeeded(
-                status, check.name, now,
-                within_hours=_SUPPRESSION_HOURS[check.name],
-            )
-        ):
-            continue
-        visible.append(check)
-    return visible
-
-
-def _ordered_problem_checks(checks: list[Check], status: dict[str, Any], now: datetime) -> list[Check]:
-    def priority(check: Check) -> tuple[int, int, str]:
-        severity = 0 if check.status == FAIL else 1
-        launchd = 1 if check.name.startswith("launchd:") else 0
-        return (severity, launchd, check.name)
-
-    return sorted(
-        _visible_problem_checks(checks, status, now),
-        key=priority,
-    )
-
-
 def render_health_banner(
-    checks: list[Check],
-    status: dict[str, Any],
+    health: HealthStatus,
     now: datetime,
     last_activity: str | None,
 ) -> str:
-    problems = _ordered_problem_checks(checks, status, now)
+    problems = health.problems
     if not problems:
         return ""
 
-    failures = [check for check in problems if check.status == FAIL]
-    warnings = [check for check in problems if check.status == WARN]
-    tone = "danger" if failures else "warn"
-    status_text = (
-        f"{len(failures)} error{'s' if len(failures) != 1 else ''}"
-        if failures
-        else f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}"
-    )
+    tone = "danger" if health.failures else "warn"
+    status_text = health.status_text
     activity_text = _ago(last_activity, now=now) if last_activity else "never"
     copy_text = _health_banner_copy_text(
         problems,
@@ -548,10 +477,16 @@ def render_health_banner(
 
     items = []
     for check in problems[:4]:
+        fix = (
+            f'<span class="health-banner-fix">→ {_esc(_short_text(check.hint, 120))}</span>'
+            if check.hint
+            else ""
+        )
         items.append(
             f'<span class="health-banner-item">'
             f'<span class="health-banner-name">{_esc(check.name)}</span>'
             f'<span class="health-banner-detail">{_esc(_short_text(check.detail, 120))}</span>'
+            f"{fix}"
             f"</span>"
         )
     if len(problems) > 4:
@@ -579,17 +514,15 @@ def render_health_banner(
 
 
 def render_sync_chip(
-    checks: list[Check],
-    status: dict[str, Any],
+    health: HealthStatus,
     last_activity: str | None,
     now: datetime,
 ) -> str:
-    problems = _ordered_problem_checks(checks, status, now)
     activity_text = _ago(last_activity, now=now) if last_activity else "—"
-    if any(check.status == FAIL for check in problems):
+    if health.verdict == FAIL:
         tone = "danger"
         label = f"Collector degraded · {activity_text}"
-    elif problems:
+    elif health.verdict == WARN:
         tone = "warn"
         label = f"Collector warnings · {activity_text}"
     else:
@@ -1805,6 +1738,10 @@ h2 { font-size: 14px; color: var(--fg); }
 }
 .health-pill.has-issues .health-dot { background: var(--warn); }
 .health-pill.has-issues { border-color: rgba(166,95,0,.25); color: var(--warn); }
+/* Activity metric (auto-filed count), not a health verdict: neutral dot, no
+   glow, so it never reads as a green "all-clear" next to the collector chip. */
+.health-pill.metric:not(.has-issues) .health-dot { background: var(--fg-dim); animation: none; }
+.health-pill.metric:not(.has-issues) { color: var(--fg-dim); }
 """
 
 
@@ -2214,6 +2151,8 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     last_activity = _latest_collector_activity(status)
     last_vault = vault_rows[0] if vault_rows else None
     health_filed_30d = fetch_health_filed_count(days=1)
+    # One reconciled verdict drives every health pill, so they can't contradict.
+    health_status = compute_health_status(doctor_report.checks, status, now)
 
     tz_source_label, tz_is_fallback = _resolve_tz_source()
     offset = local_now.strftime("%z")
@@ -2249,18 +2188,18 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
               <span class="{system_now_class}" title="{_esc(system_now_title)}">System: {_esc(system_now_str)} <span class="tz-key">{_esc(system_now_tz)} · {_esc(TZ.key)}</span></span>
             </div>
             <div class="topbar-row">
-              {render_sync_chip(doctor_report.checks, status, last_activity, now)}
+              {render_sync_chip(health_status, last_activity, now)}
               <a href="{_esc(HEALTH_ISSUES_URL)}" target="_blank" rel="noopener noreferrer"
-                 class="health-pill{' has-issues' if health_filed_30d else ''}"
-                 title="Health issues filed in the last 30 days — click to view on GitHub">
+                 class="health-pill metric{' has-issues' if health_filed_30d else ''}"
+                 title="GitHub issues the health reporter auto-filed in the last day — click to view on GitHub">
                 <span class="health-dot"></span>
-                Health: {health_filed_30d} report{'s' if health_filed_30d != 1 else ''} filed (1d)
+                Auto-filed: {health_filed_30d} issue{'s' if health_filed_30d != 1 else ''} (1d)
               </a>
               <button id="pulse-refresh" class="refresh-btn">Refresh</button>
             </div>
           </div>
         </div>
-        {render_health_banner(doctor_report.checks, status, now, last_activity)}
+        {render_health_banner(health_status, now, last_activity)}
         {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
         <div class="grid">
           <div class="col">

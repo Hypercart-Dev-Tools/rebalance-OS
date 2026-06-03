@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from rebalance.doctor import Check, FAIL, WARN
+from rebalance.health import compute_health_status
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,10 +68,11 @@ class PulseWebGoalTests(unittest.TestCase):
             Check("sleuth", WARN, "no Sleuth Web API env file"),
         ]
 
+        now = datetime(2026, 5, 28, 18, 0, tzinfo=timezone.utc)
+        health = compute_health_status(checks, {"sources": {}}, now)
         html = pulse_web.render_health_banner(
-            checks,
-            {"sources": {}},
-            datetime(2026, 5, 28, 18, 0, tzinfo=timezone.utc),
+            health,
+            now,
             "2026-05-28T17:55:00+00:00",
         )
 
@@ -84,11 +86,14 @@ class PulseWebGoalTests(unittest.TestCase):
         self.assertNotIn("launchd:github-sync</span><span class=\"health-banner-detail\"", html)
 
     def test_render_sync_chip_uses_warning_state(self) -> None:
+        now = datetime(2026, 5, 28, 18, 0, tzinfo=timezone.utc)
+        health = compute_health_status(
+            [Check("gmail", WARN, "scope missing")], {"sources": {}}, now
+        )
         chip = pulse_web.render_sync_chip(
-            [Check("gmail", WARN, "scope missing")],
-            {"sources": {}},
+            health,
             "2026-05-28T17:55:00+00:00",
-            datetime(2026, 5, 28, 18, 0, tzinfo=timezone.utc),
+            now,
         )
 
         self.assertIn("synced-warn", chip)

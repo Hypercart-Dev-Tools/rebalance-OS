@@ -202,6 +202,18 @@ no row moved except intentionally.
       rich `Console`. Run-summary JSONL and the stderr logger are intentionally
       *not* merged — they serve different purposes (durable audit vs transient
       diagnostic); the convention names which to use when.
+- [x] **Reconciled health verdict — `src/rebalance/health.py`** *(2026-06-03)*.
+      The web pulse showed three health pills computed independently — two warning,
+      one green "0 reports filed" — that contradicted each other. New `health.py` is
+      the single source of truth: `compute_health_status(checks, status, now)` →
+      one `HealthStatus` verdict every surface renders from. It also **extends the
+      suppression layer to the Phase-5 `auth:*` checks** (`auth:github`/`auth:gmail`/
+      `auth:calendar`): a stale auth WARN self-clears when the underlying collector
+      synced recently — independent evidence the credential recovered, for every
+      install (the deauth-recovery mitigation). `pulse_web.py` now derives the sync
+      chip + banner from this verdict, surfaces doctor's per-check remediation `hint`
+      inline, and the "0 reports filed" pill became a neutral "Auto-filed: N" activity
+      metric (no green = all-clear). +14 tests; suite 453 passed.
 
 ---
 
