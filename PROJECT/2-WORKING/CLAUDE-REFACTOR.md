@@ -11,6 +11,10 @@ phases_skipped: 8
 
 # Rebalance-OS Codebase Refactor
 
+| ✅ Most recently completed | ▶️ What's next |
+|---|---|
+| **Phase 5 — Logging & observability** *(2026-06-02)*: unified auth/deauth log across all collectors; `rebalance doctor` is now the single observability hub (last auth failure per integration **+** git-pulse collector health, ALIVE/STALE/DEGRADED); diagnostic `print()` sweep + a documented "where do logs go?" convention. | **Phase 5 — CLI decomposition**: split `cli.py` (~2,626 lines) into a `cli/` package — one subcommand group per file — and shrink the 186-line `refresh_cmd`. Then Phase 9 (full git-pulse migration) and Issue #39 (multi-device sync). |
+
 ## Table of Contents
 
 - [Baseline & acceptance bar](#baseline--acceptance-bar)
