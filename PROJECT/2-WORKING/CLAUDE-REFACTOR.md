@@ -135,14 +135,15 @@ no row moved except intentionally.
       shared `app`/`ingest_app`/`config_app` + `_PROJECT_ROOT` (domain modules import
       from `_core`, no circular dep); extracted `cli/raw.py` (raw probe + `_raw_*`),
       `cli/semantic.py` (3 `semantic-*` cmds + helper), `cli/config_cmds.py`
-      (all 19 `config *` cmds + `_format_purge_counts`), and `cli/calendar.py`
+      (all 19 `config *` cmds + `_format_purge_counts`), `cli/calendar.py`
       (6 `calendar-*` cmds + 9 helpers + 2 constants; test patch targets retargeted
-      to `rebalance.cli.calendar.*`). `__init__.py` 2,899 → 1,282 lines; each step
-      verified (28 top-level cmds + config(19)/ingest(5) groups held; 443 passed).
-      **Remaining domains** to extract from `__init__.py`: `github` (incl.
-      `_resolve_github_repos`), `query`/`search`/`ask`, `ingest_cmds`, `onboard`,
-      `dashboard`, `sleuth` (re-export `_load_sleuth_env` for `index_ops`), `serve`,
-      `root` (callback + `doctor`/`version`).
+      to `rebalance.cli.calendar.*`), and `cli/github.py` (6 `github-*` cmds +
+      `_resolve_github_repos`). `__init__.py` 2,899 → 973 lines; each step verified
+      (28 top-level cmds + config(19)/ingest(5) groups held; 443 passed).
+      **Remaining domains** to extract from `__init__.py`: `query`/`search`/`ask`,
+      `ingest_cmds` (preflight/sync/infer/notes/embed), `onboard`, `dashboard`
+      (+`dashboard-render`+`_launch_dashboard`), `sleuth` (re-export `_load_sleuth_env`
+      for `index_ops`), `serve`, `profile-sync`, `root` (callback + `doctor`/`version`).
 - [ ] Shrink the 186-line `refresh_cmd` by delegating to `refresh_index()`
 
 **Logging + observability**
