@@ -57,7 +57,7 @@ class CalendarCreateEventCliTests(unittest.TestCase):
             token_path = self._write_token(tmpdir, ["https://www.googleapis.com/auth/calendar"])
             env_path = self._write_env(tmpdir, token_path, "https://www.googleapis.com/auth/calendar")
 
-            with patch("rebalance.cli.GOOGLE_CALENDAR_ENV_PATH", env_path):
+            with patch("rebalance.cli.calendar.GOOGLE_CALENDAR_ENV_PATH", env_path):
                 result = self.runner.invoke(
                     app,
                     [
@@ -88,7 +88,7 @@ class CalendarCreateEventCliTests(unittest.TestCase):
             token_path = self._write_token(tmpdir, ["https://www.googleapis.com/auth/calendar.readonly"])
             env_path = self._write_env(tmpdir, token_path, "https://www.googleapis.com/auth/calendar.readonly")
 
-            with patch("rebalance.cli.GOOGLE_CALENDAR_ENV_PATH", env_path):
+            with patch("rebalance.cli.calendar.GOOGLE_CALENDAR_ENV_PATH", env_path):
                 result = self.runner.invoke(
                     app,
                     [
@@ -114,9 +114,9 @@ class CalendarCreateEventCliTests(unittest.TestCase):
             log_path = Path(tmpdir) / "calendar-event-create.jsonl"
 
             with (
-                patch("rebalance.cli.GOOGLE_CALENDAR_ENV_PATH", env_path),
-                patch("rebalance.cli.CALENDAR_EVENT_LOG_PATH", log_path),
-                patch("rebalance.cli._find_existing_calendar_event", return_value={"event_id": "evt-1", "html_link": "https://example.com/e/1"}),
+                patch("rebalance.cli.calendar.GOOGLE_CALENDAR_ENV_PATH", env_path),
+                patch("rebalance.cli.calendar.CALENDAR_EVENT_LOG_PATH", log_path),
+                patch("rebalance.cli.calendar._find_existing_calendar_event", return_value={"event_id": "evt-1", "html_link": "https://example.com/e/1"}),
                 patch("rebalance.ingest.calendar.create_calendar_event") as mock_create,
             ):
                 result = self.runner.invoke(
@@ -142,9 +142,9 @@ class CalendarCreateEventCliTests(unittest.TestCase):
             log_path = Path(tmpdir) / "calendar-event-create.jsonl"
 
             with (
-                patch("rebalance.cli.GOOGLE_CALENDAR_ENV_PATH", env_path),
-                patch("rebalance.cli.CALENDAR_EVENT_LOG_PATH", log_path),
-                patch("rebalance.cli._find_existing_calendar_event", return_value={"event_id": "evt-2", "html_link": "https://example.com/e/2"}),
+                patch("rebalance.cli.calendar.GOOGLE_CALENDAR_ENV_PATH", env_path),
+                patch("rebalance.cli.calendar.CALENDAR_EVENT_LOG_PATH", log_path),
+                patch("rebalance.cli.calendar._find_existing_calendar_event", return_value={"event_id": "evt-2", "html_link": "https://example.com/e/2"}),
                 patch("rebalance.ingest.calendar.create_calendar_event") as mock_create,
             ):
                 result = self.runner.invoke(
@@ -186,9 +186,9 @@ class CalendarCreateEventCliTests(unittest.TestCase):
             )
 
             with (
-                patch("rebalance.cli.GOOGLE_CALENDAR_ENV_PATH", env_path),
-                patch("rebalance.cli.CALENDAR_EVENT_LOG_PATH", log_path),
-                patch("rebalance.cli._find_existing_calendar_event") as mock_find_existing,
+                patch("rebalance.cli.calendar.GOOGLE_CALENDAR_ENV_PATH", env_path),
+                patch("rebalance.cli.calendar.CALENDAR_EVENT_LOG_PATH", log_path),
+                patch("rebalance.cli.calendar._find_existing_calendar_event") as mock_find_existing,
                 patch("rebalance.ingest.calendar.create_calendar_event") as mock_create,
             ):
                 result = self.runner.invoke(
