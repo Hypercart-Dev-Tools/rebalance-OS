@@ -12,7 +12,7 @@ agent (Claude, Copilot, etc.) is expected to refine the output.
 
 from __future__ import annotations
 
-import sys
+import logging
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
@@ -21,6 +21,8 @@ from typing import Any
 
 from rebalance.ingest.db import db_connection, ensure_schema, ensure_calendar_schema
 from rebalance.ingest.embedder import query_similar
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_CHAT_MODEL = "Qwen/Qwen3-0.6B"
 
@@ -59,7 +61,7 @@ def _gather_vault_context(
     try:
         return query_similar(database_path=database_path, query_text=query, top_k=top_k)
     except Exception as e:
-        print(f"[rebalance] vault context unavailable: {e}", file=sys.stderr)
+        logger.warning("vault context unavailable: %s", e)
         return []
 
 
@@ -167,7 +169,7 @@ def _gather_calendar_context(
             "recent": get_recent_events(database_path, days_back),
         }
     except Exception as e:
-        print(f"[rebalance] calendar context unavailable: {e}", file=sys.stderr)
+        logger.warning("calendar context unavailable: %s", e)
         return {"upcoming": [], "recent": []}
 
 
@@ -185,7 +187,7 @@ def _gather_github_context(
             since_days=since_days,
         )
     except Exception as e:
-        print(f"[rebalance] github context unavailable: {e}", file=sys.stderr)
+        logger.warning("github context unavailable: %s", e)
         return []
 
 
@@ -200,7 +202,7 @@ def _gather_github_semantic_context(
 
         return query_github_documents(database_path=database_path, query_text=query, top_k=top_k)
     except Exception as e:
-        print(f"[rebalance] github semantic context unavailable: {e}", file=sys.stderr)
+        logger.warning("github semantic context unavailable: %s", e)
         return []
 
 

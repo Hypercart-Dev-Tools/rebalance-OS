@@ -167,9 +167,20 @@ no row moved except intentionally.
       launchd) and refactor `experimental/git-pulse/health-check.py` +
       `scripts/health_issue_reporter.py:run_pulse_checks()` to import from this
       module (kills the duplicate logic + the fragile `line[38:56]` CLI parse).
-- [ ] Sweep remaining `print`/`echo` diagnostics → the `rebalance` logger
-      *(also tracked in the P1/P2 tail below)*; pick one home for run-summary JSONL
-      vs. the stderr logger so "where do logs go?" has a single answer.
+- [x] Sweep diagnostic `print()` in library code → the `rebalance` logger
+      *(2026-06-02)*. Audited every `print()` in `src/rebalance`: the genuine
+      diagnostic ones were just 5 — `querier.py` ×4 ("…context unavailable", was
+      stderr) and `mcp/server.py` ×1 ("Created empty database") → now
+      `logger.warning`/`logger.info`. The rest are correct as-is: `cli.py`/
+      `profile_sync.py` (user-facing CLI / rich `Console` output), `paths.py`
+      (`--migrate` JSON), `preflight.py` (questionary UI), `calendar_config.py`
+      (✓ confirmation). **"Where do logs go?" now has a single documented
+      answer** in `src/rebalance/__init__.py`: (1) diagnostics → the `rebalance`
+      logger (stderr, level-gated; MCP never prints to stdout); (2) durable
+      structured records → JSONL under `temp/logs/`; (3) user-facing → `typer.echo`/
+      rich `Console`. Run-summary JSONL and the stderr logger are intentionally
+      *not* merged — they serve different purposes (durable audit vs transient
+      diagnostic); the convention names which to use when.
 
 ---
 
@@ -244,5 +255,7 @@ no row moved except intentionally.
 > Moved out of Phase 3 — unrelated to DB work. Each is a small standalone commit; do
 > anytime, blocks nothing.
 
-- [ ] Sweep `print`/`echo` calls → `logger` *(deferred from Phase 1)*
+- [x] Sweep `print`/`echo` calls → `logger` *(done 2026-06-02 — see Phase 5
+      logging/observability; the 5 genuine diagnostic prints converted, convention
+      documented in `__init__.py`)*
 - [x] Consolidate `_parse_iso` / `_truncate` time helpers *(done — simplification audit Phase 1 F4, 2026-06-01)*

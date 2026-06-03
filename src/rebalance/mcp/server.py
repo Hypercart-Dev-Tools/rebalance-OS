@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
 from rebalance.mcp.tools import calendar, hygiene, index, onboarding, projects, retrieval, sleuth
+
+logger = logging.getLogger(__name__)
 
 
 def create_server(database_path: Path) -> FastMCP:
@@ -31,9 +34,8 @@ def main() -> None:
         database_path = canonical_database_path()
         database_path.parent.mkdir(parents=True, exist_ok=True)
         import sqlite3
-        import sys as _sys
         sqlite3.connect(database_path).close()
-        print(f"Created empty database at {database_path}", file=_sys.stderr)
+        logger.info("Created empty database at %s", database_path)
     server = create_server(database_path=database_path)
     server.run()
 
