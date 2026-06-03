@@ -20,6 +20,7 @@ from rebalance.doctor import (
     _check_calendar,
     _check_gmail,
     _check_pulse,
+    _check_pulse_collectors,
     _check_sleuth,
     _diagnostics_index,
     run_doctor,
@@ -251,6 +252,53 @@ class AuthFailureCheckTests(unittest.TestCase):
             side_effect=RuntimeError("boom"),
         ):
             self.assertEqual(_check_auth_failures(), [])
+
+
+class PulseCollectorCheckTests(unittest.TestCase):
+    """_check_pulse_collectors maps pulse_health states to OK/WARN checks."""
+
+    def _health(self, name, state, *, healthy, age_hours, failures=0, examples=""):
+        from rebalance.ingest.pulse_health import CollectorHealth
+
+        h = CollectorHealth(
+            device_id=name, device_name=name, last_scan_utc=None,
+            repo_scan_failures=failures, scan_failure_examples=examples,
+        )
+        h.state, h.age_hours = state, age_hours
+        return h
+
+    def test_alive_is_ok_degraded_and_alert_warn(self) -> None:
+        devices = [
+            self._health("Broken", "DEGRADED", healthy=False, age_hours=0.3,
+                         failures=4, examples="repo-a"),
+            self._health("Stale", "ALERT", healthy=False, age_hours=30.0),
+            self._health("Fine", "ALIVE", healthy=True, age_hours=1.0),
+        ]
+        with patch(
+            "rebalance.ingest.pulse_health.read_collector_health",
+            return_value=devices,
+        ):
+            checks = _check_pulse_collectors()
+        by = {c.name: c for c in checks}
+        self.assertEqual(by["pulse collector:Broken"].status, WARN)
+        self.assertIn("4 repo scan failures", by["pulse collector:Broken"].detail)
+        self.assertIn("repo-a", by["pulse collector:Broken"].detail)
+        self.assertEqual(by["pulse collector:Stale"].status, WARN)
+        self.assertIn("1.2d ago", by["pulse collector:Stale"].detail)  # 30h → days
+        self.assertEqual(by["pulse collector:Fine"].status, OK)
+
+    def test_empty_when_no_collectors(self) -> None:
+        with patch(
+            "rebalance.ingest.pulse_health.read_collector_health", return_value=[]
+        ):
+            self.assertEqual(_check_pulse_collectors(), [])
+
+    def test_never_crashes_on_reader_error(self) -> None:
+        with patch(
+            "rebalance.ingest.pulse_health.read_collector_health",
+            side_effect=RuntimeError("boom"),
+        ):
+            self.assertEqual(_check_pulse_collectors(), [])
 
 
 class DiagnosticsIndexTests(unittest.TestCase):

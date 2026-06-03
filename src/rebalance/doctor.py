@@ -439,6 +439,47 @@ def _check_auth_failures() -> list[Check]:
     return checks
 
 
+def _check_pulse_collectors() -> list[Check]:
+    """Surface git-pulse per-device collector health (ALIVE/STALE/ALERT/DEGRADED).
+
+    Reads the structured per-device YAML via ``ingest/pulse_health`` so a
+    *broken* collector (degraded/stale scan) shows up in ``rebalance doctor``
+    next to a *de-authorized* one. Returns ``[]`` when git-pulse is not
+    configured — no noise on installs that don't run it.
+    """
+    try:
+        from rebalance.ingest import pulse_health
+
+        devices = pulse_health.read_collector_health()
+    except Exception:  # noqa: BLE001 — doctor must never crash
+        return []
+
+    checks: list[Check] = []
+    for health in devices:
+        if health.age_hours is None:
+            age = "never pushed"
+        elif health.age_hours >= 24:
+            age = f"last scan {health.age_hours / 24:.1f}d ago"
+        else:
+            age = f"last scan {health.age_hours:.1f}h ago"
+        detail = f"{health.state} — {age}"
+        if health.repo_scan_failures:
+            detail += f", {health.repo_scan_failures} repo scan failures"
+            if health.scan_failure_examples:
+                detail += f" ({health.scan_failure_examples})"
+        checks.append(
+            Check(
+                f"pulse collector:{health.device_name}",
+                OK if health.healthy else WARN,
+                detail,
+                "" if health.healthy else
+                "check the collector machine / its launchd git-pulse job; "
+                "`python experimental/git-pulse/health-check.py` for the full view",
+            )
+        )
+    return checks
+
+
 def _diagnostics_index() -> list[Check]:
     """Map every observability surface so ``rebalance doctor`` is the single
     place that points at all of them.
@@ -469,8 +510,9 @@ def _diagnostics_index() -> list[Check]:
 
     checks.append(Check(
         "diagnostics: git-pulse", OK,
-        "collector ALIVE/DEGRADED/STALE: `python experimental/git-pulse/health-check.py` "
-        "(first-class module + direct doctor wiring tracked in Phase 9)",
+        "per-device collector health now shown inline above (`pulse collector:*`); "
+        "`python experimental/git-pulse/health-check.py` for the full cross-machine "
+        "table. Full module migration tracked in Phase 9.",
     ))
     checks.append(Check(
         "diagnostics: repo probes", OK,
@@ -597,6 +639,10 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     # Auth-event log — last deauth/auth failure per integration (calendar,
     # github, gmail), read from the unified temp/logs/auth_activity.jsonl.
     report.checks.extend(_check_auth_failures())
+
+    # git-pulse per-device collector health — a *broken* collector (stale or
+    # degraded scan) shown right next to a de-authorized one.
+    report.checks.extend(_check_pulse_collectors())
 
     report.checks.extend(_check_launchd())
 

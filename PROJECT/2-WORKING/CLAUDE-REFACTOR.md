@@ -152,14 +152,21 @@ no row moved except intentionally.
       JSONL + `/auth-log` dashboard, git-pulse collector health command, `diagnose_repo`
       MCP probes, the health-reporter log) so one command points at all of them.
       *(2026-06-02)*
-- [ ] **Deferred to Phase 9 — direct git-pulse health in doctor.** Surfacing
-      ALIVE/DEGRADED/STALE collector states *inside* `run_doctor()` (vs. just pointing
-      at the command) needs `experimental/git-pulse/health-check.py`'s
-      `collect_statuses()`/`classify()` and `pulse_common.load_sync_repo_dir`, which
-      live behind a hyphenated, not-yet-importable `experimental/` path. Wiring it now
-      means `importlib` hacks that Phase 9's git-pulse promotion would undo — so it
-      waits for that promotion. (`health_issue_reporter.py` already merges doctor +
-      git-pulse via CLI-text parsing; replace that with the structured import in P9.)
+- [x] **Direct git-pulse collector health in doctor** *(2026-06-02)* — a *broken*
+      collector now shows in `rebalance doctor` next to a de-authorized one.
+      Targeted-promoted the health-read path into a first-class module
+      `src/rebalance/ingest/pulse_health.py` (`CollectorHealth`, `classify()`,
+      `read_collector_health()`, `resolve_sync_repo_dir()`), so doctor reads the
+      structured per-device `devices/*.yaml` directly — no `experimental/` import,
+      no CLI-text parsing. Sync dir resolves via rebalance's own `pulse_target_path`
+      (git-pulse `config.sh` fallback). `doctor._check_pulse_collectors()` emits one
+      check per device (ALIVE → OK; STALE/ALERT/DEGRADED/NO-PUSHES → WARN with age +
+      failure counts). **Live-verified:** flagged a real ALERT (a device ~1.3d stale).
+      `classify()` thresholds mirror the experimental script exactly.
+      *Remaining for Phase 9:* migrate the rest of git-pulse (collect.sh, recap,
+      launchd) and refactor `experimental/git-pulse/health-check.py` +
+      `scripts/health_issue_reporter.py:run_pulse_checks()` to import from this
+      module (kills the duplicate logic + the fragile `line[38:56]` CLI parse).
 - [ ] Sweep remaining `print`/`echo` diagnostics → the `rebalance` logger
       *(also tracked in the P1/P2 tail below)*; pick one home for run-summary JSONL
       vs. the stderr logger so "where do logs go?" has a single answer.
@@ -194,6 +201,15 @@ no row moved except intentionally.
 - [ ] Promote `git-pulse` to first-class module. It is **actively maintained** (renamed
       from the old `git-history` spike, functional: hourly launchd collector, health
       checks, recap generation) — this is a promotion, not a rescue.
+      - [x] **Health-read path already promoted** *(2026-06-02, see Phase 5)* —
+            `src/rebalance/ingest/pulse_health.py` owns the canonical
+            `classify()` + device-YAML read; `doctor` consumes it. Resolved a live
+            config split: rebalance `pulse_target_path`
+            (`…/rebalance-OS/git-pulse-sync`) vs. git-pulse `config.sh`
+            (`~/git-pulse-sync`) — pulse_health prefers `pulse_target_path`.
+      - [ ] Remaining: migrate `collect.sh`, `recap.py`, `pulse_common.py`, launchd
+            jobs; repoint `experimental/git-pulse/health-check.py` and
+            `health_issue_reporter.py` at `pulse_health` to delete the duplicates.
 - [ ] **Inventory experimental spikes before deleting anything.** Produce the list
       first, confirm each is dead, *then* delete. Known dead-spike candidate so far:
       `temp/bash_script_rag_spike.py` (note: `temp/` is gitignored, so the actual
