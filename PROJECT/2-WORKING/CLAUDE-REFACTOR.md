@@ -1,11 +1,11 @@
 ---
 title: Rebalance-OS Codebase Refactor
 status: in-progress
-updated: 2026-06-02
+updated: 2026-06-03
 branch: claude/refactor-codebase-tl4PQ
-phases_done: 1, 2, 3, 4, 6, 7, 10 (partial)
-phases_pending: issue-39, 5, 9, 10 (remaining)
-execution_order: Issue #39 (multi-device sync) → Phase 5 → Phase 9 → Phase 10 (remaining)
+phases_done: 1, 2, 3, 4, 5, 6, 7, 10 (partial)
+phases_pending: issue-39, 9, 10 (remaining)
+execution_order: Phase 9 → Issue #39 (multi-device sync) → Phase 10 (remaining)
 phases_skipped: 8
 ---
 
@@ -13,7 +13,7 @@ phases_skipped: 8
 
 | ✅ Most recently completed | ▶️ What's next |
 |---|---|
-| **Phase 5 — Logging & observability** *(2026-06-02)*: unified auth/deauth log across all collectors; `rebalance doctor` is now the single observability hub (last auth failure per integration **+** git-pulse collector health, ALIVE/STALE/DEGRADED); diagnostic `print()` sweep + a documented "where do logs go?" convention. | **Phase 5 — CLI decomposition**: split `cli.py` (~2,626 lines) into a `cli/` package — one subcommand group per file — and shrink the 186-line `refresh_cmd`. Then Phase 9 (full git-pulse migration) and Issue #39 (multi-device sync). |
+| **Phase 5 — complete** *(2026-06-03)*: CLI decomposition done — `cli.py` (2,899 lines) split into a 15-module `cli/` package with a 156-line root; `refresh_cmd` shrunk. (Earlier in Phase 5: unified auth/deauth log + `rebalance doctor` as the single observability hub + diagnostic `print()` sweep.) Every step behavior-preserving; 443 passed. | **Phase 9** — full git-pulse migration (collect.sh/recap/launchd; dedup against `pulse_health`) + shared fetch module + experimental-spike inventory. Then **Issue #39** (multi-device sync) and **Phase 10** (manifest/lockfile/docs). |
 
 ## Table of Contents
 
@@ -127,24 +127,28 @@ no row moved except intentionally.
 > is the natural moment to wire per-collector auth/error logging cleanly instead of
 > cramming it into the 2,626-line god-function.
 
-**CLI decomposition** *(in progress — `cli.py` was 2,899 lines)*
+**CLI decomposition** ✅ *(complete 2026-06-03 — `cli.py` was 2,899 lines → a
+15-module `cli/` package with a 156-line root)*
 
-- [~] Split `cli.py` into a `cli/` package — one subcommand group per file.
-      **Done so far** *(2026-06-02)*: `cli.py` → `cli/` package (behavior-identical
-      `git mv`, `_PROJECT_ROOT` fixed to `parents[3]`); `cli/_core.py` holds the
-      shared `app`/`ingest_app`/`config_app` + `_PROJECT_ROOT` (domain modules import
-      from `_core`, no circular dep); extracted `cli/raw.py` (raw probe + `_raw_*`),
-      `cli/semantic.py` (3 `semantic-*` cmds + helper), `cli/config_cmds.py`
-      (all 19 `config *` cmds + `_format_purge_counts`), `cli/calendar.py`
-      (6 `calendar-*` cmds + 9 helpers + 2 constants; test patch targets retargeted
-      to `rebalance.cli.calendar.*`), and `cli/github.py` (6 `github-*` cmds +
-      `_resolve_github_repos`). `__init__.py` 2,899 → 973 lines; each step verified
-      (28 top-level cmds + config(19)/ingest(5) groups held; 443 passed).
-      **Remaining domains** to extract from `__init__.py`: `query`/`search`/`ask`,
-      `ingest_cmds` (preflight/sync/infer/notes/embed), `onboard`, `dashboard`
-      (+`dashboard-render`+`_launch_dashboard`), `sleuth` (re-export `_load_sleuth_env`
-      for `index_ops`), `serve`, `profile-sync`, `root` (callback + `doctor`/`version`).
-- [ ] Shrink the 186-line `refresh_cmd` by delegating to `refresh_index()`
+- [x] Split `cli.py` into a `cli/` package — one subcommand group per file.
+      `cli.py` → `cli/` package (behavior-identical `git mv`, `_PROJECT_ROOT` fixed
+      to `parents[3]`); `cli/_core.py` holds the shared `app`/`ingest_app`/`config_app`
+      + `_PROJECT_ROOT` (domain modules import from `_core`, no circular dep).
+      Extracted: `raw`, `semantic`, `config_cmds` (19), `calendar` (6 cmds + 9
+      helpers + 2 constants; test patch targets retargeted to `rebalance.cli.calendar.*`),
+      `github` (6 + `_resolve_github_repos`), `query` (query/search/ask),
+      `ingest_cmds` (5), `serve`, `sleuth` (`_load_sleuth_env` re-exported for
+      `index_ops`; dead `SLEUTH_ENV_PATH` dropped), `dashboard` (dashboard-render),
+      `onboard`, `profile_sync`, `refresh`. `__init__.py` is now a ~156-line package
+      root: the no-arg callback, `dashboard`/`doctor`/`version`, `_launch_dashboard`,
+      and the registration imports. **Every step verified behavior-preserving** —
+      the full 28 top-level cmds + config(19)/ingest(5) groups are byte-identical to
+      pre-refactor; 443 passed throughout. Entry point `rebalance.cli:app` unchanged.
+- [x] Shrink the 186-line `refresh_cmd` *(2026-06-03)*. Its orchestration already
+      delegated to `refresh_index` (step 1); the remaining length was the
+      web/pulse.html + publish pipeline with 3× duplicated timing/try-except/record
+      boilerplate, now factored into a `_timed_step(name, fn)` helper in
+      `cli/refresh.py`. Behavior-preserving.
 
 **Logging + observability**
 
