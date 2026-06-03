@@ -49,9 +49,9 @@ app.add_typer(config_app, name="config")
 
 
 # Resolved once so all paths in the CLI process agree on where the project
-# lives — cli.py is at src/rebalance/cli.py, so .parent.parent.parent is the
-# repo root regardless of cwd.
-_PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+# lives — this file is src/rebalance/cli/__init__.py, so parents[3] is the repo
+# root (cli → rebalance → src → repo root) regardless of cwd.
+_PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 
 def _launch_dashboard() -> None:
