@@ -104,9 +104,15 @@ class GitHubTokenKeyringTests(unittest.TestCase):
         self.assertEqual(token, "ghp_fromkeyring")
         self.assertEqual(source, "keyring")
 
-    def test_set_token_writes_to_keyring_and_removes_from_config(self) -> None:
-        """set_github_token writes to keyring and purges any legacy rbos.config entry."""
-        # Pre-seed rbos.config with a legacy token
+    def test_set_token_writes_to_keyring_and_keeps_config_fallback(self) -> None:
+        """set_github_token writes to keyring AND keeps the rbos.config copy.
+
+        The config copy is the deliberate launchd safety net: launchd jobs run
+        with a stripped environment and may not reach the user keychain, so they
+        fall back to rbos.config (see set_github_token's docstring and
+        doctor._check_token, which warns when the token is keyring-only).
+        """
+        # Pre-seed rbos.config with a legacy token to prove it's overwritten.
         cfg_path = config_module.CONFIG_PATH
         cfg_path.write_text('{"github_token": "ghp_legacy"}', encoding="utf-8")
 
@@ -120,10 +126,10 @@ class GitHubTokenKeyringTests(unittest.TestCase):
             set_github_token("ghp_new")
 
         self.assertEqual(stored.get("github_token"), "ghp_new")
-        # Legacy copy removed from rbos.config
+        # Config fallback retained, overwritten with the new token.
         import json as _json
         saved = _json.loads(cfg_path.read_text())
-        self.assertNotIn("github_token", saved)
+        self.assertEqual(saved.get("github_token"), "ghp_new")
 
     def test_auto_migration_moves_token_from_config_to_keyring(self) -> None:
         """On first read, a token in rbos.config is silently migrated to keyring."""
