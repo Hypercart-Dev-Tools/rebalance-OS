@@ -169,6 +169,8 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         query: str,
         sources: list[str] | None = None,
         top_k: int = 10,
+        updated_after: str | None = None,
+        repo: str | None = None,
     ) -> list[dict[str, Any]]:
         """
         Vector search across the unified semantic index (vault chunks +
@@ -184,6 +186,11 @@ def register(mcp: FastMCP, database_path: Path) -> None:
             sources: Filter to any of ["vault"], ["github"], ["email"], or
                 any combination of them. Defaults to all indexed sources.
             top_k: Number of results.
+            updated_after: ISO-8601 date/datetime string (e.g. "2026-05-01").
+                Excludes documents updated before this point. Useful for
+                date-bounded investigations without raw SQL fallback.
+            repo: Restrict GitHub results to one repo in ``owner/name`` form.
+                Non-GitHub results are unaffected.
         """
         from rebalance.ingest.semantic_index import query as _semantic_query
         return _semantic_query(
@@ -191,4 +198,6 @@ def register(mcp: FastMCP, database_path: Path) -> None:
             query,
             top_k=top_k,
             source_filter=sources,
+            updated_after=updated_after,
+            repo=repo,
         )

@@ -189,19 +189,18 @@ def get_github_token() -> str | None:
 
 
 def set_github_token(token: str) -> None:
-    """Store GitHub PAT in the OS keyring; remove any legacy copy from rbos.config."""
+    """Store GitHub PAT in the OS keyring AND rbos.config.
+
+    Both stores are written so launchd jobs (which run with a stripped
+    environment and may not reach the user keychain) can always fall back
+    to rbos.config. keyring is preferred for interactive reads; config is
+    the launchd safety net.
+    """
     cleaned = token.strip()
-    if not _keyring_set("github_token", cleaned):
-        # Keyring unavailable — fall back to rbos.config
-        config = _read_config()
-        config["github_token"] = cleaned
-        _write_config(config)
-        return
-    # Remove legacy copy from rbos.config if present
+    _keyring_set("github_token", cleaned)  # best-effort; ignored if unavailable
     config = _read_config()
-    if "github_token" in config:
-        del config["github_token"]
-        _write_config(config)
+    config["github_token"] = cleaned
+    _write_config(config)
 
 
 def clear_github_token() -> None:
@@ -669,7 +668,28 @@ def get_anthropic_api_key() -> str | None:
 
 
 def get_gemini_api_key() -> str | None:
-    """Return the Gemini/Google API key from the environment, or None if absent."""
+    """Return the Gemini API key.
+
+    Resolution order:
+      1. Google Secret Manager (requires google-cloud-secret-manager and
+         GOOGLE_CLOUD_PROJECT env var; secret name from GEMINI_SECRET_NAME,
+         default "gemini-api-key")
+      2. GEMINI_API_KEY environment variable
+      3. GOOGLE_API_KEY environment variable
+    """
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if project:
+        secret_name = os.environ.get("GEMINI_SECRET_NAME", "gemini-api-key")
+        try:
+            from google.cloud import secretmanager  # noqa: PLC0415
+            client = secretmanager.SecretManagerServiceClient()
+            resource = f"projects/{project}/secrets/{secret_name}/versions/latest"
+            response = client.access_secret_version(request={"name": resource})
+            value = response.payload.data.decode("utf-8").strip()
+            if value:
+                return value
+        except Exception:  # noqa: BLE001 — library absent or secret missing
+            pass
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
 
 

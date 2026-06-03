@@ -471,7 +471,19 @@ def _status_timestamp(status: dict[str, Any], key: str) -> str | None:
     return mapping.get(key)
 
 
-def _source_recently_succeeded(status: dict[str, Any], key: str, now: datetime, *, within_hours: int = 36) -> bool:
+# Suppression window per credential-check source name.
+# Contract: must equal the corresponding doctor.py warn_days * 24 for each source,
+# so that a successful sync within the stale window always clears the credential WARN.
+# Update both doctor.py warn_days and this table together.
+_SUPPRESSION_HOURS: dict[str, int] = {
+    "vault":    48,   # no freshness check; 2d safe default
+    "calendar": 72,   # calendar data warn_days=3
+    "gmail":   168,   # email data warn_days=7
+    "sleuth":   48,   # sleuth data warn_days=2
+}
+
+
+def _source_recently_succeeded(status: dict[str, Any], key: str, now: datetime, *, within_hours: int = 48) -> bool:
     raw = _status_timestamp(status, key)
     dt = _parse_iso(raw)
     if dt is None:
@@ -486,8 +498,11 @@ def _visible_problem_checks(checks: list[Check], status: dict[str, Any], now: da
             continue
         if (
             check.status == WARN
-            and check.name in {"vault", "calendar", "gmail", "sleuth"}
-            and _source_recently_succeeded(status, check.name, now)
+            and check.name in _SUPPRESSION_HOURS
+            and _source_recently_succeeded(
+                status, check.name, now,
+                within_hours=_SUPPRESSION_HOURS[check.name],
+            )
         ):
             continue
         visible.append(check)
@@ -1199,6 +1214,16 @@ def render_sidebar(
           <li><span class="kbd">C</span><span>Calendar</span><span class="badge">{streams.get('calendar', 0)}</span></li>
           <li><span class="kbd">S</span><span>Sleuth</span><span class="badge">{streams.get('sleuth', 0)}</span></li>
         </ul>
+
+        <div class="nav-section-label">System</div>
+        <ul class="nav-list">
+          <li class="auth-log-link">
+            <a href="http://localhost:8787/auth-log" target="_blank" rel="noopener noreferrer"
+               title="Open Authorization Log (requires: rebalance serve)">
+              <span class="auth-log-icon">🔐</span><span>Authorization Log</span>
+            </a>
+          </li>
+        </ul>
       </nav>
       <footer class="sidebar-foot subtle">Drift {drift_total} · {semantic_total:,} docs</footer>
     </aside>
@@ -1277,6 +1302,9 @@ h2 { font-size: 14px; color: var(--fg); }
 .streams li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
 .streams .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
 .streams .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: #fff; text-align: center; }
+.auth-log-link a { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); text-decoration: none; font-size: 13px; width: 100%; }
+.auth-log-link a:hover { color: var(--fg); }
+.auth-log-icon { font-size: 13px; }
 
 /* Hero "Open in Obsidian" link */
 .hero-open { color: var(--accent); text-decoration: none; margin-left: 8px; font-size: 12px; }

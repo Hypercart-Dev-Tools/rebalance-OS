@@ -1667,6 +1667,14 @@ def semantic_query_cmd(
     database: Path | None = DBOption(),
     top_k: int = typer.Option(10, help="Number of results to return"),
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
+    updated_after: str = typer.Option(
+        None, "--updated-after",
+        help="ISO-8601 date/datetime — exclude docs updated before this (e.g. 2026-05-01).",
+    ),
+    repo: str = typer.Option(
+        None, "--repo",
+        help="Restrict GitHub results to one repo in owner/name form.",
+    ),
 ) -> None:
     """Semantic search over the unified semantic index."""
     from rebalance.ingest.semantic_index import query
@@ -1683,6 +1691,8 @@ def semantic_query_cmd(
         top_k=top_k,
         model_name=model,
         source_filter=sources,
+        updated_after=updated_after or None,
+        repo=repo or None,
     )
     if not results:
         typer.echo(
@@ -1695,10 +1705,13 @@ def semantic_query_cmd(
         heading = f" > {metadata.get('heading')}" if metadata.get("heading") else ""
         repo_label = f" {metadata.get('repo_full_name')}" if metadata.get("repo_full_name") else ""
         html_url = metadata.get("html_url") or ""
+        updated_at = (result.get("updated_at") or "")[:19].replace("T", " ")
         typer.echo(
             f"{i}. [{result['similarity_score']:.3f}] {result['source_type']}:{result['doc_kind']}{repo_label}"
         )
         typer.echo(f"   {result['title']}{heading}")
+        if updated_at:
+            typer.echo(f"   updated: {updated_at}")
         if metadata.get("file_path"):
             typer.echo(f"   {metadata['file_path']}")
         if html_url:
@@ -2429,6 +2442,34 @@ def sleuth_sync_cmd(
         f"inserted={result.inserted_count}, updated={result.updated_count}, "
         f"unchanged={result.unchanged_count}"
     )
+
+
+@app.command("serve")
+def serve_cmd(
+    port: int = typer.Option(8787, "--port", "-p", help="Port to listen on"),
+    host: str = typer.Option("127.0.0.1", "--host", help="Bind address"),
+) -> None:
+    """Start the local web dashboard (auth log, future dashboards).
+
+    Opens http://localhost:<port>/auth-log in your browser automatically.
+    Requires: pip install 'rebalance-os[server]'
+    """
+    try:
+        import uvicorn
+    except ImportError:
+        typer.echo("uvicorn not installed. Run: pip install 'rebalance-os[server]'")
+        raise typer.Exit(1)
+
+    import webbrowser
+    import threading
+
+    url = f"http://{host}:{port}"
+    typer.echo(f"Starting rebalance web server at {url}")
+    typer.echo(f"  Auth log: {url}/auth-log")
+    threading.Timer(0.8, lambda: webbrowser.open(f"{url}/auth-log")).start()
+
+    from rebalance.web import app as web_app
+    uvicorn.run(web_app, host=host, port=port, log_level="warning")
 
 
 @app.command("version")

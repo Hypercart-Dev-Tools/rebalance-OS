@@ -417,12 +417,33 @@ def search_semantic_documents(
     query_vec: bytes,
     top_k: int,
     source_types: Sequence[str],
+    *,
+    updated_after: str | None = None,
+    repo: str | None = None,
 ) -> list[sqlite3.Row]:
     """Vector search over ``semantic_embeddings``, nearest first.
 
-    Restricts results to the given *source_types*.
+    Args:
+        source_types: Restrict to these source families (e.g. ["vault", "github"]).
+        updated_after: ISO-8601 timestamp string; exclude docs updated before this.
+        repo: Filter to a specific GitHub repo (``owner/name``); only applies to
+              github-sourced documents whose metadata_json contains repo_full_name.
     """
     placeholders = ", ".join("?" for _ in source_types)
+    params: list = [query_vec, top_k, *source_types]
+
+    extra_clauses = []
+    if updated_after:
+        extra_clauses.append("AND sd.updated_at >= ?")
+        params.append(updated_after)
+    if repo:
+        extra_clauses.append(
+            "AND (sd.source_type != 'github' OR "
+            "LOWER(JSON_EXTRACT(sd.metadata_json, '$.repo_full_name')) = LOWER(?))"
+        )
+        params.append(repo)
+
+    extra_sql = "\n          ".join(extra_clauses)
     return conn.execute(
         f"""
         SELECT
@@ -440,7 +461,8 @@ def search_semantic_documents(
         JOIN semantic_documents sd ON sd.id = se.rowid
         WHERE se.embedding MATCH ? AND se.k = ?
           AND sd.source_type IN ({placeholders})
+          {extra_sql}
         ORDER BY se.distance
         """,
-        [query_vec, top_k, *source_types],
+        params,
     ).fetchall()

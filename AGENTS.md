@@ -163,6 +163,20 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 
 ---
 
+## Known MCP tool gaps (as of 2026-06-02)
+
+Observed in a real session where the MCP surface was unavailable and CLI/SQLite fallbacks were used. Record here so future agents know what to work around or fix.
+
+| # | Gap | Impact | Owner action |
+|---|-----|--------|--------------|
+| 1 | **Runtime/docs sync** — AGENTS.md says "use MCP tools first" but the MCP server may not be callable at session start | Agent wastes time on MCP calls before falling back to CLI | Add a session-start connectivity check; verify tool list is live before instructing agents to prefer it |
+| 2 | **`semantic_query()` has no time filter** — no `since_days`, `updated_after`, or `updated_before` | Date-bounded investigations require raw SQL fallback | Add time filter to `semantic_query` MCP tool and underlying query in `src/rebalance/ingest/db/semantic.py` |
+| 3 | **`semantic_query()` weak filtering** — no `repo`, exact/keyword mode, or source metadata filter | Noisy recall for short/ambiguous terms | Add `repo`, `mode` (semantic/keyword), and `source` filter params |
+| 4 | **CLI `semantic-query` hides `updated_at`** — returned by query, stripped from output | Slows triage; requires raw SQL to see timestamps | Expose `updated_at` in the CLI table output |
+| 5 | ⚠️ **SECURITY: live API key surfaced in semantic results** — a vault note containing a live credential was indexed and returned by `semantic_query` | Key exposure via any agent that can call the tool | Add pre-embed redaction (strip key-shaped patterns) in `note_ingester.py` and/or a vault note exclusion mechanism (frontmatter `index: false` or path exclusion). **Fix before next vault ingest.** |
+
+---
+
 ## Agent rulebooks (read before editing generated docs)
 
 Some generated artifacts in this repo ship with placeholder prose that any agent

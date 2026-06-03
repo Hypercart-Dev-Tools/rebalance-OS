@@ -467,15 +467,27 @@ def query(
     top_k: int = 10,
     model_name: str = DEFAULT_EMBED_MODEL,
     source_filter: Iterable[str] | None = None,
+    updated_after: str | None = None,
+    repo: str | None = None,
     embed_texts: EmbedTexts | None = None,
 ) -> list[dict[str, Any]]:
-    """Semantic search across the unified semantic index."""
+    """Semantic search across the unified semantic index.
+
+    Args:
+        updated_after: ISO-8601 string (e.g. ``"2026-05-01"``); exclude docs
+                       updated before this date/time.
+        repo: Restrict github results to one repo (``owner/name``).
+    """
     selected_sources = _normalize_sources(source_filter)
     embed_fn = embed_texts or _default_embed_texts
     query_vec = _vec_to_bytes(embed_fn([query_text], model_name)[0])
 
     with db_connection(database_path, ensure_semantic_schema) as conn:
-        rows = sem.search_semantic_documents(conn, query_vec, top_k, selected_sources)
+        rows = sem.search_semantic_documents(
+            conn, query_vec, top_k, selected_sources,
+            updated_after=updated_after,
+            repo=repo,
+        )
 
     results: list[dict[str, Any]] = []
     for row in rows:

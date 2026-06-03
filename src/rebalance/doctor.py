@@ -112,8 +112,14 @@ def _check_database(explicit: Path | None) -> tuple[list[Check], Path | None]:
 
 
 def _check_token() -> Check:
-    """Flag a token that background launchd jobs cannot reach."""
-    from rebalance.ingest.config import get_github_token_with_source
+    """Flag a token that background launchd jobs cannot reach.
+
+    launchd has a stripped environment: gh-cli auth and env vars are unavailable.
+    A token in keyring or rbos.config is reachable; gh-cli-only is not.
+    set_github_token() now writes to both, so keyring-sourced tokens are fine
+    as long as a config copy also exists.
+    """
+    from rebalance.ingest.config import get_github_token_with_source, _read_config
 
     token, source = get_github_token_with_source()
     if not token:
@@ -123,15 +129,24 @@ def _check_token() -> Check:
             "no GitHub token configured",
             "run `rebalance config set-github-token`, or `rebalance onboard`",
         )
-    if source != "config":
+    if source == "gh-cli":
         return Check(
             "github token",
             WARN,
-            f"token resolves via '{source}', not the rebalance config",
-            "launchd jobs run with a minimal environment and cannot reach "
-            "`gh`/env vars — run `rebalance config set-github-token` to persist it",
+            "token only reachable via gh-cli — launchd jobs will fail",
+            "run `rebalance config set-github-token` to persist it",
         )
-    return Check("github token", OK, "stored in config (reachable by launchd jobs)")
+    # keyring is preferred for interactive reads; confirm config copy also exists
+    # so launchd can fall back if keychain is unavailable in its session
+    config_has_token = bool(_read_config().get("github_token"))
+    if source == "keyring" and not config_has_token:
+        return Check(
+            "github token",
+            WARN,
+            "token in keyring only — launchd session may not reach keychain",
+            "run `rebalance config set-github-token` to write the config fallback",
+        )
+    return Check("github token", OK, f"stored in {source} + config (reachable by launchd)")
 
 
 def _check_vault() -> Check:
@@ -591,7 +606,7 @@ _COLLECTOR_FRESHNESS: list[dict] = [
         name="calendar data",
         table="calendar_events",
         ts_col="fetched_at",
-        warn_days=2,
+        warn_days=3,
         empty_hint="run the calendar sync or complete the OAuth flow",
         stale_hint="run `rebalance refresh` (scope calendar) — check the launchd sync job",
     ),
