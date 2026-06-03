@@ -127,10 +127,21 @@ no row moved except intentionally.
 > is the natural moment to wire per-collector auth/error logging cleanly instead of
 > cramming it into the 2,626-line god-function.
 
-**CLI decomposition**
+**CLI decomposition** *(in progress — `cli.py` was 2,899 lines)*
 
-- [ ] Split `cli.py` (~2,626 lines) into a `cli/` package — one subcommand group per
-      file (`refresh.py`, `github.py`, `calendar.py`, `semantic.py`, `raw.py`, etc.)
+- [~] Split `cli.py` into a `cli/` package — one subcommand group per file.
+      **Done so far** *(2026-06-02)*: `cli.py` → `cli/` package (behavior-identical
+      `git mv`, `_PROJECT_ROOT` fixed to `parents[3]`); `cli/_core.py` holds the
+      shared `app`/`ingest_app`/`config_app` + `_PROJECT_ROOT` (domain modules import
+      from `_core`, no circular dep); extracted `cli/raw.py` (raw probe + `_raw_*`)
+      and `cli/semantic.py` (3 `semantic-*` cmds + helper). `__init__.py` 2,899 →
+      2,290 lines; each step verified (28 top-level cmds + config/ingest groups held;
+      443 passed). **Remaining domains** to extract from `__init__.py`: `github`,
+      `calendar` (+ update the `rebalance.cli.*` patch targets in
+      `test_calendar_create_event_cli.py` to `rebalance.cli.calendar.*`), `config_cmds`
+      (19 cmds), `query`/`search`/`ask`, `ingest_cmds`, `onboard`, `dashboard`,
+      `sleuth` (re-export `_load_sleuth_env` for `index_ops`), `serve`, `root`
+      (callback + `doctor`/`version`).
 - [ ] Shrink the 186-line `refresh_cmd` by delegating to `refresh_index()`
 
 **Logging + observability**
