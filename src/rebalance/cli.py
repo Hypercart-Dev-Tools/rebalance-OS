@@ -107,6 +107,9 @@ def doctor_cmd(database: Path | None = DBOption()) -> None:
     Read-only. Surfaces the class of problem a test suite cannot: which database
     is actually in use, whether the GitHub token is reachable by launchd jobs,
     schema version, registered projects, data freshness, and job exit status.
+    Also surfaces the last auth failure per integration (from the unified auth
+    log) and a diagnostics index pointing at every other observability surface —
+    making this the single entry point into the project's diagnostics.
     """
     from rich.console import Console
 
@@ -2747,6 +2750,19 @@ def config_doctor() -> None:
     typer.echo("\n── Google Calendar OAuth ────────────────────")
     cal_path = resolve_secret_path("google-calendar.env")
     row("google-calendar.env", cal_path.exists(), str(cal_path))
+
+    typer.echo("\n── Auth activity (last event per collector) ─")
+    from rebalance.ingest import auth_log
+    latest = auth_log.latest_event_by_source()
+    if not latest:
+        typer.echo("  ·  no auth events logged yet (temp/logs/auth_activity.jsonl)")
+    else:
+        for src in sorted(latest):
+            entry = latest[src]
+            event = entry.get("event", "")
+            ts = str(entry.get("ts", ""))[:19].replace("T", " ")
+            failed = event in auth_log.FAILURE_EVENTS
+            row(f"{src}", not failed, f"last: {event} at {ts} UTC")
 
     typer.echo("")
 
