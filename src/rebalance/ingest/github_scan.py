@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -22,6 +23,9 @@ from typing import Any
 
 from rebalance.ingest.config import normalize_github_repo_name
 from rebalance.ingest._http import GITHUB_API, GitHubClient
+
+logger = logging.getLogger(__name__)
+
 MAX_EVENT_PAGES = 3  # Hard limit documented by GitHub
 
 # Activity band definitions — shared with preflight.py for segmentation.
@@ -316,9 +320,52 @@ def validate_github_token(token: str) -> dict[str, Any]:
         scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
         login = data.get("login", "")
         auth_log.log_github_token_validated(login, scopes)
-        return {"valid": True, "login": login, "scopes": scopes}
+        return {"valid": True, "login": login, "scopes": scopes, "status": status}
     auth_log.log_github_token_invalid(status)
-    return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {status}"}
+    return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {status}", "status": status}
+
+
+def resolve_working_token(primary_token: str) -> str:
+    """Return a GitHub token that currently authenticates, falling back to gh CLI.
+
+    If *primary_token* validates, it is returned unchanged. If it is rejected
+    with **401** (revoked / expired / deauthorized PAT) *and* the host is
+    authorized for the ``gh`` CLI, fall back to gh's token (option A), then
+    persist it to keyring + ``rbos.config`` so background launchd jobs recover
+    too (option D), and return it. Any other failure (rate-limit 403/429, no gh
+    login, gh token also invalid, network error) returns the primary token
+    unchanged so the caller surfaces the real error — this never makes a refresh
+    worse than before.
+
+    The gh fallback only resolves interactively: launchd's stripped environment
+    cannot run ``gh``, so background jobs get the persisted token from a prior
+    interactive heal instead.
+    """
+    if not primary_token:
+        return primary_token
+    try:
+        check = validate_github_token(primary_token)
+        if check.get("valid"):
+            return primary_token
+        if check.get("status") != 401:
+            return primary_token  # rate-limit / transient — not a deauth
+        from rebalance.ingest import auth_log, config
+
+        gh_token = config.get_github_token_via_gh()
+        if not gh_token or gh_token == primary_token:
+            return primary_token  # no usable backup
+        gh_check = validate_github_token(gh_token)
+        if not gh_check.get("valid"):
+            return primary_token  # gh's token is no good either
+        logger.warning(
+            "GitHub PAT rejected (401); fell back to the gh CLI token and "
+            "persisted it (keyring + config) so background jobs recover."
+        )
+        auth_log.log_github_gh_fallback(gh_check.get("login", ""))
+        config.set_github_token(gh_token)  # option D: heal the persisted copy
+        return gh_token
+    except Exception:  # noqa: BLE001 — resolution must never break the refresh
+        return primary_token
 
 
 def scan_github(token: str, days: int = 30) -> GitHubScanResult:

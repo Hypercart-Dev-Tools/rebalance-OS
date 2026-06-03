@@ -885,6 +885,12 @@ def refresh_index(
                 ),
             })
             requested_scopes = [s for s in requested_scopes if s != "github"]
+        elif not dry_run:
+            # If the stored PAT is deauthorized (401), fall back to the gh CLI
+            # token and persist it so this and the launchd jobs recover. No-op
+            # when the PAT is valid or gh is unavailable (e.g. under launchd).
+            from rebalance.ingest.github_scan import resolve_working_token
+            resolved_token = resolve_working_token(resolved_token)
 
     repos_list = list(repos or [])
 

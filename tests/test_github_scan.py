@@ -5,6 +5,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rebalance.ingest import config as config_module
 from rebalance.ingest.db import db_connection, ensure_github_schema
@@ -13,6 +14,7 @@ from rebalance.ingest.github_scan import (
     RepoActivity,
     _summarize_by_repo,
     filter_ignored_repo_activity,
+    resolve_working_token,
     upsert_github_activity,
 )
 
@@ -103,3 +105,66 @@ class GitHubScanIgnoreTests(unittest.TestCase):
             ).fetchall()
 
         self.assertEqual([row["repo_full_name"] for row in rows], ["example/worked"])
+
+
+class ResolveWorkingTokenTests(unittest.TestCase):
+    """resolve_working_token: gh-CLI fallback on a 401-deauthorized PAT (A + D)."""
+
+    def _validate(self, results: dict):
+        """Return a fake validate_github_token keyed by token value."""
+        return lambda tok: results[tok]
+
+    def test_valid_primary_returned_unchanged_no_fallback(self) -> None:
+        with patch("rebalance.ingest.github_scan.validate_github_token",
+                   side_effect=self._validate({"ghp_good": {"valid": True, "status": 200}})), \
+             patch("rebalance.ingest.config.get_github_token_via_gh") as gh, \
+             patch("rebalance.ingest.config.set_github_token") as persist:
+            self.assertEqual(resolve_working_token("ghp_good"), "ghp_good")
+        gh.assert_not_called()       # no need to consult gh
+        persist.assert_not_called()  # nothing to heal
+
+    def test_401_primary_falls_back_to_gh_validates_persists(self) -> None:
+        validate = self._validate({
+            "ghp_dead": {"valid": False, "status": 401},
+            "gh_tok": {"valid": True, "login": "octocat", "status": 200},
+        })
+        with patch("rebalance.ingest.github_scan.validate_github_token", side_effect=validate), \
+             patch("rebalance.ingest.config.get_github_token_via_gh", return_value="gh_tok"), \
+             patch("rebalance.ingest.config.set_github_token") as persist, \
+             patch("rebalance.ingest.auth_log.log_github_gh_fallback") as logev:
+            self.assertEqual(resolve_working_token("ghp_dead"), "gh_tok")
+        persist.assert_called_once_with("gh_tok")          # D: heal keyring+config
+        logev.assert_called_once_with("octocat")           # recovery event logged
+
+    def test_rate_limit_403_does_not_trigger_gh_fallback(self) -> None:
+        with patch("rebalance.ingest.github_scan.validate_github_token",
+                   side_effect=self._validate({"ghp_rl": {"valid": False, "status": 403}})), \
+             patch("rebalance.ingest.config.get_github_token_via_gh") as gh, \
+             patch("rebalance.ingest.config.set_github_token") as persist:
+            self.assertEqual(resolve_working_token("ghp_rl"), "ghp_rl")  # unchanged
+        gh.assert_not_called()       # 403 is rate-limit, not deauth
+        persist.assert_not_called()
+
+    def test_401_but_no_gh_login_returns_primary(self) -> None:
+        with patch("rebalance.ingest.github_scan.validate_github_token",
+                   side_effect=self._validate({"ghp_dead": {"valid": False, "status": 401}})), \
+             patch("rebalance.ingest.config.get_github_token_via_gh", return_value=None), \
+             patch("rebalance.ingest.config.set_github_token") as persist:
+            self.assertEqual(resolve_working_token("ghp_dead"), "ghp_dead")
+        persist.assert_not_called()
+
+    def test_401_but_gh_token_also_invalid_returns_primary(self) -> None:
+        validate = self._validate({
+            "ghp_dead": {"valid": False, "status": 401},
+            "gh_bad": {"valid": False, "status": 401},
+        })
+        with patch("rebalance.ingest.github_scan.validate_github_token", side_effect=validate), \
+             patch("rebalance.ingest.config.get_github_token_via_gh", return_value="gh_bad"), \
+             patch("rebalance.ingest.config.set_github_token") as persist:
+            self.assertEqual(resolve_working_token("ghp_dead"), "ghp_dead")
+        persist.assert_not_called()
+
+    def test_empty_token_returned_as_is(self) -> None:
+        with patch("rebalance.ingest.config.get_github_token_via_gh") as gh:
+            self.assertEqual(resolve_working_token(""), "")
+        gh.assert_not_called()

@@ -154,6 +154,13 @@ def log_github_auth_failed(status: int, endpoint: str = "") -> None:
     _append("github", "auth_failed", {"status": status, "endpoint": endpoint})
 
 
+def log_github_gh_fallback(login: str = "") -> None:
+    """Recovery: the stored PAT was rejected (401) so we fell back to the gh CLI
+    token and persisted it. NOT a failure event — its presence as the most
+    recent github event means the collector recovered."""
+    _append("github", "gh_fallback", {"login": login})
+
+
 # ---------------------------------------------------------------------------
 # Gmail helpers
 # ---------------------------------------------------------------------------

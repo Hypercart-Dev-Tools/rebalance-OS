@@ -1,5 +1,35 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+
+- **GitHub deauth resilience — gh-CLI token fallback (options A + D).** When the
+  stored GitHub PAT is rejected with **401** (revoked / expired / lost a scope)
+  during a refresh, the collector now falls back to the `gh` CLI's token if the
+  host is authorized for it (A), then **persists** that token to keyring +
+  `rbos.config` so the launchd background jobs recover too (D). Wired into
+  `refresh_index` (covers `rebalance refresh`, the `refresh_index` MCP tool, and
+  launchd) at token-resolution time, so `sync_pushed_repos`, `scan_github`, and
+  per-repo sync all use the working token. Only triggers on 401 (rate-limit
+  403/429 is left alone) and only resolves interactively (launchd's stripped
+  environment cannot run `gh` — it relies on the persisted heal). New helpers:
+  `config.get_github_token_via_gh()` and `github_scan.resolve_working_token()`.
+  A `gh_fallback` event is written to the unified auth log (a *recovery*, not a
+  failure — so `rebalance doctor` shows the integration as healed once it fires).
+  The explicit `rebalance github-scan --token` command is unchanged (it respects
+  the token you pass and never auto-persists gh's token).
+- `validate_github_token()` now returns the HTTP `status` alongside `valid`, so
+  callers can distinguish a 401 deauth from a 403 rate-limit.
+
+### Fixed
+
+- Corrected the stale claim that `set_github_token()` "removes any legacy
+  plaintext copy from `rbos.config`" (see 0.31.6 below). It deliberately writes
+  **both** keyring and `rbos.config` — the config copy is the launchd safety net
+  (launchd's stripped environment may not reach the keychain), which
+  `doctor._check_token` relies on. Updated the stale unit test to match.
+
 ## [0.31.6] - 2026-06-01
 
 ### Added

@@ -158,6 +158,17 @@ def _try_gh_cli_token() -> str | None:
     return token or None
 
 
+def get_github_token_via_gh() -> str | None:
+    """Return the token the ``gh`` CLI is currently authorized with, or None.
+
+    Public wrapper over the gh-cli probe so other modules (e.g. the scan's
+    401-deauth fallback) can use the ambient gh login as a backup credential
+    without reaching into a private helper. Only resolvable interactively —
+    launchd's stripped environment cannot run ``gh``.
+    """
+    return _try_gh_cli_token()
+
+
 def get_github_token_with_source() -> tuple[str | None, str | None]:
     """
     Resolve a GitHub token. Returns (token, source) where source is one of:
