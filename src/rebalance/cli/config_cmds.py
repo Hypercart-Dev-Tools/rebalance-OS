@@ -437,6 +437,59 @@ def config_set_gmail_method(
         typer.echo("  Ensure a token exists: scripts/setup_gmail_oauth.py → migrate-to-keyring")
 
 
+def _refresh_token_of(token_json: str | None) -> str:
+    """Pull the stable refresh_token out of a serialized Google OAuth blob."""
+    if not token_json:
+        return ""
+    import json as _json
+    try:
+        return str((_json.loads(token_json) or {}).get("refresh_token") or "")
+    except (ValueError, TypeError):
+        return ""
+
+
+def _migrate_google_pickle_to_keyring(
+    *,
+    label: str,
+    token_path: Path,
+    get_keyring,
+    set_keyring,
+    missing_hint: str,
+) -> None:
+    """Sync a Google OAuth pickle file into keyring.
+
+    Unlike a naive "skip if keyring already set", this detects a *freshly
+    re-authed* pickle (different refresh_token than the keyring copy) and updates
+    keyring from it — so the documented `setup_*_oauth.py → migrate-to-keyring`
+    re-auth flow actually takes effect on a device that already had a keyring
+    entry, instead of silently keeping the stale token.
+    """
+    import pickle
+    try:
+        keyring_blob = get_keyring()
+        if not token_path.exists():
+            if keyring_blob:
+                typer.echo(f"{label}: already in keyring ✓")
+            else:
+                typer.echo(f"{label}: no token found — {missing_hint}")
+            return
+
+        with open(token_path, "rb") as f:
+            creds = pickle.load(f)
+        pickle_json = creds.to_json()
+
+        if not keyring_blob:
+            set_keyring(pickle_json, source="migrate", record=True)
+            typer.echo(f"{label}: migrated pickle file → keyring ✓")
+        elif _refresh_token_of(pickle_json) != _refresh_token_of(keyring_blob):
+            set_keyring(pickle_json, source="reauth", record=True)
+            typer.echo(f"{label}: refreshed keyring from newer pickle (re-auth) ✓")
+        else:
+            typer.echo(f"{label}: already in keyring ✓")
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"{label}: skipped ({type(exc).__name__}: {exc})")
+
+
 @config_app.command("migrate-to-keyring")
 def config_migrate_to_keyring() -> None:
     """One-shot: move local credentials (calendar pickle, sleuth env file) into keyring.
@@ -448,41 +501,25 @@ def config_migrate_to_keyring() -> None:
     from rebalance.ingest import config as cfg
 
     # calendar: pickle → keyring
-    try:
-        if cfg.get_calendar_oauth_token_json():
-            typer.echo("calendar: already in keyring ✓")
-        else:
-            import pickle
-            from rebalance.ingest.calendar import TOKEN_PATH
-            if TOKEN_PATH.exists():
-                with open(TOKEN_PATH, "rb") as f:
-                    creds = pickle.load(f)
-                cfg.set_calendar_oauth_token_json(creds.to_json(), source="migrate", record=True)
-                typer.echo("calendar: migrated pickle file → keyring ✓")
-            else:
-                typer.echo("calendar: no token found — run scripts/setup_calendar_oauth.py")
-    except Exception as exc:  # noqa: BLE001
-        typer.echo(f"calendar: skipped ({type(exc).__name__}: {exc})")
+    from rebalance.ingest.calendar import TOKEN_PATH as CALENDAR_TOKEN_PATH
+    _migrate_google_pickle_to_keyring(
+        label="calendar",
+        token_path=CALENDAR_TOKEN_PATH,
+        get_keyring=cfg.get_calendar_oauth_token_json,
+        set_keyring=cfg.set_calendar_oauth_token_json,
+        missing_hint="run scripts/setup_calendar_oauth.py",
+    )
 
     # gmail: pickle → keyring (mirrors calendar)
-    try:
-        if cfg.get_gmail_oauth_token_json():
-            typer.echo("gmail: already in keyring ✓")
-        else:
-            import pickle
-            from rebalance.ingest.gmail import TOKEN_PATH as GMAIL_TOKEN_PATH
-            if GMAIL_TOKEN_PATH.exists():
-                with open(GMAIL_TOKEN_PATH, "rb") as f:
-                    creds = pickle.load(f)
-                cfg.set_gmail_oauth_token_json(creds.to_json(), source="migrate", record=True)
-                typer.echo("gmail: migrated pickle file → keyring ✓")
-            else:
-                typer.echo(
-                    "gmail: no token found — run scripts/setup_gmail_oauth.py "
-                    "(or stay on the Gmail MCP connector: gmail_ingest_method=mcp)"
-                )
-    except Exception as exc:  # noqa: BLE001
-        typer.echo(f"gmail: skipped ({type(exc).__name__}: {exc})")
+    from rebalance.ingest.gmail import TOKEN_PATH as GMAIL_TOKEN_PATH
+    _migrate_google_pickle_to_keyring(
+        label="gmail",
+        token_path=GMAIL_TOKEN_PATH,
+        get_keyring=cfg.get_gmail_oauth_token_json,
+        set_keyring=cfg.set_gmail_oauth_token_json,
+        missing_hint="run scripts/setup_gmail_oauth.py "
+                     "(or stay on the Gmail MCP connector: gmail_ingest_method=mcp)",
+    )
 
     # sleuth: env file → keyring
     try:
