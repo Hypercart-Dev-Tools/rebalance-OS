@@ -289,6 +289,57 @@ def set_gmail_query_filter(query: str) -> None:
     _write_config(config)
 
 
+# ---------------------------------------------------------------------------
+# Health notices — demote intentional/non-actionable WARNs to a calmer tier
+# ---------------------------------------------------------------------------
+
+def get_health_notice_patterns() -> list[str]:
+    """Return check-name substrings the user has demoted to "notices".
+
+    A health WARN whose name contains one of these (case-insensitive) is shown
+    in a separate, low-key Notices section instead of counting toward the
+    "collector attention needed" verdict. Intended for *intentional* states
+    (e.g. a deliberately narrow Gmail filter that reads "stale") or
+    *non-actionable-from-here* ones (another machine's pulse collector). FAIL
+    checks are never demoted. Config key: ``health_notices`` (list of strings).
+    """
+    config = _read_config()
+    raw = config.get("health_notices")
+    if isinstance(raw, list):
+        return [str(p).strip() for p in raw if str(p).strip()]
+    return []
+
+
+def add_health_notice_pattern(pattern: str) -> bool:
+    """Add a notice pattern. Returns True if added, False if blank/duplicate."""
+    pattern = pattern.strip()
+    if not pattern:
+        return False
+    config = _read_config()
+    patterns = config.get("health_notices")
+    if not isinstance(patterns, list):
+        patterns = []
+    if pattern in patterns:
+        return False
+    patterns.append(pattern)
+    config["health_notices"] = patterns
+    _write_config(config)
+    return True
+
+
+def remove_health_notice_pattern(pattern: str) -> bool:
+    """Remove a notice pattern. Returns True if it was present and removed."""
+    pattern = pattern.strip()
+    config = _read_config()
+    patterns = config.get("health_notices")
+    if not isinstance(patterns, list) or pattern not in patterns:
+        return False
+    patterns.remove(pattern)
+    config["health_notices"] = patterns
+    _write_config(config)
+    return True
+
+
 GMAIL_INGEST_METHODS = ("oauth", "mcp")
 
 

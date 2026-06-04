@@ -15,6 +15,7 @@ from rebalance.ingest.audit import append_audit_entry
 from rebalance.ingest.config import (
     add_github_ignored_repo,
     add_github_related_repo,
+    add_health_notice_pattern,
     clear_github_token,
     get_anthropic_api_key,
     get_config_path,
@@ -23,12 +24,14 @@ from rebalance.ingest.config import (
     get_github_related_repos,
     get_github_token_with_source,
     get_gmail_ingest_method,
+    get_health_notice_patterns,
     get_project_priority_rules,
     get_sleuth_credentials,
     get_vault_path,
     normalize_github_repo_name,
     remove_github_ignored_repo,
     remove_github_related_repo,
+    remove_health_notice_pattern,
     remove_project_priority_rule,
     set_github_token,
     set_gmail_ingest_method,
@@ -413,6 +416,41 @@ def config_clear_sleuth() -> None:
     from rebalance.ingest.config import clear_sleuth_credentials
     clear_sleuth_credentials()
     typer.echo("✓ Sleuth credentials cleared from keyring + config.")
+
+
+@config_app.command("add-health-notice")
+def config_add_health_notice(
+    pattern: str = typer.Argument(..., help="Check-name substring to demote, e.g. 'email data' or 'pulse collector:noel’s MacBook'"),
+) -> None:
+    """Demote a health WARN to a 'notice' (shown on the dashboard, but not
+    counted as 'collector attention needed'). Matches the check name as a
+    case-insensitive substring. FAIL checks are never demoted."""
+    if add_health_notice_pattern(pattern):
+        typer.echo(f"health notice added: {pattern!r} ✓")
+    else:
+        typer.echo(f"health notice unchanged (blank or already present): {pattern!r}")
+
+
+@config_app.command("remove-health-notice")
+def config_remove_health_notice(
+    pattern: str = typer.Argument(..., help="Exact notice pattern to remove"),
+) -> None:
+    """Remove a health-notice pattern (re-promotes matching WARNs to problems)."""
+    if remove_health_notice_pattern(pattern):
+        typer.echo(f"health notice removed: {pattern!r} ✓")
+    else:
+        typer.echo(f"no such health notice: {pattern!r}")
+
+
+@config_app.command("list-health-notices")
+def config_list_health_notices() -> None:
+    """List the configured health-notice patterns."""
+    patterns = get_health_notice_patterns()
+    if not patterns:
+        typer.echo("no health-notice patterns configured")
+        return
+    for p in patterns:
+        typer.echo(f"  • {p}")
 
 
 @config_app.command("set-gmail-method")

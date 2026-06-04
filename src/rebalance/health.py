@@ -23,7 +23,7 @@ update both together.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
@@ -125,12 +125,26 @@ def ordered_problem_checks(
     return sorted(visible_problem_checks(checks, status, now), key=priority)
 
 
+def _matches_notice(name: str, patterns: list[str]) -> bool:
+    """True if *name* contains any notice pattern (case-insensitive substring)."""
+    low = name.lower()
+    return any(p.lower() in low for p in patterns if p)
+
+
 @dataclass
 class HealthStatus:
-    """The one verdict every dashboard surface renders from."""
+    """The one verdict every dashboard surface renders from.
+
+    ``problems`` drive the verdict and the "collector attention needed" count.
+    ``notices`` are WARNs the operator has marked as intentional or
+    non-actionable (see ``config.get_health_notice_patterns``): still surfaced,
+    in a calmer tier, but they do NOT escalate the verdict. FAILs are never
+    notices.
+    """
 
     verdict: str  # OK | WARN | FAIL
     problems: list[Check]
+    notices: list[Check] = field(default_factory=list)
 
     @property
     def failures(self) -> list[Check]:
@@ -156,14 +170,38 @@ class HealthStatus:
 
 
 def compute_health_status(
-    checks: list[Check], status: dict[str, Any], now: datetime
+    checks: list[Check],
+    status: dict[str, Any],
+    now: datetime,
+    *,
+    notice_patterns: list[str] | None = None,
 ) -> HealthStatus:
-    """Reconcile *checks* against recent activity into a single verdict."""
-    problems = ordered_problem_checks(checks, status, now)
+    """Reconcile *checks* against recent activity into a single verdict.
+
+    *notice_patterns* (defaults to ``config.get_health_notice_patterns()``)
+    demote matching WARNs to ``notices``: still returned for display, but they
+    don't count toward the verdict. FAILs are never demoted.
+    """
+    if notice_patterns is None:
+        try:
+            from rebalance.ingest.config import get_health_notice_patterns
+            notice_patterns = get_health_notice_patterns()
+        except Exception:  # noqa: BLE001 — never let config break the verdict
+            notice_patterns = []
+
+    visible = ordered_problem_checks(checks, status, now)
+    problems: list[Check] = []
+    notices: list[Check] = []
+    for check in visible:
+        if check.status == WARN and _matches_notice(check.name, notice_patterns):
+            notices.append(check)
+        else:
+            problems.append(check)
+
     if any(c.status == FAIL for c in problems):
         verdict = FAIL
     elif problems:
         verdict = WARN
     else:
         verdict = OK
-    return HealthStatus(verdict=verdict, problems=problems)
+    return HealthStatus(verdict=verdict, problems=problems, notices=notices)

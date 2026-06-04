@@ -513,6 +513,42 @@ def render_health_banner(
     """
 
 
+def render_notices(health: HealthStatus, now: datetime) -> str:
+    """Low-key section for WARNs the operator marked intentional/non-actionable.
+
+    Separate from the health banner: these don't escalate the verdict, but they
+    stay visible so a demoted state is never silently hidden.
+    """
+    notices = health.notices
+    if not notices:
+        return ""
+
+    items = []
+    for check in notices:
+        fix = (
+            f'<span class="notices-fix">→ {_esc(_short_text(check.hint, 120))}</span>'
+            if check.hint
+            else ""
+        )
+        items.append(
+            f'<span class="notices-item">'
+            f'<span class="notices-name">{_esc(check.name)}</span>'
+            f'<span class="notices-detail">{_esc(_short_text(check.detail, 120))}</span>'
+            f"{fix}"
+            f"</span>"
+        )
+    label = f"{len(notices)} notice{'s' if len(notices) != 1 else ''}"
+    return f"""
+    <section class="notices-banner" aria-live="polite">
+      <div class="notices-lead">
+        <span class="notices-badge">{_esc(label)}</span>
+        <span class="notices-summary">Notices · acknowledged or handled elsewhere</span>
+      </div>
+      <div class="notices-items">{''.join(items)}</div>
+    </section>
+    """
+
+
 def render_sync_chip(
     health: HealthStatus,
     last_activity: str | None,
@@ -1296,6 +1332,28 @@ h2 { font-size: 14px; color: var(--fg); }
   border-color: rgba(192,57,43,.18);
   background: linear-gradient(90deg, rgba(192,57,43,.11), rgba(255,255,255,.96));
 }
+.notices-banner {
+  margin: 10px 0 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 12px;
+  align-items: center;
+  padding: 9px 14px;
+  border-radius: 11px;
+  border: 1px dashed var(--border);
+  background: rgba(120,120,128,.06);
+}
+.notices-lead { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.notices-badge {
+  font-weight: 600; font-size: 12px; padding: 2px 8px; border-radius: 999px;
+  background: rgba(120,120,128,.14); color: var(--muted, #5b6470);
+}
+.notices-summary { font-size: 12px; color: var(--muted, #7a828c); }
+.notices-items { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; padding-top: 2px; }
+.notices-item { display: inline-flex; gap: 6px; align-items: baseline; }
+.notices-name { font-weight: 600; }
+.notices-detail { color: var(--muted, #7a828c); }
+.notices-fix { color: var(--muted, #7a828c); opacity: .85; }
 .health-banner-lead {
   display: inline-flex;
   align-items: center;
@@ -2200,6 +2258,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           </div>
         </div>
         {render_health_banner(health_status, now, last_activity)}
+        {render_notices(health_status, now)}
         {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
         <div class="grid">
           <div class="col">

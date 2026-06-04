@@ -93,5 +93,47 @@ class CredentialSuppressionTests(unittest.TestCase):
         self.assertEqual(compute_health_status(checks, status, NOW).verdict, WARN)
 
 
+class HealthNoticesTests(unittest.TestCase):
+    """WARNs matching a notice pattern move to `notices`, off the verdict."""
+
+    EMPTY = {"sources": {}}
+
+    def test_notice_warn_demoted_off_verdict(self) -> None:
+        checks = [Check("email data", WARN, "stale > 7d")]
+        h = compute_health_status(checks, self.EMPTY, NOW, notice_patterns=["email data"])
+        self.assertEqual(h.verdict, OK)          # not counted as a problem
+        self.assertEqual(h.problems, [])
+        self.assertEqual([c.name for c in h.notices], ["email data"])
+
+    def test_notice_match_is_case_insensitive_substring(self) -> None:
+        checks = [Check("pulse collector:noel’s MacBook Pro 14\"", WARN, "stale")]
+        h = compute_health_status(checks, self.EMPTY, NOW, notice_patterns=["macbook pro"])
+        self.assertEqual(h.verdict, OK)
+        self.assertEqual(len(h.notices), 1)
+
+    def test_fail_never_demoted_even_if_matched(self) -> None:
+        checks = [Check("email data", FAIL, "gone")]
+        h = compute_health_status(checks, self.EMPTY, NOW, notice_patterns=["email data"])
+        self.assertEqual(h.verdict, FAIL)
+        self.assertEqual([c.name for c in h.problems], ["email data"])
+        self.assertEqual(h.notices, [])
+
+    def test_real_warn_stays_a_problem_alongside_a_notice(self) -> None:
+        checks = [
+            Check("email data", WARN, "stale"),
+            Check("sleuth", WARN, "no creds"),
+        ]
+        h = compute_health_status(checks, self.EMPTY, NOW, notice_patterns=["email data"])
+        self.assertEqual(h.verdict, WARN)
+        self.assertEqual([c.name for c in h.problems], ["sleuth"])
+        self.assertEqual([c.name for c in h.notices], ["email data"])
+
+    def test_no_patterns_means_no_notices(self) -> None:
+        checks = [Check("email data", WARN, "stale")]
+        h = compute_health_status(checks, self.EMPTY, NOW, notice_patterns=[])
+        self.assertEqual(h.verdict, WARN)
+        self.assertEqual(h.notices, [])
+
+
 if __name__ == "__main__":
     unittest.main()
