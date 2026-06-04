@@ -513,42 +513,6 @@ def render_health_banner(
     """
 
 
-def render_notices(health: HealthStatus, now: datetime) -> str:
-    """Low-key section for WARNs the operator marked intentional/non-actionable.
-
-    Separate from the health banner: these don't escalate the verdict, but they
-    stay visible so a demoted state is never silently hidden.
-    """
-    notices = health.notices
-    if not notices:
-        return ""
-
-    items = []
-    for check in notices:
-        fix = (
-            f'<span class="notices-fix">→ {_esc(_short_text(check.hint, 120))}</span>'
-            if check.hint
-            else ""
-        )
-        items.append(
-            f'<span class="notices-item">'
-            f'<span class="notices-name">{_esc(check.name)}</span>'
-            f'<span class="notices-detail">{_esc(_short_text(check.detail, 120))}</span>'
-            f"{fix}"
-            f"</span>"
-        )
-    label = f"{len(notices)} notice{'s' if len(notices) != 1 else ''}"
-    return f"""
-    <section class="notices-banner" aria-live="polite">
-      <div class="notices-lead">
-        <span class="notices-badge">{_esc(label)}</span>
-        <span class="notices-summary">Notices · acknowledged or handled elsewhere</span>
-      </div>
-      <div class="notices-items">{''.join(items)}</div>
-    </section>
-    """
-
-
 def render_sync_chip(
     health: HealthStatus,
     last_activity: str | None,
@@ -1102,6 +1066,7 @@ def render_sidebar(
     streams: dict[str, int],
     drift_total: int,
     semantic_total: int,
+    notices: list[Check] | None = None,
     tz: ZoneInfo,
     now: datetime,
 ) -> str:
@@ -1157,6 +1122,27 @@ def render_sidebar(
                 '</li>'
             )
 
+    # Notices — intentional / non-actionable WARNs, demoted off the verdict but
+    # kept visible in a scrollable module.
+    notice_items = []
+    for c in (notices or []):
+        detail = _truncate(_compact_whitespace(c.detail), 140)
+        hint = _truncate(_compact_whitespace(c.hint), 140) if c.hint else ""
+        hint_html = f'<div class="side-row-hint">→ {_esc(hint)}</div>' if hint else ""
+        notice_items.append(f"""
+          <li class="side-row notice-row">
+            <div class="side-row-title">{_esc(c.name)}</div>
+            <div class="side-row-meta">{_esc(detail)}</div>
+            {hint_html}
+          </li>
+        """)
+    notices_section = ""
+    if notice_items:
+        notices_section = f"""
+        <div class="nav-section-label">Notices <span class="side-count">{len(notice_items)}</span></div>
+        <ul class="side-list notices-scroll">{''.join(notice_items)}</ul>
+        """
+
     return f"""
     <aside class="sidebar">
       <div class="brand">
@@ -1175,7 +1161,7 @@ def render_sidebar(
 
         <div class="nav-section-label">Reminders</div>
         <ul class="side-list">{''.join(sleuth_items)}</ul>
-
+        {notices_section}
         <div class="nav-section-label">Streams</div>
         <ul class="streams">
           <li><span class="kbd">G</span><span>GitHub</span><span class="badge">{streams.get('github', 0)}</span></li>
@@ -1332,28 +1318,25 @@ h2 { font-size: 14px; color: var(--fg); }
   border-color: rgba(192,57,43,.18);
   background: linear-gradient(90deg, rgba(192,57,43,.11), rgba(255,255,255,.96));
 }
-.notices-banner {
-  margin: 10px 0 0;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 12px;
-  align-items: center;
-  padding: 9px 14px;
-  border-radius: 11px;
-  border: 1px dashed var(--border);
-  background: rgba(120,120,128,.06);
+/* Sidebar Notices module — scrollable viewer for demoted WARNs */
+.side-count {
+  display: inline-block; margin-left: 6px; padding: 0 6px;
+  font-size: 10px; font-weight: 600; line-height: 16px; border-radius: 999px;
+  background: rgba(120,120,128,.16); color: var(--fg-dim);
 }
-.notices-lead { display: inline-flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.notices-badge {
-  font-weight: 600; font-size: 12px; padding: 2px 8px; border-radius: 999px;
-  background: rgba(120,120,128,.14); color: var(--muted, #5b6470);
+.notices-scroll {
+  max-height: 168px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
 }
-.notices-summary { font-size: 12px; color: var(--muted, #7a828c); }
-.notices-items { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: 12px; padding-top: 2px; }
-.notices-item { display: inline-flex; gap: 6px; align-items: baseline; }
-.notices-name { font-weight: 600; }
-.notices-detail { color: var(--muted, #7a828c); }
-.notices-fix { color: var(--muted, #7a828c); opacity: .85; }
+.notices-scroll::-webkit-scrollbar { width: 7px; }
+.notices-scroll::-webkit-scrollbar-thumb {
+  background: rgba(120,120,128,.32); border-radius: 4px;
+}
+.side-row.notice-row .side-row-hint {
+  color: var(--fg-dim); font-size: 11px; margin-top: 2px;
+}
 .health-banner-lead {
   display: inline-flex;
   align-items: center;
@@ -2234,6 +2217,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           streams=streams,
           drift_total=drift_total,
           semantic_total=semantic_total,
+          notices=health_status.notices,
           tz=TZ,
           now=now,
       )}
@@ -2258,7 +2242,6 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           </div>
         </div>
         {render_health_banner(health_status, now, last_activity)}
-        {render_notices(health_status, now)}
         {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
         <div class="grid">
           <div class="col">
