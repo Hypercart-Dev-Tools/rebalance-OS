@@ -156,6 +156,21 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [ ] Slack integration beyond reminder/task signals
 - [ ] Email → project auto-correlation (classifier already applied to calendar; extending to `gmail_messages`)
 
+## Documentation
+
+| Guide | What's in it |
+|-------|--------------|
+| [GMAIL.md](./GMAIL.md) | Gmail inbox ingest — `oauth` (keyring) vs `mcp` methods, durable Internal tokens, query filters, troubleshooting |
+| [GOOGLE_CALENDAR.md](./GOOGLE_CALENDAR.md) | Google Calendar timesheets — setup, team config, event creation, project aggregation |
+| [MCP.md](./MCP.md) | MCP layer — tool surface, server config, host adapters (Claude Desktop, Cursor, VS Code, Continue) |
+| [UPGRADE.md](./UPGRADE.md) | Keyring credential model + multi-device upgrade steps |
+| [DASHBOARD.md](./DASHBOARD.md) | Local web/activity dashboard |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture and data flow |
+| [PROJECT.md](./PROJECT.md) · [PROJECT/](./PROJECT/README.md) | Execution source-of-truth and the plan-doc index |
+| [AGENTS.md](./AGENTS.md) | Conventions for AI agents working in this repo |
+
+---
+
 ## Getting Started
 
 ### Prerequisites
@@ -327,9 +342,13 @@ If unset, rebalance defaults to `in:inbox`.
 
 **5d. Sync and verify**
 
-Call the MCP refresh entry point with `scope=["email"]`, then confirm the
-`email` block appears in `index_status()` and email hits show up in
-`semantic_query()`.
+Run `rebalance refresh` (the full pipeline syncs email in `oauth` mode), or from
+an MCP host call `refresh_index(scope=["email"])`. Confirm the `email` block
+appears in `index_status()`, email hits show up in `semantic_query()`, and
+`rebalance doctor` reports `gmail — OK`.
+
+For the full guide — both ingest methods, durable (Internal) tokens, query
+filters, troubleshooting, and Claude Code prompts — see [GMAIL.md](./GMAIL.md).
 
 ### Step 6 — Start using with Claude Code
 
