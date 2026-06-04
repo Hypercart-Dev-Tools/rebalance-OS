@@ -738,14 +738,88 @@ def get_gemini_api_key() -> str | None:
 _SLEUTH_REQUIRED = ("SLEUTH_WEB_API_BASE_URL", "SLEUTH_WEB_API_TOKEN", "SLEUTH_WORKSPACE_NAME")
 
 
+SLEUTH_KEYRING_KEY = "sleuth_web_api"  # JSON blob in keyring + rbos.config
+
+
+def _sleuth_creds_complete(values: object) -> dict[str, str] | None:
+    """Return normalized creds if every required key is present and non-empty."""
+    if not isinstance(values, dict):
+        return None
+    out = {k: str(values.get(k) or "").strip() for k in _SLEUTH_REQUIRED}
+    return out if all(out.values()) else None
+
+
+def set_sleuth_credentials(
+    base_url: str, token: str, workspace: str, *, source: str = "manual"
+) -> None:
+    """Store Sleuth Web API creds in the OS keyring AND rbos.config.
+
+    Mirrors set_github_token: keyring is the interactive primary; rbos.config is
+    the launchd safety net (the Sleuth daily-sync runs unattended and cannot reach
+    the keychain). Logs a `token_set` auth-log event + sidecar first-added metadata.
+    """
+    import json as _json
+
+    creds = {
+        "SLEUTH_WEB_API_BASE_URL": base_url.strip(),
+        "SLEUTH_WEB_API_TOKEN": token.strip(),
+        "SLEUTH_WORKSPACE_NAME": workspace.strip(),
+    }
+    _keyring_set(SLEUTH_KEYRING_KEY, _json.dumps(creds))
+    config = _read_config()
+    config[SLEUTH_KEYRING_KEY] = creds
+    _write_config(config)
+    try:  # never let logging break a credential write
+        from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
+        auth_log.log_sleuth_credentials_set(source=source, workspace=creds["SLEUTH_WORKSPACE_NAME"])
+        token_meta.record_token_set(
+            "sleuth", creds["SLEUTH_WEB_API_TOKEN"], kind="sleuth web api", source=source
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def clear_sleuth_credentials() -> None:
+    """Remove Sleuth creds from keyring + rbos.config (the env file is left alone)."""
+    _keyring_delete(SLEUTH_KEYRING_KEY)
+    config = _read_config()
+    if SLEUTH_KEYRING_KEY in config:
+        del config[SLEUTH_KEYRING_KEY]
+        _write_config(config)
+
+
 def get_sleuth_credentials(which: str = "production") -> dict[str, str]:
-    """Load Sleuth Web API connection details from the operator-owned env file.
+    """Resolve Sleuth Web API creds: keyring → rbos.config → legacy env file.
 
-    Looks up ``sleuth-web-api-{which}.env`` (default: production). Falls back
-    to the development env file if the requested one doesn't exist.
+    Mirrors the github token resolution (keyring-primary + config fallback for
+    launchd) so secrets are stored consistently. The operator-owned
+    ``sleuth-web-api-{which}.env`` remains a backward-compatible fallback.
 
-    Raises FileNotFoundError if neither file exists.
-    Raises ValueError if required keys are missing from the file.
+    Raises FileNotFoundError if nothing resolves; ValueError if a resolved source
+    is missing required keys.
+    """
+    import json as _json
+
+    blob = _keyring_get(SLEUTH_KEYRING_KEY)
+    if blob:
+        try:
+            creds = _sleuth_creds_complete(_json.loads(blob))
+        except (ValueError, TypeError):
+            creds = None
+        if creds:
+            return creds
+    creds = _sleuth_creds_complete(_read_config().get(SLEUTH_KEYRING_KEY))
+    if creds:
+        return creds
+    return _read_sleuth_env_file(which)
+
+
+def _read_sleuth_env_file(which: str = "production") -> dict[str, str]:
+    """Legacy fallback — load Sleuth creds from the operator-owned env file.
+
+    Looks up ``sleuth-web-api-{which}.env`` (default: production), falling back to
+    the development env file. Raises FileNotFoundError if neither exists, or
+    ValueError if required keys are missing.
     """
     from rebalance.paths import resolve_secret_path
 

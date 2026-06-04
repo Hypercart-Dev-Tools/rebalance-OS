@@ -124,24 +124,32 @@ class DoctorCheckTests(unittest.TestCase):
 class IntegrationCheckTests(unittest.TestCase):
     """Sleuth / Gmail / Calendar credential checks."""
 
+    # _check_sleuth now resolves keyring → config → env file; these exercise the
+    # env-file fallback with keyring/config explicitly empty.
     def test_sleuth_missing_env_warns(self) -> None:
         import rebalance.paths as paths_mod
+        from rebalance.ingest import config as config_mod
 
         original = paths_mod.resolve_secret_path
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(config_mod, "_keyring_get", return_value=None), \
+             patch.object(config_mod, "_read_config", return_value={}):
             paths_mod.resolve_secret_path = lambda name: Path(tmp) / name
             try:
                 check = _check_sleuth()
             finally:
                 paths_mod.resolve_secret_path = original
         self.assertEqual(check.status, WARN)
-        self.assertIn("env file", check.detail)
+        self.assertIn("credentials", check.detail)
 
     def test_sleuth_incomplete_env_warns(self) -> None:
         import rebalance.paths as paths_mod
+        from rebalance.ingest import config as config_mod
 
         original = paths_mod.resolve_secret_path
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(config_mod, "_keyring_get", return_value=None), \
+             patch.object(config_mod, "_read_config", return_value={}):
             env = Path(tmp) / "sleuth-web-api-production.env"
             env.write_text("SLEUTH_WEB_API_BASE_URL=https://x\n", encoding="utf-8")
             paths_mod.resolve_secret_path = lambda name: Path(tmp) / name
@@ -150,26 +158,21 @@ class IntegrationCheckTests(unittest.TestCase):
             finally:
                 paths_mod.resolve_secret_path = original
         self.assertEqual(check.status, WARN)
-        self.assertIn("missing keys", check.detail)
+        self.assertIn("missing", check.detail)
 
-    def test_sleuth_complete_env_ok(self) -> None:
-        import rebalance.paths as paths_mod
-
-        original = paths_mod.resolve_secret_path
-        with tempfile.TemporaryDirectory() as tmp:
-            env = Path(tmp) / "sleuth-web-api-production.env"
-            env.write_text(
-                "SLEUTH_WEB_API_BASE_URL=https://x\n"
-                "SLEUTH_WEB_API_TOKEN=tok\n"
-                "SLEUTH_WORKSPACE_NAME=ws\n",
-                encoding="utf-8",
-            )
-            paths_mod.resolve_secret_path = lambda name: Path(tmp) / name
-            try:
-                check = _check_sleuth()
-            finally:
-                paths_mod.resolve_secret_path = original
+    def test_sleuth_complete_keyring_ok(self) -> None:
+        # Creds in keyring → OK regardless of env files (the new primary path).
+        from rebalance.ingest import config as config_mod
+        import json
+        blob = json.dumps({
+            "SLEUTH_WEB_API_BASE_URL": "https://x",
+            "SLEUTH_WEB_API_TOKEN": "tok",
+            "SLEUTH_WORKSPACE_NAME": "ws",
+        })
+        with patch.object(config_mod, "_keyring_get", return_value=blob):
+            check = _check_sleuth()
         self.assertEqual(check.status, OK)
+        self.assertIn("keyring", check.detail)
 
     def test_calendar_token_presence(self) -> None:
         import rebalance.ingest.calendar as cal_mod

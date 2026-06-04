@@ -313,37 +313,28 @@ def _check_launchd() -> list[Check]:
 
 
 def _check_sleuth() -> Check:
-    """Sleuth/Slack reminders — the operator-owned Sleuth Web API env file."""
-    from rebalance.paths import resolve_secret_path
+    """Sleuth/Slack reminders — credentials resolved keyring → config → env file."""
+    from rebalance.ingest.config import SLEUTH_KEYRING_KEY, _keyring_get, get_sleuth_credentials
 
-    primary = resolve_secret_path("sleuth-web-api-production.env")
-    fallback = resolve_secret_path("sleuth-web-api-development.env")
-    path = primary if primary.exists() else (fallback if fallback.exists() else None)
-    if path is None:
-        return Check(
-            "sleuth", WARN,
-            f"no Sleuth Web API env file ({primary})",
-            "create it with SLEUTH_WEB_API_BASE_URL / SLEUTH_WEB_API_TOKEN / "
-            "SLEUTH_WORKSPACE_NAME — without it the Slack-reminders sync fails every run",
-        )
     try:
-        text = path.read_text(encoding="utf-8")
-    except OSError as exc:
-        return Check("sleuth", FAIL, f"cannot read {path}: {exc}")
-    present = {
-        line.split("=", 1)[0].strip()
-        for line in text.splitlines()
-        if "=" in line and not line.strip().startswith("#")
-    }
-    required = {"SLEUTH_WEB_API_BASE_URL", "SLEUTH_WEB_API_TOKEN", "SLEUTH_WORKSPACE_NAME"}
-    missing = required - present
-    if missing:
+        get_sleuth_credentials()
+    except FileNotFoundError:
         return Check(
             "sleuth", WARN,
-            f"{path.name} is missing keys: {', '.join(sorted(missing))}",
-            "add the missing keys to the Sleuth env file",
+            "no Sleuth Web API credentials configured",
+            "run `rebalance config set-sleuth` (keyring + launchd-reachable config), "
+            "or create the sleuth-web-api env file — without it the Slack-reminders "
+            "sync fails every run",
         )
-    return Check("sleuth", OK, f"configured ({path.name})")
+    except ValueError as exc:
+        return Check(
+            "sleuth", WARN, str(exc),
+            "set all of SLEUTH_WEB_API_BASE_URL / SLEUTH_WEB_API_TOKEN / SLEUTH_WORKSPACE_NAME",
+        )
+    except Exception as exc:  # noqa: BLE001 — doctor must never crash
+        return Check("sleuth", FAIL, f"could not resolve Sleuth credentials: {exc}")
+    where = "keyring" if _keyring_get(SLEUTH_KEYRING_KEY) else "config/env file"
+    return Check("sleuth", OK, f"configured (via {where})")
 
 
 def _check_gmail(db_path: Path | None) -> Check:

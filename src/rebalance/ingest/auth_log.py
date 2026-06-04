@@ -177,6 +177,15 @@ def log_github_gh_fallback(login: str = "") -> None:
 # Gmail helpers
 # ---------------------------------------------------------------------------
 
+def log_sleuth_credentials_set(source: str = "manual", workspace: str = "") -> None:
+    """Sleuth Web API credentials were (re)authorized and persisted (keyring + config).
+
+    NOT a failure event — a re-auth marker, so the Sleuth credential's cadence is
+    visible in the same unified auth log as github/calendar/gmail.
+    """
+    _append("sleuth", "token_set", {"source": source, "workspace": workspace})
+
+
 def log_gmail_adc_missing(error: str = "") -> None:
     _append("gmail", "adc_missing", {"error": error})
 

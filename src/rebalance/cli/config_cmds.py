@@ -357,6 +357,62 @@ def config_clear_github_token() -> None:
     typer.echo("✓ Stored PAT cleared. `get-github-token` will now fall back to gh CLI.")
 
 
+@config_app.command("set-sleuth")
+def config_set_sleuth(
+    base_url: str = typer.Option("", "--base-url", help="Sleuth Web API base URL"),
+    token: str = typer.Option("", "--token", help="Sleuth Web API token"),
+    workspace: str = typer.Option("", "--workspace", help="Sleuth workspace name"),
+    from_env: Path = typer.Option(
+        None, "--from-env",
+        help="Import all three values from an existing sleuth-web-api env file.",
+    ),
+) -> None:
+    """Store Sleuth Web API credentials in the OS keyring + rbos.config (launchd-reachable).
+
+    Consistent with the GitHub token: keyring is the interactive primary, the
+    config copy is the launchd fallback. Run this once per machine. Logs a
+    `token_set` auth-log event + sidecar first-added metadata.
+    """
+    from rebalance.ingest.config import set_sleuth_credentials
+
+    if from_env:
+        p = from_env.expanduser()
+        if not p.exists():
+            raise typer.BadParameter(f"env file not found: {p}")
+        vals: dict[str, str] = {}
+        for raw in p.read_text(encoding="utf-8").splitlines():
+            raw = raw.strip()
+            if not raw or raw.startswith("#") or "=" not in raw:
+                continue
+            k, v = raw.split("=", 1)
+            vals[k.strip()] = v.strip()
+        base_url = base_url or vals.get("SLEUTH_WEB_API_BASE_URL", "")
+        token = token or vals.get("SLEUTH_WEB_API_TOKEN", "")
+        workspace = workspace or vals.get("SLEUTH_WORKSPACE_NAME", "")
+
+    missing = [
+        name for name, value in (
+            ("--base-url", base_url), ("--token", token), ("--workspace", workspace),
+        ) if not value.strip()
+    ]
+    if missing:
+        raise typer.BadParameter(
+            f"missing required value(s): {', '.join(missing)} (pass them or use --from-env)"
+        )
+
+    set_sleuth_credentials(base_url, token, workspace, source="manual")
+    typer.echo(f"✓ Sleuth credentials stored in keyring + config (workspace: {workspace.strip()})")
+    typer.echo("  Token kept secret. Run the same command on your other machines to replicate.")
+
+
+@config_app.command("clear-sleuth")
+def config_clear_sleuth() -> None:
+    """Remove Sleuth credentials from keyring + rbos.config (env file untouched)."""
+    from rebalance.ingest.config import clear_sleuth_credentials
+    clear_sleuth_credentials()
+    typer.echo("✓ Sleuth credentials cleared from keyring + config.")
+
+
 @config_app.command("set-vault")
 def config_set_vault(
     path: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True, help="Absolute path to the Obsidian vault root"),
