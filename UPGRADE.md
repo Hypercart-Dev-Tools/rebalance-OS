@@ -16,6 +16,7 @@ file was missing or in the wrong place.
 | GitHub PAT | keyring | `temp/rbos.config` | `auth_log` `token_set` + `token_meta` |
 | Sleuth Web API | keyring | `temp/rbos.config` | same |
 | Google Calendar OAuth | keyring | pickle file (`~/.config/rebalance-os/google-calendar-oauth`) | same |
+| Gmail OAuth (oauth mode) | keyring | pickle file (`~/.config/rebalance-os/google-gmail-oauth`) | same |
 
 Each (re)authorization is recorded in `temp/logs/auth_activity.jsonl` (event
 stream) and `temp/logs/token_meta.json` (per-token sidecar with `first_added_at`,
@@ -47,7 +48,13 @@ git pull
 .venv/bin/python scripts/setup_calendar_oauth.py     # opens a browser
 .venv/bin/rebalance config migrate-to-keyring        # then re-run to keyring it
 
-# 5. Verify everything is green:
+# 5. Gmail — only if you use oauth mode (autonomous/launchd sync) and migrate
+#    reported "no token found". If you drive rebalance from an MCP host instead,
+#    skip this and run: rebalance config set-gmail-method mcp
+.venv/bin/python scripts/setup_gmail_oauth.py        # opens a browser (gmail.readonly)
+.venv/bin/rebalance config migrate-to-keyring        # then re-run to keyring it
+
+# 6. Verify everything is green:
 .venv/bin/rebalance doctor
 ```
 
@@ -57,6 +64,7 @@ A healthy `rebalance doctor` shows, among the checks:
  OK  github token  — stored in keyring + config … · this token first added Nd ago (classic PAT)
  OK  sleuth        — configured (via keyring)
  OK  calendar      — OAuth token present (via keyring) · authorized Nd ago
+ OK  gmail         — OAuth token present (via keyring)   # or: MCP mode — N messages ingested
 ```
 
 ## Notes for agents

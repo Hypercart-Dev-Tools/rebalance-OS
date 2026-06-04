@@ -256,7 +256,7 @@ class SyncGmailTests(unittest.TestCase):
             with self.assertRaises(GmailAuthError) as ctx:
                 sync_gmail(db_path, query_filter="in:inbox", service=_FailingService())
         message = str(ctx.exception)
-        self.assertIn("gcloud auth application-default login", message)
+        self.assertIn("setup_gmail_oauth.py", message)
         self.assertIn("gmail.readonly", message)
 
     def test_other_403s_are_not_rewritten_as_scope_errors(self) -> None:

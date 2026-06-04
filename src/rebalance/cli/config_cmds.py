@@ -22,6 +22,7 @@ from rebalance.ingest.config import (
     get_github_ignored_repos,
     get_github_related_repos,
     get_github_token_with_source,
+    get_gmail_ingest_method,
     get_project_priority_rules,
     get_sleuth_credentials,
     get_vault_path,
@@ -30,6 +31,7 @@ from rebalance.ingest.config import (
     remove_github_related_repo,
     remove_project_priority_rule,
     set_github_token,
+    set_gmail_ingest_method,
     set_project_priority_rule,
     set_vault_path,
 )
@@ -413,6 +415,28 @@ def config_clear_sleuth() -> None:
     typer.echo("✓ Sleuth credentials cleared from keyring + config.")
 
 
+@config_app.command("set-gmail-method")
+def config_set_gmail_method(
+    method: str = typer.Argument(..., help="'oauth' (desktop OAuth token) or 'mcp' (Gmail MCP connector)"),
+) -> None:
+    """Choose how Gmail is ingested.
+
+    - oauth: autonomous — `sync_gmail` fetches via the desktop OAuth token
+      (set up with scripts/setup_gmail_oauth.py, stored in keyring). Works under
+      launchd.
+    - mcp: email_messages is populated by an agent using the Gmail MCP connector.
+      No local credential needed, but requires an agent to trigger ingest.
+    """
+    try:
+        set_gmail_ingest_method(method)
+    except ValueError as exc:
+        typer.echo(f"❌ {exc}")
+        raise typer.Exit(1)
+    typer.echo(f"gmail ingest method → {method.strip().lower()} ✓")
+    if method.strip().lower() == "oauth":
+        typer.echo("  Ensure a token exists: scripts/setup_gmail_oauth.py → migrate-to-keyring")
+
+
 @config_app.command("migrate-to-keyring")
 def config_migrate_to_keyring() -> None:
     """One-shot: move local credentials (calendar pickle, sleuth env file) into keyring.
@@ -439,6 +463,26 @@ def config_migrate_to_keyring() -> None:
                 typer.echo("calendar: no token found — run scripts/setup_calendar_oauth.py")
     except Exception as exc:  # noqa: BLE001
         typer.echo(f"calendar: skipped ({type(exc).__name__}: {exc})")
+
+    # gmail: pickle → keyring (mirrors calendar)
+    try:
+        if cfg.get_gmail_oauth_token_json():
+            typer.echo("gmail: already in keyring ✓")
+        else:
+            import pickle
+            from rebalance.ingest.gmail import TOKEN_PATH as GMAIL_TOKEN_PATH
+            if GMAIL_TOKEN_PATH.exists():
+                with open(GMAIL_TOKEN_PATH, "rb") as f:
+                    creds = pickle.load(f)
+                cfg.set_gmail_oauth_token_json(creds.to_json(), source="migrate", record=True)
+                typer.echo("gmail: migrated pickle file → keyring ✓")
+            else:
+                typer.echo(
+                    "gmail: no token found — run scripts/setup_gmail_oauth.py "
+                    "(or stay on the Gmail MCP connector: gmail_ingest_method=mcp)"
+                )
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"gmail: skipped ({type(exc).__name__}: {exc})")
 
     # sleuth: env file → keyring
     try:

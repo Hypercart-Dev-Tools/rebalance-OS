@@ -338,7 +338,7 @@ def _check_sleuth() -> Check:
 
 
 def _check_gmail(db_path: Path | None) -> Check:
-    """Gmail ingest — ADC (``oauth`` mode) or the Gmail MCP connector (``mcp`` mode)."""
+    """Gmail ingest — desktop OAuth (``oauth`` mode) or the Gmail MCP connector (``mcp`` mode)."""
     from rebalance.ingest.config import get_gmail_ingest_method
 
     if get_gmail_ingest_method() == "mcp":
@@ -369,22 +369,25 @@ def _check_gmail(db_path: Path | None) -> Check:
             return Check("gmail", OK, f"MCP mode — {count} messages ingested")
         return Check("gmail", OK, "MCP mode — email ingested via the Gmail MCP connector")
 
-    # oauth mode — Google Application Default Credentials.
+    # oauth mode — desktop OAuth token, resolved keyring → pickle file
+    # (mirrors _check_calendar).
     try:
-        from rebalance.ingest.gmail import GmailAuthError, _load_adc_credentials
+        from rebalance.ingest.gmail import TOKEN_PATH
+        from rebalance.ingest.config import get_gmail_oauth_token_json
     except Exception as exc:  # noqa: BLE001 — doctor must never crash
         return Check("gmail", WARN, f"gmail module unavailable: {exc}")
-    try:
-        _load_adc_credentials()
-    except GmailAuthError as exc:
+
+    in_keyring = bool(get_gmail_oauth_token_json())
+    if not in_keyring and not TOKEN_PATH.exists():
         return Check(
-            "gmail", WARN, str(exc).splitlines()[0],
-            "run `gcloud auth application-default login` with the Gmail readonly "
-            "scope, or switch to MCP mode (`gmail_ingest_method=mcp`)",
+            "gmail", WARN,
+            "no Gmail OAuth credentials (keyring empty, no token file)",
+            "🔧 run the Gmail OAuth flow (scripts/setup_gmail_oauth.py), then "
+            "`rebalance config migrate-to-keyring` — or switch to MCP mode "
+            "(`rebalance config set-gmail-method mcp`)",
         )
-    except Exception as exc:  # noqa: BLE001
-        return Check("gmail", WARN, f"could not load ADC: {exc}")
-    return Check("gmail", OK, "Application Default Credentials present")
+    where = "keyring" if in_keyring else "token file"
+    return Check("gmail", OK, f"OAuth token present (via {where})")
 
 
 def _check_calendar() -> Check:
@@ -419,8 +422,9 @@ _AUTH_FAIL_HINT = {
               "`rebalance config set-github-token` with a fresh token",
     "calendar": "re-run the Calendar OAuth flow "
                 "(scripts/setup_calendar_oauth.py)",
-    "gmail": "re-run `gcloud auth application-default login` with the Gmail "
-             "readonly scope, or switch to MCP mode (`gmail_ingest_method=mcp`)",
+    "gmail": "re-run the Gmail OAuth flow (scripts/setup_gmail_oauth.py) then "
+             "`rebalance config migrate-to-keyring`, or switch to MCP mode "
+             "(`rebalance config set-gmail-method mcp`)",
 }
 
 
@@ -630,8 +634,8 @@ _COLLECTOR_FRESHNESS: list[dict] = [
         table="email_messages",
         ts_col="received_at",
         warn_days=7,
-        empty_hint="ingest email via the Gmail MCP connector or ADC",
-        stale_hint="no new email ingested in 7+ days — ask Claude to call `ingest_gmail_messages` (MCP mode) or check ADC credentials",
+        empty_hint="ingest email via the Gmail MCP connector or the OAuth sync (scripts/setup_gmail_oauth.py)",
+        stale_hint="no new email ingested in 7+ days — ask Claude to call `ingest_gmail_messages` (MCP mode), or check the Gmail OAuth token (`rebalance doctor`)",
     ),
 ]
 

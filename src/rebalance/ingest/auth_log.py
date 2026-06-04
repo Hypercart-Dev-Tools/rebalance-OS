@@ -195,6 +195,16 @@ def log_sleuth_credentials_set(source: str = "manual", workspace: str = "") -> N
     _append("sleuth", "token_set", {"source": source, "workspace": workspace})
 
 
+def log_gmail_token_set(source: str = "manual") -> None:
+    """Gmail OAuth credentials were (re)authorized / stored to keyring.
+
+    NOT a failure event — a re-auth marker (distinct from the access-token
+    `token_refreshed`), so the authorization's cadence shows in the auth log.
+    Mirrors :func:`log_calendar_token_set`.
+    """
+    _append("gmail", "token_set", {"source": source})
+
+
 def log_gmail_adc_missing(error: str = "") -> None:
     _append("gmail", "adc_missing", {"error": error})
 

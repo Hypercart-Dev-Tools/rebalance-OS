@@ -1,7 +1,17 @@
 # Email Ingest
 
 > Status: Shipped on `main` as Phase 1 on 2026-05-12
-> Scope: Gmail ingest via Application Default Credentials, newest 100 matching messages, semantic participation via subject + snippet
+> Scope: Gmail ingest, newest 100 matching messages, semantic participation via subject + snippet
+>
+> **Auth model updated 2026-06-04 — ADC is superseded.** The `oauth` ingest
+> method now uses a **desktop OAuth token stored in keyring** (set up once with
+> `scripts/setup_gmail_oauth.py`, launchd-reachable pickle fallback), mirroring
+> Calendar. ADC was dropped because `gmail.readonly` is a Google-*restricted*
+> scope that the shared gcloud ADC client generally cannot grant — ADC tokens
+> 403 with "insufficient authentication scopes." A user's own Desktop OAuth
+> client in Testing mode can. The alternative `mcp` method (Gmail MCP connector)
+> is unchanged. References to "Application Default Credentials" below are
+> historical. See README → "Step 5 — Connect Gmail" for current steps.
 
 ## TOC
 
@@ -45,8 +55,11 @@ Current implementation entry points:
 ## Setup checklist
 
 - [ ] Install repo deps: `.venv/bin/pip install -e ".[embeddings,calendar]"`
-- [ ] Enable Gmail API in the target Google Cloud project
-- [ ] Authorize ADC with `gmail.readonly`
+- [ ] Choose method: `rebalance config set-gmail-method oauth` (or `mcp`)
+- [ ] (oauth) Enable Gmail API in your Google Cloud project; ensure a Desktop
+      OAuth client exists and the consent screen is in Testing with your account
+      added as a test user
+- [ ] (oauth) `python scripts/setup_gmail_oauth.py` then `rebalance config migrate-to-keyring`
 - [ ] Optionally set `gmail_query_filter` in `temp/rbos.config`
 - [ ] Run `refresh_index(scope=["email"], dry_run=True)`
 - [ ] Run `refresh_index(scope=["email"])`

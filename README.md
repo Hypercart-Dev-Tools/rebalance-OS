@@ -275,23 +275,43 @@ For the full guide — including team setup, Claude Code prompts, and project de
 
 ### Step 5 — Connect Gmail (optional)
 
-The Gmail ingest uses Google Application Default Credentials and stores
-message metadata plus Gmail-provided snippets only. It does not parse full
-message bodies in Phase 1.
+The Gmail ingest stores message metadata plus Gmail-provided snippets only —
+it does not parse full message bodies. There are two ways to feed it, and you
+pick one with `rebalance config set-gmail-method`:
 
-**5a. Enable the Gmail API once**
+| Method | When to use | Credential |
+|---|---|---|
+| `oauth` *(default)* | Autonomous / scheduled sync (launchd, cron) | Desktop OAuth token in keyring |
+| `mcp` | You drive rebalance from an MCP host (e.g. Claude) | None — an agent calls `ingest_gmail_messages` |
+
+**Option A — `oauth` (self-contained, works under launchd)**
+
+A one-time browser consent stores a read-only Gmail token in your OS keyring
+(with a launchd-reachable file fallback) — the same model as Calendar:
 
 ```bash
-gcloud services enable gmail.googleapis.com
+python scripts/setup_gmail_oauth.py        # opens a browser, requests gmail.readonly
+rebalance config migrate-to-keyring        # move the token into keyring
+rebalance config set-gmail-method oauth
 ```
 
-**5b. Authorize this device**
+> `gmail.readonly` is a Google-*restricted* scope. This flow uses **your own**
+> Desktop OAuth client with the consent screen in **Testing** mode (add your
+> account as a test user), which can request it **without** formal app
+> verification. That is why this path works where
+> `gcloud auth application-default login --scopes=…gmail.readonly` does not —
+> the shared gcloud ADC client is generally not authorized for restricted Gmail
+> scopes, so ADC tokens 403 with "insufficient authentication scopes."
+
+**Option B — `mcp` (no local credential)**
 
 ```bash
-gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/cloud-platform
+rebalance config set-gmail-method mcp
 ```
 
-This stores the token at `~/.config/gcloud/application_default_credentials.json`.
+`email_messages` is then populated by an agent (e.g. Claude) using the Gmail
+MCP connector, which calls the `ingest_gmail_messages` tool. A scheduled job
+cannot trigger this — an agent has to. No local Gmail credential is needed.
 
 **5c. Optional: narrow the inbox query**
 

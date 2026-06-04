@@ -297,7 +297,10 @@ def get_gmail_ingest_method() -> str:
 
     Config key: ``gmail_ingest_method``.
 
-    - ``oauth`` — the autonomous path: ``sync_gmail`` fetches via Google ADC.
+    - ``oauth`` — the autonomous path: ``sync_gmail`` fetches via a desktop
+      OAuth token (browser consent once via ``scripts/setup_gmail_oauth.py``,
+      stored in keyring with a pickle-file fallback for launchd). Mirrors the
+      Calendar credential model.
     - ``mcp``   — email_messages is populated externally by an agent using the
       Gmail MCP connector (see ``ingest_email_messages``). The launchd email
       job does not fetch in this mode — it cannot reach an MCP connector.
@@ -688,6 +691,45 @@ def set_calendar_oauth_token_json(token_json: str, *, source: str = "manual", re
 def clear_calendar_oauth_token() -> None:
     """Remove the Calendar OAuth token from keyring."""
     _keyring_delete("calendar_oauth_token")
+
+
+# ---------------------------------------------------------------------------
+# Gmail OAuth token (keyring-backed) — mirrors the Calendar helpers above
+# ---------------------------------------------------------------------------
+
+def get_gmail_oauth_token_json() -> str | None:
+    """Return the serialized Gmail OAuth2 token JSON from keyring, or None if absent."""
+    return _keyring_get("gmail_oauth_token")
+
+
+def set_gmail_oauth_token_json(token_json: str, *, source: str = "manual", record: bool = True) -> bool:
+    """Store the serialized Gmail OAuth2 token JSON in keyring.
+
+    Returns True on success. If keyring is unavailable, returns False and the
+    caller should fall back to the pickle-file storage path (launchd-reachable).
+
+    When *record* is True (an explicit (re)authorization — migration or OAuth
+    flow — not an automatic access-token refresh), logs a `token_set` auth-log
+    event + sidecar metadata keyed on the stable ``refresh_token`` so the
+    authorization's age is tracked (and not reset on every access-token refresh).
+    """
+    ok = _keyring_set("gmail_oauth_token", token_json)
+    if ok and record:
+        try:  # never let logging break a credential write
+            import json as _json
+            from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
+            refresh = str((_json.loads(token_json) or {}).get("refresh_token") or "")
+            auth_log.log_gmail_token_set(source=source)
+            if refresh:
+                token_meta.record_token_set("gmail", refresh, kind="google oauth", source=source)
+        except Exception:  # noqa: BLE001
+            pass
+    return ok
+
+
+def clear_gmail_oauth_token() -> None:
+    """Remove the Gmail OAuth token from keyring."""
+    _keyring_delete("gmail_oauth_token")
 
 
 # ---------------------------------------------------------------------------
