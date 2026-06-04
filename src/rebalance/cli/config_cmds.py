@@ -413,6 +413,62 @@ def config_clear_sleuth() -> None:
     typer.echo("✓ Sleuth credentials cleared from keyring + config.")
 
 
+@config_app.command("migrate-to-keyring")
+def config_migrate_to_keyring() -> None:
+    """One-shot: move local credentials (calendar pickle, sleuth env file) into keyring.
+
+    Run on each device after `git pull` to adopt the keyring credential model.
+    Idempotent. The GitHub PAT can't be auto-migrated (it's a value only you have)
+    — set it with `rebalance config set-github-token <PAT>`.
+    """
+    from rebalance.ingest import config as cfg
+
+    # calendar: pickle → keyring
+    try:
+        if cfg.get_calendar_oauth_token_json():
+            typer.echo("calendar: already in keyring ✓")
+        else:
+            import pickle
+            from rebalance.ingest.calendar import TOKEN_PATH
+            if TOKEN_PATH.exists():
+                with open(TOKEN_PATH, "rb") as f:
+                    creds = pickle.load(f)
+                cfg.set_calendar_oauth_token_json(creds.to_json(), source="migrate", record=True)
+                typer.echo("calendar: migrated pickle file → keyring ✓")
+            else:
+                typer.echo("calendar: no token found — run scripts/setup_calendar_oauth.py")
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"calendar: skipped ({type(exc).__name__}: {exc})")
+
+    # sleuth: env file → keyring
+    try:
+        if cfg._keyring_get(cfg.SLEUTH_KEYRING_KEY):
+            typer.echo("sleuth: already in keyring ✓")
+        else:
+            try:
+                creds = cfg.get_sleuth_credentials()  # falls back to the env file
+                cfg.set_sleuth_credentials(
+                    creds["SLEUTH_WEB_API_BASE_URL"], creds["SLEUTH_WEB_API_TOKEN"],
+                    creds["SLEUTH_WORKSPACE_NAME"], source="migrate",
+                )
+                typer.echo("sleuth: migrated env file → keyring ✓")
+            except FileNotFoundError:
+                typer.echo("sleuth: no source found — run `rebalance config set-sleuth ...`")
+    except Exception as exc:  # noqa: BLE001
+        typer.echo(f"sleuth: skipped ({type(exc).__name__}: {exc})")
+
+    # github: report only (can't auto-migrate a token value)
+    token, source = cfg.get_github_token_with_source()
+    if source == "keyring":
+        typer.echo("github: in keyring ✓")
+    elif token:
+        typer.echo(f"github: resolves via '{source}' — run `rebalance config set-github-token <PAT>` to keyring it")
+    else:
+        typer.echo("github: not configured — run `rebalance config set-github-token <PAT>`")
+
+    typer.echo("\nDone. Verify with `rebalance doctor`. (Keyring is per-machine — run this on each device.)")
+
+
 @config_app.command("set-vault")
 def config_set_vault(
     path: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True, help="Absolute path to the Obsidian vault root"),
