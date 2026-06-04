@@ -232,8 +232,11 @@ def set_github_token(token: str, *, source: str = "manual") -> None:
     config["github_token"] = cleaned
     _write_config(config)
     try:  # never let logging break a credential write
-        from rebalance.ingest import auth_log  # noqa: PLC0415
-        auth_log.log_github_token_set(classify_github_token(cleaned), source=source)
+        from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
+        kind = classify_github_token(cleaned)
+        auth_log.log_github_token_set(kind, source=source)
+        # Sidecar: remember when THIS token value was first added (lifetime tracking).
+        token_meta.record_token_set("github", cleaned, kind=kind, source=source)
     except Exception:  # noqa: BLE001
         pass
 

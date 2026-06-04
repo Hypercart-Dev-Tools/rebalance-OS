@@ -146,7 +146,19 @@ def _check_token() -> Check:
             "token in keyring only — launchd session may not reach keychain",
             "run `rebalance config set-github-token` to write the config fallback",
         )
-    return Check("github token", OK, f"stored in {source} + config (reachable by launchd)")
+    detail = f"stored in {source} + config (reachable by launchd)"
+    # Sidecar lifetime: how long has THIS token value been in use? Surfaces a
+    # short-lived PAT (dies every few days) vs a durable one.
+    try:
+        from rebalance.ingest import token_meta
+        meta = token_meta.current_token_meta("github")
+        if meta and meta.get("first_added_at"):
+            age = token_meta.age_text(meta["first_added_at"])
+            kind = meta.get("kind") or "?"
+            detail += f" · this token first added {age} ago ({kind})"
+    except Exception:  # noqa: BLE001 — doctor must never crash
+        pass
+    return Check("github token", OK, detail)
 
 
 def _check_vault() -> Check:
