@@ -44,6 +44,22 @@ class AuthLogTests(unittest.TestCase):
         self.assertIn("ts", rows[0])
         self.assertIn("device", rows[0])
 
+    def test_shared_token_helpers_default_to_calendar(self) -> None:
+        auth_log.log_token_missing("/path/to/cal-token")
+        auth_log.log_token_refreshed("2026-06-04T00:00:00", "/path/to/cal-token")
+        rows = self._read_raw()
+        self.assertEqual([r["source"] for r in rows], ["calendar", "calendar"])
+
+    def test_shared_token_helpers_accept_source(self) -> None:
+        # Regression: gmail's _load_credentials reuses these helpers and must not
+        # mislabel its events as calendar.
+        auth_log.log_token_missing("/path/to/gmail-token", source="gmail")
+        auth_log.log_token_refresh_failed("boom", "/path/to/gmail-token", source="gmail")
+        rows = self._read_raw()
+        self.assertEqual([r["source"] for r in rows], ["gmail", "gmail"])
+        self.assertEqual(rows[0]["event"], "token_missing")
+        self.assertEqual(rows[1]["event"], "token_refresh_failed")
+
     def test_github_helpers_stamp_source_and_event(self) -> None:
         auth_log.log_github_token_validated("octocat", ["repo", "read:user"])
         auth_log.log_github_token_invalid(401)

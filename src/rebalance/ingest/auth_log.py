@@ -40,6 +40,7 @@ The ``FAILURE_EVENTS`` set marks the events that represent a collector losing
 from __future__ import annotations
 
 import json
+import os
 import socket
 from datetime import datetime, timezone
 from pathlib import Path
@@ -62,9 +63,15 @@ FAILURE_EVENTS: frozenset[str] = frozenset({
 # ---------------------------------------------------------------------------
 
 def _log_dir() -> Path:
-    """Return temp/logs/, creating it if needed."""
-    root = Path(__file__).resolve().parents[3]  # …/rebalance-OS/
-    log_dir = root / "temp" / "logs"
+    """Return the auth-log directory, creating it if needed.
+
+    Honors ``REBALANCE_AUTH_LOG_DIR`` so tests (and any sandboxed run) can
+    redirect writes away from the real ``temp/logs/`` — see tests/conftest.py,
+    which points it at a per-session tmp dir so the suite never pollutes the
+    repo's auth_activity.jsonl.
+    """
+    override = os.environ.get("REBALANCE_AUTH_LOG_DIR")
+    log_dir = Path(override) if override else Path(__file__).resolve().parents[3] / "temp" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 
@@ -124,16 +131,16 @@ def log_flow_failed(error: str) -> None:
     _append("calendar", "flow_failed", {"error": error})
 
 
-def log_token_missing(token_path: str) -> None:
-    _append("calendar", "token_missing", {"token_path": token_path})
+def log_token_missing(token_path: str, source: str = "calendar") -> None:
+    _append(source, "token_missing", {"token_path": token_path})
 
 
-def log_token_refreshed(expiry: str | None, token_path: str) -> None:
-    _append("calendar", "token_refreshed", {"expiry": expiry, "token_path": token_path})
+def log_token_refreshed(expiry: str | None, token_path: str, source: str = "calendar") -> None:
+    _append(source, "token_refreshed", {"expiry": expiry, "token_path": token_path})
 
 
-def log_token_refresh_failed(error: str, token_path: str) -> None:
-    _append("calendar", "token_refresh_failed", {"error": error, "token_path": token_path})
+def log_token_refresh_failed(error: str, token_path: str, source: str = "calendar") -> None:
+    _append(source, "token_refresh_failed", {"error": error, "token_path": token_path})
 
 
 # ---------------------------------------------------------------------------

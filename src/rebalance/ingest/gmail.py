@@ -106,7 +106,7 @@ def _load_credentials(required_scopes: list[str] | None = None) -> Any:
 
     if creds is None:
         if not TOKEN_PATH.exists():
-            log_token_missing(str(TOKEN_PATH))
+            log_token_missing(str(TOKEN_PATH), source="gmail")
             raise GmailAuthError(
                 f"Gmail OAuth token not found (keyring empty and no file at {TOKEN_PATH}).\n"
                 f"  Run: {GMAIL_SETUP_HINT}\n"
@@ -130,9 +130,10 @@ def _load_credentials(required_scopes: list[str] | None = None) -> Any:
             log_token_refreshed(
                 expiry=creds.expiry.isoformat() if creds.expiry else None,
                 token_path=str(TOKEN_PATH),
+                source="gmail",
             )
         except Exception as exc:
-            log_token_refresh_failed(error=str(exc), token_path=str(TOKEN_PATH))
+            log_token_refresh_failed(error=str(exc), token_path=str(TOKEN_PATH), source="gmail")
             raise
 
     if required_scopes and not _credentials_have_scopes(creds, required_scopes):
