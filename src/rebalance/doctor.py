@@ -388,18 +388,30 @@ def _check_gmail(db_path: Path | None) -> Check:
 
 
 def _check_calendar() -> Check:
-    """Google Calendar — the OAuth token file."""
+    """Google Calendar OAuth — resolved keyring → pickle file."""
     try:
         from rebalance.ingest.calendar import TOKEN_PATH
+        from rebalance.ingest.config import get_calendar_oauth_token_json
     except Exception as exc:  # noqa: BLE001
         return Check("calendar", WARN, f"calendar module unavailable: {exc}")
-    if not TOKEN_PATH.exists():
+
+    in_keyring = bool(get_calendar_oauth_token_json())
+    if not in_keyring and not TOKEN_PATH.exists():
         return Check(
             "calendar", WARN,
-            "Cached data showing. Calendar needs to be re-setup.",
+            "no Calendar OAuth credentials (keyring empty, no token file)",
             "🔧 run the Calendar OAuth flow (scripts/setup_calendar_oauth.py)",
         )
-    return Check("calendar", OK, f"OAuth token present ({TOKEN_PATH})")
+    where = "keyring" if in_keyring else "token file"
+    detail = f"OAuth token present (via {where})"
+    try:
+        from rebalance.ingest import token_meta
+        meta = token_meta.current_token_meta("calendar")
+        if meta and meta.get("first_added_at"):
+            detail += f" · authorized {token_meta.age_text(meta['first_added_at'])} ago"
+    except Exception:  # noqa: BLE001
+        pass
+    return Check("calendar", OK, detail)
 
 
 _AUTH_FAIL_HINT = {

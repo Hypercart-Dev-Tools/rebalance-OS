@@ -175,21 +175,24 @@ class IntegrationCheckTests(unittest.TestCase):
         self.assertIn("keyring", check.detail)
 
     def test_calendar_token_presence(self) -> None:
+        # _check_calendar now resolves keyring → file; force keyring empty to test
+        # the file-presence path.
         import rebalance.ingest.calendar as cal_mod
+        from rebalance.ingest import config as config_mod
 
         original = cal_mod.TOKEN_PATH
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(config_mod, "get_calendar_oauth_token_json", return_value=None):
             cal_mod.TOKEN_PATH = Path(tmp) / "oauth"
             try:
                 calendar_check = _check_calendar()
                 self.assertEqual(calendar_check.status, WARN)
-                self.assertEqual(
-                    calendar_check.detail,
-                    "Cached data showing. Calendar needs to be re-setup.",
-                )
+                self.assertIn("no Calendar OAuth credentials", calendar_check.detail)
                 self.assertTrue(calendar_check.hint.startswith("🔧 "))
                 cal_mod.TOKEN_PATH.write_bytes(b"token-bytes")
-                self.assertEqual(_check_calendar().status, OK)
+                ok_check = _check_calendar()
+                self.assertEqual(ok_check.status, OK)
+                self.assertIn("token file", ok_check.detail)
             finally:
                 cal_mod.TOKEN_PATH = original
 

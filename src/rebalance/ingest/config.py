@@ -660,13 +660,29 @@ def get_calendar_oauth_token_json() -> str | None:
     return _keyring_get("calendar_oauth_token")
 
 
-def set_calendar_oauth_token_json(token_json: str) -> bool:
+def set_calendar_oauth_token_json(token_json: str, *, source: str = "manual", record: bool = True) -> bool:
     """Store the serialized Google OAuth2 token JSON in keyring.
 
     Returns True on success. If keyring is unavailable, returns False and the
     caller should fall back to the existing pickle-file storage path.
+
+    When *record* is True (an explicit (re)authorization — migration or OAuth
+    flow — not an automatic access-token refresh), logs a `token_set` auth-log
+    event + sidecar metadata keyed on the stable ``refresh_token`` so the
+    authorization's age is tracked (and not reset on every access-token refresh).
     """
-    return _keyring_set("calendar_oauth_token", token_json)
+    ok = _keyring_set("calendar_oauth_token", token_json)
+    if ok and record:
+        try:  # never let logging break a credential write
+            import json as _json
+            from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
+            refresh = str((_json.loads(token_json) or {}).get("refresh_token") or "")
+            auth_log.log_calendar_token_set(source=source)
+            if refresh:
+                token_meta.record_token_set("calendar", refresh, kind="google oauth", source=source)
+        except Exception:  # noqa: BLE001
+            pass
+    return ok
 
 
 def clear_calendar_oauth_token() -> None:

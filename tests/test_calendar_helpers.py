@@ -172,10 +172,12 @@ class CalendarAuthAndWriteTests(unittest.TestCase):
         self.assertTrue(calendar._credentials_have_scopes(creds, [calendar.CALENDAR_READONLY_SCOPE]))
         self.assertTrue(calendar._credentials_have_scopes(creds, [calendar.CALENDAR_WRITE_SCOPE]))
 
+    @patch("rebalance.ingest.config.get_calendar_oauth_token_json", return_value=None)
     @patch("rebalance.ingest.calendar.pickle.load")
     @patch("builtins.open")
     @patch("pathlib.Path.exists", return_value=True)
-    def test_load_credentials_rejects_missing_scope(self, _exists: MagicMock, _open_file: MagicMock, mock_pickle: MagicMock) -> None:
+    def test_load_credentials_rejects_missing_scope(self, _exists: MagicMock, _open_file: MagicMock, mock_pickle: MagicMock, _no_keyring: MagicMock) -> None:
+        # keyring empty (patched) → falls to the pickle file path under test.
         creds = type("Creds", (), {"expired": False, "refresh_token": "x", "scopes": [calendar.CALENDAR_READONLY_SCOPE]})()
         mock_pickle.return_value = creds
 

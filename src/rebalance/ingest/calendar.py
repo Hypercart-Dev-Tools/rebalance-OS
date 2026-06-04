@@ -78,28 +78,56 @@ def _credentials_have_scopes(creds: Any, required_scopes: list[str]) -> bool:
 
 
 def _load_credentials(required_scopes: list[str] | None = None) -> Any:
-    """Load OAuth2 credentials from the stored token file."""
+    """Load OAuth2 credentials — keyring first, pickle file as the launchd fallback.
+
+    keyring (interactive primary) ↔ the pickle file (launchd reads this; the
+    keychain is unreachable from the daily-sync's stripped environment). On
+    refresh, the rotated access token is written back to BOTH so each stays
+    current.
+    """
+    import json as _json
+
     from rebalance.ingest.auth_log import (
         log_token_missing,
         log_token_refresh_failed,
         log_token_refreshed,
     )
-    if not TOKEN_PATH.exists():
-        log_token_missing(str(TOKEN_PATH))
-        raise FileNotFoundError(
-            f"Calendar OAuth token not found at {TOKEN_PATH}. "
-            "Run the OAuth flow first (see PROJECT.md — P2 Google Calendar)."
-        )
-    with open(TOKEN_PATH, "rb") as f:
-        creds = pickle.load(f)
+    from rebalance.ingest.config import (
+        get_calendar_oauth_token_json,
+        set_calendar_oauth_token_json,
+    )
 
-    # Refresh if expired
+    creds = None
+    blob = get_calendar_oauth_token_json()
+    if blob:
+        try:
+            from google.oauth2.credentials import Credentials
+            creds = Credentials.from_authorized_user_info(_json.loads(blob))
+        except Exception:  # noqa: BLE001 — corrupt/legacy blob → fall back to pickle
+            creds = None
+
+    if creds is None:
+        if not TOKEN_PATH.exists():
+            log_token_missing(str(TOKEN_PATH))
+            raise FileNotFoundError(
+                f"Calendar OAuth token not found (keyring empty and no file at {TOKEN_PATH}). "
+                "Run the OAuth flow first (see PROJECT.md — P2 Google Calendar)."
+            )
+        with open(TOKEN_PATH, "rb") as f:
+            creds = pickle.load(f)
+
+    # Refresh if expired — persist the rotated access token to both stores.
     if creds.expired and creds.refresh_token:
         from google.auth.transport.requests import Request
         try:
             creds.refresh(Request())
-            with open(TOKEN_PATH, "wb") as f:
-                pickle.dump(creds, f)
+            # record=False: an access-token refresh is not a re-authorization.
+            set_calendar_oauth_token_json(creds.to_json(), source="refresh", record=False)
+            try:
+                with open(TOKEN_PATH, "wb") as f:
+                    pickle.dump(creds, f)
+            except OSError:
+                pass
             log_token_refreshed(
                 expiry=creds.expiry.isoformat() if creds.expiry else None,
                 token_path=str(TOKEN_PATH),

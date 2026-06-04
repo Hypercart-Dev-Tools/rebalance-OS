@@ -177,6 +177,15 @@ def log_github_gh_fallback(login: str = "") -> None:
 # Gmail helpers
 # ---------------------------------------------------------------------------
 
+def log_calendar_token_set(source: str = "manual") -> None:
+    """Google Calendar OAuth credentials were (re)authorized / stored to keyring.
+
+    NOT a failure event — a re-auth marker (distinct from the access-token
+    `token_refreshed`), so the authorization's cadence shows in the auth log.
+    """
+    _append("calendar", "token_set", {"source": source})
+
+
 def log_sleuth_credentials_set(source: str = "manual", workspace: str = "") -> None:
     """Sleuth Web API credentials were (re)authorized and persisted (keyring + config).
 
