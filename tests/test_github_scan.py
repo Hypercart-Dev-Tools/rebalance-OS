@@ -133,7 +133,7 @@ class ResolveWorkingTokenTests(unittest.TestCase):
              patch("rebalance.ingest.config.set_github_token") as persist, \
              patch("rebalance.ingest.auth_log.log_github_gh_fallback") as logev:
             self.assertEqual(resolve_working_token("ghp_dead"), "gh_tok")
-        persist.assert_called_once_with("gh_tok")          # D: heal keyring+config
+        persist.assert_called_once_with("gh_tok", source="gh-fallback")  # D: heal keyring+config
         logev.assert_called_once_with("octocat")           # recovery event logged
 
     def test_rate_limit_403_does_not_trigger_gh_fallback(self) -> None:

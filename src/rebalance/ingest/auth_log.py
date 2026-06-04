@@ -154,6 +154,18 @@ def log_github_auth_failed(status: int, endpoint: str = "") -> None:
     _append("github", "auth_failed", {"status": status, "endpoint": endpoint})
 
 
+def log_github_token_set(kind: str, source: str = "manual") -> None:
+    """A GitHub token was (re-)authorized and persisted.
+
+    *kind* is derived from the token prefix (classic PAT / fine-grained PAT /
+    gh OAuth …); *source* is how it was set (``manual`` via the CLI, or
+    ``gh-fallback`` via the 401 auto-heal). NOT a failure event — its purpose is
+    to make every re-authorization visible so you can measure the *gap* between
+    successive deauths (e.g. "set, then 401 three days later, then set again").
+    """
+    _append("github", "token_set", {"kind": kind, "source": source})
+
+
 def log_github_gh_fallback(login: str = "") -> None:
     """Recovery: the stored PAT was rejected (401) so we fell back to the gh CLI
     token and persisted it. NOT a failure event — its presence as the most

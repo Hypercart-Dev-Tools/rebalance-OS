@@ -362,7 +362,7 @@ def resolve_working_token(primary_token: str) -> str:
             "persisted it (keyring + config) so background jobs recover."
         )
         auth_log.log_github_gh_fallback(gh_check.get("login", ""))
-        config.set_github_token(gh_token)  # option D: heal the persisted copy
+        config.set_github_token(gh_token, source="gh-fallback")  # option D: heal the persisted copy
         return gh_token
     except Exception:  # noqa: BLE001 — resolution must never break the refresh
         return primary_token

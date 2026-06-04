@@ -122,6 +122,32 @@ class AuthLogTests(unittest.TestCase):
         self.assertIn("token_refresh_failed", auth_log.FAILURE_EVENTS)
         self.assertNotIn("token_validated", auth_log.FAILURE_EVENTS)
         self.assertNotIn("flow_succeeded", auth_log.FAILURE_EVENTS)
+        # token_set is a re-authorization, not a failure.
+        self.assertNotIn("token_set", auth_log.FAILURE_EVENTS)
+
+    # -- re-authorization logging (measure the gap between deauths) ---------
+
+    def test_set_github_token_logs_token_set(self) -> None:
+        from rebalance.ingest import config
+
+        with patch.object(config, "_keyring_set", return_value=True), \
+             patch.object(config, "_read_config", return_value={}), \
+             patch.object(config, "_write_config"):
+            config.set_github_token("ghp_freshtoken", source="gh-fallback")
+
+        events = [r for r in self._read_raw() if r["event"] == "token_set"]
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["source"], "github")
+        self.assertEqual(events[0]["detail"]["kind"], "classic PAT")
+        self.assertEqual(events[0]["detail"]["source"], "gh-fallback")
+
+    def test_classify_github_token_by_prefix(self) -> None:
+        from rebalance.ingest.config import classify_github_token
+
+        self.assertEqual(classify_github_token("ghp_abc"), "classic PAT")
+        self.assertEqual(classify_github_token("github_pat_abc"), "fine-grained PAT")
+        self.assertEqual(classify_github_token("gho_abc"), "gh OAuth (rotates)")
+        self.assertEqual(classify_github_token("weird"), "unknown")
 
 
 if __name__ == "__main__":

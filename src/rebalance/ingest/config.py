@@ -199,19 +199,43 @@ def get_github_token() -> str | None:
     return token
 
 
-def set_github_token(token: str) -> None:
+def classify_github_token(token: str) -> str:
+    """Human label for a GitHub token by its prefix — for the re-auth log."""
+    for prefix, label in (
+        ("github_pat_", "fine-grained PAT"),
+        ("ghp_", "classic PAT"),
+        ("gho_", "gh OAuth (rotates)"),
+        ("ghs_", "app installation token"),
+        ("ghu_", "user-to-server token"),
+    ):
+        if token.startswith(prefix):
+            return label
+    return "unknown"
+
+
+def set_github_token(token: str, *, source: str = "manual") -> None:
     """Store GitHub PAT in the OS keyring AND rbos.config.
 
     Both stores are written so launchd jobs (which run with a stripped
     environment and may not reach the user keychain) can always fall back
     to rbos.config. keyring is preferred for interactive reads; config is
     the launchd safety net.
+
+    *source* records how this (re-)authorization happened (``manual`` via the
+    CLI, ``gh-fallback`` via the 401 auto-heal); it is logged to the unified
+    auth log as a ``token_set`` event so the re-auth cadence — and the gap
+    between successive deauths — is visible.
     """
     cleaned = token.strip()
     _keyring_set("github_token", cleaned)  # best-effort; ignored if unavailable
     config = _read_config()
     config["github_token"] = cleaned
     _write_config(config)
+    try:  # never let logging break a credential write
+        from rebalance.ingest import auth_log  # noqa: PLC0415
+        auth_log.log_github_token_set(classify_github_token(cleaned), source=source)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def clear_github_token() -> None:

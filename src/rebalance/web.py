@@ -30,8 +30,10 @@ _EVENT_BADGE = {
     "token_refresh_failed": ("#ea4335", "✗ refresh failed"),
     # github
     "token_validated":      ("#34a853", "✓ token validated"),
+    "token_set":            ("#1a73e8", "↻ token (re)set"),
     "token_invalid":        ("#ea4335", "✗ token invalid"),
     "auth_failed":          ("#ea4335", "✗ auth failed (401)"),
+    "gh_fallback":          ("#34a853", "✓ healed via gh CLI"),
     # gmail
     "adc_missing":          ("#fbbc05", "⚠ ADC missing"),
     "scope_insufficient":   ("#ea4335", "✗ scope insufficient"),
