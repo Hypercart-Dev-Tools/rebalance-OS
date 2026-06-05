@@ -59,6 +59,24 @@ rebalance sleuth-sync --env production
 
 ## First-time setup on a new device
 
+> **Step 0 is the one people miss.** A fresh device is **not** authorized on the
+> prod box until you add its SSH public key. The installer's preflight will refuse
+> to proceed until this passes — that is the real blocker behind most "it doesn't
+> work yet" reports, not the docs.
+
+0. **Authorize this box's SSH key on the prod box** (one-time; launchd can't answer
+   a password prompt, so key auth is mandatory). Run **on the device you're setting
+   up**, substituting your key if it isn't `id_ed25519`:
+   ```bash
+   ssh-copy-id -i ~/.ssh/id_ed25519.pub root@<prod-host>   # prompts for the root password once
+   ssh -i ~/.ssh/id_ed25519 root@<prod-host> 'echo ok'     # must print ok with NO prompt
+   ```
+   - **No `id_ed25519`?** Use whatever key the box has — e.g. a GCE box whose only
+     key is `~/.ssh/google_compute_engine`. Authorize that one
+     (`ssh-copy-id -i ~/.ssh/google_compute_engine.pub …`); the installer
+     auto-detects the sole keypair in `~/.ssh`, so you don't need `--key`.
+   - **No key at all?** `ssh-keygen -t ed25519` first, then `ssh-copy-id`.
+
 1. **Credentials** (keyring + launchd fallback) — production values:
    ```bash
    rebalance config set-sleuth \
@@ -68,19 +86,15 @@ rebalance sleuth-sync --env production
    ```
    (Dev uses `--base-url http://<dev-host>:2020 --workspace neochrome-dev`.)
 
-2. **Key-based SSH to the prod box** — launchd can't answer a password prompt, so
-   the tunnel agent requires key auth. Add your public key to the server once:
-   ```bash
-   ssh-copy-id -i ~/.ssh/id_ed25519.pub root@<prod-host>
-   ssh -i ~/.ssh/id_ed25519 root@<prod-host> 'echo ok'   # must print ok, no prompt
-   ```
-
-3. **Install the tunnel agent:**
+2. **Install the tunnel agent:**
    ```bash
    bash scripts/install_sleuth_tunnel_scheduler.sh
    ```
    The host is read from `--host`, `$SLEUTH_PROD_HOST`, or
    `~/secrets/sleuth/vultr-sleuth-production.env` (never committed — public repo).
+   The key is `--key`, else `~/.ssh/id_ed25519`, else the sole keypair in `~/.ssh`.
+   The preflight verifies keyless `echo ok` before loading the agent and, if it
+   fails, prints the exact `ssh-copy-id` command to run (i.e. you skipped Step 0).
 
 4. **Verify:**
    ```bash

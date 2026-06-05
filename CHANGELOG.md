@@ -17,6 +17,14 @@
   a bad credential**. Added pointers from `ARCHITECTURE.md` and `UPGRADE.md`, and
   marked the public-HTTP note in `PROJECT/3-DONE/SLEUTH-PRODUCTION.md` as
   superseded (prod is no longer publicly exposed; dev remains direct).
+  - **Follow-up — smoother key handling for fresh boxes.** The tunnel installer
+    now **auto-detects** the SSH key: `--key` > `~/.ssh/id_ed25519` > the sole
+    keypair in `~/.ssh`, so a box whose only key is `google_compute_engine` works
+    without `--key` (bash 3.2-safe). Reframed the real blocker — **authorizing the
+    box's public key on the prod server** — as an explicit **Step 0** in
+    `SLEUTH_SYNC.md` (with the `ssh-copy-id` command and a no-`id_ed25519`/GCE
+    note), since the installer's preflight refuses to load the agent until keyless
+    `echo ok` passes. No doc can skip that one-time `authorized_keys` step.
 
 - **GitHub deauth resilience — gh-CLI token fallback (options A + D).** When the
   stored GitHub PAT is rejected with **401** (revoked / expired / lost a scope)
@@ -43,6 +51,24 @@
   **both** keyring and `rbos.config` — the config copy is the launchd safety net
   (launchd's stripped environment may not reach the keychain), which
   `doctor._check_token` relies on. Updated the stale unit test to match.
+
+## [0.31.8] - 2026-06-04
+
+### Fixed
+
+- **Stickies-to-Obsidian launchd install now carries the real vault target.**
+  The standalone installer now renders `STICKIES_DIR`, `OBSIDIAN_FILE`, and
+  `STATE_FILE` into the launchd plist so background syncs target the intended
+  vault note instead of always falling back to the demo default path.
+
+## [0.31.7] - 2026-06-04
+
+### Added
+
+- **Stickies-to-Obsidian standalone utility.** Added a lightweight macOS
+  utility that incrementally imports Apple Stickies note content into an
+  Obsidian markdown file with SHA-256 deduplication, dry-run previews, atomic
+  prepend writes, and a launchd template plus installer for background sync.
 
 ## [0.31.6] - 2026-06-01
 

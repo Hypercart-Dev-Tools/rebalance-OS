@@ -12,12 +12,17 @@
 # http://127.0.0.1:12020. Without this tunnel they fail with ECONNREFUSED on
 # 127.0.0.1:12020 — that's a missing tunnel, NOT a bad credential.
 #
-# PREREQUISITE — key-based SSH (launchd cannot answer a password prompt):
-#   The public half of your SSH key must be in /root/.ssh/authorized_keys on the
-#   prod box. One-time setup:
-#     ssh-copy-id -i ~/.ssh/id_ed25519.pub root@<prod-host>     # or paste the pubkey
-#     ssh -i ~/.ssh/id_ed25519 root@<prod-host> 'echo ok'       # must print ok with no prompt
+# PREREQUISITE (STEP 0) — key-based SSH (launchd cannot answer a password prompt):
+#   The public half of THIS box's SSH key must be in /root/.ssh/authorized_keys on
+#   the prod box. A fresh box is NOT authorized until you do this once, and the
+#   preflight below will refuse to install until it passes. One-time setup, run on
+#   the box you're installing on (substitute your key if not id_ed25519):
+#     ssh-copy-id -i ~/.ssh/<key>.pub root@<prod-host>      # prompts for the root password once
+#     ssh -i ~/.ssh/<key> root@<prod-host> 'echo ok'        # must print ok with NO prompt
+#   No id_ed25519? This installer auto-detects the sole keypair in ~/.ssh (e.g. a
+#   box whose only key is google_compute_engine) — just authorize that one.
 #
+# Key resolution order:  --key  >  ~/.ssh/id_ed25519  >  the only keypair in ~/.ssh
 # Host resolution order (first hit wins; never committed to this public repo):
 #   1. --host <ip-or-name>
 #   2. $SLEUTH_PROD_HOST
@@ -25,7 +30,7 @@
 #
 # Usage:
 #   bash scripts/install_sleuth_tunnel_scheduler.sh
-#   bash scripts/install_sleuth_tunnel_scheduler.sh --host 203.0.113.10 --key ~/.ssh/id_ed25519
+#   bash scripts/install_sleuth_tunnel_scheduler.sh --host 203.0.113.10 --key ~/.ssh/google_compute_engine
 #
 # Uninstall:
 #   launchctl unload ~/Library/LaunchAgents/com.rebalance-os.sleuth-tunnel.plist
@@ -40,15 +45,45 @@ PLIST_DEST="$HOME/Library/LaunchAgents/com.rebalance-os.sleuth-tunnel.plist"
 SECRETS_ENV="$HOME/secrets/sleuth/vultr-sleuth-production.env"
 
 SSH_HOST=""
-SSH_KEY="$HOME/.ssh/id_ed25519"
+SSH_KEY_EXPLICIT=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --host) SSH_HOST="$2"; shift 2 ;;
-        --key)  SSH_KEY="$2";  shift 2 ;;
+        --key)  SSH_KEY_EXPLICIT="$2"; shift 2 ;;
         *) echo "Unknown argument: $1" >&2; exit 2 ;;
     esac
 done
+
+# Resolve the SSH key: explicit --key wins; else the conventional id_ed25519; else
+# auto-detect the sole keypair in ~/.ssh (a private key with a sibling .pub). This
+# makes the common single-key box — e.g. one that only has google_compute_engine —
+# "just work" without forcing --key. Multiple keys => ask the user to choose.
+if [ -n "$SSH_KEY_EXPLICIT" ]; then
+    SSH_KEY="$SSH_KEY_EXPLICIT"
+elif [ -f "$HOME/.ssh/id_ed25519" ]; then
+    SSH_KEY="$HOME/.ssh/id_ed25519"
+else
+    CANDIDATES=()
+    for PUB in "$HOME"/.ssh/*.pub; do
+        [ -e "$PUB" ] || continue            # no .pub files -> glob stays literal
+        PRIV="${PUB%.pub}"
+        [ -f "$PRIV" ] || continue           # only count keys that have a private half
+        CANDIDATES+=("$PRIV")
+    done
+    if [ "${#CANDIDATES[@]}" -eq 1 ]; then
+        SSH_KEY="${CANDIDATES[0]}"
+        echo "  Auto-detected SSH key: $SSH_KEY"
+    elif [ "${#CANDIDATES[@]}" -eq 0 ]; then
+        echo "ERROR: no SSH keypair found in ~/.ssh. Generate one (ssh-keygen -t ed25519)" >&2
+        echo "       and authorize it on the prod box, or pass --key <path>." >&2
+        exit 1
+    else
+        echo "ERROR: multiple SSH keys found — pass --key to choose one:" >&2
+        printf '         %s\n' "${CANDIDATES[@]}" >&2
+        exit 1
+    fi
+fi
 
 # Resolve host: flag > env > local secrets file.
 if [ -z "$SSH_HOST" ]; then SSH_HOST="${SLEUTH_PROD_HOST:-}"; fi
