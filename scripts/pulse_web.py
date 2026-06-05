@@ -1156,7 +1156,10 @@ def render_sidebar(
           <li class="active"><span>Today</span><span class="badge">{in_progress}</span></li>
         </ul>
 
-        <div class="nav-section-label">Calendar</div>
+        <a class="nav-section-label section-link" href="https://calendar.google.com/calendar/u/0/r"
+           target="_blank" rel="noopener noreferrer" title="Open Google Calendar">
+          <span>Calendar</span><span class="section-link-arrow" aria-hidden="true">↗</span>
+        </a>
         <ul class="side-list">{''.join(cal_items)}</ul>
 
         <div class="nav-section-label">Reminders</div>
@@ -1232,6 +1235,10 @@ h2 { font-size: 14px; color: var(--fg); }
 .crumb { font-weight: 600; }
 .crumb .sep { color: var(--fg-dim); margin: 0 4px; font-weight: 400; }
 .nav-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); padding: 18px 8px 6px; }
+.nav-section-label.section-link { display: flex; align-items: center; justify-content: space-between; text-decoration: none; gap: 8px; }
+.nav-section-label.section-link:hover { color: var(--accent); }
+.nav-section-label.section-link .section-link-arrow { font-size: 12px; line-height: 1; opacity: .65; }
+.nav-section-label.section-link:hover .section-link-arrow { opacity: 1; color: var(--accent); }
 .nav-list { list-style: none; margin: 0; padding: 0; }
 .nav-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--fg); cursor: default; }
 .nav-list li.active { background: rgba(31,111,235,.10); color: var(--fg); font-weight: 500; }
