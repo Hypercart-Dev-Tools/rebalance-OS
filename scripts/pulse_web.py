@@ -1176,8 +1176,8 @@ def render_sidebar(
         <div class="nav-section-label">System</div>
         <ul class="nav-list">
           <li class="auth-log-link">
-            <a href="http://localhost:8787/auth-log" target="_blank" rel="noopener noreferrer"
-               title="Open Authorization Log (requires: rebalance serve)">
+            <a href="/auth-log" target="_blank" rel="noopener noreferrer"
+               title="Open the Authorization Log (auth events across all collectors)">
               <span class="auth-log-icon">🔐</span><span>Authorization Log</span>
             </a>
           </li>
