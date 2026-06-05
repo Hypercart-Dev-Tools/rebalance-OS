@@ -63,6 +63,33 @@ def auth_log_raw():
     return _auth_log_raw()
 
 
+class ChatRequest(BaseModel):
+    query: str
+    scope: str = "all"
+    top_k: int = 8
+
+
+@app.post("/api/chat")
+def api_chat(req: ChatRequest):
+    """Citations-first retrieval for the dashboard 'Ask' search mode.
+
+    Note: the first call lazily loads the embedding model, so it is slow;
+    subsequent calls are fast. Loopback-only, no auth (same as the rest).
+    """
+    from rebalance.chat import chat_with_data
+    from rebalance.paths import resolve_database_path
+    try:
+        result = chat_with_data(
+            resolve_database_path(), req.query, scope=req.scope, top_k=req.top_k
+        )
+        return JSONResponse(result)
+    except Exception as exc:  # noqa: BLE001 — surface the error to the UI, don't 500-crash
+        return JSONResponse(
+            {"error": f"{type(exc).__name__}: {exc}", "citations": [], "query": req.query},
+            status_code=500,
+        )
+
+
 @app.get("/")
 def index():
     if not PULSE_HTML.exists():

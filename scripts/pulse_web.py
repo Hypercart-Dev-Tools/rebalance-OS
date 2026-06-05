@@ -1305,6 +1305,23 @@ h2 { font-size: 14px; color: var(--fg); }
 .refresh-btn:disabled { opacity: .55; cursor: progress; }
 .pulse-filter { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--fg); width: 220px; }
 .pulse-filter:focus { outline: none; border-color: var(--accent); }
+/* Search mode toggle (Filter | Ask) + chat results */
+.search-wrap { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.search-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; }
+.search-mode-btn { font: inherit; font-size: 12px; line-height: 1; padding: 6px 10px; border: 0; background: transparent; color: var(--fg-muted); cursor: pointer; }
+.search-mode-btn + .search-mode-btn { border-left: 1px solid var(--border); }
+.search-mode-btn.is-active { background: var(--accent); color: #fff; }
+.search-wrap.mode-ask .pulse-filter { width: 300px; border-color: var(--accent); }
+.chat-results { position: absolute; top: calc(100% + 6px); right: 0; width: 480px; max-width: 70vw; max-height: 62vh; overflow-y: auto; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px; z-index: 60; text-align: left; }
+.chat-meta, .chat-status { font-size: 12px; color: var(--fg-dim); padding: 2px 4px 8px; }
+.chat-status.error { color: var(--danger); }
+.chat-cite-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.chat-cite { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.chat-cite-head { display: flex; align-items: baseline; gap: 8px; }
+.chat-cite-source { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #fff; background: var(--fg-dim); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+.chat-cite-title { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.chat-cite-score { font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.chat-cite-preview { font-size: 12px; color: var(--fg-muted); margin-top: 4px; line-height: 1.4; }
 .is-hidden-by-filter { display: none !important; }
 .health-banner {
   display: grid;
@@ -1874,16 +1891,84 @@ PULSE_JS = r"""
   if (input) {
     const rows = Array.from(document.querySelectorAll(FILTER_TARGETS));
     const haystacks = rows.map(r => (r.textContent || '').toLowerCase());
+    const wrap = input.closest('.search-wrap');
+    const chatResults = document.getElementById('chat-results');
+    const modeBtns = Array.from(document.querySelectorAll('.search-mode-btn'));
+    let mode = 'filter';
+
+    const clearFilter = () => rows.forEach(r => r.classList.remove('is-hidden-by-filter'));
     const apply = () => {
       const q = input.value.trim().toLowerCase();
       for (let i = 0; i < rows.length; i++) {
         rows[i].classList.toggle('is-hidden-by-filter', q !== '' && !haystacks[i].includes(q));
       }
     };
-    input.addEventListener('input', apply);
+    const hideChat = () => { if (chatResults) { chatResults.hidden = true; chatResults.innerHTML = ''; } };
+
+    const renderChat = (data) => {
+      if (!chatResults) return;
+      if (data && data.error) {
+        chatResults.innerHTML = `<div class="chat-status error">${escapeHtml(data.error)}</div>`;
+        return;
+      }
+      const cites = (data && data.citations) || [];
+      if (!cites.length) { chatResults.innerHTML = '<div class="chat-status">No matches.</div>'; return; }
+      const items = cites.map((c) => {
+        const score = (c.score != null) ? `<span class="chat-cite-score">${Math.round(c.score * 100)}%</span>` : '';
+        const title = escapeHtml(c.title || c.path || '(untitled)');
+        const preview = escapeHtml((c.preview || '').slice(0, 240));
+        return `<li class="chat-cite">
+            <div class="chat-cite-head">
+              <span class="chat-cite-source">${escapeHtml(c.source || '')}</span>
+              <span class="chat-cite-title" title="${escapeHtml(c.path || '')}">${title}</span>
+              ${score}
+            </div>
+            <div class="chat-cite-preview">${preview}</div>
+          </li>`;
+      }).join('');
+      const ms = (data.elapsed_ms != null) ? ` · ${data.elapsed_ms} ms` : '';
+      chatResults.innerHTML = `<div class="chat-meta">${cites.length} result${cites.length !== 1 ? 's' : ''}${ms}</div><ul class="chat-cite-list">${items}</ul>`;
+    };
+
+    const runChat = async () => {
+      const q = input.value.trim();
+      if (!q || !chatResults) return;
+      chatResults.hidden = false;
+      chatResults.innerHTML = '<div class="chat-status">Searching… (first query loads the model)</div>';
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, scope: 'all', top_k: 8 }),
+        });
+        renderChat(await res.json());
+      } catch (err) {
+        chatResults.innerHTML = `<div class="chat-status error">${escapeHtml(String(err))}</div>`;
+      }
+    };
+
+    const setMode = (m) => {
+      mode = (m === 'ask') ? 'ask' : 'filter';
+      modeBtns.forEach(b => b.classList.toggle('is-active', b.dataset.mode === mode));
+      if (wrap) wrap.classList.toggle('mode-ask', mode === 'ask');
+      input.placeholder = (mode === 'ask') ? 'Ask your data…  (Enter)' : 'Filter visible rows…';
+      if (mode === 'ask') { clearFilter(); } else { hideChat(); apply(); }
+    };
+
+    modeBtns.forEach(b => b.addEventListener('click', () => { setMode(b.dataset.mode); input.focus(); }));
+    input.addEventListener('input', () => { if (mode === 'filter') apply(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && mode === 'ask') { e.preventDefault(); runChat(); }
+    });
     document.addEventListener('keydown', (e) => {
       if (e.key === '/' && document.activeElement !== input) { e.preventDefault(); input.focus(); }
-      if (e.key === 'Escape' && document.activeElement === input) { input.value = ''; apply(); input.blur(); }
+      if (e.key === 'Escape' && document.activeElement === input) {
+        if (mode === 'ask') { hideChat(); } else { input.value = ''; apply(); }
+        input.blur();
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (mode === 'ask' && wrap && !wrap.contains(e.target)) hideChat();
     });
   }
 
@@ -2233,7 +2318,14 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           <div class="crumb">Pulse <span style="color:var(--fg-dim); margin:0 4px">›</span> Today</div>
           <div class="topbar-right">
             <div class="topbar-row">
-              <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
+              <div class="search-wrap">
+                <div class="search-mode" role="group" aria-label="Search mode">
+                  <button type="button" class="search-mode-btn is-active" data-mode="filter">Filter</button>
+                  <button type="button" class="search-mode-btn" data-mode="ask">Ask</button>
+                </div>
+                <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
+                <div id="chat-results" class="chat-results" hidden></div>
+              </div>
               <span class="{system_now_class}" title="{_esc(system_now_title)}">System: {_esc(system_now_str)} <span class="tz-key">{_esc(system_now_tz)} · {_esc(TZ.key)}</span></span>
             </div>
             <div class="topbar-row">
