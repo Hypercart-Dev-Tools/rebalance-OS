@@ -61,9 +61,12 @@ unchanged: `--base-url http://<dev-host>:2020 --token <token> --workspace neochr
 | Symptom | Cause | Fix |
 |---|---|---|
 | `Sleuth reminders file not found: …` | The export repo isn't cloned/pulled on this device | `git clone …/rebalance-git-pulse.git ~/git-pulse-sync` (or `git -C ~/git-pulse-sync pull`) |
-| File present but data is stale | The local clone hasn't pulled recently | The daily sync pulls automatically; force with `git -C ~/git-pulse-sync pull`. Confirm the publisher timer is up on the Sleuth box (`systemctl list-timers sleuth-reminders-export.timer`) |
+| `doctor`: `published export is stale — heartbeat … (Nh ago)` | The publisher timer is dead **or** the local sync/clone is stuck (the publisher stamps an hourly `exportGeneratedAt`; doctor warns past ~3h) | Check the publisher: `systemctl list-timers sleuth-reminders-export.timer` on the Sleuth box. Locally, the sync auto-refreshes the clone — see `source_refresh` in the refresh result; force with `git -C ~/git-pulse-sync pull` |
+| `… refusing to reconcile (wrong file/endpoint?)` / `missing filters.activeOnly` / `source.type …` | Contract guard tripped — wrong workspace file, truncated/partial export, or publisher drift. **No DB rows were changed.** | Confirm `base_url` points at the right `reminders-<workspace>.json` and the publisher is healthy; the guard is intentional — it refuses to retire reminders from a bad payload |
 | `Sleuth reminders file is invalid JSON` | Partial write / merge conflict in the clone | `git -C ~/git-pulse-sync status`; resolve, then re-pull |
 | Want the live API instead (dev/debug) | — | `rebalance config set-sleuth --base-url http://<host>:2020 --token <token> --workspace <ws>` |
+
+**Freshness model:** the publisher stamps an hourly-rounded `exportGeneratedAt`; the consumer persists it and `rebalance doctor` compares **that** (not the local `last_synced_at`, which re-reads keep bumping) to now — so a dead publisher is visible. Before each read the sync does a best-effort, **non-destructive** refresh of the export clone (`git fetch` + checkout of only the export file — no `pull --rebase`, so it can't conflict with other jobs writing that repo); status is reported as `source_refresh`.
 
 ## Related
 

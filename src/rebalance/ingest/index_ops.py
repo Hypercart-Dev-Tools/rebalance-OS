@@ -653,50 +653,24 @@ def _refresh_calendar(database_path: Path, *, since_days: int, dry_run: bool) ->
     }
 
 
-def _pull_export_repo(file_path: Path) -> str:
-    """Best-effort `git pull` of the repo holding the published reminders export, so a
-    read-only consumer device sees fresh data before reading. Never raises — freshness
-    is best-effort; a failed pull just means we read whatever is already on disk."""
-    import subprocess
-
-    try:
-        subprocess.run(
-            ["git", "-C", str(file_path.parent), "pull", "--rebase", "--autostash"],
-            capture_output=True, text=True, timeout=60, check=True,
-        )
-        return "ok"
-    except Exception as exc:  # noqa: BLE001 — freshness is best-effort
-        return f"skipped ({type(exc).__name__})"
-
-
 def _refresh_sleuth(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     if dry_run:
         return {"scope": "sleuth", "dry_run": True, "steps": ["sync_sleuth_reminders()"]}
 
     from rebalance.cli import _load_sleuth_env
-    from rebalance.ingest.sleuth_reminders import _local_source_path, sync_sleuth_reminders
+    from rebalance.ingest.sleuth_reminders import sync_sleuth_reminders
 
     env = _load_sleuth_env()
-    base_url = env["SLEUTH_WEB_API_BASE_URL"]
-
-    # File source (published export): refresh the local clone first so we don't read
-    # a stale checkout. No-op for an http(s) source.
-    pull_status = None
-    src_file = _local_source_path(base_url)
-    if src_file is not None:
-        pull_status = _pull_export_repo(src_file)
-
+    # For a file source, sync_sleuth_reminders refreshes the export clone itself
+    # (best-effort, non-destructive) and reports it as `source_refresh`.
     result = sync_sleuth_reminders(
-        base_url=base_url,
+        base_url=env["SLEUTH_WEB_API_BASE_URL"],
         token=env["SLEUTH_WEB_API_TOKEN"],
         workspace_name=env["SLEUTH_WORKSPACE_NAME"],
         database_path=database_path,
         active_only=False,
     )
-    out = {"scope": "sleuth", "dry_run": False, **result.as_dict()}
-    if pull_status is not None:
-        out["source_file_pull"] = pull_status
-    return out
+    return {"scope": "sleuth", "dry_run": False, **result.as_dict()}
 
 
 def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:

@@ -14,6 +14,7 @@ from urllib.error import HTTPError
 from rebalance.ingest.sleuth_reminders import (
     SleuthApiError,
     _local_source_path,
+    get_export_generated_at,
     sync_sleuth_reminders,
 )
 
@@ -63,12 +64,13 @@ def _file_payload(
     workspace="neochrome-dev",
     active_only=True,
     source_type="sleuth-reminders-file",
+    export_generated_at="2026-06-05T14:00:00.000Z",
 ):
     """The published-file shape: the API's `data` object (no {success,data} wrapper),
     with the active-only export contract the consumer validates."""
     if reminders is None:
         reminders = [_fixture_reminder()]
-    return {
+    payload = {
         "workspaceName": workspace,
         "totalReminderCount": len(reminders),
         "returnedReminderCount": len(reminders),
@@ -76,6 +78,9 @@ def _file_payload(
         "source": {"type": source_type, "relativePath": "data/runtime/reminders/x.json"},
         "reminders": reminders,
     }
+    if export_generated_at is not None:
+        payload["exportGeneratedAt"] = export_generated_at
+    return payload
 
 
 class _FakeResponse:
@@ -371,6 +376,18 @@ class SleuthFileSourceTests(unittest.TestCase):
         bad = _fixture_reminder()
         del bad["reminderId"]
         self._assert_no_reconcile(_file_payload(reminders=[bad]), needle="reminderId")
+
+    def test_file_source_persists_export_heartbeat(self) -> None:
+        self._write_export(_file_payload(export_generated_at="2026-06-05T14:00:00.000Z"))
+        self._sync()
+        beat = get_export_generated_at(self.db_path)
+        self.assertIsNotNone(beat)
+        self.assertEqual(beat.year, 2026)
+        self.assertEqual(beat.hour, 14)
+
+    def test_get_export_generated_at_absent_returns_none(self) -> None:
+        # Fresh DB that has never synced — no heartbeat persisted.
+        self.assertIsNone(get_export_generated_at(self.root / "never.db"))
 
     def test_file_source_missing_file_raises_clearly(self) -> None:
         with self.assertRaises(SleuthApiError) as ctx:

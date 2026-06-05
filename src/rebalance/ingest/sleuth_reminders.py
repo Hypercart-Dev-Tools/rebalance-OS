@@ -87,9 +87,10 @@ class SleuthSyncResult:
     updated_count: int
     unchanged_count: int
     retired_count: int = 0
+    source_refresh: str | None = None  # file source: status of the pre-read git refresh
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "workspace_name": self.workspace_name,
             "fetched_at": self.fetched_at,
             "total_reminder_count": self.total_reminder_count,
@@ -99,6 +100,9 @@ class SleuthSyncResult:
             "unchanged_count": self.unchanged_count,
             "retired_count": self.retired_count,
         }
+        if self.source_refresh is not None:
+            out["source_refresh"] = self.source_refresh
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -187,6 +191,37 @@ def _local_source_path(base_url: str) -> Path | None:
             f"Sleuth file source must be an absolute or ~-anchored path, got: {base_url!r}"
         )
     return Path(raw).expanduser()
+
+
+def _refresh_file_source(file_path: Path) -> str:
+    """Best-effort, **non-destructive** refresh of the export clone before reading.
+
+    `git fetch` then check out ONLY the export file from its upstream ref. Deliberately
+    avoids `git pull --rebase --autostash`: the same clone may be a writer for other
+    jobs (pulse-sync), and a rebase there can race/conflict. Fetch never touches the
+    working tree, and the scoped checkout updates only the export file — not the other
+    jobs' files. Never raises; returns a short status string for the sync result."""
+    import subprocess
+
+    def _git(cwd: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            capture_output=True, text=True, timeout=60, check=True,
+        ).stdout.strip()
+
+    try:
+        root = Path(_git(file_path.parent, "rev-parse", "--show-toplevel")).resolve()
+        # Run subsequent git ops FROM the repo root so the checkout pathspec (which git
+        # resolves relative to cwd, not the repo root) matches.
+        rel = file_path.resolve().relative_to(root)
+        upstream = _git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+        _git(root, "fetch", "--quiet")
+        _git(root, "checkout", upstream, "--", str(rel))
+        return "ok"
+    except subprocess.CalledProcessError as exc:
+        return f"skipped (git: {(exc.stderr or '').strip()[:120] or exc.returncode})"
+    except Exception as exc:  # noqa: BLE001 — freshness is best-effort
+        return f"skipped ({type(exc).__name__})"
 
 
 def _read_payload_from_file(path: Path) -> dict[str, Any]:
@@ -323,7 +358,45 @@ def ensure_sleuth_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_sleuth_reminders_active "
         "ON sleuth_reminders(is_active)"
     )
+    # Source-level metadata (key/value), e.g. the publisher heartbeat
+    # `export_generated_at`. Used by `doctor` to detect a dead publisher — a
+    # signal the per-row `last_synced_at` cannot give (local re-reads keep
+    # bumping it even when the upstream export has gone stale).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sleuth_sync_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
     conn.commit()
+
+
+EXPORT_GENERATED_AT_KEY = "export_generated_at"
+
+
+def get_export_generated_at(database_path: Path) -> datetime | None:
+    """Read the publisher heartbeat (`exportGeneratedAt`) last persisted by a sync.
+
+    Returns None if no file-source export has been ingested yet (e.g. http source,
+    or the publisher predates the heartbeat). Doctor compares this to now."""
+    if not database_path.exists():
+        return None
+    conn = sqlite3.connect(database_path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM sleuth_sync_meta WHERE key = ?", (EXPORT_GENERATED_AT_KEY,)
+        ).fetchone() if _table_exists(conn, "sleuth_sync_meta") else None
+    finally:
+        conn.close()
+    return _parse_datetime(row[0]) if row and row[0] else None
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
 
 
 _UPDATE_FIELDS = (
@@ -438,11 +511,22 @@ def sync_sleuth_reminders(
     database_path: Path,
     *,
     active_only: bool = False,
+    refresh_source: bool = True,
 ) -> SleuthSyncResult:
-    """Fetch reminders from Sleuth and upsert them into sleuth_reminders."""
+    """Fetch reminders from Sleuth and upsert them into sleuth_reminders.
+
+    For a file source, the local export clone is refreshed (best-effort, non-
+    destructive) before reading so every entry point — CLI, MCP, daily refresh —
+    gets fresh data. Pass ``refresh_source=False`` for an explicit offline read."""
     from rebalance.ingest.db import db_connection
 
-    is_file_source = _local_source_path(base_url) is not None
+    file_path = _local_source_path(base_url)
+    is_file_source = file_path is not None
+
+    source_refresh: str | None = None
+    if is_file_source and refresh_source:
+        source_refresh = _refresh_file_source(file_path)
+
     data = _fetch_payload(base_url, token, workspace_name, active_only)
 
     reminders = _validate_payload_contract(
@@ -582,11 +666,21 @@ def sync_sleuth_reminders(
                     (now_iso,),
                 )
             retired = cur.rowcount or 0
+
+        # Persist the publisher heartbeat so doctor can detect a dead publisher
+        # independently of our local last_synced_at (which we bump on every reread).
+        export_generated_at = data.get("exportGeneratedAt")
+        if isinstance(export_generated_at, str) and export_generated_at.strip():
+            conn.execute(
+                "INSERT INTO sleuth_sync_meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (EXPORT_GENERATED_AT_KEY, export_generated_at.strip()),
+            )
         conn.commit()
 
     return SleuthSyncResult(
         workspace_name=str(data.get("workspaceName") or workspace_name),
-        fetched_at=str(data.get("fetchedAt") or ""),
+        fetched_at=str(data.get("exportGeneratedAt") or data.get("fetchedAt") or ""),
         total_reminder_count=int(data.get("totalReminderCount") or 0),
         returned_reminder_count=int(
             data.get("returnedReminderCount")
@@ -597,4 +691,5 @@ def sync_sleuth_reminders(
         updated_count=updated,
         unchanged_count=unchanged,
         retired_count=retired,
+        source_refresh=source_refresh,
     )

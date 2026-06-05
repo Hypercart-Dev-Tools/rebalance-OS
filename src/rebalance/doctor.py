@@ -312,8 +312,14 @@ def _check_launchd() -> list[Check]:
 # ---------------------------------------------------------------------------
 
 
-def _check_sleuth() -> Check:
-    """Sleuth/Slack reminders — credentials resolved keyring → config → env file."""
+# A file-source export should refresh ~hourly (publisher heartbeat). Allow a few
+# missed beats before flagging a likely-dead publisher (or a stalled local sync).
+_SLEUTH_HEARTBEAT_STALE_HOURS = 3
+
+
+def _check_sleuth(db_path: Path | None = None) -> Check:
+    """Sleuth/Slack reminders — credentials resolved keyring → config → env file,
+    plus a published-file freshness check via the publisher heartbeat."""
     from rebalance.ingest.config import SLEUTH_KEYRING_KEY, _keyring_get, get_sleuth_credentials
 
     try:
@@ -334,6 +340,30 @@ def _check_sleuth() -> Check:
     except Exception as exc:  # noqa: BLE001 — doctor must never crash
         return Check("sleuth", FAIL, f"could not resolve Sleuth credentials: {exc}")
     where = "keyring" if _keyring_get(SLEUTH_KEYRING_KEY) else "config/env file"
+
+    # Published-file freshness: compare the publisher's own heartbeat
+    # (`export_generated_at`) — NOT our local last_synced_at, which we bump on every
+    # reread even when the upstream export is dead — against now.
+    if db_path is not None:
+        try:
+            from datetime import datetime, timezone
+
+            from rebalance.ingest.sleuth_reminders import get_export_generated_at
+
+            beat = get_export_generated_at(db_path)
+        except Exception:  # noqa: BLE001 — never let the freshness probe crash doctor
+            beat = None
+        if beat is not None:
+            age_h = (datetime.now(timezone.utc) - beat).total_seconds() / 3600
+            stamp = beat.isoformat()
+            if age_h > _SLEUTH_HEARTBEAT_STALE_HOURS:
+                return Check(
+                    "sleuth", WARN,
+                    f"published export is stale — heartbeat {stamp} ({age_h:.1f}h ago)",
+                    "the Sleuth publisher (sleuth-reminders-export.timer on the box) or the "
+                    "local export clone may be stuck; check the timer and `git -C ~/git-pulse-sync pull`",
+                )
+            return Check("sleuth", OK, f"configured (via {where}) · export {age_h:.1f}h old")
     return Check("sleuth", OK, f"configured (via {where})")
 
 
@@ -665,7 +695,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
             report.checks.append(_check_collector_freshness(db_path, **collector))
 
     # Integration credentials — Sleuth/Slack, Gmail, Google Calendar.
-    report.checks.append(_check_sleuth())
+    report.checks.append(_check_sleuth(db_path))
     report.checks.append(_check_gmail(db_path))
     report.checks.append(_check_calendar())
     report.checks.append(_check_pulse())

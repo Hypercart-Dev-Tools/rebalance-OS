@@ -14,18 +14,35 @@
   port, no tunnel**. An `http(s)://` `base_url` still uses the live API, so **dev
   is unchanged** (the dev box is reachable directly). Configure with
   `rebalance config set-sleuth --base-url "~/git-pulse-sync/sync/sleuth/reminders-neochrome.json" --token file-source --workspace neochrome`.
-  - **Freshness:** `_refresh_sleuth` does a best-effort `git pull --rebase
-    --autostash` of the export clone before reading (no-op for an http source), so
-    a read-only device self-refreshes; reported as `source_file_pull` in the
-    refresh result. Never raises — a failed pull just reads what's on disk.
   - **Removed** the now-obsolete tunnel apparatus:
     `scripts/com.rebalance-os.sleuth-tunnel.plist.template` and
     `scripts/install_sleuth_tunnel_scheduler.sh` (deleted; the local LaunchAgent is
     unloaded). Rewrote `SLEUTH_SYNC.md` for the file model and updated the
     `ARCHITECTURE.md` / `UPGRADE.md` pointers.
-  - **Tests:** 4 new cases in `tests/test_sleuth_reminders.py` — file/http source
-    detection, file-source ingest (asserting HTTP is never called), missing-file
-    and invalid-JSON errors. All sleuth + index_ops tests green.
+  - **Review hardening (blocking + should-fix from external review):**
+    - **Contract validation before any DB write** — a wrong-workspace file, a
+      truncated/partial export, or publisher drift no longer silently retires live
+      reminders. `_validate_payload_contract` rejects (raises `SleuthApiError`,
+      aborting before the transaction) on `workspaceName` mismatch, a file source
+      missing `filters.activeOnly=true` / wrong `source.type`, or any `reminders[]`
+      entry that isn't a dict with a non-empty `reminderId` (previously silently
+      dropped — which reads as a retirement). Relative `file://` paths are rejected.
+    - **Publisher heartbeat → real staleness detection.** The publisher now stamps
+      an hourly-rounded `exportGeneratedAt`; the consumer persists it in a new
+      `sleuth_sync_meta` table and `rebalance doctor` compares **that source
+      timestamp** (not the local `last_synced_at`, which re-reads keep bumping) to
+      now — warning past ~3h. A dead publisher is now visible instead of looking
+      fresh forever.
+    - **Freshness is shared + non-destructive.** Moved the pre-read clone refresh
+      out of `_refresh_sleuth` into `sync_sleuth_reminders` (so CLI, MCP, and daily
+      refresh all get fresh data, not just the launchd path), and replaced
+      `git pull --rebase --autostash` with `git fetch` + a scoped checkout of only
+      the export file — it can't race/conflict with other jobs writing the same
+      clone. Status surfaces as `source_refresh`; opt out with `refresh_source=False`.
+  - **Tests:** `tests/test_sleuth_reminders.py` grew to 25 cases — source detection,
+    relative-path rejection, file ingest (HTTP asserted unused), the five contract
+    violations (each asserted to leave the table untouched), heartbeat persistence,
+    and missing-file / invalid-JSON. Full suite green (507 passed).
 
 - **GitHub deauth resilience — gh-CLI token fallback (options A + D).** When the
   stored GitHub PAT is rejected with **401** (revoked / expired / lost a scope)
