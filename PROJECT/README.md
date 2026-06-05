@@ -25,6 +25,7 @@ the repo root (see [../README.md → Documentation](../README.md#documentation))
 | Doc | Topic |
 |-----|-------|
 | [CLAUDE-ONBOARDING.md](./2-WORKING/CLAUDE-ONBOARDING.md) | Onboarding flow (GitHub repos, registry) |
+| [CHAT-WITH-DATA.md](./2-WORKING/CHAT-WITH-DATA.md) | "Chat with your rebalance data" — scoped, hybrid, citations-first retrieval (`chat_with_data`); proposed, Phase 0 next |
 | [CLAUDE-REFACTOR.md](./2-WORKING/CLAUDE-REFACTOR.md) | Codebase refactor (CLI decomposition, observability) |
 | [DECOUPLE-OBSIDIAN-AS-SOT.md](./2-WORKING/DECOUPLE-OBSIDIAN-AS-SOT.md) | Decouple Obsidian as source of truth for GitHub activity |
 | [GH-SYNC-DELTA.md](./2-WORKING/GH-SYNC-DELTA.md) | Incremental GitHub sync (delta) |
