@@ -43,6 +43,11 @@
     relative-path rejection, file ingest (HTTP asserted unused), the five contract
     violations (each asserted to leave the table untouched), heartbeat persistence,
     and missing-file / invalid-JSON. Full suite green (507 passed).
+  - **One-command device onboarding** — `scripts/setup_sleuth_file_source.sh` clones
+    the private export repo (or reuses/pulls it), points rebalance at the local
+    export file (`config set-sleuth` → file source), and verifies with
+    `sleuth-sync` + `doctor`. Idempotent; `--workspace` / `--clone-dir` / `--repo-url`
+    flags. Documented as the primary path in `SLEUTH_SYNC.md`.
 
 - **GitHub deauth resilience — gh-CLI token fallback (options A + D).** When the
   stored GitHub PAT is rejected with **401** (revoked / expired / lost a scope)

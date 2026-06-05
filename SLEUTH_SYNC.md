@@ -34,8 +34,16 @@ rebalance-OS  ──reads──►  ~/git-pulse-sync/sync/sleuth/reminders-<ws>.
 
 ## Setup on a device
 
-1. **Clone the private export repo** (any path; `~/git-pulse-sync` is the
-   convention):
+**One command** — clones the export repo, configures rebalance, and verifies:
+
+```bash
+bash scripts/setup_sleuth_file_source.sh
+# options: --workspace neochrome  --clone-dir ~/git-pulse-sync  --repo-url <url>
+```
+
+Manual equivalent, if you prefer:
+
+1. **Clone the private export repo** (any path; `~/git-pulse-sync` is the convention):
    ```bash
    git clone https://github.com/Hypercart-Dev-Tools/rebalance-git-pulse.git ~/git-pulse-sync
    ```
@@ -49,11 +57,11 @@ rebalance-OS  ──reads──►  ~/git-pulse-sync/sync/sleuth/reminders-<ws>.
    ```
 3. **Verify:**
    ```bash
-   rebalance doctor                          # sleuth → configured
+   rebalance doctor                          # sleuth → configured · export Nh old
    rebalance sleuth-sync --active-only --json | head
    ```
 
-That's it — no SSH key on the prod box, no tunnel, no firewall change. Dev is
+Either way — no SSH key on the prod box, no tunnel, no firewall change. Dev is
 unchanged: `--base-url http://<dev-host>:2020 --token <token> --workspace neochrome-dev`.
 
 ## Troubleshooting
@@ -70,5 +78,6 @@ unchanged: `--base-url http://<dev-host>:2020 --token <token> --workspace neochr
 
 ## Related
 
-- `sleuth-app` repo → `deploy/reminders-export/` — the publisher (script + systemd units + README)
+- `scripts/setup_sleuth_file_source.sh` — one-command device onboarding (clone + configure + verify)
+- `sleuth-app` repo → `deploy/reminders-export/` — the publisher (script + systemd units + `install.sh`)
 - `UPGRADE.md` — full credential migration for a device
