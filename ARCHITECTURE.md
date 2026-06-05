@@ -113,11 +113,11 @@ Project Registry ────▶ registry.py +              MD registry → proj
 | Sleuth reminders | `rebalance sleuth-sync` | `sleuth_sync_reminders` | 5 |
 | Project registry | `rebalance ingest preflight`, `ingest sync` | `list_projects`, `run_preflight`, `confirm_projects`, `onboarding_status` | on demand |
 
-> **Sleuth production is tunnel-only.** `sleuth-sync --env production` reaches the
-> firewalled prod API through an SSH port-forward (`127.0.0.1:12020 → prod :2020`,
-> launchd agent `com.rebalance-os.sleuth-tunnel`). `ECONNREFUSED` on
-> `127.0.0.1:12020` means the tunnel is down, not a bad credential — see
-> [SLEUTH_SYNC.md](SLEUTH_SYNC.md).
+> **Sleuth production is read from a published file — no inbound access.** The
+> Sleuth box pushes its reminders to a private git repo
+> (`rebalance-git-pulse:sync/sleuth/reminders-<ws>.json`); rebalance-OS reads the
+> local clone (`base_url` is a `file://`/local path). No SSH tunnel, no open port.
+> See [SLEUTH_SYNC.md](SLEUTH_SYNC.md). (Dev still hits the API directly.)
 
 ### Credentials
 

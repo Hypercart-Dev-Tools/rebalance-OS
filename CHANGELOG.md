@@ -4,27 +4,28 @@
 
 ### Added
 
-- **Sleuth production tunnel — docs + launchd agent.** Documented that
-  `rebalance sleuth-sync --env production` reaches the **firewalled** prod Sleuth
-  API only through an SSH port-forward (`127.0.0.1:12020 → prod :2020`), and
-  shipped the missing pieces so a new device can bring it up by pulling: new
-  `SLEUTH_SYNC.md` (setup + the "short token + localhost are intentional"
-  rationale + a troubleshooting table), `scripts/com.rebalance-os.sleuth-tunnel.plist.template`
-  (secrets-free; `{{REBALANCE_DIR}}`/`{{SLEUTH_PROD_HOST}}`/`{{SSH_KEY}}`
-  placeholders), and `scripts/install_sleuth_tunnel_scheduler.sh` (renders + loads
-  the agent, with a keyless-SSH preflight and a `127.0.0.1:12020` liveness probe).
-  The key symptom — `ECONNREFUSED` on `127.0.0.1:12020` — is a **down tunnel, not
-  a bad credential**. Added pointers from `ARCHITECTURE.md` and `UPGRADE.md`, and
-  marked the public-HTTP note in `PROJECT/3-DONE/SLEUTH-PRODUCTION.md` as
-  superseded (prod is no longer publicly exposed; dev remains direct).
-  - **Follow-up — smoother key handling for fresh boxes.** The tunnel installer
-    now **auto-detects** the SSH key: `--key` > `~/.ssh/id_ed25519` > the sole
-    keypair in `~/.ssh`, so a box whose only key is `google_compute_engine` works
-    without `--key` (bash 3.2-safe). Reframed the real blocker — **authorizing the
-    box's public key on the prod server** — as an explicit **Step 0** in
-    `SLEUTH_SYNC.md` (with the `ssh-copy-id` command and a no-`id_ed25519`/GCE
-    note), since the installer's preflight refuses to load the agent until keyless
-    `echo ok` passes. No doc can skip that one-time `authorized_keys` step.
+- **Sleuth production now reads a published file — SSH tunnel removed.** Replaced
+  the SSH-tunnel pull of the firewalled prod Sleuth API with a read of a file the
+  Sleuth box **pushes** to the private `rebalance-git-pulse` repo
+  (`sync/sleuth/reminders-<ws>.json`; the publisher lives in the `sleuth-app`
+  repo). `sync_sleuth_reminders` now treats a `file://`/local-path `base_url` as a
+  local-file source (`_local_source_path` / `_read_payload_from_file`) and reads
+  the locally-synced clone directly — **no inbound access, no SSH key, no open
+  port, no tunnel**. An `http(s)://` `base_url` still uses the live API, so **dev
+  is unchanged** (the dev box is reachable directly). Configure with
+  `rebalance config set-sleuth --base-url "~/git-pulse-sync/sync/sleuth/reminders-neochrome.json" --token file-source --workspace neochrome`.
+  - **Freshness:** `_refresh_sleuth` does a best-effort `git pull --rebase
+    --autostash` of the export clone before reading (no-op for an http source), so
+    a read-only device self-refreshes; reported as `source_file_pull` in the
+    refresh result. Never raises — a failed pull just reads what's on disk.
+  - **Removed** the now-obsolete tunnel apparatus:
+    `scripts/com.rebalance-os.sleuth-tunnel.plist.template` and
+    `scripts/install_sleuth_tunnel_scheduler.sh` (deleted; the local LaunchAgent is
+    unloaded). Rewrote `SLEUTH_SYNC.md` for the file model and updated the
+    `ARCHITECTURE.md` / `UPGRADE.md` pointers.
+  - **Tests:** 4 new cases in `tests/test_sleuth_reminders.py` — file/http source
+    detection, file-source ingest (asserting HTTP is never called), missing-file
+    and invalid-JSON errors. All sleuth + index_ops tests green.
 
 - **GitHub deauth resilience — gh-CLI token fallback (options A + D).** When the
   stored GitHub PAT is rejected with **401** (revoked / expired / lost a scope)

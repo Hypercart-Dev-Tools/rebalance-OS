@@ -44,10 +44,13 @@ git pull
     --token <SLEUTH_WEB_API_TOKEN> \
     --workspace neochrome-dev
 #    NOTE: the example above is the DEV box (direct, public :2020). PRODUCTION is
-#    tunnel-only — use --base-url http://127.0.0.1:12020 --workspace neochrome and
-#    install the SSH tunnel agent (bash scripts/install_sleuth_tunnel_scheduler.sh).
-#    If sleuth-sync fails with ECONNREFUSED on 127.0.0.1:12020, the tunnel is down,
-#    not the token. Full setup + troubleshooting: SLEUTH_SYNC.md
+#    read from a published file in the private git-pulse repo — no API/tunnel:
+#      git clone https://github.com/Hypercart-Dev-Tools/rebalance-git-pulse.git ~/git-pulse-sync
+#      rebalance config set-sleuth \
+#          --base-url "~/git-pulse-sync/sync/sleuth/reminders-neochrome.json" \
+#          --token file-source --workspace neochrome
+#    A file:// or local-path base_url is read directly (token unused). Full
+#    setup + troubleshooting: SLEUTH_SYNC.md
 
 # 4. Calendar — only if migrate reported "no token found" (no prior OAuth on this box):
 .venv/bin/python scripts/setup_calendar_oauth.py     # opens a browser

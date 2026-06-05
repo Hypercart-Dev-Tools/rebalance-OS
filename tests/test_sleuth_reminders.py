@@ -13,6 +13,7 @@ from urllib.error import HTTPError
 
 from rebalance.ingest.sleuth_reminders import (
     SleuthApiError,
+    _local_source_path,
     sync_sleuth_reminders,
 )
 
@@ -253,6 +254,77 @@ class SleuthRemindersTests(unittest.TestCase):
         self.assertIn("500", str(ctx.exception))
         self.assertEqual(ctx.exception.status, 500)
         self.assertNotIn("not-a-real-token", str(ctx.exception))
+
+
+class SleuthFileSourceTests(unittest.TestCase):
+    """The published-file source: read a locally-synced rebalance JSON, no HTTP."""
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.root = Path(self._tmpdir.name)
+        self.db_path = self.root / "rebalance.db"
+        # The published file is the API's `data` object — no {success, data} wrapper.
+        self.export_path = self.root / "reminders-neochrome.json"
+        self.export_path.write_text(
+            json.dumps(_success_payload()["data"], ensure_ascii=False), encoding="utf-8"
+        )
+
+    def test_local_source_path_detects_file_vs_http(self) -> None:
+        # http(s) endpoints are NOT a file source.
+        self.assertIsNone(_local_source_path("http://127.0.0.1:12020"))
+        self.assertIsNone(_local_source_path("https://example.test/api"))
+        # file:// URLs, absolute paths, and ~ paths are.
+        self.assertEqual(_local_source_path("file:///tmp/x.json"), Path("/tmp/x.json"))
+        self.assertEqual(_local_source_path("/abs/x.json"), Path("/abs/x.json"))
+        self.assertEqual(
+            _local_source_path("~/git-pulse-sync/r.json"),
+            Path("~/git-pulse-sync/r.json").expanduser(),
+        )
+
+    def test_file_source_ingests_without_http(self) -> None:
+        # urlopen must never be called for a file source.
+        with patch(
+            "rebalance.ingest.sleuth_reminders.urllib.request.urlopen",
+            side_effect=AssertionError("HTTP must not be used for a file source"),
+        ):
+            result = sync_sleuth_reminders(
+                base_url=f"file://{self.export_path}",
+                token="unused",
+                workspace_name="neochrome-dev",
+                database_path=self.db_path,
+                active_only=True,
+            )
+        self.assertEqual(result.inserted_count, 1)
+        self.assertEqual(result.workspace_name, "neochrome-dev")
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT is_active FROM sleuth_reminders WHERE reminder_id = 'R-001'"
+            ).fetchone()
+        self.assertEqual(row[0], 1)
+
+    def test_file_source_missing_file_raises_clearly(self) -> None:
+        with self.assertRaises(SleuthApiError) as ctx:
+            sync_sleuth_reminders(
+                base_url=f"file://{self.root / 'does-not-exist.json'}",
+                token="unused",
+                workspace_name="neochrome",
+                database_path=self.db_path,
+                active_only=True,
+            )
+        self.assertIn("not found", str(ctx.exception))
+
+    def test_file_source_invalid_json_raises(self) -> None:
+        self.export_path.write_text("{ not json", encoding="utf-8")
+        with self.assertRaises(SleuthApiError) as ctx:
+            sync_sleuth_reminders(
+                base_url=f"file://{self.export_path}",
+                token="unused",
+                workspace_name="neochrome",
+                database_path=self.db_path,
+                active_only=True,
+            )
+        self.assertIn("invalid JSON", str(ctx.exception))
 
 
 if __name__ == "__main__":

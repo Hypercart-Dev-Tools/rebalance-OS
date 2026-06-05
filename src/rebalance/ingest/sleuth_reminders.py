@@ -166,12 +166,62 @@ def _iso_or_none(value: datetime | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _local_source_path(base_url: str) -> Path | None:
+    """If ``base_url`` denotes a local file (a ``file://`` URL or a plain absolute/
+    ``~`` path), return its resolved Path; otherwise None (it's an http(s) endpoint).
+
+    This is the "published file" source: instead of reaching the Sleuth box over an
+    SSH tunnel, the box pushes the rebalance JSON to a private git repo (git-pulse),
+    and we read the locally-synced copy. See SLEUTH_SYNC.md.
+    """
+    raw = (base_url or "").strip()
+    if raw.startswith("file://"):
+        raw = raw[len("file://"):]
+    elif not (raw.startswith("/") or raw.startswith("~")):
+        return None
+    return Path(raw).expanduser()
+
+
+def _read_payload_from_file(path: Path) -> dict[str, Any]:
+    """Read the published rebalance export from a local file.
+
+    The published file IS the API's ``data`` object (no ``{success, data}``
+    wrapper), so it's returned directly — same shape `_fetch_payload` yields for
+    the HTTP path.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise SleuthApiError(
+            f"Sleuth reminders file not found: {path}. Is the git-pulse repo cloned "
+            f"and pulled on this device? See SLEUTH_SYNC.md."
+        ) from exc
+    except OSError as exc:
+        raise SleuthApiError(f"Cannot read Sleuth reminders file {path}: {exc}") from exc
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SleuthApiError(f"Sleuth reminders file is invalid JSON ({path}): {exc}") from exc
+
+    if not isinstance(data, dict) or "reminders" not in data:
+        raise SleuthApiError(f"Sleuth reminders file missing a 'reminders' array: {path}")
+    return data
+
+
 def _fetch_payload(
     base_url: str,
     token: str,
     workspace_name: str,
     active_only: bool,
 ) -> dict[str, Any]:
+    # File source (published export): read the locally-synced JSON directly. The
+    # file's own activeOnly filter is whatever the publisher chose, so the caller's
+    # active_only flag does not re-filter here.
+    file_path = _local_source_path(base_url)
+    if file_path is not None:
+        return _read_payload_from_file(file_path)
+
     active_param = "true" if active_only else "false"
     url = (
         f"{base_url.rstrip('/')}"

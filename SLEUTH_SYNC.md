@@ -1,120 +1,71 @@
 # Sleuth reminder sync
 
-`rebalance sleuth-sync` pulls reminders from the Sleuth Web API into the local
-`sleuth_reminders` SQLite table (consumed by the morning brief, dashboard, and
-the `sleuth_sync_reminders` MCP tool). This doc covers the one piece that is easy
-to miss when setting up a new device: **production is reachable only through an
-SSH tunnel.**
+`rebalance sleuth-sync` pulls Slack reminders into the local `sleuth_reminders`
+SQLite table (consumed by the morning brief, dashboard, and the
+`sleuth_sync_reminders` MCP tool).
 
-## TL;DR — "connection refused on 127.0.0.1:12020"
+**Production is read from a published file — no inbound access to the Sleuth
+server, no SSH tunnel, no open port.** The Sleuth box pushes its reminders to a
+private git repo; rebalance-OS reads the locally-synced copy. (This replaced an
+earlier SSH-tunnel approach — if you're looking for `127.0.0.1:12020` or
+`install_sleuth_tunnel_scheduler.sh`, they're gone.)
 
-That is **not** a credential problem. The production Sleuth API port is firewalled
-from the public internet, so `http://127.0.0.1:12020` only resolves while an SSH
-port-forward to the prod box is up. If the tunnel is down you get `ECONNREFUSED`
-(connection refused), regardless of how correct your token is.
-
-**Fix (durable):**
-```bash
-bash scripts/install_sleuth_tunnel_scheduler.sh
-```
-This installs a launchd agent that keeps the forward `127.0.0.1:12020 → prod
-127.0.0.1:2020` up across logins and reconnects if it drops. Then:
-```bash
-rebalance sleuth-sync --env production --json | head -20   # should succeed
-```
-
-**Fix (one-off, current shell only):**
-```bash
-ssh -fN -L 12020:127.0.0.1:2020 root@<prod-host>
-```
-
-## Why it's built this way (short token + localhost are intentional)
-
-Yes — a short token and a `127.0.0.1` base URL are **by design**, not a
-misconfiguration:
-
-- **Firewall + tunnel, not public HTTP.** Port `2020` on the prod box is blocked
-  at the firewall. The only way in is an authenticated SSH tunnel, so the API is
-  never exposed to the internet. A direct request to `<prod-host>:2020` times out.
-- **`base_url = http://127.0.0.1:12020`.** Your machine talks to its own loopback;
-  SSH carries the bytes (encrypted) to the server's loopback `:2020`. There is no
-  plaintext API traffic on the wire — the token rides inside the SSH session.
-- **Token length isn't the security boundary.** Because the listener is
-  loopback-only behind SSH key auth, the bearer token is a secondary check, not
-  the perimeter. (Still: if port 2020 is ever exposed publicly, rotate to a
-  high-entropy `WEB_API_BEARER_TOKEN` on the server first.)
-
-Dev is different: `--env development` points at the dev box's **public**
-`:2020` directly (no tunnel needed). Only **production** is tunnel-gated.
-
-## How the pieces fit
+## How it works
 
 ```
-rebalance sleuth-sync --env production
-        │  reads base_url=http://127.0.0.1:12020, token, workspace=neochrome
-        ▼
-   127.0.0.1:12020  ──SSH port-forward (launchd: com.rebalance-os.sleuth-tunnel)──►  prod 127.0.0.1:2020
-                                                                                      (firewalled; Sleuth Web API)
+Sleuth box (systemd timer, every 5 min)
+   └─ GET  http://127.0.0.1:2020/.../reminders?format=rebalance   (loopback, on the box)
+   └─ PUT  Hypercart-Dev-Tools/rebalance-git-pulse : sync/sleuth/reminders-<ws>.json   (GitHub contents API)
+                                                  │
+                                        git pull  ▼
+rebalance-OS  ──reads──►  ~/git-pulse-sync/sync/sleuth/reminders-<ws>.json   (local clone)
 ```
 
-## First-time setup on a new device
+- **Publisher** lives in the `sleuth-app` repo under `deploy/reminders-export/`
+  (systemd `sleuth-reminders-export.timer`). It only commits when the reminder
+  data actually changed.
+- **Consumer** points `base_url` at the local file. A `base_url` that is a
+  `file://` URL or a plain `/…`/`~/…` path is read directly; an `http(s)://`
+  `base_url` still uses the live API (that's how **dev** works — the dev box is
+  reachable directly).
+- **Freshness:** `refresh_index` / the daily launchd sync does a best-effort
+  `git -C <repo> pull --rebase --autostash` before reading, so a read-only device
+  self-refreshes. On devices that also push pulses, the pulse sync already pulls.
 
-> **Step 0 is the one people miss.** A fresh device is **not** authorized on the
-> prod box until you add its SSH public key. The installer's preflight will refuse
-> to proceed until this passes — that is the real blocker behind most "it doesn't
-> work yet" reports, not the docs.
+## Setup on a device
 
-0. **Authorize this box's SSH key on the prod box** (one-time; launchd can't answer
-   a password prompt, so key auth is mandatory). Run **on the device you're setting
-   up**, substituting your key if it isn't `id_ed25519`:
+1. **Clone the private export repo** (any path; `~/git-pulse-sync` is the
+   convention):
    ```bash
-   ssh-copy-id -i ~/.ssh/id_ed25519.pub root@<prod-host>   # prompts for the root password once
-   ssh -i ~/.ssh/id_ed25519 root@<prod-host> 'echo ok'     # must print ok with NO prompt
+   git clone https://github.com/Hypercart-Dev-Tools/rebalance-git-pulse.git ~/git-pulse-sync
    ```
-   - **No `id_ed25519`?** Use whatever key the box has — e.g. a GCE box whose only
-     key is `~/.ssh/google_compute_engine`. Authorize that one
-     (`ssh-copy-id -i ~/.ssh/google_compute_engine.pub …`); the installer
-     auto-detects the sole keypair in `~/.ssh`, so you don't need `--key`.
-   - **No key at all?** `ssh-keygen -t ed25519` first, then `ssh-copy-id`.
-
-1. **Credentials** (keyring + launchd fallback) — production values:
+2. **Point rebalance-OS at the local file** (token is unused for a file source —
+   any non-empty placeholder):
    ```bash
    rebalance config set-sleuth \
-       --base-url http://127.0.0.1:12020 \
-       --token <SLEUTH_WEB_API_TOKEN> \
+       --base-url "~/git-pulse-sync/sync/sleuth/reminders-neochrome.json" \
+       --token file-source \
        --workspace neochrome
    ```
-   (Dev uses `--base-url http://<dev-host>:2020 --workspace neochrome-dev`.)
-
-2. **Install the tunnel agent:**
+3. **Verify:**
    ```bash
-   bash scripts/install_sleuth_tunnel_scheduler.sh
+   rebalance doctor                          # sleuth → configured
+   rebalance sleuth-sync --active-only --json | head
    ```
-   The host is read from `--host`, `$SLEUTH_PROD_HOST`, or
-   `~/secrets/sleuth/vultr-sleuth-production.env` (never committed — public repo).
-   The key is `--key`, else `~/.ssh/id_ed25519`, else the sole keypair in `~/.ssh`.
-   The preflight verifies keyless `echo ok` before loading the agent and, if it
-   fails, prints the exact `ssh-copy-id` command to run (i.e. you skipped Step 0).
 
-4. **Verify:**
-   ```bash
-   nc -z 127.0.0.1 12020 && echo "tunnel up" || echo "tunnel down"
-   rebalance doctor
-   rebalance sleuth-sync --env production --json | head -20
-   ```
+That's it — no SSH key on the prod box, no tunnel, no firewall change. Dev is
+unchanged: `--base-url http://<dev-host>:2020 --token <token> --workspace neochrome-dev`.
 
 ## Troubleshooting
 
 | Symptom | Cause | Fix |
 |---|---|---|
-| `ECONNREFUSED` / connection refused on `127.0.0.1:12020` | Tunnel not running | `launchctl list \| grep sleuth-tunnel`; if absent, `bash scripts/install_sleuth_tunnel_scheduler.sh`; if present, `launchctl unload && load` the plist |
-| Tunnel agent loaded but port still dead | Key auth failing at launchd time (no password prompt possible) | Confirm `ssh -i ~/.ssh/id_ed25519 root@<prod-host> 'echo ok'` works keyless; check `temp/logs/sleuth_tunnel_stderr.log` |
-| `{"success":false,"data":"Forbidden."}` (HTTP **200**) | Wrong/missing token | Re-run `rebalance config set-sleuth` with the correct token. Note: the API returns 200 even on auth failure — check the JSON body, not the status code |
-| Direct `curl <prod-host>:2020` times out | Working as intended — port is firewalled | Use the tunnel + `127.0.0.1:12020`, not the public host |
+| `Sleuth reminders file not found: …` | The export repo isn't cloned/pulled on this device | `git clone …/rebalance-git-pulse.git ~/git-pulse-sync` (or `git -C ~/git-pulse-sync pull`) |
+| File present but data is stale | The local clone hasn't pulled recently | The daily sync pulls automatically; force with `git -C ~/git-pulse-sync pull`. Confirm the publisher timer is up on the Sleuth box (`systemctl list-timers sleuth-reminders-export.timer`) |
+| `Sleuth reminders file is invalid JSON` | Partial write / merge conflict in the clone | `git -C ~/git-pulse-sync status`; resolve, then re-pull |
+| Want the live API instead (dev/debug) | — | `rebalance config set-sleuth --base-url http://<host>:2020 --token <token> --workspace <ws>` |
 
 ## Related
 
-- `scripts/com.rebalance-os.sleuth-tunnel.plist.template` — the launchd agent (rendered by the install script)
-- `scripts/install_sleuth_tunnel_scheduler.sh` — installer + keyless-SSH preflight
-- `UPGRADE.md` — full credential migration (keyring + fallback) for a device
-- `PROJECT/3-DONE/SLEUTH-PRODUCTION.md` — original cutover checklist (predates the firewall+tunnel move; see this doc for current reality)
+- `sleuth-app` repo → `deploy/reminders-export/` — the publisher (script + systemd units + README)
+- `UPGRADE.md` — full credential migration for a device
