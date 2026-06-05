@@ -340,6 +340,31 @@ def remove_health_notice_pattern(pattern: str) -> bool:
     return True
 
 
+# ---------------------------------------------------------------------------
+# ask_self federation (chat_with_data code/doc retrieval)
+# ---------------------------------------------------------------------------
+
+def get_ask_self_path() -> str | None:
+    """Return the ask-self install path for chat federation, or None.
+
+    Resolution: ``ASK_SELF_PATH`` env first (per-shell override), then the
+    ``ask_self_path`` config key (persisted, so the dashboard server can
+    federate too). See PROJECT/2-WORKING/CHAT-WITH-DATA.md.
+    """
+    env = os.environ.get("ASK_SELF_PATH")
+    if env and env.strip():
+        return env.strip()
+    value = _read_config().get("ask_self_path")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def set_ask_self_path(path: str) -> None:
+    """Persist the ask-self install path used for chat federation."""
+    config = _read_config()
+    config["ask_self_path"] = path.strip()
+    _write_config(config)
+
+
 GMAIL_INGEST_METHODS = ("oauth", "mcp")
 
 

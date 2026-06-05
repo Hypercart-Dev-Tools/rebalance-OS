@@ -11,13 +11,20 @@ intentionally off by default — return grounded citations, fast and debuggable.
 
 from __future__ import annotations
 
+import json
+import os
+import subprocess
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable
 
 # Reserved scope vocabulary. "work" = the ingested work artifacts; "code" =
-# source tree + GitHub artifacts (code federation lands in the spike); "all" = both.
+# source tree + docs via the federated ask_self index; "all" = both.
 SCOPES = ("all", "work", "code")
+
+_REPO_ROOT = Path(__file__).resolve().parents[2]  # …/rebalance-OS/
+ASK_SELF_TIMEOUT_SECONDS = 60
 
 
 def _citation_from_semantic(row: dict[str, Any]) -> dict[str, Any]:
@@ -37,6 +44,79 @@ def _citation_from_semantic(row: dict[str, Any]) -> dict[str, Any]:
 def _default_work_query(database_path: Path, query: str, top_k: int) -> list[dict[str, Any]]:
     from rebalance.ingest.semantic_index import query as _q
     return _q(database_path, query, top_k=top_k)
+
+
+# ---------------------------------------------------------------------------
+# ask_self federation (code/docs corpus)
+# ---------------------------------------------------------------------------
+
+def ask_self_available() -> bool:
+    """True if ask_self federation can run: a configured install + the wrapper."""
+    from rebalance.ingest.config import get_ask_self_path
+    root = get_ask_self_path()
+    wrapper = _REPO_ROOT / "scripts" / "ask-self-query.sh"
+    return bool(root) and Path(root).is_dir() and wrapper.exists()
+
+
+def _query_ask_self(query: str, top_k: int) -> list[dict[str, Any]]:
+    """Federate the ask_self code/doc index → citation dicts. Never raises.
+
+    Runs the repo's ask-self-query.sh wrapper with the rebalance venv as the
+    interpreter (ASK_SELF_PYTHON) — ask-self's own venv lacks mlx-embeddings,
+    so the rebalance venv is required for the local Qwen-MLX provider.
+    """
+    from rebalance.ingest.config import get_ask_self_path
+    root = get_ask_self_path()
+    wrapper = _REPO_ROOT / "scripts" / "ask-self-query.sh"
+    if not root or not wrapper.exists():
+        return []
+    env = {**os.environ, "ASK_SELF_PATH": root, "ASK_SELF_PYTHON": sys.executable}
+    try:
+        proc = subprocess.run(
+            ["bash", str(wrapper), query, "--retrieval-only", "--json"],
+            capture_output=True, text=True, env=env,
+            timeout=ASK_SELF_TIMEOUT_SECONDS, cwd=str(_REPO_ROOT),
+        )
+        if proc.returncode != 0:
+            return []
+        data = json.loads(proc.stdout)
+    except (subprocess.TimeoutExpired, json.JSONDecodeError, OSError):
+        return []
+    if not isinstance(data, dict) or not data.get("ok"):
+        return []
+
+    cites: list[dict[str, Any]] = []
+    for hit in (data.get("retrieved_hits") or [])[:top_k]:
+        if not isinstance(hit, dict):
+            continue
+        dist = hit.get("distance")
+        score = round(1.0 - dist, 4) if isinstance(dist, (int, float)) else hit.get("score")
+        cites.append({
+            "source": "code",
+            "title": hit.get("path") or "",
+            "path": hit.get("path") or "",
+            "preview": (hit.get("content") or "")[:280],
+            "score": score,
+            "kind": hit.get("source") or "code",
+        })
+    return cites
+
+
+def _rrf_merge(lists: list[list[dict[str, Any]]], top_k: int, k: int = 60) -> list[dict[str, Any]]:
+    """Reciprocal-rank fusion — rank-based, so the two systems' score scales
+    don't have to be comparable. Dedupe by (source, path|title)."""
+    def key(c: dict[str, Any]) -> tuple[str, str]:
+        return (c.get("source") or "", (c.get("path") or c.get("title") or "").lower())
+
+    scores: dict[tuple[str, str], float] = {}
+    best: dict[tuple[str, str], dict[str, Any]] = {}
+    for lst in lists:
+        for rank, c in enumerate(lst):
+            ck = key(c)
+            scores[ck] = scores.get(ck, 0.0) + 1.0 / (k + rank + 1)
+            best.setdefault(ck, c)
+    ranked = sorted(best.values(), key=lambda c: -scores[key(c)])
+    return ranked[:top_k]
 
 
 def chat_with_data(
@@ -68,22 +148,30 @@ def chat_with_data(
             "used_sources": [], "elapsed_ms": 0, "answer": None,
         }
 
-    citations: list[dict[str, Any]] = []
     used: list[str] = []
+    result_lists: list[list[dict[str, Any]]] = []
 
-    # Native work corpus. Searched for work/all now; also the only code-adjacent
-    # source until the ask_self federation / native code corpus lands.
-    if scope in ("all", "work", "code"):
+    # Native work corpus (vault / github / email): work + all.
+    if scope in ("all", "work"):
         qfn = work_query_fn or _default_work_query
-        rows = qfn(database_path, text, top_k)
-        citations.extend(_citation_from_semantic(r) for r in rows)
-        used.append("semantic_index")
+        work = [_citation_from_semantic(r) for r in qfn(database_path, text, top_k)]
+        if work:
+            result_lists.append(work)
+            used.append("semantic_index")
 
-    # Stable, deterministic ordering: score desc, then source/title for ties.
-    citations.sort(
-        key=lambda c: (-(c.get("score") or 0.0), c.get("source") or "", c.get("title") or "")
-    )
-    citations = citations[:top_k]
+    # Federated code/docs corpus via ask_self: code + all (gated on availability).
+    if scope in ("all", "code") and ask_self_available():
+        code = _query_ask_self(text, top_k)
+        if code:
+            result_lists.append(code)
+            used.append("ask_self")
+
+    if len(result_lists) > 1:
+        citations = _rrf_merge(result_lists, top_k)  # fuse across systems
+    elif result_lists:
+        citations = result_lists[0][:top_k]
+    else:
+        citations = []
 
     return {
         "query": text,
