@@ -175,5 +175,10 @@ If prod sync misbehaves:
   unencrypted. Token can be sniffed in transit. Acceptable for current data
   sensitivity; revisit (SSH tunnel, nginx+TLS, or firewall allowlist) if the
   reminder content ever includes anything more sensitive than today's mix.
+  > **SUPERSEDED (2026-06-04):** production no longer exposes `:2020` publicly —
+  > the port is firewalled and reached via an SSH tunnel
+  > (`base_url=http://127.0.0.1:12020`, launchd agent `com.rebalance-os.sleuth-tunnel`).
+  > Dev remains direct. See [SLEUTH_SYNC.md](../../SLEUTH_SYNC.md) for current setup
+  > and troubleshooting.
 - **Dev pull is preserved, not removed.** `rebalance sleuth-sync --env development`
   remains available for ad-hoc dev queries.

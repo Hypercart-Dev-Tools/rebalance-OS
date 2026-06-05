@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Sleuth Web API tunnel: forwards local 127.0.0.1:12020 -> prod 127.0.0.1:2020.
+
+  WHY THIS EXISTS: the production Sleuth API port (2020) is firewalled from the
+  public internet. `rebalance sleuth-sync --env production` talks to
+  http://127.0.0.1:12020, which only resolves while this SSH port-forward is up.
+  Without it you get ECONNREFUSED on 127.0.0.1:12020 (NOT an auth error).
+
+  Rendered by scripts/install_sleuth_tunnel_scheduler.sh, which substitutes
+  {{REBALANCE_DIR}}, {{SLEUTH_PROD_HOST}}, and {{SSH_KEY}}. The host is read from
+  your local secrets at install time and is NOT committed (this is a public repo).
+
+  PREREQUISITE: key-based SSH to the prod box (launchd has no password prompt).
+  The public half of {{SSH_KEY}} must be in /root/.ssh/authorized_keys on the
+  server. Verify with:  ssh -i {{SSH_KEY}} root@<host> 'echo ok'
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rebalance-os.sleuth-tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/bin/ssh</string>
+        <string>-N</string>
+        <string>-i</string>
+        <string>{{SSH_KEY}}</string>
+        <string>-o</string><string>ServerAliveInterval=30</string>
+        <string>-o</string><string>ServerAliveCountMax=3</string>
+        <string>-o</string><string>ExitOnForwardFailure=yes</string>
+        <string>-o</string><string>StrictHostKeyChecking=accept-new</string>
+        <string>-o</string><string>BatchMode=yes</string>
+        <string>-L</string><string>12020:127.0.0.1:2020</string>
+        <string>root@{{SLEUTH_PROD_HOST}}</string>
+    </array>
+
+    <!-- Bring the tunnel up at login and keep it up; relaunch if the SSH process dies. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <true/>
+
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>{{REBALANCE_DIR}}/temp/logs/sleuth_tunnel_stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{REBALANCE_DIR}}/temp/logs/sleuth_tunnel_stderr.log</string>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

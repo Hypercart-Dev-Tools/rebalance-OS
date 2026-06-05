@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Sleuth production tunnel — docs + launchd agent.** Documented that
+  `rebalance sleuth-sync --env production` reaches the **firewalled** prod Sleuth
+  API only through an SSH port-forward (`127.0.0.1:12020 → prod :2020`), and
+  shipped the missing pieces so a new device can bring it up by pulling: new
+  `SLEUTH_SYNC.md` (setup + the "short token + localhost are intentional"
+  rationale + a troubleshooting table), `scripts/com.rebalance-os.sleuth-tunnel.plist.template`
+  (secrets-free; `{{REBALANCE_DIR}}`/`{{SLEUTH_PROD_HOST}}`/`{{SSH_KEY}}`
+  placeholders), and `scripts/install_sleuth_tunnel_scheduler.sh` (renders + loads
+  the agent, with a keyless-SSH preflight and a `127.0.0.1:12020` liveness probe).
+  The key symptom — `ECONNREFUSED` on `127.0.0.1:12020` — is a **down tunnel, not
+  a bad credential**. Added pointers from `ARCHITECTURE.md` and `UPGRADE.md`, and
+  marked the public-HTTP note in `PROJECT/3-DONE/SLEUTH-PRODUCTION.md` as
+  superseded (prod is no longer publicly exposed; dev remains direct).
+
 - **GitHub deauth resilience — gh-CLI token fallback (options A + D).** When the
   stored GitHub PAT is rejected with **401** (revoked / expired / lost a scope)
   during a refresh, the collector now falls back to the `gh` CLI's token if the

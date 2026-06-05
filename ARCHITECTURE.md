@@ -113,6 +113,12 @@ Project Registry ────▶ registry.py +              MD registry → proj
 | Sleuth reminders | `rebalance sleuth-sync` | `sleuth_sync_reminders` | 5 |
 | Project registry | `rebalance ingest preflight`, `ingest sync` | `list_projects`, `run_preflight`, `confirm_projects`, `onboarding_status` | on demand |
 
+> **Sleuth production is tunnel-only.** `sleuth-sync --env production` reaches the
+> firewalled prod API through an SSH port-forward (`127.0.0.1:12020 → prod :2020`,
+> launchd agent `com.rebalance-os.sleuth-tunnel`). `ECONNREFUSED` on
+> `127.0.0.1:12020` means the tunnel is down, not a bad credential — see
+> [SLEUTH_SYNC.md](SLEUTH_SYNC.md).
+
 ### Credentials
 
 | Source | Secret store | Mechanism |
