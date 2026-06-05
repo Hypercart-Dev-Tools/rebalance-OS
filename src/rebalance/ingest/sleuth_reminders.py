@@ -179,6 +179,13 @@ def _local_source_path(base_url: str) -> Path | None:
         raw = raw[len("file://"):]
     elif not (raw.startswith("/") or raw.startswith("~")):
         return None
+    # Require an absolute or ~-anchored path. A relative file:// path would resolve
+    # against the process cwd — which differs between an interactive shell and the
+    # launchd daemon — so reject it outright rather than read the wrong file.
+    if not (raw.startswith("/") or raw.startswith("~")):
+        raise SleuthApiError(
+            f"Sleuth file source must be an absolute or ~-anchored path, got: {base_url!r}"
+        )
     return Path(raw).expanduser()
 
 
@@ -368,6 +375,62 @@ def _row_differs(existing: sqlite3.Row, desired: dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_EXPECTED_FILE_SOURCE_TYPE = "sleuth-reminders-file"
+
+
+def _validate_payload_contract(
+    data: dict[str, Any], *, workspace_name: str, is_file_source: bool
+) -> list[SleuthReminder]:
+    """Validate the export contract and every reminder entry BEFORE any DB write.
+
+    Reconciliation retires DB rows absent from the response, so a wrong-workspace
+    file, a truncated/partial export, or publisher contract drift could silently
+    flip still-active reminders to stale. Guard against that: any mismatch raises
+    SleuthApiError (which aborts before the transaction), so a bad payload never
+    poisons the table.
+    """
+    # 1. Workspace must match what we asked for — never write a file's rows under a
+    #    different workspace than the one it claims (and that we requested).
+    payload_ws = str(data.get("workspaceName") or "")
+    if payload_ws != workspace_name:
+        raise SleuthApiError(
+            f"Sleuth payload workspace {payload_ws!r} != requested {workspace_name!r} "
+            f"— refusing to reconcile (wrong file/endpoint?)"
+        )
+
+    # 2. The published file must be a complete active-only export — that's the
+    #    contract the active_only=False retirement sweep relies on. Drift here is
+    #    exactly what would wrongly retire live reminders.
+    if is_file_source:
+        filters = data.get("filters")
+        if not isinstance(filters, dict) or filters.get("activeOnly") is not True:
+            raise SleuthApiError(
+                "Sleuth file source missing filters.activeOnly=true — refusing to reconcile"
+            )
+        source = data.get("source")
+        source_type = source.get("type") if isinstance(source, dict) else None
+        if source_type != _EXPECTED_FILE_SOURCE_TYPE:
+            raise SleuthApiError(
+                f"Sleuth file source.type {source_type!r} != {_EXPECTED_FILE_SOURCE_TYPE!r} "
+                f"— refusing to reconcile"
+            )
+
+    # 3. Every entry must be a dict with a usable reminderId. Reject the whole batch
+    #    on any malformed item (a silently-dropped item would look like a retirement).
+    reminders_raw = data.get("reminders")
+    if not isinstance(reminders_raw, list):
+        raise SleuthApiError("Sleuth payload 'reminders' is not a list")
+    reminders: list[SleuthReminder] = []
+    for index, item in enumerate(reminders_raw):
+        if not isinstance(item, dict):
+            raise SleuthApiError(f"Sleuth reminder at index {index} is not an object")
+        rid = item.get("reminderId")
+        if not isinstance(rid, str) or not rid.strip():
+            raise SleuthApiError(f"Sleuth reminder at index {index} is missing 'reminderId'")
+        reminders.append(_to_reminder(item))
+    return reminders
+
+
 def sync_sleuth_reminders(
     base_url: str,
     token: str,
@@ -379,13 +442,12 @@ def sync_sleuth_reminders(
     """Fetch reminders from Sleuth and upsert them into sleuth_reminders."""
     from rebalance.ingest.db import db_connection
 
+    is_file_source = _local_source_path(base_url) is not None
     data = _fetch_payload(base_url, token, workspace_name, active_only)
 
-    reminders_raw = data.get("reminders") or []
-    if not isinstance(reminders_raw, list):
-        raise SleuthApiError("Sleuth API response 'reminders' is not a list")
-
-    reminders = [_to_reminder(item) for item in reminders_raw if isinstance(item, dict)]
+    reminders = _validate_payload_contract(
+        data, workspace_name=workspace_name, is_file_source=is_file_source
+    )
 
     now_iso = datetime.now(timezone.utc).isoformat()
     inserted = updated = unchanged = 0
