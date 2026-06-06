@@ -47,10 +47,14 @@ from pulse_web import (  # noqa: E402
 
 app = FastAPI(title="rebalance pulse (local)", docs_url=None, redoc_url=None)
 
-# Serve the auth-activity log from this always-running server too, so the
-# sidebar "Authorization Log" link works without a separate `rebalance serve`
-# process on :8787. Reuses the renderers in rebalance.web (no duplication).
-from rebalance.web import auth_log_page as _auth_log_page, auth_log_raw as _auth_log_raw  # noqa: E402
+# Serve the auth-activity log and Focus 5 view from this always-running server
+# too, so their links work without a separate `rebalance serve` process on
+# :8787. Reuses the renderers in rebalance.web (no duplication).
+from rebalance.web import (  # noqa: E402
+    auth_log_page as _auth_log_page,
+    auth_log_raw as _auth_log_raw,
+    focus5_page as _focus5_page,
+)
 
 
 @app.get("/auth-log")
@@ -61,6 +65,11 @@ def auth_log():
 @app.get("/auth-log/raw")
 def auth_log_raw():
     return _auth_log_raw()
+
+
+@app.get("/focus-5")
+def focus5():
+    return _focus5_page()
 
 
 class ChatRequest(BaseModel):
