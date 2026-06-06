@@ -67,3 +67,4 @@
 - git-pulse collector scans can succeed partially: preserve successful repo rows, record `repo_scan_failures` plus `scan_failure_examples` in device metadata, classify that state as `DEGRADED` in `git-pulse-health`, and do not advance `last-run` until every watched repo scan succeeds.
 - Project plan docs should prefer frontmatter, a 2-column status table (`Most recently completed phase` and `What's next`), a Table of Contents, and phased observable checklists.
 - Focus 5 product decisions are locked for now: rank by local repo activity, require zero manual repo config, and treat repos active at session start or during the session as in scope.
+- Focus 5 architecture direction shifted from a server-side "session" concept to a persisted roster snapshot with TTL; top-5 git health is live, off-roster warning inputs should be cached/persisted, and local git data is the primary signal with GitHub as enrichment.

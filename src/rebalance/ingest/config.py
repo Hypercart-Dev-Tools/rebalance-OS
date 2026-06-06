@@ -340,6 +340,81 @@ def remove_health_notice_pattern(pattern: str) -> bool:
     return True
 
 
+def get_ask_self_scan_roots() -> list[str]:
+    """Return the directories the ask_self collector walks for harness files.
+
+    Config key: ``ask_self_scan_roots`` (list of absolute dirs). When unset,
+    defaults to the common dev-checkout parents that actually exist on this
+    machine, falling back to the home directory. Keeping this configurable
+    means a full-tree walk of ``$HOME`` is opt-in rather than the default.
+    """
+    config = _read_config()
+    raw = config.get("ask_self_scan_roots")
+    if isinstance(raw, list):
+        roots = [str(p).strip() for p in raw if str(p).strip()]
+        if roots:
+            return roots
+    home = Path.home()
+    candidates = [
+        home / "Documents" / "GitHub-Repos",
+        home / "Documents" / "GitHub",
+        home / "GitHub",
+        home / "code",
+        home / "src",
+        home / "dev",
+        home / "repos",
+        home / "Projects",
+    ]
+    existing = [str(c) for c in candidates if c.is_dir()]
+    return existing or [str(home)]
+
+
+def set_ask_self_scan_roots(roots: list[str]) -> None:
+    """Store the directories the ask_self collector walks. Config key: ``ask_self_scan_roots``."""
+    cleaned = [str(Path(p).expanduser()) for p in roots if str(p).strip()]
+    config = _read_config()
+    config["ask_self_scan_roots"] = cleaned
+    _write_config(config)
+
+
+def get_focus5_scan_roots() -> list[str]:
+    """Return the directories the Focus 5 collector walks for git repos.
+
+    Config key: ``focus5_scan_roots``. When unset, reuses the shared
+    zero-config discovery defaults (:func:`get_ask_self_scan_roots`) so the
+    operator never has to configure repo locations — Focus 5 just keeps its own
+    overridable key for the day the two surfaces want different scopes.
+    """
+    config = _read_config()
+    raw = config.get("focus5_scan_roots")
+    if isinstance(raw, list):
+        roots = [str(p).strip() for p in raw if str(p).strip()]
+        if roots:
+            return roots
+    return get_ask_self_scan_roots()
+
+
+def get_focus5_ranking_mode() -> str:
+    """Return the active Focus 5 ranking mode. Config key: ``focus5_ranking_mode``.
+
+    Defaults to ``dirty_first`` (surface uncommitted/unpushed work first). The
+    value is validated by the collector against the registered strategies; an
+    unknown mode is surfaced as a collector error rather than silently ignored.
+    """
+    config = _read_config()
+    mode = config.get("focus5_ranking_mode")
+    if isinstance(mode, str) and mode.strip():
+        return mode.strip()
+    return "dirty_first"
+
+
+def set_focus5_ranking_mode(mode: str) -> None:
+    """Store the Focus 5 ranking mode. Config key: ``focus5_ranking_mode``."""
+    config = _read_config()
+    config["focus5_ranking_mode"] = mode.strip()
+    _write_config(config)
+
+
 GMAIL_INGEST_METHODS = ("oauth", "mcp")
 
 

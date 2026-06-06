@@ -1,0 +1,557 @@
+"""Device-local activity scan + ranking for the Focus 5 dashboard.
+
+Focus 5 answers "which 5 repos am I actually working on right now, and did I
+forget to commit or push?". It is device-local: discovery and ranking lean on
+local git, and the GitHub corpus is enrichment only (newest PR), never a
+ranking input.
+
+Pipeline (mirrors the established collect → store pattern):
+
+    discover .git repos under the bounded scan roots
+        → probe per-repo SIGNALS (branch, ahead/behind, dirty, commit times)
+        → persist ALL signals (focus5_repo_signals — also the off-roster cache)
+        → rank via the selected strategy → persist top-N (focus5_roster)
+
+Why the spike forced this shape (see PROJECT/2-WORKING/FOCUS-5.md):
+
+- **Raw signals are persisted, never a baked score.** The ranking "mode" is a
+  pure function ``RepoSignals -> RankVerdict``. Switching modes is a config
+  flip, and because the raw signals are stored, an existing roster can be
+  re-ranked under a different mode *without re-probing git*. This is the seam
+  that keeps mode changes from becoming a refactor.
+- **`.git/index` mtime is NOT a ranking input.** The spike proved it is bumped
+  by clone/fetch/checkout and surfaced dormant third-party clones over the
+  operator's own dirty WIP. The honest signals are operator-authored commits
+  (matched against each repo's own ``user.email`` — the operator commits under a
+  GitHub noreply address, so a hardcoded email would silently miss them) and a
+  dirty/unpushed working tree.
+
+Everything here is read-only with respect to the scanned repos: we only run
+read-only git plumbing and ``stat`` files; we never write to a foreign repo.
+"""
+from __future__ import annotations
+
+import os
+import subprocess
+from dataclasses import asdict, dataclass
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Callable, Iterator
+
+from rebalance.ingest.db import db_connection, run_migrations
+from rebalance.ingest.sync_snapshot import get_device_id
+# Reuse the prune discipline and the (already tested) remote-URL → owner/repo
+# parser rather than duplicating them; both are low-churn and shared by intent.
+from rebalance.ingest.ask_self_scan import _PRUNE_DIRS, derive_repo_full_name
+
+DEFAULT_MAX_DEPTH = 6
+DEFAULT_ROSTER_SIZE = 5
+GIT_TIMEOUT = 5
+
+
+# ---------------------------------------------------------------------------
+# Signal model — the mode-agnostic facts a repo exposes
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RepoSignals:
+    """Raw, ranking-mode-agnostic signals for one discovered repo.
+
+    Persisted verbatim so the roster can be re-ranked under any mode without
+    re-probing git. No field here is a score or a rank.
+    """
+
+    device_id: str
+    local_path: str
+    repo_name: str
+    repo_full_name: str | None
+    branch: str | None
+    upstream: str | None
+    has_upstream: bool
+    ahead: int
+    behind: int
+    modified_count: int
+    untracked_count: int
+    is_dirty: bool
+    last_commit_at: str | None
+    last_commit_ts: int | None
+    my_last_commit_ts: int | None
+    head_reflog_ts: int | None
+    index_mtime_ts: int | None  # diagnostics only — never ranked on
+    remote_url: str | None
+    probed_at: str
+
+    @property
+    def is_unpushed(self) -> bool:
+        """Local commits not on the upstream (a 'did I forget to push?' signal)."""
+        return self.ahead > 0
+
+
+# ---------------------------------------------------------------------------
+# Ranking strategies — a pure function per mode, selected by config
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class RankVerdict:
+    """A strategy's verdict for one repo.
+
+    ``sort_key`` is compared descending (bigger = higher in the roster). Within
+    a single ranking run every repo is scored by the same strategy, so all
+    ``sort_key`` tuples share a shape and sort cleanly.
+    """
+
+    eligible: bool
+    sort_key: tuple
+    reason: str
+
+
+# A ranking strategy maps (signals, now_epoch) -> verdict. Pure: no I/O, no clock.
+RankingStrategy = Callable[[RepoSignals, int], RankVerdict]
+
+DEFAULT_RANKING_MODE = "dirty_first"
+
+
+def _humanize_ago(ts: int | None, now_ts: int) -> str:
+    if not ts:
+        return "no local commits"
+    secs = max(0, now_ts - ts)
+    for label, unit in (("d", 86400), ("h", 3600), ("m", 60)):
+        if secs >= unit:
+            return f"{secs // unit}{label} ago"
+    return "just now"
+
+
+def _recency(s: RepoSignals) -> int:
+    """Best 'when did I last touch this' estimate from operator-authored signals.
+
+    Deliberately excludes index_mtime_ts (clone/fetch pollution); falls back to
+    head-reflog (local HEAD moves) and finally any-author commit time so a repo
+    is never ranked purely on a foreign push.
+    """
+    return s.my_last_commit_ts or s.head_reflog_ts or s.last_commit_ts or 0
+
+
+def _eligible_as_my_work(s: RepoSignals) -> bool:
+    """Operator has work here: authored a commit, or the tree is dirty."""
+    return s.is_dirty or s.my_last_commit_ts is not None
+
+
+def rank_my_work(s: RepoSignals, now_ts: int) -> RankVerdict:
+    """My work only — exclude repos I've never committed to unless dirty now."""
+    eligible = _eligible_as_my_work(s)
+    recency = max(s.my_last_commit_ts or 0, now_ts if s.is_dirty else 0)
+    reason = "uncommitted changes" if s.is_dirty else f"your commit {_humanize_ago(s.my_last_commit_ts, now_ts)}"
+    return RankVerdict(eligible, (recency,), reason)
+
+
+def rank_dirty_first(s: RepoSignals, now_ts: int) -> RankVerdict:
+    """Dirty-first safety view (DEFAULT).
+
+    Same eligibility as my_work, but anything with uncommitted or unpushed work
+    is forced above clean repos, then ordered by operator-authored recency. This
+    optimizes for "don't lose track of WIP".
+    """
+    eligible = _eligible_as_my_work(s)
+    at_risk = s.is_dirty or s.is_unpushed
+    if s.is_dirty and s.is_unpushed:
+        reason = f"{s.modified_count + s.untracked_count} uncommitted, {s.ahead} unpushed"
+    elif s.is_dirty:
+        reason = f"{s.modified_count} modified, {s.untracked_count} untracked"
+    elif s.is_unpushed:
+        reason = f"{s.ahead} unpushed commit(s)"
+    else:
+        reason = f"your commit {_humanize_ago(s.my_last_commit_ts, now_ts)}"
+    return RankVerdict(eligible, (1 if at_risk else 0, _recency(s)), reason)
+
+
+def rank_any_touch(s: RepoSignals, now_ts: int) -> RankVerdict:
+    """Anything I've touched — broadest, includes clone/fetch/checkout activity.
+
+    Provided for completeness/comparison; noisier (the Phase 0 default that
+    surfaced dormant clones). Eligible for every discovered repo.
+    """
+    recency = max(
+        s.index_mtime_ts or 0, s.head_reflog_ts or 0,
+        s.last_commit_ts or 0, s.my_last_commit_ts or 0,
+    )
+    return RankVerdict(True, (recency,), f"local activity {_humanize_ago(recency, now_ts)}")
+
+
+RANKING_STRATEGIES: dict[str, RankingStrategy] = {
+    "my_work": rank_my_work,
+    "dirty_first": rank_dirty_first,
+    "any_touch": rank_any_touch,
+}
+
+
+def resolve_ranking_strategy(mode: str) -> RankingStrategy:
+    """Return the strategy for *mode*, or raise with the valid set listed.
+
+    Raising (rather than silently defaulting) keeps a misconfigured mode honest
+    — the collector surfaces it in its error envelope instead of quietly serving
+    a different ranking than configured.
+    """
+    try:
+        return RANKING_STRATEGIES[mode]
+    except KeyError:
+        valid = ", ".join(sorted(RANKING_STRATEGIES))
+        raise ValueError(f"unknown focus5 ranking mode {mode!r}; valid modes: {valid}") from None
+
+
+@dataclass(frozen=True)
+class RankedRepo:
+    signals: RepoSignals
+    position: int
+    reason: str
+
+
+def rank_repos(
+    signals: list[RepoSignals], *, mode: str, now_ts: int, limit: int = DEFAULT_ROSTER_SIZE,
+) -> list[RankedRepo]:
+    """Apply *mode* to *signals* and return the top *limit* eligible repos."""
+    strategy = resolve_ranking_strategy(mode)
+    scored: list[tuple[tuple, RepoSignals, RankVerdict]] = []
+    for s in signals:
+        v = strategy(s, now_ts)
+        if v.eligible:
+            scored.append((v.sort_key, s, v))
+    # Sort by score desc, then local_path for a stable tiebreak across runs.
+    scored.sort(key=lambda t: (t[0], t[1].local_path), reverse=True)
+    return [RankedRepo(s, i, v.reason) for i, (_k, s, v) in enumerate(scored[:limit], 1)]
+
+
+# ---------------------------------------------------------------------------
+# Discovery — bounded, zero-config .git walk (reuses the ask_self prune list)
+# ---------------------------------------------------------------------------
+
+def _should_descend(name: str) -> bool:
+    if name in _PRUNE_DIRS:
+        return False
+    return not name.startswith(".")  # ".git" is matched by marker, never descended
+
+
+def iter_git_repos(
+    roots: list[str] | list[Path], *, max_depth: int = DEFAULT_MAX_DEPTH,
+) -> Iterator[Path]:
+    """Yield each git repo root under *roots*, bounded by depth + the prune list.
+
+    Stops descending at a repo boundary so nested submodules don't multiply the
+    candidate set. De-duplicates by resolved path so overlapping roots are safe.
+    """
+    seen: set[Path] = set()
+    for raw_root in roots:
+        root = Path(raw_root).expanduser()
+        if not root.is_dir():
+            continue
+        base_depth = len(root.resolve().parts)
+        for dirpath, dirnames, _files in os.walk(root, followlinks=False):
+            cur = Path(dirpath)
+            # `.git` may be a dir (normal checkout) or a file (worktree/submodule).
+            if (cur / ".git").exists():
+                rp = cur.resolve()
+                if rp not in seen:
+                    seen.add(rp)
+                    yield rp
+                dirnames[:] = []  # repo boundary — do not descend further
+                continue
+            if len(cur.resolve().parts) - base_depth >= max_depth:
+                dirnames[:] = []
+            else:
+                dirnames[:] = [d for d in dirnames if _should_descend(d)]
+
+
+# ---------------------------------------------------------------------------
+# Signal probing — read-only git plumbing per repo
+# ---------------------------------------------------------------------------
+
+def _git(repo: Path, *args: str, timeout: int = GIT_TIMEOUT) -> str | None:
+    """Run a read-only git command in *repo*; return stdout or None on any failure."""
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(repo), *args],
+            capture_output=True, text=True, check=False, timeout=timeout,
+        )
+    except Exception:  # noqa: BLE001 — git missing / hung / unreadable repo
+        return None
+    if proc.returncode != 0:
+        return None
+    return proc.stdout
+
+
+def _parse_status(out: str) -> dict[str, Any]:
+    """Parse ``git status --porcelain=v2 --branch`` into health fields."""
+    branch = upstream = None
+    ahead = behind = modified = untracked = 0
+    has_upstream = False
+    for line in out.splitlines():
+        if line.startswith("# branch.head"):
+            branch = line.split(" ", 2)[2]
+            if branch == "(detached)":
+                branch = None
+        elif line.startswith("# branch.upstream"):
+            upstream = line.split(" ", 2)[2]
+            has_upstream = True
+        elif line.startswith("# branch.ab"):
+            parts = line.split()
+            ahead = int(parts[2].lstrip("+"))
+            behind = int(parts[3].lstrip("-"))
+        elif line[:1] in ("1", "2", "u"):  # changed/renamed/unmerged tracked entry
+            modified += 1
+        elif line.startswith("?"):
+            untracked += 1
+    return {
+        "branch": branch, "upstream": upstream, "has_upstream": has_upstream,
+        "ahead": ahead, "behind": behind,
+        "modified_count": modified, "untracked_count": untracked,
+        "is_dirty": modified > 0 or untracked > 0,
+    }
+
+
+def _mtime(path: Path) -> int | None:
+    try:
+        return int(path.stat().st_mtime)
+    except OSError:
+        return None
+
+
+def probe_repo_signals(repo: Path, *, device_id: str, probed_at: str) -> RepoSignals:
+    """Read one repo's signals with read-only git plumbing + file stats."""
+    status = _parse_status(_git(repo, "status", "--porcelain=v2", "--branch") or "")
+
+    # Newest commit (any author): epoch | ISO. Empty repos return None.
+    last_commit_ts = last_commit_at = None
+    head = _git(repo, "log", "-1", "--format=%ct|%cI")
+    if head and "|" in head:
+        epoch, iso = head.strip().split("|", 1)
+        if epoch.isdigit():
+            last_commit_ts, last_commit_at = int(epoch), iso
+
+    # Operator-authored newest commit: match THIS repo's configured identity,
+    # not a hardcoded address (the operator commits under a noreply email).
+    my_last_commit_ts = None
+    email = _git(repo, "config", "user.email")
+    if email and email.strip():
+        mine = _git(repo, "log", "-1", f"--author={email.strip()}", "--format=%ct")
+        if mine and mine.strip().isdigit():
+            my_last_commit_ts = int(mine.strip())
+
+    remote_url = (_git(repo, "remote", "get-url", "origin") or "").strip() or None
+
+    git_dir = repo / ".git"
+    head_reflog_ts = _mtime(git_dir / "logs" / "HEAD") if git_dir.is_dir() else None
+    index_mtime_ts = _mtime(git_dir / "index") if git_dir.is_dir() else None
+
+    return RepoSignals(
+        device_id=device_id,
+        local_path=str(repo),
+        repo_name=repo.name,
+        repo_full_name=derive_repo_full_name(remote_url),
+        last_commit_at=last_commit_at,
+        last_commit_ts=last_commit_ts,
+        my_last_commit_ts=my_last_commit_ts,
+        head_reflog_ts=head_reflog_ts,
+        index_mtime_ts=index_mtime_ts,
+        remote_url=remote_url,
+        probed_at=probed_at,
+        **status,
+    )
+
+
+def scan_focus5_repos(
+    roots: list[str] | list[Path], *, device_id: str, probed_at: str,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+) -> list[RepoSignals]:
+    """Discover repos under *roots* and probe each one's signals."""
+    return [
+        probe_repo_signals(repo, device_id=device_id, probed_at=probed_at)
+        for repo in iter_git_repos(roots, max_depth=max_depth)
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Persistence
+# ---------------------------------------------------------------------------
+
+_SIGNAL_COLUMNS = (
+    "device_id", "local_path", "repo_name", "repo_full_name", "branch",
+    "upstream", "has_upstream", "ahead", "behind", "modified_count",
+    "untracked_count", "is_dirty", "last_commit_at", "last_commit_ts",
+    "my_last_commit_ts", "head_reflog_ts", "index_mtime_ts", "remote_url",
+    "probed_at",
+)
+
+
+@dataclass(frozen=True)
+class Focus5SyncResult:
+    device_id: str
+    discovered: int
+    roster_size: int
+    ranking_mode: str
+    scan_roots: list[str]
+    computed_at: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+def _signal_row(s: RepoSignals) -> tuple:
+    d = asdict(s)
+    d["has_upstream"] = 1 if s.has_upstream else 0
+    d["is_dirty"] = 1 if s.is_dirty else 0
+    return tuple(d[c] for c in _SIGNAL_COLUMNS)
+
+
+def sync_focus5(
+    database_path: Path, *,
+    roots: list[str] | list[Path] | None = None,
+    device_id: str | None = None,
+    mode: str | None = None,
+    limit: int = DEFAULT_ROSTER_SIZE,
+    max_depth: int = DEFAULT_MAX_DEPTH,
+) -> Focus5SyncResult:
+    """Scan the device, persist all signals, and rewrite this device's roster.
+
+    Signals and roster are each replaced wholesale for this device inside one
+    transaction, so a removed repo never lingers in the cache and a re-rank is
+    atomic.
+    """
+    dev = device_id or get_device_id()
+    if roots is None:
+        from rebalance.ingest.config import get_focus5_scan_roots
+        roots = get_focus5_scan_roots()
+    if mode is None:
+        from rebalance.ingest.config import get_focus5_ranking_mode
+        mode = get_focus5_ranking_mode()
+
+    now = datetime.now(timezone.utc)
+    now_ts = int(now.timestamp())
+    computed_at = now.isoformat()
+
+    signals = scan_focus5_repos(roots, device_id=dev, probed_at=computed_at, max_depth=max_depth)
+    # resolve_ranking_strategy raises on a bad mode BEFORE we touch the DB.
+    ranked = rank_repos(signals, mode=mode, now_ts=now_ts, limit=limit)
+
+    placeholders = ", ".join("?" for _ in _SIGNAL_COLUMNS)
+    with db_connection(database_path) as conn:
+        run_migrations(conn)  # ensure tables exist even on a direct call
+        conn.execute("DELETE FROM focus5_repo_signals WHERE device_id=?", (dev,))
+        conn.executemany(
+            f"INSERT INTO focus5_repo_signals ({', '.join(_SIGNAL_COLUMNS)}) "
+            f"VALUES ({placeholders})",
+            [_signal_row(s) for s in signals],
+        )
+        conn.execute("DELETE FROM focus5_roster WHERE device_id=?", (dev,))
+        conn.executemany(
+            "INSERT INTO focus5_roster "
+            "(device_id, local_path, position, rank_reason, ranking_mode, computed_at) "
+            "VALUES (?,?,?,?,?,?)",
+            [
+                (dev, r.signals.local_path, r.position, r.reason, mode, computed_at)
+                for r in ranked
+            ],
+        )
+        conn.commit()
+
+    return Focus5SyncResult(
+        device_id=dev,
+        discovered=len(signals),
+        roster_size=len(ranked),
+        ranking_mode=mode,
+        scan_roots=[str(r) for r in roots],
+        computed_at=computed_at,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Read side — what the web view consumes
+# ---------------------------------------------------------------------------
+
+def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
+    """Newest remote PR (highest number) for *repo_full_name*, or None.
+
+    Enrichment only: a missing corpus row, an unsynced repo, or a non-GitHub
+    remote all yield None rather than breaking the card.
+    """
+    if not repo_full_name:
+        return None
+    try:
+        row = conn.execute(
+            "SELECT number, title, state, html_url, is_draft, is_merged "
+            "FROM github_items "
+            "WHERE repo_full_name=? AND item_type='pull_request' "
+            "ORDER BY number DESC LIMIT 1",
+            (repo_full_name,),
+        ).fetchone()
+    except Exception:  # noqa: BLE001 — corpus table may not exist yet
+        return None
+    if row is None:
+        return None
+    return {
+        "number": row["number"], "title": row["title"], "state": row["state"],
+        "html_url": row["html_url"],
+        "is_draft": bool(row["is_draft"]), "is_merged": bool(row["is_merged"]),
+    }
+
+
+def summarize_focus5(database_path: Path, *, device_id: str | None = None) -> dict[str, Any]:
+    """Return the roster cards, off-roster warnings, and snapshot metadata.
+
+    This is the single read contract for the web view. Each roster card carries
+    local signals (the source of truth) plus a ``newest_pr`` enrichment that is
+    None whenever the GitHub corpus can't supply it.
+    """
+    dev = device_id or get_device_id()
+    empty = {
+        "roster": [], "off_roster_warnings": [],
+        "computed_at": None, "ranking_mode": None,
+        "summary": {"discovered": 0, "roster_size": 0, "off_roster_attention": 0},
+    }
+    try:
+        with db_connection(database_path) as conn:
+            roster_rows = conn.execute(
+                "SELECT r.position, r.rank_reason, r.ranking_mode, r.computed_at, s.* "
+                "FROM focus5_roster r JOIN focus5_repo_signals s "
+                "  ON s.device_id=r.device_id AND s.local_path=r.local_path "
+                "WHERE r.device_id=? ORDER BY r.position",
+                (dev,),
+            ).fetchall()
+
+            roster = []
+            for row in roster_rows:
+                card = {k: row[k] for k in row.keys()}
+                card["is_dirty"] = bool(card["is_dirty"])
+                card["has_upstream"] = bool(card["has_upstream"])
+                card["newest_pr"] = _newest_pr(conn, card.get("repo_full_name"))
+                roster.append(card)
+
+            roster_paths = {c["local_path"] for c in roster}
+            warn_rows = conn.execute(
+                "SELECT repo_name, local_path, repo_full_name, branch, ahead, "
+                "       modified_count, untracked_count, is_dirty, probed_at "
+                "FROM focus5_repo_signals "
+                "WHERE device_id=? AND (is_dirty=1 OR ahead>0) "
+                "ORDER BY is_dirty DESC, ahead DESC, repo_name",
+                (dev,),
+            ).fetchall()
+            off_roster = [
+                {**{k: w[k] for k in w.keys()}, "is_dirty": bool(w["is_dirty"])}
+                for w in warn_rows if w["local_path"] not in roster_paths
+            ]
+
+            discovered = conn.execute(
+                "SELECT COUNT(*) FROM focus5_repo_signals WHERE device_id=?", (dev,)
+            ).fetchone()[0]
+    except Exception:  # noqa: BLE001 — tables absent on a brand-new DB
+        return empty
+
+    return {
+        "roster": roster,
+        "off_roster_warnings": off_roster,
+        "computed_at": roster[0]["computed_at"] if roster else None,
+        "ranking_mode": roster[0]["ranking_mode"] if roster else None,
+        "summary": {
+            "discovered": discovered,
+            "roster_size": len(roster),
+            "off_roster_attention": len(off_roster),
+        },
+    }
