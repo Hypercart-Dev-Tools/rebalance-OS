@@ -2,7 +2,7 @@
 title: Chat with Your Rebalance Data
 status: proposed
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-05
 owner: noel
 tool_surface: chat_with_data(query, scope, top_k, skip_synthesis) — new MCP tool, NOT an extension of ask()
 depends_on: semantic_index (vec0 ANN), index_ops incremental refresh, semantic_query MCP tool, ask_self code/doc RAG
