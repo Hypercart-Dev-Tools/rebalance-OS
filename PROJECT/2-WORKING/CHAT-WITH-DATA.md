@@ -2,13 +2,13 @@
 title: Chat with Your Rebalance Data
 status: proposed
 created: 2026-06-04
-updated: 2026-06-04
+updated: 2026-06-05
 owner: noel
 tool_surface: chat_with_data(query, scope, top_k, skip_synthesis) — new MCP tool, NOT an extension of ask()
 depends_on: semantic_index (vec0 ANN), index_ops incremental refresh, semantic_query MCP tool, ask_self code/doc RAG
 phases: 0 spike · 1 hybrid retrieval · 2 native code corpus · 3 synthesis · 4 surface/UX
-phases_done: none
-phases_next: Phase 0 — Federation spike
+phases_done: 0 (federation spike — 7/10 federated vs 4/10 work-only)
+phases_next: Phase 1 — Hybrid retrieval (FTS5 + vec, RRF) to close exact-match misses
 decision_gates:
   - Phase 0 recall@k + latency → decide federate-vs-build-native
   - Phase 2 runs only if federation is insufficient or ask_self proves too fragile
@@ -19,7 +19,7 @@ non_goals: replacing ask(); a general chatbot; cloud inference; multi-user
 
 | ✅ Most recently completed | ▶️ What's next |
 |---|---|
-| **Plan drafted** *(2026-06-04)*. Grounded against the code: confirmed there is **no `code` source_type** (corpus is `vault/github/calendar/sleuth/email`) and that `semantic_index.query()` is **ANN-only** (vector distance, no lexical path). No phases implemented yet. | **Phase 0 — Federation spike**: prototype `chat_with_data` that merges `semantic_query` (work artifacts) + `ask_self` (code/docs), **citations-only**, run a 10-question eval, measure recall@k and latency. Gate the federate-vs-build decision on the numbers. |
+| **Phase 0 — Federation spike, complete** *(2026-06-05)*: `chat_with_data` ships (citations-first, RRF merge), wired to a dashboard **Filter\|Ask** search-bar switch via `POST /api/chat`. ask_self federation gated on availability (the mlx-embeddings gotcha → uses the rebalance venv). Eval (`scripts/chat_eval.py`, 10 questions): **federated 7/10 vs work-only 4/10**, ~2.1 s median, and federation surfaces *real code* (`index_ops.py`, `sleuth_reminders.py`) the work corpus never did. **Decision: federation is worth it.** | **Phase 1 — Hybrid retrieval**: add an FTS5 lexical index beside vec0 and fuse (RRF), to close the 3 exact-match misses (`auth_log`, `web.py`/`pulse_server`, `config`/keyring) that semantic-only ranking lost. |
 
 ## Table of Contents
 
@@ -76,13 +76,32 @@ Adjusted from the source analysis:
 Goal: a throwaway-quality prototype that proves merged retrieval answers real
 questions, with numbers — before building anything durable.
 
-- [ ] Add prototype `chat_with_data(query, scope, top_k, skip_synthesis=True)` returning citations only.
-- [ ] Retrieve from `semantic_query` (work corpus) and `ask_self` (code/docs); merge + dedupe by `(source, path)`.
-- [ ] **ask_self availability gate**: probe ask_self at call time; if unreachable, degrade to rebalance-only and log it (no hard failure).
-- [ ] Build a fixed eval set of 10 real questions (mix code + data): e.g. "where is X orchestrated?", "what writes table Y?", "how does refresh flow into the semantic index?", "what code owns MCP tool Z?", "which collector logs auth failures?".
-- [ ] Record per-question: did a correct source appear in top-k? (recall@k) and end-to-end latency.
-- [ ] Write results to a short scorecard in this doc (recall@k, p50/p95 latency).
-- [ ] **Decision gate**: if recall@k ≥ 7/10 and p95 < target → continue federation; if code recall is the weak spot → prioritize Phase 2; if exact-match misses dominate → Phase 1 first.
+- [x] Add prototype `chat_with_data(query, scope, top_k, skip_synthesis=True)` returning citations only. → `src/rebalance/chat.py`
+- [x] Retrieve from `semantic_query` (work corpus) and `ask_self` (code/docs); merge via RRF, dedupe by `(source, path)`.
+- [x] **ask_self availability gate**: `ask_self_available()` probes config/env + the wrapper; unreachable → work-only, no hard failure. (Found the mlx-embeddings gotcha — federation runs `ask-self-query.sh` with the **rebalance venv** as `ASK_SELF_PYTHON`.)
+- [x] Build a fixed eval set of 10 real questions. → `scripts/chat_eval.py`
+- [x] Record per-question recall@k + latency. → scorecard below
+- [x] Write results to a short scorecard in this doc.
+- [x] **Decision gate** → exact-match misses dominate the gap → **do Phase 1 (hybrid) next**, keep federation.
+
+### Phase 0 scorecard (2026-06-05, top_k=8)
+
+| run | recall@8 | latency median / p95 | sources |
+|---|---|---|---|
+| work-only (`--scope work`) | **4/10** | 32 ms / 2.3 s* | semantic_index |
+| federated (`--scope all`, ask_self) | **7/10** | 2.1 s / 4.2 s | semantic_index + ask_self |
+
+\* work-only first query pays the embed-model load (~2.3 s), then ~30 ms.
+
+Findings: (1) federation ~doubles code recall and surfaces *actual code files*
+(`index_ops.py`, `sleuth_reminders.py`, `health_issue_reporter.py`) the
+work-only run never returned — its 4 "hits" were coincidental keyword matches in
+GitHub PR/issue titles. (2) The 3 federated misses — `auth_log`, `web.py`/
+`pulse_server`, `config`/keyring — are exact-identifier/ranking failures, the
+canonical semantic-only weakness → motivates Phase 1. (3) Federation latency
+(~2 s) is acceptable for an explicit "Ask"; it stays **off by default** for the
+dashboard (gated on `ask_self_path` config / `ASK_SELF_PATH` env) so Filter and
+work-only Ask stay snappy.
 
 ## Phase 1 — Hybrid retrieval (the decisive fix)
 

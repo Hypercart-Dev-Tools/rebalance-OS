@@ -1,5 +1,16 @@
 # Sleuth → rebalance-OS: Production Cutover Checklist
 
+> **Status: COMPLETED 2026-06-05.** rebalance now pulls **production** reminders
+> (workspace `neochrome`) over the SSH tunnel (`http://127.0.0.1:12020`, launchd
+> `com.rebalance-os.sleuth-tunnel`). Two issues were fixed during cutover:
+> (1) the tunnel authenticated by key but the rebuilt prod box had **no key
+> installed** → installed the Mac Studio's `~/.ssh/id_ed25519.pub` in the box's
+> `authorized_keys`; (2) the config still pointed at the **dev** box
+> (`neochrome-dev`) → repointed to the production creds from
+> `~/secrets/sleuth/sleuth-web-api-production.env` (kept in keyring). The dev
+> integration (`104.238.130.109`, `neochrome-dev`) remains available for manual
+> use. First production sync returned 24/24 reminders.
+
 **Trigger:** Sleuth has been deployed to the production host (`<prod-host>`) on
 a HEAD that includes commit `15725ec` (`Add rebalance reminders API export`) or later.
 

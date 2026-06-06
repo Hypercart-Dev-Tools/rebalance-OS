@@ -3,7 +3,7 @@
 import unittest
 from pathlib import Path
 
-from rebalance.chat import chat_with_data
+from rebalance.chat import _rrf_merge, chat_with_data
 
 
 def _fake_rows(_db, _query, top_k):
@@ -51,6 +51,22 @@ class ChatWithDataTests(unittest.TestCase):
                      "source_pk": "p", "metadata": {}, "similarity_score": 0.5}]
         out = chat_with_data(self.DB, "q", work_query_fn=big)
         self.assertLessEqual(len(out["citations"][0]["preview"]), 280)
+
+
+class RrfMergeTests(unittest.TestCase):
+    def test_fuses_shared_result_to_top_and_dedupes(self) -> None:
+        a = [{"source": "code", "path": "x.py", "title": "x"},
+             {"source": "code", "path": "y.py", "title": "y"}]
+        b = [{"source": "code", "path": "y.py", "title": "y"},
+             {"source": "work", "path": "z", "title": "z"}]
+        out = _rrf_merge([a, b], top_k=10)
+        # y.py appears in both lists → fused to the top; deduped to one entry.
+        self.assertEqual(len(out), 3)
+        self.assertEqual(out[0]["path"], "y.py")
+
+    def test_respects_top_k(self) -> None:
+        a = [{"source": "code", "path": f"{i}.py", "title": str(i)} for i in range(20)]
+        self.assertEqual(len(_rrf_merge([a], top_k=5)), 5)
 
 
 if __name__ == "__main__":
