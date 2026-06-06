@@ -201,6 +201,18 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "newest_received_at": _safe_max(conn, "email_messages", "received_at"),
         }
 
+        try:
+            built = conn.execute(
+                "SELECT COUNT(*) FROM ask_self_indexes WHERE index_built = 1"
+            ).fetchone()[0]
+        except Exception:
+            built = None
+        payload["sources"]["ask_self"] = {
+            "repos": _safe_count(conn, "ask_self_indexes"),
+            "built_indexes": built,
+            "last_scanned_at": _safe_max(conn, "ask_self_indexes", "scanned_at"),
+        }
+
         # Semantic index
         sem_total = _safe_count(conn, "semantic_documents")
         sem_meta = _safe_meta(conn, "semantic_embedding_meta")
@@ -1098,6 +1110,78 @@ def _sync_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_sync(db_path, dry_run=opts["dry_run"])
 
 
+def _refresh_ask_self(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Walk this device for ask_self-enabled repos and record their indexes.
+
+    Discovery-only: reads each repo's ask_self harness + index metadata
+    (read-only) and upserts one row per repo into ``ask_self_indexes``. Does not
+    build or refresh any RAG index itself. Opt-in (``included_in_all=False``)
+    because it walks the filesystem; run explicitly via
+    ``refresh_index(scope=["ask_self"])``.
+    """
+    from rebalance.ingest.config import get_ask_self_scan_roots
+
+    roots = get_ask_self_scan_roots()
+    if dry_run:
+        return {
+            "scope": "ask_self",
+            "dry_run": True,
+            "scan_roots": roots,
+            "steps": [
+                f"scan_ask_self_repos(roots={roots})",
+                "read each ask_self index repo_metadata (read-only)",
+                "upsert ask_self_indexes (keyed by device_id, local_path)",
+            ],
+        }
+
+    from rebalance.ingest.ask_self_scan import sync_ask_self_indexes
+
+    result = sync_ask_self_indexes(database_path, roots=roots)
+    return {"scope": "ask_self", "dry_run": False, **result.as_dict()}
+
+
+def _ask_self_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_ask_self(db_path, dry_run=opts["dry_run"])
+
+
+def _refresh_focus5(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Scan device-local git repos and rebuild the Focus 5 roster.
+
+    Discovers active local repos (bounded zero-config walk), probes per-repo
+    git signals, and persists both the full signal cache and the ranked top-5
+    roster. Local-git-first: the GitHub corpus is enrichment only. Opt-in
+    (``included_in_all=False``) because it walks the filesystem and shells git;
+    run explicitly via ``refresh_index(scope=["focus5"])`` or lazily from the
+    web view when the roster TTL has expired.
+    """
+    from rebalance.ingest.config import get_focus5_ranking_mode, get_focus5_scan_roots
+
+    roots = get_focus5_scan_roots()
+    mode = get_focus5_ranking_mode()
+    if dry_run:
+        return {
+            "scope": "focus5",
+            "dry_run": True,
+            "scan_roots": roots,
+            "ranking_mode": mode,
+            "steps": [
+                f"iter_git_repos(roots={roots})",
+                "probe per-repo signals (read-only git status/log + .git stats)",
+                "replace focus5_repo_signals for this device (off-roster cache)",
+                f"rank via {mode!r} strategy and replace focus5_roster (top 5)",
+            ],
+        }
+
+    from rebalance.ingest.focus5_scan import sync_focus5
+
+    result = sync_focus5(database_path, roots=roots, mode=mode)
+    return {"scope": "focus5", "dry_run": False, **result.as_dict()}
+
+
+def _focus5_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_focus5(db_path, dry_run=opts["dry_run"])
+
+
 register_collector(Collector("vault", _vault_adapter, requires=("vault_path",)))
 register_collector(Collector("github", _github_adapter, requires=("github_token",)))
 register_collector(Collector("calendar", _calendar_adapter))
@@ -1106,3 +1190,5 @@ register_collector(Collector("email", _email_adapter))
 register_collector(Collector("code", _code_adapter))
 register_collector(Collector("semantic", _semantic_adapter))
 register_collector(Collector("sync", _sync_adapter))
+register_collector(Collector("focus5", _focus5_adapter, included_in_all=False))
+register_collector(Collector("ask_self", _ask_self_adapter, included_in_all=False))

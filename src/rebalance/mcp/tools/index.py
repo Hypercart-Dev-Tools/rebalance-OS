@@ -132,6 +132,27 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         return get_watched_repos(database_path, since_days=since_days)
 
     @mcp.tool()
+    def list_ask_self_repos() -> dict[str, Any]:
+        """
+        Inventory every repo on this device that has an ask_self RAG index,
+        cross-referenced against the watched-repos set.
+
+        Each entry reports its local path, derived GitHub identity
+        (owner/repo), whether the index is actually built, chunk/file counts,
+        embedding model, last-ingest time, the device it lives on, and a
+        ``watched`` flag (True when Rebalance already monitors that repo). The
+        ``summary`` block totals built vs. watched and lists the devices seen.
+
+        Read-only over the ``ask_self_indexes`` table. Populate/refresh it with
+        refresh_index(scope=["ask_self"]) — this tool does not scan the disk.
+
+        Use this to answer "which of my projects have a queryable local brain,
+        and which machine is it on?".
+        """
+        from rebalance.ingest.ask_self_scan import summarize_ask_self_indexes
+        return summarize_ask_self_indexes(database_path)
+
+    @mcp.tool()
     def publish_pulse(
         dry_run: bool = False,
         push: bool = True,

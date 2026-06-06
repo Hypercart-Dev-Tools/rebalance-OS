@@ -1176,6 +1176,12 @@ def render_sidebar(
         <div class="nav-section-label">System</div>
         <ul class="nav-list">
           <li class="auth-log-link">
+            <a href="/focus-5" target="_blank" rel="noopener noreferrer"
+               title="Open Focus 5 — the 5 repos you're actively working on (tree health, newest PR, recent commits)">
+              <span class="auth-log-icon">🎯</span><span>Focus 5</span>
+            </a>
+          </li>
+          <li class="auth-log-link">
             <a href="/auth-log" target="_blank" rel="noopener noreferrer"
                title="Open the Authorization Log (auth events across all collectors)">
               <span class="auth-log-icon">🔐</span><span>Authorization Log</span>
