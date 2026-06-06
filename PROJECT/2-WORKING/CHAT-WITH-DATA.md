@@ -19,7 +19,7 @@ non_goals: replacing ask(); a general chatbot; cloud inference; multi-user
 
 | ✅ Most recently completed | ▶️ What's next |
 |---|---|
-| **Phase 0 — Federation spike, complete** *(2026-06-05)*: `chat_with_data` ships (citations-first, RRF merge), wired to a dashboard **Filter\|Ask** search-bar switch via `POST /api/chat`. ask_self federation gated on availability (the mlx-embeddings gotcha → uses the rebalance venv). Eval (`scripts/chat_eval.py`, 10 questions): **federated 7/10 vs work-only 4/10**, ~2.1 s median, and federation surfaces *real code* (`index_ops.py`, `sleuth_reminders.py`) the work corpus never did. **Decision: federation is worth it.** | **Phase 1 — Hybrid retrieval**: add an FTS5 lexical index beside vec0 and fuse (RRF), to close the 3 exact-match misses (`auth_log`, `web.py`/`pulse_server`, `config`/keyring) that semantic-only ranking lost. |
+| **Phase 1 — Hybrid retrieval, built** *(2026-06-06)*: FTS5 lexical index (`semantic_documents_fts`) beside vec0, trigger-synced + version-guarded rebuild, fused with the vector ranking via RRF in `semantic_index.query(hybrid=True)`; exposed on `semantic_query`. 8 tests; 517 green. **Honest finding: hybrid did NOT move the code-question eval (work 4/10, federated 7/10, unchanged).** It can't — the *work* corpus has no code, and where it has relevant text the vector search already finds it. The infrastructure is correct and is the substrate Phase 2 needs. *(Earlier: Phase 0 federation spike — federated 7/10 vs 4/10, see scorecard.)* | **Phase 2 — Native code corpus**: index the source tree as `source_type="code"`; the now-working hybrid FTS then surfaces the exact files (`auth_log.py`, `web.py`, `config`) the eval misses — the wins Phase 1 couldn't deliver alone. |
 
 ## Table of Contents
 
@@ -108,12 +108,18 @@ work-only Ask stay snappy.
 Goal: stop losing exact-identifier questions. Add a lexical index beside the
 existing vec0 embeddings and fuse.
 
-- [ ] Add an FTS5 virtual table over `semantic_documents` (content + key metadata).
-- [ ] Keep FTS in sync with the existing incremental upsert/delete in `semantic_index` (same write path).
-- [ ] Implement RRF fusion of ANN results + FTS results in `query()` (flag-guarded; ANN-only remains the fallback).
-- [ ] Expose hybrid via `chat_with_data` and (behind a flag) `semantic_query`.
-- [ ] Regression eval: the subset of exact-match questions ANN-only fails (paths, class names, config keys, a pasted stack-trace line) — hybrid must beat ANN-only on these.
-- [ ] No latency regression beyond an agreed budget on the work corpus.
+- [x] Add an FTS5 table (`semantic_documents_fts`, standalone — title+body) over `semantic_documents`. (External-content variant was flaky on backfill; standalone is robust.)
+- [x] Keep FTS in sync via INSERT/UPDATE/DELETE triggers + a one-time backfill; **version-guarded rebuild** (`fts_version` in `semantic_embedding_meta`) drops/recreates a stale or incompatible FTS table.
+- [x] RRF fusion of ANN + FTS in `query(hybrid=True)`; ANN-only fallback when `hybrid=False` or FTS5/lexical-terms are unavailable. Query tokenizer aligned to FTS5 (underscores split).
+- [x] Exposed via `chat_with_data` (default) and the `semantic_query` MCP tool (`hybrid` flag).
+- [~] Regression eval: **hybrid did NOT beat ANN-only on the eval** (work 4/10, federated 7/10 — both unchanged; A/B on the real corpus ≈ identical). Root cause is corpus, not method: the work corpus contains no code, so lexical search can't surface `auth_log.py`/`web.py`; where relevant text exists, the vector ranking already covers it. → the exact-match wins require **Phase 2** (code in the corpus).
+- [x] No latency regression: work-corpus median ~37 ms (was ~32 ms); federated dominated by ask_self (~2 s).
+
+> **Phase 1 conclusion:** the hybrid infrastructure is correct, tested, and on by
+> default — but on its own it doesn't fix the code-question misses. It's the
+> substrate that makes Phase 2 pay off: once the source tree is indexed
+> (`source_type="code"`), the same FTS will surface exact identifiers/paths the
+> vector index alone ranks poorly.
 
 ## Phase 2 — Native code corpus (conditional)
 

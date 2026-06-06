@@ -460,6 +460,27 @@ def embed_pending(
     )
 
 
+def _rrf_fuse(
+    result_lists: list[list[Any]], top_k: int, *, k: int = 60
+) -> list[Any]:
+    """Reciprocal-rank fusion of ranked row lists, keyed on ``doc_id``.
+
+    Rank-based, so the vector (distance) and lexical (bm25) scales never have to
+    be compared. Dedupe by doc_id; when a doc is in both lists, keep the row that
+    carries a ``distance`` (the vector hit) so a similarity score can be shown.
+    """
+    scores: dict[Any, float] = {}
+    rowmap: dict[Any, Any] = {}
+    for rows in result_lists:
+        for rank, row in enumerate(rows):
+            doc_id = row["doc_id"]
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+            if doc_id not in rowmap or row["distance"] is not None:
+                rowmap[doc_id] = row
+    ordered = sorted(scores, key=lambda d: -scores[d])
+    return [rowmap[d] for d in ordered[:top_k]]
+
+
 def query(
     database_path: Path,
     query_text: str,
@@ -470,6 +491,7 @@ def query(
     updated_after: str | None = None,
     repo: str | None = None,
     embed_texts: EmbedTexts | None = None,
+    hybrid: bool = True,
 ) -> list[dict[str, Any]]:
     """Semantic search across the unified semantic index.
 
@@ -477,21 +499,36 @@ def query(
         updated_after: ISO-8601 string (e.g. ``"2026-05-01"``); exclude docs
                        updated before this date/time.
         repo: Restrict github results to one repo (``owner/name``).
+        hybrid: Fuse the vector (ANN) ranking with an FTS5 lexical ranking via
+                RRF — better recall on exact identifiers/paths/config keys. Set
+                False for pure ANN (also the automatic fallback when FTS5 is
+                unavailable or the query has no lexical terms).
     """
     selected_sources = _normalize_sources(source_filter)
     embed_fn = embed_texts or _default_embed_texts
     query_vec = _vec_to_bytes(embed_fn([query_text], model_name)[0])
+    # Fetch a deeper pool per retriever so RRF has material to fuse.
+    pool = max(top_k * 4, 24) if hybrid else top_k
 
     with db_connection(database_path, ensure_semantic_schema) as conn:
-        rows = sem.search_semantic_documents(
-            conn, query_vec, top_k, selected_sources,
-            updated_after=updated_after,
-            repo=repo,
+        vec_rows = sem.search_semantic_documents(
+            conn, query_vec, pool, selected_sources,
+            updated_after=updated_after, repo=repo,
         )
+        fts_rows = (
+            sem.search_semantic_documents_fts(
+                conn, query_text, pool, selected_sources,
+                updated_after=updated_after, repo=repo,
+            )
+            if hybrid else []
+        )
+
+    rows = _rrf_fuse([vec_rows, fts_rows], top_k) if fts_rows else vec_rows[:top_k]
 
     results: list[dict[str, Any]] = []
     for row in rows:
         metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+        distance = row["distance"]
         results.append(
             {
                 "doc_id": row["doc_id"],
@@ -503,7 +540,7 @@ def query(
                 "body_preview": row["body_preview"],
                 "metadata": metadata,
                 "updated_at": row["updated_at"],
-                "similarity_score": round(1.0 - row["distance"], 4),
+                "similarity_score": round(1.0 - distance, 4) if distance is not None else None,
             }
         )
     return results
