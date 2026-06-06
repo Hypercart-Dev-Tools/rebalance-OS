@@ -171,6 +171,7 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         top_k: int = 10,
         updated_after: str | None = None,
         repo: str | None = None,
+        hybrid: bool = True,
     ) -> list[dict[str, Any]]:
         """
         Vector search across the unified semantic index (vault chunks +
@@ -200,4 +201,5 @@ def register(mcp: FastMCP, database_path: Path) -> None:
             source_filter=sources,
             updated_after=updated_after,
             repo=repo,
+            hybrid=hybrid,
         )

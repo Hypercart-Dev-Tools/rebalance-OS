@@ -73,7 +73,7 @@ def _normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
             continue
         if item == "all":
             return ("vault", "github", "email")
-        if item not in {"vault", "github", "calendar", "sleuth", "email"}:
+        if item not in {"vault", "github", "calendar", "sleuth", "email", "code"}:
             raise ValueError(f"Unsupported source type: {value}")
         if item not in normalized:
             normalized.append(item)
@@ -330,13 +330,67 @@ def sync_email_documents(conn: Any) -> dict[str, int]:
     }
 
 
+def sync_code_documents(conn: Any, repo_root: Path) -> dict[str, int]:
+    """Backfill semantic documents from the local source tree (source_type='code').
+
+    Unlike the other syncs, the source is the *filesystem*, not a DB table — the
+    code collector walks ``repo_root`` and AST-chunks Python modules. Change
+    detection is by content hash + file mtime, so unchanged files stay
+    ``unchanged`` across runs (no needless re-embed).
+    """
+    ensure_semantic_schema(conn)
+    from rebalance.ingest.code_collector import collect_code_chunks
+
+    chunks = collect_code_chunks(Path(repo_root))
+    inserted = updated = unchanged = 0
+    seen_source_pks: set[str] = set()
+    for ch in chunks:
+        source_pk = f"{ch.path}::{ch.symbol}"
+        seen_source_pks.add(source_pk)
+        _, state = upsert_document(
+            conn,
+            source_type="code",
+            source_table="code",
+            source_pk=source_pk,
+            doc_kind=ch.doc_kind,
+            title=f"{ch.path} :: {ch.symbol}",
+            body=ch.body,
+            metadata={
+                "path": ch.path,
+                "symbol": ch.symbol,
+                "parent_symbol": ch.parent_symbol,
+                "language": ch.language,
+                "start_line": ch.start_line,
+            },
+            created_at=ch.mtime_iso,
+            updated_at=ch.mtime_iso,
+        )
+        if state == "inserted":
+            inserted += 1
+        elif state == "updated":
+            updated += 1
+        else:
+            unchanged += 1
+
+    deleted = _delete_missing_docs(conn, source_type="code", seen_source_pks=seen_source_pks)
+    return {
+        "total": len(chunks),
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "deleted": deleted,
+    }
+
+
 def backfill_semantic_documents(
     database_path: Path,
     *,
     source_types: Iterable[str] | None = None,
     repo_full_name: str = "",
+    repo_root: Path | None = None,
 ) -> SemanticBackfillResult:
-    """Populate ``semantic_documents`` from existing source tables."""
+    """Populate ``semantic_documents`` from existing source tables (+ the source
+    tree when ``code`` is requested)."""
     start = time.monotonic()
     selected_sources = _normalize_sources(source_types)
     inserted = updated = unchanged = deleted = total = 0
@@ -363,6 +417,14 @@ def backfill_semantic_documents(
             from rebalance.ingest.db import ensure_email_schema
             ensure_email_schema(conn)
             result = sync_email_documents(conn)
+            inserted += result["inserted"]
+            updated += result["updated"]
+            unchanged += result["unchanged"]
+            deleted += result["deleted"]
+            total += result["total"]
+        if "code" in selected_sources:
+            root = repo_root or Path(__file__).resolve().parents[3]  # …/rebalance-OS/
+            result = sync_code_documents(conn, root)
             inserted += result["inserted"]
             updated += result["updated"]
             unchanged += result["unchanged"]
@@ -460,6 +522,27 @@ def embed_pending(
     )
 
 
+def _rrf_fuse(
+    result_lists: list[list[Any]], top_k: int, *, k: int = 60
+) -> list[Any]:
+    """Reciprocal-rank fusion of ranked row lists, keyed on ``doc_id``.
+
+    Rank-based, so the vector (distance) and lexical (bm25) scales never have to
+    be compared. Dedupe by doc_id; when a doc is in both lists, keep the row that
+    carries a ``distance`` (the vector hit) so a similarity score can be shown.
+    """
+    scores: dict[Any, float] = {}
+    rowmap: dict[Any, Any] = {}
+    for rows in result_lists:
+        for rank, row in enumerate(rows):
+            doc_id = row["doc_id"]
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+            if doc_id not in rowmap or row["distance"] is not None:
+                rowmap[doc_id] = row
+    ordered = sorted(scores, key=lambda d: -scores[d])
+    return [rowmap[d] for d in ordered[:top_k]]
+
+
 def query(
     database_path: Path,
     query_text: str,
@@ -470,6 +553,7 @@ def query(
     updated_after: str | None = None,
     repo: str | None = None,
     embed_texts: EmbedTexts | None = None,
+    hybrid: bool = True,
 ) -> list[dict[str, Any]]:
     """Semantic search across the unified semantic index.
 
@@ -477,21 +561,36 @@ def query(
         updated_after: ISO-8601 string (e.g. ``"2026-05-01"``); exclude docs
                        updated before this date/time.
         repo: Restrict github results to one repo (``owner/name``).
+        hybrid: Fuse the vector (ANN) ranking with an FTS5 lexical ranking via
+                RRF — better recall on exact identifiers/paths/config keys. Set
+                False for pure ANN (also the automatic fallback when FTS5 is
+                unavailable or the query has no lexical terms).
     """
     selected_sources = _normalize_sources(source_filter)
     embed_fn = embed_texts or _default_embed_texts
     query_vec = _vec_to_bytes(embed_fn([query_text], model_name)[0])
+    # Fetch a deeper pool per retriever so RRF has material to fuse.
+    pool = max(top_k * 4, 24) if hybrid else top_k
 
     with db_connection(database_path, ensure_semantic_schema) as conn:
-        rows = sem.search_semantic_documents(
-            conn, query_vec, top_k, selected_sources,
-            updated_after=updated_after,
-            repo=repo,
+        vec_rows = sem.search_semantic_documents(
+            conn, query_vec, pool, selected_sources,
+            updated_after=updated_after, repo=repo,
         )
+        fts_rows = (
+            sem.search_semantic_documents_fts(
+                conn, query_text, pool, selected_sources,
+                updated_after=updated_after, repo=repo,
+            )
+            if hybrid else []
+        )
+
+    rows = _rrf_fuse([vec_rows, fts_rows], top_k) if fts_rows else vec_rows[:top_k]
 
     results: list[dict[str, Any]] = []
     for row in rows:
         metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+        distance = row["distance"]
         results.append(
             {
                 "doc_id": row["doc_id"],
@@ -503,7 +602,7 @@ def query(
                 "body_preview": row["body_preview"],
                 "metadata": metadata,
                 "updated_at": row["updated_at"],
-                "similarity_score": round(1.0 - row["distance"], 4),
+                "similarity_score": round(1.0 - distance, 4) if distance is not None else None,
             }
         )
     return results

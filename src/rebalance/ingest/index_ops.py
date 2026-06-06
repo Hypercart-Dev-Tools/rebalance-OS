@@ -673,6 +673,33 @@ def _refresh_sleuth(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     return {"scope": "sleuth", "dry_run": False, **result.as_dict()}
 
 
+def _refresh_code(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Refresh the native code corpus (source_type='code') from the source tree.
+
+    FTS-only: the AST collector + backfill keep ``semantic_documents`` and the
+    trigger-synced FTS index current. Embedding code chunks (the vector half) is
+    intentionally skipped here — the hybrid FTS already answers code questions,
+    and embedding ~1k chunks every refresh would be slow for little gain.
+    """
+    if dry_run:
+        return {"scope": "code", "dry_run": True, "steps": ["semantic_backfill(source=['code'])"]}
+
+    from rebalance.ingest.semantic_index import backfill_semantic_documents
+
+    backfill = backfill_semantic_documents(database_path, source_types=["code"])
+    return {
+        "scope": "code",
+        "dry_run": False,
+        "semantic_backfill": {
+            "total": backfill.total_documents,
+            "inserted": backfill.inserted_count,
+            "updated": backfill.updated_count,
+            "deleted": backfill.deleted_count,
+            "elapsed_seconds": backfill.elapsed_seconds,
+        },
+    }
+
+
 def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     from rebalance.ingest.config import get_gmail_ingest_method
 
@@ -1002,6 +1029,10 @@ def _email_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_email(db_path, dry_run=opts["dry_run"])
 
 
+def _code_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_code(db_path, dry_run=opts["dry_run"])
+
+
 def _semantic_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_semantic_only(db_path, dry_run=opts["dry_run"])
 
@@ -1072,5 +1103,6 @@ register_collector(Collector("github", _github_adapter, requires=("github_token"
 register_collector(Collector("calendar", _calendar_adapter))
 register_collector(Collector("sleuth", _sleuth_adapter))
 register_collector(Collector("email", _email_adapter))
+register_collector(Collector("code", _code_adapter))
 register_collector(Collector("semantic", _semantic_adapter))
 register_collector(Collector("sync", _sync_adapter))

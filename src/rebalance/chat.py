@@ -41,9 +41,23 @@ def _citation_from_semantic(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _default_work_query(database_path: Path, query: str, top_k: int) -> list[dict[str, Any]]:
+WORK_SOURCES = ("vault", "github", "email")
+
+
+def _semantic_sources_for_scope(scope: str) -> list[str]:
+    """Which native semantic_index source_types to query for a scope."""
+    if scope == "work":
+        return list(WORK_SOURCES)
+    if scope == "code":
+        return ["code"]
+    return [*WORK_SOURCES, "code"]  # all
+
+
+def _default_semantic_query(
+    database_path: Path, query: str, top_k: int, sources: list[str]
+) -> list[dict[str, Any]]:
     from rebalance.ingest.semantic_index import query as _q
-    return _q(database_path, query, top_k=top_k)
+    return _q(database_path, query, top_k=top_k, source_filter=sources)
 
 
 # ---------------------------------------------------------------------------
@@ -126,16 +140,20 @@ def chat_with_data(
     scope: str = "all",
     top_k: int = 8,
     skip_synthesis: bool = True,
-    work_query_fn: Callable[[Path, str, int], list[dict[str, Any]]] | None = None,
+    work_query_fn: Callable[[Path, str, int, list[str]], list[dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
     """Retrieve citations for *query* across the requested *scope*.
+
+    Scope selects native semantic_index sources — ``work`` (vault/github/email),
+    ``code`` (the indexed source tree), ``all`` (both) — and adds the federated
+    ask_self code/doc index for ``code``/``all`` when available.
 
     Returns a JSON-able dict:
         {query, scope, citations: [{source,title,path,preview,score,kind}],
          used_sources: [...], elapsed_ms, answer}
 
     ``answer`` is always None while ``skip_synthesis`` is True (Phase 0).
-    *work_query_fn* is an injection point for tests so they need no embed model.
+    *work_query_fn(db, query, top_k, sources)* is an injection point for tests.
     """
     start = time.monotonic()
     scope = (scope or "all").strip().lower()
@@ -151,13 +169,13 @@ def chat_with_data(
     used: list[str] = []
     result_lists: list[list[dict[str, Any]]] = []
 
-    # Native work corpus (vault / github / email): work + all.
-    if scope in ("all", "work"):
-        qfn = work_query_fn or _default_work_query
-        work = [_citation_from_semantic(r) for r in qfn(database_path, text, top_k)]
-        if work:
-            result_lists.append(work)
-            used.append("semantic_index")
+    # Native semantic index — scope picks the source_types (work / code / both).
+    qfn = work_query_fn or _default_semantic_query
+    sources = _semantic_sources_for_scope(scope)
+    native = [_citation_from_semantic(r) for r in qfn(database_path, text, top_k, sources)]
+    if native:
+        result_lists.append(native)
+        used.append("semantic_index")
 
     # Federated code/docs corpus via ask_self: code + all (gated on availability).
     if scope in ("all", "code") and ask_self_available():
