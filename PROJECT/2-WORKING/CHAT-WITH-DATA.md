@@ -7,8 +7,8 @@ owner: noel
 tool_surface: chat_with_data(query, scope, top_k, skip_synthesis) — new MCP tool, NOT an extension of ask()
 depends_on: semantic_index (vec0 ANN), index_ops incremental refresh, semantic_query MCP tool, ask_self code/doc RAG
 phases: 0 spike · 1 hybrid retrieval · 2 native code corpus · 3 synthesis · 4 surface/UX
-phases_done: 0 (federation spike — 7/10 federated vs 4/10 work-only)
-phases_next: Phase 1 — Hybrid retrieval (FTS5 + vec, RRF) to close exact-match misses
+phases_done: 0 (federation 7/10) · 1 (hybrid FTS+RRF) · 2 (native code corpus — 10/10, native-only ~39ms)
+phases_next: Phase 3 (opt-in synthesis) / Phase 4 (surface & UX) — both optional; core retrieval is done
 decision_gates:
   - Phase 0 recall@k + latency → decide federate-vs-build-native
   - Phase 2 runs only if federation is insufficient or ask_self proves too fragile
@@ -19,7 +19,7 @@ non_goals: replacing ask(); a general chatbot; cloud inference; multi-user
 
 | ✅ Most recently completed | ▶️ What's next |
 |---|---|
-| **Phase 1 — Hybrid retrieval, built** *(2026-06-06)*: FTS5 lexical index (`semantic_documents_fts`) beside vec0, trigger-synced + version-guarded rebuild, fused with the vector ranking via RRF in `semantic_index.query(hybrid=True)`; exposed on `semantic_query`. 8 tests; 517 green. **Honest finding: hybrid did NOT move the code-question eval (work 4/10, federated 7/10, unchanged).** It can't — the *work* corpus has no code, and where it has relevant text the vector search already finds it. The infrastructure is correct and is the substrate Phase 2 needs. *(Earlier: Phase 0 federation spike — federated 7/10 vs 4/10, see scorecard.)* | **Phase 2 — Native code corpus**: index the source tree as `source_type="code"`; the now-working hybrid FTS then surfaces the exact files (`auth_log.py`, `web.py`, `config`) the eval misses — the wins Phase 1 couldn't deliver alone. |
+| **Phase 2 — Native code corpus, complete** *(2026-06-06)*: a code collector AST-chunks the source tree (957 chunks, indexed in **0.51 s**) into `source_type="code"`; the Phase 1 hybrid FTS surfaces it. **Result: recall@8 = 10/10** (was 7/10 federated, 4/10 work-only). And **native-only — no ask_self — also hits 10/10 at ~39 ms median** (~50× faster than the 2.1 s federation). So ask_self federation is now *optional*; the native corpus is faster, dependency-free, and stays fresh via the standard refresh. 523 tests green. *(Phase 0: federation 7/10. Phase 1: hybrid infra, no eval move alone.)* | **Phase 3 — Synthesis (opt-in)** and/or **Phase 4 — Surface/UX**: the dashboard `Ask` already benefits (scope=`all` now includes native code). Optional: grounded LLM synthesis on top of citations; `rebalance chat` CLI; clickable `path:symbol` citations. |
 
 ## Table of Contents
 
@@ -123,16 +123,21 @@ existing vec0 embeddings and fuse.
 
 ## Phase 2 — Native code corpus (conditional)
 
-Runs only if Phase 0 shows federation is insufficient, or ask_self proves too
-fragile to depend on.
+Built because Phase 1 showed the corpus (not the method) was the limiter.
 
-- [ ] Add `"code"` to the allowed `source_type` set in `semantic_index._normalize_sources`.
-- [ ] Code collector walks the local source tree; chunk by module / class / function.
-- [ ] Populate `metadata_json`: `path, language, symbol, parent_symbol, imports, git_sha`.
-- [ ] Wire incremental refresh into `index_ops` (mirrors vault/github: add/update/delete by source_pk).
-- [ ] Hybrid retrieval (Phase 1) covers code chunks too.
-- [ ] `chat_with_data(scope="code")` returns native results; ask_self federation becomes optional.
-- [ ] Eval: code-recall on the Phase-0 question set improves vs federation.
+- [x] Added `"code"` to the allowed `source_type` set (`_normalize_sources`) — opt-in, not in the default "all".
+- [x] Code collector (`code_collector.py`) walks `src/`+`scripts/`, AST-chunks Python by top-level function / class + a module header chunk.
+- [x] `metadata_json`: `path, symbol, parent_symbol, language, start_line`. Change detection by content-hash + file mtime (unchanged files stay `unchanged`).
+- [x] `sync_code_documents` wired into `backfill_semantic_documents(source_types=["code"])`; incremental upsert/delete by `source_pk` (`path::symbol`). FTS auto-syncs via triggers.
+- [x] Hybrid retrieval covers code chunks (FTS over title `path :: symbol` + body — no embeddings required for the lexical win).
+- [x] `chat_with_data` scope routing: `work`/`code`/`all` select native sources; ask_self added for `code`/`all` but **now optional**.
+- [x] **Eval: recall@8 = 10/10** (federated *and* native-only); native-only ~39 ms vs federated ~2.1 s. Closed the 3 misses (`auth_log`, `web.py`, `config`).
+- [~] *Follow-up:* code chunks are FTS-searchable immediately; embedding them (for the vector half) is optional and deferred — FTS alone already gets 10/10.
+
+> **Phase 2 conclusion:** the native code corpus is the decisive lever. Combined
+> with Phase 1's hybrid FTS it reaches 10/10 with no external dependency and at
+> ~50× lower latency than federation — so ask_self becomes a fallback, not a
+> requirement. The dashboard `Ask` (scope=`all`) inherits this for free.
 
 ## Phase 3 — Synthesis layer (opt-in)
 

@@ -6,7 +6,7 @@ from pathlib import Path
 from rebalance.chat import _rrf_merge, chat_with_data
 
 
-def _fake_rows(_db, _query, top_k):
+def _fake_rows(_db, _query, top_k, _sources=None):
     rows = [
         {"source_type": "github", "title": "PR #12", "doc_kind": "pr",
          "body_preview": "fix the thing", "source_pk": "owner/repo#12",
@@ -46,7 +46,7 @@ class ChatWithDataTests(unittest.TestCase):
         self.assertEqual(out["scope"], "all")
 
     def test_preview_truncated(self) -> None:
-        def big(_db, _q, k):
+        def big(_db, _q, k, _sources=None):
             return [{"source_type": "vault", "title": "t", "body_preview": "x" * 500,
                      "source_pk": "p", "metadata": {}, "similarity_score": 0.5}]
         out = chat_with_data(self.DB, "q", work_query_fn=big)

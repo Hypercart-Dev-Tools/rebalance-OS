@@ -147,10 +147,13 @@ def delete_semantic_documents(
     conn: sqlite3.Connection, doc_ids: list[int]
 ) -> None:
     """Delete ``semantic_embeddings`` + ``semantic_documents`` rows for *doc_ids*."""
-    conn.executemany(
-        "DELETE FROM semantic_embeddings WHERE rowid = ?",
-        [(doc_id,) for doc_id in doc_ids],
-    )
+    try:
+        conn.executemany(
+            "DELETE FROM semantic_embeddings WHERE rowid = ?",
+            [(doc_id,) for doc_id in doc_ids],
+        )
+    except sqlite3.OperationalError:
+        pass  # vec0 unavailable (FTS-only / no sqlite-vec) — no embeddings to clear
     conn.executemany(
         "DELETE FROM semantic_documents WHERE id = ?",
         [(doc_id,) for doc_id in doc_ids],

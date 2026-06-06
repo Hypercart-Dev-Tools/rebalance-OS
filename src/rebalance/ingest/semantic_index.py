@@ -73,7 +73,7 @@ def _normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
             continue
         if item == "all":
             return ("vault", "github", "email")
-        if item not in {"vault", "github", "calendar", "sleuth", "email"}:
+        if item not in {"vault", "github", "calendar", "sleuth", "email", "code"}:
             raise ValueError(f"Unsupported source type: {value}")
         if item not in normalized:
             normalized.append(item)
@@ -330,13 +330,67 @@ def sync_email_documents(conn: Any) -> dict[str, int]:
     }
 
 
+def sync_code_documents(conn: Any, repo_root: Path) -> dict[str, int]:
+    """Backfill semantic documents from the local source tree (source_type='code').
+
+    Unlike the other syncs, the source is the *filesystem*, not a DB table — the
+    code collector walks ``repo_root`` and AST-chunks Python modules. Change
+    detection is by content hash + file mtime, so unchanged files stay
+    ``unchanged`` across runs (no needless re-embed).
+    """
+    ensure_semantic_schema(conn)
+    from rebalance.ingest.code_collector import collect_code_chunks
+
+    chunks = collect_code_chunks(Path(repo_root))
+    inserted = updated = unchanged = 0
+    seen_source_pks: set[str] = set()
+    for ch in chunks:
+        source_pk = f"{ch.path}::{ch.symbol}"
+        seen_source_pks.add(source_pk)
+        _, state = upsert_document(
+            conn,
+            source_type="code",
+            source_table="code",
+            source_pk=source_pk,
+            doc_kind=ch.doc_kind,
+            title=f"{ch.path} :: {ch.symbol}",
+            body=ch.body,
+            metadata={
+                "path": ch.path,
+                "symbol": ch.symbol,
+                "parent_symbol": ch.parent_symbol,
+                "language": ch.language,
+                "start_line": ch.start_line,
+            },
+            created_at=ch.mtime_iso,
+            updated_at=ch.mtime_iso,
+        )
+        if state == "inserted":
+            inserted += 1
+        elif state == "updated":
+            updated += 1
+        else:
+            unchanged += 1
+
+    deleted = _delete_missing_docs(conn, source_type="code", seen_source_pks=seen_source_pks)
+    return {
+        "total": len(chunks),
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "deleted": deleted,
+    }
+
+
 def backfill_semantic_documents(
     database_path: Path,
     *,
     source_types: Iterable[str] | None = None,
     repo_full_name: str = "",
+    repo_root: Path | None = None,
 ) -> SemanticBackfillResult:
-    """Populate ``semantic_documents`` from existing source tables."""
+    """Populate ``semantic_documents`` from existing source tables (+ the source
+    tree when ``code`` is requested)."""
     start = time.monotonic()
     selected_sources = _normalize_sources(source_types)
     inserted = updated = unchanged = deleted = total = 0
@@ -363,6 +417,14 @@ def backfill_semantic_documents(
             from rebalance.ingest.db import ensure_email_schema
             ensure_email_schema(conn)
             result = sync_email_documents(conn)
+            inserted += result["inserted"]
+            updated += result["updated"]
+            unchanged += result["unchanged"]
+            deleted += result["deleted"]
+            total += result["total"]
+        if "code" in selected_sources:
+            root = repo_root or Path(__file__).resolve().parents[3]  # …/rebalance-OS/
+            result = sync_code_documents(conn, root)
             inserted += result["inserted"]
             updated += result["updated"]
             unchanged += result["unchanged"]

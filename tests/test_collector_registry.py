@@ -32,7 +32,7 @@ class CollectorRegistryTests(unittest.TestCase):
         names = _all_scope_names()
         self.assertEqual(
             sorted(names),
-            sorted(["vault", "github", "calendar", "sleuth", "email", "semantic", "sync"]),
+            sorted(["vault", "github", "calendar", "sleuth", "email", "code", "semantic", "sync"]),
         )
 
     def test_register_new_collector_then_unregister(self) -> None:
