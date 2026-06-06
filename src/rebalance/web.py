@@ -19,9 +19,14 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, PlainTextResponse
+from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
 
 from rebalance.ingest.auth_log import read_log, _log_path
+
+# How long a persisted Focus 5 roster stays authoritative before a visit lazily
+# recomputes it. Membership is snapshot-stable for this window; working-tree
+# health is always re-probed live on load regardless.
+FOCUS5_ROSTER_TTL_SECONDS = 24 * 3600
 
 app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
 
@@ -104,6 +109,15 @@ main.wide { max-width: 1480px; }
 .f5-act li { font-size: 12px; line-height: 1.35; }
 .f5-act .when { color: #9aa0a6; font-size: 10px; }
 .f5-meta { font-size: 12px; color: #5f6368; margin-bottom: 16px; }
+.f5-live { color: #34a853; }
+.f5-stale { color: #b06000; font-weight: 700; }
+.f5-refresh { font-size: 13px; font-weight: 600; color: #1a73e8; text-decoration: none;
+              margin-left: 10px; }
+.f5-refresh:hover { text-decoration: underline; }
+.f5-warn { background: #fef7e0; border: 1px solid #f9e3a0; color: #5f4b00;
+           border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
+           line-height: 1.5; }
+.f5-warn b { color: #3c2f00; }
 """
 
 
@@ -164,7 +178,10 @@ def _rel_time(iso: str | None) -> str:
 
 
 def _f5_health(card: dict[str, Any]) -> str:
-    """Working-tree health: dirty/clean dot + counts + branch + ahead/behind drift."""
+    """Working-tree health (re-probed live): dot + counts + branch + drift."""
+    if not card.get("health_available", True):
+        return ("<div class='f5-sec'><h4>Tree health · live</h4>"
+                "<span class='f5-muted'>⚠ unavailable (repo not readable)</span></div>")
     if card["is_dirty"]:
         dot, parts = "#ea4335", []
         if card["modified_count"]:
@@ -185,6 +202,34 @@ def _f5_health(card: dict[str, Any]) -> str:
         f"<span class='f5-dot' style='background:{dot}'></span>"
         f"<span>{state}</span><br>"
         f"<span class='f5-branch'>{branch}</span>{drift}</div>"
+    )
+
+
+def _f5_warning_strip(data: dict[str, Any]) -> str:
+    """Hidden-attention strip: repos outside the top 5 that still need care.
+
+    Sourced from the cached signals (not a live sweep), so it carries the roster
+    snapshot's freshness, made explicit in the label.
+    """
+    warns = data.get("off_roster_warnings") or []
+    if not warns:
+        return ""
+    shown, items = warns[:8], []
+    for w in shown:
+        bits = []
+        if w.get("modified_count"):
+            bits.append(f"{w['modified_count']} modified")
+        if w.get("untracked_count"):
+            bits.append(f"{w['untracked_count']} untracked")
+        if w.get("ahead"):
+            bits.append(f"{w['ahead']} unpushed")
+        items.append(f"<b>{html.escape(w['repo_name'])}</b> ({', '.join(bits) or 'attention'})")
+    more = f" · +{len(warns) - len(shown)} more" if len(warns) > len(shown) else ""
+    age = _rel_time(data.get("computed_at"))
+    return (
+        f"<div class='f5-warn'>⚠ <b>{len(warns)}</b> repo(s) outside the top 5 need "
+        f"attention <span class='f5-muted'>(as of roster computed {age})</span>: "
+        f"{' · '.join(items)}{more}</div>"
     )
 
 
@@ -236,28 +281,46 @@ def _f5_card(card: dict[str, Any]) -> str:
 
 def _focus5_body(data: dict[str, Any]) -> str:
     """Render the Focus 5 page body from a summarize_focus5() dict (pure)."""
+    refresh_btn = "<a class='f5-refresh' href='/focus-5?refresh=1' title='Re-rank now'>↻ Refresh</a>"
     roster = data.get("roster") or []
     if not roster:
         return (
-            "<h2>🎯 Focus 5</h2>"
+            f"<h2>🎯 Focus 5 {refresh_btn}</h2>"
             "<div class='empty'>No active repos found yet. The roster builds from "
             "your local git activity — make a commit or leave uncommitted work in a "
-            "repo under your dev folders, then reload. "
-            "You can also run <code>rebalance refresh-index</code> after a sync.</div>"
+            "repo under your dev folders, then reload.</div>"
         )
     mode = html.escape(data.get("ranking_mode") or "")
     computed = _rel_time(data.get("computed_at"))
+    # Roster membership is a snapshot (≤24h); tree health is re-probed live. Say
+    # so, and flag the rare stale case (e.g. a refresh that failed) explicitly.
+    stale = "<span class='f5-stale'>⚠ stale</span> " if _roster_stale(data.get("computed_at")) else ""
     meta = (
-        f"<div class='f5-meta'>Roster computed {computed} · ranked by "
-        f"<b>{mode}</b> · {data['summary']['discovered']} repos discovered</div>"
+        f"<div class='f5-meta'>{stale}Roster computed <b>{computed}</b> · ranked by "
+        f"<b>{mode}</b> · {data['summary']['discovered']} repos discovered · "
+        f"<span class='f5-live'>● tree health checked live</span></div>"
     )
+    strip = _f5_warning_strip(data)
     cards = "".join(_f5_card(c) for c in roster)
-    return f"<h2>🎯 Focus 5</h2>{meta}<div class='f5-grid'>{cards}</div>"
+    return f"<h2>🎯 Focus 5 {refresh_btn}</h2>{meta}{strip}<div class='f5-grid'>{cards}</div>"
 
 
-@app.get("/focus-5", response_class=HTMLResponse)
-def focus5_page() -> HTMLResponse:
-    from rebalance.ingest.focus5_scan import summarize_focus5, sync_focus5
+def _roster_stale(computed_at: str | None) -> bool:
+    """True if the roster snapshot is missing or older than the TTL."""
+    if not computed_at:
+        return True
+    try:
+        ts = datetime.fromisoformat(computed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return True
+    return (datetime.now(timezone.utc) - ts).total_seconds() > FOCUS5_ROSTER_TTL_SECONDS
+
+
+@app.get("/focus-5")
+def focus5_page(refresh: bool = False):
+    from rebalance.ingest.focus5_scan import (
+        get_roster_meta, summarize_focus5, sync_focus5,
+    )
     from rebalance.paths import DatabaseNotFoundError, resolve_database_path
 
     try:
@@ -267,16 +330,19 @@ def focus5_page() -> HTMLResponse:
                 "Run <code>rebalance refresh-index</code> first.</div>")
         return _page("Focus 5", body, wide=True)
 
-    data = summarize_focus5(db)
-    # Lazy bootstrap: first visit has an empty roster, so build it once on load.
-    # (The full 24h-TTL recompute + manual refresh button land in Phase 3.)
-    if not data["roster"]:
+    # Recompute the roster when forced, never built, or past its 24h TTL. The
+    # meta check is a cheap DB read so we don't pay the live-probe render twice.
+    meta = get_roster_meta(db)
+    if refresh or not meta["roster_size"] or _roster_stale(meta["computed_at"]):
         try:
             sync_focus5(db)
-            data = summarize_focus5(db)
         except Exception:  # noqa: BLE001 — a scan failure must not 500 the page
             pass
+        if refresh:
+            # Post/redirect/get: drop ?refresh so a browser reload doesn't re-scan.
+            return RedirectResponse("/focus-5", status_code=303)
 
+    data = summarize_focus5(db)  # roster from snapshot; health re-probed live
     return _page("Focus 5", _focus5_body(data), wide=True)
 
 

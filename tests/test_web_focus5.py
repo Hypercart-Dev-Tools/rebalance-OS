@@ -7,8 +7,13 @@ dict and assert the rendered HTML, with no DB or git. The full stack (collector
 from __future__ import annotations
 
 import unittest
+from datetime import datetime, timedelta, timezone
 
-from rebalance.web import _focus5_body, _rel_time
+from rebalance.web import _focus5_body, _rel_time, _roster_stale
+
+
+def _now_iso(**delta) -> str:
+    return (datetime.now(timezone.utc) - timedelta(**delta)).isoformat()
 
 
 def _card(**over) -> dict:
@@ -22,6 +27,7 @@ def _card(**over) -> dict:
         remote_url="https://github.com/Org/rebalance-OS.git",
         repo_full_name="Org/rebalance-OS",
         newest_pr=None, recent_activity=[],
+        health_available=True, health_probed_at=_now_iso(minutes=0),
     )
     base.update(over)
     return base
@@ -30,8 +36,9 @@ def _card(**over) -> dict:
 def _data(roster, **over) -> dict:
     d = dict(
         roster=roster, off_roster_warnings=[],
-        computed_at="2026-06-05T00:00:00+00:00", ranking_mode="dirty_first",
-        summary={"discovered": 21, "roster_size": len(roster), "off_roster_attention": 0},
+        computed_at=_now_iso(hours=1), ranking_mode="dirty_first",
+        summary={"discovered": 21, "roster_size": len(roster),
+                 "off_roster_attention": len(over.get("off_roster_warnings", []))},
     )
     d.update(over)
     return d
@@ -101,6 +108,56 @@ class FocusBodyTests(unittest.TestCase):
         body = _focus5_body(_data([card]))
         self.assertIn("clean", body)
         self.assertIn("your commit 1h ago", body)
+
+    def test_has_refresh_button_and_live_marker(self) -> None:
+        body = _focus5_body(_data([_card()]))
+        self.assertIn("/focus-5?refresh=1", body)          # manual refresh control
+        self.assertIn("tree health checked live", body)    # freshness marker
+
+    def test_fresh_roster_not_flagged_stale(self) -> None:
+        body = _focus5_body(_data([_card()], computed_at=_now_iso(hours=2)))
+        self.assertNotIn("⚠ stale", body)
+
+    def test_old_roster_flagged_stale(self) -> None:
+        body = _focus5_body(_data([_card()], computed_at=_now_iso(days=2)))
+        self.assertIn("⚠ stale", body)
+
+    def test_warning_strip_lists_off_roster_repos(self) -> None:
+        warns = [
+            {"repo_name": "side-proj", "local_path": "/x/side-proj", "repo_full_name": None,
+             "branch": "main", "ahead": 3, "modified_count": 0, "untracked_count": 0,
+             "is_dirty": False, "probed_at": _now_iso(hours=1)},
+            {"repo_name": "scratch", "local_path": "/x/scratch", "repo_full_name": None,
+             "branch": "main", "ahead": 0, "modified_count": 2, "untracked_count": 1,
+             "is_dirty": True, "probed_at": _now_iso(hours=1)},
+        ]
+        body = _focus5_body(_data([_card()], off_roster_warnings=warns))
+        self.assertIn("f5-warn", body)
+        self.assertIn("side-proj", body)
+        self.assertIn("3 unpushed", body)
+        self.assertIn("scratch", body)
+        self.assertIn("2 modified", body)
+
+    def test_no_warning_strip_when_all_clear(self) -> None:
+        body = _focus5_body(_data([_card()]))  # no off-roster warnings
+        self.assertNotIn("f5-warn", body)
+
+    def test_unavailable_health_renders_safely(self) -> None:
+        card = _card(health_available=False)
+        body = _focus5_body(_data([card]))
+        self.assertIn("unavailable", body)
+
+
+class RosterStaleTests(unittest.TestCase):
+    def test_missing_is_stale(self) -> None:
+        self.assertTrue(_roster_stale(None))
+        self.assertTrue(_roster_stale("not-a-date"))
+
+    def test_recent_is_fresh(self) -> None:
+        self.assertFalse(_roster_stale(_now_iso(hours=1)))
+
+    def test_old_is_stale(self) -> None:
+        self.assertTrue(_roster_stale(_now_iso(days=2)))
 
 
 class RelTimeTests(unittest.TestCase):

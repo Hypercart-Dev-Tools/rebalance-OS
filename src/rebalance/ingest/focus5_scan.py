@@ -494,6 +494,56 @@ def recent_activity(local_path: str, *, limit: int = 3) -> list[dict[str, Any]]:
     return items
 
 
+_LIVE_HEALTH_FIELDS = (
+    "branch", "upstream", "has_upstream", "ahead", "behind",
+    "modified_count", "untracked_count", "is_dirty",
+)
+
+
+def live_health(local_path: str) -> dict[str, Any]:
+    """Re-probe just the working-tree health for one repo (single git call).
+
+    This is the Phase 3 freshness path: roster *membership* may be a day old,
+    but "did I forget to commit or push?" must be answered against the tree's
+    current state. Returns the health fields plus ``health_probed_at``; a repo
+    that can't be read yields ``health_available=False`` (never raises).
+    """
+    probed_at = datetime.now(timezone.utc).isoformat()
+    out = _git(Path(local_path), "status", "--porcelain=v2", "--branch")
+    if out is None:
+        return {"health_available": False, "health_probed_at": probed_at}
+    h = _parse_status(out)
+    h["health_available"] = True
+    h["health_probed_at"] = probed_at
+    return h
+
+
+def get_roster_meta(database_path: Path, *, device_id: str | None = None) -> dict[str, Any]:
+    """Cheap roster freshness check (no git, no enrichment): when + how many.
+
+    Lets the web route decide whether to lazily recompute on a stale TTL without
+    paying for the full live-probe render first.
+    """
+    dev = device_id or get_device_id()
+    try:
+        with db_connection(database_path) as conn:
+            row = conn.execute(
+                "SELECT computed_at, ranking_mode FROM focus5_roster "
+                "WHERE device_id=? ORDER BY position LIMIT 1",
+                (dev,),
+            ).fetchone()
+            n = conn.execute(
+                "SELECT COUNT(*) FROM focus5_roster WHERE device_id=?", (dev,)
+            ).fetchone()[0]
+    except Exception:  # noqa: BLE001 — table absent on a brand-new DB
+        return {"computed_at": None, "ranking_mode": None, "roster_size": 0}
+    return {
+        "computed_at": row["computed_at"] if row else None,
+        "ranking_mode": row["ranking_mode"] if row else None,
+        "roster_size": n,
+    }
+
+
 def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
     """Newest remote PR (highest number) for *repo_full_name*, or None.
 
@@ -522,18 +572,24 @@ def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
 
 
 def summarize_focus5(
-    database_path: Path, *, device_id: str | None = None, with_activity: bool = True,
+    database_path: Path, *, device_id: str | None = None,
+    with_activity: bool = True, with_live_health: bool = True,
 ) -> dict[str, Any]:
     """Return the roster cards, off-roster warnings, and snapshot metadata.
 
     This is the single read contract for the web view, and the one place that
-    owns the repo-card shape. Each roster card carries local signals (the source
-    of truth), a ``vscode_url`` open action, a ``newest_pr`` enrichment that is
-    None whenever the GitHub corpus can't supply it, and the last 3 local
-    commits as ``recent_activity``.
+    owns the repo-card shape. Each roster card carries local signals, a
+    ``vscode_url`` open action, a ``newest_pr`` enrichment (None when the GitHub
+    corpus can't supply it), and the last 3 local commits as ``recent_activity``.
 
-    ``recent_activity`` is a live ``git log`` read per roster repo (top-5 only,
-    so bounded). Pass ``with_activity=False`` to skip it for a pure DB read.
+    Freshness split (Phase 3): roster *membership* comes from the persisted
+    snapshot, but each card's working-tree **health is re-probed live** here
+    (``with_live_health``) and stamped with ``health_probed_at`` — so commit/push
+    reminders reflect the tree right now, not the last sync. Off-roster warnings
+    stay cached (we never live-sweep the whole machine per request).
+
+    Both ``with_activity`` and ``with_live_health`` are bounded to the top-5 and
+    can be disabled for a pure DB read.
     """
     dev = device_id or get_device_id()
     empty = {
@@ -561,6 +617,18 @@ def summarize_focus5(
                 card["recent_activity"] = (
                     recent_activity(card["local_path"]) if with_activity else []
                 )
+                # Overlay live working-tree health on top of the stored snapshot
+                # so "did I forget to commit/push?" is answered against now.
+                if with_live_health:
+                    lh = live_health(card["local_path"])
+                    if lh.get("health_available"):
+                        for k in _LIVE_HEALTH_FIELDS:
+                            card[k] = lh[k]
+                    card["health_available"] = lh.get("health_available", True)
+                    card["health_probed_at"] = lh["health_probed_at"]
+                else:
+                    card["health_available"] = True
+                    card["health_probed_at"] = card.get("probed_at")
                 roster.append(card)
 
             roster_paths = {c["local_path"] for c in roster}

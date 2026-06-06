@@ -14,13 +14,17 @@ import sqlite3
 import subprocess
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from unittest import mock
 
 from rebalance.ingest.focus5_scan import (
     RepoSignals,
     _parse_status,
+    get_roster_meta,
     iter_git_repos,
+    live_health,
     probe_repo_signals,
     rank_repos,
     recent_activity,
@@ -363,6 +367,25 @@ class SyncSummarizeTests(unittest.TestCase):
             card = summarize_focus5(db, device_id="dev", with_activity=False)["roster"][0]
             self.assertEqual(card["recent_activity"], [])
 
+    def test_live_health_overlay_reflects_post_sync_changes(self) -> None:
+        # Sync clean, then dirty the tree. The persisted snapshot says clean, but
+        # the live overlay must report the *current* dirty state + a fresh stamp.
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            repo = _make_git_repo(root, "wip")  # committed, clean
+            db = _db(Path(tmp))
+            sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first")
+
+            snap = summarize_focus5(db, device_id="dev", with_live_health=False)["roster"][0]
+            self.assertFalse(snap["is_dirty"])  # snapshot was clean
+
+            (repo / "file.txt").write_text("changed now", encoding="utf-8")
+            live = summarize_focus5(db, device_id="dev", with_live_health=True)["roster"][0]
+            self.assertTrue(live["is_dirty"])            # overlay sees the new edit
+            self.assertTrue(live["health_available"])
+            self.assertIsNotNone(live["health_probed_at"])
+
 
 class ReadHelperTests(unittest.TestCase):
     def test_recent_activity_orders_newest_first(self) -> None:
@@ -387,6 +410,40 @@ class ReadHelperTests(unittest.TestCase):
             vscode_url("/Users/me/My Repos/app"),
             "vscode://file/Users/me/My%20Repos/app",
         )
+
+    def test_live_health_reads_current_tree(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(Path(tmp), "r", dirty=True, untracked=True)
+            h = live_health(str(repo))
+            self.assertTrue(h["health_available"])
+            self.assertTrue(h["is_dirty"])
+            self.assertEqual(h["branch"], "main")
+            self.assertIsNotNone(h["health_probed_at"])
+
+    def test_live_health_missing_repo_is_unavailable(self) -> None:
+        h = live_health("/no/such/repo")
+        self.assertFalse(h["health_available"])
+        self.assertIsNotNone(h["health_probed_at"])  # still stamped
+
+
+class RosterMetaTests(unittest.TestCase):
+    def test_empty_db_meta(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            meta = get_roster_meta(_db(Path(tmp)), device_id="dev")
+            self.assertEqual(meta["roster_size"], 0)
+            self.assertIsNone(meta["computed_at"])
+
+    def test_meta_after_sync(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            _make_git_repo(root, "wip", dirty=True)
+            db = _db(Path(tmp))
+            sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first")
+            meta = get_roster_meta(db, device_id="dev")
+            self.assertEqual(meta["roster_size"], 1)
+            self.assertEqual(meta["ranking_mode"], "dirty_first")
+            self.assertIsNotNone(meta["computed_at"])
 
 
 class WebRouteTests(unittest.TestCase):
@@ -414,6 +471,57 @@ class WebRouteTests(unittest.TestCase):
             self.assertIn("Focus 5", resp.text)
             self.assertIn("vscode://file", resp.text)
             self.assertIn("f5-grid", resp.text)
+
+    def _seed(self, tmp: Path):
+        """Seed a fresh single-repo roster; return (db, device_id)."""
+        from rebalance.ingest.sync_snapshot import get_device_id
+        root = tmp / "repos"
+        root.mkdir()
+        _make_git_repo(root, "widget", dirty=True)
+        db = _db(tmp)
+        dev = get_device_id()
+        sync_focus5(db, roots=[root], device_id=dev, mode="dirty_first")
+        return db, dev
+
+    def _get(self, db: Path, url: str = "/focus-5", **kw):
+        from fastapi.testclient import TestClient
+        from rebalance.web import app
+        os.environ["REBALANCE_DB"] = str(db)
+        try:
+            return TestClient(app).get(url, **kw)
+        finally:
+            os.environ.pop("REBALANCE_DB", None)
+
+    def test_manual_refresh_recomputes_then_redirects(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            # Patch the recompute so the forced refresh doesn't scan the machine.
+            with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
+                resp = self._get(db, "/focus-5?refresh=1", follow_redirects=False)
+            self.assertEqual(resp.status_code, 303)          # post/redirect/get
+            self.assertEqual(resp.headers["location"], "/focus-5")
+            self.assertTrue(m.called)                        # recompute fired
+
+    def test_fresh_roster_skips_recompute(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))  # computed_at = just now
+            with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
+                resp = self._get(db)
+            self.assertEqual(resp.status_code, 200)
+            self.assertFalse(m.called)                       # within TTL → no scan
+
+    def test_stale_roster_triggers_recompute_on_visit(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, dev = self._seed(Path(tmp))
+            # Age the snapshot past the 24h TTL.
+            old = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
+            conn = sqlite3.connect(str(db))
+            conn.execute("UPDATE focus5_roster SET computed_at=? WHERE device_id=?", (old, dev))
+            conn.commit(); conn.close()
+            with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
+                resp = self._get(db)
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(m.called)                        # TTL expired → recompute
 
 
 if __name__ == "__main__":

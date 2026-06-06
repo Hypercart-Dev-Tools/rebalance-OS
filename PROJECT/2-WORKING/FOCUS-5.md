@@ -11,7 +11,7 @@ surfaces:
 
 | Most recently completed phase | What's next |
 |---|---|
-| Phase 1 (collector + swappable ranking) and Phase 2 (additive `/focus-5` web view) shipped and tested (PR #54). Ranking corrected to operator-authored + dirty/unpushed signals; default mode `dirty_first`. The page renders the 5-column grid with per-repo VS Code link, tree health, newest PR, and last 3 local commits; first load lazily bootstraps the roster. | Phase 3: 24h roster TTL + manual refresh control, live top-5 health re-probe on load with freshness markers, and the off-roster hidden-attention warning strip (data already cached in `focus5_repo_signals`). |
+| Phases 1–3 shipped and tested (PR #54). Phase 3 adds: 24h roster TTL with lazy recompute on visit, a manual refresh control (post/redirect/get), live top-5 tree-health re-probe on every load (separate from the snapshot, with `health_probed_at`), explicit freshness/stale markers, and the off-roster hidden-attention warning strip from the cached signals. The view is wired into the always-on pulse server (`:8767`) with a sidebar link. | Phase 4: collector/route test hardening (largely done — 52 tests), structured timing logs around the collector path, and final rollout notes. |
 
 ## Table of Contents
 
@@ -174,22 +174,24 @@ useful on first visit; full refresh semantics are Phase 3.
 
 Goal: Keep the focused view fresh without hiding risky repos.
 
-- [ ] Implement 24-hour automatic roster refresh:
-  observable result: the selected top 5 repos can roll forward based on device-local activity when the persisted roster TTL expires and the page is next visited, unless a scheduler-backed refresh is added explicitly.
-- [ ] Add manual refresh control:
-  observable result: user can force re-ranking and push inactive repos out of the grid immediately.
-- [ ] Surface roster snapshot metadata:
-  observable result: the page can explain when the current top-5 roster was computed and whether it came from lazy TTL refresh or manual refresh.
-- [ ] Allow the roster to admit newly active repos on refresh:
-  observable result: repos that become active after the current roster snapshot can enter the top 5 on manual refresh or TTL-based recompute.
-- [ ] Refresh local tree health on page load:
-  observable result: commit/push reminders are not stale for a full day.
-- [ ] Keep roster freshness and repo-health freshness separate in the UI:
-  observable result: user can tell whether the roster snapshot is older than the live git-health probe for a given repo.
-- [ ] Add hidden-attention warning strip above the grid:
-  observable result: repos outside the top 5 with dirty trees or unhealthy branch state still surface as summary warnings.
-- [ ] Define stale-data behavior:
-  observable result: the page clearly shows when local or remote repo data is old instead of silently presenting stale status.
+Status: shipped in PR #54 (2026-06-05). Roster TTL = 24h (`FOCUS5_ROSTER_TTL_SECONDS`); the route uses a cheap `get_roster_meta()` check before any live-probe render.
+
+- [x] Implement 24-hour automatic roster refresh:
+  observable result: `get_roster_meta()` + `_roster_stale()` lazily recompute on visit when the snapshot is past 24h (no scheduler needed).
+- [x] Add manual refresh control:
+  observable result: `↻ Refresh` button hits `/focus-5?refresh=1` → forces `sync_focus5` → 303 redirect (post/redirect/get) so a reload doesn't re-scan.
+- [x] Surface roster snapshot metadata:
+  observable result: meta line shows "Roster computed {age} · ranked by {mode} · {n} discovered"; a manual refresh resets it to "just now".
+- [x] Allow the roster to admit newly active repos on refresh:
+  observable result: every recompute re-discovers and re-ranks all repos, so a newly active repo can enter the top 5 on manual or TTL refresh.
+- [x] Refresh local tree health on page load:
+  observable result: `summarize_focus5(with_live_health=True)` re-probes each top-5 repo's `git status` per load, overlaying the snapshot with a fresh `health_probed_at`.
+- [x] Keep roster freshness and repo-health freshness separate in the UI:
+  observable result: roster age ("computed {age}") and live health ("● tree health checked live" + per-card "Tree health · live") are shown distinctly.
+- [x] Add hidden-attention warning strip above the grid:
+  observable result: amber strip lists off-roster repos that are dirty or unpushed, sourced from the cached `focus5_repo_signals` (no full live sweep), labeled with the roster's age.
+- [x] Define stale-data behavior:
+  observable result: off-roster strip is labeled "as of roster computed {age}"; a roster past TTL that failed to refresh renders a "⚠ stale" marker rather than silently showing old data.
 
 ## Phase 4 - Testing, Observability, and Rollout
 
@@ -210,12 +212,12 @@ Goal: Ship the new view with confidence and operational visibility.
 
 ## Definition of Done
 
-- [ ] A new additive `Focus 5` route exists in the local web dashboard.
-- [ ] The page shows exactly 5 recent repos in a left-to-right layout.
-- [ ] Repo discovery requires zero manual config from the operator.
-- [ ] Each repo column includes repo open action, newest remote PR, current tree health, and last 3 activity items.
-- [ ] Manual refresh works and 24-hour automatic roster refresh is defined.
-- [ ] Roster recompute semantics are explicit and based on persisted snapshot timestamps rather than an implicit server-side session.
-- [ ] Local git data is sufficient to keep cards useful even when GitHub enrichment is unavailable.
-- [ ] Hidden attention warnings reduce the risk of losing sight of unhealthy repos outside the top 5.
-- [ ] Tests and logs are in place for the collector and the new page.
+- [x] A new additive `Focus 5` route exists in the local web dashboard (`/focus-5`, served by both `rebalance serve` :8787 and the always-on pulse server :8767, with a sidebar link).
+- [x] The page shows exactly 5 recent repos in a left-to-right layout (responsive 5-col grid).
+- [x] Repo discovery requires zero manual config from the operator.
+- [x] Each repo column includes repo open action, newest remote PR, current tree health, and last 3 activity items.
+- [x] Manual refresh works and 24-hour automatic roster refresh is defined.
+- [x] Roster recompute semantics are explicit and based on persisted snapshot timestamps rather than an implicit server-side session.
+- [x] Local git data is sufficient to keep cards useful even when GitHub enrichment is unavailable.
+- [x] Hidden attention warnings reduce the risk of losing sight of unhealthy repos outside the top 5.
+- [ ] Tests and logs are in place for the collector and the new page. _(52 tests in place; structured timing logs around the collector path are the remaining Phase 4 item.)_

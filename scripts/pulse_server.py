@@ -68,8 +68,8 @@ def auth_log_raw():
 
 
 @app.get("/focus-5")
-def focus5():
-    return _focus5_page()
+def focus5(refresh: bool = False):
+    return _focus5_page(refresh=refresh)
 
 
 class ChatRequest(BaseModel):
