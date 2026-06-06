@@ -31,11 +31,13 @@ read-only git plumbing and ``stat`` files; we never write to a foreign repo.
 """
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 from typing import Any, Callable, Iterator
 
 from rebalance.ingest.db import db_connection, run_migrations
@@ -44,9 +46,14 @@ from rebalance.ingest.sync_snapshot import get_device_id
 # parser rather than duplicating them; both are low-churn and shared by intent.
 from rebalance.ingest.ask_self_scan import _PRUNE_DIRS, derive_repo_full_name
 
+logger = logging.getLogger(__name__)
+
 DEFAULT_MAX_DEPTH = 6
 DEFAULT_ROSTER_SIZE = 5
 GIT_TIMEOUT = 5
+# A single repo probe over this many seconds is worth flagging — a slow disk, a
+# huge working tree, or a hung git is the usual cause.
+SLOW_REPO_SECONDS = 1.5
 
 
 # ---------------------------------------------------------------------------
@@ -314,9 +321,23 @@ def _mtime(path: Path) -> int | None:
         return None
 
 
-def probe_repo_signals(repo: Path, *, device_id: str, probed_at: str) -> RepoSignals:
-    """Read one repo's signals with read-only git plumbing + file stats."""
-    status = _parse_status(_git(repo, "status", "--porcelain=v2", "--branch") or "")
+def probe_repo_signals(
+    repo: Path, *, device_id: str, probed_at: str, stats: dict[str, Any] | None = None,
+) -> RepoSignals:
+    """Read one repo's signals with read-only git plumbing + file stats.
+
+    Pass a ``stats`` dict to accumulate diagnostics across a scan: per-repo probe
+    duration is timed, slow probes (> ``SLOW_REPO_SECONDS``) and repos whose
+    ``git status`` fails are logged and counted so a degraded scan is diagnosable
+    from the logs rather than silently slow or partial.
+    """
+    started = perf_counter()
+    status_out = _git(repo, "status", "--porcelain=v2", "--branch")
+    if status_out is None:
+        logger.warning("focus5: git status failed for %s (skipping its health)", repo)
+        if stats is not None:
+            stats["failed"] = stats.get("failed", 0) + 1
+    status = _parse_status(status_out or "")
 
     # Newest commit (any author): epoch | ISO. Empty repos return None.
     last_commit_ts = last_commit_at = None
@@ -341,6 +362,12 @@ def probe_repo_signals(repo: Path, *, device_id: str, probed_at: str) -> RepoSig
     head_reflog_ts = _mtime(git_dir / "logs" / "HEAD") if git_dir.is_dir() else None
     index_mtime_ts = _mtime(git_dir / "index") if git_dir.is_dir() else None
 
+    elapsed = perf_counter() - started
+    if elapsed > SLOW_REPO_SECONDS:
+        logger.warning("focus5: slow repo probe %.2fs for %s", elapsed, repo)
+        if stats is not None:
+            stats.setdefault("slow", []).append((str(repo), round(elapsed, 2)))
+
     return RepoSignals(
         device_id=device_id,
         local_path=str(repo),
@@ -359,11 +386,15 @@ def probe_repo_signals(repo: Path, *, device_id: str, probed_at: str) -> RepoSig
 
 def scan_focus5_repos(
     roots: list[str] | list[Path], *, device_id: str, probed_at: str,
-    max_depth: int = DEFAULT_MAX_DEPTH,
+    max_depth: int = DEFAULT_MAX_DEPTH, stats: dict[str, Any] | None = None,
 ) -> list[RepoSignals]:
-    """Discover repos under *roots* and probe each one's signals."""
+    """Discover repos under *roots* and probe each one's signals.
+
+    ``stats`` (optional) accumulates slow-probe and git-failure diagnostics
+    across the scan; see :func:`probe_repo_signals`.
+    """
     return [
-        probe_repo_signals(repo, device_id=device_id, probed_at=probed_at)
+        probe_repo_signals(repo, device_id=device_id, probed_at=probed_at, stats=stats)
         for repo in iter_git_repos(roots, max_depth=max_depth)
     ]
 
@@ -389,6 +420,9 @@ class Focus5SyncResult:
     ranking_mode: str
     scan_roots: list[str]
     computed_at: str
+    elapsed_seconds: float = 0.0
+    slow_repos: int = 0
+    failed_repos: int = 0
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -427,10 +461,18 @@ def sync_focus5(
     now_ts = int(now.timestamp())
     computed_at = now.isoformat()
 
-    signals = scan_focus5_repos(roots, device_id=dev, probed_at=computed_at, max_depth=max_depth)
+    started = perf_counter()
+    stats: dict[str, Any] = {}
+    signals = scan_focus5_repos(
+        roots, device_id=dev, probed_at=computed_at, max_depth=max_depth, stats=stats
+    )
+    t_scan = perf_counter() - started
     # resolve_ranking_strategy raises on a bad mode BEFORE we touch the DB.
+    t0 = perf_counter()
     ranked = rank_repos(signals, mode=mode, now_ts=now_ts, limit=limit)
+    t_rank = perf_counter() - t0
 
+    t0 = perf_counter()
     placeholders = ", ".join("?" for _ in _SIGNAL_COLUMNS)
     with db_connection(database_path) as conn:
         run_migrations(conn)  # ensure tables exist even on a direct call
@@ -451,6 +493,21 @@ def sync_focus5(
             ],
         )
         conn.commit()
+    t_persist = perf_counter() - t0
+
+    elapsed = perf_counter() - started
+    slow_repos, failed_repos = len(stats.get("slow", [])), stats.get("failed", 0)
+    logger.info(
+        "focus5 sync: %d repos in %.2fs (scan %.2fs, rank %.3fs, persist %.3fs); "
+        "roster=%d mode=%s slow=%d failed=%d",
+        len(signals), elapsed, t_scan, t_rank, t_persist,
+        len(ranked), mode, slow_repos, failed_repos,
+    )
+    if failed_repos:
+        logger.warning(
+            "focus5 sync: %d/%d repo(s) failed their git probe — health for those is "
+            "stale/blank (see per-repo warnings above)", failed_repos, len(signals),
+        )
 
     return Focus5SyncResult(
         device_id=dev,
@@ -459,6 +516,9 @@ def sync_focus5(
         ranking_mode=mode,
         scan_roots=[str(r) for r in roots],
         computed_at=computed_at,
+        elapsed_seconds=round(elapsed, 3),
+        slow_repos=slow_repos,
+        failed_repos=failed_repos,
     )
 
 

@@ -446,6 +446,43 @@ class RosterMetaTests(unittest.TestCase):
             self.assertIsNotNone(meta["computed_at"])
 
 
+class CollectorObservabilityTests(unittest.TestCase):
+    def test_sync_result_reports_timing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            _make_git_repo(root, "wip", dirty=True)
+            db = _db(Path(tmp))
+            res = sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first")
+            self.assertGreater(res.elapsed_seconds, 0.0)
+            self.assertEqual(res.failed_repos, 0)
+            self.assertIn("elapsed_seconds", res.as_dict())  # surfaced to refresh_index
+
+    def test_sync_logs_timing_summary(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            _make_git_repo(root, "wip", dirty=True)
+            db = _db(Path(tmp))
+            with self.assertLogs("rebalance.ingest.focus5_scan", level="INFO") as cm:
+                sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first")
+            self.assertTrue(any("focus5 sync:" in line for line in cm.output))
+
+    def test_failed_git_probe_is_logged_and_counted(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            _make_git_repo(root, "ok", dirty=True)
+            # A bogus repo: a `.git` dir that isn't a real git repo → status fails.
+            (root / "broken" / ".git").mkdir(parents=True)
+            db = _db(Path(tmp))
+            with self.assertLogs("rebalance.ingest.focus5_scan", level="WARNING") as cm:
+                res = sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first")
+            self.assertEqual(res.discovered, 2)
+            self.assertEqual(res.failed_repos, 1)
+            self.assertTrue(any("git status failed" in line for line in cm.output))
+
+
 class WebRouteTests(unittest.TestCase):
     def test_focus5_route_renders_seeded_roster(self) -> None:
         # End-to-end: seed a roster, point REBALANCE_DB at it, hit the route.

@@ -11,7 +11,7 @@ surfaces:
 
 | Most recently completed phase | What's next |
 |---|---|
-| Phases 1–3 shipped and tested (PR #54). Phase 3 adds: 24h roster TTL with lazy recompute on visit, a manual refresh control (post/redirect/get), live top-5 tree-health re-probe on every load (separate from the snapshot, with `health_probed_at`), explicit freshness/stale markers, and the off-roster hidden-attention warning strip from the cached signals. The view is wired into the always-on pulse server (`:8767`) with a sidebar link. | Phase 4: collector/route test hardening (largely done — 52 tests), structured timing logs around the collector path, and final rollout notes. |
+| All four phases shipped and tested (PR #54, 69 tests). Phase 4 adds structured per-phase timing logs + slow/failed-probe warnings to `sync_focus5` (surfacing `elapsed_seconds`/`slow_repos`/`failed_repos`), rounding out collector/route coverage. The view is live on the pulse server (`:8767`) with a sidebar link. | Done bar one optional follow-up: an in-browser visual check at narrow/mobile widths (responsive CSS breakpoints are already in place). |
 
 ## Table of Contents
 
@@ -197,18 +197,20 @@ Status: shipped in PR #54 (2026-06-05). Roster TTL = 24h (`FOCUS5_ROSTER_TTL_SEC
 
 Goal: Ship the new view with confidence and operational visibility.
 
-- [ ] Add collector tests before full integration:
-  observable result: mocks cover happy path, missing repo, auth gap, git failure, and empty activity cases.
-- [ ] Add web-route coverage for the new page:
-  observable result: automated test proves the route renders and includes the expected repo-card sections.
-- [ ] Add timing and structured logs around the collector path:
-  observable result: slow repo scans and repeated failures are diagnosable from logs.
-- [ ] Add at least one integration-style happy-path test:
-  observable result: seeded local repo data produces a populated 5-column page.
-- [ ] Run manual smoke test on desktop and narrow/mobile widths:
-  observable result: layout remains usable and the page still supports quick context switching.
-- [ ] Update this plan with final rollout notes:
-  observable result: completed phases and any follow-up items are recorded here instead of drifting into chat.
+Status: shipped in PR #54 (2026-06-06). 69 tests across the collector + web view.
+
+- [x] Add collector tests before full integration:
+  observable result: tests cover happy path, missing/unreadable repo, git failure (counted + logged), empty activity, and re-sync replace.
+- [x] Add web-route coverage for the new page:
+  observable result: pure `_focus5_body` suite + TestClient route test assert the grid, VS Code links, PR/health/activity sections, refresh redirect, and warning strip.
+- [x] Add timing and structured logs around the collector path:
+  observable result: `sync_focus5` logs a per-phase summary (scan/rank/persist + total), warns on slow probes (> `SLOW_REPO_SECONDS`) and per-repo git failures, and surfaces `elapsed_seconds`/`slow_repos`/`failed_repos` in its result (and thus `refresh_index`).
+- [x] Add at least one integration-style happy-path test:
+  observable result: `WebRouteTests` seeds a repo, syncs, and asserts the route renders a populated grid.
+- [~] Run manual smoke test on desktop and narrow/mobile widths:
+  observable result: desktop verified live on :8767 (200 + markers). Responsive CSS breakpoints are in place (5-col → 2-col at 1100px → 1-col at 620px); a visual check at narrow widths in a browser is still recommended.
+- [x] Update this plan with final rollout notes:
+  observable result: phases 1–4 statuses recorded here; the only open follow-up is the in-browser narrow-width visual check.
 
 ## Definition of Done
 
@@ -220,4 +222,4 @@ Goal: Ship the new view with confidence and operational visibility.
 - [x] Roster recompute semantics are explicit and based on persisted snapshot timestamps rather than an implicit server-side session.
 - [x] Local git data is sufficient to keep cards useful even when GitHub enrichment is unavailable.
 - [x] Hidden attention warnings reduce the risk of losing sight of unhealthy repos outside the top 5.
-- [ ] Tests and logs are in place for the collector and the new page. _(52 tests in place; structured timing logs around the collector path are the remaining Phase 4 item.)_
+- [x] Tests and logs are in place for the collector and the new page. _(69 tests; `sync_focus5` emits a structured per-phase timing summary + slow/failed-probe warnings.)_
