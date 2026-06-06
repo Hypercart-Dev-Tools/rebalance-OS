@@ -1,7 +1,9 @@
 # P2 Plugin Source Modules
 
 > **Status:** Open plan — written 2026-06-06 on branch
-> `claude/plugin-architecture-activity-stream`.
+> `claude/plugin-architecture-activity-stream`. **Phase 0 spike complete
+> 2026-06-06 — all three seams green (14/14), proceed to Phase 1.** See
+> [Phase 0 findings](#phase-0-findings).
 > **Builds on:** [P1-MODULE-REGISTRY.md](./P1-MODULE-REGISTRY.md) (decision **B′** —
 > extend the runtime `index_ops` collector registry, descriptor-first) and
 > [P2-SEMANTIC-INDEX.md](../1-INBOX/P2-SEMANTIC-INDEX.md) (the unified
@@ -20,6 +22,7 @@
 - [The Contracts](#the-contracts)
 - [Reference Integration: linkding](#reference-integration-linkding)
 - [Phase 0 Technical Spike](#phase-0-technical-spike)
+- [Phase 0 Findings](#phase-0-findings)
 - [Phase 1 — Vector write-path becomes registry-driven](#phase-1--vector-write-path-becomes-registry-driven)
 - [Phase 2 — Dashboard feed contract](#phase-2--dashboard-feed-contract)
 - [Phase 3 — Discovery + registry-driven preconditions](#phase-3--discovery--registry-driven-preconditions)
@@ -206,25 +209,40 @@ SourceModule(
 
 ## Phase 0 Technical Spike
 
-Timebox **1–2h**. Prove the three seams independently before building any of them. Read-only / throwaway.
+Timebox **1–2h**. Prove the three seams independently before building any of them. Read-only / throwaway. **Done 2026-06-06.** Artifacts: [`experimental/plugin-spike/spike.py`](../../experimental/plugin-spike/spike.py), [`experimental/plugin-spike/dummy_source_pkg/`](../../experimental/plugin-spike/dummy_source_pkg) (out-of-tree plugin), [`fixtures/linkding/`](../../fixtures/linkding). Run: `PYTHONPATH=src python3 experimental/plugin-spike/spike.py`.
 
-- [ ] **Discovery:** register a dummy `SourceModule` via a local entry point; confirm the registry loads it and `refresh_index(scope=["dummy"])` dispatches to it. (Proves the plugin boundary.)
-- [ ] **linkding API:** with a real token, paginate `GET /api/bookmarks/`; capture one page to `fixtures/linkding/bookmarks_page.json`; confirm field shape + `next` pagination + `Authorization: Token` auth.
-- [ ] **Vector round-trip:** hand-map 5 fixture bookmarks → `SemanticDoc` → `upsert_document` → `embed_pending` against the **existing 1024-dim model**; run `semantic_index.query("…")` and confirm bookmark hits rank. (Proves linkding needs **no** embedder change → Phase 5 stays optional.)
-- [ ] Findings block appended here: API quirks (self-signed TLS? rate limits?), pagination cap, embed timing.
+- [x] **Discovery:** an out-of-tree package (`rebalance-dummy-source`) advertises a source via the `rebalance.sources` entry-point group; the spike's mini-registry discovers, loads, registers, and dispatches it with **no core import-by-name**.
+- [x] **linkding API:** paginated `{count,next,previous,results}` client walks `next` to completion over two fixture pages; bookmark rows map to the `SemanticDoc` shape. (Driven from fixtures — no live token in this environment; `Authorization: Token` header path deferred to Phase 4 against a real instance.)
+- [x] **Vector round-trip:** fixture bookmarks → `SemanticDoc` → `upsert_document` → embed → vec0 KNN, through the **real** `semantic_documents`/`semantic_embeddings` tables, via the injectable embedder seam (the mlx model can't load off Apple Silicon — see findings).
+- [x] Findings block appended below.
 
-**Gate:** if any seam fails (e.g. entry-point discovery is fighting the MCP launch model, or linkding text is too short to embed usefully), stop and re-scope before Phase 1.
+**Gate:** PASSED — 14/14 checks. No seam fought the others; no re-scope needed. Proceed to Phase 1.
+
+## Phase 0 Findings
+
+| # | Finding | Evidence | Impact on plan |
+|---|---|---|---|
+| F1 | **The semantic schema is already source-agnostic.** A brand-new `source_type="linkding"` upserts, dedupes (insert→unchanged), embeds, and KNN-searches with **zero edits** to `upsert_document` / `db/semantic.py` / vec0. | `vector.upsert_new_source`, `vector.upsert_idempotent`, `vector.knn_search` all PASS. | Phase 1 is **not** a semantic-layer rewrite. The mechanics are generic already. |
+| F2 | **The only vector-plane blocker is the orchestration.** `si._normalize_sources(["linkding"])` raises `Unsupported source type`. That single allow-list (plus the `backfill` if-ladder it guards) is the entire gate. | `vector.normalize_rejects_new_source` PASS (asserting it raises). | Phase 1 scope tightens to exactly three edits: derive `_normalize_sources` from the registry, replace the if-ladder with iteration, move the 3 `sync_*_documents` to providers. |
+| F3 | **Embedder lock is real and empirical.** `import mlx_embeddings` fails on Linux: `ImportError: libmlx.so: cannot open shared object file`. The round-trip only worked via an injected stand-in embedder. | Reproduced in-container; round-trip used `_fake_embed`. | (a) CI/tests **must** inject `embed_texts` — never load mlx. (b) Reinforces Phase 5 (embedder protocol) for portability — but linkding works at the existing 1024-dim, so Phase 5 stays optional/deferred. |
+| F4 | **Entry-point discovery works and is descriptor-shape-agnostic.** Dispatch needed only `name` + `refresh`; the dummy module carried nothing else. | `discovery.*` all PASS with a 2-field `MiniSourceModule`. | The `SourceModule` contract can grow optional fields (`semantic_docs`, `panels`, …) without breaking already-published plugins — confirms the additive/reversible posture. |
+| F5 | **`sqlite-vec` loads cleanly in this Python's `sqlite3`** (extension loading enabled); vec0 virtual table queryable. | `vector.vec0_loaded` PASS (sqlite-vec 0.1.9). | No blocker for running the vector path in Linux CI — only the *embedder* is Mac-bound, not the vector store. |
+
+**Environment caveats (not blockers):** container is Python **3.11** while `pyproject` requires `>=3.12` (CI matrix is 3.12/3.13) — the package imports and the spike runs regardless; real test runs should use 3.12+. `mlx-embeddings` is an *optional* extra (`.[embeddings]`) and CI installs `.[calendar]` only, so the injectable-embedder requirement (F3) is already implied by the existing CI shape.
+
+**Net:** the three load-bearing assumptions hold. The plan proceeds unchanged in shape; Phase 1's scope is narrowed (F2) and the testing contract is sharpened (F3). Throwaway spike artifacts can be deleted once Phase 1 lands its own tests.
 
 ## Phase 1 — Vector write-path becomes registry-driven
 
-Kills impediment #1. Highest-risk phase (mirrors P2-SEMANTIC-INDEX's own warning about consolidating embed paths) — gate hard on parity.
+Kills impediment #1. **Phase 0 (F1/F2) de-risked this**: the upsert / reconcile / embed / KNN mechanics are already source-agnostic, so this is a *narrow* refactor of the orchestration, not the semantic-layer rewrite the earlier estimate feared. Three exact edits, all behind the existing single-writer (`semantic_index.py`):
 
 - [ ] Add `semantic_docs` to the descriptor; add the `SemanticDoc` dataclass.
-- [ ] Convert `sync_vault_documents` / `sync_github_documents` / `sync_email_documents` into `semantic_docs` providers attached to the vault/github/email collectors. Keep the SQL in `db/semantic.py` (single owner) — only the call site moves.
-- [ ] Rewrite `backfill_semantic_documents` to iterate `COLLECTORS` for modules declaring `semantic_docs`; drive `_normalize_sources` from the registry (drop the hardwired set).
+- [ ] **Edit 1 — allow-list:** derive `_normalize_sources` (`semantic_index.py:66`) from the registry (modules declaring `semantic_docs`) instead of the hardwired `{vault,github,calendar,sleuth,email}` set. *This is the single line F2 proved is the gate.*
+- [ ] **Edit 2 — if-ladder:** rewrite `backfill_semantic_documents` (`semantic_index.py:344`) to iterate those modules and feed each yielded `SemanticDoc` through the existing `upsert_document` + reconcile path.
+- [ ] **Edit 3 — providers:** convert `sync_vault_documents` / `sync_github_documents` / `sync_email_documents` into `semantic_docs` providers on the vault/github/email collectors. Keep the SQL in `db/semantic.py` (single owner) — only the call site moves.
 - [ ] Strangler: keep the old if-ladder behind a flag until parity passes, then delete.
 
-**Gate (from P2-SEMANTIC-INDEX acceptance):** (1) row-count parity per source; (2) identity parity — hashed set of `(source_pk, content_hash)` tuples matches old vs new; (3) ≥80% top-k(10) overlap on the fixed query set. Re-embed touches only changed rows (`embedded_at` unchanged on a no-op re-run).
+**Gate (from P2-SEMANTIC-INDEX acceptance):** (1) row-count parity per source; (2) identity parity — hashed set of `(source_pk, content_hash)` tuples matches old vs new; (3) ≥80% top-k(10) overlap on the fixed query set. Re-embed touches only changed rows (`embedded_at` unchanged on a no-op re-run). All parity tests inject the embedder (F3) — never load mlx.
 
 ## Phase 2 — Dashboard feed contract
 
@@ -241,7 +259,8 @@ Kills impediment #2; flips `DASHBOARD.md` #4/#5/#8 to clear; produces the JSON s
 
 Kills impediment #5 and the precondition half of #3.
 
-- [ ] Entry-point loader (`group="rebalance.sources"`) at registry init; built-ins win on collision unless `replace=True`.
+- [ ] Entry-point loader (`group="rebalance.sources"`) — a `load_external_sources()` called once at `index_ops` import (after built-ins register), idempotent (guard double-load), built-ins win on collision unless `replace=True`. Phase 0 (F4) confirmed `importlib.metadata.entry_points(group=…)` resolves out-of-tree packages and that dispatch needs only `name`+`refresh`, so partial/older descriptors load safely.
+- [ ] **Trust boundary (security):** `ep.load()` executes code from any installed package in the group — Phase 0 loaded the dummy purely on group membership. Document that installing a `rebalance.sources` plugin == trusting that package; no auto-install; surface the loaded-plugin list in `doctor`/`index_status` so the active set is auditable.
 - [ ] Replace the hardcoded precondition ladder in `refresh_index` (`index_ops.py:924`) with generic resolution over each module's `requires` / `secrets`; missing creds surface as the existing structured error envelope.
 - [ ] Dovetail with B′ Phase 2: each module's `health_check` is reachable via the `health_check()` MCP tool, and `onboarding_status` reflects a discovered source's `secrets` — so a freshly-installed plugin's setup hint reaches MCP-first agents (the exact gap B′ was triggered by).
 
@@ -275,7 +294,8 @@ Gated on evidence; linkding does **not** require it (Phase 0 proves the default 
 
 ## Risks and Guardrails
 
-- **Semantic refactor is the biggest piece** (P2-SEMANTIC-INDEX flagged embed-path consolidation as ~a day on its own). Strangler + the three parity gates; don't delete the if-ladder until green.
+- **Semantic refactor** — Phase 0 (F1/F2) downgraded this from "biggest piece / rewrite" to a 3-edit orchestration change, since the upsert/embed/KNN mechanics are already generic. Still gate with the strangler + three parity checks; don't delete the if-ladder until green.
+- **Embedder is Apple-Silicon-bound (confirmed, F3).** `mlx_embeddings` can't import on Linux (`libmlx.so` missing). Any non-Mac runtime (CI, a Linux self-host) cannot embed without injecting an alternative. Mitigation now: tests inject `embed_texts`; longer term: Phase 5 embedder protocol. Do **not** let any new code path import the embedder eagerly.
 - **Display refactor changes output.** Snapshot-parity the rendered TUI/HTML before deleting `fetch_*`.
 - **Entry-point discovery = executing code from installed packages.** Trust boundary: only load the declared group; document that installing a `rebalance.sources` plugin is equivalent to trusting that package. No auto-install.
 - **Self-hosted linkding realities:** self-signed TLS (verify-toggle config, never silent `verify=False`), pagination caps, rate limits (backoff), large libraries (bounded queries, `per_page=100`).
@@ -286,7 +306,8 @@ Gated on evidence; linkding does **not** require it (Phase 0 proves the default 
 
 Per AGENTS.md "from day one":
 - Structured logging with context (module name, scope, counts) on every refresh/embed/render path; mask the linkding token.
-- Mock harness **before** hitting the linkding API; fixtures versioned in `fixtures/linkding/`.
+- Mock harness **before** hitting the linkding API; fixtures versioned in `fixtures/linkding/` (Phase 0 seeded the first two pages).
+- **Tests inject the embedder (F3), never load mlx** — pass a deterministic `embed_texts` (as the Phase 0 spike does) so the vector path runs in Linux CI. This matches the existing CI, which installs `.[calendar]` only, not `.[embeddings]`.
 - `health_check` for linkding (creds present, base_url reachable, table freshness) surfaced via the `health_check()` MCP tool.
 - Counters/timing on ingest, embed, and panel build; the freshness signal already tracks `last_embed_at`.
 - The Phase 4 integration test (clean DB → ingest → vectorize → query → panel) is the smoke test that proves the happy path.
