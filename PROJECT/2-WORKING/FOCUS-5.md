@@ -11,7 +11,7 @@ surfaces:
 
 | Most recently completed phase | What's next |
 |---|---|
-| Phase 0 technical spike executed against the real device (2026-06-05). Discovery, live git-health reads, and the live-vs-cached split all validated. One contradiction found and escalated: the naive "most recently active" ranking by `.git/index` mtime is invalid — it surfaces dormant third-party clones over the operator's own dirty work-in-progress. | Resolve the ranking-signal policy (escalated below), then proceed to Phase 1 collector with the corrected signal. |
+| Phase 1 (collector + swappable ranking) and Phase 2 (additive `/focus-5` web view) shipped and tested (PR #54). Ranking corrected to operator-authored + dirty/unpushed signals; default mode `dirty_first`. The page renders the 5-column grid with per-repo VS Code link, tree health, newest PR, and last 3 local commits; first load lazily bootstraps the roster. | Phase 3: 24h roster TTL + manual refresh control, live top-5 health re-probe on load with freshness markers, and the off-roster hidden-attention warning strip (data already cached in `focus5_repo_signals`). |
 
 ## Table of Contents
 
@@ -111,45 +111,64 @@ Secondary observation: repo display names can collide across scan roots (two `sl
 
 Goal: Create a reliable device-local data source for the `Focus 5` view.
 
-- [ ] Define the `Focus 5` repo card contract in one place:
-  observable result: a single writer owns fields for repo name, local path, VS Code link, newest PR, tree health, and last 3 activity items.
-- [ ] Add a small device-local collector to [src/rebalance/ingest/index_ops.py](/Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/src/rebalance/ingest/index_ops.py:1):
-  observable result: collector is registered and callable through the existing orchestration pattern.
-- [ ] Implement zero-config repo discovery for active local work:
-  observable result: collector finds repos being actively worked on without any manual repo registration step.
-- [ ] Bound discovery so zero-config does not become full-machine drag:
-  observable result: collector avoids expensive or noisy whole-disk scans while still finding active repos automatically.
-- [ ] Persist the roster snapshot and related stable summary fields:
-  observable result: the app can explain why a repo is in the top 5 without recomputing the full ranking history on every render.
-- [ ] Persist off-roster health summaries for warning-strip use:
-  observable result: the app can surface hidden-attention warnings without live-probing every discovered repo on each request.
-- [ ] Keep working tree health as a live read with freshness metadata:
-  observable result: the app can answer "did I forget to commit or push?" using visibly fresh repo-health probes rather than stale stored status.
-- [ ] Join local repo records to existing GitHub corpus data:
-  observable result: each visible repo can show the newest remote PR title and number when available.
-- [ ] Define enrichment fallback states in the repo card contract:
-  observable result: the contract explicitly supports "no remote configured", "non-GitHub remote", and "GitHub repo not yet synced" without breaking the page.
-- [ ] Capture last-activity signals for each repo:
-  observable result: each repo can render 3 recent activity items in a stable, documented order based on local work first and remote context second.
+Status: shipped in PR #54 (2026-06-05). Implemented in
+[src/rebalance/ingest/focus5_scan.py](/Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/src/rebalance/ingest/focus5_scan.py:1)
+with migration `0003_focus5_roster.sql`.
+
+- [x] Define the `Focus 5` repo card contract in one place:
+  observable result: `summarize_focus5()` is the single owner of the card shape (name, local path, `vscode_url`, `newest_pr`, tree health, `recent_activity`).
+- [x] Add a small device-local collector to [src/rebalance/ingest/index_ops.py](/Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/src/rebalance/ingest/index_ops.py:1):
+  observable result: `focus5` collector registered opt-in (`included_in_all=False`); runs via `refresh_index(scope=["focus5"])`.
+- [x] Implement zero-config repo discovery for active local work:
+  observable result: `iter_git_repos` finds repos with no manual registration, reusing the ask_self scan-root defaults.
+- [x] Bound discovery so zero-config does not become full-machine drag:
+  observable result: bounded by the shared prune list + max-depth, stopping at each repo boundary (95 ms / 21 repos measured).
+- [x] Persist the roster snapshot and related stable summary fields:
+  observable result: `focus5_roster` stores position + rank_reason + ranking_mode + computed_at; raw signals persisted separately so re-rank needs no re-scan.
+- [x] Persist off-roster health summaries for warning-strip use:
+  observable result: `focus5_repo_signals` caches every discovered repo's health; `summarize_focus5()` derives off-roster warnings from it.
+- [x] Keep working tree health as a live read with freshness metadata:
+  observable result: each signal row carries `probed_at`; the live top-5 re-probe on page load is wired in Phase 3.
+- [x] Join local repo records to existing GitHub corpus data:
+  observable result: `newest_pr` joins `github_items` on `repo_full_name` (newest PR by number).
+- [x] Define enrichment fallback states in the repo card contract:
+  observable result: explicit "no open PR synced yet", "non-GitHub remote", and "no remote configured" states; never drops the repo.
+- [x] Capture last-activity signals for each repo:
+  observable result: `recent_activity` returns the last 3 local commits, local-git-first, via read-only `git log`.
 
 ## Phase 2 - Web View and Interaction Model
 
 Goal: Add the new additive dashboard page and make the 5-column layout useful for fast context switching.
 
-- [ ] Add a new `Focus 5` page to the local web server in [src/rebalance/web.py](/Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/src/rebalance/web.py:1):
-  observable result: the existing home page links to the new view and current screens remain unchanged.
-- [ ] Decide whether the first implementation stays in single-file HTML rendering or extracts a small helper layer:
-  observable result: the plan records an intentional rendering approach instead of drifting into ad hoc complexity.
-- [ ] Build a responsive 5-column layout for desktop:
-  observable result: five repo columns render left-to-right with readable labels and no ambiguity about what each section means.
-- [ ] Add `Open in VS Code` affordance per repo:
-  observable result: clicking the repo name or action opens the local repo root in VS Code.
-- [ ] Render the newest remote PR per repo:
-  observable result: title and PR number are visible and link to the remote artifact when present.
-- [ ] Render current tree health per repo:
-  observable result: user can immediately see dirty working tree, untracked files, and branch drift reminders.
-- [ ] Render the last 3 activity items per repo:
-  observable result: each column helps the user resume context without opening GitHub first.
+Status: shipped in PR #54 (2026-06-05).
+
+Rendering-approach decision (recorded): stay in the existing single-file
+FastAPI surface (`web.py`), but extract a **pure** `_focus5_body(data)` renderer
+plus small `_f5_*` section helpers that take a `summarize_focus5()` dict and
+return HTML. This keeps the route thin (resolve DB → summarize → render) and
+makes the view unit-testable without a DB, git, or an HTTP client. The
+`summarize_focus5()` read contract is the single owner of the card shape
+(`vscode_url`, `newest_pr`, `recent_activity`, tree-health fields).
+
+- [x] Add a new `Focus 5` page to the local web server in [src/rebalance/web.py](/Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/src/rebalance/web.py:1):
+  observable result: home page and shared nav link to `/focus-5`; existing pages unchanged.
+- [x] Decide whether the first implementation stays in single-file HTML rendering or extracts a small helper layer:
+  observable result: decision recorded above — single file + pure renderer seam.
+- [x] Build a responsive 5-column layout for desktop:
+  observable result: CSS-grid `repeat(5, 1fr)` collapsing to 2 then 1 column at 1100px / 620px; wide main for the focus view.
+- [x] Add `Open in VS Code` affordance per repo:
+  observable result: repo name links to `vscode://file/<path>` (URL-encoded), opening the repo root.
+- [x] Render the newest remote PR per repo:
+  observable result: number + title link to the PR; explicit "no open PR synced yet / non-GitHub remote / no remote configured" fallbacks otherwise.
+- [x] Render current tree health per repo:
+  observable result: dirty/clean dot, modified/untracked counts, branch, and ahead/behind (or "no upstream") drift.
+- [x] Render the last 3 activity items per repo:
+  observable result: last 3 local commits (subject + short SHA + relative age) via a live `git log` read on the top-5 only.
+
+Deferred to Phase 3 (intentionally): the off-roster hidden-attention strip, the
+24h TTL recompute, the manual refresh control, and live top-5 health re-probe on
+load. Phase 2 lazily bootstraps the roster once when it is empty so the page is
+useful on first visit; full refresh semantics are Phase 3.
 
 ## Phase 3 - Refresh Behavior and Safety Signals
 

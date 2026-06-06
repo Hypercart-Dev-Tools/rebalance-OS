@@ -23,9 +23,11 @@ from rebalance.ingest.focus5_scan import (
     iter_git_repos,
     probe_repo_signals,
     rank_repos,
+    recent_activity,
     resolve_ranking_strategy,
     summarize_focus5,
     sync_focus5,
+    vscode_url,
 )
 
 NOW = 1_700_000_000  # fixed "now" epoch for deterministic recency math
@@ -273,13 +275,16 @@ class SyncSummarizeTests(unittest.TestCase):
             self.assertEqual(result.ranking_mode, "dirty_first")
 
             out = summarize_focus5(db, device_id="dev")
+            # Both repos are dirty (tier-1); which one wins the single slot depends
+            # on commit recency, so assert the partition invariant rather than a
+            # specific winner: exactly one rostered, the other warned, no overlap.
             self.assertEqual(len(out["roster"]), 1)
-            self.assertEqual(out["roster"][0]["repo_name"], "wip")
             self.assertTrue(out["roster"][0]["is_dirty"])
             self.assertIsNone(out["roster"][0]["newest_pr"])  # no corpus row
-            # The second dirty repo is squeezed out of the top-1 but still warned.
+            rostered = {c["repo_name"] for c in out["roster"]}
             warned = {w["repo_name"] for w in out["off_roster_warnings"]}
-            self.assertIn("also_dirty", warned)
+            self.assertEqual(rostered | warned, {"wip", "also_dirty"})  # both surfaced
+            self.assertEqual(rostered & warned, set())                  # never double-counted
             self.assertEqual(out["summary"]["discovered"], 2)
 
     def test_resync_replaces_roster_without_duplicates(self) -> None:
@@ -331,6 +336,84 @@ class SyncSummarizeTests(unittest.TestCase):
             out = summarize_focus5(db, device_id="dev")
             self.assertEqual(out["roster"], [])
             self.assertEqual(out["summary"]["discovered"], 0)
+
+    def test_card_carries_activity_and_vscode_link(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            repo = _make_git_repo(root, "wip", dirty=True)
+            db = _db(Path(tmp))
+            sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first")
+
+            card = summarize_focus5(db, device_id="dev")["roster"][0]
+            # iter_git_repos stores the resolved path (macOS /var -> /private/var).
+            self.assertEqual(card["vscode_url"], vscode_url(str(repo.resolve())))
+            self.assertTrue(card["vscode_url"].startswith("vscode://file"))
+            # The seeded repo has exactly one "init" commit.
+            self.assertEqual(len(card["recent_activity"]), 1)
+            self.assertEqual(card["recent_activity"][0]["subject"], "init")
+
+    def test_with_activity_false_skips_git_read(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            _make_git_repo(root, "wip", dirty=True)
+            db = _db(Path(tmp))
+            sync_focus5(db, roots=[root], device_id="dev", mode="dirty_first")
+            card = summarize_focus5(db, device_id="dev", with_activity=False)["roster"][0]
+            self.assertEqual(card["recent_activity"], [])
+
+
+class ReadHelperTests(unittest.TestCase):
+    def test_recent_activity_orders_newest_first(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(Path(tmp), "r")  # commit "init"
+            (repo / "f2.txt").write_text("two", encoding="utf-8")
+            _run(repo, "git", "add", ".")
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_EMAIL": "me@example.com", "GIT_AUTHOR_NAME": "A",
+                "GIT_COMMITTER_EMAIL": "me@example.com", "GIT_COMMITTER_NAME": "A",
+            }
+            _run(repo, "git", "commit", "-q", "-m", "second", env=env)
+            items = recent_activity(str(repo), limit=3)
+            self.assertEqual([i["subject"] for i in items], ["second", "init"])
+
+    def test_recent_activity_on_missing_repo_is_empty(self) -> None:
+        self.assertEqual(recent_activity("/no/such/repo"), [])
+
+    def test_vscode_url_encodes_spaces(self) -> None:
+        self.assertEqual(
+            vscode_url("/Users/me/My Repos/app"),
+            "vscode://file/Users/me/My%20Repos/app",
+        )
+
+
+class WebRouteTests(unittest.TestCase):
+    def test_focus5_route_renders_seeded_roster(self) -> None:
+        # End-to-end: seed a roster, point REBALANCE_DB at it, hit the route.
+        # Pre-seeding keeps the route's lazy bootstrap from scanning the machine.
+        from rebalance.ingest.sync_snapshot import get_device_id
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            _make_git_repo(root, "widget", dirty=True)
+            db = _db(Path(tmp))
+            sync_focus5(db, roots=[root], device_id=get_device_id(), mode="dirty_first")
+
+            os.environ["REBALANCE_DB"] = str(db)
+            try:
+                from fastapi.testclient import TestClient
+                from rebalance.web import app
+                resp = TestClient(app).get("/focus-5")
+            finally:
+                os.environ.pop("REBALANCE_DB", None)
+
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("widget", resp.text)
+            self.assertIn("Focus 5", resp.text)
+            self.assertIn("vscode://file", resp.text)
+            self.assertIn("f5-grid", resp.text)
 
 
 if __name__ == "__main__":

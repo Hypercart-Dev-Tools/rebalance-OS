@@ -466,6 +466,34 @@ def sync_focus5(
 # Read side — what the web view consumes
 # ---------------------------------------------------------------------------
 
+def vscode_url(local_path: str) -> str:
+    """Build a ``vscode://file/...`` URL that opens the repo root in VS Code."""
+    from urllib.parse import quote
+    return f"vscode://file{quote(local_path, safe='/')}"
+
+
+def recent_activity(local_path: str, *, limit: int = 3) -> list[dict[str, Any]]:
+    """Return the repo's last *limit* commits (local-first activity), newest first.
+
+    Live read of ``git log``; an inaccessible or empty repo yields ``[]`` rather
+    than raising. Uses the unit-separator (0x1f) so commit subjects can contain
+    any printable character without breaking the parse.
+    """
+    out = _git(
+        Path(local_path), "log", f"-{limit}",
+        "--format=%h%x1f%s%x1f%cI%x1f%ce",
+    )
+    items: list[dict[str, Any]] = []
+    for line in (out or "").splitlines():
+        parts = line.split("\x1f")
+        if len(parts) == 4:
+            items.append({
+                "sha": parts[0], "subject": parts[1],
+                "committed_at": parts[2], "author_email": parts[3],
+            })
+    return items
+
+
 def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
     """Newest remote PR (highest number) for *repo_full_name*, or None.
 
@@ -493,12 +521,19 @@ def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
     }
 
 
-def summarize_focus5(database_path: Path, *, device_id: str | None = None) -> dict[str, Any]:
+def summarize_focus5(
+    database_path: Path, *, device_id: str | None = None, with_activity: bool = True,
+) -> dict[str, Any]:
     """Return the roster cards, off-roster warnings, and snapshot metadata.
 
-    This is the single read contract for the web view. Each roster card carries
-    local signals (the source of truth) plus a ``newest_pr`` enrichment that is
-    None whenever the GitHub corpus can't supply it.
+    This is the single read contract for the web view, and the one place that
+    owns the repo-card shape. Each roster card carries local signals (the source
+    of truth), a ``vscode_url`` open action, a ``newest_pr`` enrichment that is
+    None whenever the GitHub corpus can't supply it, and the last 3 local
+    commits as ``recent_activity``.
+
+    ``recent_activity`` is a live ``git log`` read per roster repo (top-5 only,
+    so bounded). Pass ``with_activity=False`` to skip it for a pure DB read.
     """
     dev = device_id or get_device_id()
     empty = {
@@ -521,7 +556,11 @@ def summarize_focus5(database_path: Path, *, device_id: str | None = None) -> di
                 card = {k: row[k] for k in row.keys()}
                 card["is_dirty"] = bool(card["is_dirty"])
                 card["has_upstream"] = bool(card["has_upstream"])
+                card["vscode_url"] = vscode_url(card["local_path"])
                 card["newest_pr"] = _newest_pr(conn, card.get("repo_full_name"))
+                card["recent_activity"] = (
+                    recent_activity(card["local_path"]) if with_activity else []
+                )
                 roster.append(card)
 
             roster_paths = {c["local_path"] for c in roster}
