@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rebalance-dummy-source"
+version = "0.0.1"
+description = "Throwaway out-of-tree source plugin to prove rebalance.sources entry-point discovery."
+
+# THE PROOF: a third-party package advertises a source via this entry-point group.
+# rebalance-OS core never imports this package by name — it discovers it.
+[project.entry-points."rebalance.sources"]
+dummy = "dummy_source:module"
+
+[tool.setuptools]
+packages = ["dummy_source"]
