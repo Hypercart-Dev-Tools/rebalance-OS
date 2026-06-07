@@ -6,9 +6,9 @@
 > was resolved by documenting the virtual-index exception (commit `732158d`).
 >
 > **Superseded for the figma plan by**
-> [PLUGINS-FIGMA-LINKDING.md](../2-WORKING/PLUGINS-FIGMA-LINKDING.md): figma now
-> lands as the first customer of the plugin `SourceModule` architecture, **not**
-> via the cherry-pick runbook in §Step 3 below. Treat §Step 3 as the *escape-hatch*
+> [PLUGINS.md](../2-WORKING/PLUGINS.md): figma now lands as the first customer of
+> the plugin `SourceModule` architecture, **not** via the cherry-pick runbook in
+> §Step 3 below. Treat §Step 3 as the *escape-hatch*
 > runbook only (if figma ever needs to ship before the plugin path is ready).
 >
 > **Still live here:** the **`development → main` promotion** runbook (§Post-merge)

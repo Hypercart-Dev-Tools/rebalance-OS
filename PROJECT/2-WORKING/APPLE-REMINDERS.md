@@ -31,6 +31,12 @@ non_goals:
 > Status: Phase 0 blocked on 2026-06-05 by macOS privacy/TCC. Goal remains the same: determine whether Apple Reminders can become a safe, local, read-only source in rebalance without relying on EventKit and without risking store corruption.
 > Architecture in one line: live Apple Reminders SQLite -> read-only temp snapshot -> normalized reminder rows -> rebalance collector/table -> optional MCP/query surface.
 > Hard rule: never write to the Apple Reminders store.
+>
+> **Part of the plugin source roster (2026-06-07):** Apple Reminders is the second
+> real source slated to onboard via the `SourceModule` plugin architecture — see
+> [PLUGINS.md](./PLUGINS.md). This doc remains the detailed spec; the vector
+> opt-in maps to the module's `semantic_docs`, and macOS Full Disk Access is the
+> module's `requires` precondition. Phase 0 here is still gated on that TCC grant.
 
 ## Table of Contents
 
