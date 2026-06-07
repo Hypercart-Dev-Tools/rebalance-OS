@@ -16,6 +16,31 @@ Forward-only SQL migrations for `rebalance.db`. The runner is
 This keeps fresh installs and existing databases on the same path: the baseline
 is created/assumed, then migrations `0002…N` are applied in order.
 
+### Exception: idempotent, self-healing virtual indexes (FTS5, `vec0`)
+
+The migration rule above is for **base tables, columns, and their indexes** — the
+source-of-truth schema. SQLite *virtual tables that are derived indexes* over base
+tables are deliberately the exception: the `vec0` embedding indexes
+(`semantic_embeddings`, `github_embeddings`) and the `semantic_documents_fts`
+FTS5 index are created in `ensure_*_schema`, **not** as numbered migrations.
+
+This is intentional, for two reasons a one-time migration can't satisfy:
+
+1. **Self-heal.** These indexes are rebuildable from their base tables and must
+   survive being dropped or left half-built. `ensure_semantic_schema` recreates
+   and backfills the FTS index whenever it's missing or stale (guarded by an
+   `fts_version` marker that forces a clean drop+rebuild when the definition
+   changes). A migration runs once and would never repair a later-dropped index.
+2. **Read-path coverage.** Read paths such as `semantic_index.query()` open the
+   DB through `ensure_semantic_schema` *without* running migrations, so `ensure`
+   is what guarantees the index exists for reads (it degrades to ANN-only if a
+   virtual table can't be created — e.g. the `vec0` extension isn't loaded).
+
+So: **changing one of these virtual indexes** = bump its in-code version marker
+(`fts_version`, …) to trigger a rebuild on the next `ensure`, not a numbered
+migration. **Everything else** (real tables, columns, indexes on base tables)
+still follows the migration rule above.
+
 ## Adding a migration
 
 1. Create `NNNN_short_description.sql` here, where `NNNN` is the next integer

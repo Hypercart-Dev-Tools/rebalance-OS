@@ -146,6 +146,10 @@ def ensure_semantic_schema(conn: sqlite3.Connection) -> None:
     # kept in sync with semantic_documents by triggers and joined back on
     # ``rowid = semantic_documents.id``. Fused with the vector ranking via RRF in
     # semantic_index.query(). Degrades to ANN-only if FTS5 is unavailable.
+    #
+    # Lives in ensure (not a numbered migration) by design — it is a self-healing
+    # derived index and the read path (query()) opens the DB without migrations.
+    # This is the documented virtual-index exception; see db/migrations/README.md.
     # Bump FTS_VERSION to force a clean drop+rebuild of the FTS table on every DB
     # (e.g. if its definition changes). Guards against a stale/incompatible FTS
     # table that an older code path may have left with rows but an empty index.
@@ -628,6 +632,11 @@ def ensure_project_schema(conn: sqlite3.Connection) -> None:
 # Schema changes from here on are forward-only migration files in db/migrations/
 # (applied by db/migrate.py). This number never changes and the ensure_*_schema
 # functions stay frozen at the baseline — see db/migrations/README.md.
+#
+# Exception: idempotent self-healing virtual indexes (the vec0 embedding tables
+# and the semantic_documents_fts FTS5 index) are created in ensure_*_schema, not
+# migrations — they are rebuildable derived indexes that must self-heal and cover
+# read paths that don't run migrations. See the README "Exception" section.
 BASELINE_SCHEMA_VERSION = 1
 
 

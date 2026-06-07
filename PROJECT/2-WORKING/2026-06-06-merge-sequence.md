@@ -392,10 +392,17 @@ break-glass option only.
 
 ## Open questions for Codex
 
-1. **Frozen-baseline (Risk 3):** should #55's FTS5 table/triggers be moved out of
-   `ensure_semantic_schema()` into a real numbered migration to honor the
-   schema.py frozen-baseline contract — or is the `FTS_VERSION`-guarded
-   ensure-path acceptable as-is? This doesn't change merge order either way.
+1. ~~**Frozen-baseline (Risk 3):** should #55's FTS5 table/triggers be moved out of
+   `ensure_semantic_schema()` into a real numbered migration?~~ → **RESOLVED
+   2026-06-06: keep in `ensure`.** Investigation showed FTS-in-ensure is
+   load-bearing: `query()` reads via `ensure_semantic_schema` without running
+   migrations, and `test_backfill_rebuilds_for_preexisting_docs` requires ensure
+   to rebuild a dropped FTS table (self-heal). A one-time migration would lose
+   both and can't repair a later-dropped index. It also matches how `vec0`
+   virtual tables are already created. Fix applied: documented the virtual-index
+   exception in `db/migrations/README.md` + the `schema.py` baseline comment, so
+   the convention is explicit (regular tables → migrations; self-healing virtual
+   indexes vec0/fts5 → ensure, versioned by an in-code marker like `fts_version`).
 2. **Migration numbering:** `0004_add_figma_comments.sql` (figma last, one rename)
    confirmed acceptable in your review — flag if you'd rather figma keep `0002`
    and bump focus5/ask_self instead.
