@@ -13,12 +13,14 @@ import typer
 from rebalance.cli._core import config_app
 from rebalance.ingest.audit import append_audit_entry
 from rebalance.ingest.config import (
+    add_focus5_hidden_repo,
     add_github_ignored_repo,
     add_github_related_repo,
     add_health_notice_pattern,
     clear_github_token,
     get_anthropic_api_key,
     get_config_path,
+    get_focus5_hidden_repos,
     get_gemini_api_key,
     get_github_ignored_repos,
     get_github_related_repos,
@@ -29,6 +31,7 @@ from rebalance.ingest.config import (
     get_sleuth_credentials,
     get_vault_path,
     normalize_github_repo_name,
+    remove_focus5_hidden_repo,
     remove_github_ignored_repo,
     remove_github_related_repo,
     remove_health_notice_pattern,
@@ -132,6 +135,59 @@ def config_list_github_ignored_repos() -> None:
     repos = get_github_ignored_repos()
     if not repos:
         typer.echo("No ignored GitHub repos configured.")
+        return
+    for repo in repos:
+        typer.echo(repo)
+
+
+def _focus5_rerank_after_change() -> None:
+    """Best-effort re-rank from cache so a Focus 5 hide/un-hide takes effect on the
+    next page load without a manual refresh. Silent when no database exists yet."""
+    try:
+        from rebalance.ingest.focus5_scan import rerank_focus5_from_cache
+        from rebalance.paths import DatabaseNotFoundError, resolve_database_path
+
+        try:
+            db = resolve_database_path()
+        except DatabaseNotFoundError:
+            return
+        rerank_focus5_from_cache(db)
+    except Exception:  # noqa: BLE001 — the config change stuck; re-rank is a nicety
+        pass
+
+
+@config_app.command("add-focus5-hidden-repo")
+def config_add_focus5_hidden_repo(
+    repo: str = typer.Argument(..., help="Repo identity: owner/name (remote) or device-local path"),
+) -> None:
+    """Hide one repo from the Focus 5 roster (display-only; does not affect ingest)."""
+    added = add_focus5_hidden_repo(repo)
+    _focus5_rerank_after_change()
+    if added:
+        typer.echo(f"✓ Hidden from Focus 5: {repo.strip()}")
+    else:
+        typer.echo(f"✓ Already hidden from Focus 5: {repo.strip()}")
+
+
+@config_app.command("remove-focus5-hidden-repo")
+def config_remove_focus5_hidden_repo(
+    repo: str = typer.Argument(..., help="Repo identity to un-hide"),
+) -> None:
+    """Un-hide one repo so it can re-enter the Focus 5 roster."""
+    removed = remove_focus5_hidden_repo(repo)
+    _focus5_rerank_after_change()
+    if removed:
+        typer.echo(f"✓ Un-hidden from Focus 5: {repo.strip()}")
+    else:
+        typer.echo(f"✓ Repo was not hidden from Focus 5: {repo.strip()}")
+
+
+@config_app.command("list-focus5-hidden-repos")
+def config_list_focus5_hidden_repos() -> None:
+    """List the repos hidden from the Focus 5 roster."""
+    repos = get_focus5_hidden_repos()
+    if not repos:
+        typer.echo("No repos hidden from Focus 5.")
         return
     for repo in repos:
         typer.echo(repo)

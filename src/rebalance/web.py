@@ -19,7 +19,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 from fastapi import FastAPI
-from fastapi.responses import HTMLResponse, PlainTextResponse, RedirectResponse
+from fastapi.responses import (
+    HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
+)
+from pydantic import BaseModel
 
 from rebalance.ingest.auth_log import read_log, _log_path
 
@@ -269,8 +272,18 @@ def _f5_card(card: dict[str, Any]) -> str:
     name = html.escape(card["repo_name"])
     vsurl = html.escape(card.get("vscode_url") or "#")
     reason = html.escape(card.get("rank_reason") or "")
+    # Hide identity: owner/repo when there's a remote, else the device-local path
+    # (matches focus5_repo_identity / the focus5_hidden_repos config list).
+    identity = html.escape(
+        card.get("repo_full_name") or card.get("local_path") or "", quote=True
+    )
+    hide_btn = (
+        f"<button class='f5-hide' data-f5-hide=\"{identity}\" "
+        f"title='Hide from Focus 5' aria-label='Hide {name} from Focus 5'>✕</button>"
+    )
     return (
         f"<div class='f5-card'>"
+        f"{hide_btn}"
         f"<div><div class='f5-pos'>#{card['position']}</div>"
         f"<a class='f5-name' href='{vsurl}' title='Open in VS Code'>{name}</a>"
         f"<div class='f5-reason'>{reason}</div></div>"
@@ -302,7 +315,47 @@ def _focus5_body(data: dict[str, Any]) -> str:
     )
     strip = _f5_warning_strip(data)
     cards = "".join(_f5_card(c) for c in roster)
-    return f"<h2>🎯 Focus 5 {refresh_btn}</h2>{meta}{strip}<div class='f5-grid'>{cards}</div>"
+    return (
+        f"<h2>🎯 Focus 5 {refresh_btn}</h2>{meta}{strip}"
+        f"<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}"
+    )
+
+
+# Scoped CSS + JS for the per-card hide (✕) control. Kept in the Focus 5 body so
+# it doesn't touch the shared page chrome. The ✕ POSTs to /api/focus5/hide, which
+# adds the repo to focus5_hidden_repos and re-ranks from cache, then we reload so
+# the board refills with the next candidate(s).
+_FOCUS5_HIDE_ASSETS = """
+<style>
+.f5-card { position: relative; }
+.f5-hide { position:absolute; top:8px; right:8px; width:24px; height:24px;
+  border:none; border-radius:50%; background:transparent; color:#9aa0a6;
+  font-size:15px; line-height:24px; text-align:center; cursor:pointer; padding:0;
+  transition:background .12s, color .12s; }
+.f5-hide:hover { background:#fce8e6; color:#ea4335; }
+.f5-hide:focus-visible { outline:2px solid #ea4335; outline-offset:1px; }
+.f5-hide[disabled] { opacity:.4; cursor:default; }
+</style>
+<script>
+document.addEventListener('click', async (e) => {
+  const btn = e.target.closest('.f5-hide');
+  if (!btn || btn.disabled) return;
+  const repo = btn.getAttribute('data-f5-hide');
+  if (!repo) return;
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/focus5/hide', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo }),
+    });
+    if (res.ok) { window.location.reload(); return; }
+  } catch (_) { /* fall through to re-enable */ }
+  btn.disabled = false;
+  btn.title = 'Hide failed — try again';
+});
+</script>
+"""
 
 
 def _roster_stale(computed_at: str | None) -> bool:
@@ -344,6 +397,52 @@ def focus5_page(refresh: bool = False):
 
     data = summarize_focus5(db)  # roster from snapshot; health re-probed live
     return _page("Focus 5", _focus5_body(data), wide=True)
+
+
+class _Focus5HideRequest(BaseModel):
+    repo: str
+
+
+def focus5_set_hidden(repo: str, *, hidden: bool) -> dict[str, Any]:
+    """Hide / un-hide a repo from the Focus 5 roster, then re-rank from cache.
+
+    Shared by this server and the always-running pulse server so both ``/focus-5``
+    surfaces handle the ✕ the same way. Adds (or removes) the repo identity in
+    ``focus5_hidden_repos`` and rewrites the roster from the already-probed
+    signals — no git re-probe — so the board refills with the next candidate(s).
+    Never raises: a missing DB or a re-rank hiccup degrades to ``reranked: False``.
+    """
+    from rebalance.ingest.config import (
+        add_focus5_hidden_repo, remove_focus5_hidden_repo,
+    )
+    from rebalance.ingest.focus5_scan import rerank_focus5_from_cache
+    from rebalance.paths import DatabaseNotFoundError, resolve_database_path
+
+    identity = (repo or "").strip()
+    if not identity:
+        return {"ok": False, "error": "empty repo identity"}
+    changed = (
+        add_focus5_hidden_repo(identity) if hidden
+        else remove_focus5_hidden_repo(identity)
+    )
+    try:
+        db = resolve_database_path()
+        roster_size = rerank_focus5_from_cache(db)
+        return {"ok": True, "changed": changed, "reranked": True, "roster_size": roster_size}
+    except DatabaseNotFoundError:
+        return {"ok": True, "changed": changed, "reranked": False, "roster_size": None}
+    except Exception:  # noqa: BLE001 — the config change stuck; don't 500 the click
+        return {"ok": True, "changed": changed, "reranked": False, "roster_size": None}
+
+
+@app.post("/api/focus5/hide")
+def focus5_hide(req: _Focus5HideRequest) -> JSONResponse:
+    return JSONResponse(focus5_set_hidden(req.repo, hidden=True))
+
+
+@app.post("/api/focus5/unhide")
+def focus5_unhide(req: _Focus5HideRequest) -> JSONResponse:
+    return JSONResponse(focus5_set_hidden(req.repo, hidden=False))
 
 
 @app.get("/auth-log", response_class=HTMLResponse)

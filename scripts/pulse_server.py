@@ -54,6 +54,7 @@ from rebalance.web import (  # noqa: E402
     auth_log_page as _auth_log_page,
     auth_log_raw as _auth_log_raw,
     focus5_page as _focus5_page,
+    focus5_set_hidden as _focus5_set_hidden,
 )
 
 
@@ -70,6 +71,22 @@ def auth_log_raw():
 @app.get("/focus-5")
 def focus5(refresh: bool = False):
     return _focus5_page(refresh=refresh)
+
+
+class Focus5HideRequest(BaseModel):
+    repo: str
+
+
+@app.post("/api/focus5/hide")
+def focus5_hide(req: Focus5HideRequest):
+    # The ✕ on a Focus 5 card: hide the repo and re-rank from cache (shared logic
+    # in rebalance.web, so this surface matches `rebalance serve`).
+    return _focus5_set_hidden(req.repo, hidden=True)
+
+
+@app.post("/api/focus5/unhide")
+def focus5_unhide(req: Focus5HideRequest):
+    return _focus5_set_hidden(req.repo, hidden=False)
 
 
 class ChatRequest(BaseModel):

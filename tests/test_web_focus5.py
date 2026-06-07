@@ -170,5 +170,24 @@ class RelTimeTests(unittest.TestCase):
         self.assertIsInstance(_rel_time("2026-06-05T00:00:00Z"), str)
 
 
+class HideButtonTests(unittest.TestCase):
+    def test_card_renders_hide_button_with_full_name_identity(self) -> None:
+        body = _focus5_body(_data([_card()]))
+        self.assertIn("class='f5-hide'", body)
+        self.assertIn('data-f5-hide="Org/rebalance-OS"', body)  # repo_full_name wins
+        self.assertIn("/api/focus5/hide", body)                 # POST target in JS
+
+    def test_hide_identity_falls_back_to_local_path(self) -> None:
+        body = _focus5_body(_data([_card(
+            repo_full_name=None, remote_url=None,
+            local_path="/Users/me/dev/local-only",
+        )]))
+        self.assertIn('data-f5-hide="/Users/me/dev/local-only"', body)
+
+    def test_empty_roster_has_no_hide_assets(self) -> None:
+        body = _focus5_body(_data([]))
+        self.assertNotIn("f5-hide", body)
+
+
 if __name__ == "__main__":
     unittest.main()

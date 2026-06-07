@@ -440,6 +440,65 @@ def set_focus5_ranking_mode(mode: str) -> None:
     _write_config(config)
 
 
+def get_focus5_hidden_repos() -> list[str]:
+    """Return repo identities the operator has hidden from the Focus 5 roster.
+
+    Config key: ``focus5_hidden_repos`` (a list of identity strings). Each entry
+    is a repo's ``repo_full_name`` (``owner/repo``) when it has a remote, else its
+    device-local path — the same identity :func:`focus5_repo_identity` derives.
+    This is a *display* filter (hide from the board); it is independent of
+    ``github_ignored_repos``, which suppresses GitHub *ingest*.
+    """
+    value = _read_config().get("focus5_hidden_repos")
+    if not isinstance(value, list):
+        return []
+    seen: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip() and item.strip() not in seen:
+            seen.append(item.strip())
+    return seen
+
+
+def set_focus5_hidden_repos(repos: list[str]) -> None:
+    """Store the canonical Focus 5 hidden-repo list. Config key: ``focus5_hidden_repos``."""
+    cleaned: list[str] = []
+    for r in repos:
+        s = str(r).strip()
+        if s and s not in cleaned:
+            cleaned.append(s)
+    config = _read_config()
+    config["focus5_hidden_repos"] = cleaned
+    _write_config(config)
+
+
+def add_focus5_hidden_repo(repo: str) -> bool:
+    """Hide one repo from the Focus 5 roster. Returns False if already hidden."""
+    identity = repo.strip()
+    if not identity:
+        return False
+    existing = get_focus5_hidden_repos()
+    if identity in existing:
+        return False
+    existing.append(identity)
+    set_focus5_hidden_repos(existing)
+    return True
+
+
+def remove_focus5_hidden_repo(repo: str) -> bool:
+    """Un-hide one repo. Returns False if it was not hidden."""
+    identity = repo.strip()
+    existing = get_focus5_hidden_repos()
+    if identity not in existing:
+        return False
+    set_focus5_hidden_repos([item for item in existing if item != identity])
+    return True
+
+
+def is_focus5_repo_hidden(repo: str) -> bool:
+    """Return True when *repo*'s identity is in the Focus 5 hidden list."""
+    return repo.strip() in set(get_focus5_hidden_repos())
+
+
 GMAIL_INGEST_METHODS = ("oauth", "mcp")
 
 

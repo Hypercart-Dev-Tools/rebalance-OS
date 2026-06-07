@@ -21,13 +21,17 @@ from unittest import mock
 
 from rebalance.ingest.focus5_scan import (
     RepoSignals,
+    _SIGNAL_COLUMNS,
     _parse_status,
+    _signal_row,
+    focus5_repo_identity,
     get_roster_meta,
     iter_git_repos,
     live_health,
     probe_repo_signals,
     rank_repos,
     recent_activity,
+    rerank_focus5_from_cache,
     resolve_ranking_strategy,
     summarize_focus5,
     sync_focus5,
@@ -148,6 +152,28 @@ class RankingTests(unittest.TestCase):
         sigs = [_sig(f"r{i}", is_dirty=True, my_last_commit_ts=NOW - i * HOUR)
                 for i in range(8)]
         self.assertEqual(len(rank_repos(sigs, mode="dirty_first", now_ts=NOW, limit=5)), 5)
+
+    def test_hidden_repos_are_filtered_and_promote_next(self) -> None:
+        # 6 dirty repos but a roster of 5: the hidden one must drop out and the
+        # 6th must be promoted into the freed slot.
+        sigs = [_sig(f"r{i}", is_dirty=True, my_last_commit_ts=NOW - i * HOUR,
+                     repo_full_name=f"Org/r{i}") for i in range(6)]
+        full = rank_repos(sigs, mode="dirty_first", now_ts=NOW, limit=5)
+        self.assertEqual([r.signals.repo_name for r in full], ["r0", "r1", "r2", "r3", "r4"])
+        hidden = rank_repos(sigs, mode="dirty_first", now_ts=NOW, limit=5,
+                            hidden=["Org/r1"])
+        names = [r.signals.repo_name for r in hidden]
+        self.assertNotIn("r1", names)
+        self.assertIn("r5", names)          # 6th candidate promoted into the slot
+        self.assertEqual(len(names), 5)
+
+    def test_hidden_identity_falls_back_to_local_path(self) -> None:
+        # A local-only repo (no remote) is hidden by its device-local path.
+        local = _sig("local", is_dirty=True, local_path="/repos/local")
+        other = _sig("other", is_dirty=True)
+        ranked = rank_repos([local, other], mode="dirty_first", now_ts=NOW,
+                            hidden=["/repos/local"])
+        self.assertEqual([r.signals.repo_name for r in ranked], ["other"])
 
 
 # ---------------------------------------------------------------------------
@@ -559,6 +585,112 @@ class WebRouteTests(unittest.TestCase):
                 resp = self._get(db)
             self.assertEqual(resp.status_code, 200)
             self.assertTrue(m.called)                        # TTL expired → recompute
+
+
+# ---------------------------------------------------------------------------
+# Hide → ignore → re-rank
+# ---------------------------------------------------------------------------
+
+def _seed_signals(db: Path, sigs: list[RepoSignals]) -> None:
+    """Insert raw signals into the focus5_repo_signals cache (no git probe)."""
+    from rebalance.ingest.db import db_connection, run_migrations
+    with db_connection(db) as conn:
+        run_migrations(conn)
+        ph = ", ".join("?" for _ in _SIGNAL_COLUMNS)
+        conn.executemany(
+            f"INSERT INTO focus5_repo_signals ({', '.join(_SIGNAL_COLUMNS)}) VALUES ({ph})",
+            [_signal_row(s) for s in sigs],
+        )
+        conn.commit()
+
+
+class _ConfigIsolated(unittest.TestCase):
+    """Base that points the config file at a throwaway temp path."""
+
+    def setUp(self) -> None:
+        import rebalance.ingest.config as config_module
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._cfg_mod = config_module
+        self._orig_cfg = config_module.CONFIG_PATH
+        config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+        self.addCleanup(setattr, config_module, "CONFIG_PATH", self._orig_cfg)
+        self.db = Path(self._tmp.name) / "rebalance.db"
+
+
+class Focus5HiddenConfigTests(_ConfigIsolated):
+    def test_add_remove_dedupe_list_and_is_hidden(self) -> None:
+        from rebalance.ingest.config import (
+            add_focus5_hidden_repo, get_focus5_hidden_repos,
+            is_focus5_repo_hidden, remove_focus5_hidden_repo,
+        )
+        self.assertEqual(get_focus5_hidden_repos(), [])
+        self.assertTrue(add_focus5_hidden_repo("Org/a"))
+        self.assertFalse(add_focus5_hidden_repo("Org/a"))      # idempotent
+        self.assertTrue(add_focus5_hidden_repo("  /repos/b  "))  # trims
+        self.assertTrue(is_focus5_repo_hidden("Org/a"))
+        self.assertFalse(is_focus5_repo_hidden("Org/z"))
+        self.assertEqual(get_focus5_hidden_repos(), ["Org/a", "/repos/b"])
+        self.assertTrue(remove_focus5_hidden_repo("Org/a"))
+        self.assertFalse(remove_focus5_hidden_repo("Org/a"))
+        self.assertEqual(get_focus5_hidden_repos(), ["/repos/b"])
+
+
+class Focus5RerankHideTests(_ConfigIsolated):
+    def _dirty(self, name: str) -> RepoSignals:
+        return _sig(name, device_id="dev", is_dirty=True, modified_count=1,
+                    local_path=f"/repos/{name}", repo_full_name=f"Org/{name}")
+
+    def test_hide_rerank_drops_repo_then_unhide_restores(self) -> None:
+        _seed_signals(self.db, [self._dirty(n) for n in ("a", "b", "c")])
+        # Initial re-rank from cache: all three eligible.
+        self.assertEqual(rerank_focus5_from_cache(self.db, device_id="dev",
+                                                  mode="dirty_first"), 3)
+        # Hide one and re-rank: it drops out, board refills with the rest.
+        from rebalance.ingest.config import (
+            add_focus5_hidden_repo, remove_focus5_hidden_repo,
+        )
+        add_focus5_hidden_repo("Org/b")
+        self.assertEqual(rerank_focus5_from_cache(self.db, device_id="dev",
+                                                  mode="dirty_first"), 2)
+        out = summarize_focus5(self.db, device_id="dev",
+                               with_activity=False, with_live_health=False)
+        self.assertEqual({c["repo_name"] for c in out["roster"]}, {"a", "c"})
+        # And it must NOT resurface in the off-roster "needs attention" strip —
+        # hiding a dirty repo should silence it, not relocate it to the nag list.
+        self.assertNotIn("b", {w["repo_name"] for w in out["off_roster_warnings"]})
+        # Un-hide restores it on the next re-rank (reversible — not a one-way door).
+        remove_focus5_hidden_repo("Org/b")
+        self.assertEqual(rerank_focus5_from_cache(self.db, device_id="dev",
+                                                  mode="dirty_first"), 3)
+
+    def test_web_helper_hides_and_reranks_from_cache(self) -> None:
+        import rebalance.web as web
+        _seed_signals(self.db, [self._dirty(n) for n in ("a", "b", "c")])
+        with mock.patch("rebalance.ingest.focus5_scan.get_device_id", return_value="dev"), \
+             mock.patch("rebalance.paths.resolve_database_path", return_value=self.db):
+            res = web.focus5_set_hidden("Org/b", hidden=True)
+            self.assertEqual(res, {"ok": True, "changed": True,
+                                   "reranked": True, "roster_size": 2})
+            out = summarize_focus5(self.db, device_id="dev",
+                                   with_activity=False, with_live_health=False)
+            self.assertNotIn("b", {c["repo_name"] for c in out["roster"]})
+        from rebalance.ingest.config import get_focus5_hidden_repos
+        self.assertIn("Org/b", get_focus5_hidden_repos())
+
+    def test_web_helper_rejects_empty_identity(self) -> None:
+        import rebalance.web as web
+        self.assertEqual(web.focus5_set_hidden("  ", hidden=True),
+                         {"ok": False, "error": "empty repo identity"})
+
+
+class Focus5IdentityTests(unittest.TestCase):
+    def test_identity_prefers_full_name_then_path(self) -> None:
+        self.assertEqual(focus5_repo_identity(_sig("x", repo_full_name="Org/x")), "Org/x")
+        self.assertEqual(
+            focus5_repo_identity(_sig("y", repo_full_name=None, local_path="/repos/y")),
+            "/repos/y",
+        )
 
 
 if __name__ == "__main__":

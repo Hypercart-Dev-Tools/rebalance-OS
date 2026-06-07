@@ -38,7 +38,7 @@ from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
-from typing import Any, Callable, Iterator
+from typing import Any, Callable, Iterable, Iterator
 
 from rebalance.ingest.db import db_connection, run_migrations
 from rebalance.ingest.sync_snapshot import get_device_id
@@ -92,6 +92,17 @@ class RepoSignals:
     def is_unpushed(self) -> bool:
         """Local commits not on the upstream (a 'did I forget to push?' signal)."""
         return self.ahead > 0
+
+
+def focus5_repo_identity(s: RepoSignals) -> str:
+    """Stable hide/ignore key for a repo.
+
+    Its ``owner/repo`` (``repo_full_name``) when it has a remote, else its
+    device-local path. This is exactly what the ``focus5_hidden_repos`` config
+    list stores, so a repo with a remote is hidden across devices while a
+    local-only clone is hidden per-path.
+    """
+    return s.repo_full_name or s.local_path
 
 
 # ---------------------------------------------------------------------------
@@ -214,11 +225,20 @@ class RankedRepo:
 
 def rank_repos(
     signals: list[RepoSignals], *, mode: str, now_ts: int, limit: int = DEFAULT_ROSTER_SIZE,
+    hidden: Iterable[str] = (),
 ) -> list[RankedRepo]:
-    """Apply *mode* to *signals* and return the top *limit* eligible repos."""
+    """Apply *mode* to *signals* and return the top *limit* eligible repos.
+
+    Repos whose identity (:func:`focus5_repo_identity`) is in *hidden* are dropped
+    before ranking — so a hidden repo never claims a roster slot and the next
+    eligible candidate is promoted into its place.
+    """
     strategy = resolve_ranking_strategy(mode)
+    hidden_set = set(hidden)
     scored: list[tuple[tuple, RepoSignals, RankVerdict]] = []
     for s in signals:
+        if focus5_repo_identity(s) in hidden_set:
+            continue
         v = strategy(s, now_ts)
         if v.eligible:
             scored.append((v.sort_key, s, v))
@@ -435,6 +455,17 @@ def _signal_row(s: RepoSignals) -> tuple:
     return tuple(d[c] for c in _SIGNAL_COLUMNS)
 
 
+def _row_to_signals(row: Any) -> RepoSignals:
+    """Reconstruct a RepoSignals from a focus5_repo_signals row (inverse of _signal_row).
+
+    Lets the roster be re-ranked from the cached signals without re-probing git.
+    """
+    d = {k: row[k] for k in row.keys()}
+    d["has_upstream"] = bool(d["has_upstream"])
+    d["is_dirty"] = bool(d["is_dirty"])
+    return RepoSignals(**{f: d[f] for f in RepoSignals.__dataclass_fields__})
+
+
 def sync_focus5(
     database_path: Path, *,
     roots: list[str] | list[Path] | None = None,
@@ -456,6 +487,8 @@ def sync_focus5(
     if mode is None:
         from rebalance.ingest.config import get_focus5_ranking_mode
         mode = get_focus5_ranking_mode()
+    from rebalance.ingest.config import get_focus5_hidden_repos
+    hidden = get_focus5_hidden_repos()
 
     now = datetime.now(timezone.utc)
     now_ts = int(now.timestamp())
@@ -468,8 +501,10 @@ def sync_focus5(
     )
     t_scan = perf_counter() - started
     # resolve_ranking_strategy raises on a bad mode BEFORE we touch the DB.
+    # Hidden repos still get their signals cached (so an un-hide can re-rank them
+    # back in) but are filtered out of the ranked roster.
     t0 = perf_counter()
-    ranked = rank_repos(signals, mode=mode, now_ts=now_ts, limit=limit)
+    ranked = rank_repos(signals, mode=mode, now_ts=now_ts, limit=limit, hidden=hidden)
     t_rank = perf_counter() - t0
 
     t0 = perf_counter()
@@ -520,6 +555,61 @@ def sync_focus5(
         slow_repos=slow_repos,
         failed_repos=failed_repos,
     )
+
+
+def rerank_focus5_from_cache(
+    database_path: Path, *,
+    device_id: str | None = None,
+    mode: str | None = None,
+    limit: int = DEFAULT_ROSTER_SIZE,
+) -> int:
+    """Re-rank this device's roster from the cached signals — NO git re-probe.
+
+    Reads the persisted ``focus5_repo_signals`` (the off-roster cache of *every*
+    discovered repo), re-applies the hidden-repo filter + ranking strategy, and
+    rewrites ``focus5_roster``. This is the cheap seam the schema was built for:
+    after hiding or un-hiding a repo the board refills from already-probed
+    candidates without walking the disk. Returns the new roster size.
+
+    A no-op (returns 0) when the device has no cached signals yet — call
+    :func:`sync_focus5` first to populate the cache.
+    """
+    dev = device_id or get_device_id()
+    if mode is None:
+        from rebalance.ingest.config import get_focus5_ranking_mode
+        mode = get_focus5_ranking_mode()
+    from rebalance.ingest.config import get_focus5_hidden_repos
+    hidden = get_focus5_hidden_repos()
+
+    now = datetime.now(timezone.utc)
+    now_ts = int(now.timestamp())
+    computed_at = now.isoformat()
+
+    with db_connection(database_path) as conn:
+        run_migrations(conn)
+        rows = conn.execute(
+            "SELECT * FROM focus5_repo_signals WHERE device_id=?", (dev,)
+        ).fetchall()
+        signals = [_row_to_signals(r) for r in rows]
+        # resolve_ranking_strategy raises on a bad mode BEFORE we touch the roster.
+        ranked = rank_repos(signals, mode=mode, now_ts=now_ts, limit=limit, hidden=hidden)
+        conn.execute("DELETE FROM focus5_roster WHERE device_id=?", (dev,))
+        conn.executemany(
+            "INSERT INTO focus5_roster "
+            "(device_id, local_path, position, rank_reason, ranking_mode, computed_at) "
+            "VALUES (?,?,?,?,?,?)",
+            [
+                (dev, r.signals.local_path, r.position, r.reason, mode, computed_at)
+                for r in ranked
+            ],
+        )
+        conn.commit()
+
+    logger.info(
+        "focus5 re-rank from cache: %d candidates -> roster=%d (mode=%s, hidden=%d)",
+        len(signals), len(ranked), mode, len(hidden),
+    )
+    return len(ranked)
 
 
 # ---------------------------------------------------------------------------
@@ -692,6 +782,11 @@ def summarize_focus5(
                 roster.append(card)
 
             roster_paths = {c["local_path"] for c in roster}
+            # Hidden repos are suppressed from the off-roster attention strip too —
+            # otherwise hiding a *dirty* repo would just relocate it from a card
+            # into the nag strip, the opposite of what the ✕ promises.
+            from rebalance.ingest.config import get_focus5_hidden_repos
+            hidden = set(get_focus5_hidden_repos())
             warn_rows = conn.execute(
                 "SELECT repo_name, local_path, repo_full_name, branch, ahead, "
                 "       modified_count, untracked_count, is_dirty, probed_at "
@@ -702,7 +797,9 @@ def summarize_focus5(
             ).fetchall()
             off_roster = [
                 {**{k: w[k] for k in w.keys()}, "is_dirty": bool(w["is_dirty"])}
-                for w in warn_rows if w["local_path"] not in roster_paths
+                for w in warn_rows
+                if w["local_path"] not in roster_paths
+                and (w["repo_full_name"] or w["local_path"]) not in hidden
             ]
 
             discovered = conn.execute(
