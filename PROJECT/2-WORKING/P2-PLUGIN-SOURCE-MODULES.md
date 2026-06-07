@@ -4,6 +4,9 @@
 > `claude/plugin-architecture-activity-stream`. **Phase 0 spike complete
 > 2026-06-06 — all three seams green (14/14), proceed to Phase 1.** See
 > [Phase 0 findings](#phase-0-findings).
+> **Sequencing decision (2026-06-07):** **figma** is the first real customer of
+> this architecture (not linkding) — see
+> [PLUGINS-FIGMA-LINKDING.md](./PLUGINS-FIGMA-LINKDING.md) for the what/why/when.
 > **Builds on:** [P1-MODULE-REGISTRY.md](./P1-MODULE-REGISTRY.md) (decision **B′** —
 > extend the runtime `index_ops` collector registry, descriptor-first) and
 > [P2-SEMANTIC-INDEX.md](../1-INBOX/P2-SEMANTIC-INDEX.md) (the unified

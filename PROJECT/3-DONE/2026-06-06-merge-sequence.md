@@ -1,5 +1,20 @@
 # Open-PR Merge Sequence Plan — 2026-06-06
 
+> **⛔ RETIRED 2026-06-07 — archived to `3-DONE`.** The merge sequence is
+> complete: **#55, #54, #56 merged** into `development`; **#49 (figma) intentionally
+> deferred**. The full suite is green on `development`, and Risk 3 (frozen-baseline)
+> was resolved by documenting the virtual-index exception (commit `732158d`).
+>
+> **Superseded for the figma plan by**
+> [PLUGINS-FIGMA-LINKDING.md](../2-WORKING/PLUGINS-FIGMA-LINKDING.md): figma now
+> lands as the first customer of the plugin `SourceModule` architecture, **not**
+> via the cherry-pick runbook in §Step 3 below. Treat §Step 3 as the *escape-hatch*
+> runbook only (if figma ever needs to ship before the plugin path is ready).
+>
+> **Still live here:** the **`development → main` promotion** runbook (§Post-merge)
+> remains valid but un-executed — that's a separate track from plugins; use it
+> when promoting.
+
 **Author:** Claude Code (analysis) — for Codex review
 **Repo:** `Hypercart-Dev-Tools/rebalance-OS`
 **Goal:** Land all three open PRs into `development` in an order that minimizes
