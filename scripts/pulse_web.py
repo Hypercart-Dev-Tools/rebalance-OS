@@ -58,6 +58,7 @@ from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
 from rebalance.health import HealthStatus, compute_health_status  # noqa: E402
 from rebalance.ingest.index_ops import get_index_status  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
+from rebalance.web_components import RB_BUTTON_CSS, button_link  # noqa: E402
 
 CONFIG_PATH = PROJECT_ROOT / "temp" / "rbos.config"
 DEFAULT_OUT = PROJECT_ROOT / "web" / "pulse.html"
@@ -650,7 +651,7 @@ def render_hero(
     )
     date_str = now.strftime("%A, %B %-d")
     open_link = (
-        f'<a class="hero-open" href="{_esc(obsidian_url)}">Open in Obsidian ↗</a>'
+        button_link("Open in Obsidian", obsidian_url, cls="hero-open")
         if obsidian_url else ""
     )
     undo_html = ""
@@ -1275,8 +1276,7 @@ h2 { font-size: 14px; color: var(--fg); }
 .auth-log-icon { font-size: 13px; }
 
 /* Hero "Open in Obsidian" link */
-.hero-open { color: var(--accent); text-decoration: none; margin-left: 8px; font-size: 12px; }
-.hero-open:hover { text-decoration: underline; }
+.hero-open { margin-left: 8px; }  /* visual styling now from the shared .rb-btn */
 .card-foot .strong { color: var(--fg); font-weight: 500; }
 
 /* Main */
@@ -2216,7 +2216,7 @@ def render_page(*, title: str, body_html: str, now: datetime, refresh_seconds: i
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{_esc(title)}</title>
-  <style>{CSS}</style>
+  <style>{CSS}{RB_BUTTON_CSS}</style>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>
 </head>
 <body>

@@ -189,5 +189,19 @@ class HideButtonTests(unittest.TestCase):
         self.assertNotIn("f5-hide", body)
 
 
+class OpenButtonTests(unittest.TestCase):
+    def test_card_has_open_button_pointing_at_vscode_url(self) -> None:
+        body = _focus5_body(_data([_card()]))
+        self.assertIn("rb-btn", body)                  # shared "Button ↗" helper
+        self.assertIn("rb-btn-arrow", body)            # the ↗ affordance
+        self.assertIn("vscode://file/Users/me/dev/rebalance-OS", body)
+
+    def test_open_and_hide_share_the_action_cluster(self) -> None:
+        body = _focus5_body(_data([_card()]))
+        self.assertIn("f5-actions", body)              # top-right cluster
+        self.assertIn("rb-btn", body)                  # Open ↗
+        self.assertIn("f5-hide", body)                 # ✕ still present
+
+
 if __name__ == "__main__":
     unittest.main()

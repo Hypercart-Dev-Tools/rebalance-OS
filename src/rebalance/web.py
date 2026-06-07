@@ -25,6 +25,7 @@ from fastapi.responses import (
 from pydantic import BaseModel
 
 from rebalance.ingest.auth_log import read_log, _log_path
+from rebalance.web_components import RB_BUTTON_CSS, button_link
 
 # How long a persisted Focus 5 roster stays authoritative before a visit lazily
 # recomputes it. Membership is snapshot-stable for this window; working-tree
@@ -129,7 +130,7 @@ def _page(title: str, body: str, *, wide: bool = False) -> HTMLResponse:
     html_doc = f"""<!DOCTYPE html>
 <html lang="en">
 <head><meta charset="utf-8"><title>{title} — rebalance-OS</title>
-<style>{_CSS}</style></head>
+<style>{_CSS}{RB_BUTTON_CSS}</style></head>
 <body>
 <header>
   <h1>rebalance-OS</h1>
@@ -270,20 +271,25 @@ def _f5_activity(card: dict[str, Any]) -> str:
 
 def _f5_card(card: dict[str, Any]) -> str:
     name = html.escape(card["repo_name"])
-    vsurl = html.escape(card.get("vscode_url") or "#")
+    vs_href = card.get("vscode_url") or "#"
+    vsurl = html.escape(vs_href)
     reason = html.escape(card.get("rank_reason") or "")
     # Hide identity: owner/repo when there's a remote, else the device-local path
     # (matches focus5_repo_identity / the focus5_hidden_repos config list).
     identity = html.escape(
         card.get("repo_full_name") or card.get("local_path") or "", quote=True
     )
+    # Top-right action cluster: the standard "Open ↗" button (shared helper, so it
+    # matches the dashboard home) next to the ✕ hide control.
+    open_btn = button_link("Open", vs_href, title="Open repo in VS Code")
     hide_btn = (
         f"<button class='f5-hide' data-f5-hide=\"{identity}\" "
         f"title='Hide from Focus 5' aria-label='Hide {name} from Focus 5'>✕</button>"
     )
+    actions = f"<div class='f5-actions'>{open_btn}{hide_btn}</div>"
     return (
         f"<div class='f5-card'>"
-        f"{hide_btn}"
+        f"{actions}"
         f"<div><div class='f5-pos'>#{card['position']}</div>"
         f"<a class='f5-name' href='{vsurl}' title='Open in VS Code'>{name}</a>"
         f"<div class='f5-reason'>{reason}</div></div>"
@@ -328,9 +334,11 @@ def _focus5_body(data: dict[str, Any]) -> str:
 _FOCUS5_HIDE_ASSETS = """
 <style>
 .f5-card { position: relative; }
-.f5-hide { position:absolute; top:8px; right:8px; width:24px; height:24px;
-  border:none; border-radius:50%; background:transparent; color:#9aa0a6;
-  font-size:15px; line-height:24px; text-align:center; cursor:pointer; padding:0;
+.f5-actions { position:absolute; top:8px; right:10px; display:flex;
+  align-items:center; gap:8px; }
+.f5-hide { width:24px; height:24px; border:none; border-radius:50%;
+  background:transparent; color:#9aa0a6; font-size:15px; line-height:24px;
+  text-align:center; cursor:pointer; padding:0;
   transition:background .12s, color .12s; }
 .f5-hide:hover { background:#fce8e6; color:#ea4335; }
 .f5-hide:focus-visible { outline:2px solid #ea4335; outline-offset:1px; }
