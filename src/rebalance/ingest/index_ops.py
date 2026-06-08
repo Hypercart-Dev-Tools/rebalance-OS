@@ -389,6 +389,8 @@ def _activity_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
     Passive events such as starring/watching a repo may create GitHub Events
     API entries, but they must not auto-monitor a repo.
     """
+    from rebalance.ingest.github_watch import WATCHED_LOGIN
+
     repos: list[str] = []
     try:
         with db_connection(database_path) as conn:
@@ -397,13 +399,14 @@ def _activity_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
                 SELECT DISTINCT repo_full_name
                 FROM github_activity
                 WHERE scan_date >= date('now', ?)
+                  AND login != ?
                   AND (
                     commits + pushes + prs_opened + prs_merged
                     + issues_opened + issue_comments + reviews
                   ) > 0
                 ORDER BY repo_full_name
                 """,
-                (f"-{int(since_days)} days",),
+                (f"-{int(since_days)} days", WATCHED_LOGIN),
             ).fetchall()
             for r in rows:
                 repo = (r["repo_full_name"] or "").strip()
@@ -450,6 +453,21 @@ def _pushed_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
     return repos
 
 
+def _external_repos(database_path: Path) -> list[str]:
+    """External/watched repos drawn from the project registry (external: true).
+
+    Always-on (not windowed), like ``_project_repos`` — a watched external repo
+    should be synced every refresh regardless of recent activity, since the point
+    is to catch other people's activity the operator's events feed never sees.
+    """
+    try:
+        from rebalance.ingest.registry import get_external_repos
+
+        return get_external_repos(database_path)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def get_watched_repos(
     database_path: Path,
     *,
@@ -458,16 +476,18 @@ def get_watched_repos(
     """Return the canonical view of which repos are monitored.
 
     The merged ``watched`` list = (project_repos ∪ activity_repos ∪
-    pushed_repos) − ignored. Callers (``refresh_index``,
+    pushed_repos ∪ external_repos) − ignored. Callers (``refresh_index``,
     ``list_watched_repos`` MCP tool, the ``raw`` diagnostic) consume the
     same source of truth so the user can never wonder "what's actually
-    being synced?"
+    being synced?". ``external_repos`` are third-party repos monitored for
+    everyone's activity (see ``rebalance.ingest.github_watch``).
     """
     from rebalance.ingest.config import get_github_ignored_repos
 
     project = _project_repos(database_path)
     activity = _activity_repos(database_path, since_days=since_days)
     pushed = _pushed_repos(database_path, since_days=since_days)
+    external = _external_repos(database_path)
     ignored = sorted(get_github_ignored_repos())
     # Ignored entries are stored lowercased (CLI normalizes on add);
     # watched-set sources keep GitHub's original casing. Compare on lowercase
@@ -479,7 +499,7 @@ def get_watched_repos(
     pushed_set = set(pushed)
 
     watched: list[str] = []
-    for repo in project + activity + pushed:
+    for repo in project + external + activity + pushed:
         if repo.lower() in ignored_lower:
             continue
         if repo not in watched:
@@ -495,6 +515,7 @@ def get_watched_repos(
         "project_repos": project,
         "activity_repos": activity,
         "pushed_repos": pushed,
+        "external_repos": external,
         "auto_discovered": auto_discovered,
         "ignored": ignored,
         "since_days": since_days,
@@ -517,10 +538,14 @@ def _refresh_github(
     include_semantic: bool = True,
 ) -> dict[str, Any]:
     initial_target_repos = _resolve_repos_for_refresh(database_path, repos)
+    external_count = len(
+        [r for r in initial_target_repos if r.lower() in {e.lower() for e in _external_repos(database_path)}]
+    )
     plan_steps = [
         "sync_pushed_repos()",
         f"github_scan(days={since_days})",
         f"sync_github_repo() x ~{len(initial_target_repos)} repos (after auto-discovery)",
+        f"reconcile_watched_repo() x {external_count} external repos (rollup or purge)",
     ]
     if include_semantic:
         plan_steps.extend([
@@ -580,6 +605,27 @@ def _refresh_github(
         except Exception as e:
             repo_results.append({"repo": repo, "error": str(e)})
 
+    # External/watched repos: after their artifacts are synced above, reconcile a
+    # whole-repo github_activity rollup so everyone's activity surfaces in the
+    # org-activity dashboards/reports. Idempotent + bidirectional — a watched repo
+    # that's become active local/cloud work has its sentinel rollup purged instead
+    # (see github_watch.reconcile_watched_repo) so it never double-counts.
+    from rebalance.ingest.github_watch import reconcile_watched_repo
+
+    external_set = {r.lower() for r in _external_repos(database_path)}
+    watched_activity: list[dict[str, Any]] = []
+    for repo in target_repos:
+        if repo.lower() not in external_set:
+            continue
+        try:
+            watched_activity.append(
+                reconcile_watched_repo(
+                    database_path, repo, token, since_days=since_days
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — one repo must not abort the run
+            watched_activity.append({"repo": repo, "error": str(e)})
+
     result: dict[str, Any] = {
         "scope": "github",
         "dry_run": False,
@@ -598,6 +644,7 @@ def _refresh_github(
             "skipped_ignored": len(skipped),
         },
         "artifact_sync": repo_results,
+        "watched_activity": watched_activity,
     }
     if not include_semantic:
         result["semantic"] = {
