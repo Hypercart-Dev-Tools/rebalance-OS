@@ -123,6 +123,9 @@ class PulseSnapshot:
     today_calendar_upcoming: list[dict[str, Any]]
     assigned_issues: list[dict[str, Any]]  # last 7 days, sorted today-first
     notes: list[str]  # diagnostics / soft-warnings (e.g. "search rate-limited")
+    # Whole-repo (all-author) activity today on external/watched repos — the repos
+    # the operator monitors but doesn't author. Empty when none are configured.
+    watched_repos: list[dict[str, Any]] = field(default_factory=list)
 
 
 def _query_day_activity(
@@ -426,6 +429,80 @@ def _sort_assigned_issues(
 # ---------------------------------------------------------------------------
 
 
+def _query_watched_activity(
+    conn: Any,
+    external_repos: list[str],
+    *,
+    start: datetime,
+    end: datetime,
+) -> list[dict[str, Any]]:
+    """Whole-repo (all-author) activity for watched external repos in [start, end).
+
+    Mirrors the personal day-activity queries but WITHOUT the author filter and
+    scoped to the external repos — so the pulse surfaces everyone's commits/PRs on
+    the repos the operator monitors. Repos with no activity in the window are omitted.
+    """
+    if not external_repos:
+        return []
+    repos_lower = [r.lower() for r in external_repos]
+    placeholders = ",".join("?" * len(repos_lower))
+    sql_floor = _utc_iso_floor(start - timedelta(hours=2))
+
+    activity: dict[str, dict[str, Any]] = {
+        r: {"repo": r, "commits": 0, "items": [], "comments": 0} for r in repos_lower
+    }
+
+    rows = conn.execute(
+        f"""
+        SELECT repo_full_name, committed_at FROM github_commits
+        WHERE LOWER(repo_full_name) IN ({placeholders}) AND committed_at >= ?
+        """,
+        (*repos_lower, sql_floor),
+    ).fetchall()
+    for r in rows:
+        if _in_window(r["committed_at"], start, end):
+            activity[r["repo_full_name"].lower()]["commits"] += 1
+
+    rows = conn.execute(
+        f"""
+        SELECT repo_full_name, item_type, number, title, state, html_url,
+               created_at, updated_at
+        FROM github_items
+        WHERE LOWER(repo_full_name) IN ({placeholders})
+          AND (created_at >= ? OR updated_at >= ?)
+        ORDER BY COALESCE(updated_at, created_at) DESC
+        """,
+        (*repos_lower, sql_floor, sql_floor),
+    ).fetchall()
+    for r in rows:
+        created_in = _in_window(r["created_at"], start, end)
+        if not (created_in or _in_window(r["updated_at"], start, end)):
+            continue
+        activity[r["repo_full_name"].lower()]["items"].append({
+            "item_type": r["item_type"],
+            "number": r["number"],
+            "title": r["title"] or "",
+            "state": r["state"] or "",
+            "html_url": r["html_url"] or "",
+            "is_new": created_in,
+        })
+
+    rows = conn.execute(
+        f"""
+        SELECT repo_full_name, created_at FROM github_comments
+        WHERE LOWER(repo_full_name) IN ({placeholders}) AND created_at >= ?
+        """,
+        (*repos_lower, sql_floor),
+    ).fetchall()
+    for r in rows:
+        if _in_window(r["created_at"], start, end):
+            activity[r["repo_full_name"].lower()]["comments"] += 1
+
+    out = [a for a in activity.values() if a["commits"] or a["items"] or a["comments"]]
+    out.sort(key=lambda a: (len(a["items"]), a["commits"], a["comments"]), reverse=True)
+    return out
+
+
 def collect_pulse_snapshot(
     database_path: Path,
     *,
@@ -442,6 +519,21 @@ def collect_pulse_snapshot(
     notes: list[str] = []
     assigned_issues: list[dict[str, Any]] = []
 
+    # Passively-monitored externals only — a watched repo that's become active
+    # local/cloud work already surfaces in "What I've been working on", so it must
+    # not also appear in the watched section (the same de-dupe the rollup applies).
+    try:
+        from rebalance.ingest.registry import get_external_repos
+        from rebalance.ingest.github_watch import watched_repo_is_active_work
+
+        external_repos = [
+            r for r in get_external_repos(database_path)
+            if not watched_repo_is_active_work(database_path, r)
+        ]
+    except Exception as exc:  # noqa: BLE001
+        external_repos = []
+        notes.append(f"watched_repos skipped: {exc}")
+
     with db_connection(database_path) as conn:
         today = _query_day_activity(
             conn,
@@ -450,6 +542,9 @@ def collect_pulse_snapshot(
             end=tomorrow_start,
             github_login=github_login,
             slack_user_id=slack_user_id,
+        )
+        watched_repos = _query_watched_activity(
+            conn, external_repos, start=today_start, end=tomorrow_start
         )
         yesterday = _query_day_activity(
             conn,
@@ -488,6 +583,7 @@ def collect_pulse_snapshot(
         today_calendar_upcoming=upcoming,
         assigned_issues=assigned_issues,
         notes=notes,
+        watched_repos=watched_repos,
     )
 
 
@@ -685,6 +781,31 @@ def _render_section_assigned_issues(
     return "\n".join(lines)
 
 
+def _render_section_watched(watched: list[dict[str, Any]], tz: ZoneInfo) -> str:
+    if not watched:
+        return "_No external/watched-repo activity today._"
+    lines: list[str] = []
+    for w in watched:
+        bits: list[str] = []
+        if w["commits"]:
+            bits.append(f"{w['commits']} commit{'s' if w['commits'] != 1 else ''}")
+        if w["items"]:
+            bits.append(f"{len(w['items'])} PR/issue")
+        if w["comments"]:
+            bits.append(f"{w['comments']} comment{'s' if w['comments'] != 1 else ''}")
+        lines.append(f"**`{w['repo']}`** — {' · '.join(bits)}")
+        for it in w["items"][:6]:
+            chip = "🆕 " if it.get("is_new") else ""
+            kind = "PR" if it["item_type"] == "pull_request" else "issue"
+            url_part = f" — {it['html_url']}" if it["html_url"] else ""
+            state = f" ({it['state']})" if it["state"] else ""
+            lines.append(f"- {chip}{kind} #{it['number']} {it['title']}{state}{url_part}")
+        if len(w["items"]) > 6:
+            lines.append(f"- _…and {len(w['items']) - 6} more_")
+        lines.append("")
+    return "\n".join(lines).rstrip()
+
+
 def render_pulse_markdown(snapshot: PulseSnapshot) -> str:
     tz = _resolve_timezone(snapshot.timezone_name)
     today_start = snapshot.generated_at.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -702,6 +823,9 @@ def render_pulse_markdown(snapshot: PulseSnapshot) -> str:
         "",
         "### What I've been working on",
         _render_section_today_work(snapshot.today, tz),
+        "",
+        "### Watched repos (external activity)",
+        _render_section_watched(snapshot.watched_repos, tz),
         "",
         "### Upcoming Meetings",
         _render_section_calendar(snapshot.today_calendar_upcoming, tz),

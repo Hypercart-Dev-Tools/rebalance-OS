@@ -4,6 +4,30 @@
 
 ### Added
 
+- **Monitor external GitHub repos in the unified pipeline.** You can now watch
+  third-party repos for *everyone's* activity (commits/PRs), not just your own.
+  Declare them in the project registry with a project flagged `external: true`
+  and list the repos under `repos` (see `rebalance.ingest.registry.get_external_repos`).
+  No second pipeline: external repos enter the canonical watched set
+  (`get_watched_repos` gains an `external_repos` source) and are artifact-synced by
+  the existing `sync_github_repo`, so they immediately appear in the repo-scoped
+  feeds, open-PRs panel, semantic search, and readiness tools. The one added step
+  (`rebalance.ingest.github_watch`) derives a whole-repo `github_activity` rollup
+  under a sentinel login so external repos also surface in the org-activity
+  dashboards/reports (`note_builder` org view, `dashboard.fetch_org_activity`) and
+  in a new "Watched repos (external activity)" section of the hourly pulse.
+  - **De-dupe / pause across the clone lifecycle.** A watched repo can become
+    active work — cloned and worked locally, or driven through a cloud agent — and
+    later go quiet again, possibly oscillating (Claude Code cloud → local → Codex
+    cloud → local). `reconcile_watched_repo` is recomputed every refresh and is
+    idempotent + bidirectional: when the repo is active work (signals:
+    `focus5_repo_signals` local clone with a recent commit, `github_pushed_repos`
+    push/collab access, real per-login activity, or cloud-agent authored commits)
+    it **suppresses and purges** the sentinel rollup so it never double-counts
+    against your own per-login rows; when the work goes quiet it **resumes**.
+    Artifact tables dedupe by sha/number, so the rollup is the only layer that
+    needs reconciling, and it's kept mutually exclusive with the owned rows.
+
 - **Figma comments land as the first plugin `SourceModule`.** Onboards Figma
   through the registry-driven plugin contract (`PROJECT/2-WORKING/PLUGINS.md`),
   reusing the prior figma-collector client **without** the hardcoded `if "figma"`

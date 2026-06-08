@@ -14,6 +14,12 @@ class Project(BaseModel):
     status: str = "active"
     summary: str = ""
     repos: list[str] = Field(default_factory=list)
+    # When true, every repo under ``repos`` is an EXTERNAL repo to monitor for
+    # everyone's activity (commits/PRs), not the operator's own work. Watched
+    # externals enter the watched set and get a whole-repo github_activity rollup
+    # (see rebalance.ingest.github_watch). A dedicated "Watched — …" project with
+    # external: true is the intended container.
+    external: bool = False
     obsidian_folder: str | None = None
     tags: list[str] = Field(default_factory=list)
     value_level: str | None = None
@@ -103,6 +109,13 @@ Sections:
 def _registry_to_projection(registry: Registry) -> dict[str, Any]:
     projects = []
     for project in registry.active_projects:
+        # Persist the typed ``external`` flag inside custom_fields_json so it
+        # round-trips through the project_registry table without a schema column
+        # (get_projects already decodes custom_fields, and read paths that open
+        # via ensure_project_schema without running migrations keep working).
+        custom_fields = dict(project.custom_fields)
+        if project.external:
+            custom_fields["external"] = True
         projects.append(
             {
                 "name": project.name,
@@ -114,7 +127,7 @@ def _registry_to_projection(registry: Registry) -> dict[str, Any]:
                 "repos": project.repos,
                 "obsidian_folder": project.obsidian_folder,
                 "tags": project.tags,
-                "custom_fields": project.custom_fields,
+                "custom_fields": custom_fields,
             }
         )
     return {"projects": projects}
@@ -173,18 +186,21 @@ def _push_from_projection(registry: Registry, projects_yaml_path: Path) -> Regis
     for item in projects:
         if not isinstance(item, dict):
             continue
+        custom_fields = dict(item.get("custom_fields", {}) or {})
+        external = bool(item.get("external") or custom_fields.pop("external", False))
         transformed.append(
             Project(
                 name=str(item.get("name", "")).strip(),
                 status=str(item.get("status", "active")),
                 summary=str(item.get("summary", "")),
                 repos=list(item.get("repos", []) or []),
+                external=external,
                 obsidian_folder=item.get("obsidian_folder"),
                 tags=list(item.get("tags", []) or []),
                 value_level=item.get("value_level"),
                 priority_tier=item.get("priority_tier"),
                 risk_level=item.get("risk_level"),
-                custom_fields=dict(item.get("custom_fields", {}) or {}),
+                custom_fields=custom_fields,
             )
         )
 
@@ -276,3 +292,28 @@ def get_projects(
                 d[target_key] = default
         result.append(d)
     return result
+
+
+def get_external_repos(database_path: Path) -> list[str]:
+    """Return the external/watched repos declared in the project registry.
+
+    These are repos from any project flagged ``external: true`` (persisted in
+    ``custom_fields_json``) — monitored for everyone's activity, regardless of
+    project status. Normalized to ``owner/name`` and de-duplicated. This is the
+    source consumed by ``get_watched_repos`` and the watched-repo rollup.
+    """
+    from rebalance.ingest.config import normalize_github_repo_name
+
+    repos: list[str] = []
+    for project in get_projects(database_path):
+        custom_fields = project.get("custom_fields") or {}
+        if not custom_fields.get("external"):
+            continue
+        for repo in project.get("repos") or []:
+            try:
+                normalized = normalize_github_repo_name(repo)
+            except ValueError:
+                continue
+            if normalized not in repos:
+                repos.append(normalized)
+    return repos

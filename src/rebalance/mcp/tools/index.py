@@ -116,8 +116,10 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         """
         Show which GitHub repos are currently being monitored, and where each
         one came from. The merged "watched" list = (project registry ∪ recent
-        activity from github_activity) − ignored. This is the same set
-        refresh_index syncs.
+        activity from github_activity ∪ recently-pushed ∪ external/watched repos)
+        − ignored. This is the same set refresh_index syncs. The ``external_repos``
+        bucket is third-party repos (registry projects flagged ``external: true``)
+        monitored for everyone's activity, not just your own.
 
         Use this when:
           - The user asks "is X being monitored?"
