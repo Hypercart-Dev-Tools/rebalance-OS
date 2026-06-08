@@ -4,6 +4,30 @@
 
 ### Added
 
+- **Figma comments land as the first plugin `SourceModule`.** Onboards Figma
+  through the registry-driven plugin contract (`PROJECT/2-WORKING/PLUGINS.md`),
+  reusing the prior figma-collector client **without** the hardcoded `if "figma"`
+  branches it had scattered through the core. The frozen `Collector` descriptor
+  (`index_ops.py`) gains optional `semantic_docs` (a `conn -> Iterable[SemanticDoc]`
+  provider) + `secrets`, a `SourceModule = Collector` alias, and
+  `_semantic_source_names()`. `semantic_index.backfill_semantic_documents` gains a
+  flag-gated `use_registry_providers` iteration path that runs **alongside** the
+  existing vault/github/email/code if-ladder — a strangler, so existing-source
+  vectorization is provably unchanged (the if-ladder removal is a later
+  parity-gated PR). A module *yields* `SemanticDoc`s; the index owns
+  hash/upsert/embed.
+  - `figma.py` (client, `X-Figma-Token` header) + a `figma_semantic_docs()`
+    provider (skips empty/reaction-only comments); `0004_add_figma_comments.sql`
+    **renumbered from the prior `0002`** — a duplicate `0002` would be silently
+    skipped on an already-stamped DB and the table never created (the
+    no-silent-happy-errors trap). Keyring-backed `get/set/clear_figma_token`
+    (mirrors `github_token`, not cleartext) + `get/set_figma_file_keys`; registered
+    `included_in_all=False` (PAT-gated, opt-in via `scope=["figma"]`).
+  - Verified live against a real Figma file: **686 comments** ingested →
+    `figma_comments` → `semantic_documents` → embedded → semantic query returns the
+    relevant comments. Tests inject a fake client + `embed_texts` (no
+    PAT/network/mlx, per the embedder's Apple-Silicon lock).
+
 - **Sleuth production now reads a published file — SSH tunnel removed.** Replaced
   the SSH-tunnel pull of the firewalled prod Sleuth API with a read of a file the
   Sleuth box **pushes** to the private `rebalance-git-pulse` repo
@@ -68,6 +92,36 @@
   callers can distinguish a 401 deauth from a 403 rate-limit.
 
 ### Fixed
+
+- **Semantic embedding was silently inert on this Mac — the `embeddings` extra was
+  never installed.** `refresh_index(...)`'s embed step failed with `No module named
+  'mlx_embeddings'` (surfaced as a per-scope error envelope, not a crash), so
+  `semantic_documents` rows stayed **un-embedded** and `semantic_query` / `ask()`
+  degraded to FTS/lexical hits only (no vector-kNN ranking). Root cause:
+  `ingest/embedder.py` is correct — it loads via **`mlx-embeddings`**
+  (`load`/`generate` → `output.text_embeds`; model `Qwen/Qwen3-Embedding-0.6B`,
+  1024-dim, unit-norm) — but `mlx-embeddings` is the optional `embeddings` extra in
+  `pyproject.toml` and had simply never been installed into the venv.
+  - **Fix (environment, not code):** `.venv/bin/python -m pip install -e ".[embeddings]"`
+    (Apple-Silicon only; first model load downloads ~1.2 GB from HuggingFace).
+    Confirmed: 686 Figma comments embedded in ~15s and real vector+FTS queries
+    return relevant results. There is **no code change** — wherever semantic
+    embedding runs (interactive shell + the launchd refresh hosts) must have the
+    extra installed; CI installs base deps only by design.
+  - **Why the library matters (cross-repo provenance, for future retrieval):** an
+    embedding checkpoint must load via `mlx-embeddings` (native pooled,
+    L2-normalized embeddings), **not** `mlx-lm` — `mlx-lm` is a causal-LM loader
+    that rejects an embedding checkpoint's flat weights ("Received N parameters not
+    in model") and produces a fast, valid-but-**empty** index. rebalance-OS was
+    already on the right library; the sibling `ask-self` repo hit and fixed the
+    `mlx-lm` mistake first — see its `CHANGELOG.md` **0.6.0** ("qwen-mlx … now load
+    via `mlx-embeddings`") and **0.7.4** (L2-normalize vectors at every `vec0`
+    boundary; `vec0` ranks by L2 distance, so unit-norm vectors give
+    cosine-equivalent ranking — `mlx-embeddings` returns unit-norm `text_embeds`).
+  - **Footprint caveat:** `mlx-embeddings 0.1.0` pulls a heavy transitive stack
+    (`mlx`, `mlx-lm`, `mlx-audio`, `mlx-vlm`, `transformers` 5, `numpy` 2, `pandas`
+    3, `opencv`) and upgraded `starlette` 1.0.0 → 1.2.1 — verified FastAPI-compatible
+    (`pip check` clean, 621 tests pass).
 
 - Corrected the stale claim that `set_github_token()` "removes any legacy
   plaintext copy from `rbos.config`" (see 0.31.6 below). It deliberately writes

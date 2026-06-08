@@ -267,6 +267,95 @@ def set_vault_path(path: str) -> None:
     _write_config(config)
 
 
+# ---------------------------------------------------------------------------
+# Figma
+# ---------------------------------------------------------------------------
+#
+# The Figma personal access token is a secret, so it follows the same
+# keyring-primary / rbos.config-fallback discipline as the GitHub token (see
+# get_github_token / set_github_token / clear_github_token). File keys are NOT
+# secret — the comments API is file-scoped, so the collector needs an explicit
+# allow-list — and live in plain rbos.config.
+
+
+def get_figma_token() -> str | None:
+    """Return the configured Figma personal access token (keyring → rbos.config).
+
+    Mirrors :func:`get_github_token`: keyring is the preferred store, with
+    rbos.config as the launchd-safe fallback. Any cleartext token still in
+    rbos.config is auto-migrated into keyring on first read.
+    """
+    token = _keyring_get("figma_token")
+    if token:
+        return token
+    # Legacy / launchd path — auto-migrate to keyring on first read.
+    token = _migrate_to_keyring("figma_token")
+    if token:
+        return token
+    config = _read_config()
+    value = config.get("figma_token")
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def set_figma_token(token: str) -> None:
+    """Store the Figma PAT in the OS keyring AND rbos.config.
+
+    Both stores are written so launchd jobs (stripped environment, no keychain
+    access) can fall back to rbos.config. keyring is preferred for interactive
+    reads. Mirrors :func:`set_github_token` minus the GitHub-specific auth-log
+    and gh-cli machinery.
+    """
+    cleaned = token.strip()
+    _keyring_set("figma_token", cleaned)  # best-effort; ignored if unavailable
+    config = _read_config()
+    config["figma_token"] = cleaned
+    _write_config(config)
+
+
+def clear_figma_token() -> None:
+    """Remove the stored Figma PAT from both keyring and rbos.config."""
+    _keyring_delete("figma_token")
+    config = _read_config()
+    if "figma_token" in config:
+        del config["figma_token"]
+        _write_config(config)
+
+
+def get_figma_file_keys() -> list[str]:
+    """Return configured Figma file keys to scan for comments.
+
+    Config key: ``figma_file_keys``. The Figma comments API is file-scoped, so
+    the collector needs this explicit allow-list. Not secret — plain config.
+    """
+    config = _read_config()
+    value = config.get("figma_file_keys")
+    if not isinstance(value, list):
+        return []
+    keys: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        key = item.strip()
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def set_figma_file_keys(file_keys: list[str]) -> None:
+    """Store the Figma file keys scanned by the Figma comments collector."""
+    config = _read_config()
+    keys: list[str] = []
+    for item in file_keys:
+        key = str(item or "").strip()
+        if key and key not in keys:
+            keys.append(key)
+    config["figma_file_keys"] = keys
+    _write_config(config)
+
+
 def get_gmail_query_filter() -> str | None:
     """Return the configured Gmail search query, or None if unset.
 

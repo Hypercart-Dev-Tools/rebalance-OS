@@ -18,12 +18,15 @@ def _normalize_semantic_sources_option(values: list[str]) -> list[str]:
     normalized = [value.strip().lower() for value in values if value.strip()]
     if not normalized or "all" in normalized:
         return ["vault", "github"]
-    allowed = {"vault", "github", "calendar", "sleuth"}
+    # Mirror the core's accepted set (semantic_index._normalize_sources): the
+    # CLI must not reject a source the core accepts (figma/email/code were
+    # previously missing here).
+    allowed = {"vault", "github", "calendar", "sleuth", "email", "code", "figma"}
     invalid = [value for value in normalized if value not in allowed]
     if invalid:
         raise typer.BadParameter(
             f"Unsupported --source value(s): {', '.join(sorted(set(invalid)))}. "
-            "Use vault, github, calendar, sleuth, or all."
+            "Use vault, github, calendar, sleuth, email, code, figma, or all."
         )
     deduped: list[str] = []
     for value in normalized:
