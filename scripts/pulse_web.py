@@ -58,7 +58,13 @@ from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
 from rebalance.health import HealthStatus, compute_health_status  # noqa: E402
 from rebalance.ingest.index_ops import get_index_status  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
-from rebalance.web_components import RB_BUTTON_CSS, button_link  # noqa: E402
+from rebalance.web_components import (  # noqa: E402
+    RB_BUTTON_CSS,
+    RB_CHROME_CSS,
+    RB_TOKENS_CSS,
+    button_link,
+    render_shell,
+)
 
 CONFIG_PATH = PROJECT_ROOT / "temp" / "rbos.config"
 DEFAULT_OUT = PROJECT_ROOT / "web" / "pulse.html"
@@ -1058,7 +1064,7 @@ def render_recent_emails(
     """
 
 
-def render_sidebar(
+def build_nav_data(
     *,
     in_progress: int,
     cal_rows: list[dict[str, Any]],
@@ -1070,7 +1076,15 @@ def render_sidebar(
     notices: list[Check] | None = None,
     tz: ZoneInfo,
     now: datetime,
-) -> str:
+) -> dict[str, Any]:
+    """Render the sidebar's dynamic sections to HTML and bundle them for
+    ``render_sidebar``.
+
+    This is the data/I-O-aware half that lives in pulse_web (it uses the Slack /
+    Sleuth helpers and the DB-derived rows). The pure shell that frames these
+    strings lives in :func:`rebalance.web_components.render_sidebar`, which keeps
+    that module stdlib-only.
+    """
     cal_items = []
     for ev in cal_rows:
         when = _format_dt_short(ev.get("start_time"), tz=tz)
@@ -1144,143 +1158,34 @@ def render_sidebar(
         <ul class="side-list notices-scroll">{''.join(notice_items)}</ul>
         """
 
-    return f"""
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="dot"></div>
-        <div>
-          <div class="crumb">rebalanceOS Pulse <span class="sep">›</span> Today</div>
-        </div>
-      </div>
-      <nav>
-        <ul class="nav-list">
-          <li class="active"><span>Today</span><span class="badge">{in_progress}</span></li>
-        </ul>
-
-        <a class="nav-section-label section-link" href="https://calendar.google.com/calendar/u/0/r"
-           target="_blank" rel="noopener noreferrer" title="Open Google Calendar">
-          <span>Calendar</span><span class="section-link-arrow" aria-hidden="true">↗</span>
-        </a>
-        <ul class="side-list">{''.join(cal_items)}</ul>
-
-        <div class="nav-section-label">Reminders</div>
-        <ul class="side-list">{''.join(sleuth_items)}</ul>
-        {notices_section}
-        <div class="nav-section-label">Streams</div>
-        <ul class="streams">
-          <li><span class="kbd">G</span><span>GitHub</span><span class="badge">{streams.get('github', 0)}</span></li>
-          <li><span class="kbd">V</span><span>Vault</span><span class="badge">{streams.get('vault', 0)}</span></li>
-          <li><span class="kbd">C</span><span>Calendar</span><span class="badge">{streams.get('calendar', 0)}</span></li>
-          <li><span class="kbd">S</span><span>Sleuth</span><span class="badge">{streams.get('sleuth', 0)}</span></li>
-        </ul>
-
-        <div class="nav-section-label">System</div>
-        <ul class="nav-list">
-          <li class="auth-log-link">
-            <a href="/focus-5" target="_blank" rel="noopener noreferrer"
-               title="Open Focus 5 — the 5 repos you're actively working on (tree health, newest PR, recent commits)">
-              <span class="auth-log-icon">🎯</span><span>Focus 5</span>
-            </a>
-          </li>
-          <li class="auth-log-link">
-            <a href="/auth-log" target="_blank" rel="noopener noreferrer"
-               title="Open the Authorization Log (auth events across all collectors)">
-              <span class="auth-log-icon">🔐</span><span>Authorization Log</span>
-            </a>
-          </li>
-        </ul>
-      </nav>
-      <footer class="sidebar-foot subtle">Drift {drift_total} · {semantic_total:,} docs</footer>
-    </aside>
-    """
+    return {
+        "badge": in_progress,
+        "cal_html": "".join(cal_items),
+        "sleuth_html": "".join(sleuth_items),
+        "notices_html": notices_section,
+        "streams": streams,
+        "drift_total": drift_total,
+        "semantic_total": semantic_total,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Page assembly
 # ---------------------------------------------------------------------------
 
-CSS = """
-:root {
-  --bg: #f3efe7;
-  --panel: #ffffff;
-  --border: #e3ddd0;
-  --fg: #1d2024;
-  --fg-muted: #5b5750;
-  --fg-dim: #8a857c;
-  --accent: #1f6feb;
-  --ok: #2f7437;
-  --warn: #a65f00;
-  --danger: #c0392b;
-  --info: #1d6fa8;
-  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.04);
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body {
-  font: 13px/1.45 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-  color: var(--fg);
-  background: var(--bg);
-  -webkit-font-smoothing: antialiased;
-}
-code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--fg-muted); }
-.subtle { color: var(--fg-dim); font-size: 12px; }
-h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
-h1 { font-size: 22px; }
-h2 { font-size: 14px; color: var(--fg); }
-
-.app { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
-
-/* Sidebar */
-.sidebar {
-  border-right: 1px solid var(--border);
-  padding: 20px 14px;
-  display: flex; flex-direction: column;
-  background: linear-gradient(180deg, #f8f4ec 0%, #f3efe7 100%);
-}
-.brand { display: flex; align-items: center; gap: 8px; padding: 0 6px 22px; }
-.brand .dot { width: 22px; height: 22px; background: var(--accent); border-radius: 5px; }
-.crumb { font-weight: 600; }
-.crumb .sep { color: var(--fg-dim); margin: 0 4px; font-weight: 400; }
-.nav-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); padding: 18px 8px 6px; }
-.nav-section-label.section-link { display: flex; align-items: center; justify-content: space-between; text-decoration: none; gap: 8px; }
-.nav-section-label.section-link:hover { color: var(--accent); }
-.nav-section-label.section-link .section-link-arrow { font-size: 12px; line-height: 1; opacity: .65; }
-.nav-section-label.section-link:hover .section-link-arrow { opacity: 1; color: var(--accent); }
-.nav-list { list-style: none; margin: 0; padding: 0; }
-.nav-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--fg); cursor: default; }
-.nav-list li.active { background: rgba(31,111,235,.10); color: var(--fg); font-weight: 500; }
-.nav-list .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
-.nav-list .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: #fff; text-align: center; }
-.sidebar-foot { margin-top: auto; padding: 8px; font-variant-numeric: tabular-nums; }
-
-/* Sidebar lists (calendar + reminders) */
-.side-list { list-style: none; margin: 0; padding: 0; }
-.side-row { padding: 7px 8px; border-radius: 6px; }
-.side-row + .side-row { margin-top: 1px; }
-.side-row:hover { background: rgba(0,0,0,.03); }
-.side-row.has-link { padding: 0; }
-.side-row-link { display: block; padding: 7px 8px; color: inherit; text-decoration: none; border-radius: 6px; }
-.side-row-link:hover { background: rgba(124,196,255,.10); }
-.side-row-link:hover .side-row-title { color: var(--info); }
-.side-row-title { font-size: 12.5px; line-height: 1.35; color: var(--fg); font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.side-row-meta { font-size: 11.5px; color: var(--fg-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
-.side-row.empty .side-row-meta { font-style: italic; }
-
-/* Streams: compact 4-row list */
-.streams { list-style: none; margin: 0; padding: 0; }
-.streams li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
-.streams .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
-.streams .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: #fff; text-align: center; }
-.auth-log-link a { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); text-decoration: none; font-size: 13px; width: 100%; }
-.auth-log-link a:hover { color: var(--fg); }
-.auth-log-icon { font-size: 13px; }
+# Page-LOCAL CSS for the dashboard only: hero/goals/health-banner/repo-pie/
+# topbar/email/open-prs/charts + the responsive @media collapse (which is
+# interleaved with page rules and so stays here). The shared tokens + chrome
+# come from RB_TOKENS_CSS + RB_CHROME_CSS; render_shell() injects this slice
+# between them and RB_BUTTON_CSS. Leading "\n\n" reproduces the blank line the
+# original single CSS literal had between the chrome and the hero rules.
+PAGE_CSS = """
 
 /* Hero "Open in Obsidian" link */
 .hero-open { margin-left: 8px; }  /* visual styling now from the shared .rb-btn */
 .card-foot .strong { color: var(--fg); font-weight: 500; }
 
 /* Main */
-.main { padding: 22px 28px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .topbar { display: flex; align-items: flex-start; justify-content: space-between; }
 .topbar .crumb { color: var(--fg-muted); font-weight: 500; padding-top: 4px; }
 .topbar-right { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
@@ -1815,6 +1720,13 @@ h2 { font-size: 14px; color: var(--fg); }
 .health-pill.metric:not(.has-issues) { color: var(--fg-dim); }
 """
 
+# Full page stylesheet, single-sourced: shared tokens + shared chrome (incl. the
+# base resets) by reference, then this page's local rules. Same bytes the old
+# inline literal produced; render_shell() composes the live <style> the same way
+# (it appends RB_BUTTON_CSS after page_css), so this constant is the documented
+# whole and the assembler is the live path.
+CSS = RB_TOKENS_CSS + RB_CHROME_CSS + PAGE_CSS
+
 
 PULSE_JS = r"""
 (() => {
@@ -2209,25 +2121,6 @@ PULSE_JS = r"""
 """
 
 
-def render_page(*, title: str, body_html: str, now: datetime, refresh_seconds: int) -> str:
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{_esc(title)}</title>
-  <style>{CSS}{RB_BUTTON_CSS}</style>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>
-</head>
-<body>
-{body_html}
-<!-- generated {now.isoformat()} -->
-<script>{PULSE_JS}</script>
-</body>
-</html>
-"""
-
-
 def _resolve_tz_source() -> tuple[str, bool]:
     """Mirror local_tz()'s resolution order. Returns (label, is_fallback)."""
     if os.environ.get("REBALANCE_TZ"):
@@ -2305,21 +2198,19 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     )
     system_now_class = "system-now tz-fallback" if tz_is_fallback else "system-now"
 
-    body = f"""
-    <div class="app">
-      {render_sidebar(
-          in_progress=in_progress,
-          cal_rows=cal_rows,
-          sleuth_rows=sleuth_rows,
-          sleuth_synced=sleuth_synced,
-          streams=streams,
-          drift_total=drift_total,
-          semantic_total=semantic_total,
-          notices=health_status.notices,
-          tz=TZ,
-          now=now,
-      )}
-      <main class="main">
+    nav_data = build_nav_data(
+        in_progress=in_progress,
+        cal_rows=cal_rows,
+        sleuth_rows=sleuth_rows,
+        sleuth_synced=sleuth_synced,
+        streams=streams,
+        drift_total=drift_total,
+        semantic_total=semantic_total,
+        notices=health_status.notices,
+        tz=TZ,
+        now=now,
+    )
+    main_inner = f"""
         <div class="topbar">
           <div class="crumb">Pulse <span style="color:var(--fg-dim); margin:0 4px">›</span> Today</div>
           <div class="topbar-right">
@@ -2369,10 +2260,21 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
         <div class="full-row">
           {render_index_health(status, now)}
         </div>
-      </main>
-    </div>
-    """
-    return render_page(title="rebalance pulse · Today", body_html=body, now=now, refresh_seconds=refresh_seconds)
+      """
+    head_extra = (
+        '\n  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>'
+    )
+    body_extra = f"\n<!-- generated {now.isoformat()} -->\n<script>{PULSE_JS}</script>\n"
+    return render_shell(
+        "rebalance pulse · Today",
+        main_inner,
+        active="today",
+        wide=True,
+        nav_data=nav_data,
+        page_css=PAGE_CSS,
+        head_extra=head_extra,
+        body_extra=body_extra,
+    )
 
 
 # ---------------------------------------------------------------------------

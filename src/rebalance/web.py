@@ -25,7 +25,7 @@ from fastapi.responses import (
 from pydantic import BaseModel
 
 from rebalance.ingest.auth_log import read_log, _log_path
-from rebalance.web_components import RB_BUTTON_CSS, button_link
+from rebalance.web_components import badge_html, button_link, render_shell
 
 # How long a persisted Focus 5 roster stays authoritative before a visit lazily
 # recomputes it. Membership is snapshot-stable for this window; working-tree
@@ -34,115 +34,110 @@ FOCUS5_ROSTER_TTL_SECONDS = 24 * 3600
 
 app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
 
+# Auth-log badges keyed to a semantic variant (ok|warn|danger|info|neutral),
+# resolved to a design token by web_components.badge_html — no inline hex.
 _EVENT_BADGE = {
     # calendar
-    "flow_started":         ("#1a73e8", "▶ flow started"),
-    "flow_succeeded":       ("#34a853", "✓ flow succeeded"),
-    "flow_failed":          ("#ea4335", "✗ flow failed"),
-    "token_missing":        ("#fbbc05", "⚠ token missing"),
-    "token_refreshed":      ("#34a853", "↻ token refreshed"),
-    "token_refresh_failed": ("#ea4335", "✗ refresh failed"),
+    "flow_started":         ("info",   "▶ flow started"),
+    "flow_succeeded":       ("ok",     "✓ flow succeeded"),
+    "flow_failed":          ("danger", "✗ flow failed"),
+    "token_missing":        ("warn",   "⚠ token missing"),
+    "token_refreshed":      ("ok",     "↻ token refreshed"),
+    "token_refresh_failed": ("danger", "✗ refresh failed"),
     # github
-    "token_validated":      ("#34a853", "✓ token validated"),
-    "token_set":            ("#1a73e8", "↻ token (re)set"),
-    "token_invalid":        ("#ea4335", "✗ token invalid"),
-    "auth_failed":          ("#ea4335", "✗ auth failed (401)"),
-    "gh_fallback":          ("#34a853", "✓ healed via gh CLI"),
+    "token_validated":      ("ok",     "✓ token validated"),
+    "token_set":            ("info",   "↻ token (re)set"),
+    "token_invalid":        ("danger", "✗ token invalid"),
+    "auth_failed":          ("danger", "✗ auth failed (401)"),
+    "gh_fallback":          ("ok",     "✓ healed via gh CLI"),
     # gmail
-    "adc_missing":          ("#fbbc05", "⚠ ADC missing"),
-    "scope_insufficient":   ("#ea4335", "✗ scope insufficient"),
+    "adc_missing":          ("warn",   "⚠ ADC missing"),
+    "scope_insufficient":   ("danger", "✗ scope insufficient"),
 }
 
 _SOURCE_BADGE = {
-    "calendar": ("#1a73e8", "calendar"),
-    "github":   ("#24292f", "github"),
-    "gmail":    ("#d93025", "gmail"),
+    "calendar": ("info",    "calendar"),
+    "github":   ("neutral", "github"),
+    "gmail":    ("danger",  "gmail"),
 }
 
+# Page-local CSS for the FastAPI surfaces (Focus 5 / Auth Log / Home). The base
+# resets + the .app/.sidebar shell + global h1/h2/h3 now come from
+# RB_CHROME_CSS (injected by render_shell), so only the BODY-specific rules live
+# here. All colours are design tokens (var(--…)) so the palette is single-sourced;
+# none of these rules touch the dashboard (which never includes _CSS).
 _CSS = """
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-       background: #f8f9fa; color: #202124; }
-header { background: #fff; border-bottom: 1px solid #dadce0;
-         padding: 14px 24px; display: flex; align-items: center; gap: 16px; }
-header h1 { font-size: 18px; font-weight: 600; }
-nav a { color: #1a73e8; text-decoration: none; font-size: 14px; }
-nav a:hover { text-decoration: underline; }
-main { max-width: 1100px; margin: 32px auto; padding: 0 24px; }
-h2 { font-size: 15px; font-weight: 600; color: #5f6368; margin-bottom: 16px; }
-table { width: 100%; border-collapse: collapse; background: #fff;
+h2 { font-size: 15px; font-weight: 600; color: var(--fg-muted); margin-bottom: 16px; }
+table { width: 100%; border-collapse: collapse; background: var(--panel);
         border-radius: 8px; overflow: hidden;
         box-shadow: 0 1px 3px rgba(0,0,0,.12); }
-th { background: #f1f3f4; font-size: 12px; font-weight: 600;
-     color: #5f6368; text-align: left; padding: 10px 14px; }
+th { background: var(--border); font-size: 12px; font-weight: 600;
+     color: var(--fg-muted); text-align: left; padding: 10px 14px; }
 td { padding: 10px 14px; font-size: 13px;
-     border-top: 1px solid #f1f3f4; vertical-align: top; }
-tr:hover td { background: #fafafa; }
+     border-top: 1px solid var(--border); vertical-align: top; }
+tr:hover td { background: rgba(0,0,0,.03); }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
          font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; }
+.badge-ok      { background: var(--ok);     color: #fff; }
+.badge-warn    { background: var(--warn);   color: #fff; }
+.badge-danger  { background: var(--danger); color: #fff; }
+.badge-info    { background: var(--info);   color: #fff; }
+.badge-neutral { background: var(--fg-dim); color: #fff; }
 .detail { font-family: "SF Mono", "Fira Code", monospace; font-size: 11px;
-          color: #5f6368; word-break: break-all; }
-.empty { text-align: center; padding: 48px; color: #5f6368; font-size: 14px; }
-.raw-link { float: right; font-size: 12px; color: #1a73e8; text-decoration: none; }
+          color: var(--fg-muted); word-break: break-all; }
+.empty { text-align: center; padding: 48px; color: var(--fg-muted); font-size: 14px; }
+.raw-link { float: right; font-size: 12px; color: var(--accent); text-decoration: none; }
 .raw-link:hover { text-decoration: underline; }
 
-/* Focus 5 */
-main.wide { max-width: 1480px; }
+/* Focus 5 — sits inside the .app 280px-sidebar grid, so it has ~280px less width
+   than the old centred 1480px <main>. Breakpoints retuned for that frame. */
 .f5-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 16px;
            align-items: start; }
-@media (max-width: 1100px) { .f5-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 620px)  { .f5-grid { grid-template-columns: 1fr; } }
-.f5-card { background: #fff; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+@media (max-width: 1400px) { .f5-grid { grid-template-columns: repeat(3, 1fr); } }
+@media (max-width: 1000px) { .f5-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 680px)  { .f5-grid { grid-template-columns: 1fr; } }
+.f5-card { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
            padding: 14px; display: flex; flex-direction: column; gap: 10px; }
-.f5-pos { font-size: 11px; font-weight: 700; color: #9aa0a6; }
-.f5-name { font-size: 15px; font-weight: 600; color: #1a73e8; text-decoration: none;
+.f5-pos { font-size: 11px; font-weight: 700; color: var(--fg-dim); }
+.f5-name { font-size: 15px; font-weight: 600; color: var(--accent); text-decoration: none;
            word-break: break-word; }
 .f5-name:hover { text-decoration: underline; }
-.f5-reason { font-size: 11px; color: #5f6368; }
-.f5-sec { border-top: 1px solid #f1f3f4; padding-top: 8px; }
+.f5-reason { font-size: 11px; color: var(--fg-muted); }
+.f5-sec { border-top: 1px solid var(--border); padding-top: 8px; }
 .f5-sec h4 { font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
-             color: #9aa0a6; font-weight: 700; margin-bottom: 5px; }
-.f5-branch { font-family: "SF Mono", monospace; font-size: 11px; color: #202124; }
-.f5-drift { font-size: 11px; color: #5f6368; margin-left: 6px; }
+             color: var(--fg-dim); font-weight: 700; margin-bottom: 5px; }
+.f5-branch { font-family: "SF Mono", monospace; font-size: 11px; color: var(--fg); }
+.f5-drift { font-size: 11px; color: var(--fg-muted); margin-left: 6px; }
 .f5-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
           margin-right: 5px; vertical-align: middle; }
-.f5-pr a { color: #1a73e8; text-decoration: none; font-size: 12px; }
+.f5-pr a { color: var(--accent); text-decoration: none; font-size: 12px; }
 .f5-pr a:hover { text-decoration: underline; }
-.f5-muted { font-size: 12px; color: #9aa0a6; }
+.f5-muted { font-size: 12px; color: var(--fg-dim); }
 .f5-act { list-style: none; display: flex; flex-direction: column; gap: 5px; }
 .f5-act li { font-size: 12px; line-height: 1.35; }
-.f5-act .when { color: #9aa0a6; font-size: 10px; }
-.f5-meta { font-size: 12px; color: #5f6368; margin-bottom: 16px; }
-.f5-live { color: #34a853; }
-.f5-stale { color: #b06000; font-weight: 700; }
-.f5-refresh { font-size: 13px; font-weight: 600; color: #1a73e8; text-decoration: none;
+.f5-act .when { color: var(--fg-dim); font-size: 10px; }
+.f5-meta { font-size: 12px; color: var(--fg-muted); margin-bottom: 16px; }
+.f5-live { color: var(--ok); }
+.f5-stale { color: var(--warn); font-weight: 700; }
+.f5-refresh { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none;
               margin-left: 10px; }
 .f5-refresh:hover { text-decoration: underline; }
-.f5-warn { background: #fef7e0; border: 1px solid #f9e3a0; color: #5f4b00;
+.f5-warn { background: rgba(166,95,0,.08); border: 1px solid rgba(166,95,0,.28); color: var(--warn);
            border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
            line-height: 1.5; }
-.f5-warn b { color: #3c2f00; }
+.f5-warn b { color: var(--warn); }
 """
 
 
-def _page(title: str, body: str, *, wide: bool = False) -> HTMLResponse:
-    main_attr = ' class="wide"' if wide else ""
-    html_doc = f"""<!DOCTYPE html>
-<html lang="en">
-<head><meta charset="utf-8"><title>{title} — rebalance-OS</title>
-<style>{_CSS}{RB_BUTTON_CSS}</style></head>
-<body>
-<header>
-  <h1>rebalance-OS</h1>
-  <nav>
-    <a href="/">Home</a>&ensp;·&ensp;
-    <a href="/focus-5">Focus 5</a>&ensp;·&ensp;
-    <a href="/auth-log">Auth Log</a>
-  </nav>
-</header>
-<main{main_attr}>{body}</main>
-</body></html>"""
-    return HTMLResponse(html_doc)
+def _page(title: str, body: str, *, active: str, wide: bool = False) -> HTMLResponse:
+    """Wrap a page body in the shared sidebar shell (tokens + chrome + buttons).
+
+    The nav/sidebar comes from render_shell (minimal, I/O-free sidebar); ``active``
+    marks the current nav item (``'today' | 'focus5' | 'authlog'``).
+    """
+    return HTMLResponse(
+        render_shell(title, body, active=active, wide=wide, page_css=_CSS)
+    )
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -150,20 +145,20 @@ def index() -> HTMLResponse:
     body = """
 <h2>Local dashboards</h2>
 <ul style="margin-top:16px;line-height:2;list-style:none;">
-  <li><a href="/focus-5" style="color:#1a73e8;font-size:15px;">
+  <li><a href="/focus-5" style="color:var(--accent);font-size:15px;">
       🎯 Focus 5</a>
-      <span style="color:#5f6368;font-size:13px;margin-left:8px;">
+      <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
       — the 5 repos you're actively working on: working-tree health, newest PR,
       and recent local commits, ranked by uncommitted/unpushed work first</span>
   </li>
-  <li><a href="/auth-log" style="color:#1a73e8;font-size:15px;">
+  <li><a href="/auth-log" style="color:var(--accent);font-size:15px;">
       📋 Auth Activity Log</a>
-      <span style="color:#5f6368;font-size:13px;margin-left:8px;">
+      <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
       — per-device auth events across all collectors (calendar, github, gmail):
       flow start/success/failure, token refresh, validation, deauthorization</span>
   </li>
 </ul>"""
-    return _page("Home", body)
+    return _page("Home", body, active="today")
 
 
 def _rel_time(iso: str | None) -> str:
@@ -187,14 +182,14 @@ def _f5_health(card: dict[str, Any]) -> str:
         return ("<div class='f5-sec'><h4>Tree health · live</h4>"
                 "<span class='f5-muted'>⚠ unavailable (repo not readable)</span></div>")
     if card["is_dirty"]:
-        dot, parts = "#ea4335", []
+        dot, parts = "var(--danger)", []
         if card["modified_count"]:
             parts.append(f"{card['modified_count']} modified")
         if card["untracked_count"]:
             parts.append(f"{card['untracked_count']} untracked")
         state = ", ".join(parts) or "dirty"
     else:
-        dot, state = "#34a853", "clean"
+        dot, state = "var(--ok)", "clean"
     branch = html.escape(card["branch"] or "(detached)")
     drift = ""
     if card["has_upstream"] and (card["ahead"] or card["behind"]):
@@ -337,11 +332,11 @@ _FOCUS5_HIDE_ASSETS = """
 .f5-actions { position:absolute; top:8px; right:10px; display:flex;
   align-items:center; gap:8px; }
 .f5-hide { width:24px; height:24px; border:none; border-radius:50%;
-  background:transparent; color:#9aa0a6; font-size:15px; line-height:24px;
+  background:transparent; color:var(--fg-dim); font-size:15px; line-height:24px;
   text-align:center; cursor:pointer; padding:0;
   transition:background .12s, color .12s; }
-.f5-hide:hover { background:#fce8e6; color:#ea4335; }
-.f5-hide:focus-visible { outline:2px solid #ea4335; outline-offset:1px; }
+.f5-hide:hover { background:rgba(192,57,43,.10); color:var(--danger); }
+.f5-hide:focus-visible { outline:2px solid var(--danger); outline-offset:1px; }
 .f5-hide[disabled] { opacity:.4; cursor:default; }
 </style>
 <script>
@@ -389,7 +384,7 @@ def focus5_page(refresh: bool = False):
     except DatabaseNotFoundError:
         body = ("<h2>🎯 Focus 5</h2><div class='empty'>No rebalance database found. "
                 "Run <code>rebalance refresh-index</code> first.</div>")
-        return _page("Focus 5", body, wide=True)
+        return _page("Focus 5", body, active="focus5", wide=True)
 
     # Recompute the roster when forced, never built, or past its 24h TTL. The
     # meta check is a cheap DB read so we don't pay the live-probe render twice.
@@ -404,7 +399,7 @@ def focus5_page(refresh: bool = False):
             return RedirectResponse("/focus-5", status_code=303)
 
     data = summarize_focus5(db)  # roster from snapshot; health re-probed live
-    return _page("Focus 5", _focus5_body(data), wide=True)
+    return _page("Focus 5", _focus5_body(data), active="focus5", wide=True)
 
 
 class _Focus5HideRequest(BaseModel):
@@ -462,16 +457,16 @@ def auth_log_page() -> HTMLResponse:
 
     if not entries:
         body = f"<h2>Auth Activity Log {raw_link}</h2><div class='empty'>No entries yet. Run an OAuth flow, validate the GitHub token, or run a collector sync to populate this log.</div>"
-        return _page("Auth Log", body)
+        return _page("Auth Log", body, active="authlog")
 
     rows = []
     for e in entries:
         event = e.get("event", "unknown")
-        color, label = _EVENT_BADGE.get(event, ("#9aa0a6", event))
-        badge = f'<span class="badge" style="background:{color}">{label}</span>'
+        variant, label = _EVENT_BADGE.get(event, ("neutral", event))
+        badge = badge_html(variant, label)
         source = e.get("source", "")
-        s_color, s_label = _SOURCE_BADGE.get(source, ("#9aa0a6", source or "—"))
-        source_badge = f'<span class="badge" style="background:{s_color}">{s_label}</span>'
+        s_variant, s_label = _SOURCE_BADGE.get(source, ("neutral", source or "—"))
+        source_badge = badge_html(s_variant, s_label)
         detail = e.get("detail", {})
         detail_str = "<br>".join(f"<b>{k}</b>: {v}" for k, v in detail.items()) if detail else "—"
         rows.append(
@@ -490,7 +485,7 @@ def auth_log_page() -> HTMLResponse:
         f"</tr></thead><tbody>{''.join(rows)}</tbody></table>"
     )
     body = f"<h2>Auth Activity Log {raw_link}</h2>{table}"
-    return _page("Auth Log", body)
+    return _page("Auth Log", body, active="authlog")
 
 
 @app.get("/auth-log/raw", response_class=PlainTextResponse)
