@@ -16,6 +16,7 @@ from rebalance.ingest.db import (
     ensure_github_schema,
     ensure_schema,
     ensure_semantic_schema,
+    run_migrations,
 )
 from rebalance.ingest.db import semantic as sem
 from rebalance.ingest.embedder import (
@@ -50,6 +51,25 @@ class SemanticEmbedResult:
     elapsed_seconds: float
 
 
+@dataclass
+class SemanticDoc:
+    """One source-agnostic semantic document yielded by a registry provider.
+
+    A SourceModule's ``semantic_docs(conn)`` provider yields these; the
+    flag-gated provider path in :func:`backfill_semantic_documents` maps each
+    onto :func:`upsert_document`. This keeps new sources off the legacy
+    if-ladder.
+    """
+
+    source_pk: str
+    doc_kind: str
+    title: str
+    body: str
+    metadata: dict
+    created_at: str
+    updated_at: str
+
+
 def _default_embed_texts(texts: list[str], model_name: str) -> list[list[float]]:
     model, tokenizer = _load_model(model_name)
     return _embed_batch(model, tokenizer, texts)
@@ -73,7 +93,17 @@ def _normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
             continue
         if item == "all":
             return ("vault", "github", "email")
-        if item not in {"vault", "github", "calendar", "sleuth", "email", "code"}:
+        # The legal set = the current literal sources PLUS any source a
+        # registered collector exposes via a ``semantic_docs`` provider (e.g.
+        # ``figma``). Lazy/function-local import avoids an import cycle
+        # (index_ops imports SemanticDoc from this module). The default and the
+        # ``'all'`` return tuple above are intentionally left as the legacy
+        # triad — deriving them from the registry is a later PR.
+        from rebalance.ingest.index_ops import _semantic_source_names
+        legal = {"vault", "github", "calendar", "sleuth", "email", "code"} | set(
+            _semantic_source_names()
+        )
+        if item not in legal:
             raise ValueError(f"Unsupported source type: {value}")
         if item not in normalized:
             normalized.append(item)
@@ -382,15 +412,33 @@ def sync_code_documents(conn: Any, repo_root: Path) -> dict[str, int]:
     }
 
 
+# Registry sources route through the flag-gated provider path below. Each maps
+# to the source table recorded on its ``semantic_documents`` rows. Kept as a
+# small explicit map (rather than read off the collector) so the backfill has
+# no hard dependency on collector internals — adding a SourceModule means one
+# entry here next to its registration.
+_REGISTRY_SOURCE_TABLES: dict[str, str] = {"figma": "figma_comments"}
+
+# Sources already handled by the legacy if-ladder; the provider path skips them.
+_LADDER_SOURCES: frozenset[str] = frozenset({"vault", "github", "email", "code"})
+
+
 def backfill_semantic_documents(
     database_path: Path,
     *,
     source_types: Iterable[str] | None = None,
     repo_full_name: str = "",
     repo_root: Path | None = None,
+    use_registry_providers: bool = False,
 ) -> SemanticBackfillResult:
     """Populate ``semantic_documents`` from existing source tables (+ the source
-    tree when ``code`` is requested)."""
+    tree when ``code`` is requested).
+
+    When ``use_registry_providers`` is True, any selected source NOT handled by
+    the legacy if-ladder but registered with a ``semantic_docs`` provider (e.g.
+    ``figma``) is backfilled via that provider — the registry-driven strangler
+    path. The if-ladder is otherwise untouched.
+    """
     start = time.monotonic()
     selected_sources = _normalize_sources(source_types)
     inserted = updated = unchanged = deleted = total = 0
@@ -430,6 +478,39 @@ def backfill_semantic_documents(
             unchanged += result["unchanged"]
             deleted += result["deleted"]
             total += result["total"]
+        # Registry-driven provider path (strangler). Runs alongside — never
+        # replacing — the if-ladder above. Only sources NOT in the ladder that
+        # carry a ``semantic_docs`` provider are iterated here.
+        if use_registry_providers:
+            from rebalance.ingest.index_ops import COLLECTORS
+            for source in selected_sources:
+                if source in _LADDER_SOURCES:
+                    continue
+                collector = COLLECTORS.get(source)
+                if collector is None or collector.semantic_docs is None:
+                    continue
+                run_migrations(conn)
+                source_table = _REGISTRY_SOURCE_TABLES.get(source, source)
+                for doc in collector.semantic_docs(conn):
+                    _, state = upsert_document(
+                        conn,
+                        source_type=source,
+                        source_table=source_table,
+                        source_pk=doc.source_pk,
+                        doc_kind=doc.doc_kind,
+                        title=doc.title,
+                        body=doc.body,
+                        metadata=doc.metadata,
+                        created_at=doc.created_at,
+                        updated_at=doc.updated_at,
+                    )
+                    total += 1
+                    if state == "inserted":
+                        inserted += 1
+                    elif state == "updated":
+                        updated += 1
+                    else:
+                        unchanged += 1
         conn.commit()
 
     return SemanticBackfillResult(

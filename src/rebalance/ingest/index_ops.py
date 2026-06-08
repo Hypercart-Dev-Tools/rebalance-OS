@@ -17,11 +17,14 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from rebalance.ingest.config import (
+    get_figma_file_keys,
+    get_figma_token,
     get_github_token,
     get_vault_path,
 )
 from rebalance.ingest.db import db_connection, ensure_semantic_schema, run_migrations
 from rebalance.ingest.registry import get_projects
+from rebalance.ingest.semantic_index import SemanticDoc
 
 logger = logging.getLogger(__name__)
 
@@ -53,12 +56,31 @@ class Collector:
         If True (default), the collector runs when the user requests
         ``scope=["all"]``. Set False for opt-in collectors (e.g. heavy or
         narrowly-scoped sources).
+    semantic_docs:
+        Optional registry-driven provider that yields :class:`SemanticDoc`
+        rows for the unified semantic index. When present, the source becomes
+        a *SourceModule*: the flag-gated provider path in
+        ``backfill_semantic_documents`` iterates it instead of an if-ladder
+        branch. ``None`` (default) preserves the legacy vault/github/email/code
+        ladder unchanged.
+    secrets:
+        Optional names of secret config keys this collector consumes (e.g.
+        ``("figma_token",)``). Informational metadata for tooling; not used by
+        the dispatcher itself.
     """
 
     name: str
     refresh: Callable[..., dict[str, Any]]
     requires: tuple[str, ...] = ()
     included_in_all: bool = True
+    semantic_docs: Callable[[Any], Iterable["SemanticDoc"]] | None = None
+    secrets: tuple[str, ...] = ()
+
+
+# A Collector that also exposes a ``semantic_docs`` provider is the spine of a
+# registry-driven SourceModule (the strangler path). The alias names that role
+# without forking the dataclass.
+SourceModule = Collector
 
 
 COLLECTORS: dict[str, Collector] = {}
@@ -92,6 +114,11 @@ def _scope_values() -> tuple[str, ...]:
 def _all_scope_names() -> list[str]:
     """Return the collector names that run for ``scope=["all"]``."""
     return [name for name, c in COLLECTORS.items() if c.included_in_all]
+
+
+def _semantic_source_names() -> list[str]:
+    """Return registered collectors that expose a ``semantic_docs`` provider."""
+    return [n for n, c in COLLECTORS.items() if c.semantic_docs is not None]
 
 
 # Legacy SCOPE_VALUES: retained so callers importing the constant continue to
@@ -199,6 +226,12 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "messages": _safe_count(conn, "email_messages"),
             "last_synced_at": _safe_max(conn, "email_messages", "synced_at"),
             "newest_received_at": _safe_max(conn, "email_messages", "received_at"),
+        }
+
+        payload["sources"]["figma"] = {
+            "comments": _safe_count(conn, "figma_comments"),
+            "last_synced_at": _safe_max(conn, "figma_comments", "synced_at"),
+            "newest_comment_at": _safe_max(conn, "figma_comments", "created_at"),
         }
 
         try:
@@ -765,6 +798,89 @@ def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     }
 
 
+def _refresh_figma(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Refresh Figma comments (source_type='figma') — the first SourceModule.
+
+    Modeled on :func:`_refresh_email`: sync upstream, then run the unified
+    semantic backfill (via the registry-driven provider path) and embed. The
+    token is read from keyring/rbos.config; both a missing token and a missing
+    file-key allow-list surface as honest structured envelopes, never as silent
+    success.
+    """
+    file_keys = get_figma_file_keys()
+    if dry_run:
+        return {
+            "scope": "figma",
+            "dry_run": True,
+            "file_keys": file_keys,
+            "steps": [
+                f"sync_figma_comments(files={len(file_keys)})",
+                "semantic_backfill(source=['figma'], use_registry_providers=True)",
+                "semantic_embed(source=['figma'])",
+            ],
+        }
+
+    token = (get_figma_token() or "").strip()
+    if not token:
+        return {
+            "scope": "figma",
+            "dry_run": False,
+            "error": (
+                "Figma token not configured. Set it with "
+                "`rebalance config set-figma-token` (stored in keyring)."
+            ),
+        }
+    if not file_keys:
+        return {
+            "scope": "figma",
+            "dry_run": False,
+            "skipped": True,
+            "reason": "No Figma file keys configured. Set figma_file_keys in temp/rbos.config.",
+        }
+
+    from rebalance.ingest.figma import sync_figma_comments
+    from rebalance.ingest.semantic_index import (
+        backfill_semantic_documents,
+        embed_pending,
+    )
+
+    sync_result = sync_figma_comments(
+        database_path=database_path,
+        file_keys=file_keys,
+        token=token,
+    )
+    backfill = backfill_semantic_documents(
+        database_path, source_types=["figma"], use_registry_providers=True
+    )
+    sem_embed = embed_pending(database_path, source_types=["figma"])
+
+    return {
+        "scope": "figma",
+        "dry_run": False,
+        "files_requested": sync_result.files_requested,
+        "files_synced": sync_result.files_synced,
+        "comments_fetched": sync_result.comments_fetched,
+        "comments_inserted": sync_result.comments_inserted,
+        "comments_updated": sync_result.comments_updated,
+        "comments_unchanged": sync_result.comments_unchanged,
+        "errors": sync_result.errors,
+        "elapsed_seconds": sync_result.elapsed_seconds,
+        "semantic_backfill": {
+            "total": backfill.total_documents,
+            "inserted": backfill.inserted_count,
+            "updated": backfill.updated_count,
+            "deleted": backfill.deleted_count,
+            "elapsed_seconds": backfill.elapsed_seconds,
+        },
+        "semantic_embed": {
+            "total": sem_embed.total_docs,
+            "embedded": sem_embed.embedded_docs,
+            "skipped_unchanged": sem_embed.skipped_unchanged,
+            "elapsed_seconds": sem_embed.elapsed_seconds,
+        },
+    }
+
+
 def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     if dry_run:
         return {
@@ -935,10 +1051,18 @@ def refresh_index(
 
     repos_list = list(repos or [])
 
+    # Figma PAT (keyring → rbos.config). Resolved so a missing token surfaces as
+    # the structured "missing required options" envelope below rather than an
+    # exception inside the collector. Only resolved when figma is in scope.
+    resolved_figma_token = ""
+    if "figma" in requested_scopes:
+        resolved_figma_token = (get_figma_token() or "").strip()
+
     # Per-collector kwargs bundle. Each collector ignores keys it doesn't need.
     collector_opts: dict[str, Any] = {
         "vault_path": resolved_vault,
         "token": resolved_token,
+        "figma_token": resolved_figma_token,
         "since_days": since_days,
         "repos": repos_list,
         "dry_run": dry_run,
@@ -965,6 +1089,14 @@ def refresh_index(
             missing_reqs.append("vault_path")
         if "github_token" in collector.requires and not collector_opts.get("token"):
             missing_reqs.append("github_token")
+        # Skip the figma_token precondition on dry runs so the planned-steps
+        # preview (which needs no PAT) still renders; live runs require it.
+        if (
+            "figma_token" in collector.requires
+            and not dry_run
+            and not collector_opts.get("figma_token")
+        ):
+            missing_reqs.append("figma_token")
         if missing_reqs:
             errors.append({"scope": s, "error": f"missing required options: {missing_reqs}"})
             continue
@@ -1043,6 +1175,10 @@ def _email_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
 
 def _code_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_code(db_path, dry_run=opts["dry_run"])
+
+
+def _figma_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_figma(db_path, dry_run=opts["dry_run"])
 
 
 def _semantic_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
@@ -1192,3 +1328,21 @@ register_collector(Collector("semantic", _semantic_adapter))
 register_collector(Collector("sync", _sync_adapter))
 register_collector(Collector("focus5", _focus5_adapter, included_in_all=False))
 register_collector(Collector("ask_self", _ask_self_adapter, included_in_all=False))
+
+# Figma — the first registry-driven SourceModule. Imported here (not at module
+# top) so figma.py — and its later, optional dependencies — only load when the
+# registry is constructed; figma.py's own top imports stay limited to
+# rebalance.ingest.db, so no mlx/embedder is pulled in. included_in_all=False
+# keeps it opt-in (requires a PAT + an explicit file-key allow-list).
+from rebalance.ingest.figma import figma_semantic_docs  # noqa: E402
+
+register_collector(
+    Collector(
+        "figma",
+        _figma_adapter,
+        requires=("figma_token",),
+        secrets=("figma_token", "figma_file_keys"),
+        semantic_docs=figma_semantic_docs,
+        included_in_all=False,
+    )
+)
