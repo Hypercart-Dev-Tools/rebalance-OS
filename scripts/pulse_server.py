@@ -24,8 +24,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 import uvicorn
 
@@ -117,17 +117,25 @@ def api_chat(req: ChatRequest):
 
 
 @app.get("/")
-def index():
+def index(request: Request):
     if not PULSE_HTML.exists():
         raise HTTPException(
             status_code=503,
             detail=f"pulse.html not generated yet. Run: {PYTHON} {PULSE_WEB_PY}",
         )
-    # no-store so the browser always picks up the freshly regenerated file
+    # Conditional GET: an ETag derived from the file's mtime+size lets an unchanged
+    # dashboard return 304 (no re-stream) instead of the old blanket no-store. The
+    # file is regenerated atomically off-request, so any change bumps mtime -> a new
+    # ETag -> the browser refetches; must-revalidate keeps it from serving stale.
+    st = PULSE_HTML.stat()
+    etag = f'"{int(st.st_mtime)}-{st.st_size}"'
+    cache_headers = {"ETag": etag, "Cache-Control": "max-age=0, must-revalidate"}
+    if request.headers.get("if-none-match") == etag:
+        return Response(status_code=304, headers=cache_headers)
     return FileResponse(
         PULSE_HTML,
         media_type="text/html; charset=utf-8",
-        headers={"Cache-Control": "no-store"},
+        headers=cache_headers,
     )
 
 
