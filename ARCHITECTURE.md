@@ -132,6 +132,12 @@ Env-file paths resolve via [src/rebalance/paths.py](src/rebalance/paths.py)::`re
 
 ### Adding a New Source
 
+> **The current way to add a source is the plugin (`SourceModule`) contract —
+> see the developer guide [PLUGINS.md](./PLUGINS.md).** It covers the registry
+> descriptor, the `semantic_docs` vectorize provider, secrets/keyring, numbered
+> migrations, and tests, with Figma as the worked example. The steps below are
+> the legacy collector recipe, kept for the pre-registry sources.
+
 1. **Collector** — write `src/rebalance/ingest/<source>.py` following the `sleuth_reminders.py` or `github_scan.py` shape: a dataclass for one record, a `sync_*()` function that fetches → normalizes → upserts, and a module-local `ensure_<source>_schema(conn)`. Use `db_connection(path, ensure_fn)` from `db.py`.
 2. **Schema** — keep the `CREATE TABLE` inside `ensure_<source>_schema`. Only promote to `db.py` if more than one module needs it. Use existing tables for unstructured text that should be embedded.
 3. **Credentials** — filesystem secrets live in `~/secrets/<source>.env` with a loader next to `_load_google_calendar_env` / `_load_sleuth_env` in `cli.py`. Never add credentials to `temp/rbos.config`.

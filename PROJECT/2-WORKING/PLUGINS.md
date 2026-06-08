@@ -1,5 +1,8 @@
 # Plugin Source Modules — plan & roster
 
+> **Developer how-to lives in the root [PLUGINS.md](../../PLUGINS.md)** (the
+> step-by-step for writing a `SourceModule`). This doc is the *roadmap/decisions*.
+>
 > **Status:** Active (2026-06-07). The single plan for the plugin (`SourceModule`)
 > architecture and the sources onboarding through it. Consolidates the former
 > `P2-PLUGIN-SOURCE-MODULES.md` (architecture spec — archived) and
