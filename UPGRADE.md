@@ -1,6 +1,6 @@
 # UPGRADE — bring a device onto the keyring credential model
 
-rebalance-OS now stores its three external credentials in the **OS keyring**
+rebalance-OS now stores its external credentials in the **OS keyring**
 (macOS Keychain) as the primary, with a **launchd-reachable fallback** for each
 (launchd's stripped environment can't read the keychain). This replaces the old
 "loose secret files in `~/secrets/`" approach, which caused silent stalls when a
@@ -8,6 +8,10 @@ file was missing or in the wrong place.
 
 > **Keyring is per-machine.** It does **not** sync across devices. Each device
 > installs its secrets once. This guide is what you run on a device to catch up.
+
+> **DB migrations auto-apply.** After `git pull`, numbered migration files in
+> `src/rebalance/ingest/db/migrations/` are applied automatically the first time
+> any ingest or collector runs. No manual schema step required.
 
 ## Credential model (after upgrade)
 
@@ -17,6 +21,7 @@ file was missing or in the wrong place.
 | Sleuth Web API | keyring | `temp/rbos.config` | same |
 | Google Calendar OAuth | keyring | pickle file (`~/.config/rebalance-os/google-calendar-oauth`) | same |
 | Gmail OAuth (oauth mode) | keyring | pickle file (`~/.config/rebalance-os/google-gmail-oauth`) | same |
+| Figma PAT (opt-in) | keyring | `temp/rbos.config` | — (not auth-logged; set manually) |
 
 Each (re)authorization is recorded in `temp/logs/auth_activity.jsonl` (event
 stream) and `temp/logs/token_meta.json` (per-token sidecar with `first_added_at`,
@@ -28,7 +33,7 @@ the sidecar — only a SHA-256 fingerprint.
 ```bash
 cd /path/to/rebalance-OS
 git pull
-.venv/bin/pip install -e .          # only if dependencies changed
+.venv/bin/pip install -e .          # run after every pull — dependencies change with new collectors
 
 # 1. Auto-migrate what can be migrated locally (calendar pickle, sleuth env file):
 .venv/bin/rebalance config migrate-to-keyring
@@ -74,6 +79,44 @@ A healthy `rebalance doctor` shows, among the checks:
  OK  calendar      — OAuth token present (via keyring) · authorized Nd ago
  OK  gmail         — OAuth token present (via keyring)   # or: MCP mode — N messages ingested
 ```
+
+## Opt-in integrations (per-device, as needed)
+
+### Figma comments (`figma` scope)
+
+Figma ingestion is PAT-gated and disabled by default. The collector skips cleanly
+when unconfigured — no doctor warning, no error. To enable it on a device:
+
+```bash
+# No CLI command exists yet — write directly to temp/rbos.config (gitignored JSON):
+# Set figma_token to a Figma personal access token (Settings → Personal access tokens).
+# Set figma_file_keys to the list of Figma file keys you want to monitor
+# (the alphanumeric ID from the Figma file URL: figma.com/file/<FILE_KEY>/...).
+python3 -c "
+import json, pathlib
+cfg = pathlib.Path('temp/rbos.config')
+d = json.loads(cfg.read_text()) if cfg.exists() else {}
+d['figma_token'] = 'figd_XXXXXXXXXXXXXXXX'
+d['figma_file_keys'] = ['FILEKEY1', 'FILEKEY2']
+cfg.write_text(json.dumps(d, indent=2))
+print('written')
+"
+# Then run migrate-to-keyring to lift the token into the keyring:
+.venv/bin/rebalance config migrate-to-keyring
+```
+
+The Figma collector is `included_in_all=False` — it runs only when explicitly
+scoped (`rebalance refresh --scope figma` or the registry scope list includes
+`"figma"`). Comments are ingested into `figma_comments` and vectorized into the
+unified semantic index.
+
+### External GitHub repo watching
+
+External repos are declared in the project registry (not via a credential). Add
+`external: true` to a project block and list its repos under `repos:`. No new
+token is required — the existing GitHub PAT covers public repos and any private
+repos the PAT can read. External repos enter the canonical watched set and appear
+in the pulse "Watched repos" section automatically on the next refresh.
 
 ## Notes for agents
 
