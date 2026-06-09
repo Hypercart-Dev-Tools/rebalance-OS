@@ -18,7 +18,7 @@ file was missing or in the wrong place.
 | Credential | Primary | launchd fallback | Logged on (re)auth |
 |---|---|---|---|
 | GitHub PAT | keyring | `temp/rbos.config` | `auth_log` `token_set` + `token_meta` |
-| Sleuth Web API | keyring | `temp/rbos.config` | same |
+| Sleuth sync source | keyring | `temp/rbos.config` | same |
 | Google Calendar OAuth | keyring | pickle file (`~/.config/rebalance-os/google-calendar-oauth`) | same |
 | Gmail OAuth (oauth mode) | keyring | pickle file (`~/.config/rebalance-os/google-gmail-oauth`) | same |
 | Figma PAT (opt-in) | keyring | `temp/rbos.config` | — (not auth-logged; set manually) |
@@ -42,20 +42,17 @@ git pull
 #    Use the dedicated, NO-EXPIRATION classic PAT (scopes: repo, read:org).
 .venv/bin/rebalance config set-github-token ghp_XXXXXXXX
 
-# 3. Sleuth — only if migrate-to-keyring reported "no source found".
-#    Non-secret values are fixed; supply the token from your secrets store.
+# 3. Sleuth — all devices should use the git-pulse-sync file-source method.
+#    If this machine was previously pointed at the Web API, override it now.
+git clone https://github.com/Hypercart-Dev-Tools/rebalance-git-pulse.git ~/git-pulse-sync
 .venv/bin/rebalance config set-sleuth \
-    --base-url http://104.238.130.109:2020 \
-    --token <SLEUTH_WEB_API_TOKEN> \
-    --workspace neochrome-dev
-#    NOTE: the example above is the DEV box (direct, public :2020). PRODUCTION is
-#    read from a published file in the private git-pulse repo — no API/tunnel:
-#      git clone https://github.com/Hypercart-Dev-Tools/rebalance-git-pulse.git ~/git-pulse-sync
-#      rebalance config set-sleuth \
-#          --base-url "~/git-pulse-sync/sync/sleuth/reminders-neochrome.json" \
-#          --token file-source --workspace neochrome
-#    A file:// or local-path base_url is read directly (token unused). Full
-#    setup + troubleshooting: SLEUTH_SYNC.md
+    --base-url "~/git-pulse-sync/sync/sleuth/reminders-neochrome.json" \
+    --token file-source \
+    --workspace neochrome
+#    This reads the published Sleuth export directly from the companion repo —
+#    no API auth, tunnel, or public :2020 endpoint. A file:// or local-path
+#    base_url is read directly (token unused). Full setup + troubleshooting:
+#    SLEUTH_SYNC.md
 
 # 4. Calendar — only if migrate reported "no token found" (no prior OAuth on this box):
 .venv/bin/python scripts/setup_calendar_oauth.py     # opens a browser
@@ -75,7 +72,7 @@ A healthy `rebalance doctor` shows, among the checks:
 
 ```
  OK  github token  — stored in keyring + config … · this token first added Nd ago (classic PAT)
- OK  sleuth        — configured (via keyring)
+ OK  sleuth        — configured (via config/env file)
  OK  calendar      — OAuth token present (via keyring) · authorized Nd ago
  OK  gmail         — OAuth token present (via keyring)   # or: MCP mode — N messages ingested
 ```
