@@ -4,6 +4,20 @@
 
 ### Added
 
+- **Obsidian daily-notes rollover utility.** A nightly launchd job
+  (`utilities/obsidian_daily_rollover.py` + the `utilities/obsidian_rollover.sh`
+  wrapper) that, at midnight, prepends `0. Today's Notes.md` to the top of
+  `0. Yesterday.md` under a dated header (a rolling, newest-first log) and blanks
+  Today's Notes so each morning starts clean. Auto-creates Today's Notes if it
+  goes missing, guarded against churn by a **vault sentinel** (won't write unless
+  the real vault is mounted — checks `0. Now.md`) and a **circuit breaker** (trips
+  after 3 auto-creates in 24h to stop a sync-loop spewing conflict copies; reset
+  with `--setup`). The job runs through a `/bin/bash` wrapper rather than execing
+  python directly so it inherits the existing Full Disk Access grant and needs no
+  new TCC entry to reach the `~/Documents` vault; launchd stdout/stderr are kept
+  outside `~/Documents` (in `~/Library/Logs`). Surfaces in `rebalance doctor` as
+  `launchd:obsidian-rollover`.
+
 - **Monitor external GitHub repos in the unified pipeline.** You can now watch
   third-party repos for *everyone's* activity (commits/PRs), not just your own.
   Declare them in the project registry with a project flagged `external: true`
