@@ -45,6 +45,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     fetch_open_prs,
     fetch_org_activity,
     fetch_recent_emails,
+    fetch_recent_figma,
     fetch_recent_github,
     fetch_repo_activity_counts,
     fetch_sleuth_due,
@@ -56,7 +57,8 @@ from dashboard import (  # type: ignore  # noqa: E402
 )
 from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
 from rebalance.health import HealthStatus, compute_health_status  # noqa: E402
-from rebalance.ingest.index_ops import get_index_status  # noqa: E402
+from rebalance.ingest.config import get_figma_file_keys  # noqa: E402
+from rebalance.ingest.index_ops import COLLECTORS, get_index_status  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 from rebalance.web_components import (  # noqa: E402
     RB_BUTTON_CSS,
@@ -77,6 +79,27 @@ HEALTH_ISSUES_URL = (
 MAX_GOAL_HISTORY = 3
 PRIMARY_GOAL_LIMIT = 3
 SECONDARY_TODO_LIMIT = 6
+STREAM_SOURCE_EXCLUDE = frozenset({"ask_self", "code", "focus5", "semantic", "sync"})
+STREAM_DISPLAY = {
+    "github": {"label": "GitHub", "kbd": "G", "sort": 10},
+    "vault": {"label": "Vault", "kbd": "V", "sort": 20},
+    "calendar": {"label": "Calendar", "kbd": "C", "sort": 30},
+    "sleuth": {"label": "Sleuth", "kbd": "S", "sort": 40},
+    "email": {"label": "Email", "kbd": "E", "sort": 50},
+    "figma": {"label": "Figma", "kbd": "F", "sort": 60},
+}
+STREAM_COUNT_KEYS = (
+    "messages",
+    "comments",
+    "reminders",
+    "events",
+    "items",
+    "chunks",
+    "files",
+    "repos",
+    "documents",
+    "activity_records",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -322,6 +345,68 @@ def load_vault_path() -> Path | None:
         return None
     vp = data.get("vault_path")
     return Path(vp).expanduser() if vp else None
+
+
+def _stream_sort_key(name: str) -> tuple[int, str]:
+    meta = STREAM_DISPLAY.get(name) or {}
+    return int(meta.get("sort") or 999), name
+
+
+def _stream_label(name: str) -> str:
+    meta = STREAM_DISPLAY.get(name) or {}
+    label = str(meta.get("label") or "").strip()
+    return label or name.replace("_", " ").title()
+
+
+def _stream_kbd(name: str) -> str:
+    meta = STREAM_DISPLAY.get(name) or {}
+    kbd = str(meta.get("kbd") or "").strip()
+    if kbd:
+        return kbd[:2]
+    for char in _stream_label(name):
+        if char.isalnum():
+            return char.upper()
+    return "?"
+
+
+def _stream_count(source_status: dict[str, Any]) -> int:
+    for key in STREAM_COUNT_KEYS:
+        value = source_status.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return int(value)
+    return 0
+
+
+def build_stream_rows(
+    status: dict[str, Any],
+    *,
+    live_counts: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Return the sidebar stream rows from registered user-facing collectors.
+
+    The list is derived from the collector registry plus the ``index_status``
+    source blocks, so opt-in connectors such as email and figma render even
+    before they are configured or synced. For streams the page already renders
+    directly, ``live_counts`` can override the stored totals so the sidebar
+    badges stay aligned with the visible feed lengths.
+    """
+    sources = status.get("sources") or {}
+    names = [
+        name for name in COLLECTORS
+        if name not in STREAM_SOURCE_EXCLUDE and name in sources
+    ]
+    names.sort(key=_stream_sort_key)
+    return [
+        {
+            "name": name,
+            "label": _stream_label(name),
+            "kbd": _stream_kbd(name),
+            "count": int((live_counts or {}).get(name, _stream_count(sources.get(name) or {}))),
+        }
+        for name in names
+    ]
 
 
 # ---------------------------------------------------------------------------
@@ -889,13 +974,24 @@ def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
             badges.append('<span class="pr-badge approved">approved</span>')
         elif rd in ("changes_requested", "review_required"):
             badges.append('<span class="pr-badge review">review</span>')
+        cs = pr.get("check_status") or ""
+        if cs == "failing":
+            badges.append('<span class="pr-badge ci-fail">✗ CI</span>')
+        elif cs == "mixed":
+            badges.append('<span class="pr-badge ci-mixed">~ CI</span>')
+        elif cs == "pending":
+            badges.append('<span class="pr-badge ci-pending">⟳ CI</span>')
 
         badge_html = " ".join(badges)
         title_html = f'<a href="{url}" target="_blank" rel="noopener noreferrer">#{num} {_esc(title)}</a>'
 
-        fresh_attr = ' data-fresh' if not pr["is_stale"] else ''
+        row_attrs = ''
+        if not pr["is_stale"]:
+            row_attrs += ' data-fresh'
+        if pr.get("ci_failing"):
+            row_attrs += ' data-ci-fail'
         items.append(f"""
-        <li class="pr-row"{fresh_attr}>
+        <li class="pr-row"{row_attrs}>
           <span class="pr-age {age_cls}">{age_label}</span>
           <div>
             <div class="pr-title">{title_html} {badge_html}</div>
@@ -907,16 +1003,22 @@ def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
         """)
 
     stale_count = sum(1 for pr in rows if pr["is_stale"])
+    fail_count  = sum(1 for pr in rows if pr.get("ci_failing"))
     stale_btn = (
-        f' · <button class="pr-filter-btn" data-pr-filter>'
+        f' · <button class="pr-filter-btn" data-pr-filter-stale>'
         f'{stale_count} stale</button>'
         if stale_count else ""
+    )
+    fail_btn = (
+        f' · <button class="pr-filter-btn ci" data-pr-filter-ci>'
+        f'{fail_count} failing CI</button>'
+        if fail_count else ""
     )
     return f"""
     <section class="card open-prs" id="open-prs-card">
       <header class="card-head">
         <h2>Open PRs</h2>
-        <span class="card-head-meta">{len(rows)} newest{stale_btn}</span>
+        <span class="card-head-meta">{len(rows)} open{stale_btn}{fail_btn}</span>
       </header>
       <ol class="open-prs-list">{''.join(items)}</ol>
     </section>
@@ -957,6 +1059,7 @@ def render_index_health(status: dict[str, Any], now: datetime) -> str:
         ("Calendar events",  (sources.get("calendar") or {}).get("events"),                (sources.get("calendar") or {}).get("last_fetched_at"),           "info"),
         ("Sleuth reminders", (sources.get("sleuth")   or {}).get("reminders"),             (sources.get("sleuth")   or {}).get("last_synced_at"),            "info"),
         ("Email messages",   (sources.get("email")    or {}).get("messages"),              (sources.get("email")    or {}).get("last_synced_at"),            "info"),
+        ("Figma comments",   (sources.get("figma")    or {}).get("comments"),              (sources.get("figma")    or {}).get("last_synced_at"),            "info"),
         ("Semantic docs",    semantic.get("total_documents"),                              semantic.get("last_embedded_at"),                                  "ok"),
     ]
     items = []
@@ -1064,13 +1167,103 @@ def render_recent_emails(
     """
 
 
+def render_recent_figma(
+    rows: list[dict[str, Any]],
+    now: datetime,
+    *,
+    tz: ZoneInfo,
+    limit: int,
+    stored_total: int,
+    configured_keys: list[str],
+    last_synced_at: str | None,
+) -> str:
+    configured_total = len(configured_keys)
+    sync_text = _ago(last_synced_at, now=now) if last_synced_at else "never synced"
+    chips = "".join(
+        f'<span class="figma-key-chip" title="{_esc(key)}">{_esc(key)}</span>'
+        for key in configured_keys
+    ) or '<span class="figma-key-empty">No Figma project IDs configured yet.</span>'
+
+    form = f"""
+      <form id="figma-project-form" class="figma-config-form">
+        <div class="figma-config-label">Add Figma project ID</div>
+        <div class="figma-config-help">Paste a Figma file key or full design URL. rebalance adds it to <code>figma_file_keys</code> and syncs comments.</div>
+        <div class="figma-config-row">
+          <input
+            id="figma-project-input"
+            class="figma-project-input"
+            type="text"
+            placeholder="Figma file key or design URL"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <button id="figma-project-submit" class="figma-project-btn" type="submit">Add + sync</button>
+        </div>
+        <div id="figma-project-status" class="figma-project-status subtle">
+          Tracking {configured_total} project ID{'s' if configured_total != 1 else ''} · last sync { _esc(sync_text) }
+        </div>
+        <div class="figma-key-list">{chips}</div>
+      </form>
+    """
+
+    if not rows:
+        return f"""
+    <section class="card figma-comments">
+      <header class="card-head">
+        <h2>Recent Figma comments</h2>
+        <span class="card-head-meta">{stored_total} stored · {configured_total} project{'s' if configured_total != 1 else ''}</span>
+      </header>
+      <div class="empty">No stored Figma comments yet.</div>
+      <footer class="card-foot">{form}</footer>
+    </section>
+    """
+
+    items = []
+    for row in rows:
+        author = _normalize_html_text(row.get("user_handle") or "") or _normalize_html_text(row.get("user_id") or "") or "Figma user"
+        message = _truncate(_normalize_html_text(row.get("message") or ""), 220) or "(empty comment)"
+        when = _ago(row.get("created_at") or row.get("synced_at"), now=now)
+        resolved = bool(row.get("resolved_at"))
+        resolved_badge = '<span class="figma-badge resolved">resolved</span>' if resolved else ""
+        file_key = _normalize_html_text(row.get("file_key") or "")
+        items.append(f"""
+        <li class="figma-row">
+          <div class="figma-row-main">
+            <div class="figma-row-message">{_esc(message)}</div>
+            <div class="figma-row-meta">
+              <span class="figma-row-author">{_esc(author)}</span>
+              <span class="figma-row-dot">·</span>
+              <span class="figma-row-file" title="{_esc(file_key)}">{_esc(file_key)}</span>
+              <span class="figma-row-dot">·</span>
+              <span class="figma-row-when">{_esc(when)}</span>
+              {f'<span class="figma-row-dot">·</span>{resolved_badge}' if resolved_badge else ''}
+            </div>
+          </div>
+          <div class="figma-row-side">
+            <div class="figma-row-time">{_esc(_format_dt_short(row.get("created_at") or row.get("synced_at"), tz=tz))}</div>
+          </div>
+        </li>
+        """)
+
+    return f"""
+    <section class="card figma-comments">
+      <header class="card-head">
+        <h2>Recent Figma comments</h2>
+        <span class="card-head-meta">latest {min(len(rows), limit)} shown · {stored_total} stored</span>
+      </header>
+      <ol class="figma-list">{''.join(items)}</ol>
+      <footer class="card-foot">{form}</footer>
+    </section>
+    """
+
+
 def build_nav_data(
     *,
     in_progress: int,
     cal_rows: list[dict[str, Any]],
     sleuth_rows: list[dict[str, Any]],
     sleuth_synced: bool,
-    streams: dict[str, int],
+    streams: list[dict[str, Any]],
     drift_total: int,
     semantic_total: int,
     notices: list[Check] | None = None,
@@ -1378,6 +1571,7 @@ PAGE_CSS = """
 /* Card */
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 18px 10px; }
+.card-head-meta { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .card-foot { padding: 10px 18px 14px; border-top: 1px solid var(--border); }
 
 /* Hero */
@@ -1622,6 +1816,143 @@ PAGE_CSS = """
   background: rgba(192,57,43,.08);
 }
 
+/* Recent Figma comments */
+.figma-comments .card-head { align-items: center; }
+.figma-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 540px;
+  overflow-y: auto;
+}
+.figma-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  align-items: start;
+}
+.figma-row:first-child { border-top: 0; }
+.figma-row-main { min-width: 0; }
+.figma-row-message {
+  color: var(--fg);
+  font-size: 12.75px;
+  line-height: 1.45;
+  margin-bottom: 4px;
+}
+.figma-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+}
+.figma-row-author { color: var(--fg-muted); font-weight: 600; }
+.figma-row-file {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg-dim);
+}
+.figma-row-dot { color: var(--fg-dim); }
+.figma-row-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.figma-row-time {
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.figma-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+.figma-badge.resolved {
+  color: var(--ok);
+  border-color: rgba(47,116,55,.22);
+  background: rgba(47,116,55,.08);
+}
+.figma-config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.figma-config-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--fg-dim);
+}
+.figma-config-help {
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.figma-config-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+.figma-project-input {
+  font: inherit;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--fg);
+}
+.figma-project-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.figma-project-btn {
+  font: inherit;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.figma-project-btn:disabled {
+  opacity: .55;
+  cursor: progress;
+}
+.figma-project-status.is-error { color: var(--danger); }
+.figma-project-status.is-success { color: var(--ok); }
+.figma-key-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.figma-key-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.figma-key-empty {
+  color: var(--fg-dim);
+  font-size: 11.5px;
+}
+
 /* KV lists (watched / health) */
 .kv-list { list-style: none; padding: 6px 18px 10px; margin: 0; }
 .kv-list li { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; padding: 6px 0; align-items: baseline; }
@@ -1653,6 +1984,10 @@ PAGE_CSS = """
   .email-row { grid-template-columns: 1fr; }
   .email-row-side { align-items: flex-start; }
   .email-row-time { white-space: normal; }
+  .figma-row { grid-template-columns: 1fr; }
+  .figma-row-side { align-items: flex-start; }
+  .figma-row-time { white-space: normal; }
+  .figma-config-row { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; align-items: stretch; gap: 12px; }
   .topbar > div:last-child { flex-wrap: wrap; }
   .health-banner { grid-template-columns: 1fr; }
@@ -1687,7 +2022,11 @@ PAGE_CSS = """
 .pr-badge.draft  { color: var(--fg-dim); border-color: var(--border); }
 .pr-badge.review { color: var(--warn); border-color: rgba(166,95,0,.25); background: rgba(166,95,0,.07); }
 .pr-badge.approved { color: var(--ok); border-color: rgba(47,116,55,.25); background: rgba(47,116,55,.07); }
-/* Stale filter toggle */
+/* CI check-status badges */
+.pr-badge.ci-fail    { color: var(--danger); border-color: rgba(192,57,43,.25); background: rgba(192,57,43,.07); }
+.pr-badge.ci-mixed   { color: var(--warn);   border-color: rgba(166,95,0,.25);  background: rgba(166,95,0,.07);  }
+.pr-badge.ci-pending { color: var(--fg-dim); border-color: var(--border); }
+/* Stale / CI filter toggles */
 .pr-filter-btn {
   font: inherit; font-size: 12px; font-weight: 600;
   padding: 2px 8px; border-radius: 999px; cursor: pointer;
@@ -1696,7 +2035,11 @@ PAGE_CSS = """
 }
 .pr-filter-btn:hover  { background: rgba(166,95,0,.16); }
 .pr-filter-btn.active { background: var(--warn); color: #fff; border-color: var(--warn); }
-.open-prs.filter-stale .pr-row[data-fresh] { display: none; }
+.pr-filter-btn.ci              { border-color: rgba(192,57,43,.30); background: rgba(192,57,43,.08); color: var(--danger); }
+.pr-filter-btn.ci:hover        { background: rgba(192,57,43,.16); }
+.pr-filter-btn.ci.active       { background: var(--danger); color: #fff; border-color: var(--danger); }
+.open-prs.filter-stale .pr-row[data-fresh]    { display: none; }
+.open-prs.filter-ci    .pr-row:not([data-ci-fail]) { display: none; }
 
 /* Health pill */
 .health-pill {
@@ -2005,6 +2348,65 @@ PULSE_JS = r"""
     });
   }
 
+  const figmaForm = document.getElementById('figma-project-form');
+  const figmaInput = document.getElementById('figma-project-input');
+  const figmaSubmit = document.getElementById('figma-project-submit');
+  const figmaStatus = document.getElementById('figma-project-status');
+
+  const setFigmaStatus = (message, state = '') => {
+    if (!figmaStatus) return;
+    figmaStatus.textContent = message;
+    figmaStatus.classList.remove('is-error', 'is-success');
+    if (state) figmaStatus.classList.add(state);
+  };
+
+  if (figmaForm && figmaInput && figmaSubmit) {
+    figmaForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const project = figmaInput.value.trim();
+      if (!project) {
+        setFigmaStatus('Enter a Figma project ID or paste a Figma URL.', 'is-error');
+        figmaInput.focus();
+        return;
+      }
+
+      const original = figmaSubmit.textContent;
+      figmaSubmit.disabled = true;
+      figmaSubmit.textContent = 'Adding…';
+      setFigmaStatus('Saving project ID and syncing Figma comments…');
+
+      try {
+        const res = await fetch('/api/figma/projects', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ project }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          const detail = data?.detail || data?.error || ('request failed: ' + res.status);
+          throw new Error(String(detail));
+        }
+
+        if (data.sync_ok === false) {
+          const reason = data.sync_error ? ` Sync issue: ${data.sync_error}` : '';
+          setFigmaStatus(`Stored ${data.file_key}.${reason} Reloading…`, 'is-error');
+        } else {
+          const prefix = data.already_present ? 'Re-synced' : 'Added';
+          const comments = Number(data.comments_fetched || 0);
+          setFigmaStatus(`${prefix} ${data.file_key} · ${comments} comment${comments === 1 ? '' : 's'} fetched. Reloading…`, 'is-success');
+        }
+        figmaInput.value = '';
+        window.setTimeout(() => location.reload(), 700);
+      } catch (err) {
+        console.warn('figma add project failed:', err);
+        setFigmaStatus(`Could not add Figma project: ${String(err)}`, 'is-error');
+      } finally {
+        figmaSubmit.disabled = false;
+        figmaSubmit.textContent = original;
+      }
+    });
+  }
+
   // Repo activity doughnut (Chart.js, loaded via CDN with defer).
   const initRepoPie = () => {
     const canvas = document.getElementById('repo-pie-canvas');
@@ -2105,17 +2507,29 @@ PULSE_JS = r"""
     window.addEventListener('load', initOrgPie, { once: true });
   }
 
-  // PR stale filter toggle
+  // PR filter toggles (stale + failing CI — independent, composable)
   const prCard = document.getElementById('open-prs-card');
-  const prFilterBtn = prCard && prCard.querySelector('[data-pr-filter]');
-  if (prFilterBtn) {
-    prFilterBtn.addEventListener('click', () => {
-      const active = prCard.classList.toggle('filter-stale');
-      prFilterBtn.classList.toggle('active', active);
-      prFilterBtn.textContent = active
-        ? prFilterBtn.textContent.replace('stale', 'stale ✕')
-        : prFilterBtn.textContent.replace(' ✕', '');
-    });
+  if (prCard) {
+    const staleBtn = prCard.querySelector('[data-pr-filter-stale]');
+    if (staleBtn) {
+      staleBtn.addEventListener('click', () => {
+        const active = prCard.classList.toggle('filter-stale');
+        staleBtn.classList.toggle('active', active);
+        staleBtn.textContent = active
+          ? staleBtn.textContent.replace('stale', 'stale ✕')
+          : staleBtn.textContent.replace(' ✕', '');
+      });
+    }
+    const ciBtn = prCard.querySelector('[data-pr-filter-ci]');
+    if (ciBtn) {
+      ciBtn.addEventListener('click', () => {
+        const active = prCard.classList.toggle('filter-ci');
+        ciBtn.classList.toggle('active', active);
+        ciBtn.textContent = active
+          ? ciBtn.textContent.replace('failing CI', 'failing CI ✕')
+          : ciBtn.textContent.replace(' ✕', '');
+      });
+    }
   }
 })();
 """
@@ -2157,10 +2571,12 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     cal_rows = fetch_calendar_upcoming(now, limit=6)
     sleuth_rows = fetch_sleuth_due(limit=6)
     email_rows = fetch_recent_emails(limit=30)
+    figma_rows = fetch_recent_figma(limit=12)
     repo_pie_days = 7
     repo_pie_rows = fetch_repo_activity_counts(days=repo_pie_days, limit=12)
     status = get_index_status(DB_PATH)
     doctor_report = run_doctor(DB_PATH)
+    figma_keys = get_figma_file_keys()
     # Sleuth has synced at least once iff sources.sleuth.last_synced_at is set.
     # Lets the sidebar tell a genuinely empty inbox apart from a sync that has
     # never run (e.g. missing Sleuth credentials) — no false "Inbox clear".
@@ -2169,14 +2585,20 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     )
 
     in_progress = sum(1 for g in goals if not g["done"])
-    streams = {
-        "github": len(gh_rows),
-        "vault": len(vault_rows),
-        "calendar": len(cal_rows),
-        "sleuth": len(sleuth_rows),
-    }
+    streams = build_stream_rows(
+        status,
+        live_counts={
+            "github": len(gh_rows),
+            "vault": len(vault_rows),
+            "calendar": len(cal_rows),
+            "sleuth": len(sleuth_rows),
+            "email": len(email_rows),
+        },
+    )
     semantic_total = ((status.get("semantic_index") or {}).get("total_documents")) or 0
     email_total = int(((status.get("sources") or {}).get("email") or {}).get("messages") or 0)
+    figma_source = (status.get("sources") or {}).get("figma") or {}
+    figma_total = int(figma_source.get("comments") or 0)
     freshness = status.get("freshness") or {}
     drift_total = sum(int(v) for v in freshness.values() if isinstance(v, int))
 
@@ -2245,6 +2667,15 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           </div>
           <div class="col">
             {render_watched(watched, now)}
+            {render_recent_figma(
+                figma_rows,
+                now,
+                tz=TZ,
+                limit=12,
+                stored_total=figma_total,
+                configured_keys=figma_keys,
+                last_synced_at=figma_source.get("last_synced_at"),
+            )}
             {render_repo_pie(repo_pie_rows, days=repo_pie_days)}
           </div>
         </div>

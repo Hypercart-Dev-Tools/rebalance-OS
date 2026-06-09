@@ -175,6 +175,17 @@
   (launchd's stripped environment may not reach the keychain), which
   `doctor._check_token` relies on. Updated the stale unit test to match.
 
+## [0.31.9] - 2026-06-08
+
+### Added
+
+- **Pulse homepage Figma module.** The home page now shows a `Recent Figma comments` card with the newest stored comments, tracked project IDs, and last-sync context so Figma activity is visible alongside GitHub, email, and calendar signals.
+- **One-step Figma project add flow on the homepage.** A new `Add Figma project ID` form accepts either a raw Figma file key or a full Figma URL, appends the normalized key to local config, triggers a Figma sync, and regenerates the page so newly-added files appear without a manual config edit.
+
+### Changed
+
+- **Streams list now reflects the available connectors programmatically.** The sidebar stream list is derived from the registered source set instead of a hard-coded subset, so optional connectors such as Email and Figma always appear even before they are heavily populated.
+
 ## [0.31.8] - 2026-06-04
 
 ### Fixed

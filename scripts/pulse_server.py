@@ -18,11 +18,13 @@ interface — there is no auth and /api/refresh runs a subprocess.
 from __future__ import annotations
 
 import argparse
+import re
 import subprocess
 import sys
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
@@ -44,8 +46,12 @@ from pulse_web import (  # noqa: E402
     load_goal_history,
     undo_goal_completion_in_file,
 )
+from rebalance.ingest.config import get_figma_file_keys, set_figma_file_keys  # noqa: E402
+from rebalance.ingest.index_ops import refresh_index  # noqa: E402
+from rebalance.paths import resolve_database_path  # noqa: E402
 
 app = FastAPI(title="rebalance pulse (local)", docs_url=None, redoc_url=None)
+_FIGMA_KEY_RE = re.compile(r"^[A-Za-z0-9]{8,}$")
 
 # Serve the auth-activity log and Focus 5 view from this always-running server
 # too, so their links work without a separate `rebalance serve` process on
@@ -93,6 +99,43 @@ class ChatRequest(BaseModel):
     query: str
     scope: str = "all"
     top_k: int = 8
+
+
+class FigmaProjectRequest(BaseModel):
+    project: str
+
+
+def _run_pulse_render(timeout: int = 60) -> subprocess.CompletedProcess[str]:
+    if not PULSE_WEB_PY.exists():
+        raise HTTPException(status_code=500, detail=f"missing {PULSE_WEB_PY}")
+    return subprocess.run(
+        [PYTHON, str(PULSE_WEB_PY)],
+        cwd=str(PROJECT_ROOT),
+        capture_output=True,
+        text=True,
+        timeout=timeout,
+    )
+
+
+def _extract_figma_file_key(value: str) -> str | None:
+    text = (value or "").strip()
+    if not text:
+        return None
+    if _FIGMA_KEY_RE.fullmatch(text):
+        return text
+    parsed = urlparse(text)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    host = parsed.netloc.lower()
+    if host not in {"figma.com", "www.figma.com"}:
+        return None
+    parts = [part for part in parsed.path.split("/") if part]
+    for idx, part in enumerate(parts[:-1]):
+        if part in {"file", "design", "proto", "board"}:
+            candidate = parts[idx + 1].strip()
+            if _FIGMA_KEY_RE.fullmatch(candidate):
+                return candidate
+    return None
 
 
 @app.post("/api/chat")
@@ -154,16 +197,8 @@ def health():
 
 @app.post("/api/refresh")
 def refresh():
-    if not PULSE_WEB_PY.exists():
-        raise HTTPException(status_code=500, detail=f"missing {PULSE_WEB_PY}")
     started = time.perf_counter()
-    proc = subprocess.run(
-        [PYTHON, str(PULSE_WEB_PY)],
-        cwd=str(PROJECT_ROOT),
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    proc = _run_pulse_render(timeout=60)
     duration_ms = round((time.perf_counter() - started) * 1000)
     if proc.returncode != 0:
         return JSONResponse(
@@ -180,6 +215,77 @@ def refresh():
         "ok": True,
         "duration_ms": duration_ms,
         "generated_at": mtime.isoformat(),
+    }
+
+
+@app.post("/api/figma/projects")
+def add_figma_project(req: FigmaProjectRequest):
+    raw_value = (req.project or "").strip()
+    if not raw_value:
+        raise HTTPException(status_code=400, detail="project is required")
+
+    file_key = _extract_figma_file_key(raw_value)
+    if not file_key:
+        raise HTTPException(
+            status_code=400,
+            detail="enter a Figma file key or a full figma.com design/file URL",
+        )
+
+    existing = get_figma_file_keys()
+    already_present = file_key in existing
+    if not already_present:
+        set_figma_file_keys(existing + [file_key])
+
+    sync_ok = True
+    sync_error = ""
+    figma_result: dict[str, object] = {}
+    try:
+        result = refresh_index(resolve_database_path(), scope=["figma"], dry_run=False)
+        figma_result = next(
+            (
+                row for row in (result.get("results") or [])
+                if isinstance(row, dict) and row.get("scope") == "figma"
+            ),
+            {},
+        )
+        top_errors = result.get("errors") or []
+        scoped_errors = figma_result.get("errors") or []
+        scoped_error = str(figma_result.get("error") or "").strip()
+        sync_ok = not top_errors and not scoped_errors and not scoped_error
+        if scoped_error:
+            sync_error = scoped_error
+        elif scoped_errors:
+            sync_error = "; ".join(
+                str(err.get("error") or "").strip()
+                for err in scoped_errors
+                if isinstance(err, dict) and str(err.get("error") or "").strip()
+            ) or "Figma sync reported file-level errors."
+        elif top_errors:
+            sync_error = "; ".join(str(err) for err in top_errors)
+    except Exception as exc:  # noqa: BLE001
+        sync_ok = False
+        sync_error = f"{type(exc).__name__}: {exc}"
+
+    render_error = ""
+    try:
+        proc = _run_pulse_render(timeout=60)
+        if proc.returncode != 0:
+            render_error = proc.stderr[-500:] or f"pulse render failed: {proc.returncode}"
+    except Exception as exc:  # noqa: BLE001
+        render_error = f"{type(exc).__name__}: {exc}"
+
+    return {
+        "ok": True,
+        "file_key": file_key,
+        "already_present": already_present,
+        "files_configured": len(get_figma_file_keys()),
+        "sync_ok": sync_ok,
+        "sync_error": sync_error,
+        "render_ok": not bool(render_error),
+        "render_error": render_error,
+        "comments_fetched": int(figma_result.get("comments_fetched") or 0),
+        "comments_inserted": int(figma_result.get("comments_inserted") or 0),
+        "comments_updated": int(figma_result.get("comments_updated") or 0),
     }
 
 

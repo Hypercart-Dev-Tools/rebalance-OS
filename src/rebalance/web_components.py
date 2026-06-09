@@ -158,7 +158,7 @@ h2 { font-size: 14px; color: var(--fg); }
 .side-row-meta { font-size: 11.5px; color: var(--fg-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .side-row.empty .side-row-meta { font-style: italic; }
 
-/* Streams: compact 4-row list */
+/* Streams: compact connector list */
 .streams { list-style: none; margin: 0; padding: 0; }
 .streams li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
 .streams .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
@@ -201,7 +201,7 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
         cal_html       – the calendar <li> rows
         sleuth_html    – the reminders <li> rows
         notices_html   – the optional Notices section block
-        streams        – {github, vault, calendar, sleuth: int} counts
+        streams        – [{name, label, kbd, count}, ...] stream rows
         drift_total    – footer drift count
         semantic_total – footer doc count
     """
@@ -233,9 +233,24 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
     cal_html = nav_data.get("cal_html", "")
     sleuth_html = nav_data.get("sleuth_html", "")
     notices_html = nav_data.get("notices_html", "")
-    streams = nav_data.get("streams") or {}
+    streams = nav_data.get("streams") or []
     drift_total = nav_data.get("drift_total", 0)
     semantic_total = nav_data.get("semantic_total", 0)
+    if isinstance(streams, dict):
+        streams = [
+            {"name": "github", "label": "GitHub", "kbd": "G", "count": streams.get("github", 0)},
+            {"name": "vault", "label": "Vault", "kbd": "V", "count": streams.get("vault", 0)},
+            {"name": "calendar", "label": "Calendar", "kbd": "C", "count": streams.get("calendar", 0)},
+            {"name": "sleuth", "label": "Sleuth", "kbd": "S", "count": streams.get("sleuth", 0)},
+        ]
+    stream_items = []
+    for row in streams:
+        label = html.escape(str(row.get("label") or row.get("name") or "Stream"))
+        kbd = html.escape(str(row.get("kbd") or "?")[:2])
+        count = html.escape(str(row.get("count") if row.get("count") is not None else 0))
+        stream_items.append(
+            f'<li><span class="kbd">{kbd}</span><span>{label}</span><span class="badge">{count}</span></li>'
+        )
 
     return f"""
     <aside class="sidebar">
@@ -260,12 +275,7 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
         <ul class="side-list">{sleuth_html}</ul>
         {notices_html}
         <div class="nav-section-label">Streams</div>
-        <ul class="streams">
-          <li><span class="kbd">G</span><span>GitHub</span><span class="badge">{streams.get('github', 0)}</span></li>
-          <li><span class="kbd">V</span><span>Vault</span><span class="badge">{streams.get('vault', 0)}</span></li>
-          <li><span class="kbd">C</span><span>Calendar</span><span class="badge">{streams.get('calendar', 0)}</span></li>
-          <li><span class="kbd">S</span><span>Sleuth</span><span class="badge">{streams.get('sleuth', 0)}</span></li>
-        </ul>
+        <ul class="streams">{''.join(stream_items)}</ul>
 
         <div class="nav-section-label">System</div>
         <ul class="nav-list">

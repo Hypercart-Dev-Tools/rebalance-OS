@@ -537,10 +537,12 @@ def fetch_open_prs(limit: int = 10, stale_days: int = 2) -> list[dict[str, Any]]
                 """
                 SELECT repo_full_name, number, title, author_login,
                        created_at, updated_at, is_draft,
-                       review_decision, html_url
+                       review_decision, html_url, check_status
                 FROM github_items
                 WHERE item_type = 'pull_request' AND state = 'open'
-                ORDER BY created_at DESC
+                ORDER BY
+                  CASE WHEN check_status IN ('failing','mixed') THEN 0 ELSE 1 END,
+                  created_at DESC
                 LIMIT ?
                 """,
                 (limit,),
@@ -565,9 +567,11 @@ def fetch_open_prs(limit: int = 10, stale_days: int = 2) -> list[dict[str, Any]]
             "updated_at":     r[5],
             "is_draft":       bool(r[6]),
             "review_decision": r[7] or "",
-            "html_url":       r[8] or "",
-            "age_days":       age_days,
-            "is_stale":       age_days > stale_days,
+            "html_url":        r[8] or "",
+            "check_status":    r[9] or "",
+            "age_days":        age_days,
+            "is_stale":        age_days > stale_days,
+            "ci_failing":      (r[9] or "") in ("failing", "mixed"),
         })
     return out
 
@@ -646,6 +650,26 @@ def fetch_recent_emails(limit: int = 30) -> list[dict[str, Any]]:
                 FROM email_messages
                 WHERE received_at IS NOT NULL
                 ORDER BY received_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:  # noqa: BLE001 — empty DB before first sync
+        return []
+
+
+def fetch_recent_figma(limit: int = 12) -> list[dict[str, Any]]:
+    """Newest non-empty Figma comments, across all configured files."""
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT file_key, comment_id, parent_id, message, user_id, user_handle,
+                       created_at, resolved_at, synced_at
+                FROM figma_comments
+                WHERE TRIM(COALESCE(message, '')) <> ''
+                ORDER BY COALESCE(created_at, synced_at) DESC
                 LIMIT ?
                 """,
                 (limit,),
