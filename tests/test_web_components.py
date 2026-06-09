@@ -73,7 +73,7 @@ class RenderShellTests(unittest.TestCase):
         # The active nav item carries class="active" on its <li>.
         self.assertIn('<li class="active"><a href="/focus-5">Focus 5</a></li>', out)
         # A non-active item must NOT be marked active.
-        self.assertIn('<li><a href="/auth-log">Authorization Log</a></li>', out)
+        self.assertIn('<li><a href="/auth-log">System Log</a></li>', out)
 
     def test_style_block_layers_tokens_chrome_and_button(self) -> None:
         out = render_shell("Home", "x", active="today", page_css=".pg{color:red}")

@@ -25,6 +25,8 @@ from fastapi.responses import (
 from pydantic import BaseModel
 
 from rebalance.ingest.auth_log import read_log, _log_path
+from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
+from rebalance.paths import resolve_db
 from rebalance.web_components import badge_html, button_link, render_shell
 
 # How long a persisted Focus 5 roster stays authoritative before a visit lazily
@@ -96,6 +98,23 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .empty { text-align: center; padding: 48px; color: var(--fg-muted); font-size: 14px; }
 .raw-link { float: right; font-size: 12px; color: var(--accent); text-decoration: none; }
 .raw-link:hover { text-decoration: underline; }
+
+/* Sleuth reminder groups (home page) */
+.sr-search-bar { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
+.sr-input { flex:1; max-width:340px; padding:6px 10px; border:1px solid var(--border);
+            border-radius:6px; background:var(--panel); color:var(--fg); font-size:13px; }
+.sr-count-label { font-size:12px; color:var(--fg-muted); }
+.sr-groups { display:flex; flex-direction:column; gap:12px; }
+.sr-group  { background:var(--panel); border-radius:8px;
+             box-shadow:0 1px 3px rgba(0,0,0,.12); overflow:hidden; }
+.sr-group-header { display:flex; align-items:center; gap:8px; padding:10px 14px;
+                   border-bottom:1px solid var(--border); font-size:13px; font-weight:600; }
+.sr-group-name  { flex:1; }
+.sr-group-count { font-size:11px; font-weight:400; color:var(--fg-muted); }
+.sr-tasks { list-style:none; padding:0; margin:0; }
+.sr-task  { padding:8px 14px; font-size:13px; border-top:1px solid var(--border); }
+.sr-task:first-child { border-top:none; }
+.sr-task:hover { background:rgba(0,0,0,.03); }
 
 /* Focus 5 — sits inside the .app 280px-sidebar grid, so it has ~280px less width
    than the old centred 1480px <main>. Breakpoints retuned for that frame. */
@@ -169,24 +188,97 @@ def _page(title: str, body: str, *, active: str, wide: bool = False) -> HTMLResp
     )
 
 
+_KIND_BADGE = {
+    "github":  ("info",    "GH"),
+    "client":  ("ok",      "client"),
+    "channel": ("neutral", "channel"),
+    "other":   ("neutral", "other"),
+}
+
+
+def _render_sleuth_groups() -> str:
+    """Return the Sleuth reminder groups section HTML, or an empty string on error."""
+    try:
+        groups = grouped_reminders_from_db(resolve_db())
+    except Exception:
+        return ""
+    if not groups:
+        return ""
+
+    total_tasks = sum(len(g.reminders) for g in groups)
+    rows: list[str] = []
+    for g in groups:
+        variant, badge_label = _KIND_BADGE.get(g.kind, ("neutral", g.kind))
+        tasks_html = "".join(
+            f"<li class='sr-task' data-text='{html.escape(r['task_text'].lower())}'>"
+            f"{html.escape(r['task_text']) or '<em style=\"color:var(--fg-dim)\">—</em>'}"
+            f"</li>"
+            for r in g.reminders
+        )
+        rows.append(
+            f"<div class='sr-group'>"
+            f"<div class='sr-group-header'>"
+            f"{badge_html(badge_label, variant)}"
+            f"<span class='sr-group-name'>{html.escape(g.label)}</span>"
+            f"<span class='sr-group-count'>{len(g.reminders)} reminder{'s' if len(g.reminders) != 1 else ''}</span>"
+            f"</div>"
+            f"<ul class='sr-tasks'>{tasks_html}</ul>"
+            f"</div>"
+        )
+
+    groups_html = "\n".join(rows)
+    return (
+        f"<h2 style='margin-top:28px;'>Reminders"
+        f"<span style='font-size:12px;font-weight:400;color:var(--fg-muted);margin-left:10px;'>"
+        f"{total_tasks} active across {len(groups)} group{'s' if len(groups) != 1 else ''}"
+        f"</span></h2>"
+        f"<div class='sr-search-bar'>"
+        f"<input id='srSearch' class='sr-input' type='search' autocomplete='off'"
+        f"  oninput='srFilter()' placeholder='Search reminders…'>"
+        f"<span id='srCountLabel' class='sr-count-label'></span>"
+        f"</div>"
+        f"<div id='srGroups' class='sr-groups'>{groups_html}</div>"
+        f"<script>"
+        f"function srFilter(){{"
+        f"var q=(document.getElementById('srSearch').value||'').trim().toLowerCase();"
+        f"var vis=0;"
+        f"document.querySelectorAll('.sr-group').forEach(function(g){{"
+        f"var n=0;"
+        f"g.querySelectorAll('.sr-task').forEach(function(t){{"
+        f"var m=!q||t.dataset.text.includes(q);"
+        f"t.style.display=m?'':'none'; if(m)n++;"
+        f"}});"
+        f"g.style.display=n?'':'none'; vis+=n;"
+        f"}});"
+        f"var el=document.getElementById('srCountLabel');"
+        f"el.textContent=q?(vis+' task'+(vis!==1?'s':'')+' matching'):'';"
+        f"}}"
+        f"</script>"
+    )
+
+
 @app.get("/", response_class=HTMLResponse)
 def index() -> HTMLResponse:
-    body = """
+    sleuth_section = _render_sleuth_groups()
+    body = (
+        """
 <h2>Local dashboards</h2>
 <ul style="margin-top:16px;line-height:2;list-style:none;">
   <li><a href="/focus-5" style="color:var(--accent);font-size:15px;">
-      🎯 Focus 5</a>
+      Focus 5</a>
       <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
       — the 5 repos you're actively working on: working-tree health, newest PR,
       and recent local commits, ranked by uncommitted/unpushed work first</span>
   </li>
   <li><a href="/auth-log" style="color:var(--accent);font-size:15px;">
-      📋 System Log</a>
+      System Log</a>
       <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
       — unified event stream: auth events (calendar, github, gmail) and background
       job starts, completions, and failures — filterable by type</span>
   </li>
 </ul>"""
+        + sleuth_section
+    )
     return _page("Home", body, active="today")
 
 

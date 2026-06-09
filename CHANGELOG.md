@@ -4,6 +4,16 @@
 
 ### Added
 
+- **Sleuth reminder grouping + home page search.** Active Sleuth reminders are
+  now clustered by inferred relationship and surfaced directly on the web app
+  home page (`/`). Grouping mirrors the Sleuth `show-me` rules (ported from
+  `reminder-clustering.js`): shared GitHub URL (transitive union-find) →
+  same client (channel/repo-pattern from `client-channel-mapping.json`) →
+  same channel (2+ members) → Other. A live search input filters task text
+  across all groups client-side. Connection surfacing (`find_connections`) is
+  also available for building the suggestion system. Logic lives in
+  `src/rebalance/ingest/sleuth_grouping.py` (47 tests).
+
 - **CI check status on Open PRs panel.** `check_status` (already collected
   per-PR via the GitHub check-runs API) is now surfaced in the dashboard.
   Each PR row shows an inline badge (`✗ CI` / `~ CI` / `⟳ CI`) for
