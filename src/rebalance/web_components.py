@@ -180,7 +180,7 @@ h2 { font-size: 14px; color: var(--fg); }
 _NAV_LINKS = (
     ("today", "/", "Today"),
     ("focus5", "/focus-5", "Focus 5"),
-    ("authlog", "/auth-log", "Authorization Log"),
+    ("authlog", "/auth-log", "System Log"),
 )
 
 

@@ -18,6 +18,19 @@ log() {
 
 cd "$REBALANCE_DIR"
 
+_JOB_START_TS=$(date +%s)
+"$PYTHON" -c "from rebalance.ingest.auth_log import log_job_started; log_job_started('github-sync')" 2>/dev/null || true
+_job_exit() {
+    local _code=$?
+    local _elapsed=$(( $(date +%s) - _JOB_START_TS ))
+    if [ "$_code" -eq 0 ]; then
+        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_completed; log_job_completed('github-sync', $_elapsed)" 2>/dev/null || true
+    else
+        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_failed; log_job_failed('github-sync', $_code, $_elapsed)" 2>/dev/null || true
+    fi
+}
+trap _job_exit EXIT
+
 log "=== rebalance hourly github sync starting ==="
 
 if "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1

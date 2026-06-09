@@ -35,6 +35,17 @@ gmail
 The ``FAILURE_EVENTS`` set marks the events that represent a collector losing
 (or never having) access — what ``rebalance config doctor`` surfaces as the
 "last auth failure" per integration.
+
+launchd job events (source="launchd")
+--------------------------------------
+Emitted by every background shell-wrapper script (daily_sync.sh, github_sync.sh,
+pulse_sync.sh, vault_sync.sh, pulse_web_sync.sh, pulse_server.sh, and the
+obsidian rollover) so that job starts, completions, and failures all appear in
+the same unified event stream as auth events.
+
+  job_started    — job process started (emitted before main work begins)
+  job_completed  — job exited 0
+  job_failed     — job exited non-zero; detail includes exit_code
 """
 
 from __future__ import annotations
@@ -55,6 +66,8 @@ FAILURE_EVENTS: frozenset[str] = frozenset({
     "token_invalid", "auth_failed",
     # gmail
     "adc_missing", "scope_insufficient",
+    # launchd jobs
+    "job_failed",
 })
 
 
@@ -218,6 +231,31 @@ def log_gmail_adc_missing(error: str = "") -> None:
 
 def log_gmail_scope_insufficient(error: str = "") -> None:
     _append("gmail", "scope_insufficient", {"error": error})
+
+
+# ---------------------------------------------------------------------------
+# launchd job helpers
+# ---------------------------------------------------------------------------
+
+def log_job_started(job: str) -> None:
+    """Emit a job_started event for a launchd background job."""
+    _append("launchd", "job_started", {"job": job})
+
+
+def log_job_completed(job: str, elapsed: float | None = None) -> None:
+    """Emit a job_completed event (exit 0)."""
+    detail: dict[str, Any] = {"job": job}
+    if elapsed is not None:
+        detail["elapsed_seconds"] = round(elapsed, 2)
+    _append("launchd", "job_completed", detail)
+
+
+def log_job_failed(job: str, exit_code: int, elapsed: float | None = None) -> None:
+    """Emit a job_failed event (non-zero exit)."""
+    detail: dict[str, Any] = {"job": job, "exit_code": exit_code}
+    if elapsed is not None:
+        detail["elapsed_seconds"] = round(elapsed, 2)
+    _append("launchd", "job_failed", detail)
 
 
 # ---------------------------------------------------------------------------

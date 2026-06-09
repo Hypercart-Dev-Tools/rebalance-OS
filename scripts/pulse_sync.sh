@@ -24,6 +24,19 @@ log() {
 
 cd "$REBALANCE_DIR"
 
+_JOB_START_TS=$(date +%s)
+"$PYTHON" -c "from rebalance.ingest.auth_log import log_job_started; log_job_started('pulse-sync')" 2>/dev/null || true
+_job_exit() {
+    local _code=$?
+    local _elapsed=$(( $(date +%s) - _JOB_START_TS ))
+    if [ "$_code" -eq 0 ]; then
+        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_completed; log_job_completed('pulse-sync', $_elapsed)" 2>/dev/null || true
+    else
+        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_failed; log_job_failed('pulse-sync', $_code, $_elapsed)" 2>/dev/null || true
+    fi
+}
+trap _job_exit EXIT
+
 log "=== rebalance pulse sync starting ==="
 
 "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1

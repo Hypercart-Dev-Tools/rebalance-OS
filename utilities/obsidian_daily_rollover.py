@@ -34,6 +34,24 @@ import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
+# Structured job event logging — optional; fails silently if rebalance isn't
+# importable (e.g. when run under the system python3 fallback, not the venv).
+try:
+    from rebalance.ingest.auth_log import log_job_completed, log_job_failed, log_job_started as _ljs
+    _JOB_LOG = True
+except ImportError:
+    _JOB_LOG = False
+
+def _log_job(event: str, elapsed: float | None = None, exit_code: int | None = None) -> None:
+    if not _JOB_LOG:
+        return
+    if event == "started":
+        _ljs("obsidian-rollover")
+    elif event == "completed":
+        log_job_completed("obsidian-rollover", elapsed)
+    elif event == "failed":
+        log_job_failed("obsidian-rollover", exit_code or 1, elapsed)
+
 # --- Configuration -----------------------------------------------------------
 VAULT = Path("/Users/noelsaw/Documents/Noel Saw")
 TODAY_FILE = VAULT / "0. Today's Notes.md"
@@ -212,6 +230,7 @@ def show_status() -> int:
 
 
 def main(argv: list[str]) -> int:
+    import time
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--setup", action="store_true",
                         help="create the two files if missing, reset the breaker")
@@ -239,7 +258,15 @@ def main(argv: list[str]) -> int:
         log("setup complete (circuit breaker reset).")
         return 0
 
-    return rollover(dry_run=args.dry_run)
+    _log_job("started")
+    _t0 = time.monotonic()
+    code = rollover(dry_run=args.dry_run)
+    elapsed = time.monotonic() - _t0
+    if code == 0:
+        _log_job("completed", elapsed=elapsed)
+    else:
+        _log_job("failed", elapsed=elapsed, exit_code=code)
+    return code
 
 
 if __name__ == "__main__":

@@ -38,27 +38,33 @@ app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
 # resolved to a design token by web_components.badge_html — no inline hex.
 _EVENT_BADGE = {
     # calendar
-    "flow_started":         ("info",   "▶ flow started"),
-    "flow_succeeded":       ("ok",     "✓ flow succeeded"),
-    "flow_failed":          ("danger", "✗ flow failed"),
-    "token_missing":        ("warn",   "⚠ token missing"),
-    "token_refreshed":      ("ok",     "↻ token refreshed"),
-    "token_refresh_failed": ("danger", "✗ refresh failed"),
+    "flow_started":         ("info",    "▶ flow started"),
+    "flow_succeeded":       ("ok",      "✓ flow succeeded"),
+    "flow_failed":          ("danger",  "✗ flow failed"),
+    "token_missing":        ("warn",    "⚠ token missing"),
+    "token_refreshed":      ("ok",      "↻ token refreshed"),
+    "token_refresh_failed": ("danger",  "✗ refresh failed"),
     # github
-    "token_validated":      ("ok",     "✓ token validated"),
-    "token_set":            ("info",   "↻ token (re)set"),
-    "token_invalid":        ("danger", "✗ token invalid"),
-    "auth_failed":          ("danger", "✗ auth failed (401)"),
-    "gh_fallback":          ("ok",     "✓ healed via gh CLI"),
+    "token_validated":      ("ok",      "✓ token validated"),
+    "token_set":            ("info",    "↻ token (re)set"),
+    "token_invalid":        ("danger",  "✗ token invalid"),
+    "auth_failed":          ("danger",  "✗ auth failed (401)"),
+    "gh_fallback":          ("ok",      "✓ healed via gh CLI"),
     # gmail
-    "adc_missing":          ("warn",   "⚠ ADC missing"),
-    "scope_insufficient":   ("danger", "✗ scope insufficient"),
+    "adc_missing":          ("warn",    "⚠ ADC missing"),
+    "scope_insufficient":   ("danger",  "✗ scope insufficient"),
+    # launchd jobs
+    "job_started":          ("info",    "▶ started"),
+    "job_completed":        ("ok",      "✓ completed"),
+    "job_failed":           ("danger",  "✗ failed"),
 }
 
 _SOURCE_BADGE = {
     "calendar": ("info",    "calendar"),
     "github":   ("neutral", "github"),
-    "gmail":    ("danger",  "gmail"),
+    "gmail":    ("neutral", "gmail"),
+    "sleuth":   ("neutral", "sleuth"),
+    "launchd":  ("neutral", "launchd"),
 }
 
 # Page-local CSS for the FastAPI surfaces (Focus 5 / Auth Log / Home). The base
@@ -152,10 +158,10 @@ def index() -> HTMLResponse:
       and recent local commits, ranked by uncommitted/unpushed work first</span>
   </li>
   <li><a href="/auth-log" style="color:var(--accent);font-size:15px;">
-      📋 Auth Activity Log</a>
+      📋 System Log</a>
       <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
-      — per-device auth events across all collectors (calendar, github, gmail):
-      flow start/success/failure, token refresh, validation, deauthorization</span>
+      — unified event stream: auth events (calendar, github, gmail) and background
+      job starts, completions, and failures — filterable by type</span>
   </li>
 </ul>"""
     return _page("Home", body, active="today")
@@ -448,47 +454,74 @@ def focus5_unhide(req: _Focus5HideRequest) -> JSONResponse:
     return JSONResponse(focus5_set_hidden(req.repo, hidden=False))
 
 
-_AUTH_LOG_SEARCH = (
-    "<div class='authlog-search' style='margin:.75rem 0;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap'>"
-    "<input id='authFilter' type='search' autocomplete='off' oninput='filterAuthLog()' "
-    "placeholder='Filter… e.g. \"github\", or \"errors\" / \"warnings\" to show only issues' "
-    "style='flex:1;min-width:16rem;padding:.45rem .6rem;font:inherit;border:1px solid #d0d7de;border-radius:6px'>"
-    "<span class='authlog-count' id='authFilterCount' style='color:#57606a;font-size:.85rem;white-space:nowrap'></span>"
-    "</div>"
+_SYSLOG_TOGGLE_CSS = (
+    "<style>"
+    ".syslog-bar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.75rem 0}"
+    ".syslog-toggles{display:flex;gap:.3rem;flex-wrap:wrap}"
+    ".syslog-toggle{padding:.3rem .75rem;border:1px solid #d0d7de;border-radius:2rem;"
+    "background:#f6f8fa;cursor:pointer;font:inherit;font-size:.85rem;color:#24292f}"
+    ".syslog-toggle.active{background:#0969da;border-color:#0969da;color:#fff;font-weight:600}"
+    ".syslog-input{flex:1;min-width:14rem;padding:.4rem .6rem;font:inherit;"
+    "border:1px solid #d0d7de;border-radius:6px}"
+    ".syslog-count{color:#57606a;font-size:.85rem;white-space:nowrap}"
+    "</style>"
 )
 
-# Typing any of these keywords shows only error + warning rows (severity-based,
-# not a substring match) so a quick "errors" reveals everything that needs eyes.
+_AUTH_LOG_SEARCH = (
+    _SYSLOG_TOGGLE_CSS
+    + "<div class='syslog-bar'>"
+    + "<div class='syslog-toggles'>"
+    + "<button class='syslog-toggle active' data-filter='all'    onclick='syslogToggle(this)'>All</button>"
+    + "<button class='syslog-toggle'         data-filter='auth'  onclick='syslogToggle(this)'>Auth</button>"
+    + "<button class='syslog-toggle'         data-filter='jobs'  onclick='syslogToggle(this)'>Jobs</button>"
+    + "<button class='syslog-toggle'         data-filter='errors' onclick='syslogToggle(this)'>Errors &amp; Warnings</button>"
+    + "</div>"
+    + "<input id='syslogSearch' class='syslog-input' type='search' autocomplete='off' "
+    +   "oninput='syslogFilter()' placeholder='Search…'>"
+    + "<span class='syslog-count' id='syslogCount'></span>"
+    + "</div>"
+)
+
 _AUTH_LOG_FILTER_JS = """
 <script>
 (function () {
-  var ISSUE_WORDS = new Set([
-    "error","errors","fail","fails","failure","failures","failed",
-    "warn","warns","warning","warnings","issue","issues"
-  ]);
-  window.filterAuthLog = function () {
-    var input = document.getElementById("authFilter");
-    var q = (input.value || "").trim().toLowerCase();
+  var AUTH_SOURCES = new Set(["github","calendar","gmail","sleuth"]);
+  var _activeFilter = "all";
+
+  function applyFilter() {
+    var q = (document.getElementById("syslogSearch").value || "").trim().toLowerCase();
     var rows = document.querySelectorAll("#authLogTable tbody tr");
-    var issueMode = ISSUE_WORDS.has(q);
     var shown = 0;
     rows.forEach(function (tr) {
-      var match;
-      if (!q) {
-        match = true;
-      } else if (issueMode) {
-        var sev = tr.getAttribute("data-severity");
-        match = (sev === "danger" || sev === "warn");
-      } else {
-        match = tr.textContent.toLowerCase().indexOf(q) !== -1;
+      var sev = tr.getAttribute("data-severity") || "";
+      var src = tr.getAttribute("data-source") || "";
+      var filterMatch;
+      switch (_activeFilter) {
+        case "auth":   filterMatch = AUTH_SOURCES.has(src); break;
+        case "jobs":   filterMatch = (src === "launchd"); break;
+        case "errors": filterMatch = (sev === "danger" || sev === "warn"); break;
+        default:       filterMatch = true;
       }
-      tr.style.display = match ? "" : "none";
-      if (match) shown++;
+      var textMatch = !q || tr.textContent.toLowerCase().indexOf(q) !== -1;
+      var visible = filterMatch && textMatch;
+      tr.style.display = visible ? "" : "none";
+      if (visible) shown++;
     });
-    var count = document.getElementById("authFilterCount");
-    if (count) count.textContent = shown + " / " + rows.length + " shown";
+    var el = document.getElementById("syslogCount");
+    if (el) el.textContent = shown + " / " + rows.length + " shown";
+  }
+
+  window.syslogToggle = function (btn) {
+    document.querySelectorAll(".syslog-toggle").forEach(function (b) {
+      b.classList.remove("active");
+    });
+    btn.classList.add("active");
+    _activeFilter = btn.getAttribute("data-filter");
+    applyFilter();
   };
-  document.addEventListener("DOMContentLoaded", window.filterAuthLog);
+
+  window.syslogFilter = applyFilter;
+  document.addEventListener("DOMContentLoaded", applyFilter);
 })();
 </script>
 """
@@ -497,13 +530,13 @@ _AUTH_LOG_FILTER_JS = """
 @app.get("/auth-log", response_class=HTMLResponse)
 def auth_log_page() -> HTMLResponse:
     import json
-    entries = read_log(limit=200)
+    entries = read_log(limit=500)
 
     raw_link = '<a class="raw-link" href="/auth-log/raw">⬇ raw JSONL</a>'
 
     if not entries:
-        body = f"<h2>Auth Activity Log {raw_link}</h2><div class='empty'>No entries yet. Run an OAuth flow, validate the GitHub token, or run a collector sync to populate this log.</div>"
-        return _page("Auth Log", body, active="authlog")
+        body = f"<h2>System Log {raw_link}</h2><div class='empty'>No entries yet. Run an OAuth flow, validate the GitHub token, or run a collector sync to populate this log.</div>"
+        return _page("System Log", body, active="authlog")
 
     rows = []
     for e in entries:
@@ -516,7 +549,7 @@ def auth_log_page() -> HTMLResponse:
         detail = e.get("detail", {})
         detail_str = "<br>".join(f"<b>{k}</b>: {v}" for k, v in detail.items()) if detail else "—"
         rows.append(
-            f"<tr data-severity='{variant}'>"
+            f"<tr data-severity='{variant}' data-source='{source}'>"
             f"<td>{e.get('ts','')[:19].replace('T',' ')}</td>"
             f"<td>{e.get('device','')}</td>"
             f"<td>{source_badge}</td>"
@@ -530,8 +563,8 @@ def auth_log_page() -> HTMLResponse:
         f"<th>Timestamp (UTC)</th><th>Device</th><th>Source</th><th>Event</th><th>Detail</th>"
         f"</tr></thead><tbody>{''.join(rows)}</tbody></table>"
     )
-    body = f"<h2>Auth Activity Log {raw_link}</h2>{_AUTH_LOG_SEARCH}{table}{_AUTH_LOG_FILTER_JS}"
-    return _page("Auth Log", body, active="authlog")
+    body = f"<h2>System Log {raw_link}</h2>{_AUTH_LOG_SEARCH}{table}{_AUTH_LOG_FILTER_JS}"
+    return _page("System Log", body, active="authlog")
 
 
 @app.get("/auth-log/raw", response_class=PlainTextResponse)

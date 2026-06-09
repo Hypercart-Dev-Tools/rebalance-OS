@@ -17,4 +17,7 @@ export PYTHONPATH="$REBALANCE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
 PORT="${PULSE_PORT:-8767}"
 
 cd "$REBALANCE_DIR"
+
+"$PYTHON" -c "from rebalance.ingest.auth_log import log_job_started; log_job_started('pulse-server')" 2>/dev/null || true
+
 exec "$PYTHON" scripts/pulse_server.py --port "$PORT" "$@"
