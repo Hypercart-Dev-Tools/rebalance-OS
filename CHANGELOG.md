@@ -4,6 +4,16 @@
 
 ### Added
 
+- **CI check status on Open PRs panel.** `check_status` (already collected
+  per-PR via the GitHub check-runs API) is now surfaced in the dashboard.
+  Each PR row shows an inline badge (`✗ CI` / `~ CI` / `⟳ CI`) for
+  failing, mixed, and pending states. A red **"N failing CI"** filter button
+  appears alongside the existing stale toggle — both are independent and
+  composable (clicking one doesn't clear the other). Failing/mixed PRs are
+  sorted to the top of the fetch so they always appear within the limit
+  regardless of age. No new API calls, no schema changes, no backfill.
+  Header label updated "N newest" → "N open" to reflect the new sort order.
+
 - **Auth-log page search filter.** The `/auth-log` page now has a live filter
   input. Typing a substring (e.g. `github`, a device name, a detail value)
   narrows the table client-side; typing an issue keyword (`error`/`errors`/
