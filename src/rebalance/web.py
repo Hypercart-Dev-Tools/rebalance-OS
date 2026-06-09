@@ -687,3 +687,291 @@ def auth_log_raw() -> PlainTextResponse:
     path = _log_path()
     content = path.read_text(encoding="utf-8") if path.exists() else ""
     return PlainTextResponse(content, media_type="text/plain; charset=utf-8")
+
+
+# ---------------------------------------------------------------------------
+# /sleuth-graph  — Cytoscape.js force-directed reminder relationship graph
+# ---------------------------------------------------------------------------
+
+_KIND_COLOR = {
+    "client":  {"bg": "#2f7437", "border": "#1e4d25"},  # green
+    "github":  {"bg": "#1d6fa8", "border": "#134d75"},  # blue
+    "channel": {"bg": "#6f3fa8", "border": "#4d2a75"},  # purple
+    "other":   {"bg": "#8a857c", "border": "#5b5750"},  # muted
+}
+
+
+def _build_graph_elements(
+    groups: list,
+    all_reminders: list[dict[str, Any]],
+    clients: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Return Cytoscape elements list (nodes + edges) for the reminder graph.
+
+    Structure:
+    - One compound parent node per group (hub)
+    - One child node per reminder, parented to its group
+    - Edges between reminders that share a GitHub URL (cross-group connections)
+    """
+    from rebalance.ingest.sleuth_grouping import find_connections
+
+    elements: list[dict[str, Any]] = []
+    reminder_to_group: dict[str, str] = {}
+
+    # Group (parent) nodes
+    for i, group in enumerate(groups):
+        gid = f"g{i}"
+        colors = _KIND_COLOR.get(group.kind, _KIND_COLOR["other"])
+        elements.append({
+            "data": {
+                "id": gid,
+                "label": group.label,
+                "kind": group.kind,
+                "count": len(group.reminders),
+                "bg": colors["bg"],
+                "border": colors["border"],
+            },
+        })
+        for r in group.reminders:
+            reminder_to_group[r["reminder_id"]] = gid
+
+    # Reminder (child) nodes
+    for i, group in enumerate(groups):
+        gid = f"g{i}"
+        for r in group.reminders:
+            rid = f"r_{r['reminder_id']}"
+            label = r["task_text"][:55] + "…" if len(r["task_text"]) > 55 else r["task_text"]
+            elements.append({
+                "data": {
+                    "id": rid,
+                    "parent": gid,
+                    "label": label,
+                    "full_text": r["task_text"],
+                    "reminder_id": r["reminder_id"],
+                    "channel": r.get("original_channel_name") or "",
+                    "state": r.get("state") or "",
+                },
+            })
+
+    # Cross-group edges: only GitHub URL connections (to avoid edge clutter)
+    seen_pairs: set[frozenset[str]] = set()
+    for r in all_reminders:
+        if not r.get("github_urls"):
+            continue
+        connections = find_connections(r, all_reminders, clients=clients)
+        for c in connections:
+            # Only emit edges where the connection reason is a shared GitHub URL
+            if not (set(r.get("github_urls") or []) & set(c.get("github_urls") or [])):
+                continue
+            pair = frozenset({r["reminder_id"], c["reminder_id"]})
+            if pair in seen_pairs:
+                continue
+            seen_pairs.add(pair)
+            elements.append({
+                "data": {
+                    "id": f"e_{'_'.join(sorted(pair))}",
+                    "source": f"r_{r['reminder_id']}",
+                    "target": f"r_{c['reminder_id']}",
+                    "kind": "github",
+                },
+            })
+
+    return elements
+
+
+@app.get("/sleuth-graph", response_class=HTMLResponse)
+def sleuth_graph_page() -> HTMLResponse:
+    import json as _json
+    from rebalance.ingest.sleuth_grouping import (
+        grouped_reminders_from_db,
+        load_active_reminders,
+        load_client_mapping,
+    )
+
+    try:
+        db = resolve_db()
+        clients = load_client_mapping()
+        groups = grouped_reminders_from_db(db, clients=clients)
+        import sqlite3 as _sqlite3
+        conn = _sqlite3.connect(db)
+        try:
+            all_reminders = load_active_reminders(conn)
+        finally:
+            conn.close()
+        elements = _build_graph_elements(groups, all_reminders, clients)
+        total = len(all_reminders)
+        error_msg = ""
+    except Exception as exc:
+        elements = []
+        total = 0
+        groups = []
+        error_msg = html.escape(str(exc))
+
+    elements_json = _json.dumps(elements, ensure_ascii=False)
+    group_count = len([g for g in groups if g.kind != "other"])
+
+    _legend_entries = [("client", "Client"), ("github", "GitHub issue/PR"),
+                        ("channel", "Channel"), ("other", "Other")]
+    legend_items = "".join(
+        "<span style='display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;'>"
+        f"<span style='width:10px;height:10px;border-radius:50%;background:{_KIND_COLOR[k]['bg']};display:inline-block;'></span>"
+        f"{lbl}</span>"
+        for k, lbl in _legend_entries
+    )
+
+    error_html = (
+        f"<div style='color:var(--danger);padding:16px;font-size:13px;'>"
+        f"Error loading graph: {error_msg}</div>"
+        if error_msg else ""
+    )
+
+    body = f"""
+{error_html}
+<div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
+  <span style="font-size:13px;color:var(--fg-muted);">
+    {total} active reminders · {len(groups)} groups
+  </span>
+  <span style="margin-left:auto;">{legend_items}</span>
+</div>
+<div id="cy" style="width:100%;height:calc(100vh - 160px);min-height:500px;
+     background:var(--panel);border-radius:8px;
+     box-shadow:0 1px 3px rgba(0,0,0,.12);"></div>
+<div id="cy-tooltip" style="display:none;position:fixed;background:var(--panel);
+     border:1px solid var(--border);border-radius:6px;padding:8px 12px;
+     font-size:12px;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,.15);
+     pointer-events:none;z-index:100;line-height:1.5;"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"
+        integrity="sha512-Y3tcOyWdkuJxrgbNWVWaKH19d8S5FH4H3wWaFO02ueH83YR+Qn4N8Fw+MJm0PgWJHXUbTdDIV1kRlvRe7yPqg=="
+        crossorigin="anonymous" referrerpolicy="no-referrer"></script>
+<script>
+(function() {{
+  var elements = {elements_json};
+
+  var kindColor = {{
+    client:  {{ bg: '#2f7437', border: '#1e4d25' }},
+    github:  {{ bg: '#1d6fa8', border: '#134d75' }},
+    channel: {{ bg: '#6f3fa8', border: '#4d2a75' }},
+    other:   {{ bg: '#8a857c', border: '#5b5750' }},
+  }};
+
+  var cy = cytoscape({{
+    container: document.getElementById('cy'),
+    elements: elements,
+    style: [
+      // compound group parent
+      {{
+        selector: 'node[kind]',
+        style: {{
+          'background-color': 'data(bg)',
+          'border-color': 'data(border)',
+          'border-width': 2,
+          'label': 'data(label)',
+          'font-size': 13,
+          'font-weight': 600,
+          'color': '#fff',
+          'text-valign': 'top',
+          'text-halign': 'center',
+          'text-margin-y': -6,
+          'padding': 18,
+          'shape': 'round-rectangle',
+          'text-background-color': 'data(bg)',
+          'text-background-opacity': 0.85,
+          'text-background-padding': '3px',
+          'text-background-shape': 'round-rectangle',
+        }},
+      }},
+      // reminder child nodes
+      {{
+        selector: 'node[reminder_id]',
+        style: {{
+          'background-color': '#ffffff',
+          'border-color': '#c8c0b4',
+          'border-width': 1.5,
+          'label': 'data(label)',
+          'font-size': 10,
+          'color': '#1d2024',
+          'text-valign': 'bottom',
+          'text-halign': 'center',
+          'text-margin-y': 4,
+          'width': 18,
+          'height': 18,
+          'shape': 'ellipse',
+          'text-wrap': 'wrap',
+          'text-max-width': 120,
+        }},
+      }},
+      // github connection edges
+      {{
+        selector: 'edge[kind="github"]',
+        style: {{
+          'line-color': '#1d6fa8',
+          'width': 2,
+          'line-style': 'dashed',
+          'target-arrow-shape': 'none',
+          'curve-style': 'bezier',
+          'opacity': 0.7,
+        }},
+      }},
+      // hover highlight
+      {{
+        selector: 'node:selected, node.highlighted',
+        style: {{
+          'border-width': 3,
+          'border-color': '#1f6feb',
+          'z-index': 10,
+        }},
+      }},
+    ],
+    layout: {{
+      name: 'cose',
+      animate: true,
+      animationDuration: 800,
+      nodeRepulsion: function() {{ return 8000; }},
+      idealEdgeLength: function() {{ return 80; }},
+      edgeElasticity: function() {{ return 100; }},
+      nestingFactor: 1.2,
+      gravity: 0.25,
+      numIter: 1000,
+      initialTemp: 200,
+      coolingFactor: 0.95,
+      minTemp: 1.0,
+      padding: 32,
+      randomize: false,
+    }},
+  }});
+
+  // Tooltip on reminder node hover
+  var tooltip = document.getElementById('cy-tooltip');
+  cy.on('mouseover', 'node[reminder_id]', function(e) {{
+    var d = e.target.data();
+    tooltip.innerHTML =
+      '<b style="display:block;margin-bottom:4px;">' + escHtml(d.full_text || d.label) + '</b>' +
+      (d.channel ? '<span style="color:#5b5750;">#' + escHtml(d.channel) + '</span>' : '') +
+      (d.state ? ' &nbsp;·&nbsp; <code>' + escHtml(d.state) + '</code>' : '');
+    tooltip.style.display = 'block';
+  }});
+  cy.on('mouseout', 'node[reminder_id]', function() {{
+    tooltip.style.display = 'none';
+  }});
+  cy.on('mousemove', function(e) {{
+    if (tooltip.style.display === 'none') return;
+    tooltip.style.left = (e.originalEvent.clientX + 14) + 'px';
+    tooltip.style.top  = (e.originalEvent.clientY - 10) + 'px';
+  }});
+  cy.on('tap', 'node[reminder_id]', function(e) {{
+    cy.elements().removeClass('highlighted');
+    e.target.addClass('highlighted');
+    e.target.neighborhood().addClass('highlighted');
+  }});
+  cy.on('tap', function(e) {{
+    if (e.target === cy) cy.elements().removeClass('highlighted');
+  }});
+
+  function escHtml(s) {{
+    return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }}
+}})();
+</script>"""
+
+    return _page("Reminder Graph", body, active="sleuthgraph", wide=True)

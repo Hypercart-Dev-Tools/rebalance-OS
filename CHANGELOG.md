@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Sleuth reminder graph page (`/sleuth-graph`).** Cytoscape.js force-directed
+  graph (CDN, `cose` layout) visualizing active reminders as compound nodes
+  clustered inside their group (client / GitHub / channel / other). Cross-group
+  GitHub URL connections render as dashed blue edges. Hover any reminder node
+  for a tooltip with full task text, channel, and state; click to highlight its
+  neighborhood. Color-coded legend by group kind. Linked from the sidebar nav
+  as "Reminder Graph". No bundling — single CDN `<script>` tag.
+
 - **Sleuth reminder grouping + home page search.** Active Sleuth reminders are
   now clustered by inferred relationship and surfaced directly on the web app
   home page (`/`). Grouping mirrors the Sleuth `show-me` rules (ported from

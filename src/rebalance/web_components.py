@@ -181,6 +181,7 @@ _NAV_LINKS = (
     ("today", "/", "Today"),
     ("focus5", "/focus-5", "Focus 5"),
     ("authlog", "/auth-log", "System Log"),
+    ("sleuthgraph", "/sleuth-graph", "Reminder Graph"),
 )
 
 
