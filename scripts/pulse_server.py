@@ -61,6 +61,7 @@ from rebalance.web import (  # noqa: E402
     auth_log_raw as _auth_log_raw,
     focus5_page as _focus5_page,
     focus5_set_hidden as _focus5_set_hidden,
+    sleuth_graph_page as _sleuth_graph_page,
 )
 
 
@@ -93,6 +94,11 @@ def focus5_hide(req: Focus5HideRequest):
 @app.post("/api/focus5/unhide")
 def focus5_unhide(req: Focus5HideRequest):
     return _focus5_set_hidden(req.repo, hidden=False)
+
+
+@app.get("/sleuth-graph")
+def sleuth_graph():
+    return _sleuth_graph_page()
 
 
 class ChatRequest(BaseModel):
