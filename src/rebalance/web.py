@@ -448,6 +448,52 @@ def focus5_unhide(req: _Focus5HideRequest) -> JSONResponse:
     return JSONResponse(focus5_set_hidden(req.repo, hidden=False))
 
 
+_AUTH_LOG_SEARCH = (
+    "<div class='authlog-search' style='margin:.75rem 0;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap'>"
+    "<input id='authFilter' type='search' autocomplete='off' oninput='filterAuthLog()' "
+    "placeholder='Filter… e.g. \"github\", or \"errors\" / \"warnings\" to show only issues' "
+    "style='flex:1;min-width:16rem;padding:.45rem .6rem;font:inherit;border:1px solid #d0d7de;border-radius:6px'>"
+    "<span class='authlog-count' id='authFilterCount' style='color:#57606a;font-size:.85rem;white-space:nowrap'></span>"
+    "</div>"
+)
+
+# Typing any of these keywords shows only error + warning rows (severity-based,
+# not a substring match) so a quick "errors" reveals everything that needs eyes.
+_AUTH_LOG_FILTER_JS = """
+<script>
+(function () {
+  var ISSUE_WORDS = new Set([
+    "error","errors","fail","fails","failure","failures","failed",
+    "warn","warns","warning","warnings","issue","issues"
+  ]);
+  window.filterAuthLog = function () {
+    var input = document.getElementById("authFilter");
+    var q = (input.value || "").trim().toLowerCase();
+    var rows = document.querySelectorAll("#authLogTable tbody tr");
+    var issueMode = ISSUE_WORDS.has(q);
+    var shown = 0;
+    rows.forEach(function (tr) {
+      var match;
+      if (!q) {
+        match = true;
+      } else if (issueMode) {
+        var sev = tr.getAttribute("data-severity");
+        match = (sev === "danger" || sev === "warn");
+      } else {
+        match = tr.textContent.toLowerCase().indexOf(q) !== -1;
+      }
+      tr.style.display = match ? "" : "none";
+      if (match) shown++;
+    });
+    var count = document.getElementById("authFilterCount");
+    if (count) count.textContent = shown + " / " + rows.length + " shown";
+  };
+  document.addEventListener("DOMContentLoaded", window.filterAuthLog);
+})();
+</script>
+"""
+
+
 @app.get("/auth-log", response_class=HTMLResponse)
 def auth_log_page() -> HTMLResponse:
     import json
@@ -470,7 +516,7 @@ def auth_log_page() -> HTMLResponse:
         detail = e.get("detail", {})
         detail_str = "<br>".join(f"<b>{k}</b>: {v}" for k, v in detail.items()) if detail else "—"
         rows.append(
-            f"<tr>"
+            f"<tr data-severity='{variant}'>"
             f"<td>{e.get('ts','')[:19].replace('T',' ')}</td>"
             f"<td>{e.get('device','')}</td>"
             f"<td>{source_badge}</td>"
@@ -480,11 +526,11 @@ def auth_log_page() -> HTMLResponse:
         )
 
     table = (
-        f"<table><thead><tr>"
+        f"<table id='authLogTable'><thead><tr>"
         f"<th>Timestamp (UTC)</th><th>Device</th><th>Source</th><th>Event</th><th>Detail</th>"
         f"</tr></thead><tbody>{''.join(rows)}</tbody></table>"
     )
-    body = f"<h2>Auth Activity Log {raw_link}</h2>{table}"
+    body = f"<h2>Auth Activity Log {raw_link}</h2>{_AUTH_LOG_SEARCH}{table}{_AUTH_LOG_FILTER_JS}"
     return _page("Auth Log", body, active="authlog")
 
 

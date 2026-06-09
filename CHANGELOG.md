@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Auth-log page search filter.** The `/auth-log` page now has a live filter
+  input. Typing a substring (e.g. `github`, a device name, a detail value)
+  narrows the table client-side; typing an issue keyword (`error`/`errors`/
+  `fail`/`failure`/`failed`/`warning`/`warnings`/`issue`/`issues`) switches to a
+  severity filter that shows only error (`danger`) and warning (`warn`) rows. A
+  live `N / M shown` counter accompanies the box. Pure client-side JS over the
+  already-rendered rows (each tagged with `data-severity`); no backend change.
+
 - **Obsidian daily-notes rollover utility.** A nightly launchd job
   (`utilities/obsidian_daily_rollover.py` + the `utilities/obsidian_rollover.sh`
   wrapper) that, at midnight, prepends `0. Today's Notes.md` to the top of
