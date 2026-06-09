@@ -518,6 +518,7 @@ def sync_sleuth_reminders(
     For a file source, the local export clone is refreshed (best-effort, non-
     destructive) before reading so every entry point — CLI, MCP, daily refresh —
     gets fresh data. Pass ``refresh_source=False`` for an explicit offline read."""
+    from rebalance.ingest import auth_log
     from rebalance.ingest.db import db_connection
 
     file_path = _local_source_path(base_url)
@@ -678,7 +679,7 @@ def sync_sleuth_reminders(
             )
         conn.commit()
 
-    return SleuthSyncResult(
+    result = SleuthSyncResult(
         workspace_name=str(data.get("workspaceName") or workspace_name),
         fetched_at=str(data.get("exportGeneratedAt") or data.get("fetchedAt") or ""),
         total_reminder_count=int(data.get("totalReminderCount") or 0),
@@ -693,3 +694,15 @@ def sync_sleuth_reminders(
         retired_count=retired,
         source_refresh=source_refresh,
     )
+    auth_log.log_sleuth_sync_succeeded(
+        workspace=result.workspace_name,
+        source_mode="file-source" if is_file_source else "web-api",
+        returned=result.returned_reminder_count,
+        total=result.total_reminder_count,
+        inserted=result.inserted_count,
+        updated=result.updated_count,
+        unchanged=result.unchanged_count,
+        retired=result.retired_count,
+        source_refresh=result.source_refresh,
+    )
+    return result

@@ -88,6 +88,26 @@ class AuthLogTests(unittest.TestCase):
         self.assertEqual(rows[0]["source"], "sleuth")
         self.assertEqual(rows[0]["event"], "token_invalid")
 
+    def test_sleuth_sync_success_helper_logs_mode_and_counts(self) -> None:
+        auth_log.log_sleuth_sync_succeeded(
+            workspace="neochrome",
+            source_mode="file-source",
+            returned=28,
+            total=28,
+            inserted=6,
+            updated=19,
+            unchanged=3,
+            source_refresh="ok",
+        )
+        rows = self._read_raw()
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["source"], "sleuth")
+        self.assertEqual(rows[0]["event"], "sync_succeeded")
+        self.assertEqual(rows[0]["detail"]["workspace"], "neochrome")
+        self.assertEqual(rows[0]["detail"]["source_mode"], "file-source")
+        self.assertEqual(rows[0]["detail"]["updated"], 19)
+        self.assertEqual(rows[0]["detail"]["source_refresh"], "ok")
+
     # -- readers -----------------------------------------------------------
 
     def test_read_log_newest_first(self) -> None:

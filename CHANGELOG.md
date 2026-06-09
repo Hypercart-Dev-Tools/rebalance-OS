@@ -185,6 +185,16 @@
   (launchd's stripped environment may not reach the keychain), which
   `doctor._check_token` relies on. Updated the stale unit test to match.
 
+## [0.31.10] - 2026-06-08
+
+### Added
+
+- **Sleuth sync success events now appear in the unified auth log.** Successful reminder syncs emit a dedicated Sleuth success event with the source mode and sync counts, so the system log can distinguish "source saved" from "source verified by a real sync."
+
+### Changed
+
+- **The auth-log UI now shows a green success badge for Sleuth file-source syncs.** When a published-file Sleuth sync completes, the System Log renders a clear `file source synced` success label instead of only leaving the earlier blue `token (re)set` marker.
+
 ## [0.31.9] - 2026-06-08
 
 ### Added

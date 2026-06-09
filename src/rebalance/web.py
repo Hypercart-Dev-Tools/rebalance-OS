@@ -50,6 +50,8 @@ _EVENT_BADGE = {
     "token_invalid":        ("danger",  "✗ token invalid"),
     "auth_failed":          ("danger",  "✗ auth failed (401)"),
     "gh_fallback":          ("ok",      "✓ healed via gh CLI"),
+    # sleuth
+    "sync_succeeded":       ("ok",      "✓ sync succeeded"),
     # gmail
     "adc_missing":          ("warn",    "⚠ ADC missing"),
     "scope_insufficient":   ("danger",  "✗ scope insufficient"),
@@ -133,6 +135,27 @@ tr:hover td { background: rgba(0,0,0,.03); }
            line-height: 1.5; }
 .f5-warn b { color: var(--warn); }
 """
+
+
+def _auth_event_badge(entry: dict[str, Any]) -> tuple[str, str]:
+    """Resolve the auth-log badge, allowing source-specific labels per event."""
+    event = str(entry.get("event") or "unknown")
+    detail = entry.get("detail")
+    detail = detail if isinstance(detail, dict) else {}
+    if event == "sync_succeeded" and entry.get("source") == "sleuth":
+        source_mode = str(detail.get("source_mode") or "").strip().lower()
+        if source_mode == "file-source":
+            return ("ok", "✓ file source synced")
+    return _EVENT_BADGE.get(event, ("neutral", event))
+
+
+def _auth_detail_html(detail: dict[str, Any]) -> str:
+    if not detail:
+        return "—"
+    lines = []
+    for key, value in detail.items():
+        lines.append(f"<b>{html.escape(str(key))}</b>: {html.escape(str(value))}")
+    return "<br>".join(lines)
 
 
 def _page(title: str, body: str, *, active: str, wide: bool = False) -> HTMLResponse:
@@ -540,18 +563,18 @@ def auth_log_page() -> HTMLResponse:
 
     rows = []
     for e in entries:
-        event = e.get("event", "unknown")
-        variant, label = _EVENT_BADGE.get(event, ("neutral", event))
+        variant, label = _auth_event_badge(e)
         badge = badge_html(variant, label)
         source = e.get("source", "")
         s_variant, s_label = _SOURCE_BADGE.get(source, ("neutral", source or "—"))
         source_badge = badge_html(s_variant, s_label)
         detail = e.get("detail", {})
-        detail_str = "<br>".join(f"<b>{k}</b>: {v}" for k, v in detail.items()) if detail else "—"
+        detail = detail if isinstance(detail, dict) else {}
+        detail_str = _auth_detail_html(detail)
         rows.append(
             f"<tr data-severity='{variant}' data-source='{source}'>"
-            f"<td>{e.get('ts','')[:19].replace('T',' ')}</td>"
-            f"<td>{e.get('device','')}</td>"
+            f"<td>{html.escape(str(e.get('ts','')[:19].replace('T',' ')))}</td>"
+            f"<td>{html.escape(str(e.get('device','')))}</td>"
             f"<td>{source_badge}</td>"
             f"<td>{badge}</td>"
             f"<td class='detail'>{detail_str}</td>"

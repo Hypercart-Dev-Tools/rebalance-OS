@@ -31,6 +31,9 @@ github
 gmail
   adc_missing           — no Application Default Credentials found
   scope_insufficient    — ADC present but lacks the Gmail readonly scope
+sleuth
+  token_set             — sync source stored (keyring + config fallback)
+  sync_succeeded        — reminder sync completed successfully; includes source mode
 
 The ``FAILURE_EVENTS`` set marks the events that represent a collector losing
 (or never having) access — what ``rebalance config doctor`` surfaces as the
@@ -207,12 +210,41 @@ def log_calendar_token_set(source: str = "manual") -> None:
 
 
 def log_sleuth_credentials_set(source: str = "manual", workspace: str = "") -> None:
-    """Sleuth Web API credentials were (re)authorized and persisted (keyring + config).
+    """Sleuth sync source settings were stored (keyring + config fallback).
 
-    NOT a failure event — a re-auth marker, so the Sleuth credential's cadence is
+    NOT a failure event — a setup marker, so the Sleuth source's cadence is
     visible in the same unified auth log as github/calendar/gmail.
     """
     _append("sleuth", "token_set", {"source": source, "workspace": workspace})
+
+
+def log_sleuth_sync_succeeded(
+    *,
+    workspace: str,
+    source_mode: str,
+    returned: int,
+    total: int,
+    inserted: int,
+    updated: int,
+    unchanged: int,
+    retired: int = 0,
+    source_refresh: str | None = None,
+) -> None:
+    """A Sleuth sync completed successfully and wrote a reconciled snapshot."""
+    detail: dict[str, Any] = {
+        "workspace": workspace,
+        "source_mode": source_mode,
+        "returned": returned,
+        "total": total,
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+    }
+    if retired:
+        detail["retired"] = retired
+    if source_refresh:
+        detail["source_refresh"] = source_refresh
+    _append("sleuth", "sync_succeeded", detail)
 
 
 def log_gmail_token_set(source: str = "manual") -> None:
