@@ -23,7 +23,7 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 
 | ✅ Most recently completed phase | ⏭️ What's next |
 |---|---|
-| **Phase 0 · 0a + initial harness (0b/0c)** — Synced Matt's calendar read-only (**122 events**, existing token, reversible), and built the A/B bundle generator [temp/ab_team_signal.py](temp/ab_team_signal.py) with tz-correct day bucketing; generated bundles for 06-08 / 09 / 10. Preliminary net-new signal rate visibly **>20%**. | **Finish Arm A, then run the gate.** Exclude Git Pulse Sync as noise, add Obsidian vault todos (+ Sleuth / email) to the bundle, reconcile harness GitHub activity against the live dashboard, and blind/randomize the output. Then run the 5-day blinded judging (Noel + LLM) for the decision #1 kill/continue gate. |
+| **Phase 0 · 0a–0c complete + dashboard-matched** — Matt's calendar synced (**122 events**, reversible). Harness [temp/ab_team_signal.py](temp/ab_team_signal.py) now builds Arm A from the dashboard's own per-day assembler: authored GitHub (Git Pulse Sync **excluded**, root-cause fixed), Obsidian vault, Sleuth, email. Gate thresholds set ([0e](#0e-decision-rule-kill--continue)). | **Blind the output, then run the gate.** Relabel ARM A/B → "Option 1/2" randomized (last 0b item); generate one bundle *per completed day* across ~5 days; then run the blinded two-judge scoring (Noel + LLM) against the [0e](#0e-decision-rule-kill--continue) gate. |
 
 ---
 
@@ -64,7 +64,7 @@ that the operator's own signals would have missed.
 
 | # | Decision | Choice |
 |---|---|---|
-| 1 | **Phase 0 kill/continue bar** | Continue to Phase 1 only if **all three**: ≥1 confirmed dropped-ball catch over the week **AND** blind preference favors B on **≥3 of 5 days** **AND** net-new signal rate **≥20%**. |
+| 1 | **Phase 0 kill/continue bar** *(thresholds set by Claude per Noel's delegation — see [0e](#0e-decision-rule-kill--continue))* | Continue to Phase 1 only if **all three**: (a) net-new signal rate **≥20%** (median scored day); (b) **≥1 Noel-confirmed dropped-ball catch** AND B-only **precision ≥50%**; (c) blinded preference favors B on **≥3 of 5 days for *both* judges independently** (Noel AND the LLM judge), no-preference days counting against B. |
 | 2 | **Judges** | **Noel + an LLM judge** (local Qwen and/or Claude) vote independently on each blinded pair. |
 | 3 | **Privacy / export** | Teammate rows **may** remain in the pulse/sync export **as long as the pulse target repo is confirmed private**. Confirming privacy is a gating action before Phase 1 sync ships. |
 | 4 | **Phase 1 scope** | **Matt only** — a single second calendar, not a full N-person list. Generalize to N teammates in Phase 2. |
@@ -108,12 +108,12 @@ Everything here is read-only, local, and uses `sync_calendar(calendar_id=<matt>)
 
 ### 0b. Build the A/B harness — [temp/ab_team_signal.py](temp/ab_team_signal.py)
 A throwaway script (gitignored) that, for each test day, emits two ranked next-action bundles.
-- [x] **Arm A core** — primary calendar + `github_activity` wired into the bundle (tz-correct local-day bucketing).
+- [x] **Arm A core** — primary calendar wired into the bundle (tz-correct local-day bucketing).
 - [x] **Arm B** — adds Matt's blocks (`calendar_id=<matt>`) on top of Arm A, framed as a teammate's in-flight/blocked work ("what should the team work on next?").
-- [ ] **Arm A — complete the signal set:** add Sleuth reminders, **Obsidian vault todos**, and email (spec requires *all* of Noel's signals, not just calendar + GitHub).
-- [ ] **Arm A — denoise:** exclude **Git Pulse Sync** (`rebalance-git-pulse` auto-commits, ~176/day) as known noise to skip.
-- [ ] **Reconcile GitHub activity:** harness reads `github_activity` by `scan_date` but it doesn't match Noel's live dashboard — fix the query so both arms see the real activity.
-- [ ] **Blind + randomize:** output currently prints labeled "ARM A / ARM B" — relabel to "Option 1 / Option 2" in randomized order so judging is unbiased.
+- [x] **Arm A — complete the signal set:** Sleuth reminders, Obsidian vault notes, and email now in Arm A — pulled via `pulse._query_day_activity()` (the dashboard's own assembler) + a per-day `email_messages` query. *(Note: "vault todos" = recently-modified vault notes; there is no checkbox/task table — true todo parsing is a separate future enhancement.)*
+- [x] **Arm A — denoise:** Git Pulse Sync excluded — `rebalance-git-pulse` never reaches `github_commits` (the dashboard source), plus an explicit `NOISE_REPOS` guard.
+- [x] **Reconcile GitHub activity — ROOT CAUSE FOUND & FIXED:** the old harness read `github_activity`, a *scan-snapshot* table that buckets a rolling ~30-day fetch under `scan_date = scanned_at[:10]` (the **scan-run date, in UTC**) and includes bot repos. The dashboard reads granular `github_commits/items/comments` with a tz-aware day window + author/bot filter. Harness now uses the dashboard path → matches.
+- [ ] **Blind + randomize:** output still prints labeled "ARM A / ARM B" — relabel to "Option 1 / Option 2" in randomized order so judging is unbiased. *(Last remaining 0b item.)*
 
 ### 0c. Test window
 - [x] Bundles generated for the 2 example days captured this week (**06-08, 06-09**) + **06-10**.
@@ -123,16 +123,22 @@ A throwaway script (gitignored) that, for each test day, emits two ranked next-a
 Three metrics, recorded per day:
 
 1. **Net-new signal rate** *(additivity vs. redundancy)* — % of Matt's work-blocks that (i) map to a **shared project/repo** (Binoid, bloomz, GoAffPro, …) **and** (ii) have **no corresponding signal** in Noel's own data that day. High % → additive; low % → Matt's calendar just re-states what GitHub/Slack already show.
-2. **Dropped-ball catches** *(the core value)* — count of actionable items Arm B surfaces that Arm A misses **and** that Noel confirms are real (true positives). False positives counted separately.
+2. **Dropped-ball catches** *(the core value)* — count of actionable items Arm B surfaces that Arm A misses **and** that Noel confirms are real (true positives), with **precision** = true positives ÷ all B-only items Noel reviews (false positives counted, so B can't win by flooding).
 3. **Blind preference** — Noel picks the more-useful list per day; an **LLM judge** (local Qwen and/or Claude) gives an independent second vote on the same blinded pair.
 
 ### 0e. Decision rule (kill / continue)
-Proceed to Phase 1 **only if all three** clear (locked, decision #1):
-**≥1 confirmed dropped-ball catch** over the week **AND** blind preference favors **B on ≥3 of 5 days**
-**AND** net-new signal rate **≥20%**. Otherwise **stop** and record why — a teammate calendar that's
-~90% redundant with GitHub + Slack is *not* a high-quality signal and isn't worth the privacy +
-maintenance cost. Either outcome is a successful spike.
+**Thresholds set by Claude per Noel's delegation (2026-06-09).** N≈5 days can't yield statistical
+significance, so the "gold standard" here is a *pre-registered, blinded, two-judge, conjunctive* rule —
+a chance win on any single metric can't pass the gate. Proceed to Phase 1 **only if all three** clear:
 
+1. **Additivity** — net-new signal rate **≥ 20%** (median scored day). Below this, Matt's calendar mostly restates GitHub/Slack.
+2. **Decision value** — **≥ 1 Noel-confirmed dropped-ball catch** over the window, **and** B-only **precision ≥ 50%** (confirmed catches ÷ all B-only items Noel reviews) — so B earns the catch without flooding.
+3. **Preference** — blinded preference favors **B on ≥ 3 of 5 days for *both* judges independently** (Noel *and* the LLM judge each clear 3/5); no-preference days count against B. Two independent majorities is the small-N guard — one judge at 3/5 is a coin-flip under the null.
+
+Otherwise **stop** and record why — a teammate calendar ~90% redundant with GitHub + Slack is *not* a
+high-quality signal and isn't worth the privacy + maintenance cost. Either outcome is a successful spike.
+
+- [ ] **Test-window timing:** generate each day's bundle *after that day completes* — activity tables only fill once work has happened, so a same-day/future bundle is calendar-only (see 06-10). Score completed days; future days exercise only the planning/orchestration value (H2).
 - [ ] **Phase 0 exit artifact:** append the findings table (3 metrics × N days) + go/no-go to the [progress log](#phase-0-progress-log).
 
 ---
@@ -185,9 +191,12 @@ be rigorous about whether the signal is *good*, **and** handle the person's data
 > Verbatim output of [temp/ab_team_signal.py](temp/ab_team_signal.py) for each test day,
 > committed into the doc so the results survive a crash. **Regenerate** any time with
 > `.venv/bin/python temp/ab_team_signal.py <YYYY-MM-DD>` (DB still holds the 122 Matt rows).
-> **Caveat (open 0b items):** Arm A is still *calendar + GitHub only* (no Sleuth / vault / email),
-> GitHub activity still includes Git Pulse Sync noise, and the output is not yet blinded — so
-> these are inputs for judging, **not** a scored gate result.
+> **Status:** GitHub now matches the dashboard — pulled via `pulse._query_day_activity()` over
+> the granular `github_commits/items/comments` tables (author + bot filter, tz-aware day window).
+> **Git Pulse Sync is excluded**, and **vault + Sleuth + email are now in Arm A**. **Still open:**
+> the output isn't blinded yet (labels ARM A/B) — so these remain judging *inputs*, **not** a scored
+> gate result. **Freshness caveat:** activity signals are real only *after* a day completes; a bundle
+> generated for *today/tomorrow* is partial or calendar-only (see 06-10 below).
 
 ### Per-day summary
 
@@ -197,118 +206,75 @@ be rigorous about whether the signal is *good*, **and** handle the person's data
 | Tue 06-09 | 8 blk / 4h30m | 12 blk / 9h00m | Email Matt G/Rebekah/John re: **WPE prod DB op** · **merge-or-close Binoid PR 860** · Goaffpro **PR#4** review · HPOS theme-of-week |
 | Wed 06-10 | 9 blk / 5h40m | 4 blk / 3h25m | **"Review stale Binoid PRs"** (Deployment Day) · NMI extend Customer Vault on test account |
 
-Cross-check: Matt's Goaffpro PR review (06-08/09) intersects Noel's open `BinoidCBD/goaffpro-fork`
-PRs (3 opened 06-09/10); PR 860 and the WPE DB issue have **no** corresponding row in Noel's
-calendar or GitHub activity → additive. Net-new signal rate visibly **>20%** across the three days.
+Cross-check (now against the *dashboard-matched* GitHub view): Matt's Goaffpro PR review (06-08/09)
+intersects Noel's own authored `BinoidCBD/goaffpro-fork` PRs (#2/#4, 06-08) — partially redundant.
+But **Binoid PR 860** (merge-or-close) and the **WPE prod-DB email** have **no** corresponding row in
+Noel's calendar or authored GitHub activity → additive. Preliminary net-new signal rate visibly
+**>20%** on the two completed days (06-08, 06-09); 06-10 is a future planning day (calendar-only).
 
-### Mon 2026-06-08 (tz America/Los_Angeles)
-
-```
-[NOEL] GitHub activity (scan_date = 2026-06-08):
-  rebalance-git-pulse        commits=204 pushes=204     <- Git Pulse Sync (NOISE, to exclude)
-  Hypercart-Dev-Tools/rebalance-OS   commits=13 prs_opened=3 issue_comments=2
-  Claude-AI-Tools/giant-bra  commits=11
-  Hypercart-Dev-Tools/ask-self       commits=4 prs_opened=5
-  NeochromeTeam/sleuth-app   commits=4 prs_opened=1 issues_opened=1
-  ...plan-proof, deckme, three-que, agent-vs, AI-DDTK (small)
-  BinoidCBD/goaffpro-fork            prs_opened=1
-  BinoidCBD/universal-child-theme    issues_opened=3
-
-ARM A (control) — NOEL primary calendar (10 blocks, 5h25m)
-  09:00 Blocked off for morning exercise (65m)
-  10:15 Neochrome Daily Check-in (25m)
-  11:00 MacNerd - add news (60m)
-  11:00 Post Binoid Kanban screenshot for Elan (15m)
-  12:30 Noel/Matt (25m) | 12:30 Weekly - Joyce/Noel (15m)
-  13:45 1:45 - Team Call (15m)
-  15:00 Rebalance - calibrate project definition file (45m)
-  15:30 Rebalance - test remote repos (45m)
-  17:00 End of Day Check-In (15m)
-
-ARM B (treatment) — + MATT Neochrome Work Schedule (15 blocks, 7h15m)
-  10:15 Binoid: look into emails/cron (15m)
-  10:30 Neochrome: morning meeting (15m)
-  10:45 Binoid: Scheduled Actions Backlog Investigation (30m)
-  11:15 Binoid: Production Log Analysis (30m)
-  11:45 Binoid: Database Saturation Analysis (30m)
-  12:15 Binoid: Slow Query Analysis (30m)
-  12:45 Binoid: Incident Report (GitHub Issue #873) (30m)
-  13:15 Binoid: Bug Reports for WordPress.org Plugin Forums (30m)
-  13:45 Binoid: GoAffPro Fork PR Review (30m)
-  14:15 Binoid: Production Database Fix — Composite Index (15m)
-  14:30 lunch (50m)
-  15:20 File bug report to Goaffpro (25m)
-  15:45 Binoid: bloomz STG1 plugin updates (60m)
-  16:45 SMPT Pro feature request (15m)
-  17:00 Binoid: bloomz STG1 plugin updates (30m)
-```
-
-### Tue 2026-06-09 (tz America/Los_Angeles)
+### Mon 2026-06-08 (tz America/Los_Angeles) — full completed day
 
 ```
-[NOEL] GitHub activity (scan_date = 2026-06-09):
-  rebalance-git-pulse        commits=176 pushes=176     <- Git Pulse Sync (NOISE, to exclude)
-  NeochromeTeam/sleuth-app   commits=22 prs_opened=4 issues_opened=1
-  Hypercart-Dev-Tools/rebalance-OS   commits=13 prs_opened=2 issue_comments=1
-  Hypercart-Dev-Tools/ask-self       commits=8 prs_opened=4
-  BinoidCBD/LTVera-Pandas    commits=5 prs_opened=1 issues_opened=2
-  BinoidCBD/goaffpro-fork    commits=1 prs_opened=3 issues_opened=1 issue_comments=1
-  ...giant-bra, plan-proof, three-que, agent-vs, love2socal, deckme, AI-DDTK (small)
-  BinoidCBD/universal-child-theme    issues_opened=3 issue_comments=1
-  NormansNursery/photoapp-webapp     issues_opened=1
+ARM A (control) — NOEL-ONLY · "what should I work on next?"
+  primary calendar (10 blk, 5h25m): morning exercise · Neochrome check-ins ·
+    MacNerd add news · Post Binoid Kanban for Elan · Noel/Matt · Weekly Joyce/Noel ·
+    1:45 Team Call · Rebalance calibrate project-def · Rebalance test remote repos · EOD
+  GitHub authored (login=noelsaw1, git-pulse EXCLUDED, dashboard-matched):
+    ask-self          9 commits  🤖claude  PRs #38/#37/#36/#35/#33
+    sleuth-app       15 commits  🤖claude  PRs #310/#309/#308, issue #307
+    goaffpro-fork     4 commits  🤖claude  PR #4(open)/#2/#1, issue #3 (HPOS incompat)
+    LTVera-Pandas     4 commits  🤖claude  PR #17 (P20 Customer Decisioning), issues #16/#15
+    rebalance-OS      2 commits +1 comment  🤖claude 🤖codex  PRs #58/#57/#49
+    universal-child-theme               issues #874/#872/#871
+  Vault notes (3): 0. Incoming · Ltvera Reference Model · Love2learn.xyz
+  Sleuth (5, →by me / stale): @Matthew Mini-Cart Upsell deploy · Product Upsell→Minicart ·
+    @Jose 3 LTVera WP pages · @Matthew CR CC Tenant→Landlord (workflow + UI sketch)
+  Email in-window: 0
 
-ARM A (control) — NOEL primary calendar (8 blocks, 4h30m)
-  09:00 Blocked off for morning exercise (65m)
-  09:30 Neochrome Daily Check-in (25m)
-  10:00 Pre-meeting (50m)
-  12:30 Weekly - Joyce/Noel (15m)
-  13:00 BW Maintenance Check-in (Matt's Zoom) (25m)
-  13:45 1:45 - Team Call (15m)
-  17:00 End of Day Check-In (15m) | 17:00 Placeholder Transportation Broker Mtg (60m)
-
-ARM B (treatment) — + MATT Neochrome Work Schedule (12 blocks, 9h00m)
-  09:30 Start of day officially - Check Slack & Emails (30m)
-  10:00 Send email to Matt G, Rebekah, John re: WPE DB operation issue (15m)
-  10:15 Binoid - Cron research (75m)
-  11:30 Binoid - continue with HPOS theme of the week (60m)
-  12:30 Review and merge or close Binoid PR 860 (30m)
-  13:00 Binoid: deterministic analysis scripts (45m)
-  13:45 Binoid: Goaffpro review PR#4 (15m)
-  14:00 neochrome: afternoon checkin (15m)
-  14:15 lunch (60m)
-  15:15 Binoid - continue with HPOS theme of the week (105m)
-  17:00 Binoid - premium plugins (75m)
-  18:15 Binoid - stg1 testing checkout (15m)
+ARM B = ARM A + MATT Neochrome Work Schedule (15 blk, 7h15m):
+  Binoid emails/cron · Scheduled Actions Backlog · Prod Log Analysis · DB Saturation ·
+  Slow Query · Incident Report (Issue #873) · WP.org forum bug reports ·
+  GoAffPro Fork PR Review · Prod DB Fix—Composite Index · File Goaffpro bug ·
+  bloomz STG1 plugin updates ×2 · SMTP Pro feature request
 ```
 
-### Wed 2026-06-10 — Deployment Day (tz America/Los_Angeles)
+### Tue 2026-06-09 (tz America/Los_Angeles) — TODAY, partial (day not yet over)
 
 ```
-[NOEL] GitHub activity (scan_date = 2026-06-10):
-  rebalance-git-pulse        commits=169 pushes=169     <- Git Pulse Sync (NOISE, to exclude)
-  NeochromeTeam/sleuth-app   commits=24 prs_opened=5 issues_opened=1
-  Claude-AI-Tools/giant-bra  commits=12
-  Hypercart-Dev-Tools/rebalance-OS   commits=10 prs_opened=1
-  BinoidCBD/LTVera-Pandas    commits=8 prs_opened=1 issues_opened=2
-  Hypercart-Dev-Tools/ask-self       commits=6 prs_opened=4
-  BinoidCBD/goaffpro-fork    commits=1 prs_opened=3 issues_opened=1 issue_comments=1
-  ...universal-child-theme, three-que, agent-vs, love2socal, deckme, photoapp (small)
+ARM A (control) — NOEL-ONLY
+  primary calendar (8 blk, 4h30m): exercise · Neochrome check-in · Pre-meeting ·
+    Weekly Joyce/Noel · BW Maintenance (Matt's Zoom) · 1:45 Team Call · EOD · Broker placeholder
+  GitHub authored (git-pulse excluded, dashboard-matched):
+    sleuth-app       2 commits  🤖claude  PR #312 (Fable 5 aliases), #311 (memories export)
+    LTVera-Pandas    6 commits  🤖claude  PR #17 (P20)
+    universal-child-theme  2 commits +1 comment  🤖claude  PR #860 (/rca skill — WPE incident RCA)
+    photoapp-webapp-new                  issue #171 (login error, Mac Safari)
+    goaffpro-fork    1 comment            PR #2
+  Vault notes (6): 0. Goals · 0. Today's Notes · Project Registry · Meetup Group · rebalanceOS Dashboard · Yesterday
+  Sleuth (27 active): @Mike category bubbles · review PR→push Binoid · restore Prod→Dev ·
+    Shipping Tracker plugin · @Samuel WP→BigQuery sync bundle (LTVera-Pandas) · …(27 total)
+  Email in-window: 0
 
-ARM A (control) — NOEL primary calendar (9 blocks, 5h40m)
-  09:00 Blocked off for morning exercise (65m)
-  10:15 Neochrome Daily Check-in (25m)
-  10:15 Neochrome Team - Deployment Day (50m)
-  12:20 Physical therapy (60m)
-  13:45 1:45 - Team Call (15m) | 13:45 Sleuth Team Call (25m)
-  15:00 NN Weekly (25m)
-  16:30 Blocked off (60m)
-  17:00 End of Day Check-In (15m)
+ARM B = ARM A + MATT Neochrome Work Schedule (12 blk, 9h00m):
+  Slack&Emails · Email Matt G/Rebekah/John re WPE DB op · Cron research ·
+  HPOS theme-of-week ×2 · Review+merge/close Binoid PR 860 · deterministic analysis scripts ·
+  Goaffpro review PR#4 · premium plugins · stg1 checkout testing
+```
 
-ARM B (treatment) — + MATT Neochrome Work Schedule (4 blocks, 3h25m)
-  09:30 Start of day officially - Check Slack & Emails (50m)
-  13:00 Neochrome Team - Review stale Binoid PRs (50m)
-  14:00 lunch (60m)
-  16:15 Binoid: nmi, extend Customer Vault time on test account if needed (45m)
+### Wed 2026-06-10 (tz America/Los_Angeles) — TOMORROW, calendar-only (no activity yet)
+
+```
+ARM A (control) — NOEL-ONLY
+  primary calendar (9 blk, 5h40m): exercise · Neochrome check-in · **Deployment Day** ·
+    Physical therapy · 1:45 Team Call · Sleuth Team Call · NN Weekly · Blocked · EOD
+  GitHub authored: (none)   Vault: (none)   Sleuth: (none)   Email: (none)
+  ^ Correct & expected — 06-10 hasn't happened yet. (The OLD harness wrongly showed 169
+    git-pulse + repo commits here; that was github_activity.scan_date stamped in UTC
+    on the 06-09-evening scan, NOT real 06-10 work.)
+
+ARM B = ARM A + MATT Neochrome Work Schedule (4 blk, 3h25m):
+  Slack&Emails · **Neochrome Team — Review stale Binoid PRs** · Binoid NMI extend Customer Vault
+  ^ On a planning day, Matt's calendar is the ONLY actionable team signal — strong for H2.
 ```
 
 ---
@@ -323,3 +289,10 @@ ARM B (treatment) — + MATT Neochrome Work Schedule (4 blocks, 3h25m)
 
 **2026-06-09 (later) — harness scope correction (post-crash recovery).**
 - Arm A currently wires only `primary` calendar + `github_activity`; per spec it still needs **Sleuth reminders, vault todos, and email**. Noel's directives from the recovered session: **exclude Git Pulse Sync as noise**, **add Obsidian vault todos**, and **reconcile the harness's GitHub activity with the live dashboard** (they don't currently match). Output is also **not yet blinded** (prints "ARM A/ARM B"). These are now open items under [0b](#0b-build-the-ab-harness--tempab_team_signalpy) and must close before the gate runs.
+
+**2026-06-09 (later still) — harness rebuilt on the dashboard path; gate thresholds set.**
+- **GitHub mismatch root-caused & fixed.** The old harness read `github_activity` — a *scan-snapshot* table that buckets a rolling ~30-day fetch under `scan_date = scanned_at[:10]` (the **scan-run date, in UTC**) and includes bot/auto-commit repos. Rebuilt the harness on `pulse._query_day_activity()` over the granular `github_commits/items/comments` tables (tz-aware day window + author/bot filter) — now matches the dashboard exactly. `rebalance-git-pulse` confirmed **absent** from the granular tables (it only ever lived in the scan-snapshot); an explicit `NOISE_REPOS` guard was added anyway.
+- **Arm A completed.** Obsidian vault notes + Sleuth reminders now come from the same assembler; **email** added via a per-day `email_messages` query. (Note: "vault todos" = recently-modified vault notes — there is no checkbox/task-extraction table; true todo parsing is a separate future enhancement.)
+- **Validation.** Re-ran 06-08/09/10: 06-08 full, 06-09 (today) partial, **06-10 (tomorrow) correctly calendar-only** — confirming the tz-aware windowing and exposing the old "06-10" GitHub rows as a UTC scan-date artifact. Corrected bundles re-captured above.
+- **Gate thresholds set** (per Noel's delegation): conjunctive 3-metric rule, two independent judges, B-only precision floor — see [0e](#0e-decision-rule-kill--continue). Honest that N≈5 ≠ statistical significance.
+- **Remaining for the gate:** blind/randomize the output (last 0b item), generate ~5 *completed*-day bundles, run the two-judge blinded scoring.
