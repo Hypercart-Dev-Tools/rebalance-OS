@@ -454,16 +454,23 @@ def set_ask_self_path(path: str) -> None:
     _write_config(config)
 
 
-def get_ask_self_scan_roots() -> list[str]:
-    """Return the directories the ask_self collector walks for harness files.
+def get_repo_scan_roots() -> list[str]:
+    """Return the directories repo-discovery collectors walk on this device.
 
-    Config key: ``ask_self_scan_roots`` (list of absolute dirs). When unset,
+    Shared by the Focus 5 repo collector and the ask_self index inventory —
+    a generic "where do this machine's repos live" setting, not specific to
+    ask_self (hence the neutral name; see COLLECTOR-PATH-AND-PORTABILITY-AUDIT).
+
+    Config key: ``repo_scan_roots`` (list of absolute dirs). The legacy
+    ``ask_self_scan_roots`` key is still honored as a fallback. When unset,
     defaults to the common dev-checkout parents that actually exist on this
     machine, falling back to the home directory. Keeping this configurable
     means a full-tree walk of ``$HOME`` is opt-in rather than the default.
     """
     config = _read_config()
-    raw = config.get("ask_self_scan_roots")
+    raw = config.get("repo_scan_roots")
+    if not isinstance(raw, list):
+        raw = config.get("ask_self_scan_roots")  # back-compat: pre-decouple key
     if isinstance(raw, list):
         roots = [str(p).strip() for p in raw if str(p).strip()]
         if roots:
@@ -483,19 +490,25 @@ def get_ask_self_scan_roots() -> list[str]:
     return existing or [str(home)]
 
 
-def set_ask_self_scan_roots(roots: list[str]) -> None:
-    """Store the directories the ask_self collector walks. Config key: ``ask_self_scan_roots``."""
+def set_repo_scan_roots(roots: list[str]) -> None:
+    """Store the directories repo-discovery collectors walk. Config key: ``repo_scan_roots``."""
     cleaned = [str(Path(p).expanduser()) for p in roots if str(p).strip()]
     config = _read_config()
-    config["ask_self_scan_roots"] = cleaned
+    config["repo_scan_roots"] = cleaned
     _write_config(config)
+
+
+# Deprecated pre-decouple aliases — kept so existing imports keep working while
+# the COLLECTOR-PATH-AND-PORTABILITY-AUDIT rename settles. Prefer the repo_* names.
+get_ask_self_scan_roots = get_repo_scan_roots
+set_ask_self_scan_roots = set_repo_scan_roots
 
 
 def get_focus5_scan_roots() -> list[str]:
     """Return the directories the Focus 5 collector walks for git repos.
 
     Config key: ``focus5_scan_roots``. When unset, reuses the shared
-    zero-config discovery defaults (:func:`get_ask_self_scan_roots`) so the
+    zero-config discovery defaults (:func:`get_repo_scan_roots`) so the
     operator never has to configure repo locations — Focus 5 just keeps its own
     overridable key for the day the two surfaces want different scopes.
     """
@@ -505,7 +518,7 @@ def get_focus5_scan_roots() -> list[str]:
         roots = [str(p).strip() for p in raw if str(p).strip()]
         if roots:
             return roots
-    return get_ask_self_scan_roots()
+    return get_repo_scan_roots()
 
 
 def get_focus5_ranking_mode() -> str:

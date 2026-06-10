@@ -306,8 +306,8 @@ def sync_ask_self_indexes(
     """Scan the device for ask_self repos and upsert them into ``ask_self_indexes``."""
     dev = device_id or get_device_id()
     if roots is None:
-        from rebalance.ingest.config import get_ask_self_scan_roots
-        roots = get_ask_self_scan_roots()
+        from rebalance.ingest.config import get_repo_scan_roots
+        roots = get_repo_scan_roots()
     scanned_at = datetime.now(timezone.utc).isoformat()
     found = scan_ask_self_repos(roots, max_depth=max_depth, device_id=dev)
 

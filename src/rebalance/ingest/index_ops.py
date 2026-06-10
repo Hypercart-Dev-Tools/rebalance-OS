@@ -1302,9 +1302,9 @@ def _refresh_ask_self(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     because it walks the filesystem; run explicitly via
     ``refresh_index(scope=["ask_self"])``.
     """
-    from rebalance.ingest.config import get_ask_self_scan_roots
+    from rebalance.ingest.config import get_repo_scan_roots
 
-    roots = get_ask_self_scan_roots()
+    roots = get_repo_scan_roots()
     if dry_run:
         return {
             "scope": "ask_self",
