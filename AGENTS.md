@@ -74,7 +74,7 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 - Precise, concise chat replies/updates: Short as possible, detailed enough.
 - Reduce redundancy/duplication unless critical.
 - New docs: High-level TOC at top; checklist + phased format; actionable items visible. Suggest Phase 0 technical spike (1-2h max) to validate assumptions/critical paths first.
-- Do not create new MD/text files unless instructed. Append to existing project docs.
+- Do not create new MD/text files unless instructed or it is a new audit. Append to existing project docs.
 - Add things to remember to MEMORY.md
 - General workflow: 1-2 step ad-hoc requests to direct implementation. If 4-5 steps with multiple phases, write project MD file first.
 - Slight pushback OK if security/maintainability/destructive risk ahead.
@@ -93,6 +93,14 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 - **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document state diagram in code comments or `/docs/state-machine.md`.
 - **Contracts**: Designate single writer per contract/schema (API response shape, DB record structure, queue message format). Changes require review from contract owner; broadcast breaking changes immediately.
 - **Pipelines**: One logical pipeline per data flow whenever possible. Avoid forking/rejoining; use filters, transforms, and side effects in sequence. If pipeline needs multiple paths, use conditional routing within single pipeline, not separate pipelines.
+- **Collectors, sources & write paths** (see `PROJECT/2-WORKING/COLLECTOR-PATH-AND-PORTABILITY-AUDIT.md`):
+  - **Classify before you register.** Every scope is exactly one of: raw source / derived scan / projection / export. Only raw sources are `all`-eligible; derived/projection/export attach as named stages, never as peers in the registry.
+  - **One writer per table.** Only the `semantic` stage writes `semantic_documents`/`semantic_embeddings`; a source writes only its own raw tables. (This is the Contracts rule above, applied to the semantic tables.)
+  - **Route user-facing writes through the orchestrator.** CLI, MCP, scheduler, and web write surfaces call `refresh_index` or one source-owned helper — never a leaf ingest function (`sync_*`, `ingest_*`, `embed_*`, `backfill_*`) directly.
+  - **Use the shared resolvers** for any new runtime path (DB, secrets, auth/token, operator config). No `Path.home()` token paths, no `parents[N]` repo-root walks, no sibling-checkout assumptions.
+  - **Obsidian/vault is optional output, not a control-plane dependency** — a refresh must succeed with no vault present.
+  - **Name settings by what they are**, not the first feature that used them (e.g. `ask_self_scan_roots` → `repo_scan_roots`).
+  - These are the **target contract**: the route-through-orchestrator and stage-owned-semantic rules bind *new* code; the audit owns migrating existing call sites. Enforce mechanically, not by prose — drift slipped past these same principles once already. Ship the contract tests (single-writer on the semantic tables, `all`-expansion, "no user-facing surface imports a leaf ingest fn") so a violation fails CI instead of accreting.
 
 ## Anti-Patterns to Avoid
 

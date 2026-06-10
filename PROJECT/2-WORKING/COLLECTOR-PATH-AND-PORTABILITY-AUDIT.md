@@ -351,7 +351,7 @@ Goal: Land the refactor without silently breaking refresh behavior or data fresh
   observable result: each source surfaces missing credential/config errors as structured failures, not implicit no-ops.
 - [ ] Add unchanged/no-op tests for incremental runs:
   observable result: repeated refreshes prove that unchanged inputs do not drift counts or duplicate writes.
-- [ ] Add contract tests for `all` expansion:
+- [ ] Add contract tests for `all` expansion: _(seeded early — see `tests/test_collector_contracts.py`, which also encodes the leaf-ingest-bypass and semantic single-writer contracts; target-state tests are `xfail` until their owning phase lands, then the marker is removed)_.
   observable result: one test proves which scopes are included in `all` and why.
 - [ ] Add observability around stage timing and ownership:
   observable result: logs and/or status outputs distinguish source ingest from semantic projection and export work.
