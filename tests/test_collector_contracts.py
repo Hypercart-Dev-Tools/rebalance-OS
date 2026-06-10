@@ -60,9 +60,38 @@ def test_github_activity_and_commits_are_distinct_not_redundant():
     assert "committed_at" in schema   # commits = real commit time
 
 
-# --- Decision A / Phase 1 — `all` = raw sources only --------------------------
+# --- Phase 1a — explicit collector taxonomy (`kind`) --------------------------
+EXPECTED_KIND = {
+    "vault": "raw_source", "github": "raw_source", "calendar": "raw_source",
+    "sleuth": "raw_source", "email": "raw_source", "figma": "raw_source",
+    "code": "derived_scan", "focus5": "derived_scan", "ask_self": "derived_scan",
+    "semantic": "projection", "sync": "export",
+}
+
+
+def test_every_collector_has_valid_kind():
+    from rebalance.ingest.index_ops import COLLECTORS, _COLLECTOR_KINDS
+    for name, c in COLLECTORS.items():
+        assert c.kind in _COLLECTOR_KINDS, f"{name} has invalid kind {c.kind!r}"
+
+
+def test_known_collectors_are_classified_as_expected():
+    from rebalance.ingest.index_ops import COLLECTORS
+    for name, expected in EXPECTED_KIND.items():
+        assert COLLECTORS[name].kind == expected, f"{name}: {COLLECTORS[name].kind!r} != {expected!r}"
+
+
+def test_raw_source_membership_is_exactly_the_five():
+    from rebalance.ingest.index_ops import _raw_source_scopes
+    assert set(_raw_source_scopes()) == RAW_SOURCES
+
+
+# --- Decision A / Phase 1b — `all` TOKEN narrows to raw sources only ----------
+# Phase 1a made raw-source membership explicit (test above). Phase 1b narrows the
+# `all` *token* + rewires the default-refresh callers to a named recipe; until
+# then `_all_scope_names()` still returns the full recipe (raw + code/semantic/sync).
 @pytest.mark.xfail(
-    reason="Phase 1: `all` not yet narrowed to raw sources (still includes code/semantic/sync)",
+    reason="Phase 1b: `all` token not yet narrowed to raw sources (still the full recipe)",
     strict=False,
 )
 def test_all_expands_to_raw_sources_only():

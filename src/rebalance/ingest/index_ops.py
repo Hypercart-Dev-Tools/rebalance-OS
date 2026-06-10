@@ -56,6 +56,12 @@ class Collector:
         If True (default), the collector runs when the user requests
         ``scope=["all"]``. Set False for opt-in collectors (e.g. heavy or
         narrowly-scoped sources).
+    kind:
+        Architectural classification — one of ``raw_source`` / ``derived_scan``
+        / ``projection`` / ``export`` (see COLLECTOR-PATH-AND-PORTABILITY-AUDIT).
+        Only ``raw_source`` collectors are raw incoming data; derived scans,
+        projections, and exports are *stages*, not sources. ``raw_source`` is the
+        default so external integrations register a source unless they say otherwise.
     semantic_docs:
         Optional registry-driven provider that yields :class:`SemanticDoc`
         rows for the unified semantic index. When present, the source becomes
@@ -73,6 +79,7 @@ class Collector:
     refresh: Callable[..., dict[str, Any]]
     requires: tuple[str, ...] = ()
     included_in_all: bool = True
+    kind: str = "raw_source"
     semantic_docs: Callable[[Any], Iterable["SemanticDoc"]] | None = None
     secrets: tuple[str, ...] = ()
 
@@ -82,6 +89,9 @@ class Collector:
 # without forking the dataclass.
 SourceModule = Collector
 
+
+# Architectural classification for collectors (COLLECTOR-PATH-AND-PORTABILITY-AUDIT).
+_COLLECTOR_KINDS = {"raw_source", "derived_scan", "projection", "export"}
 
 COLLECTORS: dict[str, Collector] = {}
 
@@ -98,6 +108,11 @@ def register_collector(collector: Collector, *, replace: bool = False) -> None:
         )
     if collector.name == "all":
         raise ValueError(f"Reserved collector name: {collector.name!r}")
+    if collector.kind not in _COLLECTOR_KINDS:
+        raise ValueError(
+            f"Collector {collector.name!r} has invalid kind {collector.kind!r}; "
+            f"expected one of {sorted(_COLLECTOR_KINDS)}."
+        )
     if collector.name in COLLECTORS and not replace:
         raise ValueError(
             f"Collector {collector.name!r} already registered; pass replace=True to override."
@@ -114,6 +129,14 @@ def _scope_values() -> tuple[str, ...]:
 def _all_scope_names() -> list[str]:
     """Return the collector names that run for ``scope=["all"]``."""
     return [name for name, c in COLLECTORS.items() if c.included_in_all]
+
+
+def _raw_source_scopes() -> list[str]:
+    """The raw incoming sources — the explicit membership `all` resolves to once
+    Phase 1 narrows it (today `all` still runs the full default recipe). Raw
+    sources are the only all-eligible ``kind == "raw_source"`` collectors;
+    derived scans / projections / exports are stages, attached intentionally."""
+    return [n for n, c in COLLECTORS.items() if c.kind == "raw_source" and c.included_in_all]
 
 
 def _semantic_source_names() -> list[str]:
@@ -1370,11 +1393,11 @@ register_collector(Collector("github", _github_adapter, requires=("github_token"
 register_collector(Collector("calendar", _calendar_adapter))
 register_collector(Collector("sleuth", _sleuth_adapter))
 register_collector(Collector("email", _email_adapter))
-register_collector(Collector("code", _code_adapter))
-register_collector(Collector("semantic", _semantic_adapter))
-register_collector(Collector("sync", _sync_adapter))
-register_collector(Collector("focus5", _focus5_adapter, included_in_all=False))
-register_collector(Collector("ask_self", _ask_self_adapter, included_in_all=False))
+register_collector(Collector("code", _code_adapter, kind="derived_scan"))
+register_collector(Collector("semantic", _semantic_adapter, kind="projection"))
+register_collector(Collector("sync", _sync_adapter, kind="export"))
+register_collector(Collector("focus5", _focus5_adapter, included_in_all=False, kind="derived_scan"))
+register_collector(Collector("ask_self", _ask_self_adapter, included_in_all=False, kind="derived_scan"))
 
 # Figma — the first registry-driven SourceModule. Imported here (not at module
 # top) so figma.py — and its later, optional dependencies — only load when the
