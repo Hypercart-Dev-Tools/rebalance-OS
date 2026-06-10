@@ -14,7 +14,7 @@ surfaces:
 
 | Most recently completed phase | What's next |
 |---|---|
-| Audit baseline complete: the current collector taxonomy, user-facing write-path duplication, portability hotspots, and refactor-coupled risks are now captured in one place. | Phase 0 technical spike: lock the source taxonomy, define what `all` means, and decide whether semantic projection is source-owned or stage-owned before moving call sites. |
+| Phase 0 spike complete (2026-06-10): source-manifest built, single-writer map drawn, and the two load-bearing decisions locked — `all` = raw sources only (figma stays opt-in); semantic projection is **stage-owned**. Spike confirms the target model, no blockers. | Phase 1: model raw-sources vs derived/projection/export explicitly; retire `included_in_all` in favor of explicit raw-source membership + a named default-refresh recipe (`all` + `code` + `semantic` + `sync`); keep scope-name back-compat; propagate the taxonomy + `all` definition into `ARCHITECTURE.md`. |
 
 ## Table of Contents
 
@@ -226,16 +226,56 @@ Target split:
 
 Goal: Lock the three decisions that determine the rest of the refactor before any write-path movement starts.
 
-- [ ] Generate a temporary source-manifest view directly from the collector registry:
-  observable result: one report listing each registered scope, its kind (`raw_source`, `derived_scan`, `projection`, `export`), required config/secrets, tables written, and whether it participates in semantic projection.
-- [ ] Define the meaning of `all`:
-  observable result: one explicit statement in this doc and `ARCHITECTURE.md` that `all` means either raw sources only or raw sources plus named follow-on stages.
-- [ ] Decide semantic ownership:
-  observable result: documented choice between source-owned semantic projection, stage-owned semantic projection, or a formally defined hybrid.
-- [ ] Identify non-negotiable contract owners:
-  observable result: draft single-writer list for source tables, semantic tables, sync exports, dashboard notes, and auth logs.
-- [ ] Pause if the spike contradicts the current target model:
-  observable result: blockers captured here before any Phase 1 work starts.
+- [x] Generate a temporary source-manifest view directly from the collector registry — see [Phase 0 Results](#phase-0-results-locked-2026-06-10) below.
+- [x] Define the meaning of `all` — **Decision A locked** below. (Statement also lands in `ARCHITECTURE.md` during Phase 1, which owns the taxonomy doc update; deferred here to avoid colliding with in-flight `ARCHITECTURE.md` edits.)
+- [x] Decide semantic ownership — **Decision B locked** below (stage-owned).
+- [x] Identify non-negotiable contract owners — single-writer list drafted below.
+- [x] Pause if the spike contradicts the current target model — no contradiction; spike **confirms** the target model. One nuance resolved (figma stays opt-in; `code`/`semantic`/`sync` become named stages in the default recipe).
+
+### Phase 0 Results (locked 2026-06-10)
+
+Spike outcome: **the target model holds — no blockers.** The manifest confirms every classification. The one structural surprise: the semantic tables have **six writers** today (each raw source + `code` + the standalone `semantic` scope) — resolved by Decision B.
+
+#### Source manifest (code-verified)
+
+| Scope | Kind | in `all` today | Config / secrets | Tables written | Semantic |
+|---|---|---|---|---|---|
+| vault | raw_source | yes | `vault_path` | `vault_files`, `chunks` | backfill + embed |
+| github | raw_source | yes | `github_token` (PAT / gh-cli) | `github_activity`, `github_commits/items/comments`, `github_repo_meta/branches/labels/milestones/releases/check_runs/links`, `github_pushed_repos`, `github_documents` | backfill + embed |
+| calendar | raw_source | yes | Google OAuth | `calendar_events` | none |
+| sleuth | raw_source | yes | `SLEUTH_WEB_API_*` | `sleuth_reminders`, `sleuth_sync_meta` | none |
+| email | raw_source | yes | Gmail OAuth (MCP push-mode skips) | `email_messages` | backfill only |
+| figma | raw_source | **no (opt-in)** | `figma_token` + `figma_file_keys` allowlist | `figma_comments` | backfill + embed (registry path) |
+| code | derived_scan | yes | none (local FS) | `semantic_documents` (FTS only) | backfill only |
+| semantic | projection | yes | none (local DB) | `semantic_documents`, `semantic_embeddings` | backfill + embed |
+| sync | export | yes | `pulse_target_path` | none (git export) | none |
+| focus5 | derived_scan | no (opt-in) | `repo_scan_roots`, `focus5_ranking_mode`, … | `focus5_repo_signals`, `focus5_roster` | none |
+| ask_self | derived_scan | no (opt-in) | `repo_scan_roots` | `ask_self_indexes` | none |
+
+#### Single-writer contract (drafted)
+
+- **Raw source tables — one source owner each:** `vault_files`/`chunks` → vault; all `github_*` → github; `calendar_events` → calendar; `sleuth_reminders`/`sleuth_sync_meta` → sleuth; `email_messages` → email; `figma_comments` → figma.
+- **`semantic_documents` / `semantic_embeddings` — sole owner = the `semantic` stage** (post-Decision B). Today six scopes write them; this collapses to one writer.
+- **Sync export (pulse snapshots / git)** → the `sync` export stage.
+- **Dashboard note (vault write-back)** → the `dashboard` stage (currently embedded in the full-refresh path).
+- **Local derived scans** → focus5 owns `focus5_*`; ask_self owns `ask_self_indexes`.
+- **Auth log** (`temp/logs/auth_activity.jsonl`) → the `auth_log` writer.
+
+#### Decision A — meaning of `all` (LOCKED)
+
+`all` = **raw incoming sources only**: `vault, github, calendar, sleuth, email`. Chosen as the most maintainable long-run end-state (the 80–90% destination), per owner direction.
+
+- `figma`, `focus5`, `ask_self` stay **opt-in** (figma needs a PAT + file-key allowlist; the local scans are explicit). figma is **not** swept into `all`.
+- Retire the `included_in_all` flag in favor of (a) explicit raw-source membership and (b) a **named default-refresh recipe**: `rebalance refresh` / `daily_sync` = `all` (raw sources) **+ named follow-on stages `code`, `semantic`, `sync`**. This preserves today's full-refresh behavior exactly while separating raw sources from derived/projection/export stages.
+- Back-compat: existing scope names continue to work (carried as a Phase 1 lock-in).
+
+#### Decision B — semantic ownership (LOCKED)
+
+**Stage-owned.** The `semantic` projection stage is the **single writer** of `semantic_documents` and `semantic_embeddings`. Raw-source refreshes (and `code`) stop calling `backfill_semantic_documents` / `embed_pending` directly — they write only their own raw tables; the `semantic` stage reads those and owns all projection + embedding.
+
+- Fixes the email-never-embedded gap (the stage always embeds every source).
+- Collapses the six-writer overlap on the semantic tables to one writer (clean contract).
+- Trade-off: semantic results are staged just after source ingest rather than inline; in the default recipe the stage runs immediately after the raw sources, so end-to-end freshness for a full refresh is unchanged.
 
 ## Phase 1 - Split Raw Sources from Derived Jobs
 
