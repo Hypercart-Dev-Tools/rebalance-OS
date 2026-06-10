@@ -841,8 +841,8 @@ def sleuth_graph_page() -> HTMLResponse:
      font-size:12px;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,.15);
      pointer-events:none;z-index:100;line-height:1.5;"></div>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.30.4/cytoscape.min.js"
-        integrity="sha512-Y3tcOyWdkuJxrgbNWVWaKH19d8S5FH4H3wWaFO02ueH83YR+Qn4N8Fw+MJm0PgWJHXUbTdDIV1kRlvRe7yPqg=="
+<script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.33.1/cytoscape.min.js"
+        integrity="sha512-kHAY8XzRfLVMcLuowdk91552RD+Nb2/1uHamfHMdLejNqlZnbEJLl1wYnsNnqIFCEZ++WaOcOlfokC6p9JWrLw=="
         crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 <script>
 (function() {{
@@ -926,18 +926,19 @@ def sleuth_graph_page() -> HTMLResponse:
     layout: {{
       name: 'cose',
       animate: true,
-      animationDuration: 800,
-      nodeRepulsion: function() {{ return 8000; }},
-      idealEdgeLength: function() {{ return 80; }},
+      animationDuration: 1000,
+      randomize: true,
+      nodeRepulsion: function() {{ return 450000; }},
+      idealEdgeLength: function() {{ return 120; }},
       edgeElasticity: function() {{ return 100; }},
-      nestingFactor: 1.2,
-      gravity: 0.25,
-      numIter: 1000,
-      initialTemp: 200,
-      coolingFactor: 0.95,
+      nestingFactor: 1.5,
+      gravity: 0.08,
+      numIter: 2500,
+      initialTemp: 1000,
+      coolingFactor: 0.99,
       minTemp: 1.0,
-      padding: 32,
-      randomize: false,
+      padding: 48,
+      fit: true,
     }},
   }});
 
