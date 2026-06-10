@@ -153,7 +153,7 @@ def onboard_cmd(
         typer.echo("Skipped initial refresh (--skip-refresh). Run `rebalance refresh` later.")
     else:
         typer.echo("Running initial data refresh (this can take a few minutes)...")
-        refresh = refresh_index(db, scope=["all"])
+        refresh = refresh_index(db)  # default recipe: raw sources + code/semantic/sync
         errors = refresh.get("errors", [])
         if errors:
             typer.echo(f"  Refresh finished with {len(errors)} error(s):", err=True)

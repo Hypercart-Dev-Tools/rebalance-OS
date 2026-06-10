@@ -1,7 +1,7 @@
 #!/bin/bash
 # rebalance OS — daily data sync
-# Runs on boot and daily via launchd. Calls refresh_index(scope=["all"])
-# so the MCP server always has fresh context.
+# Runs on boot and daily via launchd. Calls refresh_index() (default recipe:
+# all raw sources + code/semantic/sync) so the MCP server always has fresh context.
 #
 # Single source of truth: this is the same orchestration the MCP
 # refresh_index tool exposes to interactive agents.
@@ -53,7 +53,7 @@ from rebalance.paths import resolve_database_path
 
 db_path = resolve_database_path()
 print(f"database={db_path}")
-result = refresh_index(db_path, scope=["all"])
+result = refresh_index(db_path)  # default recipe: raw sources + code/semantic/sync
 print(json.dumps(result, indent=2, default=str))
 sys.exit(1 if result.get("errors") else 0)
 PY

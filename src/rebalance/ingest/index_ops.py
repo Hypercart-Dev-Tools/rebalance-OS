@@ -53,9 +53,10 @@ class Collector:
         ``"github_token"``. Failures surface as structured errors rather than
         exceptions, mirroring the legacy refresh_index error envelope.
     included_in_all:
-        If True (default), the collector runs when the user requests
-        ``scope=["all"]``. Set False for opt-in collectors (e.g. heavy or
-        narrowly-scoped sources).
+        If True (default), the collector is part of the default refresh recipe
+        (a no-scope `rebalance refresh`). For raw sources this also makes them
+        part of the ``all`` token. Set False for opt-in collectors (e.g. figma,
+        focus5, ask_self) that must be requested by name.
     kind:
         Architectural classification — one of ``raw_source`` / ``derived_scan``
         / ``projection`` / ``export`` (see COLLECTOR-PATH-AND-PORTABILITY-AUDIT).
@@ -126,17 +127,26 @@ def _scope_values() -> tuple[str, ...]:
     return tuple(COLLECTORS.keys()) + ("all",)
 
 
-def _all_scope_names() -> list[str]:
-    """Return the collector names that run for ``scope=["all"]``."""
+def _raw_source_scopes() -> list[str]:
+    """The raw incoming sources — the only ``kind == "raw_source"`` collectors
+    that are all-eligible. This is what the ``all`` token expands to (Decision A);
+    derived scans / projections / exports are stages, attached intentionally."""
+    return [n for n, c in COLLECTORS.items() if c.kind == "raw_source" and c.included_in_all]
+
+
+def _default_refresh_scopes() -> list[str]:
+    """The default full-refresh recipe (registration order): all raw sources plus
+    the all-eligible follow-on stages (code, semantic, sync). This is what a
+    no-scope `rebalance refresh` / `refresh_index(scope=None)` runs — raw sources
+    first, then the derived/projection/export stages that read them."""
     return [name for name, c in COLLECTORS.items() if c.included_in_all]
 
 
-def _raw_source_scopes() -> list[str]:
-    """The raw incoming sources — the explicit membership `all` resolves to once
-    Phase 1 narrows it (today `all` still runs the full default recipe). Raw
-    sources are the only all-eligible ``kind == "raw_source"`` collectors;
-    derived scans / projections / exports are stages, attached intentionally."""
-    return [n for n, c in COLLECTORS.items() if c.kind == "raw_source" and c.included_in_all]
+def _all_scope_names() -> list[str]:
+    """Collectors the ``all`` token expands to — the raw incoming sources only
+    (Decision A). Derived scans / projections / exports are NOT in ``all``; they
+    run as named follow-on stages in the default recipe (:func:`_default_refresh_scopes`)."""
+    return _raw_source_scopes()
 
 
 def _semantic_source_names() -> list[str]:
@@ -176,7 +186,7 @@ def _safe_meta(conn: Any, table: str) -> dict[str, str]:
 
 def _normalize_scope(scope: Iterable[str] | str | None) -> list[str]:
     if scope is None:
-        return ["all"]
+        return _default_refresh_scopes()
     if isinstance(scope, str):
         items = [scope]
     else:
@@ -192,7 +202,7 @@ def _normalize_scope(scope: Iterable[str] | str | None) -> list[str]:
         if v not in cleaned:
             cleaned.append(v)
     if not cleaned:
-        return ["all"]
+        return _default_refresh_scopes()
     if "all" in cleaned:
         return _all_scope_names()
     return cleaned

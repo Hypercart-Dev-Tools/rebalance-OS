@@ -86,17 +86,19 @@ def test_raw_source_membership_is_exactly_the_five():
     assert set(_raw_source_scopes()) == RAW_SOURCES
 
 
-# --- Decision A / Phase 1b — `all` TOKEN narrows to raw sources only ----------
-# Phase 1a made raw-source membership explicit (test above). Phase 1b narrows the
-# `all` *token* + rewires the default-refresh callers to a named recipe; until
-# then `_all_scope_names()` still returns the full recipe (raw + code/semantic/sync).
-@pytest.mark.xfail(
-    reason="Phase 1b: `all` token not yet narrowed to raw sources (still the full recipe)",
-    strict=False,
-)
+# --- Decision A / Phase 1b — `all` TOKEN = raw sources only (DONE) ------------
 def test_all_expands_to_raw_sources_only():
     from rebalance.ingest.index_ops import _all_scope_names
     assert set(_all_scope_names()) == RAW_SOURCES
+
+
+def test_default_refresh_recipe_preserves_follow_on_stages():
+    """`all` is narrowed to raw sources, but the default (no-scope) recipe still
+    runs the follow-on stages, so a full refresh behaves as before (Decision A)."""
+    from rebalance.ingest.index_ops import _default_refresh_scopes
+    recipe = set(_default_refresh_scopes())
+    assert RAW_SOURCES <= recipe
+    assert {"code", "semantic", "sync"} <= recipe
 
 
 # --- Decision B / Phase 3 — semantic projection is single-writer (stage-owned) -

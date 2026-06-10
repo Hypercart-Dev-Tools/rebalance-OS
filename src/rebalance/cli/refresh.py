@@ -72,8 +72,9 @@ def refresh_cmd(
 
     Steps, each independently guarded so one failure does not abort the rest:
 
-    1. ``refresh_index(scope=["all"])`` — vault, github (incl. pushed-repo
-       auto-discovery), calendar, sleuth, unified semantic index.
+    1. ``refresh_index()`` (default recipe) — all raw sources (vault, github incl.
+       pushed-repo auto-discovery, calendar, sleuth, email) plus the follow-on
+       stages (code, semantic, sync). ``scope=["all"]`` alone is raw sources only.
     2. Regenerate ``web/pulse.html`` from the now-fresh DB (atomic
        tmp+replace; same renderer the 30-min launchd job uses).
     3. Render the markdown pulse and push it to your private pulse repo,
@@ -90,7 +91,7 @@ def refresh_cmd(
 
     # ---- Step 1: refresh_index(all) ----
     def _step_refresh_index() -> dict[str, Any]:
-        index_result = refresh_index(db_path, scope=["all"])
+        index_result = refresh_index(db_path)  # default recipe: raw sources + code/semantic/sync
         return {
             "ok": not bool(index_result.get("errors")),
             "errors": index_result.get("errors") or [],

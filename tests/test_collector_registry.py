@@ -28,10 +28,18 @@ class CollectorRegistryTests(unittest.TestCase):
         for name in ("vault", "github", "calendar", "sync"):
             self.assertIn(name, values)
 
-    def test_all_scope_includes_default_built_ins(self) -> None:
-        names = _all_scope_names()
+    def test_all_scope_is_raw_sources_only(self) -> None:
+        # `all` token narrowed to raw incoming sources (Decision A / Phase 1b).
         self.assertEqual(
-            sorted(names),
+            sorted(_all_scope_names()),
+            sorted(["vault", "github", "calendar", "sleuth", "email"]),
+        )
+
+    def test_default_refresh_recipe_includes_follow_on_stages(self) -> None:
+        # The no-scope default still runs raw sources + code/semantic/sync.
+        from rebalance.ingest.index_ops import _default_refresh_scopes
+        self.assertEqual(
+            sorted(_default_refresh_scopes()),
             sorted(["vault", "github", "calendar", "sleuth", "email", "code", "semantic", "sync"]),
         )
 
