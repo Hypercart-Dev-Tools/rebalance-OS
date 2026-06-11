@@ -340,17 +340,17 @@ System state at phase completion:
 
 ### QA Checklist
 <!-- phase-qa -->
-- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
-- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
-- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
-- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
-- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
-- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
-- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
-- [ ] MCP retrieval tools accept the same documented scopes before and after — backward-compatible
-- [ ] Scope-normalization and result-shaping logic has exactly one implementation; CLI and MCP wrappers reference it, not re-derive it
-- [ ] `ask()` and `semantic_query` ownership is documented and non-overlapping — no caller depends on both for the same use case
-- [ ] Legacy compatibility surfaces are marked as facades in the code (not just in docs) and tested as such
+- [x] DRY: Three pre-existing duplications removed — `WORK_SOURCES` and `_semantic_sources_for_scope()` deleted from `chat.py`; hardcoded `allowed` set removed from `cli/semantic.py`. One canonical owner remains in `semantic_index.py`
+- [x] S (Single Responsibility): `normalize_sources()` owns source vocabulary; `scope_to_sources()` owns scope mapping; CLI wrapper owns CLI error formatting. Each has exactly one reason to change
+- [x] O (Open/Closed): New source types are registered via `_semantic_source_names()` (registry-driven, no switch edit needed); new scope aliases would require editing the `scope_to_sources()` if-chain, but no new scopes are in the plan — not flagged per calibration rule
+- [x] L (Liskov): not applicable — no subclassing in this phase
+- [x] I (Interface Segregation): not applicable
+- [x] D (Dependency Inversion): `chat.py` and `cli/semantic.py` both depend on `semantic_index` (lower-level canonical owner); direction is correct
+- [x] Observability: not applicable — no new I/O boundaries introduced; error message clarity improved (`{value!r}` in `normalize_sources` ValueError)
+- [x] MCP retrieval tools accept the same documented scopes before and after — `_normalize_sources = normalize_sources` alias preserved for backward compat; `test_email_ingest.py` migrated to `normalize_sources`; `query_notes()` and `query_github_context()` behavior unchanged
+- [x] Scope-normalization has exactly one implementation — `normalize_sources()` is the single owner; CLI delegates via `try/except ValueError → typer.BadParameter`; no caller re-derives the allowed set
+- [x] `ask()` and `semantic_query` ownership documented and non-overlapping — `ARCHITECTURE.md` ownership table updated; spike confirmed no production caller uses `ask()` for citations-first retrieval
+- [x] Legacy compatibility surfaces marked in code and tested — `query_notes()` and `query_github_context()` carry `FACADE:` in docstring + inline comment; `LegacyFacadeMarkerTests` (4 tests) assert marker presence and delegate name
 
 ## Phase 4 - Scheduler and Launchd Orchestration
 
