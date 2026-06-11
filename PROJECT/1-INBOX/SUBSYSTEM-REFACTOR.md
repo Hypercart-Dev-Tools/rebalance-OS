@@ -424,6 +424,8 @@ System state at phase completion:
   observable result: tests cover `run_preflight` → `confirm_projects` → `list_projects` with stable contracts, plus status-contract tests asserting the stage map, status vocabulary, and provenance field.
 - [ ] Update onboarding docs after the contract cleanup:
   observable result: the setup narrative matches the actual registry/inference architecture and names the lifecycle stages Phase 6 will surface.
+- [ ] Validate the contract with a thin Phase 6 spike before phase close:
+  observable result: a disposable driver (no skill, no UX polish) walks `onboarding_status` on a clean sandbox and asserts the contract holds under real conditions — a missing PAT marks downstream stages `blocked`, stage order renders correctly, and gaps in the status vocabulary surface (e.g. whether skipped optional steps need a `skipped` status distinct from `done`). Findings feed back into the contract before Phase 5 is declared done. This is the guard against over-engineering: anything the spike doesn't need, Phase 5 doesn't build.
 
 ### QA Checklist
 <!-- phase-qa -->
@@ -535,7 +537,7 @@ System state at phase completion:
   Phase 6 is the only feature phase in this plan. Its deliverable list is the scope boundary — "while we're building the agent" additions (new ingest sources, GUI work, telemetry platforms) get logged for a future plan, not built.
 
 - `Contract built before its consumer`
-  Phase 5 defines contracts (lifecycle map, provenance, status vocabulary) whose first real consumer is Phase 6. If Phase 6 is deferred long, validate the contracts against a thin spike before declaring Phase 5 done — an unconsumed contract is a guess.
+  Phase 5 defines contracts (lifecycle map, provenance, status vocabulary) whose first real consumer is Phase 6. An unconsumed contract is a guess — so the thin Phase 6 spike is a mandatory Phase 5 exit item, not a contingency. The spike also bounds Phase 5's size: anything it doesn't need, Phase 5 doesn't build.
 
 ## Definition of Done
 
@@ -547,4 +549,3 @@ System state at phase completion:
 - [ ] `onboarding/registry` persistence and inference responsibilities are separated cleanly enough to test independently.
 - [ ] New tests added during the rollout catch contract drift at the subsystem seam, not just inside leaf functions.
 - [ ] The refactor reduces duplication and ambiguity without forcing a flag day for operators.
-- [ ] A new user reaches a rendered first pulse through one guided `/welcome` session — with auth setup (PAT, optional Calendar/Gmail), repo promotion, and scheduler install handled by the agent, and "where am I / what's next" queryable at every step.
