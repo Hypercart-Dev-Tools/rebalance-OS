@@ -50,7 +50,7 @@ def semantic_backfill_cmd(
     database: Path | None = DBOption(),
 ) -> None:
     """Populate the unified semantic document layer from existing source tables."""
-    from rebalance.ingest.semantic_index import backfill_semantic_documents
+    from rebalance.ingest.semantic_index import project_semantic_documents
 
     try:
         db_path = resolve_database_path(database)
@@ -59,7 +59,7 @@ def semantic_backfill_cmd(
         raise typer.Exit(2) from exc
     sources = _normalize_semantic_sources_option(source)
     typer.echo(f"Backfilling semantic documents for {', '.join(sources)}...")
-    result = backfill_semantic_documents(
+    result = project_semantic_documents(
         database_path=db_path,
         source_types=sources,
         repo_full_name=repo,
@@ -86,7 +86,7 @@ def semantic_embed_cmd(
     force: bool = typer.Option(False, help="Force re-embed matching semantic documents"),
 ) -> None:
     """Generate embeddings for the unified semantic document layer."""
-    from rebalance.ingest.semantic_index import embed_pending
+    from rebalance.ingest.semantic_index import embed_semantic_pending
 
     try:
         db_path = resolve_database_path(database)
@@ -98,7 +98,7 @@ def semantic_embed_cmd(
         f"Embedding semantic documents for {', '.join(sources)} with {model} "
         f"(batch_size={batch_size})..."
     )
-    result = embed_pending(
+    result = embed_semantic_pending(
         database_path=db_path,
         source_types=sources,
         model_name=model,

@@ -145,11 +145,9 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         ``received_at``, and ``labels`` (list of label strings). The new rows
         are also projected into the semantic index.
         """
-        from rebalance.ingest.gmail import ingest_email_messages
-        from rebalance.ingest.semantic_index import backfill_semantic_documents
+        from rebalance.ingest.gmail import push_email_messages
 
-        result = ingest_email_messages(database_path, messages)
-        backfill_semantic_documents(database_path, source_types=["email"])
+        result = push_email_messages(database_path, messages)
         return {
             "messages_listed": result.messages_listed,
             "messages_stored": result.messages_stored,

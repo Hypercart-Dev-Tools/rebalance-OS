@@ -113,11 +113,9 @@ def test_semantic_projection_is_single_writer():
     assert src.count("embed_pending(") == 1
 
 
-# --- DASHBOARD row 8 (SOLID/OCP) / Phase 2 — no leaf-ingest bypasses ----------
-@pytest.mark.xfail(
-    reason="Phase 2: CLI/MCP write surfaces still call leaf ingest fns directly",
-    strict=False,
-)
+# --- DASHBOARD row 8 (SOLID/OCP) / Phase 2 — no leaf-ingest bypasses (ENFORCED) -
+# Phase 2 landed: every CLI/MCP write surface now routes through a source-owned
+# helper, so this contract is enforced strictly (no xfail). A new bypass fails CI.
 def test_user_surfaces_do_not_import_leaf_ingest_functions():
     surfaces = list((SRC / "cli").rglob("*.py")) + list((SRC / "mcp" / "tools").rglob("*.py"))
     offenders = {}

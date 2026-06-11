@@ -423,6 +423,22 @@ _REGISTRY_SOURCE_TABLES: dict[str, str] = {"figma": "figma_comments"}
 _LADDER_SOURCES: frozenset[str] = frozenset({"vault", "github", "email", "code"})
 
 
+def project_semantic_documents(
+    database_path: Path,
+    *,
+    source_types: Iterable[str] | None = None,
+    repo_full_name: str = "",
+) -> SemanticBackfillResult:
+    """Source-owned facade over :func:`backfill_semantic_documents` for the
+    `semantic-backfill` maintenance command, so the CLI doesn't import the leaf
+    directly (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2)."""
+    return backfill_semantic_documents(
+        database_path=database_path,
+        source_types=source_types,
+        repo_full_name=repo_full_name,
+    )
+
+
 def backfill_semantic_documents(
     database_path: Path,
     *,
@@ -521,6 +537,30 @@ def backfill_semantic_documents(
         unchanged_count=unchanged,
         deleted_count=deleted,
         elapsed_seconds=round(time.monotonic() - start, 2),
+    )
+
+
+def embed_semantic_pending(
+    database_path: Path,
+    *,
+    source_types: Iterable[str] | None = None,
+    model_name: str = DEFAULT_EMBED_MODEL,
+    batch_size: int = 32,
+    min_chars: int = 1,
+    force_reembed: bool = False,
+    embed_texts: EmbedTexts | None = None,
+) -> SemanticEmbedResult:
+    """Source-owned facade over :func:`embed_pending` for the `semantic-embed`
+    maintenance command, so the CLI doesn't import the leaf directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2)."""
+    return embed_pending(
+        database_path=database_path,
+        source_types=source_types,
+        model_name=model_name,
+        batch_size=batch_size,
+        min_chars=min_chars,
+        force_reembed=force_reembed,
+        embed_texts=embed_texts,
     )
 
 

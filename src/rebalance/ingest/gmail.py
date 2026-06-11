@@ -343,6 +343,26 @@ def sync_gmail(
     )
 
 
+def push_email_messages(
+    database_path: Path,
+    messages: list[dict[str, Any]],
+    *,
+    backfill_semantic: bool = True,
+) -> GmailSyncResult:
+    """Source-owned entry point for the MCP Gmail push-ingest: upsert the
+    caller-provided messages, then (by default) project them into the semantic
+    index. The MCP tool uses this so it no longer imports the leaf
+    ingest_email_messages / backfill_semantic_documents directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2). The email-scoped backfill stays
+    inline here until Phase 3 makes the `semantic` stage the single writer.
+    """
+    result = ingest_email_messages(database_path, messages)
+    if backfill_semantic:
+        from rebalance.ingest.semantic_index import backfill_semantic_documents
+        backfill_semantic_documents(database_path, source_types=["email"])
+    return result
+
+
 def ingest_email_messages(
     database_path: Path,
     messages: list[dict[str, Any]],
