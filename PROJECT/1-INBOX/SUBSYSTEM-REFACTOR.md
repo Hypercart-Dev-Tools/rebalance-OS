@@ -3,13 +3,14 @@ title: Subsystem Refactor Plan
 status: in-progress
 doc_type: project-plan
 owner: Noel Saw
-last_updated: 2026-06-10
+last_updated: 2026-06-11
 priority_order:
   - config-auth-path
   - pulse-dashboard-web
   - query-retrieval
   - scheduler-launchd
   - onboarding-registry
+  - welcome-agent
 rollout_rule: each phase must leave the full system runnable end-to-end
 branch: feat/subsystem-refactor
 branch_convention: single branch, one clean commit per phase close
@@ -17,7 +18,7 @@ branch_convention: single branch, one clean commit per phase close
 
 | Most recently completed phase | What's next |
 |---|---|
-| Phase 4 complete (v0.36.0): `SCHEDULER.md` policy table covers the full 10-job launchd fleet (incl. previously untracked `obsidian-rollover`); wrappers share `scripts/lib/scheduler_common.sh`, installers share `scripts/lib/install_common.sh` (always-unload, plutil -lint, poll-verify); 17 hermetic conformance tests in `tests/test_scheduler_policy.py` (caught 2 invalid-XML templates); all 7 live plists render byte-identical; both Phase-1 deferred items closed (`config.py` module-level import, `sys.path.insert` 7→1 via `scripts/_bootstrap.py`). 808 tests passing (1 pre-existing env-dependent figma failure). | Phase 5: Onboarding, Registry, and Inference — separate registry persistence from heuristic inference; canonical project schema boundary; end-to-end onboarding tests. |
+| Phase 4 complete (v0.36.0): `SCHEDULER.md` policy table covers the full 10-job launchd fleet (incl. previously untracked `obsidian-rollover`); wrappers share `scripts/lib/scheduler_common.sh`, installers share `scripts/lib/install_common.sh` (always-unload, plutil -lint, poll-verify); 17 hermetic conformance tests in `tests/test_scheduler_policy.py` (caught 2 invalid-XML templates); all 7 live plists render byte-identical; both Phase-1 deferred items closed (`config.py` module-level import, `sys.path.insert` 7→1 via `scripts/_bootstrap.py`). 808 tests passing (1 pre-existing env-dependent figma failure). | Phase 5: Onboarding, Registry, and Inference — separate registry persistence from heuristic inference; canonical project schema (incl. discovery provenance); extend `onboarding_status` into the lifecycle status contract. Phase 5 is deliberately shaped so Phase 6 (Welcome Agent) sits on top without rework. |
 
 ## Table of Contents
 
@@ -31,8 +32,9 @@ branch_convention: single branch, one clean commit per phase close
 8. [Phase 3 - Query, Retrieval, and Synthesis](#phase-3---query-retrieval-and-synthesis)
 9. [Phase 4 - Scheduler and Launchd Orchestration](#phase-4---scheduler-and-launchd-orchestration)
 10. [Phase 5 - Onboarding, Registry, and Inference](#phase-5---onboarding-registry-and-inference)
-11. [Cross-Phase Risks](#cross-phase-risks)
-12. [Definition of Done](#definition-of-done)
+11. [Phase 6 - Welcome Agent and Guided Onboarding](#phase-6---welcome-agent-and-guided-onboarding)
+12. [Cross-Phase Risks](#cross-phase-risks)
+13. [Definition of Done](#definition-of-done)
 
 ## Executive Summary
 
@@ -70,6 +72,8 @@ These are explicit non-targets. If a task would require doing any of these to ma
 - **No flag-day migrations.** Every phase must leave the system runnable end-to-end. If a phase requires a simultaneous cutover across multiple subsystems to work, it has been scoped incorrectly.
 - **No broad renaming or reorganization.** Narrow seam extraction and contract stabilization are the tools here. Repo-wide file moves or rename passes are out of scope unless a specific seam forces it.
 - **No "while we're in here" cleanup.** Spotted a debt item that isn't a blocker for the seam being extracted? Log it, don't fix it mid-phase. Opportunistic cleanup silently expands diffs and makes rollback harder.
+
+Scope note: these anti-goals govern the refactor phases (1–5). Phase 6 (Welcome Agent) is the one explicitly scoped **feature** phase in this plan — "no new product scope" is replaced there by its bounded deliverable list; every other anti-goal still applies to it.
 
 ## Scope
 
@@ -395,7 +399,9 @@ Phase-4 QA notes: `tests/test_pulse_server_figma.py::test_adds_new_key_and_retur
 
 ## Phase 5 - Onboarding, Registry, and Inference
 
-Goal: consolidate project discovery, confirmation, registry persistence, and priority/inference logic into clearer contracts.
+Goal: consolidate project discovery, confirmation, registry persistence, and priority/inference logic into clearer contracts — shaped explicitly so the Phase 6 welcome agent can sit on top of them without rework.
+
+Still a refactor phase: no new UX ships here. What changes versus the original Phase 5 sketch is that the contracts now name the things the welcome agent will need: lifecycle stages with a status vocabulary, a discovery-provenance field in the project schema, and `onboarding_status` as the machine-readable "where am I" source of truth.
 
 System state at phase completion:
 
@@ -405,17 +411,19 @@ System state at phase completion:
 - no user loses the ability to onboard or refresh projects mid-refactor
 
 - [ ] Define the project-lifecycle contract:
-  observable result: one map for discovery, review, confirmation, persistence, inference, and prioritization stages.
+  observable result: one machine-readable map of the lifecycle stages — discovery → review → confirmation ("promote") → persistence → inference → prioritization — with a status vocabulary (`done` / `now` / `next` / `blocked`) per stage. This map is the contract the Phase 6 welcome agent walks; it must be queryable without an LLM.
 - [ ] Separate durable registry writes from heuristic inference:
-  observable result: registry persistence is clearly isolated from project guessing/classification logic.
+  observable result: registry persistence is clearly isolated from project guessing/classification logic. Nothing writes the registry except explicit confirmation — re-running discovery is always safe, which is what makes Phase 6's conversational exploration non-destructive.
 - [ ] Reduce duplicate project-shape normalization:
-  observable result: onboarding, preflight, and registry code use one canonical project dict/schema boundary.
+  observable result: onboarding, preflight, and registry code use one canonical project dict/schema boundary, including a discovery-provenance field (`remote-activity` today; `local-scan` reserved for Phase 6's git-pulse promotion) so local discovery lands later without schema churn.
 - [ ] Clarify priority and classifier ownership:
-  observable result: rules, learned heuristics, and operator overrides each have one obvious home.
+  observable result: rules, learned heuristics, and operator overrides each have one obvious home; overrides always win and survive refresh — a promoted or demoted project never silently reverts to an inferred value.
+- [ ] Extend `onboarding_status` into the canonical lifecycle status contract:
+  observable result: `onboarding_status` reports every lifecycle stage — including vault path, GitHub PAT, and the optional Calendar/Gmail auth steps — with done/now/next/blocked status and a remediation hint per blocked step. Pure contract work on an existing tool; no new UX in this phase.
 - [ ] Add end-to-end onboarding tests around the chosen boundary:
-  observable result: tests cover `run_preflight` → `confirm_projects` → `list_projects` with stable contracts.
+  observable result: tests cover `run_preflight` → `confirm_projects` → `list_projects` with stable contracts, plus status-contract tests asserting the stage map, status vocabulary, and provenance field.
 - [ ] Update onboarding docs after the contract cleanup:
-  observable result: the setup narrative matches the actual registry/inference architecture.
+  observable result: the setup narrative matches the actual registry/inference architecture and names the lifecycle stages Phase 6 will surface.
 
 ### QA Checklist
 <!-- phase-qa -->
@@ -430,6 +438,81 @@ System state at phase completion:
 - [ ] Inference or classification changes do not implicitly mutate durable registry state
 - [ ] `run_preflight → confirm_projects → list_projects` end-to-end path is covered by tests using stable contracts
 - [ ] Operator override rules have one canonical home — not re-derived in preflight, registry, or MCP tool layers
+- [ ] Lifecycle map and statuses are machine-readable without an LLM — a host agent renders "where am I / what's next" from one `onboarding_status` call
+- [ ] Canonical project schema carries discovery provenance — remote-activity and (future) local-scan candidates are distinguishable end to end
+
+## Phase 6 - Welcome Agent and Guided Onboarding
+
+Goal: ship a first-class guided setup experience — a welcome agent that walks a new user from clone to first rendered pulse, executing every step itself, with the operator always able to see what's done, what's happening now, and what's next.
+
+**This is a feature phase, not a refactor phase.** It builds strictly on the Phase 5 lifecycle contract and must not reopen Phase 1–5 seams. The refactor anti-goals apply except "no new product scope," which is replaced by the deliverable list below — anything not on it gets logged, not built.
+
+**Form (locked 2026-06-11): three clients of one state machine.**
+
+| Surface | Role |
+|---|---|
+| MCP lifecycle tools (`onboarding_status` + step executors) | Single source of truth for setup state (done/now/next/blocked per stage). Host-agnostic; queryable without an LLM; survives `/clear`, crashes, and days-long gaps. |
+| `/welcome` skill (Claude Code) | Conversational front end. Reads the state machine each turn, executes each step's commands itself, asks only real decisions (OAuth consent, promote/skip). |
+| `rebalance onboard` CLI | No-LLM parity fallback covering the same stages, extended to optional auth steps and scheduler install. |
+
+**The journey (state-machine stages the agent walks):**
+
+1. Prerequisites — venv, package install, doctor baseline
+2. Vault path — set and verified
+3. GitHub PAT — stored keyring-first, validated against the API
+4. Google Calendar — optional, skippable, re-enterable later via the same flow
+5. Gmail — optional, skippable, re-enterable later via the same flow
+6. Discovery — remote GitHub activity bands (6.1 adds local git-pulse scan, provenance `local-scan`)
+7. Review & promote — "we discovered these repos — promote them to monitored?"; `confirm_projects` is the only registry write
+8. Initial refresh — `refresh_index`, per-source errors surfaced with remediation hints
+9. Graduation — install the launchd fleet via the Phase 4 installers, render the first pulse, hand over the SCHEDULER.md runbook
+
+**UX requirements (the bar):**
+
+- Agent does everything: the human only clicks OAuth consent screens and answers promote/skip decisions — zero copy-pasted commands.
+- "Where am I" is always answerable: the stage list with statuses renders from one tool call, at any point, in any session.
+- Every step verifies, not just runs: validation is the step's exit condition (token round-trip, OAuth probe, pulse actually renders).
+- Secrets posture: tokens are never echoed into the transcript; keyring-first storage; the agent passes secrets via env/stdin, never as chat literals.
+- Skippable and re-enterable: optional steps can be skipped and added later through the same entry point ("you skipped Calendar — want to add it now?").
+- Start-over exists: a documented, scripted reset returns the machine to a pre-onboarding state without touching the vault.
+- Time-to-first-pulse is the success metric: a new user on a clean machine reaches a rendered pulse in one guided session.
+
+System state at phase completion:
+
+- a brand-new user completes clone → first pulse through `/welcome` alone
+- every stage is resumable, verifiable, and visible via `onboarding_status`
+- existing operators are unaffected (all current entry points keep working)
+
+- [ ] Ship the `/welcome` skill:
+  observable result: a checked-in skill that fronts the state machine, executes steps itself, never echoes secrets; a demo transcript committed as the UX reference.
+- [ ] Cover every stage with an agent-runnable executor:
+  observable result: existing MCP tools reused where they exist (`setup_github_token`, `run_preflight`, `confirm_projects`, `refresh_index`); Calendar/Gmail OAuth scripts wrapped so the agent can launch and verify them; graduation drives the Phase 4 installers.
+- [ ] CLI parity:
+  observable result: `rebalance onboard` covers the same stages including optional auth and scheduler install, rendering the same status map.
+- [ ] Promote local repo discovery (6.1):
+  observable result: the git-pulse local scanner graduates from `experimental/` into the candidate pipeline; local candidates carry provenance `local-scan`; the promote flow is identical for remote and local candidates.
+- [ ] Surface unpushed work as an ongoing signal:
+  observable result: unpushed local commits appear as a pulse/doctor signal ("3 commits on feat/x not pushed in 9 days") — continuous monitoring, not a one-time onboarding check.
+- [ ] Ship the reset path:
+  observable result: `rebalance reset` (or a documented script) unloads launchd jobs and clears registry/config — keyring entries enumerated, vault untouched — verified by re-running `/welcome` afterward.
+- [ ] End-to-end walkthrough test:
+  observable result: a hermetic sandbox test drives the state machine clone → first pulse with mocked OAuth/network; runs in CI; time-to-first-pulse recorded in the phase close notes.
+- [ ] Rewrite onboarding docs around the agent:
+  observable result: README Getting Started leads with `/welcome`; manual steps move to an appendix; PROJECT.md's deferred-UX note is updated.
+
+### QA Checklist
+<!-- phase-qa -->
+- [ ] DRY: stage definitions live only in the lifecycle contract — skill, CLI, and tools render the same map and never re-declare stages
+- [ ] S (Single Responsibility): state machine = state; executors = actions; skill/CLI = presentation
+- [ ] O (Open/Closed): adding a stage = one lifecycle-map entry + one executor; skill and CLI pick it up without edits
+- [ ] L (Liskov): no subtype narrows the step-executor contract (skipped optional steps report `skipped`, never throw)
+- [ ] I (Interface Segregation): hosts that skip optional stages are not forced to implement or stub them
+- [ ] D (Dependency Inversion): skill and CLI depend on the status contract, not on each other or on script internals
+- [ ] Observability: every step execution emits a structured event (reuse the auth/job-lifecycle stream); failures carry remediation hints
+- [ ] Secrets: an automated test asserts no secret value can appear in skill/CLI output paths
+- [ ] Resumability: tests kill the flow at every stage boundary and assert status resumes correctly
+- [ ] Host-agnostic: the status map renders in a non-Claude MCP host (no skill dependency in the state machine)
+- [ ] Time-to-first-pulse measured on a clean sandbox and recorded in the phase close notes
 
 ## Cross-Phase Risks
 
@@ -448,6 +531,12 @@ System state at phase completion:
 - `Semantic-index churn`
   Read-side and pulse/web work will brush against semantic search, but the plan should avoid broadening semantic-index internals unless a narrow blocker demands it.
 
+- `Feature-phase drift`
+  Phase 6 is the only feature phase in this plan. Its deliverable list is the scope boundary — "while we're building the agent" additions (new ingest sources, GUI work, telemetry platforms) get logged for a future plan, not built.
+
+- `Contract built before its consumer`
+  Phase 5 defines contracts (lifecycle map, provenance, status vocabulary) whose first real consumer is Phase 6. If Phase 6 is deferred long, validate the contracts against a thin spike before declaring Phase 5 done — an unconsumed contract is a guess.
+
 ## Definition of Done
 
 - [ ] Each subsystem phase leaves the repo runnable end to end.
@@ -458,3 +547,4 @@ System state at phase completion:
 - [ ] `onboarding/registry` persistence and inference responsibilities are separated cleanly enough to test independently.
 - [ ] New tests added during the rollout catch contract drift at the subsystem seam, not just inside leaf functions.
 - [ ] The refactor reduces duplication and ambiguity without forcing a flag day for operators.
+- [ ] A new user reaches a rendered first pulse through one guided `/welcome` session — with auth setup (PAT, optional Calendar/Gmail), repo promotion, and scheduler install handled by the agent, and "where am I / what's next" queryable at every step.
