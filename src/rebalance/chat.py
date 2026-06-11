@@ -24,6 +24,10 @@ from typing import Any, Callable
 SCOPES = ("all", "work", "code")
 
 from rebalance.paths import resolve_project_root
+from rebalance.ingest.semantic_index import (  # noqa: E402
+    WORK_SOURCES,
+    scope_to_sources as _semantic_sources_for_scope,
+)
 _REPO_ROOT = resolve_project_root(Path(__file__))
 ASK_SELF_TIMEOUT_SECONDS = 60
 
@@ -40,18 +44,6 @@ def _citation_from_semantic(row: dict[str, Any]) -> dict[str, Any]:
         "score": row.get("similarity_score"),
         "kind": row.get("doc_kind") or "",
     }
-
-
-WORK_SOURCES = ("vault", "github", "email")
-
-
-def _semantic_sources_for_scope(scope: str) -> list[str]:
-    """Which native semantic_index source_types to query for a scope."""
-    if scope == "work":
-        return list(WORK_SOURCES)
-    if scope == "code":
-        return ["code"]
-    return [*WORK_SOURCES, "code"]  # all
 
 
 def _default_semantic_query(

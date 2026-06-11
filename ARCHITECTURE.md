@@ -282,13 +282,29 @@ Every source is incremental, but the meaning of "incremental" depends on what th
 
 All consumers read from the same SQLite file. The query layer is source-agnostic.
 
+**Read-side ownership model (Phase 3, Option C):**
+
+| Surface | Role | Owner |
+|---|---|---|
+| `semantic_query()` MCP tool | Unified raw retrieval primitive | `semantic_index.query()` — owns source vocabulary, freshness, hybrid RRF |
+| `chat_with_data()` | Citations-first interactive retrieval | `chat.py` — owns scope aliases (`work`/`code`/`all`), citation shaping; delegates retrieval to `semantic_index` |
+| `ask()` | Broad mixed-context synthesis/orchestration | `querier.py` — owns project/calendar/temporal framing; not the canonical retrieval primitive |
+| `query_notes()`, `query_github_context()` | Legacy per-source lookups | Facades over older per-source indexes; use `semantic_query()` for new work |
+
 ```
 SQLite @ $REBALANCE_DB
    │
-   ├──▶ querier.py::ask()          ── semantic + keyword recall across vault,
-   │                                   GitHub corpus, calendar, project registry,
-   │                                   vault activity, temporal context
-   │                                   (optionally synthesized by local Qwen3)
+   ├──▶ semantic_index.query()     ── unified raw retrieval primitive
+   │    (MCP: semantic_query)          source vocab + hybrid RRF
+   │         │
+   │         ├──▶ chat_with_data() ── citations-first presentation layer
+   │         │    (dashboard /api/chat)  scope aliases, citation shaping
+   │         │
+   │         └──▶ ask() (partial)  ── contributes to synthesis context
+   │
+   ├──▶ querier.py::ask()          ── broad orchestrator: gathers project,
+   │    (MCP: ask, CLI: ask)           calendar, temporal + semantic signals;
+   │                                   synthesizes via local Qwen3 (optional)
    │
    ├──▶ daily_report.py /          ── per-day / per-week calendar rollups
    │    weekly_report.py              with project classification
@@ -303,7 +319,7 @@ SQLite @ $REBALANCE_DB
                                        to Claude Code, Claude Desktop, etc.
 ```
 
-`querier.py` is the central orchestrator. A single `ask()` call:
+`querier.py` is the synthesis orchestrator (not the retrieval primitive). A single `ask()` call:
 
 1. **Gathers context** from all sources in parallel-ready functions:
    - `_gather_project_context()` — registry entries + repos map

@@ -15,7 +15,13 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         Embeds the query using the same model used for indexing, then
         runs ANN search to find the most similar chunks.
         Requires: `rebalance ingest notes` + `rebalance ingest embed`.
+
+        FACADE: delegates to the legacy vault-only embeddings index
+        (embedder.query_similar / embeddings table). Preserved for backward
+        compatibility. For cross-source ranked retrieval, prefer semantic_query()
+        with sources=["vault"] instead.
         """
+        # FACADE: delegates to embedder.query_similar (legacy vault-only index)
         from rebalance.ingest.embedder import query_similar
         return query_similar(database_path=database_path, query_text=query, top_k=top_k)
 
@@ -38,7 +44,13 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         Searches synced issues, pull requests, comments, reviews, and commit
         messages that have already been ingested into SQLite and embedded with
         the local model.
+
+        FACADE: delegates to the legacy GitHub-only embeddings index
+        (github_knowledge.query_github_documents / github_embeddings table).
+        Preserved for backward compatibility. For cross-source ranked retrieval,
+        prefer semantic_query() with sources=["github"] instead.
         """
+        # FACADE: delegates to github_knowledge.query_github_documents (legacy github-only index)
         from rebalance.ingest.github_knowledge import query_github_documents
 
         return query_github_documents(

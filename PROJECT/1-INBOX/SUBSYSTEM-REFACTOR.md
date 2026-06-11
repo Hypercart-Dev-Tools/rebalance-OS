@@ -17,7 +17,7 @@ branch_convention: single branch, one clean commit per phase close
 
 | Most recently completed phase | What's next |
 |---|---|
-| Phase 2 complete: glyph constants extracted to `web_components.KIND_GLYPHS/ITEM_SUB_GLYPHS`; `Focus5HideRequest` publicised in `web.py`, duplicate in `pulse_server.py` removed; `test_web_surface.py` added (17 tests). 59 total contract tests passing; INV 1-5 and 7-8 green. | Phase 3: Query, Retrieval, and Synthesis — clarify read-side ownership: `semantic_query`, `ask()`, `chat_with_data`, legacy note/GitHub queries. |
+| Phase 3 complete: Option C ownership model locked; `normalize_sources` + `scope_to_sources`/`WORK_SOURCES` extracted to `semantic_index.py`; `chat.py` and `cli/semantic.py` delegate to the canonical owner; legacy facades marked in `retrieval.py`; 28 contract tests added (791 total passing). `ARCHITECTURE.md` read-side diagram updated. | Phase 4: Scheduler and Launchd Orchestration — consolidate shell scripts, plist templates, and installer behavior; resolve lazy-import smell in `config.py` (Phase 1 deferred item). |
 
 ## Table of Contents
 
@@ -327,16 +327,16 @@ System state at phase completion:
 
 - [x] Define the read-side contract map:
   observable result: ownership table above — `semantic_query` (retrieval), `chat_with_data` (citations presentation), `ask` (synthesis/orchestration), legacy tools (facades). Locked before implementation begins.
-- [ ] Extract shared source-normalization helper:
-  observable result: one implementation of semantic source vocabulary — `semantic_index.py:86-110` is the owner; `cli/semantic.py:16-36` and `chat.py:22-61` both delegate to it instead of re-deriving.
-- [ ] Extract shared scope-alias helper:
-  observable result: one mapping of product scopes (`work`, `code`, `all`) to semantic sources; `chat_with_data` imports it rather than owning an independent vocabulary.
-- [ ] Mark legacy surfaces as facades in code:
-  observable result: `query_notes()` and `query_github_context()` carry a `# FACADE` comment and a test that asserts delegation; no new behavior is added to these surfaces.
-- [ ] Add contract tests for canonical read paths:
-  observable result: tests prove `semantic_query` owns retrieval semantics and `ask()` does not silently redefine them; `chat_with_data` contract test proves it delegates to shared helpers.
-- [ ] Update architecture docs for the locked ownership model:
-  observable result: `ARCHITECTURE.md` and MCP docs distinguish retrieval, presentation, and synthesis surfaces using the Option C table.
+- [x] Extract shared source-normalization helper:
+  observable result: `_normalize_sources` renamed to `normalize_sources` (public) in `semantic_index.py`; `cli/semantic.py` delegates to it via `normalize_sources(normalized)` + `ValueError` → `typer.BadParameter`; private alias kept for any internal callers not yet migrated.
+- [x] Extract shared scope-alias helper:
+  observable result: `WORK_SOURCES` and `scope_to_sources()` live in `semantic_index.py`; `chat.py` imports both — its `_semantic_sources_for_scope` is now `scope_to_sources` from semantic_index, verified by identity test (`assertIs`).
+- [x] Mark legacy surfaces as facades in code:
+  observable result: `query_notes()` and `query_github_context()` in `mcp/tools/retrieval.py` carry `FACADE:` in docstring and inline `# FACADE:` comment naming the delegate; `test_retrieval_contracts.py::LegacyFacadeMarkerTests` asserts the markers and delegate names.
+- [x] Add contract tests for canonical read paths:
+  observable result: `tests/test_retrieval_contracts.py` (28 tests) — `NormalizeSourcesContractTests`, `WorkSourcesAndScopeContractTests`, `ChatDelegationContractTests`, `LegacyFacadeMarkerTests`, `CliNormalizationDelegationTests`. All 28 pass.
+- [x] Update architecture docs for the locked ownership model:
+  observable result: `ARCHITECTURE.md` read-side ownership table and diagram updated to show Option C hierarchy: `semantic_index.query()` → `chat_with_data()` → `ask()`; legacy facades named.
 
 ### QA Checklist
 <!-- phase-qa -->
