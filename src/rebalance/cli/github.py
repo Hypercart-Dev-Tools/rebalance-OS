@@ -61,11 +61,7 @@ def github_scan(
     database: Path | None = DBOption(),
 ) -> None:
     """Fetch GitHub activity and persist to database for use by github_balance MCP tool."""
-    from rebalance.ingest.github_scan import (
-        filter_ignored_repo_activity,
-        scan_github,
-        upsert_github_activity,
-    )
+    from rebalance.ingest.github_scan import scan_and_store_github_activity
 
     try:
         db_path = resolve_database_path(database)
@@ -73,9 +69,7 @@ def github_scan(
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
     typer.echo(f"Scanning GitHub activity for last {days} days...")
-    result = scan_github(token=token, days=days)
-    skipped_repos = filter_ignored_repo_activity(result, get_github_ignored_repos())
-    upsert_github_activity(db_path, result)
+    result, skipped_repos = scan_and_store_github_activity(db_path, token=token, since_days=days)
     typer.echo(
         f"Done: login={result.login}, events={result.total_events}, "
         f"repos={len(result.repo_activity)}, skipped={len(skipped_repos)}, stored to {db_path}"
@@ -94,7 +88,7 @@ def github_sync_artifacts(
     database: Path | None = DBOption(),
 ) -> None:
     """Sync detailed GitHub issues, PRs, comments, reviews, checks, and releases."""
-    from rebalance.ingest.github_knowledge import sync_github_repo
+    from rebalance.ingest.github_knowledge import sync_github_artifacts
 
     # When the caller pins explicit --repo values, validate them against the
     # ignored list BEFORE resolving the DB. Catches "you told me to sync an
@@ -125,20 +119,21 @@ def github_sync_artifacts(
             "GitHub token not configured; attempting unauthenticated sync for explicit public repo targets."
         )
 
-    for repo in target_repos:
-        typer.echo(f"Syncing GitHub artifacts for {repo} ({days} days)...")
-        result = sync_github_repo(
-            database_path=db_path,
-            repo_full_name=repo,
-            token=resolved_token,
-            since_days=days,
-        )
-        typer.echo(
+    sync_github_artifacts(
+        db_path,
+        target_repos,
+        token=resolved_token,
+        since_days=days,
+        on_repo_start=lambda repo: typer.echo(
+            f"Syncing GitHub artifacts for {repo} ({days} days)..."
+        ),
+        on_repo_result=lambda repo, result: typer.echo(
             f"  synced branches={result.branches_synced}, issues={result.issues_synced}, prs={result.prs_synced}, "
             f"comments={result.comments_synced}, commits={result.commits_synced}, "
             f"checks={result.checks_synced}, docs={result.docs_built} "
             f"({result.elapsed_seconds}s)"
-        )
+        ),
+    )
 
 
 @app.command("github-embed")
@@ -150,7 +145,7 @@ def github_embed(
     force: bool = typer.Option(False, help="Force re-embed all GitHub documents"),
 ) -> None:
     """Generate embeddings for the local GitHub artifact corpus."""
-    from rebalance.ingest.github_knowledge import embed_github_documents
+    from rebalance.ingest.github_knowledge import refresh_github_embeddings
 
     try:
         db_path = resolve_database_path(database)
@@ -158,7 +153,7 @@ def github_embed(
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
     typer.echo(f"Embedding GitHub documents with {model} (batch_size={batch_size})...")
-    result = embed_github_documents(
+    result = refresh_github_embeddings(
         database_path=db_path,
         model_name=model,
         batch_size=batch_size,

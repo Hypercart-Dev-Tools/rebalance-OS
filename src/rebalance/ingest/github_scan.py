@@ -368,6 +368,27 @@ def resolve_working_token(primary_token: str) -> str:
         return primary_token
 
 
+def scan_and_store_github_activity(
+    database_path: Path,
+    *,
+    token: str,
+    since_days: int,
+    ignored_repos: list[str] | None = None,
+) -> tuple[GitHubScanResult, list[str]]:
+    """Source-owned entry point for the GitHub activity scan: scan -> filter
+    ignored repos -> upsert. CLI `github-scan` (and any collector) share this so
+    no surface imports the leaf scan_github / upsert_github_activity directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2). Returns (result, skipped_repos).
+    """
+    if ignored_repos is None:
+        from rebalance.ingest.config import get_github_ignored_repos
+        ignored_repos = get_github_ignored_repos()
+    result = scan_github(token=token, days=since_days)
+    skipped = filter_ignored_repo_activity(result, ignored_repos)
+    upsert_github_activity(database_path, result)
+    return result, skipped
+
+
 def scan_github(token: str, days: int = 30) -> GitHubScanResult:
     """
     Authenticate, fetch events, and return aggregated per-repo activity.
