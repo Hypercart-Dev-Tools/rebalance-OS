@@ -11,6 +11,8 @@ priority_order:
   - scheduler-launchd
   - onboarding-registry
 rollout_rule: each phase must leave the full system runnable end-to-end
+branch: feat/subsystem-refactor
+branch_convention: single branch, one clean commit per phase close
 ---
 
 | Most recently completed phase | What's next |
@@ -57,6 +59,18 @@ This rollout is designed so that **each phase can stop cleanly**. At the end of 
 - scheduled jobs still run
 - no user-facing surface is left half-migrated
 
+## Anti-Goals
+
+These are explicit non-targets. If a task would require doing any of these to make a phase work, that is a scope violation — stop, reassess, and split it out rather than expanding the phase to cover it.
+
+- **No semantic-index redesign.** `semantic_index.py` is still in active contract churn from the collector-path refactor. Broadening it here adds regression risk with no phase-gated benefit. Read-side and pulse/web work may brush against it but must not alter its internals.
+- **No collector registry redesign.** The collector registry was just restructured. This plan consolidates the subsystems that call it, not the registry itself.
+- **No new product scope for existing sources.** Sources already in production stay as-is. Refactoring a subsystem is not an opportunity to add ingest features.
+- **No scheduler replacement.** launchd stays. Policy consolidation and script cleanup are in scope; evaluating or introducing a new scheduler is not.
+- **No flag-day migrations.** Every phase must leave the system runnable end-to-end. If a phase requires a simultaneous cutover across multiple subsystems to work, it has been scoped incorrectly.
+- **No broad renaming or reorganization.** Narrow seam extraction and contract stabilization are the tools here. Repo-wide file moves or rename passes are out of scope unless a specific seam forces it.
+- **No "while we're in here" cleanup.** Spotted a debt item that isn't a blocker for the seam being extracted? Log it, don't fix it mid-phase. Opportunistic cleanup silently expands diffs and makes rollback harder.
+
 ## Scope
 
 This plan covers five subsystem families:
@@ -67,12 +81,7 @@ This plan covers five subsystem families:
 4. `Scheduler / launchd orchestration`
 5. `Project onboarding / registry / inference`
 
-This plan does not include:
-
-- a broad semantic-index redesign
-- redesigning the collector registry again
-- changing product scope for sources already in production
-- replacing launchd with another scheduler
+See [Anti-Goals](#anti-goals) above for a full list of explicit non-targets.
 
 ## Current Prioritization
 
@@ -169,6 +178,15 @@ Compatibility rule for this plan:
 
 ## Phase 0 - Architecture Spike
 
+**Branch:** `feat/subsystem-refactor` (single branch for the full rollout; one clean commit per phase close)
+
+**Ultracode workflow:** run in a new session with:
+```
+Workflow({ name: "phase-0-spike" })
+```
+Expected: 7 agents, 5–8 min, ~60–90k tokens. Output: `PROJECT/1-INBOX/PHASE-0-SPIKE.md`.
+Operator reviews PHASE-0-SPIKE.md and checks off the QA items before Phase 1 begins.
+
 Goal: lock subsystem boundaries, choose the first implementation slice, and define compatibility rules before moving files.
 
 System state at phase completion:
@@ -187,6 +205,20 @@ System state at phase completion:
   observable result: one list of end-to-end behaviors that must continue to work after every phase (`refresh_index`, MCP startup, scheduled syncs, dashboard render, doctor).
 - [ ] Identify the two highest-risk regressions per subsystem:
   observable result: a risk table used to decide where tests must land before edits.
+
+### QA Checklist
+<!-- phase-qa -->
+- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
+- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
+- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
+- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
+- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
+- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
+- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
+- [ ] Seam map validated against the actual codebase — entry points listed in the table exist and are reachable
+- [ ] Compatibility rules address wrapper-decay explicitly: a rule governs when temporary wrappers must be removed, not just that they may exist
+- [ ] Rollout invariants are machine-checkable — at least one automated smoke test per invariant exists or is scheduled before Phase 1 begins
+- [ ] Risk table includes mitigations, not just descriptions, for the two highest-risk regressions per subsystem
 
 ## Phase 1 - Config, Auth, and Path Resolution
 
@@ -210,6 +242,20 @@ System state at phase completion:
   observable result: tests prove that setup scripts and runtime readers point at the same resolved token locations.
 - [ ] Update operator docs for the final config/auth model:
   observable result: one source of truth describing where credentials and local settings live.
+
+### QA Checklist
+<!-- phase-qa -->
+- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
+- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
+- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
+- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
+- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
+- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
+- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
+- [ ] No behavior change in the diff — all existing auth flows resolve token paths identically before and after
+- [ ] Contract tests land before module movement, not after (verified by commit ordering)
+- [ ] `sys.path.insert()` count is reduced, not just relocated — measure before and after
+- [ ] Auth-source precedence chains are tested, not just documented
 
 ## Phase 2 - Pulse, Dashboard, and Web Surface
 
@@ -235,6 +281,20 @@ System state at phase completion:
 - [ ] Preserve current user-visible routes and controls during consolidation:
   observable result: no route or operator habit disappears without an explicit deprecation note.
 
+### QA Checklist
+<!-- phase-qa -->
+- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
+- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
+- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
+- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
+- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
+- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
+- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
+- [ ] No user-visible route or operator control removed without a deprecation note committed in the same phase
+- [ ] Refresh orchestration is testable in isolation — tests do not require a live HTTP server
+- [ ] No data-fetch or aggregation logic moves into the rendering layer (rendering stays pure presentation)
+- [ ] Third-party and subprocess calls flow through the shared rendering boundary, not scattered across entry-point scripts
+
 ## Phase 3 - Query, Retrieval, and Synthesis
 
 Goal: clarify the read-side architecture so semantic query, legacy source query, `ask()`, and chat-with-data are not overlapping without clear ownership.
@@ -259,6 +319,20 @@ System state at phase completion:
 - [ ] Document what remains legacy vs preferred:
   observable result: operator-facing docs can distinguish compatibility surfaces from preferred ones.
 
+### QA Checklist
+<!-- phase-qa -->
+- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
+- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
+- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
+- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
+- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
+- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
+- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
+- [ ] MCP retrieval tools accept the same documented scopes before and after — backward-compatible
+- [ ] Scope-normalization and result-shaping logic has exactly one implementation; CLI and MCP wrappers reference it, not re-derive it
+- [ ] `ask()` and `semantic_query` ownership is documented and non-overlapping — no caller depends on both for the same use case
+- [ ] Legacy compatibility surfaces are marked as facades in the code (not just in docs) and tested as such
+
 ## Phase 4 - Scheduler and Launchd Orchestration
 
 Goal: consolidate scheduler policy so shell scripts, plist templates, installers, and docs share the same behavior model.
@@ -281,6 +355,20 @@ System state at phase completion:
   observable result: scripts that rely on semantic freshness or derived stages encode that intentionally rather than by accident.
 - [ ] Update scheduler docs and runbooks:
   observable result: docs match the live launchd behavior exactly.
+
+### QA Checklist
+<!-- phase-qa -->
+- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
+- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
+- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
+- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
+- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
+- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
+- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
+- [ ] No scheduled job silently loses its cadence — launchd plist diff reviewed explicitly before and after each installer change
+- [ ] Scheduler policy table is the single source of truth; any plist or script diverging from it is a bug
+- [ ] Smoke tests run hermetically without a live launchd environment (no `launchctl` calls in CI)
+- [ ] Freshness-sensitive follow-on stages have explicit, testable preconditions in the script, not just in comments
 
 ## Phase 5 - Onboarding, Registry, and Inference
 
@@ -305,6 +393,20 @@ System state at phase completion:
   observable result: tests cover `run_preflight` → `confirm_projects` → `list_projects` with stable contracts.
 - [ ] Update onboarding docs after the contract cleanup:
   observable result: the setup narrative matches the actual registry/inference architecture.
+
+### QA Checklist
+<!-- phase-qa -->
+- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
+- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
+- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
+- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
+- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
+- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
+- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
+- [ ] Registry persistence is testable without running inference — isolated unit tests cover write/read without classification logic
+- [ ] Inference or classification changes do not implicitly mutate durable registry state
+- [ ] `run_preflight → confirm_projects → list_projects` end-to-end path is covered by tests using stable contracts
+- [ ] Operator override rules have one canonical home — not re-derived in preflight, registry, or MCP tool layers
 
 ## Cross-Phase Risks
 
