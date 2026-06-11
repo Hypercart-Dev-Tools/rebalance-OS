@@ -240,7 +240,7 @@ def calendar_sync_cmd(
     days_forward: int = typer.Option(7, help="Days forward to fetch"),
 ) -> None:
     """Sync Google Calendar events to SQLite for historical queries."""
-    from rebalance.ingest.calendar import sync_calendar
+    from rebalance.ingest.calendar import refresh_calendar_source
     from rebalance.ingest.calendar_config import CalendarConfig
 
     if not calendar_id:
@@ -253,7 +253,7 @@ def calendar_sync_cmd(
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
     typer.echo(f"Syncing calendar '{calendar_id}' ({days_back} days back, {days_forward} days forward)...")
-    result = sync_calendar(
+    result = refresh_calendar_source(
         database_path=db_path,
         calendar_id=calendar_id,
         days_back=days_back,

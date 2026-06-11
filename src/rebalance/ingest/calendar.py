@@ -162,6 +162,31 @@ from rebalance.ingest.db import ensure_calendar_schema  # noqa: F401
 # ---------------------------------------------------------------------------
 
 
+def refresh_calendar_source(
+    database_path: Path,
+    *,
+    calendar_id: str = "",
+    days_back: int = 30,
+    days_forward: int = 7,
+) -> CalendarSyncResult:
+    """Source-owned entry point for the calendar sync.
+
+    Resolves the calendar id (explicit arg, else ``CalendarConfig``) and runs
+    :func:`sync_calendar`. The CLI (`calendar-sync`) and the `calendar` collector
+    share this so no surface imports the leaf ``sync_calendar`` directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2).
+    """
+    from rebalance.ingest.calendar_config import CalendarConfig
+
+    resolved = calendar_id or CalendarConfig.load().calendar_id
+    return sync_calendar(
+        database_path=database_path,
+        calendar_id=resolved,
+        days_back=days_back,
+        days_forward=days_forward,
+    )
+
+
 def sync_calendar(
     database_path: Path,
     *,
