@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Code & docs search now uses Gemini embeddings.** The code-intelligence
+  search index was rebuilt on a higher-quality Gemini embedding model instead of
+  the local model, improving retrieval relevance. Trade-off: querying it now
+  requires the API key and the index is built per environment rather than shipped
+  prebuilt. The separate activity/data search index stays fully local by design.
+- **A full "all" refresh now means all raw incoming sources.** Refreshing "all"
+  covers the raw sources (calendar, GitHub, vault notes, Slack reminders, email);
+  the derived search-projection and export steps run as named follow-on stages of
+  the default full refresh. A no-argument refresh still does everything, so
+  scheduled and daily syncs are unchanged. Also fixed a latent bug where an
+  unscoped refresh could skip vault notes.
+- **Every data source is now explicitly classified.** Raw sources, local scans,
+  the search-projection stage, and the export stage are modeled distinctly instead
+  of being treated as interchangeable peers — clearer refresh behavior and a guard
+  against future drift.
+- **Unified the data write paths.** All command-line and assistant-facing
+  data-write operations now flow through a single owned path per source instead of
+  calling low-level ingest functions directly, so behavior stays consistent across
+  the CLI, the assistant tools, and scheduled syncs. Behavior is preserved and is
+  protected by an automated check that fails the build if a new bypass is added.
+
 ### Added
 
 - **Sleuth reminder graph page (`/sleuth-graph`).** Cytoscape.js force-directed
