@@ -6,6 +6,26 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.33.0] - 2026-06-10
+
+### Changed
+
+- **Semantic projection is now stage-owned (single writer).** The `semantic`
+  collector is the sole writer of `semantic_documents` and `semantic_embeddings`.
+  Per-source `_refresh_*` functions no longer call `backfill_semantic_documents`
+  or `embed_pending` inline — sources write their raw tables only; the `semantic`
+  stage handles all projection and embedding as a follow-on step. This fixes the
+  email-never-embedded gap and makes semantic freshness predictable: documents
+  become searchable on the next `semantic` run (included in every default recipe).
+- **`semantic` stage now covers all five sources.** `_ALL_SEMANTIC_SOURCES =
+  ["vault","github","email","code","figma"]` — the semantic stage projects the
+  full set, including `code` (previously only run when the code collector ran) and
+  `figma` (via the registry-driven provider path).
+- **`include_semantic` parameter removed from `refresh_index` and `_refresh_github`.**
+  Semantic work is no longer an opt-out flag on individual source refreshes; it
+  runs as its own stage. Passing `include_semantic` was previously the only way to
+  skip it — use `scope=["github"]` (without `"semantic"`) for source-only refreshes.
+
 ## [0.32.0] - 2026-06-10
 
 ### Changed

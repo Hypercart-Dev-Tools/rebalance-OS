@@ -14,7 +14,7 @@ surfaces:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 2 complete (2026-06-10):** every CLI/MCP write surface now routes through a source-owned helper (sleuth / calendar / github×3 / vault / gmail-push / semantic-maintenance) — zero leaf-ingest bypasses, and the no-bypass contract test is **ENFORCED** (xfail removed). Reframed mid-flight as helper-extraction (a workflow's adversarial pass found `refresh_index` routing was *not* behavior-preserving). Commits `65abdee`, `6e8b5c6`, `a488511`, `f5c8a29`, `50765e9`. | **Phase 3:** unify semantic projection ownership — make the `semantic` stage the single writer of `semantic_documents`/`semantic_embeddings` (sources stop calling backfill/embed); flips the last xfail (`test_semantic_projection_is_single_writer`) green and fixes the email-embed gap. |
+| **Phase 3 complete (2026-06-10):** `semantic` is now the single writer of `semantic_documents`/`semantic_embeddings`. All 7 inline `backfill_semantic_documents` and 5 `embed_pending` calls stripped from source `_refresh_*` functions; `_refresh_semantic_only` expanded to all 5 sources (`_ALL_SEMANTIC_SOURCES`). `test_semantic_projection_is_single_writer` flipped from xfail → GREEN; `include_semantic` parameter removed from `refresh_index` and `_refresh_github`. | **Phase 4:** portability contract cleanup — repo-local config, auth token paths, `parents[3]` assumptions, sibling-checkout, Obsidian write-back. |
 
 ## Table of Contents
 
@@ -305,18 +305,18 @@ Goal: Stop exposing leaf ingest functions as parallel user-facing write APIs.
 
 ## Phase 3 - Unify Semantic Projection Ownership
 
-Goal: Replace the current mixed semantic behavior with one explicit contract.
+**COMPLETE 2026-06-10** — `semantic` is now the single writer of `semantic_documents`/`semantic_embeddings`. Key changes: stripped 7 `backfill_semantic_documents` and 5 `embed_pending` calls from source `_refresh_*` functions; `_refresh_semantic_only` expanded to `_ALL_SEMANTIC_SOURCES = ["vault","github","email","code","figma"]` with `use_registry_providers=True`; `include_semantic` param removed from `refresh_index` and `_refresh_github`; `push_email_messages` in `gmail.py` cleaned up (backfill dropped); `test_semantic_projection_is_single_writer` xfail removed (strict GREEN). Tests updated: `test_email_ingest.py` dry-run assertion, `test_index_ops.py` github dry-run pair.
 
-- [ ] Decide whether semantic projection is synchronous with source ingest or staged after source ingest:
-  observable result: each source has a documented rule for when its documents become searchable.
-- [ ] Remove the hardcoded semantic source ladder where possible:
-  observable result: semantic-capable sources expose one provider/contract instead of requiring special-case branches in `semantic_index.py`.
-- [ ] Normalize source behavior for `vault`, `github`, `email`, and `figma`:
-  observable result: all semantic-capable sources follow the same projection lifecycle.
-- [ ] Define how non-semantic structured sources fit the model:
-  observable result: `calendar` and `sleuth` are explicitly documented as structured-only or upgraded intentionally with a semantic provider.
-- [ ] Make semantic-only maintenance a clearly separate operational stage if retained:
-  observable result: `semantic` is documented as a projection job, not a source.
+- [x] Decide whether semantic projection is synchronous with source ingest or staged after source ingest:
+  **Decision: staged.** Sources write their raw tables; the `semantic` stage owns all projection and embedding. Documents become searchable on the next `semantic` stage run (or the default recipe, which runs `semantic` as a follow-on stage).
+- [x] Remove the hardcoded semantic source ladder where possible:
+  `_refresh_semantic_only` now covers all 5 sources; `figma` uses the registry-driven provider path.
+- [x] Normalize source behavior for `vault`, `github`, `email`, and `figma`:
+  All four (plus `code`) follow the same lifecycle: source refresh writes raw tables only; semantic stage does all projection and embedding.
+- [x] Define how non-semantic structured sources fit the model:
+  `calendar` and `sleuth` are structured-only (no semantic rows) — unchanged by Phase 3.
+- [x] Make semantic-only maintenance a clearly separate operational stage if retained:
+  `semantic` collector is `kind="projection"`, documented as a projection job, and is the sole writer.
 
 ## Phase 4 - Portability Contract Cleanup
 

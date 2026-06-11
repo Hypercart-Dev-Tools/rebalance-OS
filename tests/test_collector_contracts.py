@@ -102,12 +102,13 @@ def test_default_refresh_recipe_preserves_follow_on_stages():
 
 
 # --- Decision B / Phase 3 — semantic projection is single-writer (stage-owned) -
-@pytest.mark.xfail(
-    reason="Phase 3: semantic projection not yet stage-owned (multiple backfill call sites)",
-    strict=False,
-)
 def test_semantic_projection_is_single_writer():
-    """Only the `semantic` stage may project/embed into the semantic tables."""
+    """Only the `semantic` stage may project/embed into the semantic tables.
+
+    _refresh_semantic_only is the single call site for both functions in index_ops.
+    Any new source that wants semantic coverage must add itself to _ALL_SEMANTIC_SOURCES,
+    NOT call backfill_semantic_documents / embed_pending inline.
+    """
     src = INDEX_OPS.read_text(encoding="utf-8")
     assert src.count("backfill_semantic_documents(") == 1
     assert src.count("embed_pending(") == 1

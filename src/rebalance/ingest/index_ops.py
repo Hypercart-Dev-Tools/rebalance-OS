@@ -45,7 +45,7 @@ class Collector:
     refresh:
         Callable executed for live runs. Receives ``(db_path, **opts)`` where
         ``opts`` includes every refresh_index kwarg the collector might want
-        (since_days, vault_path, token, repos, include_semantic, ...). Unknown
+        (since_days, vault_path, token, repos, ...). Unknown
         keys must be ignored. Must return a ``dict`` whose first key is
         ``"scope": "<name>"`` so the caller can correlate results.
     requires:
@@ -375,8 +375,6 @@ def _refresh_vault(
         "steps": [
             f"ingest_vault(vault={vault_path})",
             "embed_chunks()",
-            "semantic_backfill(source=['vault'])",
-            "semantic_embed(source=['vault'])",
         ]
     }
     if dry_run:
@@ -384,10 +382,6 @@ def _refresh_vault(
 
     from rebalance.ingest.note_ingester import ingest_vault
     from rebalance.ingest.embedder import embed_chunks
-    from rebalance.ingest.semantic_index import (
-        backfill_semantic_documents,
-        embed_pending,
-    )
 
     ingest_result = ingest_vault(
         vault_path=vault_path,
@@ -396,8 +390,6 @@ def _refresh_vault(
         dry_run=False,
     )
     embed_result = embed_chunks(database_path=database_path)
-    backfill = backfill_semantic_documents(database_path, source_types=["vault"])
-    sem_embed = embed_pending(database_path, source_types=["vault"])
 
     return {
         "scope": "vault",
@@ -416,19 +408,6 @@ def _refresh_vault(
             "embedded": embed_result.embedded_chunks,
             "skipped_unchanged": embed_result.skipped_unchanged,
             "elapsed_seconds": embed_result.elapsed_seconds,
-        },
-        "semantic_backfill": {
-            "total": backfill.total_documents,
-            "inserted": backfill.inserted_count,
-            "updated": backfill.updated_count,
-            "deleted": backfill.deleted_count,
-            "elapsed_seconds": backfill.elapsed_seconds,
-        },
-        "semantic_embed": {
-            "total": sem_embed.total_docs,
-            "embedded": sem_embed.embedded_docs,
-            "skipped_unchanged": sem_embed.skipped_unchanged,
-            "elapsed_seconds": sem_embed.elapsed_seconds,
         },
     }
 
@@ -601,7 +580,6 @@ def _refresh_github(
     since_days: int,
     repos: list[str],
     dry_run: bool,
-    include_semantic: bool = True,
 ) -> dict[str, Any]:
     initial_target_repos = _resolve_repos_for_refresh(database_path, repos)
     external_count = len(
@@ -612,15 +590,8 @@ def _refresh_github(
         f"github_scan(days={since_days})",
         f"sync_github_repo() x ~{len(initial_target_repos)} repos (after auto-discovery)",
         f"reconcile_watched_repo() x {external_count} external repos (rollup or purge)",
+        "embed_github_documents()",
     ]
-    if include_semantic:
-        plan_steps.extend([
-            "embed_github_documents()",
-            "semantic_backfill(source=['github'])",
-            "semantic_embed(source=['github'])",
-        ])
-    else:
-        plan_steps.append("skip semantic embedding")
     if dry_run:
         return {
             "scope": "github",
@@ -692,7 +663,10 @@ def _refresh_github(
         except Exception as e:  # noqa: BLE001 — one repo must not abort the run
             watched_activity.append({"repo": repo, "error": str(e)})
 
-    result: dict[str, Any] = {
+    from rebalance.ingest.github_knowledge import embed_github_documents
+
+    gh_embed = embed_github_documents(database_path=database_path)
+    return {
         "scope": "github",
         "dry_run": False,
         "pushed_repos_sync": {
@@ -711,45 +685,13 @@ def _refresh_github(
         },
         "artifact_sync": repo_results,
         "watched_activity": watched_activity,
-    }
-    if not include_semantic:
-        result["semantic"] = {
-            "skipped": True,
-            "reason": "include_semantic=False",
-        }
-        return result
-
-    from rebalance.ingest.github_knowledge import embed_github_documents
-    from rebalance.ingest.semantic_index import (
-        backfill_semantic_documents,
-        embed_pending,
-    )
-
-    gh_embed = embed_github_documents(database_path=database_path)
-    backfill = backfill_semantic_documents(database_path, source_types=["github"])
-    sem_embed = embed_pending(database_path, source_types=["github"])
-    result.update({
         "github_embed": {
             "total": gh_embed.total_docs,
             "embedded": gh_embed.embedded_docs,
             "skipped_unchanged": gh_embed.skipped_unchanged,
             "elapsed_seconds": gh_embed.elapsed_seconds,
         },
-        "semantic_backfill": {
-            "total": backfill.total_documents,
-            "inserted": backfill.inserted_count,
-            "updated": backfill.updated_count,
-            "deleted": backfill.deleted_count,
-            "elapsed_seconds": backfill.elapsed_seconds,
-        },
-        "semantic_embed": {
-            "total": sem_embed.total_docs,
-            "embedded": sem_embed.embedded_docs,
-            "skipped_unchanged": sem_embed.skipped_unchanged,
-            "elapsed_seconds": sem_embed.elapsed_seconds,
-        },
-    })
-    return result
+    }
 
 
 def _refresh_calendar(database_path: Path, *, since_days: int, dry_run: bool) -> dict[str, Any]:
@@ -792,29 +734,21 @@ def _refresh_sleuth(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
 
 
 def _refresh_code(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
-    """Refresh the native code corpus (source_type='code') from the source tree.
+    """Code projection into semantic_documents is owned by the semantic stage (Phase 3).
 
-    FTS-only: the AST collector + backfill keep ``semantic_documents`` and the
-    trigger-synced FTS index current. Embedding code chunks (the vector half) is
-    intentionally skipped here — the hybrid FTS already answers code questions,
-    and embedding ~1k chunks every refresh would be slow for little gain.
+    Running scope=['code'] alone is a no-op. The default recipe and
+    scope=['semantic'] both include code via _refresh_semantic_only.
     """
     if dry_run:
-        return {"scope": "code", "dry_run": True, "steps": ["semantic_backfill(source=['code'])"]}
-
-    from rebalance.ingest.semantic_index import backfill_semantic_documents
-
-    backfill = backfill_semantic_documents(database_path, source_types=["code"])
+        return {
+            "scope": "code",
+            "dry_run": True,
+            "steps": ["(code projection deferred to semantic stage)"],
+        }
     return {
         "scope": "code",
         "dry_run": False,
-        "semantic_backfill": {
-            "total": backfill.total_documents,
-            "inserted": backfill.inserted_count,
-            "updated": backfill.updated_count,
-            "deleted": backfill.deleted_count,
-            "elapsed_seconds": backfill.elapsed_seconds,
-        },
+        "note": "code projection runs in the semantic stage; use scope=['semantic'] to index code",
     }
 
 
@@ -841,18 +775,16 @@ def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
         return {
             "scope": "email",
             "dry_run": True,
-            "steps": ["sync_gmail()", "semantic_backfill(email)"],
+            "steps": ["sync_gmail()"],
         }
 
     from rebalance.ingest.gmail import GmailAuthError, sync_gmail
-    from rebalance.ingest.semantic_index import backfill_semantic_documents
 
     try:
         sync_result = sync_gmail(database_path=database_path)
     except GmailAuthError as exc:
         return {"scope": "email", "dry_run": False, "error": str(exc)}
 
-    semantic = backfill_semantic_documents(database_path, source_types=["email"])
     return {
         "scope": "email",
         "dry_run": False,
@@ -862,12 +794,6 @@ def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
         "messages_updated": sync_result.messages_updated,
         "query_filter": sync_result.query_filter,
         "elapsed_seconds": sync_result.elapsed_seconds,
-        "semantic_backfill": {
-            "total": semantic.total_documents,
-            "inserted": semantic.inserted_count,
-            "updated": semantic.updated_count,
-            "elapsed_seconds": semantic.elapsed_seconds,
-        },
     }
 
 
@@ -888,8 +814,6 @@ def _refresh_figma(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
             "file_keys": file_keys,
             "steps": [
                 f"sync_figma_comments(files={len(file_keys)})",
-                "semantic_backfill(source=['figma'], use_registry_providers=True)",
-                "semantic_embed(source=['figma'])",
             ],
         }
 
@@ -912,20 +836,12 @@ def _refresh_figma(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
         }
 
     from rebalance.ingest.figma import sync_figma_comments
-    from rebalance.ingest.semantic_index import (
-        backfill_semantic_documents,
-        embed_pending,
-    )
 
     sync_result = sync_figma_comments(
         database_path=database_path,
         file_keys=file_keys,
         token=token,
     )
-    backfill = backfill_semantic_documents(
-        database_path, source_types=["figma"], use_registry_providers=True
-    )
-    sem_embed = embed_pending(database_path, source_types=["figma"])
 
     return {
         "scope": "figma",
@@ -938,20 +854,12 @@ def _refresh_figma(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
         "comments_unchanged": sync_result.comments_unchanged,
         "errors": sync_result.errors,
         "elapsed_seconds": sync_result.elapsed_seconds,
-        "semantic_backfill": {
-            "total": backfill.total_documents,
-            "inserted": backfill.inserted_count,
-            "updated": backfill.updated_count,
-            "deleted": backfill.deleted_count,
-            "elapsed_seconds": backfill.elapsed_seconds,
-        },
-        "semantic_embed": {
-            "total": sem_embed.total_docs,
-            "embedded": sem_embed.embedded_docs,
-            "skipped_unchanged": sem_embed.skipped_unchanged,
-            "elapsed_seconds": sem_embed.elapsed_seconds,
-        },
     }
+
+
+# All sources that project into the unified semantic index. The semantic stage
+# is the single writer (Phase 3) — update this list when adding new sources.
+_ALL_SEMANTIC_SOURCES = ["vault", "github", "email", "code", "figma"]
 
 
 def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
@@ -959,17 +867,25 @@ def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, A
         return {
             "scope": "semantic",
             "dry_run": True,
-            "steps": ["semantic_backfill(all)", "semantic_embed(all)"],
+            "steps": [
+                f"semantic_backfill(sources={_ALL_SEMANTIC_SOURCES}, use_registry_providers=True)",
+                f"semantic_embed(sources={_ALL_SEMANTIC_SOURCES})",
+            ],
         }
     from rebalance.ingest.semantic_index import (
         backfill_semantic_documents,
         embed_pending,
     )
-    backfill = backfill_semantic_documents(database_path, source_types=["vault", "github", "email"])
-    sem_embed = embed_pending(database_path, source_types=["vault", "github", "email"])
+    backfill = backfill_semantic_documents(
+        database_path,
+        source_types=_ALL_SEMANTIC_SOURCES,
+        use_registry_providers=True,
+    )
+    sem_embed = embed_pending(database_path, source_types=_ALL_SEMANTIC_SOURCES)
     return {
         "scope": "semantic",
         "dry_run": False,
+        "sources": _ALL_SEMANTIC_SOURCES,
         "semantic_backfill": {
             "total": backfill.total_documents,
             "inserted": backfill.inserted_count,
@@ -1015,7 +931,6 @@ def _refresh_dashboard_note(
     from rebalance.ingest.note_builder import build_dashboard_note_content, write_dashboard_note
     from rebalance.ingest.embedder import embed_chunks
     from rebalance.ingest.note_ingester import ingest_vault
-    from rebalance.ingest.semantic_index import backfill_semantic_documents, embed_pending
 
     markdown = build_dashboard_note_content(
         database_path,
@@ -1026,8 +941,6 @@ def _refresh_dashboard_note(
     note_file = write_dashboard_note(output_path, markdown)
     ingest_result = ingest_vault(vault_path=vault_path, database_path=database_path)
     embed_result = embed_chunks(database_path=database_path)
-    backfill = backfill_semantic_documents(database_path, source_types=["vault"])
-    sem_embed = embed_pending(database_path, source_types=["vault"])
 
     return {
         "scope": "dashboard",
@@ -1048,19 +961,6 @@ def _refresh_dashboard_note(
             "skipped_unchanged": embed_result.skipped_unchanged,
             "elapsed_seconds": embed_result.elapsed_seconds,
         },
-        "semantic_backfill": {
-            "total": backfill.total_documents,
-            "inserted": backfill.inserted_count,
-            "updated": backfill.updated_count,
-            "deleted": backfill.deleted_count,
-            "elapsed_seconds": backfill.elapsed_seconds,
-        },
-        "semantic_embed": {
-            "total": sem_embed.total_docs,
-            "embedded": sem_embed.embedded_docs,
-            "skipped_unchanged": sem_embed.skipped_unchanged,
-            "elapsed_seconds": sem_embed.elapsed_seconds,
-        },
     }
 
 
@@ -1072,7 +972,6 @@ def refresh_index(
     since_days: int = 30,
     repos: list[str] | None = None,
     dry_run: bool = False,
-    include_semantic: bool = True,
     update_dashboard_note: bool = True,
 ) -> dict[str, Any]:
     """Run the configured ingest pipelines for ``scope`` and return a summary.
@@ -1139,7 +1038,6 @@ def refresh_index(
         "since_days": since_days,
         "repos": repos_list,
         "dry_run": dry_run,
-        "include_semantic": include_semantic,
     }
 
     # Bring the database schema to the latest version before any collector
@@ -1230,7 +1128,6 @@ def _github_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
         since_days=opts["since_days"],
         repos=opts.get("repos") or [],
         dry_run=opts["dry_run"],
-        include_semantic=opts.get("include_semantic", True),
     )
 
 

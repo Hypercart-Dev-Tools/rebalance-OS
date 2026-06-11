@@ -393,7 +393,8 @@ class RefreshEmailDryRunTests(unittest.TestCase):
         self.assertEqual(result["scope"], "email")
         self.assertTrue(result["dry_run"])
         self.assertIn("sync_gmail()", result["steps"])
-        self.assertIn("semantic_backfill(email)", result["steps"])
+        # Phase 3: semantic projection is now owned by the semantic stage, not the email collector
+        self.assertNotIn("semantic_backfill(email)", result["steps"])
 
     def test_dry_run_reports_mcp_mode(self) -> None:
         self._config_module.set_gmail_ingest_method("mcp")
