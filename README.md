@@ -93,6 +93,8 @@ Data sources
 
 The MCP server speaks standard JSON-RPC — no LLM-specific logic inside it. Any MCP-compatible client works without modification.
 
+The scheduled side of the diagram (the launchd fleet: daily/hourly syncs, pulse publishing, health checks) is governed by the policy table in [SCHEDULER.md](SCHEDULER.md) — job cadences, scopes, prerequisites, and the runbook live there.
+
 For layer roles, tool surface, server configuration, and host adapter setup (Claude Desktop, Cursor, VS Code, Continue), see **[MCP.md](./MCP.md)**.
 
 ---

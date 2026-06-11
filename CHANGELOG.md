@@ -6,6 +6,48 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.36.0] - 2026-06-11
+
+### Added
+
+- **Phase 4 scheduler consolidation — SCHEDULER.md policy table.** Single source
+  of truth for the 10-job launchd fleet (labels, cadences, scopes, prerequisites,
+  outputs), the intentional freshness model (vault-sync embeds semantically every
+  hour; github-sync defers semantic backfill to daily-sync), and the operator
+  runbook. Enforced hermetically by `tests/test_scheduler_policy.py` (17 tests:
+  plistlib template rendering, cadence/label/RunAtLoad conformance, wrapper policy
+  lines, installer flow, doc coverage — no `launchctl` anywhere).
+- **Shared launchd runtime** `scripts/lib/scheduler_common.sh`: env bootstrap,
+  per-day logs, job-lifecycle events, retention trimming — sourced by
+  `daily_sync.sh`, `vault_sync.sh`, `github_sync.sh`, `pulse_sync.sh`,
+  `pulse_web_sync.sh`, `pulse_server.sh` (each shrank to its policy payload).
+- **Shared installer flow** `scripts/lib/install_common.sh`: always-unload,
+  template render (`{{REBALANCE_DIR}}`/`{{PYTHON}}`/`{{HOME}}`), `plutil -lint`,
+  load, poll-verified registration. All `install_*.sh` are now thin wrappers; new
+  installers added for the jobs that had none: `install_health_check_scheduler.sh`,
+  `install_health_check_triage_scheduler.sh`, `install_obsidian_rollover_scheduler.sh`
+  (plus a tracked `com.rebalance-os.obsidian-rollover.plist.template` for the
+  previously hand-created plist).
+- **`scripts/_bootstrap.py`** — the single remaining `sys.path` shim for
+  directly-run scripts (was 7 inserts across 5 scripts: `pulse_web.py`,
+  `pulse_server.py`, `dashboard.py`, `chat_eval.py`, `health_issue_reporter.py`).
+
+### Fixed
+
+- **Invalid XML in two plist templates.** `pulse-warning-watch` and
+  `health-check-triage` templates carried `--` inside XML comments — rejected by
+  expat (plutil tolerates it). Caught by the new conformance tests.
+- **Stale `IGNORED_FILES` entries** in `scripts/audit_modules.py` (`db.py`,
+  `ask-self-ingest-throttled.py`) unblocked the module audit.
+
+### Changed
+
+- **config.py imports `find_project_root` at module level** — the circular-import
+  risk that justified the Phase-1 lazy import no longer exists (`paths.py` imports
+  nothing from the package). Closes both Phase-1 deferred items.
+- **ARCHITECTURE.md / README.md** point at SCHEDULER.md as the scheduler
+  authority; file map documents `scripts/lib/` and `_bootstrap.py`.
+
 ## [0.35.0] - 2026-06-10
 
 ### Added

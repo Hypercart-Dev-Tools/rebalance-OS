@@ -17,7 +17,7 @@ branch_convention: single branch, one clean commit per phase close
 
 | Most recently completed phase | What's next |
 |---|---|
-| Phase 3 complete: Option C ownership model locked; `normalize_sources` + `scope_to_sources`/`WORK_SOURCES` extracted to `semantic_index.py`; `chat.py` and `cli/semantic.py` delegate to the canonical owner; legacy facades marked in `retrieval.py`; 28 contract tests added (791 total passing). `ARCHITECTURE.md` read-side diagram updated. | Phase 4: Scheduler and Launchd Orchestration — consolidate shell scripts, plist templates, and installer behavior; resolve lazy-import smell in `config.py` (Phase 1 deferred item). |
+| Phase 4 complete (v0.36.0): `SCHEDULER.md` policy table covers the full 10-job launchd fleet (incl. previously untracked `obsidian-rollover`); wrappers share `scripts/lib/scheduler_common.sh`, installers share `scripts/lib/install_common.sh` (always-unload, plutil -lint, poll-verify); 17 hermetic conformance tests in `tests/test_scheduler_policy.py` (caught 2 invalid-XML templates); all 7 live plists render byte-identical; both Phase-1 deferred items closed (`config.py` module-level import, `sys.path.insert` 7→1 via `scripts/_bootstrap.py`). 808 tests passing (1 pre-existing env-dependent figma failure). | Phase 5: Onboarding, Registry, and Inference — separate registry persistence from heuristic inference; canonical project schema boundary; end-to-end onboarding tests. |
 
 ## Table of Contents
 
@@ -250,11 +250,11 @@ System state at phase completion:
 - [x] O (Open/Closed): `source` kwarg added without touching existing callers (default `"calendar"` preserves behavior)
 - [x] L (Liskov): not applicable — no subclassing in this phase
 - [x] I (Interface Segregation): not applicable
-- [x] D (Dependency Inversion): `config.py` now depends on `paths.find_project_root` (abstraction) rather than its own `_project_root_from` (concrete). **Note:** the import is lazy (inside `_resolved_config_path()`) to avoid a circular-import risk — no violation, but this pattern is a candidate for cleanup in Phase 4 if the circular dependency is resolved
+- [x] D (Dependency Inversion): `config.py` now depends on `paths.find_project_root` (abstraction) rather than its own `_project_root_from` (concrete). **Note:** the import was lazy to avoid a circular-import risk — **resolved in Phase 4**: no cycle exists (`paths.py` imports nothing from the package), import lifted to module level
 - [x] Observability: `auth_log` source kwarg ensures gmail events are distinguishable from calendar events in the auth log
 - [x] No behavior change in the diff — all existing auth flows resolve token paths identically before and after
 - [x] Contract tests land before module movement, not after (test files committed before config.py change)
-- [ ] `sys.path.insert()` count is reduced, not just relocated — not yet measured/reduced; deferred to Phase 4 (Scheduler/Launchd)
+- [x] `sys.path.insert()` count is reduced, not just relocated — **done in Phase 4**: 7 call sites across 5 scripts → one `scripts/_bootstrap.py` shim
 - [x] Auth-source precedence chains are tested — `test_google_oauth_client.py::AuthLogFlowSourceTests` covers source kwarg and gmail default
 
 ## Phase 2 - Pulse, Dashboard, and Web Surface
@@ -362,32 +362,36 @@ System state at phase completion:
 - daily/hourly refreshes still produce the same effective work
 - scheduler behavior is easier to verify after future ingest refactors
 
-- [ ] Define one scheduler policy table:
-  observable result: one table naming each job, cadence, scope, prerequisites, and expected outputs.
-- [ ] Reduce duplication across shell scripts:
-  observable result: common logging, bootstrapping, and result handling move behind shared helpers or clearly repeated patterns.
-- [ ] Normalize installer behavior across all jobs:
-  observable result: unload/load behavior, template rendering, and post-install verification are consistent.
-- [ ] Add smoke checks for scheduled entry points:
-  observable result: dry-run or hermetic tests validate each scheduled script’s intended `refresh_index(...)` or publish call.
-- [ ] Make freshness-sensitive follow-on stages explicit:
-  observable result: scripts that rely on semantic freshness or derived stages encode that intentionally rather than by accident.
-- [ ] Update scheduler docs and runbooks:
-  observable result: docs match the live launchd behavior exactly.
+- [x] Define one scheduler policy table:
+  observable result: `SCHEDULER.md` job table — 10 jobs (label, cadence, wrapper, work/scope, prerequisites, outputs) including the previously untracked `obsidian-rollover`; freshness model and runbook included.
+- [x] Reduce duplication across shell scripts:
+  observable result: `scripts/lib/scheduler_common.sh` owns env bootstrap, dated logging, job-lifecycle events, and retention; the six wrappers shrank to their policy payloads (heredocs preserved verbatim).
+- [x] Normalize installer behavior across all jobs:
+  observable result: `scripts/lib/install_common.sh` — always-unload (the racy grep-conditional pattern eliminated), uniform template render (`{{REBALANCE_DIR}}`/`{{PYTHON}}`/`{{HOME}}`), `plutil -lint` before load, poll-verified registration; new installers for health-check, health-check-triage, obsidian-rollover (had none).
+- [x] Add smoke checks for scheduled entry points:
+  observable result: `tests/test_scheduler_policy.py` (17 tests) renders every template with plistlib and asserts cadence/label/RunAtLoad/program paths, wrapper `refresh_index(...)`/`publish_pulse(...)` calls, installer flow, and doc coverage; runs `scheduler_common.sh` in a throwaway tree.
+- [x] Make freshness-sensitive follow-on stages explicit:
+  observable result: vault-sync's `semantic` follow-on and github-sync's deliberate exclusion (deferred to daily-sync; `github_documents_missing_from_semantic` drift metric) are encoded in script comments, SCHEDULER.md, and test-enforced scope assertions; pulse jobs documented as read-only derived stages.
+- [x] Update scheduler docs and runbooks:
+  observable result: SCHEDULER.md runbook; ARCHITECTURE.md mode-2 section and file map updated to point at SCHEDULER.md; README points at SCHEDULER.md; verified all 7 installed plists render byte-identical to the live LaunchAgents.
+
+Also closed both Phase-1 deferred items: `config.py` now imports `find_project_root` at module level (no cycle exists — `paths.py` imports nothing from the package), and `sys.path.insert` dropped from 7 call sites in 5 scripts to one `scripts/_bootstrap.py` shim (all five entry points verified from a foreign cwd with empty `PYTHONPATH`).
 
 ### QA Checklist
 <!-- phase-qa -->
-- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
-- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
-- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
-- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
-- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
-- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
-- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
-- [ ] No scheduled job silently loses its cadence — launchd plist diff reviewed explicitly before and after each installer change
-- [ ] Scheduler policy table is the single source of truth; any plist or script diverging from it is a bug
-- [ ] Smoke tests run hermetically without a live launchd environment (no `launchctl` calls in CI)
-- [ ] Freshness-sensitive follow-on stages have explicit, testable preconditions in the script, not just in comments
+- [x] DRY: No rule, constant, or business logic duplicated across files changed in this phase — logging/bootstrap/trap and render/load flows each live in one lib; the POLICY dict in tests intentionally mirrors SCHEDULER.md (that redundancy *is* the enforcement mechanism, and a test asserts the doc stays in sync)
+- [x] S (Single Responsibility): wrappers = job payload; scheduler_common = runtime; install_common = install flow; _bootstrap = path shim
+- [x] O (Open/Closed): a new launchd job = template + thin wrapper/installer + POLICY row; no edits to either lib
+- [x] L (Liskov): n/a — no subtyping introduced (shell + data tables)
+- [x] I (Interface Segregation): daemon wrapper uses `rb_job_mark_started` without being forced into the EXIT-trap contract that doesn't fit exec'd processes
+- [x] D (Dependency Inversion): wrappers depend on the lib functions, not on auth_log internals; config.py depends on `paths.find_project_root` (now at module level)
+- [x] Observability: job lifecycle (started/completed/failed + elapsed) still flows to `auth_activity.jsonl`; installer verifies registration and warns on failure; `plutil -lint` failures abort before load
+- [x] No scheduled job silently loses its cadence — all 7 installed plists verified byte-identical between template render and live `~/Library/LaunchAgents/`; github-sync reinstalled end-to-end as canary
+- [x] Scheduler policy table is the single source of truth — test-enforced (labels, cadences, scopes, installer wiring, doc coverage)
+- [x] Smoke tests run hermetically without a live launchd environment — plistlib + throwaway-tree bash runs; zero `launchctl` in tests (and a test asserts wrappers never call `launchctl`)
+- [x] Freshness-sensitive follow-on stages have explicit, testable preconditions — scope lists are test-asserted in wrappers (`["vault", "semantic"]`, `["github"]`); the github→semantic gap is observable via the drift metric rather than assumed
+
+Phase-4 QA notes: `tests/test_pulse_server_figma.py::test_adds_new_key_and_returns_sync_counts` fails pre-existing (leaks against the operator's real figma config — 409; fails on a clean tree too). `scripts/audit_modules.py` backlog (16 ARCHITECTURE / 9 CHANGELOG misses) predates this phase; Phase-4 files are fully documented in CHANGELOG 0.36.0 and ARCHITECTURE.
 
 ## Phase 5 - Onboarding, Registry, and Inference
 
