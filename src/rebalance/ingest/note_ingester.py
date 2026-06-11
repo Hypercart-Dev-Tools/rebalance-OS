@@ -100,6 +100,24 @@ class IngestResult:
 # ---------------------------------------------------------------------------
 
 
+def ingest_notes_command(
+    vault_path: Path,
+    database_path: Path,
+    *,
+    exclude_patterns: list[str] | None = None,
+    dry_run: bool = False,
+) -> IngestResult:
+    """Source-owned 1:1 wrapper over :func:`ingest_vault` so CLI / dashboard /
+    calendar surfaces don't import the leaf ingest_vault directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2)."""
+    return ingest_vault(
+        vault_path=vault_path,
+        database_path=database_path,
+        exclude_patterns=exclude_patterns,
+        dry_run=dry_run,
+    )
+
+
 def ingest_vault(
     vault_path: Path,
     database_path: Path,

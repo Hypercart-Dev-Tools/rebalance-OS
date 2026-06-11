@@ -86,17 +86,17 @@ def dashboard_render_cmd(
     typer.echo(f"Dashboard written to {note_file}")
 
     if reingest_note:
-        from rebalance.ingest.note_ingester import ingest_vault
-        from rebalance.ingest.embedder import embed_chunks
+        from rebalance.ingest.note_ingester import ingest_notes_command
+        from rebalance.ingest.embedder import embed_vault_chunks
 
-        ingest_result = ingest_vault(vault_path=resolved_vault, database_path=db_path)
+        ingest_result = ingest_notes_command(vault_path=resolved_vault, database_path=db_path)
         typer.echo(
             "Vault ingest complete: "
             f"new={ingest_result.new_files}, updated={ingest_result.updated_files}, "
             f"unchanged={ingest_result.unchanged_files}, deleted={ingest_result.deleted_files} "
             f"({ingest_result.elapsed_seconds}s)"
         )
-        embed_result = embed_chunks(database_path=db_path)
+        embed_result = embed_vault_chunks(database_path=db_path)
         typer.echo(
             "Embed complete: "
             f"embedded={embed_result.embedded_chunks}, skipped={embed_result.skipped_unchanged}, "

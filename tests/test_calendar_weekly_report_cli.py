@@ -77,11 +77,11 @@ class CalendarWeeklyReportCliTests(unittest.TestCase):
             with (
                 patch("rebalance.ingest.calendar_config.CalendarConfig.load", return_value=config),
                 patch(
-                    "rebalance.ingest.note_ingester.ingest_vault",
+                    "rebalance.ingest.note_ingester.ingest_notes_command",
                     return_value=IngestResult(1, 1, 0, 0, 0, 0, 2, 2, 0, 0.12),
                 ) as mock_ingest,
                 patch(
-                    "rebalance.ingest.embedder.embed_chunks",
+                    "rebalance.ingest.embedder.embed_vault_chunks",
                     return_value=EmbedResult(2, 1, 1, "fake-model", 1024, 0.08),
                 ) as mock_embed,
             ):

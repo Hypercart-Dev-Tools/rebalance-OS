@@ -137,14 +137,14 @@ def ingest_notes(
     dry_run: bool = typer.Option(False, help="Show what would be ingested without writing"),
 ) -> None:
     """Ingest Obsidian vault notes into SQLite (parse, chunk, extract keywords/links)."""
-    from rebalance.ingest.note_ingester import ingest_vault
+    from rebalance.ingest.note_ingester import ingest_notes_command
 
     try:
         db_path = resolve_database_path(database)
     except DatabaseNotFoundError as exc:
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
-    result = ingest_vault(
+    result = ingest_notes_command(
         vault_path=vault,
         database_path=db_path,
         exclude_patterns=exclude,
@@ -168,7 +168,7 @@ def ingest_embed(
     force: bool = typer.Option(False, help="Force re-embed all chunks (use after model change)"),
 ) -> None:
     """Generate embeddings for ingested chunks via mlx-embeddings."""
-    from rebalance.ingest.embedder import embed_chunks
+    from rebalance.ingest.embedder import embed_vault_chunks
 
     try:
         db_path = resolve_database_path(database)
@@ -176,7 +176,7 @@ def ingest_embed(
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
     typer.echo(f"Embedding chunks with {model} (batch_size={batch_size})...")
-    result = embed_chunks(
+    result = embed_vault_chunks(
         database_path=db_path,
         model_name=model,
         batch_size=batch_size,
