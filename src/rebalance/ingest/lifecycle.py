@@ -263,7 +263,9 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
     ),
     SetupStage(
         id="calendar_auth",
-        title="Google Calendar (optional)",
+        # Titles never encode optionality — the `optional` flag is the
+        # machine-readable source; renderers decorate (spike finding).
+        title="Google Calendar",
         check=_check_calendar_auth,
         remediation="Run `python scripts/setup_calendar_oauth.py` and complete the browser consent.",
         optional=True,
@@ -271,7 +273,7 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
     ),
     SetupStage(
         id="gmail_auth",
-        title="Gmail (optional)",
+        title="Gmail",
         check=_check_gmail_auth,
         remediation="Run `python scripts/setup_gmail_oauth.py` and complete the browser consent.",
         optional=True,
