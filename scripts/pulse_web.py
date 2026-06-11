@@ -34,8 +34,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
 
 # Reuse the TUI's data layer so both views move in lockstep.
 from dashboard import (  # type: ignore  # noqa: E402

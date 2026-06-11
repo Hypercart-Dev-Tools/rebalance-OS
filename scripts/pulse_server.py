@@ -36,7 +36,7 @@ PULSE_HTML = PROJECT_ROOT / "web" / "pulse.html"
 PULSE_WEB_PY = PROJECT_ROOT / "scripts" / "pulse_web.py"
 PYTHON = sys.executable
 
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
 from pulse_web import (  # noqa: E402
     complete_goal_in_file,
     forget_goal_completion,

@@ -21,6 +21,8 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from rebalance.paths import find_project_root
+
 
 # Override seam for tests. When None, resolve from the active checkout/env.
 CONFIG_PATH: Path | None = None
@@ -84,7 +86,6 @@ def _resolved_config_path() -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
 
-    from rebalance.paths import find_project_root  # noqa: PLC0415
     cwd_root = find_project_root(Path.cwd())
     if cwd_root is not None:
         return cwd_root / "temp" / "rbos.config"

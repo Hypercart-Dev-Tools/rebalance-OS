@@ -43,7 +43,7 @@ from rich.table import Table
 from rich.text import Text
 
 # Make `rebalance.*` importable when running the script straight from the repo.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+import _bootstrap  # noqa: E402, F401
 
 from rebalance.ingest.config import (  # noqa: E402
     get_calendar_ignored_summaries,
