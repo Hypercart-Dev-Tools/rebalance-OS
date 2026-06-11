@@ -82,10 +82,18 @@ def extract_task_text(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 def _find_client_mapping_path() -> Path | None:
-    """Locate client-channel-mapping.json from the sibling sleuth-app checkout."""
-    # Canonical sibling layout: ~/Documents/GH Repos/sleuth-app/
-    # This file lives at sleuth_grouping.py → ingest → rebalance → src → rebalance-OS (parents[3])
-    repo_root = Path(__file__).resolve().parents[3]
+    """Locate client-channel-mapping.json.
+
+    Checks ``sleuth_client_mapping_path`` in rbos.config first (portable);
+    falls back to the canonical sibling sleuth-app checkout heuristic.
+    """
+    from rebalance.ingest.config import get_sleuth_client_mapping_path
+    configured = get_sleuth_client_mapping_path()
+    if configured:
+        p = Path(configured)
+        return p if p.exists() else None
+    from rebalance.paths import resolve_project_root
+    repo_root = resolve_project_root(Path(__file__))
     candidate = (
         repo_root.parent / "GH Repos" / "sleuth-app"
         / "data" / "static" / "client-channel-mapping.json"

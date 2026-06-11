@@ -487,7 +487,11 @@ def backfill_semantic_documents(
             deleted += result["deleted"]
             total += result["total"]
         if "code" in selected_sources:
-            root = repo_root or Path(__file__).resolve().parents[3]  # …/rebalance-OS/
+            if repo_root:
+                root = repo_root
+            else:
+                from rebalance.paths import resolve_project_root
+                root = resolve_project_root(Path(__file__))
             result = sync_code_documents(conn, root)
             inserted += result["inserted"]
             updated += result["updated"]

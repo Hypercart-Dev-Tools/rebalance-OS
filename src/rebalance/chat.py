@@ -23,7 +23,8 @@ from typing import Any, Callable
 # source tree + docs via the federated ask_self index; "all" = both.
 SCOPES = ("all", "work", "code")
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]  # …/rebalance-OS/
+from rebalance.paths import resolve_project_root
+_REPO_ROOT = resolve_project_root(Path(__file__))
 ASK_SELF_TIMEOUT_SECONDS = 60
 
 

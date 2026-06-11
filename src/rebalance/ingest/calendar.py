@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any
 
 
-TOKEN_PATH = Path.home() / ".config" / "rebalance-os" / "google-calendar-oauth"
+from rebalance.paths import resolve_oauth_token_path
+TOKEN_PATH = resolve_oauth_token_path("calendar")
 CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 CALENDAR_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
 

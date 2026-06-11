@@ -6,6 +6,28 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.34.0] - 2026-06-10
+
+### Changed
+
+- **Portability contract cleanup (Phase 4).** All `parents[N]` path hacks replaced
+  by `resolve_project_root(Path(__file__))` (walk-up resolver in `paths.py`) across
+  `cli/_core.py`, `ingest/token_meta.py`, `ingest/auth_log.py`,
+  `ingest/semantic_index.py`, and `chat.py`.
+- **Auth token paths centralized.** `resolve_oauth_token_path(service)` added to
+  `paths.py`; `calendar.py` and `gmail.py` now call it instead of hardcoding
+  `Path.home() / ".config" / "rebalance-os" / ...`.
+- **Sleuth client-mapping is config-first.** `sleuth_grouping._find_client_mapping_path()`
+  checks `rbos.config["sleuth_client_mapping_path"]` (via new
+  `config.get_sleuth_client_mapping_path()`) before falling back to the heuristic
+  sibling-checkout path.
+- **`update_dashboard_note` documented as optional output.** `refresh_index` docstring
+  clarifies that the Obsidian write-back is a documented side-output, not a required
+  control-plane dependency; callers without a vault set `update_dashboard_note=False`.
+- **Operator config contract recorded.** `temp/rbos.config` (gitignored) is the
+  repo-local operator store; `~/.config/rebalance-os/config.json` (`USER_CONFIG_DIR`)
+  holds cross-repo/user defaults.
+
 ## [0.33.0] - 2026-06-10
 
 ### Changed

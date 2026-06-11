@@ -37,7 +37,8 @@ DEFAULT_MAX_RESULTS = 100
 
 # launchd-reachable fallback for the OAuth token (keychain is unreachable from
 # the daily-sync's stripped environment). Mirrors calendar's TOKEN_PATH.
-TOKEN_PATH = Path.home() / ".config" / "rebalance-os" / "google-gmail-oauth"
+from rebalance.paths import resolve_oauth_token_path
+TOKEN_PATH = resolve_oauth_token_path("gmail")
 
 GMAIL_SETUP_HINT = (
     "python scripts/setup_gmail_oauth.py   "

@@ -22,8 +22,8 @@ from typing import Any
 
 
 def _meta_path() -> Path:
-    root = Path(__file__).resolve().parents[3]  # …/rebalance-OS/
-    log_dir = root / "temp" / "logs"
+    from rebalance.paths import resolve_project_root
+    log_dir = resolve_project_root(Path(__file__)) / "temp" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir / "token_meta.json"
 

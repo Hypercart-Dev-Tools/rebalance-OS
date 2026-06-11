@@ -356,6 +356,22 @@ def set_figma_file_keys(file_keys: list[str]) -> None:
     _write_config(config)
 
 
+def add_figma_file_key(file_key: str) -> bool:
+    """Add one Figma file key to the allow-list.
+
+    Returns True when the key was newly added, False when it was already present.
+    The stored list remains de-duplicated in insertion order.
+    """
+    key = str(file_key or "").strip()
+    if not key:
+        raise ValueError("file_key must be non-empty")
+    existing = get_figma_file_keys()
+    if key in existing:
+        return False
+    set_figma_file_keys(existing + [key])
+    return True
+
+
 def get_gmail_query_filter() -> str | None:
     """Return the configured Gmail search query, or None if unset.
 
@@ -1218,3 +1234,20 @@ def _read_sleuth_env_file(which: str = "production") -> dict[str, str]:
             f"Sleuth env file missing required keys: {', '.join(missing)} (in {path})"
         )
     return values
+
+
+def get_sleuth_client_mapping_path() -> str:
+    """Return the configured path to client-channel-mapping.json, or '' if unset.
+
+    When set, sleuth_grouping.py uses this path instead of the sibling-checkout
+    heuristic. Set with ``rebalance config set-sleuth-mapping-path <path>`` or
+    directly in temp/rbos.config under ``sleuth_client_mapping_path``.
+    """
+    return str(_read_config().get("sleuth_client_mapping_path", ""))
+
+
+def set_sleuth_client_mapping_path(path: str) -> None:
+    """Store the path to client-channel-mapping.json in rbos.config."""
+    config = _read_config()
+    config["sleuth_client_mapping_path"] = path
+    _write_config(config)

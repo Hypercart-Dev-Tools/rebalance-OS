@@ -87,7 +87,11 @@ def _log_dir() -> Path:
     repo's auth_activity.jsonl.
     """
     override = os.environ.get("REBALANCE_AUTH_LOG_DIR")
-    log_dir = Path(override) if override else Path(__file__).resolve().parents[3] / "temp" / "logs"
+    if override:
+        log_dir = Path(override)
+    else:
+        from rebalance.paths import resolve_project_root
+        log_dir = resolve_project_root(Path(__file__)) / "temp" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir
 

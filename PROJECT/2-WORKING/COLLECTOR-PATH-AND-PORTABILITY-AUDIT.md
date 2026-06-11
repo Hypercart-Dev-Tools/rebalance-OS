@@ -14,7 +14,7 @@ surfaces:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 3 complete (2026-06-10):** `semantic` is now the single writer of `semantic_documents`/`semantic_embeddings`. All 7 inline `backfill_semantic_documents` and 5 `embed_pending` calls stripped from source `_refresh_*` functions; `_refresh_semantic_only` expanded to all 5 sources (`_ALL_SEMANTIC_SOURCES`). `test_semantic_projection_is_single_writer` flipped from xfail → GREEN; `include_semantic` parameter removed from `refresh_index` and `_refresh_github`. | **Phase 4:** portability contract cleanup — repo-local config, auth token paths, `parents[3]` assumptions, sibling-checkout, Obsidian write-back. |
+| **Phase 4 complete (2026-06-10):** Portability contracts cleaned up. Walk-up resolver (`resolve_project_root`) replaces all `parents[N]` hacks; auth token paths centralized via `resolve_oauth_token_path`; Sleuth sibling-checkout is config-first with heuristic fallback; Obsidian write-back documented as optional output in `refresh_index` docstring; operator config decision recorded (repo-local `temp/rbos.config`). All 35 affected tests GREEN. | **Phase 5:** smoke tests per raw source, failure-path auth tests, ARCHITECTURE.md updates. |
 
 ## Table of Contents
 
@@ -305,35 +305,55 @@ Goal: Stop exposing leaf ingest functions as parallel user-facing write APIs.
 
 ## Phase 3 - Unify Semantic Projection Ownership
 
-**COMPLETE 2026-06-10** — `semantic` is now the single writer of `semantic_documents`/`semantic_embeddings`. Key changes: stripped 7 `backfill_semantic_documents` and 5 `embed_pending` calls from source `_refresh_*` functions; `_refresh_semantic_only` expanded to `_ALL_SEMANTIC_SOURCES = ["vault","github","email","code","figma"]` with `use_registry_providers=True`; `include_semantic` param removed from `refresh_index` and `_refresh_github`; `push_email_messages` in `gmail.py` cleaned up (backfill dropped); `test_semantic_projection_is_single_writer` xfail removed (strict GREEN). Tests updated: `test_email_ingest.py` dry-run assertion, `test_index_ops.py` github dry-run pair.
+Goal: Replace the current mixed semantic behavior with one explicit contract.
+
+**COMPLETE 2026-06-10** — `semantic` is the single writer of `semantic_documents`/`semantic_embeddings`. All 7 inline `backfill_semantic_documents` and 5 `embed_pending` calls stripped from source `_refresh_*` functions. `_refresh_semantic_only` expanded to all sources via registry-derived `_all_semantic_sources()`. `test_semantic_projection_is_single_writer` flipped from xfail → GREEN. Codex findings addressed: freshness for targeted refreshes (scripts chain `semantic`; MCP push returns `semantic_pending: True`), `_ALL_SEMANTIC_SOURCES` replaced by registry-derived function, ARCHITECTURE.md updated.
 
 - [x] Decide whether semantic projection is synchronous with source ingest or staged after source ingest:
-  **Decision: staged.** Sources write their raw tables; the `semantic` stage owns all projection and embedding. Documents become searchable on the next `semantic` stage run (or the default recipe, which runs `semantic` as a follow-on stage).
+  **staged** — source `_refresh_*` functions write raw tables only; the `semantic` stage owns all projection and embedding.
 - [x] Remove the hardcoded semantic source ladder where possible:
-  `_refresh_semantic_only` now covers all 5 sources; `figma` uses the registry-driven provider path.
+  `_all_semantic_sources()` is registry-derived: ladder sources (`vault`, `github`, `email`, `code`) are hardcoded only because they use the if-ladder path in `backfill_semantic_documents`; sources with a `semantic_docs` provider (e.g., `figma`) are auto-included from the registry.
 - [x] Normalize source behavior for `vault`, `github`, `email`, and `figma`:
-  All four (plus `code`) follow the same lifecycle: source refresh writes raw tables only; semantic stage does all projection and embedding.
+  all semantic-capable sources follow the same lifecycle — raw tables written by source stage; projection/embedding by the `semantic` stage.
 - [x] Define how non-semantic structured sources fit the model:
-  `calendar` and `sleuth` are structured-only (no semantic rows) — unchanged by Phase 3.
+  `calendar` and `sleuth` are documented as structured-only sources; no semantic provider.
 - [x] Make semantic-only maintenance a clearly separate operational stage if retained:
-  `semantic` collector is `kind="projection"`, documented as a projection job, and is the sole writer.
+  `semantic` is a `projection` kind collector in the registry; documented in AGENTS.md and ARCHITECTURE.md.
 
 ## Phase 4 - Portability Contract Cleanup
 
 Goal: Remove the environment and filesystem coupling that would make the refactor brittle or non-reusable.
 
-- [ ] Inventory every config setting by storage class:
-  observable result: one table naming which settings live in repo-local config, user-level config, keyring, filesystem secrets, and environment variables.
-- [ ] Decide whether operator config is repo-local, user-local, or workspace-scoped:
-  observable result: one explicit contract for `temp/rbos.config` versus user-level config.
-- [ ] Move auth/token fallback paths behind one resolver:
-  observable result: Calendar and Gmail no longer hardcode their fallback token file locations internally.
-- [ ] Reduce repo-root runtime assumptions:
-  observable result: critical runtime paths no longer depend on `parents[3]` or ad-hoc `sys.path.insert(...)` where a stable resolver could be used.
-- [ ] Remove sibling-checkout assumptions from product behavior:
-  observable result: Sleuth grouping/mapping resolution uses a documented resolver or optional config, not a fixed neighboring checkout layout.
-- [ ] Reclassify Obsidian write-back as optional output where appropriate:
-  observable result: dashboard note generation and similar flows are clearly outputs, not hidden required control-plane side effects.
+**COMPLETE 2026-06-10** — Walk-up resolver (`resolve_project_root` in `paths.py`) replaces all `parents[N]` hacks across `cli/_core.py`, `ingest/token_meta.py`, `ingest/auth_log.py`, `ingest/semantic_index.py`, `chat.py`. Auth token paths centralized via `resolve_oauth_token_path("calendar"/"gmail")` in `calendar.py` and `gmail.py`. Sleuth `_find_client_mapping_path()` is config-first (`get_sleuth_client_mapping_path()`) with heuristic fallback. `refresh_index` docstring documents `update_dashboard_note` as optional output. Operator config decision recorded below. All 35 affected tests GREEN.
+
+- [x] Inventory every config setting by storage class:
+  see config inventory table below.
+- [x] Decide whether operator config is repo-local, user-local, or workspace-scoped:
+  **repo-local** — `temp/rbos.config` (gitignored) is the operator config store for machine/checkout-specific settings; `~/.config/rebalance-os/config.json` (`USER_CONFIG_DIR` via `paths.py`) holds cross-repo/user defaults. `get_sleuth_client_mapping_path` / `set_sleuth_client_mapping_path` added to `config.py` as the first config-backed key following this contract.
+- [x] Move auth/token fallback paths behind one resolver:
+  `resolve_oauth_token_path(service)` in `paths.py` computes `USER_CONFIG_DIR / f"google-{service}-oauth"`; `calendar.py` and `gmail.py` now call it instead of hardcoding `Path.home() / ".config" / "rebalance-os" / ...`.
+- [x] Reduce repo-root runtime assumptions:
+  `resolve_project_root(Path(__file__))` (walk-up, no `parents[N]`) used in all critical runtime paths; lazy import pattern used in `token_meta.py`, `auth_log.py`, `semantic_index.py` to avoid circular imports.
+- [x] Remove sibling-checkout assumptions from product behavior:
+  `sleuth_grouping._find_client_mapping_path()` checks `rbos.config["sleuth_client_mapping_path"]` first; falls back to the heuristic sibling-checkout path using `resolve_project_root` (not raw `parents[3]`).
+- [x] Reclassify Obsidian write-back as optional output where appropriate:
+  `refresh_index` docstring documents `update_dashboard_note` as a documented optional side-output; callers without a vault set it to `False`.
+
+### Config inventory (2026-06-10)
+
+| Setting | Storage class | Accessor | Notes |
+|---|---|---|---|
+| `vault_path` | repo-local `temp/rbos.config` | `config.get_vault_path()` | set via `rebalance config set-vault-path` |
+| `github_token` | keyring (file fallback in `temp/secrets/`) | `config.get_github_token()` | set via `setup_github_token` MCP / CLI |
+| `sleuth_client_mapping_path` | repo-local `temp/rbos.config` | `config.get_sleuth_client_mapping_path()` | optional; heuristic fallback if absent |
+| `sleuth_web_api_*` | keyring (env fallback) | `config.get_sleuth_*()` | set via `rebalance config sleuth-*` |
+| `figma_token` | keyring | `config.get_figma_token()` | optional source |
+| `figma_file_keys` | repo-local `temp/rbos.config` | `config.get_figma_file_keys()` | allowlist; opt-in |
+| `ask_self_path` | repo-local `temp/rbos.config` | `config.get_ask_self_path()` | path to ask-self install |
+| Google Calendar OAuth token | user-local `~/.config/rebalance-os/google-calendar-oauth` | `resolve_oauth_token_path("calendar")` | pickle file; launchd fallback |
+| Google Gmail OAuth token | user-local `~/.config/rebalance-os/google-gmail-oauth` | `resolve_oauth_token_path("gmail")` | pickle file; launchd fallback |
+| `REBALANCE_DB_PATH` | environment variable | `paths.resolve_database_path()` | overrides default DB location |
+| `REBALANCE_AUTH_LOG_DIR` | environment variable | checked in `auth_log._log_dir()` | test/sandbox override for log writes |
 
 ## Phase 5 - Tests, Observability, and Rollout
 

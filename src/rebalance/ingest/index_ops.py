@@ -991,6 +991,11 @@ def refresh_index(
     ``scope`` accepts any combination of ``vault``, ``github``, ``calendar``,
     ``sleuth``, ``email``, ``semantic``, or ``all``. ``dry_run=True`` returns
     the planned steps without touching the DB or network.
+
+    ``update_dashboard_note`` triggers an optional Obsidian write-back: a
+    markdown dashboard note is written to the vault after a full refresh.
+    It is a documented side-output, not a core contract — callers that run
+    without a vault (CI, portable installs) set this to ``False``.
     """
     db_path = Path(database_path).expanduser().resolve()
     requested_scopes = _normalize_scope(scope)

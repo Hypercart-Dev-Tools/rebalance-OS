@@ -12,6 +12,8 @@ from pathlib import Path
 
 import typer
 
+from rebalance.paths import resolve_project_root
+
 app = typer.Typer(help="rebalance CLI")
 ingest_app = typer.Typer(help="Ingest and project registry workflows")
 config_app = typer.Typer(help="Configuration and secrets management")
@@ -20,6 +22,6 @@ app.add_typer(config_app, name="config")
 
 
 # Resolved once so all paths in the CLI process agree on where the project
-# lives — this file is src/rebalance/cli/_core.py, so parents[3] is the repo
-# root (cli → rebalance → src → repo root) regardless of cwd.
-_PROJECT_ROOT = Path(__file__).resolve().parents[3]
+# lives. Uses the walk-up resolver so layout changes (e.g., deeper nesting)
+# don't silently return a wrong directory the way parents[3] would.
+_PROJECT_ROOT = resolve_project_root(Path(__file__))
