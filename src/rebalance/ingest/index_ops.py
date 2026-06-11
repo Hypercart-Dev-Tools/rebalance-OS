@@ -782,19 +782,12 @@ def _refresh_sleuth(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     if dry_run:
         return {"scope": "sleuth", "dry_run": True, "steps": ["sync_sleuth_reminders()"]}
 
-    from rebalance.cli import _load_sleuth_env
-    from rebalance.ingest.sleuth_reminders import sync_sleuth_reminders
+    from rebalance.ingest.sleuth_reminders import sync_sleuth
 
-    env = _load_sleuth_env()
-    # For a file source, sync_sleuth_reminders refreshes the export clone itself
-    # (best-effort, non-destructive) and reports it as `source_refresh`.
-    result = sync_sleuth_reminders(
-        base_url=env["SLEUTH_WEB_API_BASE_URL"],
-        token=env["SLEUTH_WEB_API_TOKEN"],
-        workspace_name=env["SLEUTH_WORKSPACE_NAME"],
-        database_path=database_path,
-        active_only=False,
-    )
+    # Single source-owned path (CLI / MCP / collector all call sync_sleuth). For a
+    # file source it refreshes the export clone itself (best-effort, non-destructive)
+    # and reports it as `source_refresh`. No more ingest->cli back-import.
+    result = sync_sleuth(database_path, active_only=False)
     return {"scope": "sleuth", "dry_run": False, **result.as_dict()}
 
 

@@ -504,6 +504,34 @@ def _validate_payload_contract(
     return reminders
 
 
+def sync_sleuth(
+    database_path: Path,
+    *,
+    active_only: bool = False,
+    which: str = "production",
+    refresh_source: bool = True,
+) -> SleuthSyncResult:
+    """Source-owned entry point for the Sleuth reminders sync.
+
+    Resolves credentials (``config.get_sleuth_credentials``) then runs
+    :func:`sync_sleuth_reminders`. This is the single path the CLI (`sleuth-sync`),
+    the MCP tool (`sleuth_sync_reminders`), and the `sleuth` collector all call —
+    so no user-facing surface imports the leaf ``sync_sleuth_reminders`` directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2).
+    """
+    from rebalance.ingest.config import get_sleuth_credentials
+
+    env = get_sleuth_credentials(which)
+    return sync_sleuth_reminders(
+        base_url=env["SLEUTH_WEB_API_BASE_URL"],
+        token=env["SLEUTH_WEB_API_TOKEN"],
+        workspace_name=env["SLEUTH_WORKSPACE_NAME"],
+        database_path=database_path,
+        active_only=active_only,
+        refresh_source=refresh_source,
+    )
+
+
 def sync_sleuth_reminders(
     base_url: str,
     token: str,

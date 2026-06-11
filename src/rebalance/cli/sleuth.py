@@ -1,8 +1,10 @@
 """`rebalance sleuth-sync` — pull Slack reminders from the Sleuth Web API.
 
 Extracted from the cli monolith (Phase 5). Registers on the shared Typer `app`.
-`_load_sleuth_env` lives here and is re-exported from `rebalance.cli` for
-`ingest.index_ops`, which imports it as `from rebalance.cli import _load_sleuth_env`.
+`_load_sleuth_env` is the CLI's `typer.BadParameter` wrapper over
+`config.get_sleuth_credentials`. The shared sync path is
+`ingest.sleuth_reminders.sync_sleuth`, which this command, the MCP tool, and the
+`sleuth` collector all call (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2).
 """
 
 from __future__ import annotations
@@ -36,21 +38,15 @@ def sleuth_sync_cmd(
     json_output: bool = typer.Option(False, "--json", help="Emit full sync result as JSON"),
 ) -> None:
     """Pull Slack reminders from the Sleuth Web API and upsert them into SQLite."""
-    from rebalance.ingest.sleuth_reminders import sync_sleuth_reminders
+    from rebalance.ingest.sleuth_reminders import sync_sleuth
 
-    env_data = _load_sleuth_env()
+    _load_sleuth_env()  # validate creds → typer.BadParameter before touching the DB
     try:
         db_path = resolve_database_path(database)
     except DatabaseNotFoundError as exc:
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
-    result = sync_sleuth_reminders(
-        base_url=env_data["SLEUTH_WEB_API_BASE_URL"],
-        token=env_data["SLEUTH_WEB_API_TOKEN"],
-        workspace_name=env_data["SLEUTH_WORKSPACE_NAME"],
-        database_path=db_path,
-        active_only=active_only,
-    )
+    result = sync_sleuth(db_path, active_only=active_only)
 
     if json_output:
         typer.echo(json.dumps(result.as_dict(), ensure_ascii=False))
