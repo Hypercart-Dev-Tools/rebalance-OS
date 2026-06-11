@@ -5,67 +5,37 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from rebalance.ingest.config import get_config_path, get_github_token, set_github_token, set_vault_path
+from rebalance.ingest.config import get_github_token, set_github_token, set_vault_path
 from rebalance.ingest.github_scan import validate_github_token
 from rebalance.ingest.preflight import confirm_and_write, discover_candidates
-from rebalance.ingest.registry import get_projects
 
 
 def register(mcp: FastMCP, database_path: Path) -> None:
     @mcp.tool()
     def onboarding_status(vault_path: str) -> dict[str, Any]:
         """
-        Check which onboarding steps are complete.
+        Report the full setup lifecycle: every stage (config, vault, GitHub
+        PAT, optional Calendar/Gmail auth, registry, projections) with a
+        ``done`` / ``now`` / ``next`` / ``blocked`` status and a remediation
+        hint, so the host agent always knows where the operator is and what
+        comes next. Pure read — safe to call repeatedly.
 
-        Returns a list of steps with completion status so the host agent
-        knows where to resume.  DB path is resolved from REBALANCE_DB
-        (same as all server tools).
+        The stage map is owned by ``rebalance.ingest.lifecycle`` (the Phase 5
+        contract); this tool is a thin view over it. The legacy ``steps``
+        list is preserved for existing clients. DB path is resolved from
+        REBALANCE_DB (same as all server tools).
         """
+        from rebalance.ingest.lifecycle import evaluate_setup
+
         vp = Path(vault_path).expanduser().resolve()
-        registry_path = vp / "Projects" / "00-project-registry.md"
-        projects_yaml_path = vp / "projects.yaml"
+        report = evaluate_setup(vault_path=vp, database_path=database_path)
 
-        steps: list[dict[str, Any]] = []
-
-        config_path = get_config_path()
-        steps.append({
-            "name": "config_exists",
-            "complete": config_path.exists(),
-            "detail": str(config_path),
-        })
-
-        token = get_github_token()
-        steps.append({
-            "name": "github_token_set",
-            "complete": token is not None,
-            "detail": "Token is configured" if token else "No token found",
-        })
-
-        steps.append({
-            "name": "registry_exists",
-            "complete": registry_path.exists(),
-            "detail": str(registry_path),
-        })
-
-        steps.append({
-            "name": "projection_exists",
-            "complete": projects_yaml_path.exists(),
-            "detail": str(projects_yaml_path),
-        })
-
-        db_has_rows = False
-        if database_path.exists():
-            try:
-                db_has_rows = len(get_projects(database_path)) > 0
-            except Exception:
-                pass
-        steps.append({
-            "name": "db_synced",
-            "complete": db_has_rows,
-            "detail": str(database_path),
-        })
-
-        return {"steps": steps}
+        # Legacy shape: flat steps with name/complete/detail.
+        report["steps"] = [
+            {"name": s["id"], "complete": s["complete"], "detail": s["detail"]}
+            for s in report["stages"]
+        ]
+        return report
 
     @mcp.tool()
     def setup_github_token(token: str) -> dict[str, Any]:
