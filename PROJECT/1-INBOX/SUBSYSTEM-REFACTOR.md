@@ -297,7 +297,26 @@ System state at phase completion:
 
 ## Phase 3 - Query, Retrieval, and Synthesis
 
-Goal: clarify the read-side architecture so semantic query, legacy source query, `ask()`, and chat-with-data are not overlapping without clear ownership.
+Goal: lock the read-side ownership model (Option C), extract shared retrieval helpers, and mark legacy surfaces as tested facades — before any module movement.
+
+**Ownership model: Option C (Codex + Gemini consensus, Claude concurs)**
+Research and rationale: `PROJECT/1-INBOX/SUBSYSTEM-REFACTOR-PHASE 3.md`
+
+| Surface | Role | Notes |
+|---|---|---|
+| `semantic_query()` | Unified raw retrieval primitive | Owns `sources`, `updated_after`, `repo`, `hybrid`, and raw result shape |
+| `chat_with_data()` | Interactive citations-first presentation | Owns scope aliases (`work`, `code`), citation formatting, optional synthesis; must consume shared retrieval helpers |
+| `ask()` | Broad mixed-context orchestrator | Owns project/calendar/temporal framing and planner-style synthesis; not the canonical retrieval primitive |
+| `query_notes()` / `query_github_context()` | Legacy facades | Remain only for backward compatibility; must be marked as facades in code and tested as such |
+
+**Contract rules locked before implementation:**
+- `semantic_query()` owns retrieval semantics — source vocabulary, freshness filters, repo filters, hybrid behavior, and raw result shape are defined here.
+- `chat_with_data()` owns presentation semantics — it calls shared retrieval helpers, never re-derives source mapping or result shaping independently.
+- `ask()` owns synthesis/orchestration — project registry, calendar, temporal context belong here; it does not redefine retrieval semantics.
+- Legacy facades may remain for compatibility but define no new read-side behavior; each is marked `# FACADE: delegates to <canonical owner>` and has a test asserting that delegation.
+
+**First slice: shared helpers and facade marking, not module movement.**
+Do not move functions between modules until the ownership table is enforced in code and tests.
 
 System state at phase completion:
 
@@ -306,20 +325,18 @@ System state at phase completion:
 - dashboard/pulse “ask” flows still work
 - no query path depends on a half-migrated abstraction
 
-See review and opinion by Gemini and Codex: PROJECT/1-INBOX/SUBSYSTEM-REFACTOR-PHASE 3.md
-
-- [ ] Define the read-side contract map:
-  observable result: one table separating source-scoped retrieval, unified semantic retrieval, and synthesis surfaces.
-- [ ] Decide which read API is canonical for each use case:
-  observable result: clear ownership for `semantic_query`, legacy note/GitHub queries, `ask()`, and `chat_with_data`.
-- [ ] Remove duplicated scope-normalization and result-shaping logic where possible:
-  observable result: CLI and MCP wrappers use shared helpers instead of re-deriving accepted source sets and response shapes.
-- [ ] Align naming and behavior between retrieval surfaces:
-  observable result: “all”, source filters, top-k behavior, and freshness semantics match across CLI and MCP where they mean the same thing.
+- [x] Define the read-side contract map:
+  observable result: ownership table above — `semantic_query` (retrieval), `chat_with_data` (citations presentation), `ask` (synthesis/orchestration), legacy tools (facades). Locked before implementation begins.
+- [ ] Extract shared source-normalization helper:
+  observable result: one implementation of semantic source vocabulary — `semantic_index.py:86-110` is the owner; `cli/semantic.py:16-36` and `chat.py:22-61` both delegate to it instead of re-deriving.
+- [ ] Extract shared scope-alias helper:
+  observable result: one mapping of product scopes (`work`, `code`, `all`) to semantic sources; `chat_with_data` imports it rather than owning an independent vocabulary.
+- [ ] Mark legacy surfaces as facades in code:
+  observable result: `query_notes()` and `query_github_context()` carry a `# FACADE` comment and a test that asserts delegation; no new behavior is added to these surfaces.
 - [ ] Add contract tests for canonical read paths:
-  observable result: tests prove that the chosen canonical query surfaces accept the documented scopes and return the documented structure.
-- [ ] Document what remains legacy vs preferred:
-  observable result: operator-facing docs can distinguish compatibility surfaces from preferred ones.
+  observable result: tests prove `semantic_query` owns retrieval semantics and `ask()` does not silently redefine them; `chat_with_data` contract test proves it delegates to shared helpers.
+- [ ] Update architecture docs for the locked ownership model:
+  observable result: `ARCHITECTURE.md` and MCP docs distinguish retrieval, presentation, and synthesis surfaces using the Option C table.
 
 ### QA Checklist
 <!-- phase-qa -->
