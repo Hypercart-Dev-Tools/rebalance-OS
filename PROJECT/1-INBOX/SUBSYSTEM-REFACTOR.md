@@ -250,7 +250,7 @@ System state at phase completion:
 - [x] O (Open/Closed): `source` kwarg added without touching existing callers (default `"calendar"` preserves behavior)
 - [x] L (Liskov): not applicable — no subclassing in this phase
 - [x] I (Interface Segregation): not applicable
-- [x] D (Dependency Inversion): `config.py` now depends on `paths.find_project_root` (abstraction) rather than its own `_project_root_from` (concrete)
+- [x] D (Dependency Inversion): `config.py` now depends on `paths.find_project_root` (abstraction) rather than its own `_project_root_from` (concrete). **Note:** the import is lazy (inside `_resolved_config_path()`) to avoid a circular-import risk — no violation, but this pattern is a candidate for cleanup in Phase 4 if the circular dependency is resolved
 - [x] Observability: `auth_log` source kwarg ensures gmail events are distinguishable from calendar events in the auth log
 - [x] No behavior change in the diff — all existing auth flows resolve token paths identically before and after
 - [x] Contract tests land before module movement, not after (test files committed before config.py change)
