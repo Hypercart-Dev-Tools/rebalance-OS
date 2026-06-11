@@ -1,48 +1,335 @@
-Yes. Based on the current tree, there are 5 subsystems with the same spread/duplication pattern the command system had.
+---
+title: Subsystem Refactor Plan
+status: in-progress
+doc_type: project-plan
+owner: Noel Saw
+last_updated: 2026-06-10
+priority_order:
+  - config-auth-path
+  - pulse-dashboard-web
+  - query-retrieval
+  - scheduler-launchd
+  - onboarding-registry
+rollout_rule: each phase must leave the full system runnable end-to-end
+---
 
-1. `Config + auth + path resolution` is the strongest candidate.
-   Files: [src/rebalance/ingest/config.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/config.py), [src/rebalance/paths.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/paths.py), [src/rebalance/ingest/auth_log.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/auth_log.py), [scripts/setup_calendar_oauth.py](/Users/noelsaw/Documents/rebalance-OS/scripts/setup_calendar_oauth.py), [scripts/setup_gmail_oauth.py](/Users/noelsaw/Documents/rebalance-OS/scripts/setup_gmail_oauth.py)
-   Reason: credentials, token paths, keyring fallbacks, legacy config, and setup behavior are still split across runtime modules and setup scripts. This directly affects portability and onboarding.
-   Effort/risk: medium effort, high payoff, moderate risk.
+| Most recently completed phase | What's next |
+|---|---|
+| Baseline triage complete: the next refactor candidates have been identified, prioritized, and compared against recent collector-path work. | Phase 0 spike: lock subsystem boundaries, choose the first slice (`config/auth/path`), and define the compatibility rules for the rest of the rollout. |
 
-2. `Query / retrieval / synthesis` needs a boundary pass.
-   Files: [src/rebalance/chat.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/chat.py), [src/rebalance/ingest/querier.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/querier.py), [src/rebalance/mcp/tools/retrieval.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/mcp/tools/retrieval.py), [src/rebalance/mcp/tools/index.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/mcp/tools/index.py), [src/rebalance/cli/query.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/cli/query.py)
-   Reason: there are multiple read-side surfaces with overlapping concepts: semantic query, legacy source queries, `ask()`, chat-with-data, MCP wrappers, CLI wrappers.
-   Effort/risk: medium effort, medium risk.
+## Table of Contents
 
-3. `Pulse / dashboard / web surface` is spread across too many runtime entry points.
-   Files: [scripts/dashboard.py](/Users/noelsaw/Documents/rebalance-OS/scripts/dashboard.py), [scripts/pulse_web.py](/Users/noelsaw/Documents/rebalance-OS/scripts/pulse_web.py), [scripts/pulse_server.py](/Users/noelsaw/Documents/rebalance-OS/scripts/pulse_server.py), [src/rebalance/web.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/web.py), [src/rebalance/web_components.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/web_components.py)
-   Reason: rendering, HTTP serving, refresh triggers, and UI composition are split between scripts and package modules, with multiple `sys.path` bootstrap hacks.
-   Effort/risk: medium-high effort, moderate risk.
+1. [Executive Summary](#executive-summary)
+2. [Scope](#scope)
+3. [Current Prioritization](#current-prioritization)
+4. [Refactor Principles](#refactor-principles)
+5. [Phase 0 - Architecture Spike](#phase-0---architecture-spike)
+6. [Phase 1 - Config, Auth, and Path Resolution](#phase-1---config-auth-and-path-resolution)
+7. [Phase 2 - Pulse, Dashboard, and Web Surface](#phase-2---pulse-dashboard-and-web-surface)
+8. [Phase 3 - Query, Retrieval, and Synthesis](#phase-3---query-retrieval-and-synthesis)
+9. [Phase 4 - Scheduler and Launchd Orchestration](#phase-4---scheduler-and-launchd-orchestration)
+10. [Phase 5 - Onboarding, Registry, and Inference](#phase-5---onboarding-registry-and-inference)
+11. [Cross-Phase Risks](#cross-phase-risks)
+12. [Definition of Done](#definition-of-done)
 
-4. `Scheduler / launchd orchestration` would benefit from consolidation.
-   Files: [scripts/daily_sync.sh](/Users/noelsaw/Documents/rebalance-OS/scripts/daily_sync.sh), [scripts/vault_sync.sh](/Users/noelsaw/Documents/rebalance-OS/scripts/vault_sync.sh), [scripts/github_sync.sh](/Users/noelsaw/Documents/rebalance-OS/scripts/github_sync.sh), installer scripts and plist templates under [scripts/](/Users/noelsaw/Documents/rebalance-OS/scripts)
-   Reason: behavior is coherent, but policy is duplicated in shell scripts, installers, and docs. This is where freshness regressions can hide after ingest refactors.
-   Effort/risk: low-medium effort, low risk.
+## Executive Summary
 
-5. `Project onboarding / registry / inference` is a good second-wave candidate.
-   Files: [src/rebalance/ingest/preflight.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/preflight.py), [src/rebalance/ingest/registry.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/registry.py), [src/rebalance/ingest/project_inference.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/project_inference.py), [src/rebalance/ingest/project_classifier.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/project_classifier.py), [src/rebalance/ingest/project_priority.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/project_priority.py), [src/rebalance/mcp/tools/onboarding.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/mcp/tools/onboarding.py)
-   Reason: discovery, confirmation, classification, and priority logic are related but live in separate modules with evolving contracts.
-   Effort/risk: medium effort, medium risk.
+This plan converts the earlier subsystem-refactor sketch into a real rollout sequence. The goal is not generic cleanup. The goal is to reduce the same spread, duplication, and contract drift that recently forced the command-system refactor.
 
-If you want strict prioritization, I’d do:
+Priority is driven by user-visible reliability:
 
-1. config/auth/path
-2. pulse/dashboard/web
-3. query/retrieval
-4. scheduler
-5. onboarding/registry
+1. `config/auth/path`
+2. `pulse/dashboard/web`
+3. `query/retrieval`
+4. `scheduler/launchd`
+5. `onboarding/registry`
 
-The one I would not broaden casually right now is `semantic_index.py`: it still deserves work, but it is already in active contract churn from the collector refactor, so it is higher regression risk than the others.
+Important nuance:
 
-If useful, I can turn this into a short “next subsystem audit queue” section inside the existing audit doc.
+- `config/auth/path` and `scheduler/launchd` already received meaningful portability work during the collector refactor.
+- `pulse/dashboard/web` has been touched repeatedly, but mostly through feature additions and local fixes rather than subsystem consolidation.
+- `semantic_index.py` is intentionally not the center of this plan. It is still in active contract churn from the collector-path refactor, so broadening it casually would raise regression risk.
 
-Yes. Reviewing recent collector-related work in [CHANGELOG.md](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md), the refactor already crossed into `1`, `2`, and `4`, but unevenly.
+This rollout is designed so that **each phase can stop cleanly**. At the end of every phase:
 
-`1. Config / auth / path resolution` has already been touched heavily. The clearest entries are the portability/auth cleanup in [0.34.0](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:29), especially path resolver adoption and centralized OAuth token paths at [CHANGELOG.md](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:33), plus earlier keyring/config work in [0.31.6](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:336) and config discovery fixes in [0.31.3](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:401). So `1` is not untouched; it has already been partially refactored as part of collector portability.
+- the system still refreshes end to end
+- the MCP server still works
+- scheduled jobs still run
+- no user-facing surface is left half-migrated
 
-`2. Pulse / dashboard / web` has also been touched, but more as feature and behavior work than as a clean architectural consolidation. Relevant entries are the dashboard/pulse fixes in [0.31.3](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:403), the pulse self-repair loop in [0.31.5](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:359), the Figma home-page integration in [0.31.9](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:307), and the dashboard/web additions in [0.32.0](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:96). So yes, `2` was touched, but it still reads like an accreted surface rather than a subsystem that got a proper unification pass.
+## Scope
 
-`4. Scheduler / launchd orchestration` was definitely touched already. The big portability/scheduler cleanup is in [0.29.0](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:461), where the sync scripts and plist templates were made portable at [CHANGELOG.md](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:469). Then [0.29.1](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:454) brought pulse-server into the same template-managed pattern, and [0.32.0](/Users/noelsaw/Documents/rebalance-OS/CHANGELOG.md:80) explicitly says the collector refactor preserved scheduled/daily sync behavior.
+This plan covers five subsystem families:
 
-So the short answer is: yes, all of `1`, `2`, and `4` were touched already. But only `1` and `4` look like they got deliberate refactor-level attention. `2` looks more like repeated surface changes on top of still-split architecture, so it remains a good candidate for a focused pass.
+1. `Config + auth + path resolution`
+2. `Pulse / dashboard / web surface`
+3. `Query / retrieval / synthesis`
+4. `Scheduler / launchd orchestration`
+5. `Project onboarding / registry / inference`
+
+This plan does not include:
+
+- a broad semantic-index redesign
+- redesigning the collector registry again
+- changing product scope for sources already in production
+- replacing launchd with another scheduler
+
+## Current Prioritization
+
+### 1. Config, Auth, and Path Resolution
+
+Primary files:
+
+- [src/rebalance/ingest/config.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/config.py)
+- [src/rebalance/paths.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/paths.py)
+- [src/rebalance/ingest/auth_log.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/auth_log.py)
+- [scripts/setup_calendar_oauth.py](/Users/noelsaw/Documents/rebalance-OS/scripts/setup_calendar_oauth.py)
+- [scripts/setup_gmail_oauth.py](/Users/noelsaw/Documents/rebalance-OS/scripts/setup_gmail_oauth.py)
+
+Why first:
+
+- It has the largest effect on collector reliability and portability.
+- Recent collector work already touched it, so the next pass can finish seams rather than invent new ones.
+
+### 2. Pulse, Dashboard, and Web Surface
+
+Primary files:
+
+- [scripts/dashboard.py](/Users/noelsaw/Documents/rebalance-OS/scripts/dashboard.py)
+- [scripts/pulse_web.py](/Users/noelsaw/Documents/rebalance-OS/scripts/pulse_web.py)
+- [scripts/pulse_server.py](/Users/noelsaw/Documents/rebalance-OS/scripts/pulse_server.py)
+- [src/rebalance/web.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/web.py)
+- [src/rebalance/web_components.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/web_components.py)
+
+Why second:
+
+- This is the most visibly accreted subsystem.
+- It now contains multiple refresh triggers, rendering paths, and path-bootstrap patterns.
+
+### 3. Query, Retrieval, and Synthesis
+
+Primary files:
+
+- [src/rebalance/chat.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/chat.py)
+- [src/rebalance/ingest/querier.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/querier.py)
+- [src/rebalance/mcp/tools/retrieval.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/mcp/tools/retrieval.py)
+- [src/rebalance/mcp/tools/index.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/mcp/tools/index.py)
+- [src/rebalance/cli/query.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/cli/query.py)
+
+Why third:
+
+- There are overlapping read-side abstractions, but the risk is lower than config/auth drift.
+- This is best done after the pulse/web surface is more stable, because several query experiences are exposed there.
+
+### 4. Scheduler and Launchd Orchestration
+
+Primary files:
+
+- [scripts/daily_sync.sh](/Users/noelsaw/Documents/rebalance-OS/scripts/daily_sync.sh)
+- [scripts/vault_sync.sh](/Users/noelsaw/Documents/rebalance-OS/scripts/vault_sync.sh)
+- [scripts/github_sync.sh](/Users/noelsaw/Documents/rebalance-OS/scripts/github_sync.sh)
+- launchd installer scripts and plist templates under [scripts/](/Users/noelsaw/Documents/rebalance-OS/scripts)
+
+Why fourth:
+
+- Recent work already made this subsystem more portable.
+- It still benefits from consolidation, but it is less fragmented than pulse/web or read-side retrieval.
+
+### 5. Onboarding, Registry, and Inference
+
+Primary files:
+
+- [src/rebalance/ingest/preflight.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/preflight.py)
+- [src/rebalance/ingest/registry.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/registry.py)
+- [src/rebalance/ingest/project_inference.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/project_inference.py)
+- [src/rebalance/ingest/project_classifier.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/project_classifier.py)
+- [src/rebalance/ingest/project_priority.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/project_priority.py)
+- [src/rebalance/mcp/tools/onboarding.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/mcp/tools/onboarding.py)
+
+Why fifth:
+
+- It is important, but less likely to destabilize everyday refresh behavior than the earlier phases.
+- This is a better second-wave subsystem once the lower-level seams are cleaner.
+
+## Refactor Principles
+
+- One subsystem owner per contract.
+- One logical pipeline per flow when possible.
+- No phase should require a flag day.
+- Every phase must preserve the current end-to-end system.
+- Every phase must leave CLI, MCP, and scheduler paths working together.
+- Narrow seam extraction beats broad renaming.
+- Tests should lock behavior before module movement when practical.
+
+Compatibility rule for this plan:
+
+- old entry points may remain temporarily as thin facades
+- shared contracts must move before leaf implementations are shuffled
+- docs must be updated in the same phase that changes operator behavior
+
+## Phase 0 - Architecture Spike
+
+Goal: lock subsystem boundaries, choose the first implementation slice, and define compatibility rules before moving files.
+
+System state at phase completion:
+
+- full refresh still works
+- no module movement required yet
+- one agreed map exists for the next phases
+
+- [ ] Generate a subsystem seam map:
+  observable result: one table mapping each subsystem to its entry points, contract owners, shared config surfaces, and current duplication points.
+- [ ] Lock the first executable slice:
+  observable result: explicit statement that Phase 1 starts with `config/auth/path`, plus the specific files touched first.
+- [ ] Define compatibility rules for facades and deprecations:
+  observable result: one short rule set covering when legacy commands or scripts can remain as wrappers.
+- [ ] Define rollout invariants:
+  observable result: one list of end-to-end behaviors that must continue to work after every phase (`refresh_index`, MCP startup, scheduled syncs, dashboard render, doctor).
+- [ ] Identify the two highest-risk regressions per subsystem:
+  observable result: a risk table used to decide where tests must land before edits.
+
+## Phase 1 - Config, Auth, and Path Resolution
+
+Goal: finish consolidating operator config, auth-token paths, and repo/path resolution behind a stable runtime contract.
+
+System state at phase completion:
+
+- all existing refresh paths still run
+- setup flows still produce usable credentials
+- no collector depends on ad hoc path logic for normal runtime behavior
+
+- [ ] Introduce one canonical token-path resolver contract everywhere it belongs:
+  observable result: runtime modules and setup scripts resolve Calendar/Gmail token paths through the same helper.
+- [ ] Separate repo-local operator config from user-level defaults more explicitly:
+  observable result: one documented accessor boundary for `temp/rbos.config` vs `~/.config/rebalance-os/config.json`.
+- [ ] Collapse duplicated auth-source precedence logic:
+  observable result: GitHub, Calendar, Gmail, Sleuth, and Figma each have one clearly documented precedence chain.
+- [ ] Remove path bootstrap hacks from scripts where package imports can be made stable:
+  observable result: fewer `sys.path.insert(...)` and fewer script-local path assumptions for normal launches.
+- [ ] Add contract tests for setup/runtime path agreement:
+  observable result: tests prove that setup scripts and runtime readers point at the same resolved token locations.
+- [ ] Update operator docs for the final config/auth model:
+  observable result: one source of truth describing where credentials and local settings live.
+
+## Phase 2 - Pulse, Dashboard, and Web Surface
+
+Goal: consolidate the pulse/dashboard surface so rendering, refresh triggers, and HTTP behavior are not spread across loosely coupled scripts.
+
+System state at phase completion:
+
+- pulse HTML still renders
+- pulse server still serves
+- dashboard refresh still works
+- no user-facing page depends on a partially migrated rendering path
+
+- [ ] Define one rendering contract for pulse/dashboard views:
+  observable result: one shared renderer or rendering boundary consumed by script and server entry points.
+- [ ] Separate refresh orchestration from UI rendering:
+  observable result: refresh-trigger code is isolated from HTML generation and page composition.
+- [ ] Reduce duplicate data-fetch helpers across script and package modules:
+  observable result: page surfaces read from shared functions instead of parallel script-only implementations.
+- [ ] Normalize script bootstrapping and import behavior:
+  observable result: dashboard/pulse scripts stop each carrying their own fragile import/path bootstrap logic where avoidable.
+- [ ] Add end-to-end checks for the main web entry points:
+  observable result: tests cover dashboard refresh, pulse server refresh, and pulse HTML generation with the live function signatures.
+- [ ] Preserve current user-visible routes and controls during consolidation:
+  observable result: no route or operator habit disappears without an explicit deprecation note.
+
+## Phase 3 - Query, Retrieval, and Synthesis
+
+Goal: clarify the read-side architecture so semantic query, legacy source query, `ask()`, and chat-with-data are not overlapping without clear ownership.
+
+System state at phase completion:
+
+- semantic query still works
+- MCP retrieval tools still work
+- dashboard/pulse “ask” flows still work
+- no query path depends on a half-migrated abstraction
+
+- [ ] Define the read-side contract map:
+  observable result: one table separating source-scoped retrieval, unified semantic retrieval, and synthesis surfaces.
+- [ ] Decide which read API is canonical for each use case:
+  observable result: clear ownership for `semantic_query`, legacy note/GitHub queries, `ask()`, and `chat_with_data`.
+- [ ] Remove duplicated scope-normalization and result-shaping logic where possible:
+  observable result: CLI and MCP wrappers use shared helpers instead of re-deriving accepted source sets and response shapes.
+- [ ] Align naming and behavior between retrieval surfaces:
+  observable result: “all”, source filters, top-k behavior, and freshness semantics match across CLI and MCP where they mean the same thing.
+- [ ] Add contract tests for canonical read paths:
+  observable result: tests prove that the chosen canonical query surfaces accept the documented scopes and return the documented structure.
+- [ ] Document what remains legacy vs preferred:
+  observable result: operator-facing docs can distinguish compatibility surfaces from preferred ones.
+
+## Phase 4 - Scheduler and Launchd Orchestration
+
+Goal: consolidate scheduler policy so shell scripts, plist templates, installers, and docs share the same behavior model.
+
+System state at phase completion:
+
+- all current launchd jobs still install and run
+- daily/hourly refreshes still produce the same effective work
+- scheduler behavior is easier to verify after future ingest refactors
+
+- [ ] Define one scheduler policy table:
+  observable result: one table naming each job, cadence, scope, prerequisites, and expected outputs.
+- [ ] Reduce duplication across shell scripts:
+  observable result: common logging, bootstrapping, and result handling move behind shared helpers or clearly repeated patterns.
+- [ ] Normalize installer behavior across all jobs:
+  observable result: unload/load behavior, template rendering, and post-install verification are consistent.
+- [ ] Add smoke checks for scheduled entry points:
+  observable result: dry-run or hermetic tests validate each scheduled script’s intended `refresh_index(...)` or publish call.
+- [ ] Make freshness-sensitive follow-on stages explicit:
+  observable result: scripts that rely on semantic freshness or derived stages encode that intentionally rather than by accident.
+- [ ] Update scheduler docs and runbooks:
+  observable result: docs match the live launchd behavior exactly.
+
+## Phase 5 - Onboarding, Registry, and Inference
+
+Goal: consolidate project discovery, confirmation, registry persistence, and priority/inference logic into clearer contracts.
+
+System state at phase completion:
+
+- onboarding still completes end to end
+- project registry remains queryable
+- preflight and confirm flows still work through MCP
+- no user loses the ability to onboard or refresh projects mid-refactor
+
+- [ ] Define the project-lifecycle contract:
+  observable result: one map for discovery, review, confirmation, persistence, inference, and prioritization stages.
+- [ ] Separate durable registry writes from heuristic inference:
+  observable result: registry persistence is clearly isolated from project guessing/classification logic.
+- [ ] Reduce duplicate project-shape normalization:
+  observable result: onboarding, preflight, and registry code use one canonical project dict/schema boundary.
+- [ ] Clarify priority and classifier ownership:
+  observable result: rules, learned heuristics, and operator overrides each have one obvious home.
+- [ ] Add end-to-end onboarding tests around the chosen boundary:
+  observable result: tests cover `run_preflight` → `confirm_projects` → `list_projects` with stable contracts.
+- [ ] Update onboarding docs after the contract cleanup:
+  observable result: the setup narrative matches the actual registry/inference architecture.
+
+## Cross-Phase Risks
+
+- `Compatibility drift`
+  Keeping wrappers temporarily is useful, but wrappers that diverge from the canonical path will recreate the same problem.
+
+- `Doc lag`
+  These subsystems are operator-facing. A working refactor with stale docs will still read as unreliable.
+
+- `Half-finished seam extraction`
+  Moving helpers without locking the contract first will spread behavior rather than centralize it.
+
+- `Cross-subsystem scope creep`
+  The phases intentionally touch adjacent files, but they should not turn into repo-wide reorganizations.
+
+- `Semantic-index churn`
+  Read-side and pulse/web work will brush against semantic search, but the plan should avoid broadening semantic-index internals unless a narrow blocker demands it.
+
+## Definition of Done
+
+- [ ] Each subsystem phase leaves the repo runnable end to end.
+- [ ] `config/auth/path` has one stable runtime contract for token paths, config precedence, and project-root resolution.
+- [ ] `pulse/dashboard/web` has one clear rendering and refresh boundary rather than multiple partially overlapping script paths.
+- [ ] `query/retrieval` surfaces have explicit ownership and reduced overlap.
+- [ ] `scheduler/launchd` policy is encoded consistently across scripts, installers, templates, and docs.
+- [ ] `onboarding/registry` persistence and inference responsibilities are separated cleanly enough to test independently.
+- [ ] New tests added during the rollout catch contract drift at the subsystem seam, not just inside leaf functions.
+- [ ] The refactor reduces duplication and ambiguity without forcing a flag day for operators.
