@@ -390,10 +390,18 @@ Goal: Land the refactor without silently breaking refresh behavior or data fresh
 ## Definition of Done
 
 - [ ] Every raw incoming source has exactly one source-owned write path.
-- [ ] User-facing write surfaces no longer call leaf ingest functions directly.
-- [ ] `all` has one explicit, tested meaning.
+  Status: not yet. Source-owned wrappers exist, but some raw sources still expose multiple user-facing write paths rather than one single path.
+- [x] User-facing write surfaces no longer call leaf ingest functions directly.
+  Status: complete. `tests/test_collector_contracts.py::test_user_surfaces_do_not_import_leaf_ingest_functions` is GREEN.
+- [x] `all` has one explicit, tested meaning.
+  Status: complete. `all` = raw sources only; the default no-scope recipe adds named follow-on stages. Contract tests are GREEN.
 - [ ] Semantic projection ownership is explicit and consistent across semantic-capable sources.
-- [ ] Raw sources, derived scans, projection jobs, and export jobs are modeled separately in code and docs.
+  Status: not yet. The `semantic` stage is the single writer on the collector path, but maintenance CLI semantics still drift from the live stage coverage (`--source all` does not match the full semantic stage source set).
+- [x] Raw sources, derived scans, projection jobs, and export jobs are modeled separately in code and docs.
+  Status: complete. `Collector.kind` is enforced in code and reflected in `ARCHITECTURE.md`.
 - [ ] Runtime config and auth-path assumptions are documented and reduced behind resolvers.
-- [ ] Obsidian write-back is treated as an intentional output surface, not a hidden default control-plane dependency.
+  Status: partial. Core runtime paths now use resolvers, but setup scripts and some script bootstraps still hardcode or inject path behavior.
+- [x] Obsidian write-back is treated as an intentional output surface, not a hidden default control-plane dependency.
+  Status: complete. `refresh_index` documents `update_dashboard_note` as an optional side-output rather than a core contract.
 - [ ] Tests and observability cover the new contracts well enough to ship the refactor without blind spots.
+  Status: not yet. Contract and smoke coverage improved materially, but blind spots remain; for example, a stale dashboard refresh call still passed tests because the signature was mocked rather than exercised live.
