@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import re
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -50,6 +50,21 @@ _CALENDAR_NOISE_EXACT = {
 _CALENDAR_SUFFIX_WORDS = {"weekly", "meetings", "meeting", "website", "deployment", "day", "daily"}
 
 
+# Provenance marker for rows this module owns. Inference may create, update,
+# and delete ONLY rows carrying this marker (lifecycle contract:
+# write_semantics="machine_owned") — curated registry rows always win.
+INFERENCE_GENERATED_BY = "activity_inference_v1"
+
+
+def _is_inference_owned(custom_fields_json: str | None) -> bool:
+    try:
+        custom_fields = json.loads(custom_fields_json) if custom_fields_json else {}
+    except json.JSONDecodeError:
+        custom_fields = {}
+    generated_by = ((custom_fields or {}).get("inference") or {}).get("generated_by")
+    return generated_by == INFERENCE_GENERATED_BY
+
+
 @dataclass
 class InferenceSummary:
     inferred_count: int
@@ -58,6 +73,8 @@ class InferenceSummary:
     updated_count: int
     deleted_stale_inferred_count: int
     project_names: list[str]
+    skipped_curated_count: int = 0
+    skipped_curated_names: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -475,7 +492,7 @@ def _seed_to_project_row(seed: _ProjectSeed) -> dict[str, Any]:
             "aliases": aliases,
             "calendar_aliases": calendar_aliases,
             "inference": {
-                "generated_by": "activity_inference_v1",
+                "generated_by": INFERENCE_GENERATED_BY,
                 "github_repo_count": len(seed.repos),
                 "github_activity_score": seed.github_score,
                 "github_last_active_at": seed.github_last_active_at,
@@ -492,20 +509,37 @@ def _delete_stale_inferred_rows(database_path: Path, project_names: set[str]) ->
         rows = conn.execute(
             "SELECT name, custom_fields_json FROM project_registry"
         ).fetchall()
-        stale_names: list[str] = []
-        for row in rows:
-            try:
-                custom_fields = json.loads(row["custom_fields_json"]) if row["custom_fields_json"] else {}
-            except json.JSONDecodeError:
-                custom_fields = {}
-            generated_by = ((custom_fields or {}).get("inference") or {}).get("generated_by")
-            if generated_by == "activity_inference_v1" and row["name"] not in project_names:
-                stale_names.append(row["name"])
+        stale_names: list[str] = [
+            row["name"]
+            for row in rows
+            if _is_inference_owned(row["custom_fields_json"]) and row["name"] not in project_names
+        ]
 
         if stale_names:
             conn.executemany("DELETE FROM project_registry WHERE name = ?", [(name,) for name in stale_names])
             conn.commit()
         return len(stale_names)
+
+
+def _partition_writable_rows(
+    database_path: Path, projects: list[dict[str, Any]]
+) -> tuple[list[dict[str, Any]], list[str]]:
+    """Split inferred rows into writable vs. curated-name collisions.
+
+    A name already present in project_registry WITHOUT the inference marker is
+    operator-curated state — inference must not touch it (the registry upsert
+    is keyed by name, so writing would clobber the curated row wholesale).
+    """
+    with db_connection(database_path, ensure_project_schema) as conn:
+        rows = conn.execute(
+            "SELECT name, custom_fields_json FROM project_registry"
+        ).fetchall()
+    curated_names = {
+        row["name"] for row in rows if not _is_inference_owned(row["custom_fields_json"])
+    }
+    writable = [p for p in projects if p["name"] not in curated_names]
+    skipped = sorted(p["name"] for p in projects if p["name"] in curated_names)
+    return writable, skipped
 
 
 def infer_project_registry(
@@ -556,7 +590,10 @@ def sync_inferred_project_registry(
         calendar_days_back=calendar_days_back,
         calendar_days_forward=calendar_days_forward,
     )
-    updated_count = sync_db(database_path, {"projects": projects})
+    # machine_owned contract: write only rows inference owns. Curated rows
+    # sharing a name are skipped (reported in the summary), never clobbered.
+    writable, skipped_curated = _partition_writable_rows(database_path, projects)
+    updated_count = sync_db(database_path, {"projects": writable})
     deleted_count = _delete_stale_inferred_rows(database_path, set(summary.project_names))
     return InferenceSummary(
         inferred_count=summary.inferred_count,
@@ -565,4 +602,6 @@ def sync_inferred_project_registry(
         updated_count=updated_count,
         deleted_stale_inferred_count=deleted_count,
         project_names=summary.project_names,
+        skipped_curated_count=len(skipped_curated),
+        skipped_curated_names=skipped_curated,
     )

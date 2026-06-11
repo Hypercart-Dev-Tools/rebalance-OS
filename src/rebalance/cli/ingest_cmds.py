@@ -120,8 +120,14 @@ def ingest_infer_project_registry(
     typer.echo(
         f"Inferred project registry: inferred={summary.inferred_count}, updated={summary.updated_count}, "
         f"github_backed={summary.github_backed_count}, calendar_only={summary.calendar_only_count}, "
-        f"deleted_stale={summary.deleted_stale_inferred_count}"
+        f"deleted_stale={summary.deleted_stale_inferred_count}, "
+        f"skipped_curated={summary.skipped_curated_count}"
     )
+    if summary.skipped_curated_names:
+        typer.echo(
+            "  Skipped (curated rows own these names; inference never overwrites them): "
+            + ", ".join(summary.skipped_curated_names)
+        )
     for name in summary.project_names:
         typer.echo(f"  {name}")
 
