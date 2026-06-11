@@ -1,6 +1,12 @@
 # Changelog
 
-## [Unreleased]
+> **Maintainers — there is no `[Unreleased]` section in this project.** Every fix
+> or feature takes a version bump at commit/merge time (semver: MAJOR = breaking ·
+> MINOR = feature · PATCH = fix) under a `## [x.y.z] - YYYY-MM-DD` heading. Do
+> **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
+> current dated version instead. See AGENTS.md → "Versioning & Changelog".
+
+## [0.32.0] - 2026-06-10
 
 ### Changed
 
