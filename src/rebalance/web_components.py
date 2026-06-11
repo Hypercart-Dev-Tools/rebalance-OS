@@ -344,3 +344,21 @@ def render_shell(
 {shell_body}</body>
 </html>
 """
+
+
+# ---------------------------------------------------------------------------
+# Shared glyph constants — single source of truth for kind/sub-kind characters.
+# Both the TUI dashboard (dashboard.py) and the HTML surfaces (pulse_web.py)
+# build their own colored tuples on top; the characters must match across both.
+# ---------------------------------------------------------------------------
+
+KIND_GLYPHS: dict[str, str] = {
+    "commit":  "●",
+    "item":    "◆",
+    "comment": "○",
+}
+
+ITEM_SUB_GLYPHS: dict[str, str] = {
+    "issue":        "✦",
+    "pull_request": "⇡",
+}

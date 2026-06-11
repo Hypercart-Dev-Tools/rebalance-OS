@@ -61,6 +61,8 @@ from rebalance.ingest.config import get_figma_file_keys  # noqa: E402
 from rebalance.ingest.index_ops import COLLECTORS, get_index_status  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 from rebalance.web_components import (  # noqa: E402
+    ITEM_SUB_GLYPHS,
+    KIND_GLYPHS,
     RB_BUTTON_CSS,
     RB_CHROME_CSS,
     RB_TOKENS_CSS,
@@ -454,14 +456,14 @@ def fetch_health_filed_count(days: int = 30) -> int:
 # ---------------------------------------------------------------------------
 
 KIND_GLYPH = {
-    "commit":  ("●", "ok"),
-    "item":    ("◆", "info"),
-    "comment": ("○", "muted"),
+    "commit":  (KIND_GLYPHS["commit"],  "ok"),
+    "item":    (KIND_GLYPHS["item"],    "info"),
+    "comment": (KIND_GLYPHS["comment"], "muted"),
 }
 
 ITEM_SUB_GLYPH = {
-    "issue":        ("✦", "warn"),
-    "pull_request": ("⇡", "info"),
+    "issue":        (ITEM_SUB_GLYPHS["issue"],        "warn"),
+    "pull_request": (ITEM_SUB_GLYPHS["pull_request"], "info"),
 }
 
 

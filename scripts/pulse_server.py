@@ -57,6 +57,7 @@ _FIGMA_KEY_RE = re.compile(r"^[A-Za-z0-9]{8,}$")
 # too, so their links work without a separate `rebalance serve` process on
 # :8787. Reuses the renderers in rebalance.web (no duplication).
 from rebalance.web import (  # noqa: E402
+    Focus5HideRequest,
     auth_log_page as _auth_log_page,
     auth_log_raw as _auth_log_raw,
     focus5_page as _focus5_page,
@@ -78,10 +79,6 @@ def auth_log_raw():
 @app.get("/focus-5")
 def focus5(refresh: bool = False):
     return _focus5_page(refresh=refresh)
-
-
-class Focus5HideRequest(BaseModel):
-    repo: str
 
 
 @app.post("/api/focus5/hide")

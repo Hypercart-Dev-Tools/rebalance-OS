@@ -523,7 +523,7 @@ def focus5_page(refresh: bool = False):
     return _page("Focus 5", _focus5_body(data), active="focus5", wide=True)
 
 
-class _Focus5HideRequest(BaseModel):
+class Focus5HideRequest(BaseModel):
     repo: str
 
 
@@ -560,12 +560,12 @@ def focus5_set_hidden(repo: str, *, hidden: bool) -> dict[str, Any]:
 
 
 @app.post("/api/focus5/hide")
-def focus5_hide(req: _Focus5HideRequest) -> JSONResponse:
+def focus5_hide(req: Focus5HideRequest) -> JSONResponse:
     return JSONResponse(focus5_set_hidden(req.repo, hidden=True))
 
 
 @app.post("/api/focus5/unhide")
-def focus5_unhide(req: _Focus5HideRequest) -> JSONResponse:
+def focus5_unhide(req: Focus5HideRequest) -> JSONResponse:
     return JSONResponse(focus5_set_hidden(req.repo, hidden=False))
 
 

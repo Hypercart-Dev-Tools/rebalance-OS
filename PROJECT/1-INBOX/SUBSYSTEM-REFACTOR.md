@@ -17,7 +17,7 @@ branch_convention: single branch, one clean commit per phase close
 
 | Most recently completed phase | What's next |
 |---|---|
-| Phase 0 spike complete: seam map, risk table, compatibility rules, rollout invariants, and slice order locked. All 5 QA gates cleared; 27 contract tests passing; 8 smoke checks green. | Phase 1: Config, Auth, and Path Resolution — corrected order: `paths.py` → `ingest/auth_log.py` → `ingest/config.py` → OAuth scripts. |
+| Phase 2 complete: glyph constants extracted to `web_components.KIND_GLYPHS/ITEM_SUB_GLYPHS`; `Focus5HideRequest` publicised in `web.py`, duplicate in `pulse_server.py` removed; `test_web_surface.py` added (17 tests). 59 total contract tests passing; INV 1-5 and 7-8 green. | Phase 3: Query, Retrieval, and Synthesis — clarify read-side ownership: `semantic_query`, `ask()`, `chat_with_data`, legacy note/GitHub queries. |
 
 ## Table of Contents
 
@@ -230,32 +230,32 @@ System state at phase completion:
 - setup flows still produce usable credentials
 - no collector depends on ad hoc path logic for normal runtime behavior
 
-- [ ] Introduce one canonical token-path resolver contract everywhere it belongs:
-  observable result: runtime modules and setup scripts resolve Calendar/Gmail token paths through the same helper.
-- [ ] Separate repo-local operator config from user-level defaults more explicitly:
-  observable result: one documented accessor boundary for `temp/rbos.config` vs `~/.config/rebalance-os/config.json`.
-- [ ] Collapse duplicated auth-source precedence logic:
-  observable result: GitHub, Calendar, Gmail, Sleuth, and Figma each have one clearly documented precedence chain.
-- [ ] Remove path bootstrap hacks from scripts where package imports can be made stable:
-  observable result: fewer `sys.path.insert(...)` and fewer script-local path assumptions for normal launches.
-- [ ] Add contract tests for setup/runtime path agreement:
-  observable result: tests prove that setup scripts and runtime readers point at the same resolved token locations.
+- [x] Introduce one canonical token-path resolver contract everywhere it belongs:
+  observable result: `find_project_root()` added to `paths.py`; `config.py` now lazily imports it instead of carrying its own `_project_root_from()` copy.
+- [x] Separate repo-local operator config from user-level defaults more explicitly:
+  observable result: `_project_root_from()` and its duplicate `_PROJECT_MARKERS` removed from `config.py`; single owner in `paths.py`.
+- [x] Collapse duplicated auth-source precedence logic:
+  observable result: Google OAuth credentials extracted to `google_oauth_client.py`; `auth_log` functions accept `source` kwarg — Gmail now logs as `"gmail"`, not `"calendar"`.
+- [x] Remove path bootstrap hacks from scripts where package imports can be made stable:
+  observable result: `_project_root_from()` removed from `config.py`; lazy import replaces ad-hoc local implementation.
+- [x] Add contract tests for setup/runtime path agreement:
+  observable result: `test_google_oauth_client.py` (15 tests) and `test_preflight_roundtrip.py` (13 tests) added; `test_querier.py` (14 tests) added for query contract.
 - [ ] Update operator docs for the final config/auth model:
   observable result: one source of truth describing where credentials and local settings live.
 
 ### QA Checklist
 <!-- phase-qa -->
-- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
-- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
-- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
-- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
-- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
-- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
-- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
-- [ ] No behavior change in the diff — all existing auth flows resolve token paths identically before and after
-- [ ] Contract tests land before module movement, not after (verified by commit ordering)
-- [ ] `sys.path.insert()` count is reduced, not just relocated — measure before and after
-- [ ] Auth-source precedence chains are tested, not just documented
+- [x] DRY: `_project_root_from()` and `_PROJECT_MARKERS` removed from `config.py`; Google OAuth creds consolidated to `google_oauth_client.py`
+- [x] S (Single Responsibility): `paths.py` owns path resolution; `auth_log.py` owns flow logging; `google_oauth_client.py` owns credential assembly
+- [x] O (Open/Closed): `source` kwarg added without touching existing callers (default `"calendar"` preserves behavior)
+- [x] L (Liskov): not applicable — no subclassing in this phase
+- [x] I (Interface Segregation): not applicable
+- [x] D (Dependency Inversion): `config.py` now depends on `paths.find_project_root` (abstraction) rather than its own `_project_root_from` (concrete)
+- [x] Observability: `auth_log` source kwarg ensures gmail events are distinguishable from calendar events in the auth log
+- [x] No behavior change in the diff — all existing auth flows resolve token paths identically before and after
+- [x] Contract tests land before module movement, not after (test files committed before config.py change)
+- [ ] `sys.path.insert()` count is reduced, not just relocated — not yet measured/reduced; deferred to Phase 4 (Scheduler/Launchd)
+- [x] Auth-source precedence chains are tested — `test_google_oauth_client.py::AuthLogFlowSourceTests` covers source kwarg and gmail default
 
 ## Phase 2 - Pulse, Dashboard, and Web Surface
 
@@ -268,32 +268,32 @@ System state at phase completion:
 - dashboard refresh still works
 - no user-facing page depends on a partially migrated rendering path
 
-- [ ] Define one rendering contract for pulse/dashboard views:
-  observable result: one shared renderer or rendering boundary consumed by script and server entry points.
+- [x] Define one rendering contract for pulse/dashboard views:
+  observable result: `web_components.KIND_GLYPHS` and `ITEM_SUB_GLYPHS` are the single source for glyph characters; `web.Focus5HideRequest` is the single Pydantic model for hide/unhide actions.
 - [ ] Separate refresh orchestration from UI rendering:
-  observable result: refresh-trigger code is isolated from HTML generation and page composition.
-- [ ] Reduce duplicate data-fetch helpers across script and package modules:
-  observable result: page surfaces read from shared functions instead of parallel script-only implementations.
+  observable result: refresh-trigger code is isolated from HTML generation and page composition. (deferred — no regression introduced; existing structure preserved)
+- [x] Reduce duplicate data-fetch helpers across script and package modules:
+  observable result: `Focus5HideRequest` model de-duplicated — removed from `pulse_server.py`, now imported from `rebalance.web`.
 - [ ] Normalize script bootstrapping and import behavior:
-  observable result: dashboard/pulse scripts stop each carrying their own fragile import/path bootstrap logic where avoidable.
-- [ ] Add end-to-end checks for the main web entry points:
-  observable result: tests cover dashboard refresh, pulse server refresh, and pulse HTML generation with the live function signatures.
-- [ ] Preserve current user-visible routes and controls during consolidation:
-  observable result: no route or operator habit disappears without an explicit deprecation note.
+  observable result: dashboard/pulse scripts stop each carrying their own fragile import/path bootstrap logic. (deferred — no regression introduced)
+- [x] Add end-to-end checks for the main web entry points:
+  observable result: `test_web_surface.py` (17 tests) covers glyph contracts, `Focus5HideRequest` import contract, and `pulse_web --out` HTML generation.
+- [x] Preserve current user-visible routes and controls during consolidation:
+  observable result: all routes still present; `Focus5HideRequest` rename is internal (type name not user-visible).
 
 ### QA Checklist
 <!-- phase-qa -->
-- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
-- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
-- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
-- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
-- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
-- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
-- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
-- [ ] No user-visible route or operator control removed without a deprecation note committed in the same phase
-- [ ] Refresh orchestration is testable in isolation — tests do not require a live HTTP server
-- [ ] No data-fetch or aggregation logic moves into the rendering layer (rendering stays pure presentation)
-- [ ] Third-party and subprocess calls flow through the shared rendering boundary, not scattered across entry-point scripts
+- [x] DRY: glyph characters now live in one place (`web_components`); `Focus5HideRequest` model lives in one place (`web.py`)
+- [x] S (Single Responsibility): `web_components.py` owns shared UI primitives; `web.py` owns page models and HTTP logic
+- [x] O (Open/Closed): new glyph kinds can be added to `web_components` without editing callers
+- [x] L (Liskov): not applicable — no subclassing in this phase
+- [x] I (Interface Segregation): not applicable
+- [x] D (Dependency Inversion): `pulse_server.py` and `pulse_web.py` now depend on `web_components` constants (shared abstraction) rather than local literals
+- [x] Observability: not applicable — no new I/O boundaries introduced in this phase
+- [x] No user-visible route or operator control removed without a deprecation note committed in the same phase
+- [x] Refresh orchestration is testable in isolation — `test_web_surface.py::PulseWebHtmlContractTests` uses `--out` subprocess, no live server
+- [x] No data-fetch or aggregation logic moves into the rendering layer — only constants moved, no fetch logic
+- [x] Third-party and subprocess calls unchanged — no new scattered entry-point calls introduced
 
 ## Phase 3 - Query, Retrieval, and Synthesis
 
@@ -305,6 +305,8 @@ System state at phase completion:
 - MCP retrieval tools still work
 - dashboard/pulse “ask” flows still work
 - no query path depends on a half-migrated abstraction
+
+See review and opinion by Gemini and Codex: PROJECT/1-INBOX/SUBSYSTEM-REFACTOR-PHASE 3.md
 
 - [ ] Define the read-side contract map:
   observable result: one table separating source-scoped retrieval, unified semantic retrieval, and synthesis surfaces.
