@@ -46,7 +46,7 @@ from pulse_web import (  # noqa: E402
     load_goal_history,
     undo_goal_completion_in_file,
 )
-from rebalance.ingest.config import get_figma_file_keys, set_figma_file_keys  # noqa: E402
+from rebalance.ingest.config import add_figma_file_key, get_figma_file_keys  # noqa: E402
 from rebalance.ingest.index_ops import refresh_index  # noqa: E402
 from rebalance.paths import resolve_database_path  # noqa: E402
 
@@ -237,16 +237,18 @@ def add_figma_project(req: FigmaProjectRequest):
             detail="enter a Figma file key or a full figma.com design/file URL",
         )
 
-    existing = get_figma_file_keys()
-    already_present = file_key in existing
-    if not already_present:
-        set_figma_file_keys(existing + [file_key])
+    added = add_figma_file_key(file_key)
+    if not added:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Figma file key already configured: {file_key}",
+        )
 
     sync_ok = True
     sync_error = ""
     figma_result: dict[str, object] = {}
     try:
-        result = refresh_index(resolve_database_path(), scope=["figma"], dry_run=False)
+        result = refresh_index(resolve_database_path(), scope=["figma", "semantic"], dry_run=False)
         figma_result = next(
             (
                 row for row in (result.get("results") or [])
@@ -283,7 +285,7 @@ def add_figma_project(req: FigmaProjectRequest):
     return {
         "ok": True,
         "file_key": file_key,
-        "already_present": already_present,
+        "already_present": False,
         "files_configured": len(get_figma_file_keys()),
         "sync_ok": sync_ok,
         "sync_error": sync_error,

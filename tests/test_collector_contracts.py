@@ -114,6 +114,23 @@ def test_semantic_projection_is_single_writer():
     assert src.count("embed_pending(") == 1
 
 
+# --- Phase 3 follow-up — semantic source list derived from registry (no second edit needed) -
+def test_all_semantic_sources_includes_registry_providers():
+    """Every collector with a semantic_docs provider must be in _all_semantic_sources().
+
+    Guards against the drift where a new source is registered with semantic_docs
+    but is never projected because the semantic stage's source list wasn't updated.
+    _all_semantic_sources() is registry-derived so this should never fail — but
+    the contract stays as a load-bearing regression guard.
+    """
+    from rebalance.ingest.index_ops import _all_semantic_sources, _semantic_source_names
+    all_sem = set(_all_semantic_sources())
+    missing = set(_semantic_source_names()) - all_sem
+    assert not missing, (
+        f"sources with semantic_docs not in _all_semantic_sources(): {missing}"
+    )
+
+
 # --- DASHBOARD row 8 (SOLID/OCP) / Phase 2 — no leaf-ingest bypasses (ENFORCED) -
 # Phase 2 landed: every CLI/MCP write surface now routes through a source-owned
 # helper, so this contract is enforced strictly (no xfail). A new bypass fails CI.

@@ -142,8 +142,11 @@ def register(mcp: FastMCP, database_path: Path) -> None:
 
         Each *messages* dict accepts: ``message_id`` (required), ``thread_id``,
         ``from_address``, ``from_name``, ``subject``, ``snippet``,
-        ``received_at``, and ``labels`` (list of label strings). The new rows
-        are also projected into the semantic index.
+        ``received_at``, and ``labels`` (list of label strings). Rows are stored
+        immediately; semantic projection runs in the next ``semantic`` stage
+        (``semantic_pending: true`` in this result signals that). To make new
+        messages searchable right away, follow up with
+        ``refresh_index(scope=["semantic"])``.
         """
         from rebalance.ingest.gmail import push_email_messages
 
@@ -153,4 +156,5 @@ def register(mcp: FastMCP, database_path: Path) -> None:
             "messages_stored": result.messages_stored,
             "messages_inserted": result.messages_inserted,
             "messages_updated": result.messages_updated,
+            "semantic_pending": True,
         }

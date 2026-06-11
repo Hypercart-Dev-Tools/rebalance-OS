@@ -857,19 +857,31 @@ def _refresh_figma(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     }
 
 
-# All sources that project into the unified semantic index. The semantic stage
-# is the single writer (Phase 3) — update this list when adding new sources.
-_ALL_SEMANTIC_SOURCES = ["vault", "github", "email", "code", "figma"]
+def _all_semantic_sources() -> list[str]:
+    """All sources that project into the unified semantic index.
+
+    Derived from the registry so new sources with a ``semantic_docs`` provider
+    are automatically included without a second manual edit. The legacy
+    if-ladder sources (vault / github / email / code) project via the
+    if-ladder in ``backfill_semantic_documents`` without needing a
+    ``semantic_docs`` provider; registry-driven sources (figma, …) use the
+    provider path. Add a new source to either the ladder or the registry —
+    it will appear here automatically.
+    """
+    _LADDER = ["vault", "github", "email", "code"]
+    registry_extra = [n for n in _semantic_source_names() if n not in _LADDER]
+    return _LADDER + registry_extra
 
 
 def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    sources = _all_semantic_sources()
     if dry_run:
         return {
             "scope": "semantic",
             "dry_run": True,
             "steps": [
-                f"semantic_backfill(sources={_ALL_SEMANTIC_SOURCES}, use_registry_providers=True)",
-                f"semantic_embed(sources={_ALL_SEMANTIC_SOURCES})",
+                f"semantic_backfill(sources={sources}, use_registry_providers=True)",
+                f"semantic_embed(sources={sources})",
             ],
         }
     from rebalance.ingest.semantic_index import (
@@ -878,14 +890,14 @@ def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, A
     )
     backfill = backfill_semantic_documents(
         database_path,
-        source_types=_ALL_SEMANTIC_SOURCES,
+        source_types=sources,
         use_registry_providers=True,
     )
-    sem_embed = embed_pending(database_path, source_types=_ALL_SEMANTIC_SOURCES)
+    sem_embed = embed_pending(database_path, source_types=sources)
     return {
         "scope": "semantic",
         "dry_run": False,
-        "sources": _ALL_SEMANTIC_SOURCES,
+        "sources": sources,
         "semantic_backfill": {
             "total": backfill.total_documents,
             "inserted": backfill.inserted_count,

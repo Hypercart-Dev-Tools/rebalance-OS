@@ -51,7 +51,7 @@ from rebalance.paths import resolve_database_path
 
 db_path = resolve_database_path()
 print(f"database={db_path}")
-result = refresh_index(db_path, scope=["vault"])
+result = refresh_index(db_path, scope=["vault", "semantic"])
 print(json.dumps(result, indent=2, default=str))
 sys.exit(1 if result.get("errors") else 0)
 PY
