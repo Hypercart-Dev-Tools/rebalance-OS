@@ -15,9 +15,11 @@
         <string>{{REBALANCE_DIR}}/temp/pulse-warning-watch.jsonl</string>
         <string>--state</string>
         <string>{{REBALANCE_DIR}}/temp/pulse-warning-watch.state.json</string>
-        <!-- Uncomment these if you want local Gemma/Ollama triage notes -->
-        <!-- <string>--ollama-base-url</string><string>http://127.0.0.1:11434/v1</string> -->
-        <!-- <string>--ollama-model</string><string>gemma3:12b</string> -->
+        <!-- Optional local Gemma/Ollama triage notes: add two string pairs
+             here, "ollama-base-url" (e.g. http://127.0.0.1:11434/v1) and
+             "ollama-model" (e.g. gemma3:12b), each flag prefixed with two
+             hyphens. (Spelled out because XML comments cannot contain
+             double hyphens.) -->
     </array>
 
     <key>StartCalendarInterval</key>
