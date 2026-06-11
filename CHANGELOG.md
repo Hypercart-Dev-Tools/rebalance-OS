@@ -6,6 +6,26 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.35.0] - 2026-06-10
+
+### Added
+
+- **Phase 5 collector test coverage.** `tests/test_phase5_collector_smoke.py` (13 tests):
+  - Smoke tests (dry-run) for all 5 raw sources: vault, calendar, sleuth, email (oauth
+    and MCP-skip modes), plus github (already covered in `test_index_ops.py`).
+  - Auth/config failure tests for all 5 sources via the `refresh_index` error envelope:
+    vault missing path, github missing token, calendar/sleuth API exceptions, email
+    `GmailAuthError` returned inline rather than raised.
+  - Idempotency tests: vault second-run reports 0 new/updated files (real SQLite);
+    calendar result shape is stable across identical calls; github dry-run planning
+    is deterministic.
+
+### Changed
+
+- **ARCHITECTURE.md updated for Phase 4/5 contracts.** Calendar credential row now
+  references `resolve_oauth_token_path("calendar")`; `paths.py` entry documents
+  `resolve_project_root` and `resolve_oauth_token_path` as the stable path resolvers.
+
 ## [0.34.0] - 2026-06-10
 
 ### Changed

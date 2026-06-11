@@ -154,7 +154,7 @@ Project Registry ────▶ registry.py +              MD registry → proj
 | Source | Secret store | Mechanism |
 |---|---|---|
 | GitHub | OS keyring + `temp/rbos.config` fallback; `gh` CLI as last-resort read fallback | PAT with `repo:read`; persisted to both keyring and config for launchd reachability |
-| Google Calendar | `google-calendar.env` resolved via `resolve_secret_path()` + pickled OAuth token | OAuth 2.0 user consent |
+| Google Calendar | `google-calendar.env` (client credentials) via `resolve_secret_path()` + pickled OAuth user-token at `resolve_oauth_token_path("calendar")` → `~/.config/rebalance-os/google-calendar-oauth` | OAuth 2.0 user consent |
 | Sleuth | `~/secrets/sleuth-web-api-development.env` (mode 600) | Bearer token, 64-hex |
 | Gmail | Desktop OAuth token in keyring + `~/.config/rebalance-os/google-gmail-oauth` fallback, or MCP push-ingest mode | `gmail.readonly` desktop OAuth, or agent-pushed `ingest_gmail_messages` path when `gmail_ingest_method=mcp` |
 | Figma | OS keyring for PAT + `temp/rbos.config` for file-key allow-list | Personal access token + explicit file selection |
@@ -418,10 +418,14 @@ src/rebalance/
   paths.py                 — centralized path resolver. `resolve_database_path()` and
                               `resolve_secret_path()` walk a layered chain (explicit
                               flag → env var → canonical app-data path → user
-                              config → cwd walk-up for project marker. Single
+                              config → cwd walk-up for project marker). Single
                               source of truth for "where is the DB / secrets dir?"
-                              Configure user defaults via `rebalance config
-                              set-default-database` and `set-secrets-dir`.
+                              `resolve_project_root(Path(__file__))` (walk-up) is the
+                              stable repo-root resolver used throughout the codebase —
+                              replaces all `parents[N]` hacks. `resolve_oauth_token_path(service)`
+                              returns the canonical launchd-reachable token path for
+                              Google OAuth services. Configure user defaults via
+                              `rebalance config set-default-database` and `set-secrets-dir`.
   web.py                   — FastAPI local dashboard/web surfaces (`/`, `/focus-5`, `/auth-log`, etc.)
   doctor.py                — installation health checks; backs `rebalance doctor`
   ingest/

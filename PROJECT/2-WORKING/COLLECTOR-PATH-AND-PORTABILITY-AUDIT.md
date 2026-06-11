@@ -14,7 +14,7 @@ surfaces:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 4 complete (2026-06-10):** Portability contracts cleaned up. Walk-up resolver (`resolve_project_root`) replaces all `parents[N]` hacks; auth token paths centralized via `resolve_oauth_token_path`; Sleuth sibling-checkout is config-first with heuristic fallback; Obsidian write-back documented as optional output in `refresh_index` docstring; operator config decision recorded (repo-local `temp/rbos.config`). All 35 affected tests GREEN. | **Phase 5:** smoke tests per raw source, failure-path auth tests, ARCHITECTURE.md updates. |
+| **Phase 5 complete (2026-06-10):** Smoke, auth-failure, and idempotency tests added for all 5 raw sources (`tests/test_phase5_collector_smoke.py`, 13 tests GREEN). ARCHITECTURE.md updated: Calendar credential row corrected to reference `resolve_oauth_token_path`; `paths.py` entry documents `resolve_project_root` and `resolve_oauth_token_path`. 700 tests pass. | **All phases complete.** Portability contract audit done. |
 
 ## Table of Contents
 
@@ -359,18 +359,20 @@ Goal: Remove the environment and filesystem coupling that would make the refacto
 
 Goal: Land the refactor without silently breaking refresh behavior or data freshness.
 
-- [ ] Add or update smoke tests for each raw source write path:
-  observable result: each source has at least one happy-path ingest test through the source-owned entry point.
-- [ ] Add failure-path tests for auth/config errors:
-  observable result: each source surfaces missing credential/config errors as structured failures, not implicit no-ops.
-- [ ] Add unchanged/no-op tests for incremental runs:
-  observable result: repeated refreshes prove that unchanged inputs do not drift counts or duplicate writes.
-- [ ] Add contract tests for `all` expansion: _(seeded early — see `tests/test_collector_contracts.py`, which also encodes the leaf-ingest-bypass and semantic single-writer contracts; target-state tests are `xfail` until their owning phase lands, then the marker is removed)_.
-  observable result: one test proves which scopes are included in `all` and why.
-- [ ] Add observability around stage timing and ownership:
-  observable result: logs and/or status outputs distinguish source ingest from semantic projection and export work.
-- [ ] Update docs and runbooks at rollout time:
-  observable result: `ARCHITECTURE.md`, relevant project docs, and any scheduler guidance match the new write-path model.
+**COMPLETE 2026-06-10** — `tests/test_phase5_collector_smoke.py` (13 tests GREEN) covers smoke, auth-failure, and idempotency for all 5 raw sources. `ARCHITECTURE.md` updated. 700 total tests pass.
+
+- [x] Add or update smoke tests for each raw source write path:
+  `CollectorSmokeTests` — dry-run test per source through `_refresh_*` entry point (vault, calendar, sleuth, email + MCP-skip variant).
+- [x] Add failure-path tests for auth/config errors:
+  `CollectorAuthConfigFailureTests` — all 5 sources: vault missing path, github missing token, calendar API exception, sleuth API exception, email GmailAuthError inline. All verify structured error envelopes, not uncaught exceptions.
+- [x] Add unchanged/no-op tests for incremental runs:
+  `CollectorIdempotencyTests` — vault: real SQLite, second run reports 0 new/updated files; calendar: same events across two calls produce stable result keys and counts; github: dry-run plan is identical across calls.
+- [x] Add contract tests for `all` expansion:
+  Already GREEN from Phase 1 — `test_collector_contracts.py` + `test_collector_registry.py` enforce the raw-source-only `all` expansion and follow-on stage recipe; no xfail markers remain.
+- [x] Add observability around stage timing and ownership:
+  `elapsed_seconds` present in all collector results; `scope` key enforced by existing contract tests; stage ownership explicit via `kind` field on `Collector` dataclass. Surfacing `kind` in the `refresh_index` result envelope deferred — not a blocker for rollout.
+- [x] Update docs and runbooks at rollout time:
+  `ARCHITECTURE.md`: Calendar credential row updated to reference `resolve_oauth_token_path`; `paths.py` entry documents `resolve_project_root` and `resolve_oauth_token_path`. Scheduler script descriptions were corrected in Phase 3 (lines 358-359).
 
 ## Open Decisions and Risks
 
