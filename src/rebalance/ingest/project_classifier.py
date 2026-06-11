@@ -21,9 +21,18 @@ class ProjectMatcher:
     aliases: tuple[str, ...]
 
 
-def _normalize_text(text: str) -> str:
-    """Normalize free-form text for project alias matching."""
+def normalize_match_text(text: str) -> str:
+    """Normalize free-form text for project alias/rule matching.
+
+    Canonical owner (Phase 5): project_inference and project_priority delegate
+    here — one implementation, one matching behavior across classification,
+    inference seeding, and priority rules.
+    """
     return " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+
+
+# Internal alias kept for this module's pre-Phase-5 call sites.
+_normalize_text = normalize_match_text
 
 
 def _camel_case_parts(text: str) -> list[str]:

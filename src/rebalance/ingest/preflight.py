@@ -11,6 +11,7 @@ from rebalance.ingest.registry import (
     Project,
     Registry,
     load_registry,
+    read_registry,
     save_registry,
     sync_registry,
 )
@@ -223,7 +224,7 @@ def discover_candidates(
     Read-only: does not write to registry, DB, or filesystem.
     Returns candidates segmented by activity recency.
     """
-    registry = load_registry(registry_path)
+    registry = read_registry(registry_path)
     existing = _existing_names(registry)
 
     titles, scanned = _scan_titles(vault_path=vault_path, registry_path=registry_path)
@@ -233,7 +234,7 @@ def discover_candidates(
         key = title.casefold()
         if key in existing:
             continue
-        discovered.append(Project(name=title, status="potential"))
+        discovered.append(Project(name=title, status="potential", provenance="vault-note"))
         existing.add(key)
 
     github_error: str | None = None
@@ -255,6 +256,7 @@ def discover_candidates(
                             repos=[repo_cand.repo_full_name],
                             last_activity_at=repo_cand.last_active_at,
                             tags=repo_cand.bands,  # store bands as tags for downstream use
+                            provenance="remote-activity",
                         )
                     )
                     existing.add(key)

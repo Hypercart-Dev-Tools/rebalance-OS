@@ -17,6 +17,7 @@ from rebalance.ingest.db import (
     ensure_github_schema,
     ensure_project_schema,
 )
+from rebalance.ingest.project_classifier import normalize_match_text
 from rebalance.ingest.registry import sync_db
 
 _GENERIC_ALIAS_TOKENS = {
@@ -101,8 +102,9 @@ class _ProjectSeed:
             self.aliases = set()
 
 
-def _normalize_text(text: str) -> str:
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+# Phase 5: one normalizer across classifier/inference/priority — the
+# canonical implementation lives in project_classifier.
+_normalize_text = normalize_match_text
 
 
 def _split_tokens(text: str) -> list[str]:
@@ -491,6 +493,7 @@ def _seed_to_project_row(seed: _ProjectSeed) -> dict[str, Any]:
         "custom_fields": {
             "aliases": aliases,
             "calendar_aliases": calendar_aliases,
+            "provenance": "inferred",
             "inference": {
                 "generated_by": INFERENCE_GENERATED_BY,
                 "github_repo_count": len(seed.repos),

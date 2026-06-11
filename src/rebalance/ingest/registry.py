@@ -20,6 +20,11 @@ class Project(BaseModel):
     # (see rebalance.ingest.github_watch). A dedicated "Watched — …" project with
     # external: true is the intended container.
     external: bool = False
+    # Where this project entered the system (lifecycle contract, Phase 5):
+    # "remote-activity" (GitHub activity discovery), "vault-note" (vault title
+    # discovery), "inferred" (activity inference); "local-scan" is reserved for
+    # the Phase 6 git-pulse promotion. "" = legacy/operator-entered rows.
+    provenance: str = ""
     obsidian_folder: str | None = None
     tags: list[str] = Field(default_factory=list)
     value_level: str | None = None
@@ -75,13 +80,28 @@ def _extract_yaml_block(markdown: str) -> dict[str, Any]:
     return parsed
 
 
-def load_registry(registry_path: Path) -> Registry:
+def read_registry(registry_path: Path) -> Registry:
+    """Pure read: parse the registry file, or return an empty Registry when
+    it doesn't exist. Never touches the filesystem — the right call for
+    read-only paths (discovery) where creating the registry file would lie
+    to the setup-status contract (`registry_exists` flipping done before any
+    confirmation)."""
     if not registry_path.exists():
-        registry_path.parent.mkdir(parents=True, exist_ok=True)
-        registry_path.write_text(_default_registry_markdown(), encoding="utf-8")
+        return Registry()
     raw = registry_path.read_text(encoding="utf-8")
     parsed = _extract_yaml_block(raw)
     return Registry.model_validate(parsed)
+
+
+def load_registry(registry_path: Path) -> Registry:
+    """Read the registry, creating the default file first when missing.
+
+    Write-path variant: only confirmation-gated flows should call this —
+    read-only paths use :func:`read_registry`."""
+    if not registry_path.exists():
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(_default_registry_markdown(), encoding="utf-8")
+    return read_registry(registry_path)
 
 
 def save_registry(registry_path: Path, registry: Registry) -> None:
@@ -116,6 +136,10 @@ def _registry_to_projection(registry: Registry) -> dict[str, Any]:
         custom_fields = dict(project.custom_fields)
         if project.external:
             custom_fields["external"] = True
+        # Same pattern as ``external``: provenance rides in custom_fields_json
+        # so it round-trips through the fixed project_registry columns.
+        if project.provenance:
+            custom_fields["provenance"] = project.provenance
         projects.append(
             {
                 "name": project.name,
@@ -290,6 +314,9 @@ def get_projects(
                 d[target_key] = json.loads(raw) if raw else default
             except (json.JSONDecodeError, ValueError):
                 d[target_key] = default
+        # Lift provenance back to the top level so DB reads match the
+        # candidate/Project shape (it is persisted inside custom_fields).
+        d["provenance"] = (d["custom_fields"] or {}).get("provenance", "")
         result.append(d)
     return result
 
