@@ -19,9 +19,10 @@ def test_extract_banner_text_with_warning_banner() -> None:
     </body></html>
     """
 
-    page_state, sync_text, banner_text = extract_banner_text(html)
+    page_state, sync_text, banner_text, sync_tone = extract_banner_text(html)
 
     assert page_state == "warning"
+    assert sync_tone == "warn"
     assert sync_text == "Collector warnings · 38m ago"
     assert "Status: 2 warnings" in banner_text
     assert "gmail: token missing" in banner_text
@@ -34,9 +35,10 @@ def test_extract_banner_text_when_healthy() -> None:
     </body></html>
     """
 
-    page_state, sync_text, banner_text = extract_banner_text(html)
+    page_state, sync_text, banner_text, sync_tone = extract_banner_text(html)
 
     assert page_state == "healthy"
+    assert sync_tone == "ok"
     assert sync_text == "Collector active 4m ago"
     assert banner_text == ""
 

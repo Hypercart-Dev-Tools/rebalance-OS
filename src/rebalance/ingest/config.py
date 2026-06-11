@@ -17,6 +17,7 @@ import json
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -356,6 +357,9 @@ def set_figma_file_keys(file_keys: list[str]) -> None:
     _write_config(config)
 
 
+_figma_key_lock = threading.Lock()
+
+
 def add_figma_file_key(file_key: str) -> bool:
     """Add one Figma file key to the allow-list.
 
@@ -365,11 +369,12 @@ def add_figma_file_key(file_key: str) -> bool:
     key = str(file_key or "").strip()
     if not key:
         raise ValueError("file_key must be non-empty")
-    existing = get_figma_file_keys()
-    if key in existing:
-        return False
-    set_figma_file_keys(existing + [key])
-    return True
+    with _figma_key_lock:
+        existing = get_figma_file_keys()
+        if key in existing:
+            return False
+        set_figma_file_keys(existing + [key])
+        return True
 
 
 def get_gmail_query_filter() -> str | None:

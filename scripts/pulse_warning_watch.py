@@ -159,8 +159,8 @@ def fetch_html_with_curl(url: str, timeout_seconds: int) -> str:
     return proc.stdout
 
 
-def extract_banner_text(page_html: str) -> tuple[str, str, str]:
-    """Return (page_state, sync_text, banner_text) from rendered pulse HTML."""
+def extract_banner_text(page_html: str) -> tuple[str, str, str, str]:
+    """Return (page_state, sync_text, banner_text, sync_tone) from rendered pulse HTML."""
     parser = _PulseHTMLParser()
     parser.feed(page_html)
     sync_text = parser.sync_text
@@ -169,19 +169,17 @@ def extract_banner_text(page_html: str) -> tuple[str, str, str]:
     banner_match = _BANNER_RE.search(page_html)
     if not banner_match and not parser.banner_text:
         page_state = "healthy" if sync_tone == "ok" else "unknown"
-        return page_state, sync_text, ""
+        return page_state, sync_text, "", sync_tone
 
     banner_html = banner_match.group("body") if banner_match else ""
     if parser.banner_text:
         banner_text = parser.banner_text
-    elif _COPY_TEXT_RE.search(banner_html):
-        copy_match = _COPY_TEXT_RE.search(banner_html)
-        assert copy_match is not None
+    elif copy_match := _COPY_TEXT_RE.search(banner_html):
         banner_text = html.unescape(copy_match.group("text")).strip()
     else:
         banner_text = _strip_tags(banner_html)
-    page_state = "warning" if sync_tone in {"warn", "danger"} else "warning"
-    return page_state, sync_text, banner_text
+    page_state = "warning" if sync_tone in {"warn", "danger"} else "unknown"
+    return page_state, sync_text, banner_text, sync_tone
 
 
 def compute_fingerprint(sync_text: str, banner_text: str) -> str:
@@ -321,10 +319,7 @@ def collect_snapshot(
     previous_state = load_state(state_path)
     try:
         page_html = fetch_html_with_curl(url, timeout_seconds)
-        page_state, sync_text, banner_text = extract_banner_text(page_html)
-        parser = _PulseHTMLParser()
-        parser.feed(page_html)
-        sync_tone = parser.sync_tone
+        page_state, sync_text, banner_text, sync_tone = extract_banner_text(page_html)
         fingerprint = compute_fingerprint(sync_text, banner_text)
         snapshot = PulseSnapshot(
             fetched_at=_iso_now(),
@@ -471,9 +466,6 @@ def main(argv: list[str] | None = None) -> int:
     while True:
         exit_code = run_once(args)
         time.sleep(max(1, int(args.interval_seconds)))
-        if exit_code != 0 and not args.print:
-            # Keep the watcher alive in unattended mode; the log has the error.
-            continue
 
 
 if __name__ == "__main__":

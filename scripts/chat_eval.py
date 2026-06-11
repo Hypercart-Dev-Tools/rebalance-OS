@@ -70,7 +70,7 @@ def main() -> int:
         print(f"| {i} | {q[:44]} | {'✅' if ok else '❌'} | {r['elapsed_ms']} | {','.join(r['used_sources']) or '—'} | {top} |")
 
     med = int(statistics.median(latencies))
-    p95 = int(max(latencies)) if len(latencies) < 20 else int(statistics.quantiles(latencies, n=20)[18])
+    p95 = int(statistics.quantiles(latencies, n=100)[94]) if len(latencies) >= 100 else int(max(latencies))
     print(f"\n**recall@{args.top_k} = {hits}/{len(QUESTIONS)}**  ·  latency median={med}ms p95≈{p95}ms  ·  used={','.join(sorted(used_union)) or '—'}")
     return 0
 
