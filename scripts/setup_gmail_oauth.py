@@ -35,9 +35,10 @@ from rebalance.ingest.auth_log import (
     log_flow_succeeded,
     log_flow_failed,
 )
+from rebalance.paths import resolve_oauth_token_path
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
-TOKEN_PATH = Path.home() / ".config" / "rebalance-os" / "google-gmail-oauth"
+TOKEN_PATH = resolve_oauth_token_path("gmail")
 
 # Desktop app credentials (Base64-encoded to avoid overly-broad secret scanners).
 # These are NOT sensitive — see Google OAuth 2.0 for Installed Apps documentation.

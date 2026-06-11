@@ -235,7 +235,7 @@ def _write_refresh_profile(result: dict[str, Any]) -> None:
 def _do_refresh() -> None:
     REFRESH.start()
     try:
-        result = refresh_index(DB_PATH, scope=["github"], include_semantic=False)
+        result = refresh_index(DB_PATH, scope=["github"])
         _write_refresh_profile(result)
         REFRESH.succeed(_summarize_refresh_profile(result))
     except Exception as exc:  # noqa: BLE001

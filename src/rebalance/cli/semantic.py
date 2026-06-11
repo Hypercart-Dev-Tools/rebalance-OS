@@ -17,7 +17,8 @@ def _normalize_semantic_sources_option(values: list[str]) -> list[str]:
     """Normalize repeatable --source flags for unified semantic commands."""
     normalized = [value.strip().lower() for value in values if value.strip()]
     if not normalized or "all" in normalized:
-        return ["vault", "github"]
+        from rebalance.ingest.index_ops import _all_semantic_sources
+        return _all_semantic_sources()
     # Mirror the core's accepted set (semantic_index._normalize_sources): the
     # CLI must not reject a source the core accepts (figma/email/code were
     # previously missing here).
