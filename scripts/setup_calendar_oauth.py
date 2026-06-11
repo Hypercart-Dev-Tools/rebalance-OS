@@ -14,7 +14,6 @@ Usage:
   python scripts/setup_calendar_oauth.py --write-access --test
 """
 
-import base64
 import pickle
 import argparse
 from pathlib import Path
@@ -25,30 +24,12 @@ from rebalance.ingest.auth_log import (
     log_flow_succeeded,
     log_flow_failed,
 )
+from rebalance.ingest.google_oauth_client import build_google_oauth_client_config
 from rebalance.paths import resolve_oauth_token_path
 
 READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
 TOKEN_PATH = resolve_oauth_token_path("calendar")
-
-# Desktop app credentials (Base64-encoded to avoid overly-broad secret scanners).
-# These are NOT sensitive — see Google OAuth 2.0 for Installed Apps documentation.
-# Original credential file is preserved locally at temp/client_secret.json (gitignored).
-_CID = "NDA5Mjk4MzQxOTg1LTFrdWI0dTFiMWJkMGxlZWEzYjc0ZDR2bW81Y3F2NzV0LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t"
-_CS  = "R09DU1BYLWNxWTA3a0VBZDJTTHM5RWg2MDRqV2NYRGxpQXo="
-
-
-def _build_client_config() -> dict:
-    """Decode embedded credentials and return client config dict."""
-    return {
-        "installed": {
-            "client_id":     base64.b64decode(_CID).decode(),
-            "client_secret": base64.b64decode(_CS).decode(),
-            "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
-            "token_uri":     "https://oauth2.googleapis.com/token",
-            "redirect_uris": ["http://localhost"],
-        }
-    }
 
 
 def authorize_calendar(scopes: list[str]) -> None:
@@ -56,7 +37,7 @@ def authorize_calendar(scopes: list[str]) -> None:
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     flow = InstalledAppFlow.from_client_config(
-        _build_client_config(),
+        build_google_oauth_client_config(),
         scopes=scopes,
     )
 

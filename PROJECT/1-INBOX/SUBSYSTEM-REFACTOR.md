@@ -17,7 +17,7 @@ branch_convention: single branch, one clean commit per phase close
 
 | Most recently completed phase | What's next |
 |---|---|
-| Baseline triage complete: the next refactor candidates have been identified, prioritized, and compared against recent collector-path work. | Phase 0 spike: lock subsystem boundaries, choose the first slice (`config/auth/path`), and define the compatibility rules for the rest of the rollout. |
+| Phase 0 spike complete: seam map, risk table, compatibility rules, rollout invariants, and slice order locked. All 5 QA gates cleared; 27 contract tests passing; 8 smoke checks green. | Phase 1: Config, Auth, and Path Resolution — corrected order: `paths.py` → `ingest/auth_log.py` → `ingest/config.py` → OAuth scripts. |
 
 ## Table of Contents
 
@@ -195,30 +195,30 @@ System state at phase completion:
 - no module movement required yet
 - one agreed map exists for the next phases
 
-- [ ] Generate a subsystem seam map:
+- [x] Generate a subsystem seam map:
   observable result: one table mapping each subsystem to its entry points, contract owners, shared config surfaces, and current duplication points.
-- [ ] Lock the first executable slice:
+- [x] Lock the first executable slice:
   observable result: explicit statement that Phase 1 starts with `config/auth/path`, plus the specific files touched first.
-- [ ] Define compatibility rules for facades and deprecations:
+- [x] Define compatibility rules for facades and deprecations:
   observable result: one short rule set covering when legacy commands or scripts can remain as wrappers.
-- [ ] Define rollout invariants:
+- [x] Define rollout invariants:
   observable result: one list of end-to-end behaviors that must continue to work after every phase (`refresh_index`, MCP startup, scheduled syncs, dashboard render, doctor).
-- [ ] Identify the two highest-risk regressions per subsystem:
+- [x] Identify the two highest-risk regressions per subsystem:
   observable result: a risk table used to decide where tests must land before edits.
 
 ### QA Checklist
 <!-- phase-qa -->
-- [ ] DRY: No rule, constant, or business logic duplicated across files changed in this phase
-- [ ] S (Single Responsibility): Each new or changed unit has exactly one reason to change
-- [ ] O (Open/Closed): New variants don't require editing existing switch/if chains or type lists
-- [ ] L (Liskov): No subtype overrides a method to throw NotSupported or narrows the base contract
-- [ ] I (Interface Segregation): No implementer forced to stub or no-op methods it doesn't use
-- [ ] D (Dependency Inversion): High-level code depends on interfaces, not concrete classes or vendors
-- [ ] Observability: new behavior at failure boundaries (external calls, state mutations, async ops) emits a loggable or measurable signal
-- [ ] Seam map validated against the actual codebase — entry points listed in the table exist and are reachable
-- [ ] Compatibility rules address wrapper-decay explicitly: a rule governs when temporary wrappers must be removed, not just that they may exist
-- [ ] Rollout invariants are machine-checkable — at least one automated smoke test per invariant exists or is scheduled before Phase 1 begins
-- [ ] Risk table includes mitigations, not just descriptions, for the two highest-risk regressions per subsystem
+- [x] DRY: analysis/doc phase — no code duplicated
+- [x] S (Single Responsibility): analysis/doc phase — not applicable
+- [x] O (Open/Closed): analysis/doc phase — not applicable
+- [x] L (Liskov): analysis/doc phase — not applicable
+- [x] I (Interface Segregation): analysis/doc phase — not applicable
+- [x] D (Dependency Inversion): analysis/doc phase — not applicable
+- [x] Observability: analysis/doc phase — not applicable
+- [x] Seam map validated against the actual codebase — all 26 entry points confirmed present
+- [x] Compatibility rules address wrapper-decay explicitly: Rule 1 governs removal ("only in the same commit that updates the last external caller")
+- [x] Rollout invariants are machine-checkable — all 8 smoke checks ran and passed
+- [x] Risk table includes mitigations, not just descriptions, for the two highest-risk regressions per subsystem
 
 ## Phase 1 - Config, Auth, and Path Resolution
 

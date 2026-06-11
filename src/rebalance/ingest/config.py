@@ -25,7 +25,6 @@ from typing import Any
 # Override seam for tests. When None, resolve from the active checkout/env.
 CONFIG_PATH: Path | None = None
 CONFIG_ENV_VAR = "REBALANCE_CONFIG"
-_PROJECT_MARKERS = (".git", "pyproject.toml")
 
 # Keyring service name — all secrets stored under this service.
 KEYRING_SERVICE = "rebalance-os"
@@ -77,14 +76,6 @@ def _migrate_to_keyring(config_key: str) -> str | None:
 _GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
-def _project_root_from(start: Path) -> Path | None:
-    current = start.resolve()
-    for candidate in (current, *current.parents):
-        if any((candidate / marker).exists() for marker in _PROJECT_MARKERS):
-            return candidate
-    return None
-
-
 def _resolved_config_path() -> Path:
     if CONFIG_PATH is not None:
         return CONFIG_PATH.expanduser().resolve()
@@ -93,11 +84,12 @@ def _resolved_config_path() -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
 
-    cwd_root = _project_root_from(Path.cwd())
+    from rebalance.paths import find_project_root  # noqa: PLC0415
+    cwd_root = find_project_root(Path.cwd())
     if cwd_root is not None:
         return cwd_root / "temp" / "rbos.config"
 
-    module_root = _project_root_from(Path(__file__).resolve())
+    module_root = find_project_root(Path(__file__).resolve())
     if module_root is not None:
         return module_root / "temp" / "rbos.config"
 
