@@ -459,12 +459,18 @@ src/rebalance/
                               read_registry (pure read) vs load_registry (write-path)
     preflight.py           — onboarding discovery (read-only, provenance-stamped)
                               + confirmation — the only curated registry write path
-    lifecycle.py           — Phase 5 lifecycle contract: setup stage map with
-                              done/now/next/blocked statuses + remediation (backs
-                              onboarding_status), and the project-lifecycle
+    lifecycle.py           — Phase 5/6 lifecycle contract: setup stage map with
+                              done/now/next/blocked/skipped statuses, executor
+                              hints, and remediation (backs onboarding_status and
+                              the /welcome skill), plus the project-lifecycle
                               ownership table (write semantics per stage —
                               discovery read_only, confirmation gated, inference
                               machine-owned, prioritization read-time overlay)
+    local_repos.py         — local checkout discovery (Phase 6.1): scan
+                              local_repo_roots for git checkouts, GitHub identity
+                              from origin, unpushed-commit counts; feeds
+                              provenance=local-scan candidates + the doctor's
+                              unpushed-work check
     github_scan.py         — GitHub Events API collector + per-project balance query
     github_knowledge.py    — per-repo artifact sync (issues/PRs/comments/commits/checks) + embedding
     github_watch.py        — watched/external repo reconciliation and repo-watch logic

@@ -6,6 +6,37 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.39.0] - 2026-06-11
+
+### Added
+
+- **Phase 6 complete — the welcome agent ships end to end.**
+  - *Graduation stages:* `schedulers_installed` and `first_pulse` join the
+    lifecycle contract (optional, after `db_synced`) with patchable seams for
+    hermetic sandboxes; clients picked them up with zero edits.
+  - *CLI parity finished:* interactive `rebalance onboard` now offers each
+    incomplete optional stage (Calendar/Gmail OAuth, scheduler fleet, first
+    pulse) by dispatching the contract's executor hints; declining persists
+    the skip. `--yes` never launches OAuth or installs jobs silently.
+  - *Local discovery (6.1):* `ingest/local_repos.py` promotes the git-pulse
+    scanner — scan `local_repo_roots` for checkouts, parse GitHub identity,
+    measure unpushed commits; discovery surfaces uncovered on-disk repos as
+    `provenance=local-scan` candidates ("found on disk — promote?"). New
+    doctor check `local repos` WARNs on unpushed work as an ongoing signal.
+  - *Reset path:* `rebalance reset` — dry-run by default, `--force` executes;
+    unloads/removes the launchd fleet, deletes config + knowledge base,
+    enumerates keyring secrets (deleted only with `--include-keyring`), vault
+    never touched.
+  - *Hermetic walkthrough:* `tests/test_welcome_walkthrough.py` drives clone →
+    first pulse with real config writes in 0.06s. It caught a second
+    machine-global escape: the gh-CLI token fallback leaked the operator's
+    real login into "fresh" sandboxes — new `REBALANCE_HERMETIC=1` disables
+    keyring *and* gh-CLI fallbacks.
+  - *Docs:* README Getting Started leads with `/welcome` (manual steps kept
+    as reference); PROJECT.md v1.1 note updated — a future desktop UI is now
+    just another client of the same state machine; demo transcript committed
+    as the skill's UX baseline.
+
 ## [0.38.0] - 2026-06-11
 
 ### Added

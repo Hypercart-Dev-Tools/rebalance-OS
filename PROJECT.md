@@ -24,7 +24,7 @@ Complexity that doesn't serve beta validation is explicitly deferred.
 
 ### General release (v1.1+) — Desktop app users
 
-Future users entering through Claude Desktop, ChatGPT desktop, or other consumer MCP hosts will need a guided setup UI, installer, and simplified config experience. Onboarding for this tier is out of scope until the beta flow is proven.
+Future users entering through Claude Desktop, ChatGPT desktop, or other consumer MCP hosts will need a guided setup UI, installer, and simplified config experience. **Update (Phase 6, 2026-06-11):** the guided flow for IDE users now exists — the `/welcome` skill drives the machine-readable lifecycle contract (`onboarding_status`, `src/rebalance/ingest/lifecycle.py`), with `rebalance onboard` as the no-LLM parity client. A future desktop UI becomes just another client of the same state machine; only the rendering layer remains out of scope for this tier.
 
 All decisions that create divergence between tiers should be flagged explicitly in this document.
 
