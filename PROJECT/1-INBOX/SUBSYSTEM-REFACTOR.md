@@ -532,6 +532,14 @@ System state at phase completion:
 
 Phase-6 QA notes: the hermetic walkthrough caught the gh-CLI token fallback leaking the operator's real login into "fresh" sandboxes (same class as the Phase 5 keyring finding) — `REBALANCE_HERMETIC=1` now covers both. The "no secrets in transcript" automated test is the one accepted gap (prompt-enforced today); candidates for a hardening pass alongside the pre-existing figma test leak.
 
+**Post-close adversarial review (Gemini, 2026-06-11) — 6 findings triaged (v0.39.1):**
+1. *[Refuted→fixed]* `skipped` outranked `blocked` in `evaluate_setup`, letting a skip marker mask unmet prerequisites — and Gemini correctly flagged this precedence as the hard-to-reverse contract bet. Fixed before any client depends on it: `done` > `blocked` > `skipped`, documented in the vocabulary; clients may now execute any `skipped` stage without re-checking deps. Test-locked.
+2. *[Refuted→fixed]* Ctrl+C during a CLI optional-stage offer persisted a skip (questionary returns `None` on interrupt). Now aborts the offers without recording anything. Test-locked.
+3. *[Refuted→fixed]* Executor dispatch crashed for non-checkout installs: relative `.venv/bin/python` + `repo_root=None`. Now: absolute venv python with `sys.executable` fallback, and a remediation listing instead of execution when no checkout exists.
+4. *[Partial→fixed]* OAuth status checks were keyring-only while the runtime collectors read token FILES (`resolve_oauth_token_path`) — file-only machines showed auth incomplete. Checks now probe keyring then file; hermetic mode skips the machine-global file path; all sandbox harnesses patched.
+5. *[Refuted→fixed]* Reset gaps: half-reset orphaned the DB when config was already gone (now sweeps the canonical path), `sleuth_web_api` missing from keyring enumeration (added), OAuth token files not removed (now listed and deleted). Verified live: dry-run found 2 token files + 5 secrets on this machine. *Declined:* the `com.user.*` glob — git-pulse/stickies are utility agents with their own installers, outside /welcome's footprint; reset now states this explicitly.
+6. *[Partial→fixed]* Detached HEADs were flagged as unpushed work (no upstream possible by definition) — excluded; a NAMED branch with no upstream still counts, by design. *Declined:* launchctl-loaded and pulse-mtime graduation checks — the lifecycle contract stays filesystem-pure (cheap, hermetic, side-effect free); liveness and freshness are the doctor's domain, which already surfaces `launchd:*` last-run status and pulse staleness. Duplicating doctor inside the status contract would blur the ownership the contract exists to encode.
+
 ## Cross-Phase Risks
 
 - `Compatibility drift`

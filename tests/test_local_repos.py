@@ -129,3 +129,18 @@ class DiscoveryIntegrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DetachedHeadTests(unittest.TestCase):
+    def test_detached_head_is_not_flagged_as_unpushed(self):
+        # Review finding: detached HEAD can't have an upstream by definition —
+        # flagging it is noise, not signal.
+        detached = LocalRepo(
+            path=Path("/x"), origin_url="git@github.com:a/b.git",
+            full_name="a/b", branch="HEAD", unpushed_commits=None,
+        )
+        named_no_upstream = LocalRepo(
+            path=Path("/y"), origin_url="git@github.com:a/c.git",
+            full_name="a/c", branch="feat/x", unpushed_commits=None,
+        )
+        self.assertEqual(unpushed_work([detached, named_no_upstream]), [named_no_upstream])

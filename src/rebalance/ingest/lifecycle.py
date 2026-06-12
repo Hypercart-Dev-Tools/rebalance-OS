@@ -29,7 +29,10 @@ single source of truth the Phase 6 welcome agent — and any other client
    - ``skipped``  optional stage the operator deliberately skipped (persisted
                   in rbos.config via ``set_onboarding_stage_skipped``); still
                   re-enterable — completing it flips it to ``done``, and
-                  un-skipping returns it to ``next`` (contract v2)
+                  un-skipping returns it to ``next`` (contract v2).
+                  Precedence: ``done`` > ``blocked`` > ``skipped`` — a skip
+                  marker never masks unmet prerequisites, so clients may
+                  execute any ``skipped`` stage without re-checking deps
 
 Each stage also carries an ``executor`` hint — the machine-actionable way to
 complete it, in a small vocabulary the welcome agent can dispatch on:
@@ -205,18 +208,41 @@ def _check_github_token(ctx: SetupContext) -> tuple[bool, str]:
     return token is not None, "token configured" if token else "no token found"
 
 
+def _oauth_token_file_exists(service: str) -> bool:
+    """File-fallback probe (review finding): the runtime collectors read a
+    token FILE via resolve_oauth_token_path, not just the keyring — a
+    file-only machine has working auth and must not show the stage
+    incomplete. Machine-global path, so hermetic mode skips it."""
+    from rebalance.ingest.config import _hermetic
+
+    if _hermetic():
+        return False
+    from rebalance.paths import resolve_oauth_token_path
+
+    try:
+        return resolve_oauth_token_path(service).exists()
+    except Exception:  # noqa: BLE001 — unresolvable path = no file token
+        return False
+
+
 def _check_calendar_auth(ctx: SetupContext) -> tuple[bool, str]:
     from rebalance.ingest.config import get_calendar_oauth_token_json
 
-    present = bool(get_calendar_oauth_token_json())
-    return present, "OAuth token present" if present else "no Calendar OAuth token"
+    if get_calendar_oauth_token_json():
+        return True, "OAuth token present (keyring)"
+    if _oauth_token_file_exists("calendar"):
+        return True, "OAuth token present (file)"
+    return False, "no Calendar OAuth token"
 
 
 def _check_gmail_auth(ctx: SetupContext) -> tuple[bool, str]:
     from rebalance.ingest.config import get_gmail_oauth_token_json
 
-    present = bool(get_gmail_oauth_token_json())
-    return present, "OAuth token present" if present else "no Gmail OAuth token"
+    if get_gmail_oauth_token_json():
+        return True, "OAuth token present (keyring)"
+    if _oauth_token_file_exists("gmail"):
+        return True, "OAuth token present (file)"
+    return False, "no Gmail OAuth token"
 
 
 def _registry_path(ctx: SetupContext) -> Path | None:
@@ -425,10 +451,14 @@ def evaluate_setup(
             entry["status"] = STATUS_DONE
             continue
         deps_done = all(results[dep]["complete"] for dep in stage.requires)
-        if stage.optional and stage.id in skipped_ids:
-            entry["status"] = STATUS_SKIPPED
-        elif not deps_done:
+        # Precedence: blocked beats skipped (review finding). A skip marker
+        # is an operator preference; unmet prerequisites are a structural
+        # fact — clients may safely execute any `skipped` stage on request
+        # without re-verifying dependencies themselves.
+        if not deps_done:
             entry["status"] = STATUS_BLOCKED
+        elif stage.optional and stage.id in skipped_ids:
+            entry["status"] = STATUS_SKIPPED
         elif not now_assigned and not stage.optional:
             entry["status"] = STATUS_NOW
             now_assigned = True

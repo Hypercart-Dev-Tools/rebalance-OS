@@ -129,11 +129,14 @@ def scan_local_repos(
 
 
 def unpushed_work(repos: list[LocalRepo] | None = None) -> list[LocalRepo]:
-    """Repos carrying unpushed work: commits ahead of upstream, or a branch
-    with no upstream at all. The ongoing doctor/pulse signal."""
+    """Repos carrying unpushed work: commits ahead of upstream, or a NAMED
+    branch with no upstream at all. Detached HEADs are excluded — they can't
+    have an upstream by definition, so flagging them is noise, not signal
+    (review finding). The ongoing doctor/pulse signal."""
     if repos is None:
         repos = scan_local_repos()
     return [
         r for r in repos
-        if (r.unpushed_commits or 0) > 0 or r.unpushed_commits is None
+        if (r.unpushed_commits or 0) > 0
+        or (r.unpushed_commits is None and r.branch not in ("", "HEAD"))
     ]

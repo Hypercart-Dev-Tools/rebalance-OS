@@ -240,6 +240,7 @@ def _offer_optional_stages(database: Path | None) -> None:
     """
     import shlex
     import subprocess
+    import sys
 
     import questionary
 
@@ -260,6 +261,18 @@ def _offer_optional_stages(database: Path | None) -> None:
     if not offered:
         return
 
+    if repo_root is None:
+        # Installed outside a checkout (e.g. pipx): the script/installer
+        # executors have nowhere to run. Point at the remediation instead of
+        # crashing in an arbitrary cwd (review finding).
+        typer.echo("\nOptional steps (run from a rebalance-OS checkout):")
+        for stage in offered:
+            typer.echo(f"  - {stage['title']}: {stage['remediation']}")
+        return
+
+    venv_python = repo_root / ".venv" / "bin" / "python"
+    python_bin = str(venv_python) if venv_python.exists() else sys.executable
+
     typer.echo("\nOptional steps:")
     for stage in offered:
         if stage["status"] == "blocked":
@@ -268,6 +281,11 @@ def _offer_optional_stages(database: Path | None) -> None:
         run_it = questionary.confirm(
             f"{stage['title']} — set up now?", default=False
         ).ask()
+        if run_it is None:
+            # Ctrl+C / EOF: abort the offers without persisting anything —
+            # an interrupt is not a skip decision (review finding).
+            typer.echo("  Cancelled — no skip state recorded.")
+            return
         if not run_it:
             set_onboarding_stage_skipped(stage["id"])
             typer.echo(f"  Skipped {stage['title']} — re-enterable via `rebalance onboard` or /welcome.")
@@ -275,7 +293,7 @@ def _offer_optional_stages(database: Path | None) -> None:
         set_onboarding_stage_skipped(stage["id"], False)
         kind, _, target = stage["executor"].partition(":")
         if kind == "script":
-            cmd = [".venv/bin/python", target]
+            cmd = [python_bin, str(repo_root / target)]
         elif kind == "cli" and target.startswith("bash "):
             cmd = shlex.split(target)
         else:

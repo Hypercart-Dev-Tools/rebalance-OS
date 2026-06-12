@@ -88,6 +88,7 @@ def sandbox_walkthrough() -> int:
                 stack.enter_context(patch(f"{CONFIG}.get_onboarding_skipped_stages", lambda: list(state.get("skipped", []))))
                 stack.enter_context(patch("rebalance.ingest.lifecycle._launch_agents_dir", lambda: root / "LaunchAgents"))
                 stack.enter_context(patch("rebalance.ingest.lifecycle._pulse_html_path", lambda: root / "web" / "pulse.html"))
+                stack.enter_context(patch("rebalance.paths.resolve_oauth_token_path", lambda svc: root / f"oauth-{svc}.json"))
                 return evaluate_setup(vault_path=vault, database_path=db)
 
         def status(report: dict, stage_id: str) -> str:

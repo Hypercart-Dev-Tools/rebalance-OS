@@ -96,8 +96,10 @@ class _EvaluateHarness(unittest.TestCase):
              patch(f"{CONFIG}.get_gmail_oauth_token_json") as gm_tok, \
              patch(f"{CONFIG}.get_onboarding_skipped_stages") as skip_list, \
              patch("rebalance.ingest.lifecycle._launch_agents_dir") as agents_dir, \
-             patch("rebalance.ingest.lifecycle._pulse_html_path") as pulse_html:
+             patch("rebalance.ingest.lifecycle._pulse_html_path") as pulse_html, \
+             patch("rebalance.paths.resolve_oauth_token_path") as oauth_path:
             sandbox = Path(vault or tempfile.gettempdir())
+            oauth_path.side_effect = lambda svc: sandbox / f"oauth-{svc}.json"
             agents_dir.return_value = sandbox / "LaunchAgents"
             pulse_html.return_value = sandbox / "web" / "pulse.html"
             fake_cfg = Path(vault or tempfile.gettempdir()) / "rbos.config"
@@ -181,6 +183,34 @@ class ContractV2Tests(_EvaluateHarness):
             report = self._evaluate(vault_dir=tmp, skipped=["calendar_auth"])
         self.assertEqual(self._status(report, "calendar_auth"), "skipped")
         self.assertEqual(self._status(report, "gmail_auth"), "next")
+
+    def test_blocked_beats_skipped(self):
+        # Review finding: a skip marker must never mask unmet prerequisites —
+        # clients execute `skipped` stages without re-checking deps.
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._evaluate(
+                config=False, vault_dir=tmp, skipped=["calendar_auth"]
+            )
+        self.assertEqual(self._status(report, "calendar_auth"), "blocked")
+
+    def test_oauth_file_fallback_counts_as_authenticated(self):
+        # Review finding: runtime collectors read a token FILE — a file-only
+        # machine has working auth and must not show the stage incomplete.
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "oauth-calendar.json").write_text("{}")
+            report = self._evaluate(vault_dir=tmp, calendar=False)
+        stage = next(s for s in report["stages"] if s["id"] == "calendar_auth")
+        self.assertEqual(stage["status"], "done")
+        self.assertIn("file", stage["detail"])
+
+    def test_hermetic_mode_ignores_oauth_token_files(self):
+        import os
+
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "oauth-calendar.json").write_text("{}")
+            with patch.dict(os.environ, {"REBALANCE_HERMETIC": "1"}):
+                report = self._evaluate(vault_dir=tmp, calendar=False)
+        self.assertEqual(self._status(report, "calendar_auth"), "next")
 
     def test_completing_a_stage_wins_over_stale_skip_marker(self):
         with tempfile.TemporaryDirectory() as tmp:

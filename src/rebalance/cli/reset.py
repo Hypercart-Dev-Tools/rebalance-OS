@@ -14,11 +14,25 @@ from pathlib import Path
 import typer
 
 from rebalance.cli._core import app
-from rebalance.paths import DatabaseNotFoundError, DBOption, resolve_database_path
+from rebalance.paths import (
+    DatabaseNotFoundError,
+    DBOption,
+    canonical_database_path,
+    resolve_database_path,
+    resolve_oauth_token_path,
+)
 
 # Secrets stored under the rebalance-os keyring service. Enumerated (and only
 # ever deleted) by name — there is no portable "list all" keyring API.
-KEYRING_KEYS = ("github_token", "figma_token", "calendar_oauth_token", "gmail_oauth_token")
+KEYRING_KEYS = (
+    "github_token",
+    "figma_token",
+    "calendar_oauth_token",
+    "gmail_oauth_token",
+    "sleuth_web_api",
+)
+
+OAUTH_FILE_SERVICES = ("calendar", "gmail")
 
 LAUNCHD_PREFIX = "com.rebalance-os."
 
@@ -54,12 +68,19 @@ def reset_cmd(
     try:
         db_path: Path | None = database or resolve_database_path()
     except DatabaseNotFoundError:
-        db_path = None
+        # Half-reset recovery (review finding): a prior reset may have removed
+        # the config that pointed at the DB — still sweep the canonical
+        # location so the files aren't orphaned on re-run.
+        candidate = canonical_database_path()
+        db_path = candidate if candidate.exists() else None
     db_files = (
         [p for p in (db_path, *(db_path.with_name(db_path.name + s) for s in ("-wal", "-shm")))
          if p and p.exists()]
         if db_path else []
     )
+    oauth_files = [
+        p for p in (resolve_oauth_token_path(s) for s in OAUTH_FILE_SERVICES) if p.exists()
+    ]
     keyring_present = [k for k in KEYRING_KEYS if _keyring_get(k)]
 
     mode = "RESET" if force else "DRY-RUN (pass --force to execute)"
@@ -69,11 +90,15 @@ def reset_cmd(
         typer.echo(f"    - {p.name}")
     typer.echo(f"  operator config: {config_path}{'' if config_path.exists() else ' (absent)'}")
     typer.echo(f"  knowledge base: {db_path or '(none resolved)'} ({len(db_files)} file(s))")
+    typer.echo(f"  OAuth token files: {len(oauth_files)}")
+    for p in oauth_files:
+        typer.echo(f"    - {p}")
     typer.echo(
         "  keyring secrets present: " + (", ".join(keyring_present) or "none")
         + ("" if include_keyring else "  [kept — pass --include-keyring to delete]")
     )
     typer.echo("  vault: untouched (registry markdown and projects.yaml stay where they are)")
+    typer.echo("  note: com.user.* utility agents (git-pulse, stickies) have their own installers and are not touched")
 
     if not force:
         return
@@ -86,6 +111,9 @@ def reset_cmd(
         config_path.unlink()
         typer.echo(f"  removed {config_path}")
     for f in db_files:
+        f.unlink(missing_ok=True)
+        typer.echo(f"  removed {f}")
+    for f in oauth_files:
         f.unlink(missing_ok=True)
         typer.echo(f"  removed {f}")
     if include_keyring:

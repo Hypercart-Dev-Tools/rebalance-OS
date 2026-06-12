@@ -6,6 +6,25 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.39.1] - 2026-06-11
+
+### Fixed
+
+- **Phase 6 adversarial-review fixes (Gemini).** Status precedence is now
+  `done` > `blocked` > `skipped` — a skip marker never masks unmet
+  prerequisites (the review's "hard to reverse later" call, fixed before any
+  client depends on it). Ctrl+C during a CLI optional-stage offer no longer
+  persists a skip. Executor dispatch survives non-checkout installs (absolute
+  venv python, `sys.executable` fallback, remediation listing when no repo
+  root). OAuth status checks now probe the token FILE the collectors actually
+  read, not just the keyring (hermetic mode skips the machine-global path).
+  Detached HEADs are no longer flagged as unpushed work. `rebalance reset`
+  sweeps the canonical DB path in half-reset states, enumerates
+  `sleuth_web_api`, and removes OAuth token files (verified live: 2 files +
+  5 secrets found that 0.39.0 missed). Declined with rationale: `com.user.*`
+  agents stay outside reset's footprint; launchctl/mtime graduation checks
+  stay in the doctor (the contract remains filesystem-pure).
+
 ## [0.39.0] - 2026-06-11
 
 ### Added
