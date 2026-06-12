@@ -135,20 +135,26 @@ def log_event(source: str, event: str, detail: dict[str, Any] | None = None) -> 
 # Calendar helpers — one per event type
 # ---------------------------------------------------------------------------
 
-def log_flow_started(scopes: list[str]) -> None:
-    _append("calendar", "flow_started", {"scopes": scopes})
+def log_flow_started(scopes: list[str], *, source: str = "calendar") -> None:
+    _append(source, "flow_started", {"scopes": scopes})
 
 
-def log_flow_succeeded(expiry: str | None, scopes: list[str], token_path: str) -> None:
-    _append("calendar", "flow_succeeded", {
+def log_flow_succeeded(
+    expiry: str | None,
+    scopes: list[str],
+    token_path: str,
+    *,
+    source: str = "calendar",
+) -> None:
+    _append(source, "flow_succeeded", {
         "expiry": expiry,
         "scopes": scopes,
         "token_path": token_path,
     })
 
 
-def log_flow_failed(error: str) -> None:
-    _append("calendar", "flow_failed", {"error": error})
+def log_flow_failed(error: str, *, source: str = "calendar") -> None:
+    _append(source, "flow_failed", {"error": error})
 
 
 def log_token_missing(token_path: str, source: str = "calendar") -> None:

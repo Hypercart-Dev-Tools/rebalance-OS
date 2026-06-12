@@ -136,7 +136,14 @@ Project Registry ────▶ registry.py +              MD registry → proj
 | Figma comments | `rebalance refresh` | `refresh_index` | opt-in |
 | Focus 5 | `refresh_index(scope=["focus5"])`, `rebalance serve` / pulse server | web `/focus-5` route | opt-in |
 | ask_self inventory | `refresh_index(scope=["ask_self"])` | `list_ask_self_repos` | opt-in |
-| Project registry | `rebalance ingest preflight`, `ingest sync` | `list_projects`, `run_preflight`, `confirm_projects`, `onboarding_status` | on demand |
+| Project registry | `rebalance ingest preflight`, `ingest sync`, `onboard` | `list_projects`, `run_preflight`, `confirm_projects`, `onboarding_status` | on demand |
+
+> Registry write discipline (Phase 5, `ingest/lifecycle.py`): discovery is
+> read-only and stamps candidates with `provenance` (remote-activity /
+> vault-note; local-scan reserved); `confirm_and_write` is the only curated
+> write path; activity inference maintains only rows it created (marked
+> `inference.generated_by`) and never touches curated rows; priority rules
+> overlay at read time and are never persisted.
 
 > Preferred write path: `refresh_index(scope=[...])` is the orchestrated entry
 > point. Several source-specific CLI/MCP write commands still exist for
@@ -282,13 +289,29 @@ Every source is incremental, but the meaning of "incremental" depends on what th
 
 All consumers read from the same SQLite file. The query layer is source-agnostic.
 
+**Read-side ownership model (Phase 3, Option C):**
+
+| Surface | Role | Owner |
+|---|---|---|
+| `semantic_query()` MCP tool | Unified raw retrieval primitive | `semantic_index.query()` — owns source vocabulary, freshness, hybrid RRF |
+| `chat_with_data()` | Citations-first interactive retrieval | `chat.py` — owns scope aliases (`work`/`code`/`all`), citation shaping; delegates retrieval to `semantic_index` |
+| `ask()` | Broad mixed-context synthesis/orchestration | `querier.py` — owns project/calendar/temporal framing; not the canonical retrieval primitive |
+| `query_notes()`, `query_github_context()` | Legacy per-source lookups | Facades over older per-source indexes; use `semantic_query()` for new work |
+
 ```
 SQLite @ $REBALANCE_DB
    │
-   ├──▶ querier.py::ask()          ── semantic + keyword recall across vault,
-   │                                   GitHub corpus, calendar, project registry,
-   │                                   vault activity, temporal context
-   │                                   (optionally synthesized by local Qwen3)
+   ├──▶ semantic_index.query()     ── unified raw retrieval primitive
+   │    (MCP: semantic_query)          source vocab + hybrid RRF
+   │         │
+   │         ├──▶ chat_with_data() ── citations-first presentation layer
+   │         │    (dashboard /api/chat)  scope aliases, citation shaping
+   │         │
+   │         └──▶ ask() (partial)  ── contributes to synthesis context
+   │
+   ├──▶ querier.py::ask()          ── broad orchestrator: gathers project,
+   │    (MCP: ask, CLI: ask)           calendar, temporal + semantic signals;
+   │                                   synthesizes via local Qwen3 (optional)
    │
    ├──▶ daily_report.py /          ── per-day / per-week calendar rollups
    │    weekly_report.py              with project classification
@@ -303,7 +326,7 @@ SQLite @ $REBALANCE_DB
                                        to Claude Code, Claude Desktop, etc.
 ```
 
-`querier.py` is the central orchestrator. A single `ask()` call:
+`querier.py` is the synthesis orchestrator (not the retrieval primitive). A single `ask()` call:
 
 1. **Gathers context** from all sources in parallel-ready functions:
    - `_gather_project_context()` — registry entries + repos map
@@ -353,7 +376,7 @@ Four ways the pipeline runs:
 
 1. **Interactive CLI** — `rebalance <subcommand>` via the Typer package under `src/rebalance/cli/`. Ad-hoc and one-shot workflows (`calendar-create-event`, `github-release-readiness`, `sleuth-sync --json`, `profile-sync`, `raw`, etc.). `rebalance` invoked with no arguments launches the live dashboard (mode 4). `rebalance raw [--minutes N] [--watch S] [--json]` is a calibration probe: 1 GitHub API request per invocation, classifies recent events as captured / pending / unwatched against the local pipeline state, used to verify that commits/PRs/issues are making it into rebalanceOS.
 
-2. **Unattended scheduled syncs** — five scheduled launchd jobs cooperate, plus a sixth long-running one:
+2. **Unattended scheduled syncs** — a launchd fleet of ten jobs. [SCHEDULER.md](SCHEDULER.md) is the policy table (single source of truth for labels, cadences, scopes, prerequisites, and outputs; enforced by `tests/test_scheduler_policy.py`). The six data/render jobs, conceptually:
 
    - **Daily all-scope sync** ([scripts/daily_sync.sh](scripts/daily_sync.sh) / [scripts/com.rebalance-os.daily-sync.plist.template](scripts/com.rebalance-os.daily-sync.plist.template)) at 06:30 local time, plus on boot/login if 06:30 was missed. Calls `refresh_index()` with no scope (the **default recipe**): all raw sources (`vault`, `github`, `calendar`, `sleuth`, `email`) followed by the derived/projection/export stages (`code`, `semantic`, `sync`). Note: `scope=["all"]` is *not* the same as the default recipe — after Phase 1b, `all` expands to raw sources only; the default no-scope path runs the full recipe including follow-on stages. Opt-in scopes (`figma`, `focus5`, `ask_self`) are never included automatically. Per-scope failures are captured in `errors` rather than aborting the run.
    - **Hourly vault refresh** ([scripts/vault_sync.sh](scripts/vault_sync.sh) / [scripts/com.rebalance-os.vault-sync.plist.template](scripts/com.rebalance-os.vault-sync.plist.template)) at HH:15 from 06:15 to 23:15. Calls `refresh_index(scope=["vault", "semantic"])` — keeps notes edited mid-day visible in **both** the dashboard/pulse (vault ingest) and **semantic search** (semantic projection stage). Vault ingest with no changes is ~0.02s; the semantic stage only embeds rows where content changed, so it is also cheap on idle runs.
@@ -362,7 +385,9 @@ Four ways the pipeline runs:
    - **Hourly GitHub sync** ([scripts/github_sync.sh](scripts/github_sync.sh) / [scripts/com.rebalance-os.github-sync.plist.template](scripts/com.rebalance-os.github-sync.plist.template)) — a narrower github-only refresh independent of the daily full sync, for environments that want fresher GitHub data without paying the full multi-source cost.
    - **Pulse server (long-running, not scheduled)** ([scripts/pulse_server.sh](scripts/pulse_server.sh) / [scripts/com.rebalance-os.pulse-server.plist.template](scripts/com.rebalance-os.pulse-server.plist.template)) — a FastAPI/uvicorn server on `127.0.0.1:8767` with `RunAtLoad` + `KeepAlive` (autostart at login, restart on crash, `ThrottleInterval=30s`). Adds an interactive layer (real Refresh button + filter) on top of the static `web/pulse.html` the pulse-web job regenerates. Loopback bind is enforced in [scripts/pulse_server.py](scripts/pulse_server.py). Unlike the five scheduled jobs above, it runs continuously rather than firing on a calendar interval.
 
-   The shell scripts derive `REBALANCE_DIR` from their own location, and the `.plist.template` files use a `{{REBALANCE_DIR}}` placeholder that each `install_*_scheduler.sh` substitutes with the local checkout path before writing into `~/Library/LaunchAgents/`. The rendered plists are gitignored — the templates are the only checked-in form, so a clone on any machine installs cleanly with no per-user editing.
+   The remaining four jobs (health-check hourly, health-check-triage 3×/day, pulse-warning-watch every 15 min, obsidian-rollover at midnight) are operational/maintenance agents — see [SCHEDULER.md](SCHEDULER.md).
+
+   Wrapper scripts source [scripts/lib/scheduler_common.sh](scripts/lib/scheduler_common.sh) for env bootstrap (repo root, venv python, `PYTHONPATH`), per-day logs under `temp/logs/`, job-lifecycle events into `auth_activity.jsonl`, and log retention. Installers source [scripts/lib/install_common.sh](scripts/lib/install_common.sh) for one normalized flow: always-unload, render the `.plist.template` (`{{REBALANCE_DIR}}`, `{{PYTHON}}`, `{{HOME}}`), `plutil -lint`, load, poll-verify registration. The rendered plists in `~/Library/LaunchAgents/` are gitignored — the templates are the only checked-in form, so a clone on any machine installs cleanly with no per-user editing.
 
 3. **MCP tool handlers** — [src/rebalance/mcp/server.py](src/rebalance/mcp/server.py) registers the tools; [src/rebalance/mcp_server.py](src/rebalance/mcp_server.py) remains as the backward-compatibility shim for older launch commands. Host agents (Claude Code / Claude Desktop) call these on demand. `REBALANCE_DB` env var resolves the shared DB path.
 
@@ -430,8 +455,22 @@ src/rebalance/
   doctor.py                — installation health checks; backs `rebalance doctor`
   ingest/
     config.py              — secrets storage (temp/rbos.config)
-    registry.py            — project registry sync (Markdown ↔ YAML ↔ SQLite)
-    preflight.py           — onboarding discovery + confirmation
+    registry.py            — project registry sync (Markdown ↔ YAML ↔ SQLite);
+                              read_registry (pure read) vs load_registry (write-path)
+    preflight.py           — onboarding discovery (read-only, provenance-stamped)
+                              + confirmation — the only curated registry write path
+    lifecycle.py           — Phase 5/6 lifecycle contract: setup stage map with
+                              done/now/next/blocked/skipped statuses, executor
+                              hints, and remediation (backs onboarding_status and
+                              the /welcome skill), plus the project-lifecycle
+                              ownership table (write semantics per stage —
+                              discovery read_only, confirmation gated, inference
+                              machine-owned, prioritization read-time overlay)
+    local_repos.py         — local checkout discovery (Phase 6.1): scan
+                              local_repo_roots for git checkouts, GitHub identity
+                              from origin, unpushed-commit counts; feeds
+                              provenance=local-scan candidates + the doctor's
+                              unpushed-work check
     github_scan.py         — GitHub Events API collector + per-project balance query
     github_knowledge.py    — per-repo artifact sync (issues/PRs/comments/commits/checks) + embedding
     github_watch.py        — watched/external repo reconciliation and repo-watch logic
@@ -477,17 +516,20 @@ scripts/                   — Operator entry points (not part of the importable
   pulse_web.py             — render module: regenerates web/pulse.html (the local
                               browser mirror of the dashboard) from the same SQLite
                               knowledge base; atomic via tmp+replace; supports --watch
+  _bootstrap.py            — single sys.path shim for directly-run scripts (src/ + scripts/)
+  spike_welcome_status.py  — disposable Phase 6 spike: drives the lifecycle status
+                              contract (sandbox walkthrough + --real "where am I")
+  lib/scheduler_common.sh  — shared launchd job runtime: env bootstrap, dated logs,
+                              job-lifecycle events, retention (sourced by *_sync.sh)
+  lib/install_common.sh    — shared installer flow: always-unload, render template,
+                              plutil -lint, load, poll-verify (sourced by install_*.sh)
   daily_sync.sh            — daily_sync launchd entry (mode 2)
   vault_sync.sh            — hourly vault-only launchd entry (mode 2)
   pulse_sync.sh            — hourly pulse-publish (markdown→private repo) launchd entry (mode 2)
   pulse_web_sync.sh        — 30-minute pulse-web (web/pulse.html) launchd entry (mode 2)
-  install_scheduler.sh     — install/reload the daily launchd job
-  install_vault_scheduler.sh — install/reload the hourly vault launchd job
-  install_pulse_scheduler.sh — install/reload the hourly pulse-markdown launchd job
-  install_pulse_web_scheduler.sh — install/reload the 30-min pulse-web launchd job
-  install_github_scheduler.sh — install/reload the hourly github-only launchd job
-  install_pulse_server_scheduler.sh — install/reload the long-running pulse-server launchd job
   github_sync.sh           — github-only launchd entry (mode 2)
+  install_*.sh             — one installer per launchd job (see SCHEDULER.md for the
+                              job ↔ installer table; all delegate to lib/install_common.sh)
   setup_calendar_oauth.py  — interactive OAuth consent flow for Google Calendar
   build_extension.py       — native extension builder
   ask-self-ingest.sh       — self-ingest shell wrapper (portable mode, requires ASK_SELF_PATH)

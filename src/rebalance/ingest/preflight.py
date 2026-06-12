@@ -11,6 +11,7 @@ from rebalance.ingest.registry import (
     Project,
     Registry,
     load_registry,
+    read_registry,
     save_registry,
     sync_registry,
 )
@@ -20,6 +21,7 @@ from rebalance.ingest.github_scan import (
     BAND_C_DAYS,
     discover_repos_from_activity,
 )
+from rebalance.ingest.local_repos import scan_local_repos
 
 
 # ---------------------------------------------------------------------------
@@ -223,7 +225,7 @@ def discover_candidates(
     Read-only: does not write to registry, DB, or filesystem.
     Returns candidates segmented by activity recency.
     """
-    registry = load_registry(registry_path)
+    registry = read_registry(registry_path)
     existing = _existing_names(registry)
 
     titles, scanned = _scan_titles(vault_path=vault_path, registry_path=registry_path)
@@ -233,7 +235,7 @@ def discover_candidates(
         key = title.casefold()
         if key in existing:
             continue
-        discovered.append(Project(name=title, status="potential"))
+        discovered.append(Project(name=title, status="potential", provenance="vault-note"))
         existing.add(key)
 
     github_error: str | None = None
@@ -255,11 +257,38 @@ def discover_candidates(
                             repos=[repo_cand.repo_full_name],
                             last_activity_at=repo_cand.last_active_at,
                             tags=repo_cand.bands,  # store bands as tags for downstream use
+                            provenance="remote-activity",
                         )
                     )
                     existing.add(key)
         except Exception as e:
             github_error = str(e)
+
+    # Local checkouts (Phase 6.1): GitHub repos found on disk that neither
+    # remote activity nor the registry already cover — typically work that
+    # never got pushed. Off unless local_repo_roots is configured; read-only
+    # like the rest of discovery.
+    for local in scan_local_repos():
+        if local.full_name is None:
+            continue
+        key = local.full_name.casefold()
+        if key in existing:
+            continue
+        unpushed = (
+            f"{local.unpushed_commits} unpushed commit(s) on {local.branch}"
+            if local.unpushed_commits
+            else ("no upstream for " + local.branch if local.unpushed_commits is None else "in sync")
+        )
+        discovered.append(
+            Project(
+                name=local.full_name,
+                status="potential",
+                summary=f"Local checkout at {local.path} — {unpushed}.",
+                repos=[local.full_name],
+                provenance="local-scan",
+            )
+        )
+        existing.add(key)
 
     # Segment candidates — GitHub repos use band-based classification, vault-only use recency.
     # GitHub repos have band letters (A/B/C) stored in their tags field.

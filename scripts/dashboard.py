@@ -43,7 +43,7 @@ from rich.table import Table
 from rich.text import Text
 
 # Make `rebalance.*` importable when running the script straight from the repo.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+import _bootstrap  # noqa: E402, F401
 
 from rebalance.ingest.config import (  # noqa: E402
     get_calendar_ignored_summaries,
@@ -59,6 +59,7 @@ from rebalance.ingest.index_ops import (  # noqa: E402
     refresh_index,
 )
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
+from rebalance.web_components import ITEM_SUB_GLYPHS, KIND_GLYPHS  # noqa: E402
 
 
 try:
@@ -685,14 +686,14 @@ def fetch_recent_figma(limit: int = 12) -> list[dict[str, Any]]:
 
 
 KIND_GLYPH = {
-    "commit": ("●", PALETTE["ok"]),
-    "item": ("◆", PALETTE["info"]),
-    "comment": ("○", PALETTE["fg_muted"]),
+    "commit":  (KIND_GLYPHS["commit"],  PALETTE["ok"]),
+    "item":    (KIND_GLYPHS["item"],    PALETTE["info"]),
+    "comment": (KIND_GLYPHS["comment"], PALETTE["fg_muted"]),
 }
 
 ITEM_SUB_GLYPH = {
-    "issue": ("✦", PALETTE["warn"]),
-    "pull_request": ("⇡", PALETTE["info"]),
+    "issue":        (ITEM_SUB_GLYPHS["issue"],        PALETTE["warn"]),
+    "pull_request": (ITEM_SUB_GLYPHS["pull_request"], PALETTE["info"]),
 }
 
 

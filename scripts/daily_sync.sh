@@ -6,36 +6,13 @@
 # Single source of truth: this is the same orchestration the MCP
 # refresh_index tool exposes to interactive agents.
 #
+# Policy: SCHEDULER.md (job com.rebalance-os.daily-sync).
 # Install: see scripts/install_scheduler.sh
 
 set -euo pipefail
 
-REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="$REBALANCE_DIR/.venv/bin/python"
-export PYTHONPATH="$REBALANCE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-LOG_DIR="$REBALANCE_DIR/temp/logs"
-
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/daily_sync_$(date +%Y-%m-%d).log"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
-}
-
-cd "$REBALANCE_DIR"
-
-_JOB_START_TS=$(date +%s)
-"$PYTHON" -c "from rebalance.ingest.auth_log import log_job_started; log_job_started('daily-sync')" 2>/dev/null || true
-_job_exit() {
-    local _code=$?
-    local _elapsed=$(( $(date +%s) - _JOB_START_TS ))
-    if [ "$_code" -eq 0 ]; then
-        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_completed; log_job_completed('daily-sync', $_elapsed)" 2>/dev/null || true
-    else
-        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_failed; log_job_failed('daily-sync', $_code, $_elapsed)" 2>/dev/null || true
-    fi
-}
-trap _job_exit EXIT
+source "$(cd "$(dirname "$0")" && pwd)/lib/scheduler_common.sh"
+rb_job_init "daily-sync" 30
 
 log "=== rebalance daily sync starting ==="
 
@@ -69,7 +46,6 @@ else
     log "=== rebalance daily sync finished with errors (see JSON above) ==="
 fi
 
-# Retain 30 days of logs.
-find "$LOG_DIR" -name "daily_sync_*.log" -mtime +30 -delete 2>/dev/null || true
+rb_trim_logs
 
 exit $EXIT_CODE

@@ -21,18 +21,40 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from rebalance.paths import find_project_root
+
 
 # Override seam for tests. When None, resolve from the active checkout/env.
 CONFIG_PATH: Path | None = None
 CONFIG_ENV_VAR = "REBALANCE_CONFIG"
-_PROJECT_MARKERS = (".git", "pyproject.toml")
 
 # Keyring service name — all secrets stored under this service.
 KEYRING_SERVICE = "rebalance-os"
 
 
+# Hermetic-sandbox seams (Phase 6 spike finding + walkthrough finding): the
+# OS keyring AND the gh CLI are machine-global, so a "clean sandbox"
+# walkthrough on an operator machine would see the real secrets through
+# either. REBALANCE_NO_KEYRING=1 makes every keyring helper a no-op;
+# REBALANCE_HERMETIC=1 additionally disables the gh-CLI token fallback —
+# resolution then reads only rbos.config, which sandboxes control via
+# REBALANCE_CONFIG / CONFIG_PATH.
+KEYRING_DISABLE_ENV_VAR = "REBALANCE_NO_KEYRING"
+HERMETIC_ENV_VAR = "REBALANCE_HERMETIC"
+
+
+def _hermetic() -> bool:
+    return bool(os.environ.get(HERMETIC_ENV_VAR, "").strip())
+
+
+def _keyring_disabled() -> bool:
+    return _hermetic() or bool(os.environ.get(KEYRING_DISABLE_ENV_VAR, "").strip())
+
+
 def _keyring_get(key: str) -> str | None:
     """Return a secret from the OS keyring, or None if unavailable/unset."""
+    if _keyring_disabled():
+        return None
     try:
         import keyring  # noqa: PLC0415
         return keyring.get_password(KEYRING_SERVICE, key)
@@ -42,6 +64,8 @@ def _keyring_get(key: str) -> str | None:
 
 def _keyring_set(key: str, value: str) -> bool:
     """Write a secret to the OS keyring. Returns True on success."""
+    if _keyring_disabled():
+        return False
     try:
         import keyring  # noqa: PLC0415
         keyring.set_password(KEYRING_SERVICE, key, value)
@@ -52,6 +76,8 @@ def _keyring_set(key: str, value: str) -> bool:
 
 def _keyring_delete(key: str) -> bool:
     """Delete a secret from the OS keyring. Returns True on success."""
+    if _keyring_disabled():
+        return False
     try:
         import keyring  # noqa: PLC0415
         import keyring.errors  # noqa: PLC0415
@@ -77,14 +103,6 @@ def _migrate_to_keyring(config_key: str) -> str | None:
 _GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
-def _project_root_from(start: Path) -> Path | None:
-    current = start.resolve()
-    for candidate in (current, *current.parents):
-        if any((candidate / marker).exists() for marker in _PROJECT_MARKERS):
-            return candidate
-    return None
-
-
 def _resolved_config_path() -> Path:
     if CONFIG_PATH is not None:
         return CONFIG_PATH.expanduser().resolve()
@@ -93,11 +111,11 @@ def _resolved_config_path() -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
 
-    cwd_root = _project_root_from(Path.cwd())
+    cwd_root = find_project_root(Path.cwd())
     if cwd_root is not None:
         return cwd_root / "temp" / "rbos.config"
 
-    module_root = _project_root_from(Path(__file__).resolve())
+    module_root = find_project_root(Path(__file__).resolve())
     if module_root is not None:
         return module_root / "temp" / "rbos.config"
 
@@ -188,9 +206,10 @@ def get_github_token_with_source() -> tuple[str | None, str | None]:
     token = _migrate_to_keyring("github_token")
     if token:
         return token, "config"
-    token = _try_gh_cli_token()
-    if token:
-        return token, "gh-cli"
+    if not _hermetic():  # gh login is machine-global — hermetic mode skips it
+        token = _try_gh_cli_token()
+        if token:
+            return token, "gh-cli"
     return None, None
 
 
@@ -266,6 +285,52 @@ def set_vault_path(path: str) -> None:
     config = _read_config()
     config["vault_path"] = path.strip()
     _write_config(config)
+
+
+def get_local_repo_roots() -> list[str]:
+    """Folders to scan for local git checkouts (Phase 6.1 local discovery).
+
+    Empty list = local scanning is off. Config key: local_repo_roots
+    """
+    config = _read_config()
+    value = config.get("local_repo_roots")
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def set_local_repo_roots(roots: list[str]) -> None:
+    """Store the local-scan root folders in config."""
+    config = _read_config()
+    config["local_repo_roots"] = [str(r).strip() for r in roots if str(r).strip()]
+    _write_config(config)
+
+
+def get_onboarding_skipped_stages() -> list[str]:
+    """Optional setup stages the operator deliberately skipped.
+
+    Consumed by the lifecycle status contract (Phase 6): a skipped optional
+    stage reports status ``skipped`` instead of being offered as ``next``
+    forever. Config key: onboarding_skipped_stages
+    """
+    config = _read_config()
+    value = config.get("onboarding_skipped_stages")
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def set_onboarding_stage_skipped(stage_id: str, skipped: bool = True) -> list[str]:
+    """Mark or unmark an optional setup stage as deliberately skipped.
+
+    Returns the updated skip list. Idempotent in both directions.
+    """
+    config = _read_config()
+    current = config.get("onboarding_skipped_stages")
+    stages = {str(item) for item in current} if isinstance(current, list) else set()
+    if skipped:
+        stages.add(stage_id)
+    else:
+        stages.discard(stage_id)
+    config["onboarding_skipped_stages"] = sorted(stages)
+    _write_config(config)
+    return sorted(stages)
 
 
 # ---------------------------------------------------------------------------

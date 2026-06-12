@@ -20,7 +20,7 @@ from rebalance.ingest.gmail import (
 )
 from rebalance.ingest.index_ops import SCOPE_VALUES, _normalize_scope, _refresh_email, get_index_status
 from rebalance.ingest.semantic_index import (
-    _normalize_sources,
+    normalize_sources as _normalize_sources,
     backfill_semantic_documents,
 )
 

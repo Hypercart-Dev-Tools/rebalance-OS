@@ -6,6 +6,170 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.39.1] - 2026-06-11
+
+### Fixed
+
+- **Phase 6 adversarial-review fixes (Gemini).** Status precedence is now
+  `done` > `blocked` > `skipped` — a skip marker never masks unmet
+  prerequisites (the review's "hard to reverse later" call, fixed before any
+  client depends on it). Ctrl+C during a CLI optional-stage offer no longer
+  persists a skip. Executor dispatch survives non-checkout installs (absolute
+  venv python, `sys.executable` fallback, remediation listing when no repo
+  root). OAuth status checks now probe the token FILE the collectors actually
+  read, not just the keyring (hermetic mode skips the machine-global path).
+  Detached HEADs are no longer flagged as unpushed work. `rebalance reset`
+  sweeps the canonical DB path in half-reset states, enumerates
+  `sleuth_web_api`, and removes OAuth token files (verified live: 2 files +
+  5 secrets found that 0.39.0 missed). Declined with rationale: `com.user.*`
+  agents stay outside reset's footprint; launchctl/mtime graduation checks
+  stay in the doctor (the contract remains filesystem-pure).
+
+## [0.39.0] - 2026-06-11
+
+### Added
+
+- **Phase 6 complete — the welcome agent ships end to end.**
+  - *Graduation stages:* `schedulers_installed` and `first_pulse` join the
+    lifecycle contract (optional, after `db_synced`) with patchable seams for
+    hermetic sandboxes; clients picked them up with zero edits.
+  - *CLI parity finished:* interactive `rebalance onboard` now offers each
+    incomplete optional stage (Calendar/Gmail OAuth, scheduler fleet, first
+    pulse) by dispatching the contract's executor hints; declining persists
+    the skip. `--yes` never launches OAuth or installs jobs silently.
+  - *Local discovery (6.1):* `ingest/local_repos.py` promotes the git-pulse
+    scanner — scan `local_repo_roots` for checkouts, parse GitHub identity,
+    measure unpushed commits; discovery surfaces uncovered on-disk repos as
+    `provenance=local-scan` candidates ("found on disk — promote?"). New
+    doctor check `local repos` WARNs on unpushed work as an ongoing signal.
+  - *Reset path:* `rebalance reset` — dry-run by default, `--force` executes;
+    unloads/removes the launchd fleet, deletes config + knowledge base,
+    enumerates keyring secrets (deleted only with `--include-keyring`), vault
+    never touched.
+  - *Hermetic walkthrough:* `tests/test_welcome_walkthrough.py` drives clone →
+    first pulse with real config writes in 0.06s. It caught a second
+    machine-global escape: the gh-CLI token fallback leaked the operator's
+    real login into "fresh" sandboxes — new `REBALANCE_HERMETIC=1` disables
+    keyring *and* gh-CLI fallbacks.
+  - *Docs:* README Getting Started leads with `/welcome` (manual steps kept
+    as reference); PROJECT.md v1.1 note updated — a future desktop UI is now
+    just another client of the same state machine; demo transcript committed
+    as the skill's UX baseline.
+
+## [0.38.0] - 2026-06-11
+
+### Added
+
+- **Phase 6 (slices 1–3) — lifecycle contract v2 + the welcome agent's front
+  ends.** `CONTRACT_VERSION` 2 in `ingest/lifecycle.py`:
+  - `REBALANCE_NO_KEYRING=1` makes every keyring helper a no-op — the
+    injection seam that lets hermetic walkthroughs run on an operator machine
+    without seeing real secrets (Phase 5 spike finding #1).
+  - `skipped` status: optional stages can be deliberately skipped (persisted
+    via `set_onboarding_stage_skipped` in rbos.config; new
+    `skip_onboarding_stage` MCP tool, optional-only) instead of being offered
+    as `next` forever; completing a stage always wins over a stale skip
+    marker (spike finding #2).
+  - Machine-executable `executor` hints per stage (`mcp:` / `cli:` /
+    `script:` vocabulary) alongside human remediation prose (spike finding #3).
+- **`/welcome` skill** (`.claude/skills/welcome/SKILL.md`): conversational
+  onboarding agent — renders where-am-I from one `onboarding_status` call per
+  turn, dispatches stages via executor hints, verifies each stage flips to
+  done, offers-then-skips optional auth, runs the provenance-grouped promote
+  review, graduates into the Phase 4 scheduler installers + first pulse.
+  Secrets never enter the transcript; resume works from the contract.
+- **`rebalance onboard --status`**: the no-LLM parity client — renders the
+  same lifecycle stage map (glyphs for done/now/next/blocked/skipped, fix
+  hints for now/blocked) from one `evaluate_setup` call.
+
+## [0.37.0] - 2026-06-11
+
+### Added
+
+- **Phase 5 lifecycle contract — `src/rebalance/ingest/lifecycle.py`.** Two
+  machine-readable maps the Phase 6 welcome agent will render: the project
+  lifecycle ownership table (discovery → review → confirmation → persistence →
+  inference → prioritization, each with one owner and a write-semantics
+  vocabulary) and the setup stage machine (config, vault, GitHub PAT, optional
+  Calendar/Gmail auth, registry, projections) with `done`/`now`/`next`/`blocked`
+  statuses and per-stage remediation hints. `onboarding_status` is now a thin
+  view over it (legacy `steps` list preserved).
+- **Discovery provenance end to end.** `Project.provenance` field
+  (`remote-activity` | `vault-note` | `inferred`; `local-scan` reserved for the
+  Phase 6 git-pulse promotion); candidates stamped at discovery, persisted via
+  `custom_fields_json` (same pattern as `external`), lifted back to top level by
+  `get_projects`.
+- **Onboarding E2E tests** (`tests/test_onboarding_e2e.py`): discover →
+  confirm → list promote path, provenance round-trip, read-only discovery,
+  setup status flipping to done. **Lifecycle contract tests**
+  (`tests/test_lifecycle_contract.py`, 13 tests): blocked propagation,
+  exactly-one-now, optional-stays-offered, re-poll stability.
+- **Thin Phase 6 spike** (`scripts/spike_welcome_status.py`): disposable driver
+  that walks the status contract on a sandbox fresh machine (all assertions
+  pass) and renders "where am I" for the real machine via `--real`.
+
+### Fixed
+
+- **Discovery no longer creates the registry file.** `discover_candidates`
+  called `load_registry`, which writes the default registry when missing — so
+  merely running discovery flipped `registry_exists` to done before any
+  confirmation. New `read_registry` (pure read) used on the discovery path.
+- **Inference can no longer clobber curated registry rows.**
+  `sync_inferred_project_registry` skips any name owned by a non-inference row
+  (the upsert is name-keyed and would have overwritten curated
+  summary/priority/custom_fields wholesale); skips are reported in
+  `InferenceSummary.skipped_curated_*` and echoed by the CLI.
+
+### Changed
+
+- **One text normalizer.** `normalize_match_text` in `project_classifier` is
+  the canonical implementation; `project_inference` and `project_priority`
+  delegate (was three identical copies).
+- **ARCHITECTURE.md** documents the registry write discipline and the
+  lifecycle module.
+
+## [0.36.0] - 2026-06-11
+
+### Added
+
+- **Phase 4 scheduler consolidation — SCHEDULER.md policy table.** Single source
+  of truth for the 10-job launchd fleet (labels, cadences, scopes, prerequisites,
+  outputs), the intentional freshness model (vault-sync embeds semantically every
+  hour; github-sync defers semantic backfill to daily-sync), and the operator
+  runbook. Enforced hermetically by `tests/test_scheduler_policy.py` (17 tests:
+  plistlib template rendering, cadence/label/RunAtLoad conformance, wrapper policy
+  lines, installer flow, doc coverage — no `launchctl` anywhere).
+- **Shared launchd runtime** `scripts/lib/scheduler_common.sh`: env bootstrap,
+  per-day logs, job-lifecycle events, retention trimming — sourced by
+  `daily_sync.sh`, `vault_sync.sh`, `github_sync.sh`, `pulse_sync.sh`,
+  `pulse_web_sync.sh`, `pulse_server.sh` (each shrank to its policy payload).
+- **Shared installer flow** `scripts/lib/install_common.sh`: always-unload,
+  template render (`{{REBALANCE_DIR}}`/`{{PYTHON}}`/`{{HOME}}`), `plutil -lint`,
+  load, poll-verified registration. All `install_*.sh` are now thin wrappers; new
+  installers added for the jobs that had none: `install_health_check_scheduler.sh`,
+  `install_health_check_triage_scheduler.sh`, `install_obsidian_rollover_scheduler.sh`
+  (plus a tracked `com.rebalance-os.obsidian-rollover.plist.template` for the
+  previously hand-created plist).
+- **`scripts/_bootstrap.py`** — the single remaining `sys.path` shim for
+  directly-run scripts (was 7 inserts across 5 scripts: `pulse_web.py`,
+  `pulse_server.py`, `dashboard.py`, `chat_eval.py`, `health_issue_reporter.py`).
+
+### Fixed
+
+- **Invalid XML in two plist templates.** `pulse-warning-watch` and
+  `health-check-triage` templates carried `--` inside XML comments — rejected by
+  expat (plutil tolerates it). Caught by the new conformance tests.
+- **Stale `IGNORED_FILES` entries** in `scripts/audit_modules.py` (`db.py`,
+  `ask-self-ingest-throttled.py`) unblocked the module audit.
+
+### Changed
+
+- **config.py imports `find_project_root` at module level** — the circular-import
+  risk that justified the Phase-1 lazy import no longer exists (`paths.py` imports
+  nothing from the package). Closes both Phase-1 deferred items.
+- **ARCHITECTURE.md / README.md** point at SCHEDULER.md as the scheduler
+  authority; file map documents `scripts/lib/` and `_bootstrap.py`.
+
 ## [0.35.0] - 2026-06-10
 
 ### Added

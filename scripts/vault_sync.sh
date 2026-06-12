@@ -1,9 +1,9 @@
 #!/bin/bash
 # rebalance OS — hourly vault refresh
 # Runs hourly via launchd (com.rebalance-os.vault-sync) between 6 AM and 11 PM.
-# Calls refresh_index(scope=["vault"]) so notes edited during the day surface
-# in the dashboard / pulse / semantic search without waiting for the daily
-# 06:30 sync.
+# Calls refresh_index(scope=["vault", "semantic"]) so notes edited during the
+# day surface in the dashboard / pulse / semantic search without waiting for
+# the daily 06:30 sync.
 #
 # Vault ingest is cheap (~0.02s with no changes; small fractions of a second
 # per modified file) and offline, so running it on the hour does not impact
@@ -11,38 +11,19 @@
 #
 # Single source of truth: this calls the same `refresh_index` the MCP server
 # exposes — no per-script duplication of the orchestration.
+#
+# Policy: SCHEDULER.md (job com.rebalance-os.vault-sync).
 
 set -euo pipefail
 
-REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="$REBALANCE_DIR/.venv/bin/python"
-export PYTHONPATH="$REBALANCE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-LOG_DIR="$REBALANCE_DIR/temp/logs"
-
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/vault_sync_$(date +%Y-%m-%d).log"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
-}
-
-cd "$REBALANCE_DIR"
-
-_JOB_START_TS=$(date +%s)
-"$PYTHON" -c "from rebalance.ingest.auth_log import log_job_started; log_job_started('vault-sync')" 2>/dev/null || true
-_job_exit() {
-    local _code=$?
-    local _elapsed=$(( $(date +%s) - _JOB_START_TS ))
-    if [ "$_code" -eq 0 ]; then
-        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_completed; log_job_completed('vault-sync', $_elapsed)" 2>/dev/null || true
-    else
-        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_failed; log_job_failed('vault-sync', $_code, $_elapsed)" 2>/dev/null || true
-    fi
-}
-trap _job_exit EXIT
+source "$(cd "$(dirname "$0")" && pwd)/lib/scheduler_common.sh"
+rb_job_init "vault-sync" 14
 
 log "=== rebalance vault sync starting ==="
 
+# Freshness policy: "semantic" is included INTENTIONALLY as the follow-on
+# stage — vault ingest alone updates raw tables only; the semantic backfill+
+# embed is what makes edited notes searchable within the hour.
 if "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1
 import json
 import sys
@@ -67,7 +48,6 @@ else
     log "=== rebalance vault sync finished with errors (see JSON above) ==="
 fi
 
-# Retain 14 days of vault sync logs (more frequent than daily, so trim sooner).
-find "$LOG_DIR" -name "vault_sync_*.log" -mtime +14 -delete 2>/dev/null || true
+rb_trim_logs
 
 exit $EXIT_CODE

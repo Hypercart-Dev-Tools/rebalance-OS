@@ -17,7 +17,7 @@ import statistics
 import sys
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+import _bootstrap  # noqa: E402, F401  — puts src/ on sys.path
 
 from rebalance.chat import ask_self_available, chat_with_data  # noqa: E402
 from rebalance.paths import resolve_database_path  # noqa: E402

@@ -93,6 +93,8 @@ Data sources
 
 The MCP server speaks standard JSON-RPC — no LLM-specific logic inside it. Any MCP-compatible client works without modification.
 
+The scheduled side of the diagram (the launchd fleet: daily/hourly syncs, pulse publishing, health checks) is governed by the policy table in [SCHEDULER.md](SCHEDULER.md) — job cadences, scopes, prerequisites, and the runbook live there.
+
 For layer roles, tool surface, server configuration, and host adapter setup (Claude Desktop, Cursor, VS Code, Continue), see **[MCP.md](./MCP.md)**.
 
 ---
@@ -172,6 +174,14 @@ The result is an AI assistant that actually knows your work — because it's rea
 ---
 
 ## Getting Started
+
+### Fastest path — `/welcome`
+
+After cloning and installing (Step 1 below), open the repo in Claude Code and type `/welcome`. The welcome agent walks you from zero to your first rendered pulse: it checks where you are (`onboarding_status` — resumable any time, even days later), runs each step itself (GitHub PAT validation, optional Google Calendar/Gmail OAuth, project discovery), asks you which discovered repos to promote to monitored, then installs the scheduled sync fleet and opens your first pulse. You only click OAuth consent screens and answer promote/skip questions — secrets never appear in the chat.
+
+Prefer no agent? `rebalance onboard` is the same guided journey as a CLI wizard, and `rebalance onboard --status` shows the stage map ("where am I / what's next") at any time. To start over: `rebalance reset` (dry-run by default; your vault is never touched).
+
+The manual steps below remain for reference and for environments without an MCP host.
 
 ### Prerequisites
 

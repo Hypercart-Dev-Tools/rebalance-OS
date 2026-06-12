@@ -1,38 +1,20 @@
 #!/bin/bash
 # rebalance OS — hourly github sync
 # Runs hourly via launchd to keep github context fresh.
+#
+# Policy: SCHEDULER.md (job com.rebalance-os.github-sync).
 
 set -euo pipefail
 
-REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="$REBALANCE_DIR/.venv/bin/python"
-export PYTHONPATH="$REBALANCE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-LOG_DIR="$REBALANCE_DIR/temp/logs"
-
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/github_sync_$(date +%Y-%m-%d).log"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
-}
-
-cd "$REBALANCE_DIR"
-
-_JOB_START_TS=$(date +%s)
-"$PYTHON" -c "from rebalance.ingest.auth_log import log_job_started; log_job_started('github-sync')" 2>/dev/null || true
-_job_exit() {
-    local _code=$?
-    local _elapsed=$(( $(date +%s) - _JOB_START_TS ))
-    if [ "$_code" -eq 0 ]; then
-        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_completed; log_job_completed('github-sync', $_elapsed)" 2>/dev/null || true
-    else
-        "$PYTHON" -c "from rebalance.ingest.auth_log import log_job_failed; log_job_failed('github-sync', $_code, $_elapsed)" 2>/dev/null || true
-    fi
-}
-trap _job_exit EXIT
+source "$(cd "$(dirname "$0")" && pwd)/lib/scheduler_common.sh"
+rb_job_init "github-sync" 14
 
 log "=== rebalance hourly github sync starting ==="
 
+# Freshness policy: intentionally NO "semantic" follow-on here. GitHub rows
+# land in the raw tables hourly; the github -> semantic backfill+embed runs
+# in the 06:30 daily sync. The gap is observable as the
+# github_documents_missing_from_semantic drift metric (index_status).
 if "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1
 import json
 import sys
@@ -57,6 +39,6 @@ else
     log "=== rebalance hourly github sync finished with errors ==="
 fi
 
-find "$LOG_DIR" -name "github_sync_*.log" -mtime +14 -delete 2>/dev/null || true
+rb_trim_logs
 
 exit $EXIT_CODE

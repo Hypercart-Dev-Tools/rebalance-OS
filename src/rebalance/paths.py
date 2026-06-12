@@ -304,6 +304,18 @@ if __name__ == "__main__":
 # Project root resolver  (replaces scattered parents[N] hacks)
 # ---------------------------------------------------------------------------
 
+def find_project_root(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for a project marker (.git / pyproject.toml).
+
+    Returns the root ``Path`` if found, ``None`` if not.  This is the
+    ``None``-returning twin of :func:`resolve_project_root` (which raises).
+    Prefer this in callers that have a sensible fallback when the root is
+    absent (e.g. config-path resolution), and :func:`resolve_project_root`
+    in callers that must abort on missing root.
+    """
+    return _walk_up_for_project_root(start)
+
+
 def resolve_project_root(start: Path | None = None) -> Path:
     """Resolve the project root by walking up from ``start`` looking for a project marker.
 

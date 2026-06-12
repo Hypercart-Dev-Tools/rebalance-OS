@@ -221,3 +221,106 @@ class ProjectInferenceTests(unittest.TestCase):
             names = [row["name"] for row in conn.execute("SELECT name FROM project_registry ORDER BY name").fetchall()]
         self.assertIn("Rebalance OS", names)
         self.assertNotIn("Old Project", names)
+
+
+class CuratedRowProtectionTests(unittest.TestCase):
+    """machine_owned contract: inference never creates, updates, or deletes
+    a row the operator curated — even on a name collision."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._orig_path = config_module.CONFIG_PATH
+        config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+
+    def tearDown(self) -> None:
+        config_module.CONFIG_PATH = self._orig_path
+
+    def _calendar_config(self) -> CalendarConfig:
+        return CalendarConfig(
+            calendar_id="primary",
+            exclude_titles=[],
+            aggregator_skip_words=[],
+            timezone="America/Los_Angeles",
+            projects=[],
+            hours_format="decimal",
+        )
+
+    def test_curated_row_with_colliding_name_is_never_overwritten(self) -> None:
+        db_path = Path(self._tmp.name) / "rebalance.db"
+        curated_fields = {"aliases": ["rebalance"], "priority_source": "operator"}
+        with db_connection(db_path) as conn:
+            ensure_github_schema(conn)
+            ensure_calendar_schema(conn)
+            ensure_project_schema(conn)
+            conn.execute(
+                """
+                INSERT INTO github_activity
+                    (login, repo_full_name, scan_date, commits, pushes, prs_opened, prs_merged,
+                     issues_opened, issue_comments, reviews, last_active_at, scanned_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "tester",
+                    "Hypercart-Dev-Tools/rebalance-OS",
+                    "2026-04-28",
+                    10, 10, 0, 0, 0, 0, 0,
+                    "2026-04-27T19:11:32Z",
+                    "2026-04-28T14:47:36Z",
+                ),
+            )
+            # Operator-curated row whose name collides with the inferred seed.
+            conn.execute(
+                """
+                INSERT INTO project_registry
+                    (name, status, summary, value_level, priority_tier, risk_level,
+                     repos_json, tags_json, custom_fields_json)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "Rebalance OS",
+                    "active",
+                    "CURATED - operator owned",
+                    "high",
+                    1,
+                    None,
+                    json.dumps(["Hypercart-Dev-Tools/rebalance-OS"]),
+                    json.dumps(["curated"]),
+                    json.dumps(curated_fields),
+                ),
+            )
+            conn.commit()
+
+        summary = sync_inferred_project_registry(
+            db_path,
+            calendar_config=self._calendar_config(),
+        )
+
+        self.assertIn("Rebalance OS", summary.project_names)  # still inferred...
+        self.assertEqual(summary.skipped_curated_names, ["Rebalance OS"])  # ...but skipped
+        self.assertEqual(summary.skipped_curated_count, 1)
+        self.assertEqual(summary.updated_count, 0)
+        self.assertEqual(summary.deleted_stale_inferred_count, 0)
+
+        with db_connection(db_path, ensure_project_schema) as conn:
+            row = conn.execute(
+                "SELECT * FROM project_registry WHERE name = ?", ("Rebalance OS",)
+            ).fetchone()
+        self.assertEqual(row["summary"], "CURATED - operator owned")
+        self.assertEqual(row["priority_tier"], 1)
+        self.assertEqual(row["value_level"], "high")
+        self.assertEqual(json.loads(row["custom_fields_json"]), curated_fields)
+
+        # Repeat sync is idempotent: curated row still untouched, never deleted.
+        summary2 = sync_inferred_project_registry(
+            db_path,
+            calendar_config=self._calendar_config(),
+        )
+        self.assertEqual(summary2.skipped_curated_names, ["Rebalance OS"])
+        self.assertEqual(summary2.deleted_stale_inferred_count, 0)
+        with db_connection(db_path, ensure_project_schema) as conn:
+            count = conn.execute(
+                "SELECT COUNT(*) AS c FROM project_registry WHERE summary = ?",
+                ("CURATED - operator owned",),
+            ).fetchone()["c"]
+        self.assertEqual(count, 1)

@@ -16,40 +16,16 @@
 # Usage:
 #   bash scripts/install_pulse_server_scheduler.sh
 #
-# To uninstall:
-#   launchctl unload ~/Library/LaunchAgents/com.rebalance-os.pulse-server.plist
-#   rm ~/Library/LaunchAgents/com.rebalance-os.pulse-server.plist
+# Policy: SCHEDULER.md (job com.rebalance-os.pulse-server).
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-REBALANCE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
-PLIST_TEMPLATE="$SCRIPT_DIR/com.rebalance-os.pulse-server.plist.template"
-PLIST_DEST="$HOME/Library/LaunchAgents/com.rebalance-os.pulse-server.plist"
-SERVER_SCRIPT="$SCRIPT_DIR/pulse_server.sh"
+source "$(cd "$(dirname "$0")" && pwd)/lib/install_common.sh"
 
 echo "Installing rebalance OS pulse server (autostart)..."
 echo "  REBALANCE_DIR=$REBALANCE_DIR"
 
-if [ ! -x "$SERVER_SCRIPT" ]; then
-    chmod +x "$SERVER_SCRIPT"
-    echo "  Made pulse_server.sh executable"
-fi
-
-# Always attempt an unload first — `launchctl load` fails with an opaque
-# "Input/output error" if the job is already registered, and the grep check
-# can miss a job that is loaded but momentarily absent from `launchctl list`.
-launchctl unload "$PLIST_DEST" 2>/dev/null || true
-
-# Render template into LaunchAgents — escape '/' and '&' for sed.
-ESCAPED_DIR=$(printf '%s\n' "$REBALANCE_DIR" | sed 's/[\/&]/\\&/g')
-sed "s/{{REBALANCE_DIR}}/$ESCAPED_DIR/g" "$PLIST_TEMPLATE" > "$PLIST_DEST"
-echo "  Rendered plist to $PLIST_DEST"
-
-mkdir -p "$REBALANCE_DIR/temp/logs"
-
-launchctl load "$PLIST_DEST"
-echo "  Loaded pulse server"
+rb_install_launchd_job "com.rebalance-os.pulse-server" "scripts/pulse_server.sh"
 
 echo
 echo "Done! The rebalance OS pulse server is running at http://127.0.0.1:8767/"
@@ -59,4 +35,4 @@ echo "Commands:"
 echo "  Check status:   launchctl list | grep pulse-server"
 echo "  Health check:   curl -fsS http://127.0.0.1:8767/api/health"
 echo "  View logs:      cat $REBALANCE_DIR/temp/logs/pulse_server_stderr.log"
-echo "  Uninstall:      launchctl unload $PLIST_DEST && rm $PLIST_DEST"
+echo "  Uninstall:      launchctl unload $RB_PLIST_DEST && rm $RB_PLIST_DEST"

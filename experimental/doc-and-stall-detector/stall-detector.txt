@@ -1,0 +1,29 @@
+Correct — git-blame is just a flagpole: "when did this *line of text* last change," which is a noisy proxy for "when did this *task* last make progress." And there's a sharper problem specific to your workflow that makes it worse than noisy.
+
+**Your branch convention breaks git-blame outright.** You squash to *one clean commit per phase close*. The moment you squash, every task line in that phase collapses to a single commit timestamp — git-blame can no longer tell a task finished three weeks ago from one finished an hour before the squash. The retroactive history blame appears to give you is partly fiction after a squash. So blame isn't just imprecise about *why* something stalled; for your repo it's unreliable about *when*, too.
+
+**You're right on both counts re: the blob.** A sidecar `.json` drifts because it's a second artifact that moves independently (edit one, forget the other, merge conflicts). An in-file blob is one artifact — single source of truth, travels with the doc, no drift. And it fixes the squash problem: the script keeps its *own* observed timestamps, so history rewrites can't erase them.
+
+So I rebuilt the stall subsystem around an in-file state log and made git optional. Let me show it working:613 lines, syntax clean. Now test the new design end to end. **Test 1 — first run, no git:** every task's clock starts today, so nothing flags yet (honest first-run blindness), and the state log gets appended:Test 1 clean: 74%, nothing flagged (correct first-run behavior), state log appended with sorted keys. **Test 2 — prove stalls come from the blob, not git:** I'll hand-set the docs task's `since` back to Jun 1 in the JSON, then re-run with no git at all:Test 2 passes — stall fires purely from the JSON, zero git. **Test 3 — the payoff: `--seed-from-git` to bootstrap, then prove it survives a squash.** Seed `since` from blame on first run, then delete git history entirely and confirm the stall still fires from the blob:Test 3 nails it: seeded from blame, then **git history destroyed entirely** — stall still fires from the blob. Squash-proof. **Test 4 — the "not all stalls are SWE" handling:** mark a task `(blocked: …)` and confirm it lands in a separate Blocked bucket with its own age, not lumped in with forgotten work:Test 4 passes: blocked work gets its own bucket (chase Samuel re: schema) separate from the forgotten Phase 1 task. **Test 5 — idempotency, `--check`, and `--no-stall` leaving the log untouched:**All five tests pass: blob-driven timing, squash survival, blocked-vs-stalled separation, idempotency, and `--no-stall` leaving the log byte-identical. Generating the final deliverables (faithful plan content; the one genuinely-stalled task back-dated so you see a populated block):Rebuilt and delivered. Git is now demoted to an **optional one-time seed**; the in-file JSON log is the source of truth.
+
+**How timing works now:** on each run the script records every task's *status* (`done · cancelled · deferred · blocked · in_progress · open`) and the date it last *changed* status. Stall age = today − that date. Because the date lives in the blob, not in commit history, **squashing a phase can't erase it** — proven above: I seeded from blame, deleted `.git` entirely, and the stall still fired. It also measures status change, not file edits, so reformatting a line no longer resets the clock.
+
+**Your "not all stalls are SWE issues" point is now first-class** — three buckets instead of one:
+- **`(deferred)`** → silent (unchanged)
+- **`(blocked: …)`** → its own **⏳ Blocked** bucket with its own age ("blocked 8 business days" → chase the dependency), *not* mixed in with forgotten work
+- **open / in-progress, in scope** → **⚠ Stalled** (the "did you forget this?" bucket)
+
+The marker is just text you already write inline; status is derived from it. Marking a task blocked resets its clock, so "blocked N days" answers "is this blocker still real?"
+
+**Two regions, still single-owner:** human summary up top, machine state at the bottom (where you wanted it). The script rewrites only those two marked spans; everything else stays read-only validation. No sidecar, no drift.
+
+**Toggles:**
+- Default — no git touched at all; works offline
+- `--seed-from-git` — run **once** in your repo to backfill realistic `since` dates from blame (only seeds tasks not already logged; subject to the squash caveat, which is exactly why it's seed-only)
+- `--no-stall` — leaves the state log byte-for-byte untouched
+
+**Two honest tradeoffs:**
+- **First-run blindness** — without `--seed-from-git`, every clock starts today, so nothing flags for the first 2 business days. That's the price of not trusting blame; it's truthful about what the tool can actually observe. You can also just hand-edit `since` values in the JSON to bootstrap — it's plain, sorted, readable.
+- **Key = task text** — rewording a task resets its clock (same caveat blame had). If that bites, add a trailing `{#docs}` id convention later and key on that instead.
+
+**Tie-in:** this blob *is* a minimal attention ledger — `{task → status, since}`. When you promote it into rebalance-OS, it's the same shape as your weekly-rebalance-verdict event log, so fold it in there rather than re-deriving. If you want full transition history (not just current state), that's the JSONL append-log layer in rebalance-OS, not the MD — keep the embedded blob a bounded snapshot so the doc doesn't balloon.

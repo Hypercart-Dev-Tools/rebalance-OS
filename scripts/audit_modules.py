@@ -88,7 +88,6 @@ IGNORED_FILES = {
     "__init__.py",
     "__main__.py",                   # CLI entry point shim, not a module
     "config.py",
-    "db.py",
     "calendar_config.py",
     "calendar_helpers.py",
     "agent_tags.py",
@@ -99,7 +98,7 @@ IGNORED_FILES = {
     "dashboard.py",                  # Poller, doesn't need same fan-out
     "audit_modules.py",              # This script
     "audit.py",                      # Internal helper for destructive-op logging
-    "ask-self-ingest-throttled.py",  # Operator-only Gemini rate-limit wrapper
+    "_bootstrap.py",                 # sys.path shim, not a module
 }
 
 

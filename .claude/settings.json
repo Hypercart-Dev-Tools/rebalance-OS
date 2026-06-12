@@ -57,7 +57,9 @@
       "Edit(PROJECT/**)",
       "Write(src/**)",
       "Write(tests/**)",
-      "Write(PROJECT/**)"
+      "Write(PROJECT/**)",
+      "Bash(REBALANCE_NO_KEYRING=1 .venv/bin/python -c ' *)",
+      "Edit(/.claude/skills/welcome/**)"
     ]
   }
 }

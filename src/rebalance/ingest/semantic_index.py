@@ -83,16 +83,52 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
+# ---------------------------------------------------------------------------
+# Shared retrieval contracts — exported so callers never re-derive them.
+# ---------------------------------------------------------------------------
+
+# The canonical set of source names that constitute "work artifacts" in the
+# unified semantic index. Used by chat_with_data and any surface that needs to
+# express the product concept of "all ingested work".
+WORK_SOURCES: tuple[str, ...] = ("vault", "github", "email")
+
+
+def scope_to_sources(scope: str) -> list[str]:
+    """Map a product scope alias to semantic source_type values.
+
+    Canonical scope vocabulary:
+      "work"  → ingested work artifacts (vault, github, email)
+      "code"  → federated code/docs corpus (ask_self)
+      "all"   → both work and code
+
+    Callers must NOT define their own scope→sources mapping; import this.
+    """
+    if scope == "work":
+        return list(WORK_SOURCES)
+    if scope == "code":
+        return ["code"]
+    return [*WORK_SOURCES, "code"]  # "all"
+
+
+def normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
+    """Validate and deduplicate a raw source-type list against the legal set.
+
+    Returns a tuple of accepted source_type strings. Raises ``ValueError`` for
+    any unrecognised value. Callers that need CLI-friendly errors should catch
+    ``ValueError`` and re-raise in a surface-appropriate form.
+
+    This is the canonical owner of the semantic source vocabulary. CLI and MCP
+    wrappers must delegate here instead of maintaining their own allowed sets.
+    """
     if source_types is None:
-        return ("vault", "github", "email")
+        return WORK_SOURCES
     normalized = []
     for value in source_types:
         item = value.strip().lower()
         if not item:
             continue
         if item == "all":
-            return ("vault", "github", "email")
+            return WORK_SOURCES
         # The legal set = the current literal sources PLUS any source a
         # registered collector exposes via a ``semantic_docs`` provider (e.g.
         # ``figma``). Lazy/function-local import avoids an import cycle
@@ -104,10 +140,15 @@ def _normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
             _semantic_source_names()
         )
         if item not in legal:
-            raise ValueError(f"Unsupported source type: {value}")
+            raise ValueError(f"Unsupported source type: {value!r}")
         if item not in normalized:
             normalized.append(item)
     return tuple(normalized)
+
+
+# Keep the private name alive so any internal caller not yet migrated still
+# works — remove after all call sites are updated.
+_normalize_sources = normalize_sources
 
 
 def upsert_document(
@@ -691,7 +732,7 @@ def query(
                 False for pure ANN (also the automatic fallback when FTS5 is
                 unavailable or the query has no lexical terms).
     """
-    selected_sources = _normalize_sources(source_filter)
+    selected_sources = normalize_sources(source_filter)
     embed_fn = embed_texts or _default_embed_texts
     query_vec = _vec_to_bytes(embed_fn([query_text], model_name)[0])
     # Fetch a deeper pool per retriever so RRF has material to fuse.

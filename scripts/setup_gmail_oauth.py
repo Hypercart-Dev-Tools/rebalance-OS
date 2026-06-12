@@ -24,7 +24,6 @@ After running, adopt the keyring credential model with:
   rebalance config migrate-to-keyring
 """
 
-import base64
 import pickle
 import argparse
 from pathlib import Path
@@ -35,30 +34,11 @@ from rebalance.ingest.auth_log import (
     log_flow_succeeded,
     log_flow_failed,
 )
+from rebalance.ingest.google_oauth_client import build_google_oauth_client_config
 from rebalance.paths import resolve_oauth_token_path
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 TOKEN_PATH = resolve_oauth_token_path("gmail")
-
-# Desktop app credentials (Base64-encoded to avoid overly-broad secret scanners).
-# These are NOT sensitive — see Google OAuth 2.0 for Installed Apps documentation.
-# Same rebalance-OS desktop client used for Calendar; original credential file is
-# preserved locally at temp/client_secret.json (gitignored).
-_CID = "NDA5Mjk4MzQxOTg1LTFrdWI0dTFiMWJkMGxlZWEzYjc0ZDR2bW81Y3F2NzV0LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t"
-_CS  = "R09DU1BYLWNxWTA3a0VBZDJTTHM5RWg2MDRqV2NYRGxpQXo="
-
-
-def _build_client_config() -> dict:
-    """Decode embedded credentials and return client config dict."""
-    return {
-        "installed": {
-            "client_id":     base64.b64decode(_CID).decode(),
-            "client_secret": base64.b64decode(_CS).decode(),
-            "auth_uri":      "https://accounts.google.com/o/oauth2/auth",
-            "token_uri":     "https://oauth2.googleapis.com/token",
-            "redirect_uris": ["http://localhost"],
-        }
-    }
 
 
 def authorize_gmail(scopes: list[str]) -> None:
@@ -66,11 +46,11 @@ def authorize_gmail(scopes: list[str]) -> None:
     TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     flow = InstalledAppFlow.from_client_config(
-        _build_client_config(),
+        build_google_oauth_client_config(),
         scopes=scopes,
     )
 
-    log_flow_started(scopes)
+    log_flow_started(scopes, source="gmail")
     print("\n🔐 Opening browser for Google (Gmail) OAuth consent...\n")
     print("   If you see an 'unverified app' warning, click")
     print("   Advanced → Go to rebalance OS (unsafe). This is your own")
@@ -78,7 +58,7 @@ def authorize_gmail(scopes: list[str]) -> None:
     try:
         creds = flow.run_local_server(port=0, open_browser=True)
     except Exception as exc:
-        log_flow_failed(str(exc))
+        log_flow_failed(str(exc), source="gmail")
         raise
 
     with open(TOKEN_PATH, "wb") as f:
@@ -88,6 +68,7 @@ def authorize_gmail(scopes: list[str]) -> None:
         expiry=creds.expiry.isoformat() if creds.expiry else None,
         scopes=list(scopes),
         token_path=str(TOKEN_PATH),
+        source="gmail",
     )
     print(f"\n✅ Token saved to: {TOKEN_PATH}")
     print(f"   Expires: {creds.expiry}")
