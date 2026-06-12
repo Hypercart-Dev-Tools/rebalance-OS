@@ -322,11 +322,16 @@ def _query_calendar_upcoming(
 ) -> list[dict[str, Any]]:
     """Today's events with start_time >= now (i.e. still upcoming)."""
     now_utc = normalize_aware_utc(now)
+    # Default deny (P2 decision #3): the pulse is committed + pushed off-machine,
+    # so only the operator's own ('primary') calendar may appear here — never a
+    # teammate calendar. Keep this a constant literal; do not parameterize to a
+    # wider scope.
     rows = conn.execute(
         """
         SELECT summary, start_time, end_time, location, status
         FROM calendar_events
-        WHERE julianday(start_time) >= julianday(?)
+        WHERE calendar_id = 'primary'
+          AND julianday(start_time) >= julianday(?)
           AND julianday(start_time) < julianday(?)
         ORDER BY julianday(start_time)
         """,

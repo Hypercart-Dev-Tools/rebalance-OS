@@ -8,11 +8,20 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from rebalance.ingest.calendar import get_daily_totals, get_recent_events
+from rebalance.ingest.calendar import (
+    _calendar_id_filter,
+    get_daily_totals,
+    get_recent_events,
+    get_upcoming_events,
+)
 
 
 def _past(days: int) -> str:
     return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
+
+
+def _future(days: int) -> str:
+    return (datetime.now(timezone.utc) + timedelta(days=days)).isoformat()
 
 
 def _seed(db: Path, rows: list[dict]) -> None:
@@ -65,6 +74,41 @@ class TestReaderScope(unittest.TestCase):
         all_events = sum(d.event_count for d in get_daily_totals(self.db, calendar_id=None))
         self.assertEqual(default_events, 1)
         self.assertEqual(all_events, 2)
+
+    def test_upcoming_events_default_primary_only(self) -> None:
+        _seed(self.db, [
+            {"id": "up-mine", "summary": "My upcoming",
+             "start": _future(1), "end": _future(1), "cal": "primary"},
+            {"id": "up-mate", "summary": "Teammate upcoming",
+             "start": _future(1), "end": _future(1),
+             "cal": "teammate@group.calendar.google.com"},
+        ])
+        summaries = [e["summary"] for e in get_upcoming_events(self.db)]
+        self.assertIn("My upcoming", summaries)
+        self.assertNotIn("Teammate upcoming", summaries)
+
+    def test_upcoming_events_none_includes_all(self) -> None:
+        _seed(self.db, [
+            {"id": "up-mine", "summary": "My upcoming",
+             "start": _future(1), "end": _future(1), "cal": "primary"},
+            {"id": "up-mate", "summary": "Teammate upcoming",
+             "start": _future(1), "end": _future(1),
+             "cal": "teammate@group.calendar.google.com"},
+        ])
+        summaries = [e["summary"] for e in get_upcoming_events(self.db, calendar_id=None)]
+        self.assertIn("My upcoming", summaries)
+        self.assertIn("Teammate upcoming", summaries)
+
+
+class TestCalendarIdFilter(unittest.TestCase):
+    """The shared helper that the readers default through (calendar.py)."""
+
+    def test_none_is_no_restriction(self) -> None:
+        self.assertEqual(_calendar_id_filter(None), ("", ()))
+
+    def test_value_is_parameterized_clause(self) -> None:
+        self.assertEqual(
+            _calendar_id_filter("primary"), ("AND calendar_id = ?", ("primary",)))
 
 
 if __name__ == "__main__":

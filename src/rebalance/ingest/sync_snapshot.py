@@ -70,6 +70,10 @@ def get_device_id() -> str:
 # Calendar snapshot
 # ---------------------------------------------------------------------------
 
+# `person` (added in migration 0005) is intentionally NOT exported — a teammate
+# identity label stays local. The export is also primary-only (see the WHERE
+# clause in export_calendar_snapshot), and `person` is NULL on primary rows
+# anyway. Do not add it here without a deliberate privacy review.
 _CALENDAR_COLUMNS = (
     "id", "summary", "start_time", "end_time", "location",
     "attendees_json", "calendar_id", "status", "description", "fetched_at",

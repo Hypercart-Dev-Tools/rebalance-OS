@@ -80,6 +80,44 @@ class MigrationRunnerTests(unittest.TestCase):
             finally:
                 migrate.MIGRATIONS_DIR = original_dir
 
+    def test_failed_migration_rolls_back_atomically(self) -> None:
+        # A migration that wraps a destructive table rebuild in BEGIN ... COMMIT
+        # must be atomic: if a statement fails mid-script, the runner rolls back
+        # so the ORIGINAL table and data survive and the version does not advance.
+        with tempfile.TemporaryDirectory() as tmp:
+            mig_dir = Path(tmp) / "migrations"
+            mig_dir.mkdir()
+            (mig_dir / "0002_bad_rebuild.sql").write_text(
+                "BEGIN;\n"
+                "CREATE TABLE keepme_new (id TEXT NOT NULL, v TEXT, PRIMARY KEY(id));\n"
+                "INSERT INTO keepme_new (id, v) SELECT id, v FROM keepme;\n"
+                "DROP TABLE keepme;\n"
+                "ALTER TABLE keepme_new RENAME TO keepme;\n"
+                "INSERT INTO keepme (nonexistent_col) VALUES ('x');\n"  # fails here
+                "COMMIT;\n",
+                encoding="utf-8",
+            )
+            db_path = Path(tmp) / "rebalance.db"
+            original_dir = migrate.MIGRATIONS_DIR
+            migrate.MIGRATIONS_DIR = mig_dir
+            try:
+                with db_connection(db_path, ensure_schema) as conn:
+                    conn.execute("CREATE TABLE keepme (id TEXT PRIMARY KEY, v TEXT)")
+                    conn.executemany(
+                        "INSERT INTO keepme VALUES (?, ?)", [("a", "1"), ("b", "2")])
+                    conn.commit()
+                    with self.assertRaises(Exception):
+                        run_migrations(conn)
+                    # Original table + data fully intact after the rollback.
+                    rows = conn.execute(
+                        "SELECT id, v FROM keepme ORDER BY id").fetchall()
+                    self.assertEqual([tuple(r) for r in rows], [("a", "1"), ("b", "2")])
+                    # Version did not advance past the baseline.
+                    self.assertEqual(
+                        current_schema_version(conn), BASELINE_SCHEMA_VERSION)
+            finally:
+                migrate.MIGRATIONS_DIR = original_dir
+
     def test_discover_migrations_ignores_non_numeric_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             mig_dir = Path(tmp) / "migrations"

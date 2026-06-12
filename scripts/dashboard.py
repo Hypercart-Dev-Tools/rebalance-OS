@@ -514,7 +514,8 @@ def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any
                 """
                 SELECT summary, start_time, end_time, location
                 FROM calendar_events
-                WHERE julianday(start_time) >= julianday(?)
+                WHERE calendar_id = 'primary'
+                  AND julianday(start_time) >= julianday(?)
                 ORDER BY julianday(start_time) ASC
                 LIMIT ?
                 """,

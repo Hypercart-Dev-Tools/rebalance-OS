@@ -78,9 +78,18 @@ def run_migrations(conn: sqlite3.Connection) -> int:
     for mig_version, path in discover_migrations():
         if mig_version <= version:
             continue
-        conn.executescript(path.read_text(encoding="utf-8"))
-        _stamp(conn, mig_version)
+        try:
+            conn.executescript(path.read_text(encoding="utf-8"))
+            _stamp(conn, mig_version)
+            conn.commit()
+        except Exception:
+            # A migration that opens its own transaction (BEGIN ... COMMIT) leaves
+            # it open if a statement fails mid-script; roll back so a destructive
+            # table rebuild is atomic — the database stays at the prior version
+            # with the original tables intact, rather than half-applied.
+            conn.rollback()
+            raise
         version = mig_version
 
-    conn.commit()
+    conn.commit()  # flush the baseline stamp when no migrations were pending
     return version

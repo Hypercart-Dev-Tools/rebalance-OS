@@ -208,7 +208,8 @@ def collect_calendar(db: Path) -> tuple[list[dict[str, Any]], str | None]:
             recs = conn.execute(
                 """SELECT id, summary, start_time, end_time, location, attendees_json
                    FROM calendar_events
-                   WHERE date(start_time) = ?
+                   WHERE calendar_id = 'primary'
+                     AND date(start_time) = ?
                    ORDER BY start_time ASC""",
                 (today,),
             ).fetchall()
