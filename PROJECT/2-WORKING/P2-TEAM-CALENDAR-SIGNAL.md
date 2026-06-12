@@ -3,7 +3,7 @@ project: "P2 — Team Calendar as a Signal"
 codename: HiQS
 owner: Noel
 created: 2026-06-09
-updated: 2026-06-09
+updated: 2026-06-12
 status: "Working — Phase 0 in progress"
 current_phase: "Phase 0 — Spike + A/B test"
 kill_switch: "Willing to kill if Matt's calendar is mostly redundant with GitHub + Slack"
@@ -66,7 +66,7 @@ that the operator's own signals would have missed.
 |---|---|---|
 | 1 | **Phase 0 kill/continue bar** *(thresholds set by Claude per Noel's delegation — see [0e](#0e-decision-rule-kill--continue))* | Continue to Phase 1 only if **all three**: (a) net-new signal rate **≥20%** (median scored day); (b) **≥1 Noel-confirmed dropped-ball catch** AND B-only **precision ≥50%**; (c) blinded preference favors B on **≥3 of 5 days for *both* judges independently** (Noel AND the LLM judge), no-preference days counting against B. |
 | 2 | **Judges** | **Noel + an LLM judge** (local Qwen and/or Claude) vote independently on each blinded pair. |
-| 3 | **Privacy / export** | Teammate rows **may** remain in the pulse/sync export **as long as the pulse target repo is confirmed private**. Confirming privacy is a gating action before Phase 1 sync ships. |
+| 3 | **Privacy / export** | Teammate calendar data is **never exported** to the pulse git repo. `export_calendar_snapshot` always filters `WHERE calendar_id = 'primary'`. Teammate data stays purely local to the dashboard SQLite. Default deny — no repo-visibility gate required. |
 | 4 | **Phase 1 scope** | **Matt only** — a single second calendar, not a full N-person list. Generalize to N teammates in Phase 2. |
 
 ---
@@ -88,10 +88,14 @@ The calendar source is already a first-class, registry-driven `Collector`. Most 
 
 1. **PK collision.** `calendar_events` PK is `id` (Google event ID) alone. A shared invite on
    both calendars has the *same* event ID → overwrites + flips `calendar_id`. Needs composite
-   PK `(id, calendar_id)`.
+   PK `(id, calendar_id)`. **Phase 0 data integrity note:** syncing Matt's calendar in 0a may
+   have overwritten shared-invite rows from `calendar_id='primary'` to `calendar_id='<matt>'`
+   (e.g., "1:45 Team Call", "Weekly Joyce/Noel"). Before scoring, run a repair query or re-ingest
+   `primary` to restore any flipped rows — Arm A's `WHERE calendar_id='primary'` filter silently
+   drops those events if corrupted.
 2. **No person attribution.** No `owner`/`person` column → can't say "this is Matt's block, not mine."
 3. **Single-calendar config.** `CalendarConfig.calendar_id` is one string; needs a team list.
-4. **Leak surface.** [src/rebalance/ingest/sync_snapshot.py](src/rebalance/ingest/sync_snapshot.py) `export_calendar_snapshot` pushes `calendar_events` to the pulse git repo. Per decision #3, teammate rows may stay in the export **once the pulse target repo is confirmed private** (gating action, see [HiQS ethos](#hiqs-ethos-privacy-consent-leak-control)).
+4. **Leak surface (closed by design).** `export_calendar_snapshot` ([sync_snapshot.py](src/rebalance/ingest/sync_snapshot.py)) must always filter `WHERE calendar_id = 'primary'` — teammate rows are never exported to the pulse git repo (decision #3, default deny).
 
 ---
 
@@ -113,7 +117,8 @@ A throwaway script (gitignored) that, for each test day, emits two ranked next-a
 - [x] **Arm A — complete the signal set:** Sleuth reminders, Obsidian vault notes, and email now in Arm A — pulled via `pulse._query_day_activity()` (the dashboard's own assembler) + a per-day `email_messages` query. *(Note: "vault todos" = recently-modified vault notes; there is no checkbox/task table — true todo parsing is a separate future enhancement.)*
 - [x] **Arm A — denoise:** Git Pulse Sync excluded — `rebalance-git-pulse` never reaches `github_commits` (the dashboard source), plus an explicit `NOISE_REPOS` guard.
 - [x] **Reconcile GitHub activity — ROOT CAUSE FOUND & FIXED:** the old harness read `github_activity`, a *scan-snapshot* table that buckets a rolling ~30-day fetch under `scan_date = scanned_at[:10]` (the **scan-run date, in UTC**) and includes bot repos. The dashboard reads granular `github_commits/items/comments` with a tz-aware day window + author/bot filter. Harness now uses the dashboard path → matches.
-- [ ] **Blind + randomize:** output still prints labeled "ARM A / ARM B" — relabel to "Option 1 / Option 2" in randomized order so judging is unbiased. *(Last remaining 0b item.)*
+- [ ] **Blind + randomize:** output still prints labeled "ARM A / ARM B" — relabel to "Option 1 / Option 2" in randomized order so judging is unbiased. Write the mapping to a hidden `.ab_key.json` file (gitignored); **do not print to console** — Noel is a judge and seeing the key before voting breaks the blind. Reveal only after both judges have locked votes. *(Last remaining 0b item.)*
+- [ ] **De-duplicate shared events from Arm B delta:** query for event IDs present in *both* `calendar_id='primary'` and `calendar_id='<matt>'` (shared invites: "1:45 Team Call", "Weekly Joyce/Noel", etc.). These are already in Arm A — suppress them from the Arm B-only delta display and exclude them from the net-new signal rate count. The A→B delta must surface only blocks *unique* to Matt's calendar. Also reduces over-counting of joint meetings in the block totals.
 
 ### 0c. Test window
 - [x] Bundles generated for the 2 example days captured this week (**06-08, 06-09**) + **06-10**.
@@ -133,7 +138,7 @@ a chance win on any single metric can't pass the gate. Proceed to Phase 1 **only
 
 1. **Additivity** — net-new signal rate **≥ 20%** (median scored day). Below this, Matt's calendar mostly restates GitHub/Slack.
 2. **Decision value** — **≥ 1 Noel-confirmed dropped-ball catch** over the window, **and** B-only **precision ≥ 50%** (confirmed catches ÷ all B-only items Noel reviews) — so B earns the catch without flooding.
-3. **Preference** — blinded preference favors **B on ≥ 3 of 5 days for *both* judges independently** (Noel *and* the LLM judge each clear 3/5); no-preference days count against B. Two independent majorities is the small-N guard — one judge at 3/5 is a coin-flip under the null.
+3. **Preference** — blinded preference favors **B on ≥ 3 of 5 days for *both* judges independently** (Noel *and* the LLM judge each clear 3/5); no-preference days count against B. Two independent majorities is the small-N guard — one judge at 3/5 is a coin-flip under the null. **LLM judge calibration:** the judge prompt must explicitly instruct the model to *discount vague time-blocks* ("Slack&Emails", "Cron research") and *heavily weight verifiable, targeted actions* ("Review Binoid PR 860", "Email re WPE DB op") — otherwise the judge may falsely prefer Arm B simply because it has more text.
 
 Otherwise **stop** and record why — a teammate calendar ~90% redundant with GitHub + Slack is *not* a
 high-quality signal and isn't worth the privacy + maintenance cost. Either outcome is a successful spike.
@@ -143,17 +148,33 @@ high-quality signal and isn't worth the privacy + maintenance cost. Either outco
 
 ---
 
+## Standing design constraints (Phase 1 onward)
+
+> Phase 0 is throwaway. From Phase 1 onward, **all calendar-related production code must pass
+> these gates before shipping.** Prior refactors in this codebase were caused by non-compliant
+> foundations — do not build on a house of cards.
+
+- **SOLID:** Single responsibility — calendar sync, read, person-attribution, and export are
+  distinct concerns kept in separate, composable functions. No function does two of these.
+- **DRY:** No query logic repeated across `_gather_calendar_context`, `get_recent_events`,
+  `get_daily_totals`, and the harness helpers. Extract shared helpers; callers use them.
+- **Gate:** Run `/phase-qa` before marking any production phase complete. SOLID+DRY compliance
+  is a *high-priority* check, not a nice-to-have.
+
+---
+
 ## Phase 1 — Productize the second calendar (only if Phase 0 passes)
 
 Keep it one `Collector` — no new dispatch branches (registry stays clean). **Matt only** (decision #4):
 a single second calendar, modeled so the Phase-2 jump to N people is config, not a refactor.
 
 - [ ] **Schema migration** (numbered, in `db.py`): composite PK `(id, calendar_id)`; add `person TEXT` (friendly owner label) + index on `(calendar_id, start_time)`. *(PK + person column are needed even for one teammate.)*
-- [ ] **Config**: add a single `team_calendar: {person, calendar_id}` entry to [calendar_config.py](src/rebalance/ingest/calendar_config.py) (a 1-element shape, not yet a list); keep single `calendar_id` for back-compat.
+- [ ] **Config**: add `team_calendars: [{person, calendar_id}]` (a **list from day one**) to [calendar_config.py](src/rebalance/ingest/calendar_config.py); a 1-element list handles Matt now and makes Phase 2's N-person generalization config-only, not a second migration. Keep single `calendar_id` for back-compat.
 - [ ] **Refresh**: `_refresh_calendar` syncs `primary` + the one team calendar; per-calendar timing/counts in the result envelope (window stays bounded).
 - [ ] **Confirm the pulse repo is private** (gating action, decision #3) before the team-calendar sync ships.
 - [ ] **Read side**: `_gather_calendar_context()` attributes events by person and segregates *my calendar* vs *team calendar* in the prompt sections.
 - [ ] **Observability/tests from day one** (per AGENTS.md): structured per-person log lines; integration test stubbing the Calendar API for ≥2 calendars asserting insert/overwrite isolation by `calendar_id`; smoke test for the blended prompt.
+- [ ] **SOLID + DRY gate** (see [standing constraints](#standing-design-constraints-phase-1-onward)): run `/phase-qa` before marking Phase 1 complete.
 
 ---
 
@@ -161,7 +182,8 @@ a single second calendar, modeled so the Phase-2 jump to N people is config, not
 
 - [ ] Promote "what should the **team** work on next" to a first-class output in `ask` / dashboard / pulse.
 - [ ] Blend with the goal layer ([PROJECT/1-INBOX/P3-GOAL-LAYER.md](PROJECT/1-INBOX/P3-GOAL-LAYER.md)).
-- [ ] **Generalize the single `team_calendar` entry into an N-person `team_calendars` list** (adrian / chloe / gihan transfers already visible in the calendar list) — each behind explicit opt-in.
+- [ ] **Extend `team_calendars` list to N teammates** (adrian / chloe / gihan already visible in the calendar list) — each behind explicit opt-in. No config migration needed; Phase 1 already uses a list.
+- [ ] **SOLID + DRY gate** (see [standing constraints](#standing-design-constraints-phase-1-onward)): run `/phase-qa` before marking Phase 2 complete.
 
 ---
 
@@ -170,15 +192,11 @@ a single second calendar, modeled so the Phase-2 jump to N people is config, not
 A teammate's calendar is a person's day. The "high quality signals" ethos cuts two ways here —
 be rigorous about whether the signal is *good*, **and** handle the person's data with care.
 
-- **Consent:** Matt maintains this calendar explicitly for timesheets and has already shared it
-  into Noel's account → low consent bar. For any *additional* teammate, require explicit opt-in
-  before ingest.
-- **Locality (decision #3):** teammate rows may ride along in the pulse/sync export
-  **only once the pulse target repo is confirmed private.** `export_calendar_snapshot`
-  ([sync_snapshot.py](src/rebalance/ingest/sync_snapshot.py)) pushes `calendar_events` to the
-  pulse repo — so **confirming the repo is private is a gating action before the team-calendar
-  sync ships.** (If it can't be confirmed private, fall back to filtering the export to
-  `calendar_id='primary'`.)
+- **Consent:** The source is a **company Google Workspace timesheet calendar** ("Matt - Neochrome Work Schedule") — *not* a personal calendar. It is timesheet-specific, opt-in by design, and lives on company infrastructure. Personal calendars are never ingested. Matt maintains it explicitly for timesheets and has already shared it into Noel's Workspace account → low consent bar. For any *additional* teammate, require explicit opt-in before ingest.
+- **Locality (decision #3, default deny):** teammate calendar data is **never exported** to the
+  pulse git repo. `export_calendar_snapshot` ([sync_snapshot.py](src/rebalance/ingest/sync_snapshot.py))
+  must always filter `WHERE calendar_id = 'primary'` — teammate rows stay purely local to the
+  dashboard SQLite. This eliminates the leak surface entirely; no repo-visibility gate is required.
 - **Data minimization:** prefer storing classified *project + duration + blocker flag* over verbatim
   personal detail where the decision layer doesn't need the raw title.
 - **Honesty:** the success metric is pre-registered above; we report the real numbers and are
