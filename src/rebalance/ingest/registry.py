@@ -212,6 +212,10 @@ def _push_from_projection(registry: Registry, projects_yaml_path: Path) -> Regis
             continue
         custom_fields = dict(item.get("custom_fields", {}) or {})
         external = bool(item.get("external") or custom_fields.pop("external", False))
+        # Like external: provenance rides custom_fields in the projection and
+        # must be lifted back to the typed field on push, or the round-trip
+        # desyncs the model from its custom_fields copy.
+        provenance = str(item.get("provenance") or custom_fields.pop("provenance", "") or "")
         transformed.append(
             Project(
                 name=str(item.get("name", "")).strip(),
@@ -219,6 +223,7 @@ def _push_from_projection(registry: Registry, projects_yaml_path: Path) -> Regis
                 summary=str(item.get("summary", "")),
                 repos=list(item.get("repos", []) or []),
                 external=external,
+                provenance=provenance,
                 obsidian_folder=item.get("obsidian_folder"),
                 tags=list(item.get("tags", []) or []),
                 value_level=item.get("value_level"),

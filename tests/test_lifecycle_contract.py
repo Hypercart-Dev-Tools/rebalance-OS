@@ -160,5 +160,50 @@ class EvaluateSetupTests(unittest.TestCase):
         self.assertEqual(report["contract_version"], lifecycle.CONTRACT_VERSION)
 
 
+class WriteSemanticsEnforcementTests(unittest.TestCase):
+    """Gemini review finding: write semantics were asserted as strings only.
+    Behavioral lock: a read_time_overlay stage must not persist anything."""
+
+    def test_prioritization_overlay_never_writes_the_db(self):
+        import json as _json
+        import sqlite3
+
+        from rebalance.ingest.db import db_connection, ensure_project_schema
+        from rebalance.ingest.project_priority import apply_project_priorities
+        from rebalance.ingest.registry import get_projects
+
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "rebalance.db"
+            with db_connection(db, ensure_project_schema) as conn:
+                conn.execute(
+                    "INSERT INTO project_registry (name, status, summary, value_level,"
+                    " priority_tier, risk_level, repos_json, tags_json, custom_fields_json)"
+                    " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                    ("P", "active", "s", None, 3, None, "[]", "[]", _json.dumps({})),
+                )
+                conn.commit()
+
+            before = sqlite3.connect(db).execute(
+                "SELECT * FROM project_registry"
+            ).fetchall()
+            overlaid = apply_project_priorities(get_projects(db))
+            self.assertTrue(overlaid)  # overlay produced output...
+            after = sqlite3.connect(db).execute(
+                "SELECT * FROM project_registry"
+            ).fetchall()
+            self.assertEqual(before, after)  # ...and persisted nothing
+
+    def test_project_lifecycle_map_is_runtime_consumable(self):
+        from rebalance.ingest.lifecycle import project_lifecycle_map
+
+        rows = project_lifecycle_map()
+        self.assertEqual(len(rows), len(PROJECT_LIFECYCLE))
+        import json as _json
+
+        _json.dumps(rows)  # MCP-serializable
+        by_id = {r["id"]: r for r in rows}
+        self.assertEqual(by_id["confirmation"]["write_semantics"], "confirmation_gated")
+
+
 if __name__ == "__main__":
     unittest.main()

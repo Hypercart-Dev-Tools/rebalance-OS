@@ -25,10 +25,14 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         list is preserved for existing clients. DB path is resolved from
         REBALANCE_DB (same as all server tools).
         """
-        from rebalance.ingest.lifecycle import evaluate_setup
+        from rebalance.ingest.lifecycle import evaluate_setup, project_lifecycle_map
 
         vp = Path(vault_path).expanduser().resolve()
         report = evaluate_setup(vault_path=vp, database_path=database_path)
+
+        # Ownership table: which function owns each project-lifecycle stage
+        # and whether it may write — the agent's map of the write discipline.
+        report["project_lifecycle"] = project_lifecycle_map()
 
         # Legacy shape: flat steps with name/complete/detail.
         report["steps"] = [

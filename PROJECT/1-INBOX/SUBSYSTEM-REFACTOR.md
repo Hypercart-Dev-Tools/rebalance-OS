@@ -18,7 +18,7 @@ branch_convention: single branch, one clean commit per phase close
 
 | Most recently completed phase | What's next |
 |---|---|
-| Phase 5 complete (v0.37.0): `ingest/lifecycle.py` owns the contract (project-lifecycle ownership table + setup stage machine with done/now/next/blocked); `onboarding_status` extended to 8 stages incl. optional Calendar/Gmail; two real bugs fixed (discovery created the registry file; inference clobbered curated rows on name collision — now skip-and-report); `Project.provenance` end to end; one text normalizer; thin Phase 6 spike passed at every stage boundary, 4 findings recorded for Phase 6. 829 tests passing (1 pre-existing figma failure). | Phase 6: Welcome Agent and Guided Onboarding — `/welcome` skill + CLI parity over the Phase 5 state machine; agent executes every step (PAT, optional OAuth, discovery, promote, schedulers, first pulse); spike findings to absorb: keyring injection seam, `skipped` status, executor hints. |
+| Phase 5 complete + review-hardened (v0.37.0): `ingest/lifecycle.py` owns the contract (project-lifecycle ownership table — now served through `onboarding_status` — + setup stage machine with done/now/next/blocked, 8 stages incl. optional Calendar/Gmail); three real bugs fixed (discovery created the registry file; inference clobbered curated rows on name collision; push sync dropped `Project.provenance` — caught by Gemini's adversarial review, all test-locked); one text normalizer; thin Phase 6 spike passed at every stage boundary. 828 tests passing (1 pre-existing figma failure). | Phase 6: Welcome Agent and Guided Onboarding — `/welcome` skill + CLI parity over the Phase 5 state machine; agent executes every step (PAT, optional OAuth, discovery, promote, schedulers, first pulse); spike findings to absorb: keyring injection seam, `skipped` status, executor hints. |
 
 ## Table of Contents
 
@@ -450,6 +450,12 @@ System state at phase completion:
 - [x] Canonical project schema carries discovery provenance — `remote-activity` / `vault-note` / `inferred` round-trip discovery → confirm → DB read (tested); `local-scan` reserved
 
 Phase-5 QA notes: `test_pulse_server_figma.py::test_adds_new_key_and_returns_sync_counts` still fails pre-existing (operator-config leak, predates Phase 4). The subsystem map's claim that inference runs inside `refresh_index` was wrong — verified by grep before building the seam; the actual exposure was the CLI write path plus the name-keyed upsert.
+
+**Post-close adversarial review (Gemini, 2026-06-11) — claims 1–3 CONFIRMED, 4–6 PARTIAL; 4 findings triaged:**
+1. *[High — fixed]* `sync_registry(mode="push")` dropped `Project.provenance`: `_push_from_projection` lifted `external` out of custom_fields but ignored provenance, desyncing the typed field from its custom_fields copy. Fixed with the same lift pattern; `ProvenancePushRoundTripTests` locks the full pull→push→read cycle.
+2. *[Medium — fixed]* `PROJECT_LIFECYCLE` had no runtime consumer ("documentation disguised as an array"). Now exposed as `project_lifecycle_map()` in the `onboarding_status` payload — the agent gets the write-discipline map through one tool call.
+3. *[Low — declined, logged]* Token-splitting still differs between `_split_tokens` (inference) and `_camel_case_parts` (classifier). Intentional: different matching behaviors (lowercased tokens vs. acronym-preserving parts); merging would change matching results mid-refactor. Logged as a candidate for a future aliasing pass.
+4. *[Low — fixed]* Write semantics were string-asserted only. `WriteSemanticsEnforcementTests` adds a behavioral lock: `apply_project_priorities` over a real SQLite registry leaves the table byte-identical (read_time_overlay persists nothing).
 
 ## Phase 6 - Welcome Agent and Guided Onboarding
 

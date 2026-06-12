@@ -303,6 +303,25 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
 )
 
 
+def project_lifecycle_map() -> list[dict[str, Any]]:
+    """The project-lifecycle ownership table as plain dicts.
+
+    Runtime consumers (onboarding_status, the Phase 6 welcome agent) use this
+    to explain the write discipline — e.g. "confirmation is the only curated
+    write path" — without re-declaring it.
+    """
+    return [
+        {
+            "id": stage.id,
+            "title": stage.title,
+            "owner": stage.owner,
+            "write_semantics": stage.write_semantics,
+            "description": stage.description,
+        }
+        for stage in PROJECT_LIFECYCLE
+    ]
+
+
 def evaluate_setup(
     *,
     vault_path: Path | None,

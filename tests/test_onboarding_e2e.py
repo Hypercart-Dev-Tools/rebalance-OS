@@ -150,5 +150,45 @@ class OnboardingEndToEndTests(unittest.TestCase):
         self.assertEqual(by_id["gmail_auth"]["status"], "next")
 
 
+class ProvenancePushRoundTripTests(unittest.TestCase):
+    """Gemini review finding (High): push sync dropped Project.provenance.
+
+    Locks the full pull -> push -> pull cycle: provenance must survive every
+    direction, with the typed field and its custom_fields copy in sync.
+    """
+
+    def test_provenance_survives_push_sync(self):
+        from rebalance.ingest.registry import (
+            Project,
+            Registry,
+            read_registry,
+            save_registry,
+            sync_registry,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            registry_path = root / "Projects" / "00-project-registry.md"
+            projects_yaml = root / "projects.yaml"
+            db = root / "rebalance.db"
+
+            registry = Registry(
+                active_projects=[
+                    Project(name="acme/site", provenance="remote-activity", repos=["acme/site"])
+                ]
+            )
+            save_registry(registry_path, registry)
+            sync_registry("pull", registry_path, projects_yaml, db)  # md -> yaml + db
+            sync_registry("push", registry_path, projects_yaml, db)  # yaml -> md
+
+            after = read_registry(registry_path)
+            self.assertEqual(after.active_projects[0].provenance, "remote-activity")
+            # The custom_fields copy must not desync from the typed field.
+            self.assertEqual(
+                after.active_projects[0].custom_fields.get("provenance", "remote-activity"),
+                "remote-activity",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
