@@ -56,6 +56,7 @@ from rebalance.cli import dashboard as _dashboard  # noqa: F401,E402
 from rebalance.cli import sleuth as _sleuth  # noqa: F401,E402
 from rebalance.cli import serve as _serve  # noqa: F401,E402
 from rebalance.cli import onboard as _onboard  # noqa: F401,E402
+from rebalance.cli import reset as _reset  # noqa: F401,E402
 from rebalance.cli import profile_sync as _profile_sync  # noqa: F401,E402
 from rebalance.cli import refresh as _refresh  # noqa: F401,E402
 

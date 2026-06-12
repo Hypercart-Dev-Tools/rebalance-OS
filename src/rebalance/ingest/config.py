@@ -32,16 +32,23 @@ CONFIG_ENV_VAR = "REBALANCE_CONFIG"
 KEYRING_SERVICE = "rebalance-os"
 
 
-# Hermetic-sandbox seam (Phase 6 spike finding): the OS keyring is
-# machine-global, so a "clean sandbox" walkthrough on an operator machine
-# would see the real secrets. Setting REBALANCE_NO_KEYRING=1 makes every
-# keyring helper a no-op; resolution falls through to rbos.config / env,
-# which sandboxes already control via REBALANCE_CONFIG.
+# Hermetic-sandbox seams (Phase 6 spike finding + walkthrough finding): the
+# OS keyring AND the gh CLI are machine-global, so a "clean sandbox"
+# walkthrough on an operator machine would see the real secrets through
+# either. REBALANCE_NO_KEYRING=1 makes every keyring helper a no-op;
+# REBALANCE_HERMETIC=1 additionally disables the gh-CLI token fallback —
+# resolution then reads only rbos.config, which sandboxes control via
+# REBALANCE_CONFIG / CONFIG_PATH.
 KEYRING_DISABLE_ENV_VAR = "REBALANCE_NO_KEYRING"
+HERMETIC_ENV_VAR = "REBALANCE_HERMETIC"
+
+
+def _hermetic() -> bool:
+    return bool(os.environ.get(HERMETIC_ENV_VAR, "").strip())
 
 
 def _keyring_disabled() -> bool:
-    return bool(os.environ.get(KEYRING_DISABLE_ENV_VAR, "").strip())
+    return _hermetic() or bool(os.environ.get(KEYRING_DISABLE_ENV_VAR, "").strip())
 
 
 def _keyring_get(key: str) -> str | None:
@@ -199,9 +206,10 @@ def get_github_token_with_source() -> tuple[str | None, str | None]:
     token = _migrate_to_keyring("github_token")
     if token:
         return token, "config"
-    token = _try_gh_cli_token()
-    if token:
-        return token, "gh-cli"
+    if not _hermetic():  # gh login is machine-global — hermetic mode skips it
+        token = _try_gh_cli_token()
+        if token:
+            return token, "gh-cli"
     return None, None
 
 
