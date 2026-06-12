@@ -335,13 +335,46 @@ Answer:"""
 
 
 # ---------------------------------------------------------------------------
-# Local LLM synthesis
+# LLM synthesis — Gemini (preferred) with local Qwen fallback
 # ---------------------------------------------------------------------------
 
+_GEMINI_ENDPOINT = (
+    "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
+)
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 
 _cached_chat_model = None
 _cached_chat_tokenizer = None
 _cached_chat_model_name = None
+
+
+def _synthesize_gemini(
+    prompt: str,
+    api_key: str,
+    model: str = DEFAULT_GEMINI_MODEL,
+    max_tokens: int = 1024,
+) -> str:
+    """Synthesize via Gemini REST API.
+
+    The API key is passed in-memory and is never logged or written to disk.
+    Uses the same REST pattern as repair.py so we don't pull in extra deps.
+    """
+    import json as _json
+    import urllib.request
+
+    url = _GEMINI_ENDPOINT.format(model=model) + f"?key={api_key}"
+    body = _json.dumps({
+        "contents": [{"role": "user", "parts": [{"text": prompt}]}],
+        "generationConfig": {"maxOutputTokens": max_tokens},
+    }).encode()
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"content-type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=30) as resp:
+        payload = _json.loads(resp.read().decode())
+    return payload["candidates"][0]["content"]["parts"][0]["text"].strip()
 
 
 def _synthesize(prompt: str, model_name: str = DEFAULT_CHAT_MODEL, max_tokens: int = 512) -> str:
@@ -415,7 +448,7 @@ def ask(
         "tomorrow": _gather_temporal_context(database_path, tomorrow),
     }
 
-    # Synthesize
+    # Synthesize — Gemini preferred (key from GSM/env); local Qwen as fallback.
     synthesis = ""
     model_used = ""
     if not skip_synthesis:
@@ -429,12 +462,27 @@ def ask(
             calendar_context,
             temporal_context,
         )
-        try:
-            synthesis = _synthesize(prompt, model_name=chat_model)
-            model_used = chat_model
-        except Exception as e:
-            synthesis = f"[Local LLM synthesis failed: {e}]"
-            model_used = f"{chat_model} (failed)"
+        from rebalance.ingest.config import get_gemini_api_key
+        gemini_key = get_gemini_api_key()
+        if gemini_key:
+            try:
+                synthesis = _synthesize_gemini(prompt, api_key=gemini_key)
+                model_used = DEFAULT_GEMINI_MODEL
+            except Exception as e:
+                logger.warning("Gemini synthesis failed, falling back to local LLM: %s", e)
+                try:
+                    synthesis = _synthesize(prompt, model_name=chat_model)
+                    model_used = f"{chat_model} (gemini-fallback)"
+                except Exception as e2:
+                    synthesis = f"[LLM synthesis failed: {e2}]"
+                    model_used = f"{chat_model} (failed)"
+        else:
+            try:
+                synthesis = _synthesize(prompt, model_name=chat_model)
+                model_used = chat_model
+            except Exception as e:
+                synthesis = f"[Local LLM synthesis failed: {e}]"
+                model_used = f"{chat_model} (failed)"
 
     elapsed = time.monotonic() - start
 

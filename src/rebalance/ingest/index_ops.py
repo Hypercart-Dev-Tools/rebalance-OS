@@ -695,28 +695,69 @@ def _refresh_github(
 
 
 def _refresh_calendar(database_path: Path, *, since_days: int, dry_run: bool) -> dict[str, Any]:
-    if dry_run:
-        return {"scope": "calendar", "dry_run": True, "steps": [f"sync_calendar(days_back={since_days})"]}
-
     from rebalance.ingest.calendar import sync_calendar
     from rebalance.ingest.calendar_config import CalendarConfig
 
     config = CalendarConfig.load()
+
+    if dry_run:
+        steps = [f"sync_calendar(calendar_id='primary', days_back={since_days}) [operator]"]
+        for tc in config.team_calendars:
+            steps.append(
+                f"sync_calendar(calendar_id={tc.calendar_id!r},"
+                f" person={tc.person!r}, days_back={since_days})"
+            )
+        return {"scope": "calendar", "dry_run": True, "steps": steps}
+
+    # Operator's own calendar: always stored as 'primary' (canonical) so that
+    # WHERE calendar_id='primary' filters always cover the operator's data.
+    logger.info("calendar sync: operator calendar_id=primary days_back=%d", since_days)
     result = sync_calendar(
         database_path=database_path,
-        calendar_id=config.calendar_id,
+        calendar_id="primary",
+        person=None,  # operator rows: person IS NULL by convention
         days_back=since_days,
         days_forward=7,
     )
+    logger.info(
+        "calendar sync done: operator fetched=%d stored=%d",
+        result.events_fetched, result.events_stored,
+    )
+
+    team_results: list[dict[str, Any]] = []
+    for tc in config.team_calendars:
+        logger.info(
+            "calendar sync: person=%s calendar_id=%s days_back=%d",
+            tc.person, tc.calendar_id, since_days,
+        )
+        tr = sync_calendar(
+            database_path=database_path,
+            calendar_id=tc.calendar_id,
+            person=tc.person,
+            days_back=since_days,
+            days_forward=7,
+        )
+        logger.info(
+            "calendar sync done: person=%s fetched=%d stored=%d",
+            tc.person, tr.events_fetched, tr.events_stored,
+        )
+        team_results.append({
+            "person": tc.person,
+            "calendar_id": tc.calendar_id,
+            "events_fetched": tr.events_fetched,
+            "events_stored": tr.events_stored,
+        })
+
     return {
         "scope": "calendar",
         "dry_run": False,
-        "calendar_id": config.calendar_id,
+        "calendar_id": "primary",
         "events_fetched": result.events_fetched,
         "events_stored": result.events_stored,
         "window_start": result.window_start,
         "window_end": result.window_end,
         "elapsed_seconds": result.elapsed_seconds,
+        "team_calendars": team_results,
     }
 
 

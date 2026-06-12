@@ -5,6 +5,9 @@ Config file: temp/calendar_config.json (gitignored, repo root)
 Schema:
   {
     "calendar_id": "primary",
+    "team_calendars": [
+      {"person": "matthew", "calendar_id": "matthew@group.calendar.google.com"}
+    ],
     "exclude_titles": ["Check Slack", "Post Daily Timesheet"],
     "aggregator_skip_words": ["wrap", "setup", "test"],
     "timezone": "",
@@ -18,6 +21,16 @@ Schema:
   }
 
 Field notes:
+  - ``calendar_id``: the operator's own Google Calendar ID. "primary" is the
+    Google alias for the authenticated user's default calendar and is the
+    canonical stored value. index_ops always syncs the operator's calendar
+    as "primary" regardless of this field; change it only for direct CLI usage
+    (``calendar-sync``) if your primary has a non-standard ID.
+  - ``team_calendars``: list of teammate calendars to ingest. Each entry must
+    have ``person`` (short label used in the ``person`` DB column, e.g. "matthew")
+    and ``calendar_id`` (the Google Calendar ID, e.g. a group calendar address).
+    Teammate rows are stored with ``calendar_id != 'primary'`` and are NEVER
+    exported to the pulse repo (P2 privacy default-deny).
   - ``timezone`` accepts any IANA name (e.g. "America/Los_Angeles"). If omitted
     or left as an empty string, the device's local timezone is used (resolved
     via REBALANCE_TZ env var, then /etc/localtime, then UTC fallback).
@@ -43,6 +56,7 @@ REVIEW_DECISIONS_PATH = Path(__file__).parent.parent.parent.parent / "temp" / "r
 
 DEFAULT_CONFIG: dict[str, Any] = {
     "calendar_id": "primary",
+    "team_calendars": [],
     "exclude_titles": [
         "Lunch",
         "Break",
@@ -53,6 +67,13 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "projects": [],
     "hours_format": "decimal",
 }
+
+
+@dataclass
+class TeamCalendarEntry:
+    """A single teammate's calendar to ingest alongside the operator's own."""
+    person: str      # short label stored in the DB ``person`` column (e.g. "matthew")
+    calendar_id: str # Google Calendar ID (e.g. "matthew@group.calendar.google.com")
 
 
 @dataclass
@@ -71,11 +92,26 @@ class CalendarConfig:
     timezone: str
     projects: list[CalendarProject]
     hours_format: str  # "decimal" (default) or "hm"
+    team_calendars: list[TeamCalendarEntry] = field(default_factory=list)
 
     @property
     def exclude_keywords(self) -> list[str]:
         """Backwards-compatible alias — returns exclude_titles."""
         return self.exclude_titles
+
+    @staticmethod
+    def _load_team_calendars(raw: Any) -> list[TeamCalendarEntry]:
+        if not isinstance(raw, list):
+            return []
+        entries: list[TeamCalendarEntry] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            person = str(item.get("person", "")).strip()
+            cal_id = str(item.get("calendar_id", "")).strip()
+            if person and cal_id:
+                entries.append(TeamCalendarEntry(person=person, calendar_id=cal_id))
+        return entries
 
     @staticmethod
     def _load_projects(raw_projects: Any) -> list[CalendarProject]:
@@ -137,6 +173,7 @@ class CalendarConfig:
 
         return cls(
             calendar_id=data.get("calendar_id", DEFAULT_CONFIG["calendar_id"]),
+            team_calendars=cls._load_team_calendars(data.get("team_calendars", [])),
             exclude_titles=exclude_titles,
             aggregator_skip_words=aggregator_skip_words,
             timezone=data.get("timezone") or local_tz().key,
@@ -153,6 +190,10 @@ class CalendarConfig:
             json.dump(
                 {
                     "calendar_id": self.calendar_id,
+                    "team_calendars": [
+                        {"person": tc.person, "calendar_id": tc.calendar_id}
+                        for tc in self.team_calendars
+                    ],
                     "exclude_titles": self.exclude_titles,
                     "aggregator_skip_words": self.aggregator_skip_words,
                     "timezone": self.timezone,

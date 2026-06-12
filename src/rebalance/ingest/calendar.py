@@ -167,6 +167,7 @@ def refresh_calendar_source(
     database_path: Path,
     *,
     calendar_id: str = "",
+    person: str | None = None,
     days_back: int = 30,
     days_forward: int = 7,
 ) -> CalendarSyncResult:
@@ -176,13 +177,23 @@ def refresh_calendar_source(
     :func:`sync_calendar`. The CLI (`calendar-sync`) and the `calendar` collector
     share this so no surface imports the leaf ``sync_calendar`` directly
     (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2).
+
+    For the operator's own calendar the stored ``calendar_id`` is always
+    normalised to ``"primary"`` so DB filters are always correct regardless of
+    what the operator wrote in ``calendar_config.json``.
     """
     from rebalance.ingest.calendar_config import CalendarConfig
 
     resolved = calendar_id or CalendarConfig.load().calendar_id
+    # Canonicalise: "primary" is the Google alias for the authenticated user's
+    # default calendar. Storing it normalised keeps all WHERE calendar_id='primary'
+    # filters correct even if the operator set their email in the config.
+    if person is None and resolved != "primary":
+        resolved = "primary"
     return sync_calendar(
         database_path=database_path,
         calendar_id=resolved,
+        person=person,
         days_back=days_back,
         days_forward=days_forward,
     )
@@ -192,6 +203,7 @@ def sync_calendar(
     database_path: Path,
     *,
     calendar_id: str = "primary",
+    person: str | None = None,
     days_back: int = 30,
     days_forward: int = 7,
 ) -> CalendarSyncResult:
@@ -204,6 +216,8 @@ def sync_calendar(
     Args:
         database_path: Path to SQLite database
         calendar_id: Calendar to fetch from (default: "primary"). Use calendar email or group ID for other calendars.
+        person: Attribution label stored in the ``person`` column. ``None`` = operator (self).
+            Teammate calendars must supply a non-empty label (e.g. "matthew").
         days_back: How many days back to fetch (default 30)
         days_forward: How many days forward to fetch (default 7)
     """
@@ -261,8 +275,8 @@ def sync_calendar(
             conn.execute(
                 """INSERT OR REPLACE INTO calendar_events
                    (id, summary, start_time, end_time, location, attendees_json,
-                    calendar_id, status, description, fetched_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    calendar_id, status, description, fetched_at, person)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     event_id,
                     summary,
@@ -274,6 +288,7 @@ def sync_calendar(
                     status,
                     description,
                     fetched_at,
+                    person,
                 ),
             )
             stored += 1
