@@ -122,7 +122,7 @@ exposed as levers rather than hardcoded.
 |---|---|---|
 | 1 | **Phase 0 kill/continue bar** *(thresholds set by Claude per Noel's delegation — see [0e](#0e-decision-rule-kill--continue))* | Continue to Phase 1 only if **all three**: (a) net-new signal rate **≥20%** (median scored day); (b) **≥1 Noel-confirmed dropped-ball catch** AND B-only **precision ≥50%**; (c) blinded preference favors B on **≥3 of 5 days for *both* judges independently** (Noel AND the LLM judge), no-preference days counting against B. |
 | 2 | **Judges** | **Noel + an LLM judge (Gemini — decision #5)** vote independently on each blinded pair. *(Amended 2026-06-12: judge model fixed to Gemini, replacing "local Qwen and/or Claude" — locked before any vote; see [0f](#0f-amendments-after-first-data-exposure).)* |
-| 3 | **Privacy / export** | Teammate calendar data is **never exported** to the pulse git repo. `export_calendar_snapshot` always filters `WHERE calendar_id = 'primary'`. Teammate data stays purely local to the dashboard SQLite. Default deny — no repo-visibility gate required. |
+| 3 | **Privacy / export** | **Policy:** teammate calendar data is **never exported** to the pulse git repo — `export_calendar_snapshot` must filter `WHERE calendar_id = 'primary'` (default deny). **⚠️ NOT YET IMPLEMENTED (discovered 2026-06-12):** the live `export_calendar_snapshot` ([sync_snapshot.py:99-107](src/rebalance/ingest/sync_snapshot.py#L99-L107)) selects **all** rows — no filter — and the Phase-0 sync's Matt rows (155, never cleaned up) have already been exported + pushed to the pulse repo `rebalance-git-pulse`. That repo is **PRIVATE** (verified), so this is a policy violation, not a public exposure — but the filter is now a **blocking Phase-1 task**, not a done guarantee. |
 | 4 | **Phase 1 scope** | **Matt only** — a single second calendar, not a full N-person list. Phase 2 generalizes to the rest of the [cohort](#cohort-defined-2026-06-12) (**Jose, Jinhui**) once their newer logging habit produces rich-enough data. |
 | 5 | **Analysis/inference LLM** *(2026-06-12)* | **Gemini** (cloud) for all P2 analysis & inference — the Phase-0 LLM judge and the v0.5 dashboard synthesis. API key lives in **Google Secret Manager**, fetched via the gcloud CLI (same pattern as the existing `ltvera-gemini-api-key` secret); [repair.py](src/rebalance/repair.py) already calls `gemini-3.1-flash-lite`. Local Qwen stays embeddings/RAG-only. |
 | 6 | **Endgame** *(2026-06-12)* | P2 concludes as a **functional tool, not an exercise**: a v0.5 **"What should we work on next?"** view in the existing web dashboard — see [Endgame](#endgame--the-v05-functional-tool). |
@@ -154,7 +154,8 @@ The calendar source is already a first-class, registry-driven `Collector`. Most 
    handled by the harness's normalized-title de-dup (see 0b). PK fix still required for Phase 1.
 2. **No person attribution.** No `owner`/`person` column → can't say "this is Matt's block, not mine."
 3. **Single-calendar config.** `CalendarConfig.calendar_id` is one string; needs a team list.
-4. **Leak surface (closed by design).** `export_calendar_snapshot` ([sync_snapshot.py](src/rebalance/ingest/sync_snapshot.py)) must always filter `WHERE calendar_id = 'primary'` — teammate rows are never exported to the pulse git repo (decision #3, default deny).
+4. **Leak surface — OPEN, not yet closed (corrected 2026-06-12).** `export_calendar_snapshot` ([sync_snapshot.py:99-107](src/rebalance/ingest/sync_snapshot.py#L99-L107)) currently exports **all** `calendar_events` rows (no `calendar_id` filter), and `_refresh_sync` ([index_ops.py:1175](src/rebalance/ingest/index_ops.py#L1175)) git-pushes them to the pulse repo. Matt's Phase-0 rows have already been pushed there. **The pulse target repo `Hypercart-Dev-Tools/rebalance-git-pulse` is PRIVATE** (verified 2026-06-12 via `gh repo view`) — so this is **not a public exposure**; future sessions should not flag it as one. Closing the leak = implement the `WHERE calendar_id='primary'` export filter (Phase 1) + segregate the dashboard readers (gap #5 below).
+5. **Reader contamination (discovered 2026-06-12).** `get_upcoming_events` / `get_recent_events` / `get_daily_totals` ([calendar.py:360-475](src/rebalance/ingest/calendar.py#L360-L475)) and `querier._gather_calendar_context` read `calendar_events` with **no `calendar_id` filter**, so Matt's rows are currently mixed into Noel's *own* dashboard / `ask` / pulse views and double-counted in daily totals. Phase 1 read-side work must filter/segregate by `calendar_id`.
 
 ---
 
@@ -267,11 +268,14 @@ is the goal (verify).**
 Keep it one `Collector` — no new dispatch branches (registry stays clean). **Matt only** (decision #4):
 a single second calendar, modeled so the Phase-2 jump to N people is config, not a refactor.
 
-- [ ] **Schema migration** (numbered, in `db.py`): composite PK `(id, calendar_id)`; add `person TEXT` (friendly owner label) + index on `(calendar_id, start_time)`. *(PK + person column are needed even for one teammate.)*
+- [ ] **🔴 BLOCKING — close the export leak (decision #3, gap #4):** add `WHERE calendar_id = 'primary'` to `export_calendar_snapshot` ([sync_snapshot.py:99-107](src/rebalance/ingest/sync_snapshot.py#L99-L107)) so teammate rows never reach the pulse repo. Add a regression test asserting a non-primary row is absent from the export. *(Do this first — every pulse-sync run currently re-exports Matt's rows to `rebalance-git-pulse`.)*
+- [ ] **🔴 BLOCKING — fix reader contamination (gap #5):** filter/segregate by `calendar_id` in `get_upcoming_events` / `get_recent_events` / `get_daily_totals` ([calendar.py:360-475](src/rebalance/ingest/calendar.py#L360-L475)) and `_gather_calendar_context` so Matt's blocks stop bleeding into Noel's *own* dashboard/`ask`/pulse views and double-counting daily totals.
+- [ ] **Clean up the Phase-0 Matt rows** *(pending Noel's call — see progress log):* either `DELETE FROM calendar_events WHERE calendar_id='<matt>'` (reverse the spike; Phase 1 re-syncs cleanly) **or** keep them and rely on the filters above. Decide before Phase 1 ships.
+- [ ] **Schema migration** (numbered `.sql` in [db/migrations/](src/rebalance/ingest/db/migrations/) — next is `0005`; **first table-rebuild in this repo**, no in-place PK ALTER in SQLite): composite PK `(id, calendar_id)`; add `person TEXT`; add index `(calendar_id, start_time)`. Standard create-new/copy/drop/rename per [migrations/README.md](src/rebalance/ingest/db/migrations/README.md). Only **1 real ID collision** exists today, so this is foundational, not urgent — sequence it *after* the two leaks are closed.
 - [ ] **Config**: add `team_calendars: [{person, calendar_id}]` (a **list from day one**) to [calendar_config.py](src/rebalance/ingest/calendar_config.py); a 1-element list handles Matt now and makes Phase 2's N-person generalization config-only, not a second migration. Keep single `calendar_id` for back-compat.
 - [ ] **Refresh**: `_refresh_calendar` syncs `primary` + the one team calendar; per-calendar timing/counts in the result envelope (window stays bounded).
-- [ ] **Confirm the pulse repo is private** (gating action, decision #3) before the team-calendar sync ships.
-- [ ] **Read side**: `_gather_calendar_context()` attributes events by person and segregates *my calendar* vs *team calendar* in the prompt sections.
+- [x] **Pulse repo privacy confirmed (2026-06-12):** `Hypercart-Dev-Tools/rebalance-git-pulse` is **PRIVATE** (`gh repo view`). The gating concern (decision #3) is satisfied for visibility; the code-level export filter above is still required (default deny).
+- [ ] **Read side**: `_gather_calendar_context()` attributes events by person and segregates *my calendar* vs *team calendar* in the prompt sections. *(Folds in the gap-#5 fix above.)*
 - [ ] **Inference path (decision #5):** next-action synthesis calls **Gemini**; API key fetched at runtime from **Google Secret Manager** via the gcloud CLI (`gcloud secrets versions access latest --secret=<gemini-key-secret>`) — never hardcoded, never committed. Local Qwen remains embeddings/RAG-only.
 - [ ] **Observability/tests from day one** (per AGENTS.md): structured per-person log lines; integration test stubbing the Calendar API for ≥2 calendars asserting insert/overwrite isolation by `calendar_id`; smoke test for the blended prompt.
 - [ ] **SOLID + DRY gate** (see [standing constraints](#standing-design-constraints-phase-1-onward)): run `/phase-qa` before marking Phase 1 complete.
@@ -303,10 +307,14 @@ A teammate's calendar is a person's day. The "high quality signals" ethos cuts t
 be rigorous about whether the signal is *good*, **and** handle the person's data with care.
 
 - **Consent:** The source is a **company Google Workspace timesheet calendar** ("Matt - Neochrome Work Schedule") — *not* a personal calendar. It is timesheet-specific, opt-in by design, and lives on company infrastructure. Personal calendars are never ingested. Matt maintains it explicitly for timesheets and has already shared it into Noel's Workspace account → low consent bar. For any *additional* teammate, require explicit opt-in before ingest.
-- **Locality (decision #3, default deny):** teammate calendar data is **never exported** to the
-  pulse git repo. `export_calendar_snapshot` ([sync_snapshot.py](src/rebalance/ingest/sync_snapshot.py))
-  must always filter `WHERE calendar_id = 'primary'` — teammate rows stay purely local to the
-  dashboard SQLite. This eliminates the leak surface entirely; no repo-visibility gate is required.
+- **Locality (decision #3, default deny) — POLICY, not yet enforced in code (2026-06-12):** the
+  *intent* is that teammate calendar data never leaves the dashboard SQLite. The export filter
+  (`WHERE calendar_id='primary'` in `export_calendar_snapshot`, [sync_snapshot.py:99-107](src/rebalance/ingest/sync_snapshot.py#L99-L107))
+  is **not implemented yet** — a Phase-1 blocking task. **Mitigating fact:** the pulse target repo
+  `Hypercart-Dev-Tools/rebalance-git-pulse` is **PRIVATE** (verified), so the Phase-0 rows already
+  pushed there are not publicly exposed. Future agent sessions: this is a known, accepted state —
+  do not re-flag the private-repo export as an incident; the open work is the filter + reader
+  segregation, tracked in Phase 1.
 - **Data minimization:** prefer storing classified *project + duration + blocker flag* over verbatim
   personal detail where the decision layer doesn't need the raw title.
 - **Honesty:** the success metric is pre-registered above; we report the real numbers and are
@@ -408,3 +416,35 @@ de-duped, with the arm mapping sealed in `.ab_key.json` and the LLM judge's vote
 **Owner-bias finding (Noel disclosure, 2026-06-12) — strengthens criterion 1, NOT re-scored ([0f](#0f-amendments-after-first-data-exposure) discipline).** Noel is the owner/supervisor: his *own* GitHub stream is dominated by **his system/tooling work** (rebalance-OS, ask-self, sleuth-app), while the team's **client/operational work** (Binoid, Bloomz, GoAffPro production) only occasionally reaches repos he authors. So Matt's calendar fills a *structural* blind spot — the B-only catches (production incidents, NMI blockers, prod-DB ops) are exactly the class of work Noel's own stream can't surface. The conservative scoring above (some teammate items marked "redundant" for overlapping Noel's GitHub) therefore likely **understates** true additivity — that overlap is often Noel's tooling-side vs Matt's operational-side. Per 0f we do **not** re-score upward post-hoc (the gate already passes); captured instead as a Phase-1/2 design driver → the **owner-bias-correction lever** ([Tunable levers](#tunable-levers--v05--decided-2026-06-12)).
 
 **Phase 0 closed.** Either outcome was a successful spike; this one is a GO. Phase 1 begins (Sonnet High, single agent).
+
+**2026-06-12 (Phase 1 pre-flight) — blast-radius check surfaced two LIVE gaps + the migration is low-risk.**
+- **Schema migration scope (answers "what does it affect / will it break the dashboard"):** `calendar_events` schema lives in [db/schema.py:216-227](src/rebalance/ingest/db/schema.py#L216-L227) (PK = `id` alone); migrations are numbered `.sql` files ([db/migrations/](src/rebalance/ingest/db/migrations/), next = `0005`). The composite-PK change is the **first table-rebuild** in the repo (SQLite can't ALTER a PK in place). **It will NOT break the web dashboard** — `web.py` never queries `calendar_events` directly; it goes through `_gather_calendar_context` → `get_upcoming/recent_events`. No `SELECT *`, no positional row→struct unpacking, no dataclass hardcodes the column list ([sync_snapshot.py](src/rebalance/ingest/sync_snapshot.py) uses an explicit `_CALENDAR_COLUMNS` tuple), so a nullable `person` column + composite PK are safe. The only behavior change is `get_daily_totals` double-counting an event present under two `calendar_id`s — already true today (unfiltered), and only 1 real collision exists.
+- **🔴 LIVE gap 1 — export leak:** decision #3's `WHERE calendar_id='primary'` filter was **never implemented**; `export_calendar_snapshot` exports all rows and `_refresh_sync` pushes them. Matt's 155 Phase-0 rows are already in `git-pulse-sync/sync/calendar/*.json` and pushed. **Mitigated:** `rebalance-git-pulse` is **PRIVATE** (verified) → not a public exposure. Filter is now a 🔴 blocking Phase-1 task.
+- **🔴 LIVE gap 2 — reader contamination:** the dashboard/`ask`/pulse calendar readers don't filter `calendar_id`, so Matt's blocks are currently mixed into Noel's *own* views + double-counted. Blocking Phase-1 fix.
+- **Doc corrected:** decision #3, gaps #4/#5, and the ethos "Locality" bullet now state the true (un-enforced) state and record that `rebalance-git-pulse` is PRIVATE so future sessions don't re-flag it.
+- **Open decision for Noel:** delete the Phase-0 Matt rows now (clean reverse) vs keep them behind the new filters. Pulse-sync re-exports them each run until one of those lands.
+
+---
+
+## Phase 3 — entity_graph attribution layer (v0.6, deferred)
+
+*Per Codex's note (2026-06-12), captured so it isn't lost — but explicitly **after** v0.5 ships.*
+
+The hard problem for "what should we work on next" is **attribution and explainability**, not
+"find more text": *which client/project does this event/email/repo/reminder belong to · is a
+teammate item redundant with the operator's own signals · is a B-only item actionable · who owns
+the next move · what evidence explains the recommendation.* A small **SQLite-backed `entity_graph`
+projection** (not a "knowledge graph" — that invites ontology sprawl) serves these better than
+title-matching or embeddings alone.
+
+- **Entities:** client, project, person, repo, issue, pr, calendar_event, email, reminder, note.
+- **Relations:** `person worked_on project` · `event mentions project` · `repo belongs_to project`
+  · `email requests project` · `issue blocks project` · `pr closes issue` · `project belongs_to client`.
+- **Pipeline:** `raw signals → entity attribution → relation expansion → attention_events → next-action ranking`.
+
+**Guardrails (agreed):** (1) it is a **projection over the existing relational tables**, not a new
+source of truth to keep in sync; (2) it does **not** become the prediction model — the lever-based
+scorer still produces the verdict; the graph makes the [levers](#tunable-levers--v05--decided-2026-06-12)
+(redundancy penalty, owner-bias correction, attribution) *more robust and explainable*. The Phase-1
+`person` column is its **first edge** (`person worked_on`), so Phase 1 already lays the foundation.
+**Sequence:** ship v0.5 on the lever scorer first; add `entity_graph` as a v0.6 robustness upgrade.
