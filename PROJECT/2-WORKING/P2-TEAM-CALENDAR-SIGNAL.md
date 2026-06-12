@@ -24,7 +24,7 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 
 | ✅ Most recently completed phase | ⏭️ What's next |
 |---|---|
-| **Phase 0 · 0a–0c complete + dashboard-matched** — Matt's calendar synced (**122 events**, reversible). Harness [temp/ab_team_signal.py](temp/ab_team_signal.py) now builds Arm A from the dashboard's own per-day assembler: authored GitHub (Git Pulse Sync **excluded**, root-cause fixed), Obsidian vault, Sleuth, email. Gate thresholds set ([0e](#0e-decision-rule-kill--continue)). | **Repair → regenerate → blind → gate.** (1) Re-ingest `primary` to restore PK-flipped shared-invite rows; (2) **regenerate the 06-08/09/10 bundles** from the repaired table; (3) relabel ARM A/B → "Option 1/2" randomized + de-dup shared events; (4) complete ~5 *completed-day* bundles; (5) lock the [0f amendments log](#0f-amendments-after-first-data-exposure), then run the blinded two-judge scoring (Noel + **Gemini**) against the [0e](#0e-decision-rule-kill--continue) gate. |
+| **Phase 0 · 0a–0c complete + dashboard-matched** — Matt's calendar synced (**122 events**, reversible). Harness [temp/ab_team_signal.py](temp/ab_team_signal.py) now builds Arm A from the dashboard's own per-day assembler: authored GitHub (Git Pulse Sync **excluded**, root-cause fixed), Obsidian vault, Sleuth, email. Gate thresholds set ([0e](#0e-decision-rule-kill--continue)). | **Noel votes → reveal → score.** Repair, content de-dup, blinding, 5 completed-day blinded bundles (`temp/ab_blinded/`), and the **sealed Gemini votes** are all done (2026-06-12); [0f](#0f-amendments-after-first-data-exposure) is locked. Remaining: Noel's 5 blind preference votes → reveal `.ab_key.json` → confirm dropped-ball catches + B-only precision → score the [0e](#0e-decision-rule-kill--continue) gate, append go/no-go. |
 
 ---
 
@@ -126,11 +126,12 @@ The calendar source is already a first-class, registry-driven `Collector`. Most 
 
 1. **PK collision.** `calendar_events` PK is `id` (Google event ID) alone. A shared invite on
    both calendars has the *same* event ID → overwrites + flips `calendar_id`. Needs composite
-   PK `(id, calendar_id)`. **Phase 0 data integrity note:** syncing Matt's calendar in 0a may
-   have overwritten shared-invite rows from `calendar_id='primary'` to `calendar_id='<matt>'`
-   (e.g., "1:45 Team Call", "Weekly Joyce/Noel"). Before scoring, run a repair query or re-ingest
-   `primary` to restore any flipped rows — Arm A's `WHERE calendar_id='primary'` filter silently
-   drops those events if corrupted.
+   PK `(id, calendar_id)`. **Phase 0 data integrity note — RESOLVED 2026-06-12:** repair ran
+   (`temp/phase0_repair_and_shared.py`: Matt re-synced first for his post-hoc timesheet edits
+   → 155 fresh rows through 06-13, then `primary` re-synced to restore flips). Outcome: only
+   **1 true ID collision** existed — Matt's "Team Call" / "Joyce/Noel" entries are his own
+   hand-logged blocks with *different* event IDs, so the real duplication risk is content-level,
+   handled by the harness's normalized-title de-dup (see 0b). PK fix still required for Phase 1.
 2. **No person attribution.** No `owner`/`person` column → can't say "this is Matt's block, not mine."
 3. **Single-calendar config.** `CalendarConfig.calendar_id` is one string; needs a team list.
 4. **Leak surface (closed by design).** `export_calendar_snapshot` ([sync_snapshot.py](src/rebalance/ingest/sync_snapshot.py)) must always filter `WHERE calendar_id = 'primary'` — teammate rows are never exported to the pulse git repo (decision #3, default deny).
@@ -155,14 +156,14 @@ A throwaway script (gitignored) that, for each test day, emits two ranked next-a
 - [x] **Arm A — complete the signal set:** Sleuth reminders, Obsidian vault notes, and email now in Arm A — pulled via `pulse._query_day_activity()` (the dashboard's own assembler) + a per-day `email_messages` query. *(Note: "vault todos" = recently-modified vault notes; there is no checkbox/task table — true todo parsing is a separate future enhancement.)*
 - [x] **Arm A — denoise:** Git Pulse Sync excluded — `rebalance-git-pulse` never reaches `github_commits` (the dashboard source), plus an explicit `NOISE_REPOS` guard.
 - [x] **Reconcile GitHub activity — ROOT CAUSE FOUND & FIXED:** the old harness read `github_activity`, a *scan-snapshot* table that buckets a rolling ~30-day fetch under `scan_date = scanned_at[:10]` (the **scan-run date, in UTC**) and includes bot repos. The dashboard reads granular `github_commits/items/comments` with a tz-aware day window + author/bot filter. Harness now uses the dashboard path → matches.
-- [ ] **Blind + randomize:** output still prints labeled "ARM A / ARM B" — relabel to "Option 1 / Option 2" in randomized order so judging is unbiased. Write the mapping to a hidden `.ab_key.json` file (gitignored); **do not print to console** — Noel is a judge and seeing the key before voting breaks the blind. Reveal only after both judges have locked votes. *(Last remaining 0b item.)*
-- [ ] **De-duplicate shared events from Arm B delta:** query for event IDs present in *both* `calendar_id='primary'` and `calendar_id='<matt>'` (shared invites: "1:45 Team Call", "Weekly Joyce/Noel", etc.). These are already in Arm A — suppress them from the Arm B-only delta display and exclude them from the net-new signal rate count. The A→B delta must surface only blocks *unique* to Matt's calendar. Also reduces over-counting of joint meetings in the block totals.
+- [x] **Blind + randomize (done 2026-06-12):** harness now writes one self-contained blinded file per day to `temp/ab_blinded/<date>.md` — "OPTION 1 / OPTION 2" in randomized order, neutral headers (`[OWN]` / `[TEAMMATE]`, no control/treatment wording). Mapping sealed in `temp/ab_blinded/.ab_key.json`, never printed; reveal only after both judges lock votes.
+- [x] **De-duplicate shared events from Arm B delta (done 2026-06-12):** implemented as **content-based** de-dup, not just ID-based — the repair revealed only 1 true ID collision; Matt hand-logs joint meetings ("1:45 - Team Call", "Weekly - Joyce/Noel") as his *own* events with different IDs. Harness suppresses a teammate block when its normalized title matches a primary block the same local day, OR its ID is in `temp/ab_blinded/shared_event_ids.json`. Suppression counts recorded in the key file (not in the bundle, to keep it clean for judging).
 
 ### 0c. Test window
-- [x] Bundles generated for the 2 example days captured this week (**06-08, 06-09**) + **06-10**.
-- [ ] **Repair first:** re-ingest `primary` (or run a repair query) to restore the shared-invite rows the 0a sync PK-flipped to `calendar_id='<matt>'` (gap #1). Verify "1:45 Team Call" / "Weekly Joyce/Noel" rows exist under `primary` again.
-- [ ] **Then regenerate the 06-08/09/10 bundles from the repaired table.** The 0a sync ran *before* those bundles were generated, so their Arm A may silently undercount (flipped rows are dropped by `WHERE calendar_id='primary'`), inflating B's apparent net-new rate. Repairing the table does **not** fix pre-rendered bundles — regenerate, then re-capture the [raw results](#phase-0--captured-ab-bundles-raw-results).
-- [ ] Generate the remaining ~2 days to complete the ≈1 work-week window. Small N is fine for a spike — we want signal, not significance.
+- [x] Bundles generated for the 2 example days captured this week (**06-08, 06-09**) + **06-10**. *(Superseded by the repaired, blinded regeneration below.)*
+- [x] **Repair (done 2026-06-12):** `temp/phase0_repair_and_shared.py` — Matt re-synced first (fresh post-hoc timesheet edits), then `primary` (restores any flips); shared-ID set computed. Verified: all "Team Call" / "Joyce/Noel" rows 06-05..06-11 live under `primary`.
+- [x] **Regenerated from the repaired table (done 2026-06-12):** all bundles re-rendered blinded + de-duped.
+- [x] **Full 5-day window:** blinded bundles for **06-05, 06-08, 06-09, 06-10, 06-11** (5 completed days) in `temp/ab_blinded/`. Small N is fine for a spike — we want signal, not significance.
 
 ### 0d. Pre-registered measurement (define BEFORE looking — HiQS honesty)
 Three metrics, recorded per day:
@@ -183,10 +184,15 @@ a chance win on any single metric can't pass the gate. Proceed to Phase 1 **only
 Otherwise **stop** and record why — a teammate calendar ~90% redundant with GitHub + Slack is *not* a
 high-quality signal and isn't worth the privacy + maintenance cost. Either outcome is a successful spike.
 
-- [ ] **Test-window timing:** generate each day's bundle *after that day completes* — activity tables only fill once work has happened, so a same-day/future bundle is calendar-only (see 06-10). Score completed days; future days exercise only the planning/orchestration value (H2).
+- [x] **Test-window timing:** all 5 scored days (06-05, 06-08..06-11) were *completed* days at generation time (generated 06-12) — activity arms fully populated.
+- [x] **LLM judge voted (2026-06-12):** Gemini scored all 5 blinded bundles; votes **sealed** in `temp/ab_blinded/votes_gemini.json` (model recorded per vote: `gemini-3.1-flash-lite` — the `-pro`/`-flash` variants were unavailable on this key). Not opened; Noel votes independently before any reveal.
+- [ ] **Noel votes** on the 5 blinded bundles (`temp/ab_blinded/2026-*.md`): OPTION 1 / OPTION 2 / NONE per day, votes locked before reveal.
+- [ ] **Reveal + score:** open `.ab_key.json` + `votes_gemini.json`, map votes to arms, confirm dropped-ball catches + B-only precision with Noel, score the three criteria.
 - [ ] **Phase 0 exit artifact:** append the findings table (3 metrics × N days) + go/no-go to the [progress log](#phase-0-progress-log).
 
 ### 0f. Amendments after first data exposure
+
+**🔒 LOCKED 2026-06-12 (before any vote was cast). No further metric changes.**
 
 *(Logged 2026-06-12 — HiQS honesty.)* The 0d metrics were pre-registered 2026-06-09, but the
 06-08/09/10 bundles were generated and eyeballed before the rules below were finalized. To keep
@@ -220,6 +226,20 @@ data — nothing here makes a pass easier. A pass after these amendments is *mor
 - **Gate:** Run `/phase-qa` before marking any production phase complete. SOLID+DRY compliance
   is a *high-priority* check, not a nice-to-have.
 
+### Execution modes — Ultra Code vs Sonnet High (decided 2026-06-12)
+
+Rule of thumb: **build sequential/stateful things single-agent at high effort; fan out
+(Ultra Code sub-agents) only when surfaces are independent (build) or adversarial review
+is the goal (verify).**
+
+| Work | Mode | Why |
+|---|---|---|
+| **Phase 0 remainder** (votes, reveal, scoring, exit artifact) | **Sonnet High — single agent** | Sequential, stateful bookkeeping over a live DB and *sealed* judge files; extra agent contexts only add blind-integrity risk, not quality. |
+| **Phase 1 implementation** (migration, config, refresh, read side, Gemini wiring) | **Sonnet High — single agent** | A numbered schema migration is inherently sequential; small diff surface; correctness over breadth. |
+| **Phase 1 pre-merge review** | **Ultra Code (sub-agents)** | The export filter is the privacy-critical seam — adversarial multi-agent review (`/code-review ultra` + security pass over `export_calendar_snapshot` and the migration) before ship. |
+| **Phase 2 v0.5 build-out** (web.py route, pulse.html panel, `ask` parity, synthesis prompt) | **Ultra Code (sub-agents)** | Four largely independent surfaces — parallel implementation in isolated worktrees, plus a judge panel on the Gemini synthesis prompt; fan-out buys real wall-clock and quality here. |
+| **Phase 2 integration + polish + v0.5 tag** | **Sonnet High — single agent** | Single-context integration of the parallel pieces; one final Ultra review pass before tagging v0.5. |
+
 ---
 
 ## Phase 1 — Productize the second calendar (only if Phase 0 passes)
@@ -251,6 +271,12 @@ a single second calendar, modeled so the Phase-2 jump to N people is config, not
 
 ---
 
+## Post-project (queued, HIGH priority)
+
+- [ ] **Privacy scrub pass on git history** — [issue #66](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/66). The repo is **public**; history contains a personal session artifact (untracked in `8cba49e` but still in older commits) and verbatim bundle sections from early revisions of this doc. After P2 wraps: `git filter-repo` to drop the affected paths/sections, force-push, fresh-clone + grep verify. *(Decision 2026-06-12: exposure accepted as low-sensitivity for now; raw bundles live only in gitignored `temp/` going forward.)*
+
+---
+
 ## HiQS ethos: privacy, consent, leak-control
 
 A teammate's calendar is a person's day. The "high quality signals" ethos cuts two ways here —
@@ -270,15 +296,13 @@ be rigorous about whether the signal is *good*, **and** handle the person's data
 
 ## Phase 0 — captured A/B bundles (raw results)
 
-> Verbatim output of [temp/ab_team_signal.py](temp/ab_team_signal.py) for each test day,
-> committed into the doc so the results survive a crash. **Regenerate** any time with
-> `.venv/bin/python temp/ab_team_signal.py <YYYY-MM-DD>` (DB still holds the 122 Matt rows).
-> **Status:** GitHub now matches the dashboard — pulled via `pulse._query_day_activity()` over
-> the granular `github_commits/items/comments` tables (author + bot filter, tz-aware day window).
-> **Git Pulse Sync is excluded**, and **vault + Sleuth + email are now in Arm A**. **Still open:**
-> the output isn't blinded yet (labels ARM A/B) — so these remain judging *inputs*, **not** a scored
-> gate result. **Freshness caveat:** activity signals are real only *after* a day completes; a bundle
-> generated for *today/tomorrow* is partial or calendar-only (see 06-10 below).
+> **Raw bundles are no longer committed to this doc (2026-06-12).** The repo is public; verbatim
+> teammate-calendar output stays in gitignored `temp/ab_blinded/` (one blinded file per day +
+> sealed `.ab_key.json` / `votes_gemini.json`). History scrub queued as
+> [issue #66](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/66). Regenerate any
+> day with `.venv/bin/python temp/ab_team_signal.py <YYYY-MM-DD>`.
+> The summary table below is the pre-repair 06-09 analysis — kept for the record, but
+> **superseded** by the repaired, de-duped, blinded bundles now in `temp/ab_blinded/`.
 
 ### Per-day summary
 
@@ -294,70 +318,13 @@ But **Binoid PR 860** (merge-or-close) and the **WPE prod-DB email** have **no**
 Noel's calendar or authored GitHub activity → additive. Preliminary net-new signal rate visibly
 **>20%** on the two completed days (06-08, 06-09); 06-10 is a future planning day (calendar-only).
 
-### Mon 2026-06-08 (tz America/Los_Angeles) — full completed day
+### Per-day verbatim bundles → `temp/ab_blinded/` (gitignored)
 
-```
-ARM A (control) — NOEL-ONLY · "what should I work on next?"
-  primary calendar (10 blk, 5h25m): morning exercise · Neochrome check-ins ·
-    MacNerd add news · Post Binoid Kanban for Elan · Noel/Matt · Weekly Joyce/Noel ·
-    1:45 Team Call · Rebalance calibrate project-def · Rebalance test remote repos · EOD
-  GitHub authored (login=noelsaw1, git-pulse EXCLUDED, dashboard-matched):
-    ask-self          9 commits  🤖claude  PRs #38/#37/#36/#35/#33
-    sleuth-app       15 commits  🤖claude  PRs #310/#309/#308, issue #307
-    goaffpro-fork     4 commits  🤖claude  PR #4(open)/#2/#1, issue #3 (HPOS incompat)
-    LTVera-Pandas     4 commits  🤖claude  PR #17 (P20 Customer Decisioning), issues #16/#15
-    rebalance-OS      2 commits +1 comment  🤖claude 🤖codex  PRs #58/#57/#49
-    universal-child-theme               issues #874/#872/#871
-  Vault notes (3): 0. Incoming · Ltvera Reference Model · Love2learn.xyz
-  Sleuth (5, →by me / stale): @Matthew Mini-Cart Upsell deploy · Product Upsell→Minicart ·
-    @Jose 3 LTVera WP pages · @Matthew CR CC Tenant→Landlord (workflow + UI sketch)
-  Email in-window: 0
-
-ARM B = ARM A + MATT Neochrome Work Schedule (15 blk, 7h15m):
-  Binoid emails/cron · Scheduled Actions Backlog · Prod Log Analysis · DB Saturation ·
-  Slow Query · Incident Report (Issue #873) · WP.org forum bug reports ·
-  GoAffPro Fork PR Review · Prod DB Fix—Composite Index · File Goaffpro bug ·
-  bloomz STG1 plugin updates ×2 · SMTP Pro feature request
-```
-
-### Tue 2026-06-09 (tz America/Los_Angeles) — TODAY, partial (day not yet over)
-
-```
-ARM A (control) — NOEL-ONLY
-  primary calendar (8 blk, 4h30m): exercise · Neochrome check-in · Pre-meeting ·
-    Weekly Joyce/Noel · BW Maintenance (Matt's Zoom) · 1:45 Team Call · EOD · Broker placeholder
-  GitHub authored (git-pulse excluded, dashboard-matched):
-    sleuth-app       2 commits  🤖claude  PR #312 (Fable 5 aliases), #311 (memories export)
-    LTVera-Pandas    6 commits  🤖claude  PR #17 (P20)
-    universal-child-theme  2 commits +1 comment  🤖claude  PR #860 (/rca skill — WPE incident RCA)
-    photoapp-webapp-new                  issue #171 (login error, Mac Safari)
-    goaffpro-fork    1 comment            PR #2
-  Vault notes (6): 0. Goals · 0. Today's Notes · Project Registry · Meetup Group · rebalanceOS Dashboard · Yesterday
-  Sleuth (27 active): @Mike category bubbles · review PR→push Binoid · restore Prod→Dev ·
-    Shipping Tracker plugin · @Samuel WP→BigQuery sync bundle (LTVera-Pandas) · …(27 total)
-  Email in-window: 0
-
-ARM B = ARM A + MATT Neochrome Work Schedule (12 blk, 9h00m):
-  Slack&Emails · Email Matt G/Rebekah/John re WPE DB op · Cron research ·
-  HPOS theme-of-week ×2 · Review+merge/close Binoid PR 860 · deterministic analysis scripts ·
-  Goaffpro review PR#4 · premium plugins · stg1 checkout testing
-```
-
-### Wed 2026-06-10 (tz America/Los_Angeles) — TOMORROW, calendar-only (no activity yet)
-
-```
-ARM A (control) — NOEL-ONLY
-  primary calendar (9 blk, 5h40m): exercise · Neochrome check-in · **Deployment Day** ·
-    Physical therapy · 1:45 Team Call · Sleuth Team Call · NN Weekly · Blocked · EOD
-  GitHub authored: (none)   Vault: (none)   Sleuth: (none)   Email: (none)
-  ^ Correct & expected — 06-10 hasn't happened yet. (The OLD harness wrongly showed 169
-    git-pulse + repo commits here; that was github_activity.scan_date stamped in UTC
-    on the 06-09-evening scan, NOT real 06-10 work.)
-
-ARM B = ARM A + MATT Neochrome Work Schedule (4 blk, 3h25m):
-  Slack&Emails · **Neochrome Team — Review stale Binoid PRs** · Binoid NMI extend Customer Vault
-  ^ On a planning day, Matt's calendar is the ONLY actionable team signal — strong for H2.
-```
+The verbatim per-day output previously inlined here (06-08, 06-09, 06-10) was removed
+2026-06-12 — public repo, see the blockquote above. Current artifacts, one per completed day
+(06-05, 06-08, 06-09, 06-10, 06-11), live in `temp/ab_blinded/<date>.md`, blinded and
+de-duped, with the arm mapping sealed in `.ab_key.json` and the LLM judge's votes sealed in
+`votes_gemini.json`.
 
 ---
 
@@ -384,3 +351,13 @@ ARM B = ARM A + MATT Neochrome Work Schedule (4 blk, 3h25m):
 - **Cohort defined (4 people):** Noel (`primary`) · **Matthew** (lead dev — Phase 0/1 subject, rich timesheet data) · **Jose** + **Jinhui** (recently started calendar logging — sparse; Phase 2, behind explicit opt-in + per-person additivity checks). Replaces the earlier adrian/chloe/gihan Phase-2 placeholder.
 - **Inference LLM locked (decision #5): Gemini**, key in **Google Secret Manager** via the gcloud CLI. Today's reality: `ask()` synthesizes via local Qwen3-0.6B ([querier.py](src/rebalance/ingest/querier.py)); [repair.py](src/rebalance/repair.py) already calls `gemini-3.1-flash-lite`. P2 standardizes on Gemini for the Phase-0 judge + v0.5 synthesis; Qwen stays embeddings/RAG-only.
 - **Endgame locked (decision #6):** P2 concludes as **v0.5 — a "What should we work on next?" view** in the existing web dashboard (`rebalance serve` [web.py](src/rebalance/web.py) + [pulse.html](scripts/pulse_web.py)) with `ask` parity — see [Endgame](#endgame--the-v05-functional-tool). Dashboard infra confirmed present; the next-action view is the only missing surface.
+
+**2026-06-12 (later) — Phase 0 executed to the Noel-vote line; privacy decision; execution modes.**
+- **Repo found PUBLIC** (`Hypercart-Dev-Tools/rebalance-OS`): `snapshot.md` untracked + gitignored (`8cba49e`); Noel's decision — accept current exposure as low-sensitivity, queue a **post-project history scrub** ([issue #66](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/66)); raw bundles stripped from this doc → gitignored `temp/ab_blinded/`.
+- **0c repair ran** (`temp/phase0_repair_and_shared.py`): Matt re-synced *first* (155 fresh rows through 06-13, capturing post-hoc timesheet edits), `primary` second (restores flips; verified all "Team Call"/"Joyce/Noel" rows under `primary`). **Finding: only 1 true ID collision** — Matt hand-logs joint meetings as his own events, so de-dup must be (and now is) content-based: normalized-title match per local day + the shared-ID set.
+- **0b complete:** harness rewritten — blinded OPTION 1/2 in randomized order, neutral `[OWN]`/`[TEAMMATE]` headers, mapping sealed in `.ab_key.json` (never printed), de-dup counts recorded in the key file only.
+- **5 completed-day blinded bundles** generated: 06-05, 06-08, 06-09, 06-10, 06-11.
+- **Gemini judge voted all 5 days** (`temp/ab_judge_gemini.py`, GSM key via gcloud, in-memory only); votes **sealed** in `votes_gemini.json`. Model: `gemini-3.1-flash-lite` (the `-pro`/`-flash` variants 404'd on this key) — recorded per vote.
+- **0f amendments log LOCKED** before any vote was cast.
+- **Execution-mode policy documented** ([standing constraints](#execution-modes--ultra-code-vs-sonnet-high-decided-2026-06-12)): Sonnet High single-agent for Phase 0 remainder + Phase 1 implementation + Phase 2 integration; Ultra Code sub-agents for Phase 1 pre-merge review and the Phase 2 v0.5 parallel build-out.
+- **Next:** Noel's 5 blind votes → reveal both sealed files → confirm catches + precision → score the gate.
