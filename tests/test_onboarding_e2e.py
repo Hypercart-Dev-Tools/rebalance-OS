@@ -117,11 +117,14 @@ class OnboardingEndToEndTests(unittest.TestCase):
 
     def test_setup_status_flips_done_after_promote(self):
         def status_report():
+            sandbox = Path(self._tmp.name)
             with patch(f"{CONFIG}.get_config_path", return_value=config_module.CONFIG_PATH), \
                  patch(f"{CONFIG}.get_vault_path", return_value=str(self.vault)), \
                  patch(f"{CONFIG}.get_github_token", return_value="fake-token"), \
                  patch(f"{CONFIG}.get_calendar_oauth_token_json", return_value=None), \
-                 patch(f"{CONFIG}.get_gmail_oauth_token_json", return_value=None):
+                 patch(f"{CONFIG}.get_gmail_oauth_token_json", return_value=None), \
+                 patch("rebalance.ingest.lifecycle._launch_agents_dir", return_value=sandbox / "LaunchAgents"), \
+                 patch("rebalance.ingest.lifecycle._pulse_html_path", return_value=sandbox / "web" / "pulse.html"):
                 Path(config_module.CONFIG_PATH).write_text("{}")
                 return evaluate_setup(vault_path=self.vault, database_path=self.db)
 

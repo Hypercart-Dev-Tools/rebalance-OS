@@ -74,9 +74,12 @@ class SetupStageMapTests(unittest.TestCase):
         for stage in SETUP_STAGES:
             self.assertTrue(stage.remediation.strip(), stage.id)
 
-    def test_optional_stages_are_exactly_calendar_and_gmail(self):
+    def test_optional_stages_are_auth_and_graduation(self):
         optional = {s.id for s in SETUP_STAGES if s.optional}
-        self.assertEqual(optional, {"calendar_auth", "gmail_auth"})
+        self.assertEqual(
+            optional,
+            {"calendar_auth", "gmail_auth", "schedulers_installed", "first_pulse"},
+        )
 
 
 class _EvaluateHarness(unittest.TestCase):
@@ -91,7 +94,12 @@ class _EvaluateHarness(unittest.TestCase):
              patch(f"{CONFIG}.get_github_token") as gh_token, \
              patch(f"{CONFIG}.get_calendar_oauth_token_json") as cal_tok, \
              patch(f"{CONFIG}.get_gmail_oauth_token_json") as gm_tok, \
-             patch(f"{CONFIG}.get_onboarding_skipped_stages") as skip_list:
+             patch(f"{CONFIG}.get_onboarding_skipped_stages") as skip_list, \
+             patch("rebalance.ingest.lifecycle._launch_agents_dir") as agents_dir, \
+             patch("rebalance.ingest.lifecycle._pulse_html_path") as pulse_html:
+            sandbox = Path(vault or tempfile.gettempdir())
+            agents_dir.return_value = sandbox / "LaunchAgents"
+            pulse_html.return_value = sandbox / "web" / "pulse.html"
             fake_cfg = Path(vault or tempfile.gettempdir()) / "rbos.config"
             if config:
                 fake_cfg.parent.mkdir(parents=True, exist_ok=True)

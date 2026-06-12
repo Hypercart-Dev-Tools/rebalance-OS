@@ -239,6 +239,34 @@ def _check_projection_exists(ctx: SetupContext) -> tuple[bool, str]:
     return path.exists(), str(path)
 
 
+# Patchable seams for the graduation checks — both read machine-global
+# locations (LaunchAgents, the repo's web/ dir), so hermetic sandboxes
+# override these the same way REBALANCE_NO_KEYRING covers the keyring.
+def _launch_agents_dir() -> Path:
+    return Path.home() / "Library" / "LaunchAgents"
+
+
+def _pulse_html_path() -> Path | None:
+    from rebalance.paths import find_project_root
+
+    root = find_project_root(Path(__file__).resolve())
+    return (root / "web" / "pulse.html") if root else None
+
+
+def _check_schedulers_installed(ctx: SetupContext) -> tuple[bool, str]:
+    plist = _launch_agents_dir() / "com.rebalance-os.daily-sync.plist"
+    if plist.exists():
+        return True, f"daily-sync installed ({plist})"
+    return False, "daily-sync launchd job not installed"
+
+
+def _check_first_pulse(ctx: SetupContext) -> tuple[bool, str]:
+    path = _pulse_html_path()
+    if path is None:
+        return False, "repo root not found"
+    return path.exists(), str(path)
+
+
 def _check_db_synced(ctx: SetupContext) -> tuple[bool, str]:
     if ctx.database_path is None or not ctx.database_path.exists():
         return False, str(ctx.database_path or "database path unknown")
@@ -317,6 +345,27 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
         remediation="confirm_projects pull-syncs it; or run `rebalance ingest sync --mode pull`.",
         executor="mcp:confirm_projects",
         requires=("registry_exists",),
+    ),
+    # Graduation (Phase 6): optional so portable/Linux installs without
+    # launchd can still reach setup_complete — but the welcome agent always
+    # offers them; first pulse is the journey's intended endpoint.
+    SetupStage(
+        id="schedulers_installed",
+        title="Scheduled sync fleet",
+        check=_check_schedulers_installed,
+        remediation="Install the daily job, then the hourly jobs per SCHEDULER.md: `bash scripts/install_scheduler.sh`.",
+        executor="cli:bash scripts/install_scheduler.sh",
+        optional=True,
+        requires=("db_synced",),
+    ),
+    SetupStage(
+        id="first_pulse",
+        title="First pulse rendered",
+        check=_check_first_pulse,
+        remediation="Render web/pulse.html: `bash scripts/pulse_web_sync.sh`, then open it.",
+        executor="cli:bash scripts/pulse_web_sync.sh",
+        optional=True,
+        requires=("db_synced",),
     ),
 )
 
