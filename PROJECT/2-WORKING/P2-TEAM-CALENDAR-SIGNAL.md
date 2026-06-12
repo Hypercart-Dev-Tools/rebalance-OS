@@ -6,6 +6,7 @@ created: 2026-06-09
 updated: 2026-06-12
 status: "Working — Phase 0 in progress"
 current_phase: "Phase 0 — Spike + A/B test"
+endgame: "v0.5 — 'What should we work on next?' view in the web dashboard (Gemini-powered)"
 kill_switch: "Willing to kill if Matt's calendar is mostly redundant with GitHub + Slack"
 tags: [signal-quality, calendar, team-orchestration, ab-test]
 ---
@@ -23,18 +24,19 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 
 | ✅ Most recently completed phase | ⏭️ What's next |
 |---|---|
-| **Phase 0 · 0a–0c complete + dashboard-matched** — Matt's calendar synced (**122 events**, reversible). Harness [temp/ab_team_signal.py](temp/ab_team_signal.py) now builds Arm A from the dashboard's own per-day assembler: authored GitHub (Git Pulse Sync **excluded**, root-cause fixed), Obsidian vault, Sleuth, email. Gate thresholds set ([0e](#0e-decision-rule-kill--continue)). | **Blind the output, then run the gate.** Relabel ARM A/B → "Option 1/2" randomized (last 0b item); generate one bundle *per completed day* across ~5 days; then run the blinded two-judge scoring (Noel + LLM) against the [0e](#0e-decision-rule-kill--continue) gate. |
+| **Phase 0 · 0a–0c complete + dashboard-matched** — Matt's calendar synced (**122 events**, reversible). Harness [temp/ab_team_signal.py](temp/ab_team_signal.py) now builds Arm A from the dashboard's own per-day assembler: authored GitHub (Git Pulse Sync **excluded**, root-cause fixed), Obsidian vault, Sleuth, email. Gate thresholds set ([0e](#0e-decision-rule-kill--continue)). | **Repair → regenerate → blind → gate.** (1) Re-ingest `primary` to restore PK-flipped shared-invite rows; (2) **regenerate the 06-08/09/10 bundles** from the repaired table; (3) relabel ARM A/B → "Option 1/2" randomized + de-dup shared events; (4) complete ~5 *completed-day* bundles; (5) lock the [0f amendments log](#0f-amendments-after-first-data-exposure), then run the blinded two-judge scoring (Noel + **Gemini**) against the [0e](#0e-decision-rule-kill--continue) gate. |
 
 ---
 
 ## Table of Contents
 
 - [Goal & the two outputs](#goal--the-two-outputs)
-- [Decisions (locked 2026-06-09)](#decisions-locked-2026-06-09)
+- [Endgame — the v0.5 functional tool](#endgame--the-v05-functional-tool)
+- [Decisions](#decisions)
 - [What already exists (don't rebuild)](#what-already-exists-dont-rebuild)
 - [Phase 0 — Spike + A/B test (the decision gate)](#phase-0--spike--ab-test-the-decision-gate)
 - [Phase 1 — Productize the second calendar (only if Phase 0 passes)](#phase-1--productize-the-second-calendar-only-if-phase-0-passes)
-- [Phase 2 — Team-orchestration output + N teammates](#phase-2--team-orchestration-output--n-teammates)
+- [Phase 2 — v0.5: "What should we work on next" dashboard + N teammates](#phase-2--v05-what-should-we-work-on-next-dashboard--n-teammates)
 - [HiQS ethos: privacy, consent, leak-control](#hiqs-ethos-privacy-consent-leak-control)
 - [Phase 0 — captured A/B bundles (raw results)](#phase-0--captured-ab-bundles-raw-results)
 - [Phase 0 progress log](#phase-0-progress-log)
@@ -58,16 +60,52 @@ These are **not** the same question with the same answer, so the spike tracks tw
 The real success criterion across both: **don't drop the ball** — surface an actionable item
 that the operator's own signals would have missed.
 
+### Cohort (defined 2026-06-12)
+
+| Person | Role | Calendar | Data richness | Enters at |
+|---|---|---|---|---|
+| **Noel** | Company owner (operator) | `primary` | Rich | Baseline — Arm A |
+| **Matthew** | Lead developer | "Matt - Neochrome Work Schedule" (shared) | **Rich** — long-standing timesheet habit | **Phase 0/1 subject** |
+| **Jose** | Developer | shared timesheet calendar | **Sparse** — only recently started logging | Phase 2 |
+| **Jinhui** | Teammate | shared timesheet calendar | **Sparse** — only recently started logging | Phase 2 |
+
+Jose's and Jinhui's calendars aren't rich enough to test yet — Phase 0/1 stay Matt-only
+(decision #4). Phase 2 onboards them once their logging is consistent, each behind explicit
+opt-in **and** a cheap per-person mini additivity check, so a still-mostly-empty calendar
+doesn't dilute the blend.
+
 ---
 
-## Decisions (locked 2026-06-09)
+## Endgame — the v0.5 functional tool
+
+P2 must conclude as a **working tool, not an exercise** (decision #6). Most of the v0.5
+surface already exists:
+
+| Layer | Exists today | v0.5 gap |
+|---|---|---|
+| Web dashboard | **Yes** — FastAPI app in [src/rebalance/web.py](src/rebalance/web.py) (`rebalance serve`, port 8787: `/focus-5`, `/auth-log`, `/sleuth-graph`) + the launchd-regenerated static [web/pulse.html](scripts/pulse_web.py) served by [scripts/pulse_server.py](scripts/pulse_server.py) | No "what should we work on next" view yet |
+| Next-action engine | **Partial** — the `ask()` MCP tool ([retrieval.py](src/rebalance/mcp/tools/retrieval.py)) gathers vault/GitHub/registry context; the Phase-0 harness ranks next actions per day | `ask()` is retrieval-first, not a ranked recommender; the harness is throwaway |
+| Inference LLM | **Partial** — `ask()` synthesizes via local Qwen3-0.6B ([querier.py](src/rebalance/ingest/querier.py)); [repair.py](src/rebalance/repair.py) already calls `gemini-3.1-flash-lite` | Standardize P2 inference on **Gemini** (decision #5), GSM-keyed |
+
+**v0.5 =** the Phase-1 blended data layer + a Gemini-synthesized, ranked, person-attributed
+**"What should we work on next?"** view in the web dashboard (route in `web.py` + panel in
+`pulse.html`), with `ask` parity for agents. Phase 0 proves the signal earns it; Phase 1
+builds the data layer; **Phase 2 ships v0.5.**
+
+---
+
+## Decisions
+
+*#1–4 locked 2026-06-09; #5–6 added and #2/#4 amended 2026-06-12 — every post-data-exposure change is logged with its bias direction in [0f](#0f-amendments-after-first-data-exposure).*
 
 | # | Decision | Choice |
 |---|---|---|
 | 1 | **Phase 0 kill/continue bar** *(thresholds set by Claude per Noel's delegation — see [0e](#0e-decision-rule-kill--continue))* | Continue to Phase 1 only if **all three**: (a) net-new signal rate **≥20%** (median scored day); (b) **≥1 Noel-confirmed dropped-ball catch** AND B-only **precision ≥50%**; (c) blinded preference favors B on **≥3 of 5 days for *both* judges independently** (Noel AND the LLM judge), no-preference days counting against B. |
-| 2 | **Judges** | **Noel + an LLM judge** (local Qwen and/or Claude) vote independently on each blinded pair. |
+| 2 | **Judges** | **Noel + an LLM judge (Gemini — decision #5)** vote independently on each blinded pair. *(Amended 2026-06-12: judge model fixed to Gemini, replacing "local Qwen and/or Claude" — locked before any vote; see [0f](#0f-amendments-after-first-data-exposure).)* |
 | 3 | **Privacy / export** | Teammate calendar data is **never exported** to the pulse git repo. `export_calendar_snapshot` always filters `WHERE calendar_id = 'primary'`. Teammate data stays purely local to the dashboard SQLite. Default deny — no repo-visibility gate required. |
-| 4 | **Phase 1 scope** | **Matt only** — a single second calendar, not a full N-person list. Generalize to N teammates in Phase 2. |
+| 4 | **Phase 1 scope** | **Matt only** — a single second calendar, not a full N-person list. Phase 2 generalizes to the rest of the [cohort](#cohort-defined-2026-06-12) (**Jose, Jinhui**) once their newer logging habit produces rich-enough data. |
+| 5 | **Analysis/inference LLM** *(2026-06-12)* | **Gemini** (cloud) for all P2 analysis & inference — the Phase-0 LLM judge and the v0.5 dashboard synthesis. API key lives in **Google Secret Manager**, fetched via the gcloud CLI (same pattern as the existing `ltvera-gemini-api-key` secret); [repair.py](src/rebalance/repair.py) already calls `gemini-3.1-flash-lite`. Local Qwen stays embeddings/RAG-only. |
+| 6 | **Endgame** *(2026-06-12)* | P2 concludes as a **functional tool, not an exercise**: a v0.5 **"What should we work on next?"** view in the existing web dashboard — see [Endgame](#endgame--the-v05-functional-tool). |
 
 ---
 
@@ -122,6 +160,8 @@ A throwaway script (gitignored) that, for each test day, emits two ranked next-a
 
 ### 0c. Test window
 - [x] Bundles generated for the 2 example days captured this week (**06-08, 06-09**) + **06-10**.
+- [ ] **Repair first:** re-ingest `primary` (or run a repair query) to restore the shared-invite rows the 0a sync PK-flipped to `calendar_id='<matt>'` (gap #1). Verify "1:45 Team Call" / "Weekly Joyce/Noel" rows exist under `primary` again.
+- [ ] **Then regenerate the 06-08/09/10 bundles from the repaired table.** The 0a sync ran *before* those bundles were generated, so their Arm A may silently undercount (flipped rows are dropped by `WHERE calendar_id='primary'`), inflating B's apparent net-new rate. Repairing the table does **not** fix pre-rendered bundles — regenerate, then re-capture the [raw results](#phase-0--captured-ab-bundles-raw-results).
 - [ ] Generate the remaining ~2 days to complete the ≈1 work-week window. Small N is fine for a spike — we want signal, not significance.
 
 ### 0d. Pre-registered measurement (define BEFORE looking — HiQS honesty)
@@ -129,7 +169,7 @@ Three metrics, recorded per day:
 
 1. **Net-new signal rate** *(additivity vs. redundancy)* — % of Matt's work-blocks that (i) map to a **shared project/repo** (Binoid, bloomz, GoAffPro, …) **and** (ii) have **no corresponding signal** in Noel's own data that day. High % → additive; low % → Matt's calendar just re-states what GitHub/Slack already show.
 2. **Dropped-ball catches** *(the core value)* — count of actionable items Arm B surfaces that Arm A misses **and** that Noel confirms are real (true positives), with **precision** = true positives ÷ all B-only items Noel reviews (false positives counted, so B can't win by flooding).
-3. **Blind preference** — Noel picks the more-useful list per day; an **LLM judge** (local Qwen and/or Claude) gives an independent second vote on the same blinded pair.
+3. **Blind preference** — Noel picks the more-useful list per day; an **LLM judge** (**Gemini**, decision #5) gives an independent second vote on the same blinded pair.
 
 ### 0e. Decision rule (kill / continue)
 **Thresholds set by Claude per Noel's delegation (2026-06-09).** N≈5 days can't yield statistical
@@ -138,13 +178,32 @@ a chance win on any single metric can't pass the gate. Proceed to Phase 1 **only
 
 1. **Additivity** — net-new signal rate **≥ 20%** (median scored day). Below this, Matt's calendar mostly restates GitHub/Slack.
 2. **Decision value** — **≥ 1 Noel-confirmed dropped-ball catch** over the window, **and** B-only **precision ≥ 50%** (confirmed catches ÷ all B-only items Noel reviews) — so B earns the catch without flooding.
-3. **Preference** — blinded preference favors **B on ≥ 3 of 5 days for *both* judges independently** (Noel *and* the LLM judge each clear 3/5); no-preference days count against B. Two independent majorities is the small-N guard — one judge at 3/5 is a coin-flip under the null. **LLM judge calibration:** the judge prompt must explicitly instruct the model to *discount vague time-blocks* ("Slack&Emails", "Cron research") and *heavily weight verifiable, targeted actions* ("Review Binoid PR 860", "Email re WPE DB op") — otherwise the judge may falsely prefer Arm B simply because it has more text.
+3. **Preference** — blinded preference favors **B on ≥ 3 of 5 days for *both* judges independently** (Noel *and* the LLM judge each clear 3/5); no-preference days count against B. Two independent majorities is the small-N guard — one judge at 3/5 is a coin-flip under the null. **LLM judge calibration:** the judge prompt must explicitly instruct the model to *discount vague time-blocks* ("Slack&Emails", "Cron research") and *heavily weight verifiable, targeted actions* ("Review Binoid PR 860", "Email re WPE DB op") — otherwise the judge may falsely prefer Arm B simply because it has more text. **Blind-softness caveat (2026-06-12):** Arm B is a strict superset of Arm A, so Noel can identify the arms by *content* — any item he doesn't recognize from his own signals is, by definition, B-only — no matter how the labels are randomized. Noel's preference vote is therefore structurally **soft** evidence; the relabeling still fully blinds the **LLM judge**, and the gate's hard weight rests on criteria 1–2 (net-new rate, precision + confirmed catch).
 
 Otherwise **stop** and record why — a teammate calendar ~90% redundant with GitHub + Slack is *not* a
 high-quality signal and isn't worth the privacy + maintenance cost. Either outcome is a successful spike.
 
 - [ ] **Test-window timing:** generate each day's bundle *after that day completes* — activity tables only fill once work has happened, so a same-day/future bundle is calendar-only (see 06-10). Score completed days; future days exercise only the planning/orchestration value (H2).
 - [ ] **Phase 0 exit artifact:** append the findings table (3 metrics × N days) + go/no-go to the [progress log](#phase-0-progress-log).
+
+### 0f. Amendments after first data exposure
+
+*(Logged 2026-06-12 — HiQS honesty.)* The 0d metrics were pre-registered 2026-06-09, but the
+06-08/09/10 bundles were generated and eyeballed before the rules below were finalized. To keep
+"pre-registered" honest, every post-exposure rule change is logged here with its bias direction.
+**This log locks before any vote is cast; no further metric changes once scoring starts.**
+
+| Amendment | Rationale | Bias direction |
+|---|---|---|
+| De-dup shared events from the B-only delta ([0b](#0b-build-the-ab-harness--tempab_team_signalpy)) | Shared invites are already in Arm A; counting them inflates B's net-new rate | **Against B** |
+| LLM-judge calibration prompt ([0e](#0e-decision-rule-kill--continue) #3) | Stops the judge preferring B merely for having more text | **Against B** |
+| Blind mechanics: `.ab_key.json`, no console print ([0b](#0b-build-the-ab-harness--tempab_team_signalpy)) | Label leakage broke the blind for Noel | Neutral (integrity) |
+| Blind-softness caveat: Noel's vote downgraded to soft evidence ([0e](#0e-decision-rule-kill--continue) #3) | Superset arms are content-identifiable; be honest about what the blind can do | **Against B** (hard weight shifts to criteria 1–2) |
+| Judge model fixed: **Gemini** replaces "local Qwen and/or Claude" (decisions #2/#5) | One named judge model, GSM-keyed; no post-hoc judge shopping | Neutral (locked pre-vote) |
+| Repair + regenerate the 06-08/09/10 bundles ([0c](#0c-test-window)) | The 0a sync's PK-flip may have corrupted Arm A in the captured bundles | **For A** (restores A's full signal) |
+
+Net effect: every metric-affecting amendment either tightens the gate against B or repairs Arm A's
+data — nothing here makes a pass easier. A pass after these amendments is *more* credible, not less.
 
 ---
 
@@ -173,16 +232,21 @@ a single second calendar, modeled so the Phase-2 jump to N people is config, not
 - [ ] **Refresh**: `_refresh_calendar` syncs `primary` + the one team calendar; per-calendar timing/counts in the result envelope (window stays bounded).
 - [ ] **Confirm the pulse repo is private** (gating action, decision #3) before the team-calendar sync ships.
 - [ ] **Read side**: `_gather_calendar_context()` attributes events by person and segregates *my calendar* vs *team calendar* in the prompt sections.
+- [ ] **Inference path (decision #5):** next-action synthesis calls **Gemini**; API key fetched at runtime from **Google Secret Manager** via the gcloud CLI (`gcloud secrets versions access latest --secret=<gemini-key-secret>`) — never hardcoded, never committed. Local Qwen remains embeddings/RAG-only.
 - [ ] **Observability/tests from day one** (per AGENTS.md): structured per-person log lines; integration test stubbing the Calendar API for ≥2 calendars asserting insert/overwrite isolation by `calendar_id`; smoke test for the blended prompt.
 - [ ] **SOLID + DRY gate** (see [standing constraints](#standing-design-constraints-phase-1-onward)): run `/phase-qa` before marking Phase 1 complete.
 
 ---
 
-## Phase 2 — Team-orchestration output + N teammates
+## Phase 2 — v0.5: "What should we work on next" dashboard + N teammates
 
-- [ ] Promote "what should the **team** work on next" to a first-class output in `ask` / dashboard / pulse.
+**This is where P2 lands as a functional tool** (decision #6, [Endgame](#endgame--the-v05-functional-tool)) — a usable v0.5, not a report.
+
+- [ ] **v0.5 dashboard view:** add a **"What should we work on next?"** page to the existing web dashboard — a route in [src/rebalance/web.py](src/rebalance/web.py) (`rebalance serve`, alongside `/focus-5`) **and** a panel in the launchd-regenerated [web/pulse.html](scripts/pulse_web.py). Ranked, person-attributed next actions from the Phase-1 blended signal, synthesized by **Gemini** (decision #5). The Phase-0 harness's bundle logic is the spec — productized via shared helpers, not copy-pasted (DRY).
+- [ ] **`ask` parity:** expose the same team-level output through the `ask` MCP tool so agents see what the dashboard shows.
+- [ ] **Onboard Jose + Jinhui** to `team_calendars` — each behind explicit opt-in (HiQS ethos) **and** a per-person mini additivity check (their logging habit is new and sparse; a still-mostly-empty calendar shouldn't dilute the blend). No config migration needed; Phase 1 already uses a list.
 - [ ] Blend with the goal layer ([PROJECT/1-INBOX/P3-GOAL-LAYER.md](PROJECT/1-INBOX/P3-GOAL-LAYER.md)).
-- [ ] **Extend `team_calendars` list to N teammates** (adrian / chloe / gihan already visible in the calendar list) — each behind explicit opt-in. No config migration needed; Phase 1 already uses a list.
+- [ ] **v0.5 definition of done:** Noel opens the dashboard in a browser and sees a ranked, person-attributed "what should we work on next" list containing ≥1 item his own signals would have missed.
 - [ ] **SOLID + DRY gate** (see [standing constraints](#standing-design-constraints-phase-1-onward)): run `/phase-qa` before marking Phase 2 complete.
 
 ---
@@ -314,3 +378,9 @@ ARM B = ARM A + MATT Neochrome Work Schedule (4 blk, 3h25m):
 - **Validation.** Re-ran 06-08/09/10: 06-08 full, 06-09 (today) partial, **06-10 (tomorrow) correctly calendar-only** — confirming the tz-aware windowing and exposing the old "06-10" GitHub rows as a UTC scan-date artifact. Corrected bundles re-captured above.
 - **Gate thresholds set** (per Noel's delegation): conjunctive 3-metric rule, two independent judges, B-only precision floor — see [0e](#0e-decision-rule-kill--continue). Honest that N≈5 ≠ statistical significance.
 - **Remaining for the gate:** blind/randomize the output (last 0b item), generate ~5 *completed*-day bundles, run the two-judge blinded scoring.
+
+**2026-06-12 — step-back applied; cohort, inference LLM, and endgame locked.**
+- **Step-back findings → action plans:** (1) repair the PK-flipped `primary` rows **and regenerate** the 06-08/09/10 bundles before scoring ([0c](#0c-test-window)) — repairing the table doesn't fix pre-rendered bundles; (2) every post-exposure rule change now logged with its bias direction in the new [0f amendments log](#0f-amendments-after-first-data-exposure) (net effect: nothing makes a pass easier); (3) blind-softness caveat added to [0e](#0e-decision-rule-kill--continue) #3 — Noel's preference vote is soft evidence (superset arms are content-identifiable); hard weight on criteria 1–2.
+- **Cohort defined (4 people):** Noel (`primary`) · **Matthew** (lead dev — Phase 0/1 subject, rich timesheet data) · **Jose** + **Jinhui** (recently started calendar logging — sparse; Phase 2, behind explicit opt-in + per-person additivity checks). Replaces the earlier adrian/chloe/gihan Phase-2 placeholder.
+- **Inference LLM locked (decision #5): Gemini**, key in **Google Secret Manager** via the gcloud CLI. Today's reality: `ask()` synthesizes via local Qwen3-0.6B ([querier.py](src/rebalance/ingest/querier.py)); [repair.py](src/rebalance/repair.py) already calls `gemini-3.1-flash-lite`. P2 standardizes on Gemini for the Phase-0 judge + v0.5 synthesis; Qwen stays embeddings/RAG-only.
+- **Endgame locked (decision #6):** P2 concludes as **v0.5 — a "What should we work on next?" view** in the existing web dashboard (`rebalance serve` [web.py](src/rebalance/web.py) + [pulse.html](scripts/pulse_web.py)) with `ask` parity — see [Endgame](#endgame--the-v05-functional-tool). Dashboard infra confirmed present; the next-action view is the only missing surface.
