@@ -4,9 +4,9 @@ codename: HiQS
 owner: Noel
 created: 2026-06-09
 updated: 2026-06-12
-status: "Working — Phase 0 in progress"
-current_phase: "Phase 0 — Spike + A/B test"
-endgame: "v0.5 — 'What should we work on next?' view in the web dashboard (Gemini-powered)"
+status: "Phase 0 PASSED (GO 2026-06-12) — Phase 1 next"
+current_phase: "Phase 1 — Productize the second calendar"
+endgame: "v0.5 — 'What should we work on next?' view in the web dashboard (Gemini-powered, tunable levers)"
 kill_switch: "Willing to kill if Matt's calendar is mostly redundant with GitHub + Slack"
 tags: [signal-quality, calendar, team-orchestration, ab-test]
 ---
@@ -24,7 +24,7 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 
 | ✅ Most recently completed phase | ⏭️ What's next |
 |---|---|
-| **Phase 0 · 0a–0c complete + dashboard-matched** — Matt's calendar synced (**122 events**, reversible). Harness [temp/ab_team_signal.py](temp/ab_team_signal.py) now builds Arm A from the dashboard's own per-day assembler: authored GitHub (Git Pulse Sync **excluded**, root-cause fixed), Obsidian vault, Sleuth, email. Gate thresholds set ([0e](#0e-decision-rule-kill--continue)). | **Noel votes → reveal → score.** Repair, content de-dup, blinding, 5 completed-day blinded bundles (`temp/ab_blinded/`), and the **sealed Gemini votes** are all done (2026-06-12); [0f](#0f-amendments-after-first-data-exposure) is locked. Remaining: Noel's 5 blind preference votes → reveal `.ab_key.json` → confirm dropped-ball catches + B-only precision → score the [0e](#0e-decision-rule-kill--continue) gate, append go/no-go. |
+| **Phase 0 PASSED — GO (2026-06-12).** All three gate criteria cleared: net-new median **~58%** (≥20%), **5/5 Noel-confirmed catches** + precision ≥50%, blinded preference **Noel 4/5 · Gemini 5/5** (both ≥3/5). Owner-bias finding strengthens it. Full scoring in the [progress log](#phase-0-progress-log). | **Phase 1 — productize Matt's calendar** (single agent, Sonnet High per the [mode policy](#execution-modes--ultra-code-vs-sonnet-high-decided-2026-06-12)): schema migration (composite PK + `person`), `team_calendars` list config, Gemini inference wired from GSM, then **Ultra Code** pre-merge review of the export seam. |
 
 ---
 
@@ -91,6 +91,26 @@ surface already exists:
 **"What should we work on next?"** view in the web dashboard (route in `web.py` + panel in
 `pulse.html`), with `ask` parity for agents. Phase 0 proves the signal earns it; Phase 1
 builds the data layer; **Phase 2 ships v0.5.**
+
+### Tunable levers (v0.5 — decided 2026-06-12)
+
+The blend is **not** a black box. v0.5 ships a `signal_weights` config so the operator can
+fine-tune what the "what should we work on next" view surfaces, with defaults **seeded from the
+Phase-0 spike** (the spike's implicit decision rule becomes the default lever settings). This is
+the "pattern library / model with levers" idea made concrete.
+
+| Lever | What it controls | Phase-0 seed / default |
+|---|---|---|
+| **Per-person weight** | Trust on each teammate's calendar | Matt = 1.0 (rich); Jose/Jinhui start low (sparse) and earn weight via their per-person additivity check |
+| **Per-source weight** | Calendar vs GitHub vs Sleuth vs email | Tunable; calendar earned its place for *team* operational signal |
+| **Redundancy penalty** | How hard to suppress a teammate item already echoed in the operator's own data | The *additivity* knob; the content de-dup is its hard floor |
+| **Vagueness discount** | Down-weight "Slack&Emails"/"Cron research"; up-weight named PR/issue/incident/email actions | The judge-calibration rule, as a threshold |
+| **Owner-bias correction** | Up-weight team *operational/client* work because the operator's own GitHub stream is skewed toward his *own tooling/system* work (Noel's disclosure, 2026-06-12) | **Default ON** — see the Phase-0 exit-artifact note |
+| **Drop sensitivity** | How aggressively to flag blocked/stale *delegated* work ("about to be dropped") | The NMI-vault blocker catch (06-11) is the canonical hit |
+
+The decision rule the spike validated — *"prefer the teammate signal when it's not already in my
+own data, and especially when my own stream structurally can't see it"* — is the default tuning,
+exposed as levers rather than hardcoded.
 
 ---
 
@@ -186,9 +206,9 @@ high-quality signal and isn't worth the privacy + maintenance cost. Either outco
 
 - [x] **Test-window timing:** all 5 scored days (06-05, 06-08..06-11) were *completed* days at generation time (generated 06-12) — activity arms fully populated.
 - [x] **LLM judge voted (2026-06-12):** Gemini scored all 5 blinded bundles; votes **sealed** in `temp/ab_blinded/votes_gemini.json` (model recorded per vote: `gemini-3.1-flash-lite` — the `-pro`/`-flash` variants were unavailable on this key). Not opened; Noel votes independently before any reveal.
-- [ ] **Noel votes** on the 5 blinded bundles (`temp/ab_blinded/2026-*.md`): OPTION 1 / OPTION 2 / NONE per day, votes locked before reveal.
-- [ ] **Reveal + score:** open `.ab_key.json` + `votes_gemini.json`, map votes to arms, confirm dropped-ball catches + B-only precision with Noel, score the three criteria.
-- [ ] **Phase 0 exit artifact:** append the findings table (3 metrics × N days) + go/no-go to the [progress log](#phase-0-progress-log).
+- [x] **Noel voted (2026-06-12)** on the 5 blinded bundles via interactive coach walkthrough (coach stayed neutral, flagged slot position each day) — ballot in `temp/ab_blinded/votes_noel.json`.
+- [x] **Reveal + score (2026-06-12):** mapped both judges' votes to arms; confirmed 5/5 catches with Noel; scored all three criteria. See exit artifact below.
+- [x] **Phase 0 exit artifact:** findings table (3 metrics × 5 days) + **GO** appended to the [progress log](#phase-0-progress-log); machine-readable copy in `temp/ab_blinded/scoring.json`.
 
 ### 0f. Amendments after first data exposure
 
@@ -361,3 +381,30 @@ de-duped, with the arm mapping sealed in `.ab_key.json` and the LLM judge's vote
 - **0f amendments log LOCKED** before any vote was cast.
 - **Execution-mode policy documented** ([standing constraints](#execution-modes--ultra-code-vs-sonnet-high-decided-2026-06-12)): Sonnet High single-agent for Phase 0 remainder + Phase 1 implementation + Phase 2 integration; Ultra Code sub-agents for Phase 1 pre-merge review and the Phase 2 v0.5 parallel build-out.
 - **Next:** Noel's 5 blind votes → reveal both sealed files → confirm catches + precision → score the gate.
+
+**2026-06-12 (later still) — PHASE 0 SCORED: GO. ✅ (exit artifact)**
+
+**Noel voted live** (interactive coach walkthrough; coach stayed neutral, flagged slot position each day — `temp/ab_blinded/votes_noel.json`). Reveal of `.ab_key.json` + `votes_gemini.json` mapped every vote to its arm (**A** = own signals; **B** = own + Matt's calendar):
+
+| Day | Net-new rate | B-only dropped-ball catch (Noel-confirmed ✓) | Noel pref | Gemini pref |
+|---|---|---|---|---|
+| Fri 06-05 | ~75% | Klaviyo PR4 commented + **rejected** | B | B |
+| Mon 06-08 | ~73% | **Incident #873** + DB saturation / slow-query / composite-index fix | B | B |
+| Tue 06-09 | ~58% | **WPE DB-op email** (Matt G/Rebekah/John) + PR 860 merge/close hand-off | B | B |
+| Wed 06-10 | ~40% | **NMI Customer-Vault** extend (Mailgun blocks were redundant w/ issue #845) | B | B |
+| Thu 06-11 | ~36% | **Bloomz HPOS switchover BLOCKED by NMI vault** — work Noel had delegated | A | B |
+
+**Gate — all three PASS:**
+1. **Additivity** — median net-new **~58%** ≥ 20% ✓
+2. **Decision value** — **5/5 catches confirmed** (≥1 required); precision ≥50% — every item put to Noel was real, and B doesn't flood (~4–7 actionable blocks/day, reviewable) ✓
+3. **Preference** — Noel **4/5**, Gemini **5/5**; both clear ≥3/5 independently ✓
+
+→ **CONTINUE TO PHASE 1.**
+
+**Split worth keeping:** 06-11 is the one day Noel preferred the base-only list, yet the teammate arm still held a real catch (the NMI blocker). *Preference* and *additivity* are different axes — B can be additive on a day you'd rather read the shorter list. The gate scores them separately, correctly.
+
+**Blind held where it counts:** on 06-10 the randomizer put the teammate arm in slot 2; Noel still found it (voted OPTION 2 → B) — he was judging content, not slot.
+
+**Owner-bias finding (Noel disclosure, 2026-06-12) — strengthens criterion 1, NOT re-scored ([0f](#0f-amendments-after-first-data-exposure) discipline).** Noel is the owner/supervisor: his *own* GitHub stream is dominated by **his system/tooling work** (rebalance-OS, ask-self, sleuth-app), while the team's **client/operational work** (Binoid, Bloomz, GoAffPro production) only occasionally reaches repos he authors. So Matt's calendar fills a *structural* blind spot — the B-only catches (production incidents, NMI blockers, prod-DB ops) are exactly the class of work Noel's own stream can't surface. The conservative scoring above (some teammate items marked "redundant" for overlapping Noel's GitHub) therefore likely **understates** true additivity — that overlap is often Noel's tooling-side vs Matt's operational-side. Per 0f we do **not** re-score upward post-hoc (the gate already passes); captured instead as a Phase-1/2 design driver → the **owner-bias-correction lever** ([Tunable levers](#tunable-levers--v05--decided-2026-06-12)).
+
+**Phase 0 closed.** Either outcome was a successful spike; this one is a GO. Phase 1 begins (Sonnet High, single agent).
