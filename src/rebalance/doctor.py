@@ -178,6 +178,37 @@ def _check_vault() -> Check:
     return Check("vault", OK, str(vault))
 
 
+def _check_unpushed_work() -> Check:
+    """Ongoing Phase 6.1 signal: local checkouts with commits that never
+    reached the remote (ahead of upstream, or no upstream at all). Off — and
+    silent OK — unless local_repo_roots is configured."""
+    from rebalance.ingest.config import get_local_repo_roots
+    from rebalance.ingest.local_repos import scan_local_repos, unpushed_work
+
+    roots = get_local_repo_roots()
+    if not roots:
+        return Check(
+            "local repos", OK,
+            "local scanning off (set local_repo_roots to enable unpushed-work checks)",
+        )
+    repos = scan_local_repos(roots)
+    stale = unpushed_work(repos)
+    if not stale:
+        return Check("local repos", OK, f"{len(repos)} checkout(s) scanned — all pushed")
+    detail = "; ".join(
+        f"{r.full_name or r.path.name}: "
+        + (f"{r.unpushed_commits} unpushed on {r.branch}" if r.unpushed_commits else f"no upstream for {r.branch}")
+        for r in stale[:5]
+    )
+    if len(stale) > 5:
+        detail += f"; +{len(stale) - 5} more"
+    return Check(
+        "local repos", WARN,
+        f"{len(stale)}/{len(repos)} checkout(s) carry unpushed work — {detail}",
+        "push the branches (or set their upstreams); discovery offers these repos for promotion",
+    )
+
+
 def _check_schema(db_path: Path) -> Check:
     from rebalance.ingest.db import current_schema_version, db_connection
 
@@ -687,6 +718,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     report.checks.extend(db_checks)
     report.checks.append(_check_token())
     report.checks.append(_check_vault())
+    report.checks.append(_check_unpushed_work())
 
     if db_path is not None:
         report.checks.append(_check_schema(db_path))

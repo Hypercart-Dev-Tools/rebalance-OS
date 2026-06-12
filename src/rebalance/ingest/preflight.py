@@ -21,6 +21,7 @@ from rebalance.ingest.github_scan import (
     BAND_C_DAYS,
     discover_repos_from_activity,
 )
+from rebalance.ingest.local_repos import scan_local_repos
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +263,32 @@ def discover_candidates(
                     existing.add(key)
         except Exception as e:
             github_error = str(e)
+
+    # Local checkouts (Phase 6.1): GitHub repos found on disk that neither
+    # remote activity nor the registry already cover — typically work that
+    # never got pushed. Off unless local_repo_roots is configured; read-only
+    # like the rest of discovery.
+    for local in scan_local_repos():
+        if local.full_name is None:
+            continue
+        key = local.full_name.casefold()
+        if key in existing:
+            continue
+        unpushed = (
+            f"{local.unpushed_commits} unpushed commit(s) on {local.branch}"
+            if local.unpushed_commits
+            else ("no upstream for " + local.branch if local.unpushed_commits is None else "in sync")
+        )
+        discovered.append(
+            Project(
+                name=local.full_name,
+                status="potential",
+                summary=f"Local checkout at {local.path} — {unpushed}.",
+                repos=[local.full_name],
+                provenance="local-scan",
+            )
+        )
+        existing.add(key)
 
     # Segment candidates — GitHub repos use band-based classification, vault-only use recency.
     # GitHub repos have band letters (A/B/C) stored in their tags field.

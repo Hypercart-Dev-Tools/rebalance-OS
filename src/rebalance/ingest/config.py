@@ -279,6 +279,23 @@ def set_vault_path(path: str) -> None:
     _write_config(config)
 
 
+def get_local_repo_roots() -> list[str]:
+    """Folders to scan for local git checkouts (Phase 6.1 local discovery).
+
+    Empty list = local scanning is off. Config key: local_repo_roots
+    """
+    config = _read_config()
+    value = config.get("local_repo_roots")
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def set_local_repo_roots(roots: list[str]) -> None:
+    """Store the local-scan root folders in config."""
+    config = _read_config()
+    config["local_repo_roots"] = [str(r).strip() for r in roots if str(r).strip()]
+    _write_config(config)
+
+
 def get_onboarding_skipped_stages() -> list[str]:
     """Optional setup stages the operator deliberately skipped.
 
