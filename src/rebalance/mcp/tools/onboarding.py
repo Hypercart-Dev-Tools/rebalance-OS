@@ -79,12 +79,20 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         """
         Validate a GitHub PAT against the /user endpoint and store it.
 
-        Returns validation result with login and scopes.  If invalid,
-        the token is not stored.
+        Returns validation result with login and scopes. If invalid, the
+        token is not stored. A ``visibility_warning`` field is set when the
+        token likely cannot see private repositories (classic token without
+        ``repo``, or a fine-grained token that may still have the
+        public-only default) — surface it to the user verbatim.
         """
+        from rebalance.ingest.github_scan import token_visibility_warning
+
         result = validate_github_token(token)
         if result["valid"]:
             set_github_token(token)
+            warning = token_visibility_warning(token, result.get("scopes", []))
+            if warning:
+                result["visibility_warning"] = warning
         return result
 
     @mcp.tool()

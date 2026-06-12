@@ -6,6 +6,29 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.39.2] - 2026-06-11
+
+### Changed
+- **Sidebar reminders now match the "show reminders" Slack command** — same sections (Due Today → Due after today → Due within last 7 days → Due older than 7 days), same chronological sort, same global A/B/C labels, and resolved assignee display names. The sidebar reads `display.*` fields from the published git-pulse file (which Sleuth's v1.4.184+ export already pre-renders) instead of extracting raw `reminder_message_text` from SQLite. Falls back to the previous flat SQLite list when the published file is unavailable. Addresses the follow-up noted in sleuth-app CHANGELOG v1.4.184.
+- `fetch_sleuth_display_sections()` added to [scripts/dashboard.py](scripts/dashboard.py): reads the local published JSON, recomputes `ageDays` from `createdOn`, returns `(sections, total)` bucketed in `sectionOrder` sequence.
+- `build_nav_data` in [scripts/pulse_web.py](scripts/pulse_web.py) gains a `sleuth_sections` parameter; when present, renders section sub-headers and canonical reminder lines (`{label}.) {summary} ({N}d old) · {assigneeName}` with Slack permalink). Flat `sleuth_rows` fallback path unchanged.
+- Stream badge count reflects the full published total when sections are available (previously capped at 6).
+
+### Fixed
+
+- **PAT guidance named a nonexistent scope (`repo:read`) — user-reported.**
+  GitHub classic tokens have no read-only repo scope, so users hunting for
+  "repo:read" landed on `public_repo` or the fine-grained "Public
+  repositories" default — making their private work silently invisible to
+  discovery and github-scan. All six doc sites (README, ARCHITECTURE,
+  PROJECT ×3, /welcome skill + demo transcript) now give correct guidance:
+  classic `repo` scope, or fine-grained with All-repos read-only
+  Contents/Metadata. PROJECT.md's threat-model line restated honestly
+  (classic `repo` is read/write — treat as sensitive). `setup_github_token`
+  now returns a `visibility_warning` when a valid token likely can't see
+  private repos (classic without `repo`; fine-grained default-trap
+  advisory), and the welcome agent surfaces it verbatim at setup time.
+
 ## [0.39.1] - 2026-06-11
 
 ### Fixed

@@ -29,14 +29,16 @@ Where does your Obsidian vault live? I'll configure it for you.
 
 **Agent:** *(runs `rebalance config set-vault-path "~/Documents/Noel Saw"`,
 re-checks status)* Done — vault verified. Next: your GitHub PAT. Create one at
-https://github.com/settings/tokens with `repo:read` scope, then paste it
+https://github.com/settings/tokens — classic token with the `repo` scope, or
+a fine-grained token with Repository access changed from the "Public
+repositories" default to All/selected repos — then paste it
 **as the tool argument when I call setup_github_token** — don't paste it into
 the chat.
 
 **You:** *(provides token via the tool prompt)*
 
-**Agent:** Validated — logged in as `noelsaw1`, repo:read confirmed, stored
-keyring-first. Google Calendar next (optional) — set it up now, or skip? You
+**Agent:** Validated — logged in as `noelsaw1`, `repo` scope confirmed
+(private repos visible), stored keyring-first. Google Calendar next (optional) — set it up now, or skip? You
 can add it any time by running /welcome again.
 
 **You:** skip for now

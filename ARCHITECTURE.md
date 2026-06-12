@@ -160,7 +160,7 @@ Project Registry ────▶ registry.py +              MD registry → proj
 
 | Source | Secret store | Mechanism |
 |---|---|---|
-| GitHub | OS keyring + `temp/rbos.config` fallback; `gh` CLI as last-resort read fallback | PAT with `repo:read`; persisted to both keyring and config for launchd reachability |
+| GitHub | OS keyring + `temp/rbos.config` fallback; `gh` CLI as last-resort read fallback | PAT: classic `repo` scope, or fine-grained with All-repos read-only Contents/Metadata (public-only tokens hide private work); persisted to both keyring and config for launchd reachability |
 | Google Calendar | `google-calendar.env` (client credentials) via `resolve_secret_path()` + pickled OAuth user-token at `resolve_oauth_token_path("calendar")` → `~/.config/rebalance-os/google-calendar-oauth` | OAuth 2.0 user consent |
 | Sleuth | `~/secrets/sleuth-web-api-development.env` (mode 600) | Bearer token, 64-hex |
 | Gmail | Desktop OAuth token in keyring + `~/.config/rebalance-os/google-gmail-oauth` fallback, or MCP push-ingest mode | `gmail.readonly` desktop OAuth, or agent-pushed `ingest_gmail_messages` path when `gmail_ingest_method=mcp` |

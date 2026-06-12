@@ -48,9 +48,13 @@ Render the `stages` array every turn, in order, as a checklist:
 Dispatch on the stage's `executor` field:
 
 - `mcp:<tool>` — call that MCP tool. For `setup_github_token`, first send the
-  user to https://github.com/settings/tokens (repo:read scope), have them
-  paste the PAT as the tool argument, and report the validation result
-  (login + scopes) back.
+  user to https://github.com/settings/tokens — classic token with the `repo`
+  scope, or a fine-grained token with Repository access changed from the
+  "Public repositories" default to All/selected repos (read-only Contents +
+  Metadata). Have them paste the PAT as the tool argument and report the
+  validation result (login + scopes) back. If the result carries a
+  `visibility_warning`, surface it verbatim — a public-only token silently
+  hides their private work from discovery.
 - `cli:<command>` — run it with Bash from the repo root, substituting
   `<path>`-style placeholders with values the user gives you.
 - `script:<path>` — run `.venv/bin/python <path>` in the background if it

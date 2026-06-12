@@ -188,7 +188,9 @@ The manual steps below remain for reference and for environments without an MCP 
 - macOS with Apple Silicon (M1+)
 - Python 3.13 recommended for the local MLX embeddings stack
 - An Obsidian vault (local folder with `.md` files)
-- A GitHub Personal Access Token with `repo:read` scope ([create one here](https://github.com/settings/tokens))
+- A GitHub Personal Access Token ([create one here](https://github.com/settings/tokens)) — either:
+  - **classic token** with the `repo` scope (GitHub offers no read-only private scope on classic tokens; `public_repo` alone makes your private work invisible to discovery), or
+  - **fine-grained token** — change *Repository access* from the default **"Public repositories"** to *All repositories* (or the ones you work in), with read-only **Contents** and **Metadata** permissions.
 - Claude Code (CLI or VS Code extension)
 
 ### Step 1 — Clone and install

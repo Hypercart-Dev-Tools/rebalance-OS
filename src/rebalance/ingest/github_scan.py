@@ -325,6 +325,39 @@ def validate_github_token(token: str) -> dict[str, Any]:
     return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {status}", "status": status}
 
 
+def token_visibility_warning(token: str, scopes: list[str]) -> str | None:
+    """Warn when a valid token likely can't see private repositories.
+
+    The docs used to name a nonexistent ``repo:read`` scope, which steered
+    users to public-only tokens (classic ``public_repo``, or the fine-grained
+    "Public repositories" default) — discovery then silently missed all
+    their private work. Heuristics:
+
+    - classic tokens report scopes via ``x-oauth-scopes``: anything without
+      ``repo`` is public-only for our purposes
+    - fine-grained tokens (``github_pat_``) report NO scopes header, so
+      visibility can't be verified remotely — surface the default-trap
+      advisory instead
+    """
+    if scopes:  # classic token — scopes are authoritative
+        if "repo" in scopes:
+            return None
+        return (
+            f"classic token without the `repo` scope (has: {', '.join(scopes)}) — "
+            "private repositories are INVISIBLE to discovery and github-scan. "
+            "Re-issue with the `repo` scope, or use a fine-grained token with "
+            "All-repos read-only Contents/Metadata."
+        )
+    if token.startswith("github_pat_"):
+        return (
+            "fine-grained token — GitHub doesn't expose its repository access "
+            "remotely. Confirm Repository access was changed from the default "
+            "'Public repositories' to All/selected repositories, or your "
+            "private work stays invisible to discovery."
+        )
+    return None  # gho_/other ambient tokens: no scopes header, no verdict
+
+
 def resolve_working_token(primary_token: str) -> str:
     """Return a GitHub token that currently authenticates, falling back to gh CLI.
 
