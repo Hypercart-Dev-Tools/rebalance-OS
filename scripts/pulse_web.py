@@ -47,6 +47,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     fetch_recent_figma,
     fetch_recent_github,
     fetch_repo_activity_counts,
+    fetch_sleuth_display_sections,
     fetch_sleuth_due,
     fetch_vault_recent,
     fetch_watched_summary,
@@ -1264,6 +1265,7 @@ def build_nav_data(
     cal_rows: list[dict[str, Any]],
     sleuth_rows: list[dict[str, Any]],
     sleuth_synced: bool,
+    sleuth_sections: list[dict[str, Any]] | None = None,
     streams: list[dict[str, Any]],
     drift_total: int,
     semantic_total: int,
@@ -1278,6 +1280,11 @@ def build_nav_data(
     Sleuth helpers and the DB-derived rows). The pure shell that frames these
     strings lives in :func:`rebalance.web_components.render_sidebar`, which keeps
     that module stdlib-only.
+
+    When ``sleuth_sections`` is provided (from ``fetch_sleuth_display_sections``),
+    reminders are rendered with the same section/label/assignee format as the
+    Slack "show reminders" command. Falls back to the flat ``sleuth_rows`` path
+    when the published file is unavailable.
     """
     cal_items = []
     for ev in cal_rows:
@@ -1294,29 +1301,66 @@ def build_nav_data(
         cal_items.append('<li class="side-row empty"><div class="side-row-meta">No upcoming events.</div></li>')
 
     sleuth_items = []
-    for s in sleuth_rows:
-        msg = compact_sleuth_reminder(s.get("reminder_message_text") or "")
-        msg = _truncate(msg, 90)
-        when = _format_dt_short(s.get("should_post_on"), tz=tz) if s.get("should_post_on") else ""
-        role = "from me" if s.get("sleuth_role") == "assigned_by_me" else "for me"
-        meta_bits = [b for b in [when, role] if b]
-        slack_url = build_slack_url(s)
-        body = f"""
-            <div class="side-row-title">{_esc(msg)}</div>
-            <div class="side-row-meta">{_esc(' · '.join(meta_bits))}</div>
-        """
-        if slack_url:
-            sleuth_items.append(f"""
+    if sleuth_sections:
+        # Published-file path: section headers + canonical "show reminders" format.
+        _SUBSECTION_LI = (
+            "style='font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;"
+            "color:var(--fg-dim);padding:10px 8px 3px;pointer-events:none;'"
+        )
+        for section in sleuth_sections:
+            section_label = section.get("sectionLabel", "")
+            sleuth_items.append(
+                f"<li {_SUBSECTION_LI}>{_esc(section_label)}</li>"
+            )
+            for r in section.get("reminders") or []:
+                label    = r.get("label", "")
+                summary  = _truncate(r.get("summary", ""), 90)
+                age_days = int(r.get("ageDays") or 0)
+                assignee = r.get("assigneeName", "")
+                permalink = r.get("permalink", "")
+                due_str  = _format_dt_short(r.get("shouldPostOn"), tz=tz) if r.get("shouldPostOn") else ""
+
+                age_part  = f" ({age_days}d old)" if age_days else ""
+                title_txt = f"{label}.) {summary}{age_part}" if label else f"{summary}{age_part}"
+                meta_bits = [b for b in [due_str, assignee] if b]
+                body = (
+                    f"<div class='side-row-title'>{_esc(title_txt)}</div>"
+                    f"<div class='side-row-meta'>{_esc(' · '.join(meta_bits))}</div>"
+                )
+                if permalink:
+                    sleuth_items.append(
+                        f"<li class='side-row has-link'>"
+                        f"<a class='side-row-link' href='{_esc(permalink)}' "
+                        f"target='_blank' rel='noopener noreferrer' title='Open in Slack'>"
+                        f"{body}</a></li>"
+                    )
+                else:
+                    sleuth_items.append(f"<li class='side-row'>{body}</li>")
+    else:
+        # Fallback: flat list from SQLite (no display fields available).
+        for s in sleuth_rows:
+            msg = compact_sleuth_reminder(s.get("reminder_message_text") or "")
+            msg = _truncate(msg, 90)
+            when = _format_dt_short(s.get("should_post_on"), tz=tz) if s.get("should_post_on") else ""
+            role = "from me" if s.get("sleuth_role") == "assigned_by_me" else "for me"
+            meta_bits = [b for b in [when, role] if b]
+            slack_url = build_slack_url(s)
+            body = f"""
+                <div class="side-row-title">{_esc(msg)}</div>
+                <div class="side-row-meta">{_esc(' · '.join(meta_bits))}</div>
+            """
+            if slack_url:
+                sleuth_items.append(f"""
           <li class="side-row has-link">
             <a class="side-row-link" href="{_esc(slack_url)}" target="_blank" rel="noopener noreferrer" title="Open in Slack">
               {body}
             </a>
           </li>
-            """)
-        else:
-            sleuth_items.append(f"""
+                """)
+            else:
+                sleuth_items.append(f"""
           <li class="side-row">{body}</li>
-            """)
+                """)
     if not sleuth_items:
         if sleuth_synced:
             # Genuinely empty — Sleuth synced and there is nothing pending.
@@ -2570,7 +2614,9 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     org_activity_rows = fetch_org_activity(days=org_activity_days)
     vault_rows = fetch_vault_recent(limit=6)
     cal_rows = fetch_calendar_upcoming(now, limit=6)
-    sleuth_rows = fetch_sleuth_due(limit=6)
+    sleuth_sections, sleuth_total = fetch_sleuth_display_sections()
+    # Fallback to the DB-backed flat list when the published file is unavailable.
+    sleuth_rows = fetch_sleuth_due(limit=6) if not sleuth_sections else []
     email_rows = fetch_recent_emails(limit=30)
     figma_rows = fetch_recent_figma(limit=12)
     repo_pie_days = 7
@@ -2586,13 +2632,14 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     )
 
     in_progress = sum(1 for g in goals if not g["done"])
+    _sleuth_count = sleuth_total if sleuth_sections else len(sleuth_rows)
     streams = build_stream_rows(
         status,
         live_counts={
             "github": len(gh_rows),
             "vault": len(vault_rows),
             "calendar": len(cal_rows),
-            "sleuth": len(sleuth_rows),
+            "sleuth": _sleuth_count,
             "email": len(email_rows),
         },
     )
@@ -2626,6 +2673,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
         cal_rows=cal_rows,
         sleuth_rows=sleuth_rows,
         sleuth_synced=sleuth_synced,
+        sleuth_sections=sleuth_sections or None,
         streams=streams,
         drift_total=drift_total,
         semantic_total=semantic_total,

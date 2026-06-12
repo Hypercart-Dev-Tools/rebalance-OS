@@ -320,3 +320,31 @@ class ConfigPathResolutionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TokenVisibilityWarningTests(unittest.TestCase):
+    """The docs' nonexistent `repo:read` scope steered users to public-only
+    tokens; setup now warns when a valid token likely can't see private repos."""
+
+    def test_classic_repo_scope_is_clean(self):
+        from rebalance.ingest.github_scan import token_visibility_warning
+
+        self.assertIsNone(token_visibility_warning("ghp_x", ["repo", "read:org"]))
+
+    def test_classic_public_only_warns(self):
+        from rebalance.ingest.github_scan import token_visibility_warning
+
+        warning = token_visibility_warning("ghp_x", ["public_repo"])
+        self.assertIn("INVISIBLE", warning)
+        self.assertIn("public_repo", warning)
+
+    def test_fine_grained_gets_default_trap_advisory(self):
+        from rebalance.ingest.github_scan import token_visibility_warning
+
+        warning = token_visibility_warning("github_pat_x", [])
+        self.assertIn("Public repositories", warning)
+
+    def test_ambient_tokens_without_scopes_get_no_verdict(self):
+        from rebalance.ingest.github_scan import token_visibility_warning
+
+        self.assertIsNone(token_visibility_warning("gho_x", []))

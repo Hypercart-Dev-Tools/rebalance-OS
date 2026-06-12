@@ -642,6 +642,86 @@ def fetch_sleuth_due(limit: int = 4) -> list[dict[str, Any]]:
     return out
 
 
+def fetch_sleuth_display_sections() -> tuple[list[dict[str, Any]], int]:
+    """Read the published Sleuth reminders file and return (sections, total).
+
+    Each section is {sectionKey, sectionLabel, reminders: [{label, summary,
+    assigneeName, permalink, ageDays, shouldPostOn}]}, ordered per
+    display.sectionOrder. ageDays is recomputed from createdOn at call time.
+
+    Returns ([], 0) on any error (missing file, bad config, etc.).
+    """
+    try:
+        from rebalance.ingest.config import get_sleuth_credentials
+        from rebalance.ingest.sleuth_reminders import (
+            _local_source_path,
+            _read_payload_from_file,
+        )
+    except ImportError:
+        return [], 0
+
+    try:
+        env = get_sleuth_credentials("production")
+        base_url = env.get("SLEUTH_WEB_API_BASE_URL", "")
+        file_path = _local_source_path(base_url)
+        if file_path is None:
+            return [], 0
+        data = _read_payload_from_file(file_path)
+    except Exception:
+        return [], 0
+
+    top_display = data.get("display") or {}
+    # sectionOrder is [{key, label}, ...] in the published file
+    section_order_raw = top_display.get("sectionOrder") or []
+    section_order = [
+        s["key"] for s in section_order_raw if isinstance(s, dict) and s.get("key")
+    ] or ["dueToday", "dueUpcoming", "dueLastWeek", "dueOlder"]
+
+    reminders_raw = data.get("reminders") or []
+    now_utc = datetime.now(timezone.utc)
+
+    sections_by_key: dict[str, dict[str, Any]] = {}
+    for r in reminders_raw:
+        disp = r.get("display") or {}
+        section_key = disp.get("sectionKey")
+        if not section_key:
+            continue
+
+        created_on = r.get("createdOn") or ""
+        try:
+            created_dt = datetime.fromisoformat(created_on.replace("Z", "+00:00"))
+            age_days = max(0, int((now_utc - created_dt).total_seconds() / 86400))
+        except (ValueError, TypeError, AttributeError):
+            age_days = int(disp.get("ageDays") or 0)
+
+        entry = {
+            "label":        disp.get("label", ""),
+            "summary":      disp.get("summary", ""),
+            "assigneeName": disp.get("assigneeName", ""),
+            "permalink":    disp.get("permalink", ""),
+            "sectionLabel": disp.get("sectionLabel", section_key),
+            "sectionKey":   section_key,
+            "ageDays":      age_days,
+            "shouldPostOn": r.get("shouldPostOn"),
+        }
+
+        if section_key not in sections_by_key:
+            sections_by_key[section_key] = {
+                "sectionKey":   section_key,
+                "sectionLabel": disp.get("sectionLabel", section_key),
+                "reminders":    [],
+            }
+        sections_by_key[section_key]["reminders"].append(entry)
+
+    result = [
+        sections_by_key[key]
+        for key in section_order
+        if key in sections_by_key and sections_by_key[key]["reminders"]
+    ]
+    total = sum(len(s["reminders"]) for s in result)
+    return result, total
+
+
 def fetch_recent_emails(limit: int = 30) -> list[dict[str, Any]]:
     try:
         with db_connection(DB_PATH) as conn:

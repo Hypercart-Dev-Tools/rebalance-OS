@@ -33,7 +33,7 @@ All decisions that create divergence between tiers should be flagged explicitly 
 ## Assumptions
 
 - **Obsidian Vault**: Local folder with clean MD files; frontmatter, headings, tags, and links are well-structured for parsing. Vault size <10k notes to keep embedding feasible on macOS hardware.
-- **Local Setup**: macOS with `mlx-embeddings` (local fork at `WP-DB-Toolkit/mlx-embeddings`) for Qwen3 embeddings via Apple Silicon MLX; optional Ollama/LM Studio for local LLM synthesis; Python 3.12+ with sqlite-vec extension; GitHub PAT with repo:read scope.
+- **Local Setup**: macOS with `mlx-embeddings` (local fork at `WP-DB-Toolkit/mlx-embeddings`) for Qwen3 embeddings via Apple Silicon MLX; optional Ollama/LM Studio for local LLM synthesis; Python 3.12+ with sqlite-vec extension; GitHub PAT (classic `repo` scope, or fine-grained with All-repos read-only Contents/Metadata — public-only tokens hide private work).
 - **GitHub Usage**: 5-6 active repos; PAT stored securely in gitignored config (see Secrets Strategy); activity tracked via API (commits, PRs, issues last 30-90 days).
 - **Google Calendar**: `gcalcli` installed and OAuth2-authenticated; today's agenda pulled via CLI subprocess call.
 - **Project Registry Source**: `Projects/00-project-registry.md` in the Obsidian vault is the human-editable source of truth for project metadata.
@@ -289,7 +289,7 @@ The host agent (not the server) drives this flow by calling MCP tools:
 1. **Check state** — Agent calls `onboarding_status`. If all steps complete, skip onboarding. If any step is incomplete, agent walks the user through remaining steps in order.
 
 2. **GitHub PAT** (first because it's the fastest high-signal bootstrap):
-   - Agent asks user for a PAT with `repo:read` scope.
+   - Agent asks user for a PAT — classic `repo` scope, or fine-grained with Repository access set to All/selected repos (read-only Contents + Metadata; the "Public repositories" default hides private work).
    - Agent calls `setup_github_token` with the PAT.
    - Tool validates against GitHub `/user` endpoint, confirms minimum scope, stores in `temp/rbos.config` (gitignored, repo root — see Secrets Strategy).
    - If validation fails: tool returns error detail, agent prompts replacement.
@@ -653,7 +653,7 @@ Once built, the MCP host becomes the conversational interface to the assembled o
 
 - Config stored at `temp/rbos.config` (JSON, plaintext) relative to **repo root** — not vault root. These are separate locations; do not conflate them.
 - `temp/` is listed in `.gitignore` — never committed
-- PAT scope is read-only (`repo:read`), so exposure impact is low
+- PAT exposure impact depends on token type: a classic `repo` token grants read/write to all repos (GitHub has no read-only private scope on classic tokens) — treat it as sensitive; a fine-grained token with read-only Contents/Metadata genuinely limits blast radius. Keyring-first storage either way.
 - CLI commands:
   - `rebalance config set-github-token <PAT>` — store PAT
   - `rebalance config get-github-token` — check config (masked output)
