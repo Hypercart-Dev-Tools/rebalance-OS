@@ -125,6 +125,29 @@ class TestCalendarSnapshot(unittest.TestCase):
                     "attendees_json", "calendar_id", "status", "description", "fetched_at"):
             self.assertIn(col, row)
 
+    def test_excludes_non_primary_calendars(self) -> None:
+        # Default deny (P2 decision #3): teammate (non-'primary') calendars must
+        # never be exported to the pulse repo.
+        _seed_calendar(self.db, [
+            {"id": "mine", "summary": "My block", "start_time": _future(1)},
+        ])
+        conn = sqlite3.connect(self.db)
+        conn.execute(
+            "INSERT OR REPLACE INTO calendar_events VALUES (?,?,?,?,?,?,?,?,?,?)",
+            ("teammate-evt", "Teammate block", _future(1), None, None, None,
+             "teammate@group.calendar.google.com", "confirmed", None,
+             "2026-06-01T00:00:00Z"),
+        )
+        conn.commit()
+        conn.close()
+        out = export_calendar_snapshot(self.db, self.sync_dir, device_id="mac")
+        data = json.loads(out.read_text())
+        self.assertEqual(data["row_count"], 1)
+        self.assertEqual({r["calendar_id"] for r in data["rows"]}, {"primary"})
+        summaries = [r["summary"] for r in data["rows"]]
+        self.assertIn("My block", summaries)
+        self.assertNotIn("Teammate block", summaries)
+
     def test_empty_db_writes_zero_rows(self) -> None:
         _seed_calendar(self.db, [])
         out = export_calendar_snapshot(self.db, self.sync_dir, device_id="mac")

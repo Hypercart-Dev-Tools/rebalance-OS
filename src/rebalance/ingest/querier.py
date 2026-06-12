@@ -97,7 +97,8 @@ def _gather_temporal_context(
             # Check for all-day or spanning events on the target date
             rows = conn.execute(
                 """SELECT summary FROM calendar_events
-                   WHERE start_time <= ? AND end_time >= ?""",
+                   WHERE calendar_id = 'primary'
+                     AND start_time <= ? AND end_time >= ?""",
                 (date_str + "T23:59:59", date_str + "T00:00:00"),
             ).fetchall()
         for row in rows:

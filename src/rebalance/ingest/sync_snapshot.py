@@ -96,11 +96,14 @@ def export_calendar_snapshot(
     since = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
 
     with db_connection(database_path, ensure_calendar_schema) as conn:
+        # Default deny (P2 decision #3): only the operator's own ('primary')
+        # calendar is ever exported to the pulse repo. Teammate calendars
+        # (calendar_id != 'primary') stay local to the dashboard SQLite.
         rows = conn.execute(
             f"""
             SELECT {", ".join(_CALENDAR_COLUMNS)}
             FROM calendar_events
-            WHERE start_time >= ?
+            WHERE calendar_id = 'primary' AND start_time >= ?
             ORDER BY start_time DESC
             """,
             (since,),

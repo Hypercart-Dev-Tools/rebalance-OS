@@ -356,25 +356,44 @@ def create_calendar_event(
 # ---------------------------------------------------------------------------
 
 
+def _calendar_id_filter(calendar_id: str | None) -> tuple[str, tuple]:
+    """SQL fragment + params to optionally restrict a query to one calendar.
+
+    Callers default to ``"primary"`` (the operator's own calendar) so personal
+    views never mix in teammate calendars; pass ``None`` to include every
+    calendar (the team-blended views added in P2 Phase 2).
+    """
+    if calendar_id is None:
+        return "", ()
+    return "AND calendar_id = ?", (calendar_id,)
+
+
 def get_upcoming_events(
     database_path: Path,
     days_forward: int = 2,
+    calendar_id: str | None = "primary",
 ) -> list[dict[str, Any]]:
-    """Return upcoming events from the calendar_events table."""
+    """Return upcoming events from the calendar_events table.
+
+    Defaults to the operator's own ``primary`` calendar; pass ``calendar_id=None``
+    to include all calendars (team views).
+    """
     from rebalance.ingest.calendar_helpers import calendar_connection
 
     now = datetime.now(timezone.utc).isoformat()
     cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
 
+    cal_clause, cal_params = _calendar_id_filter(calendar_id)
     with calendar_connection(database_path) as conn:
         rows = conn.execute(
-            """SELECT summary, start_time, end_time, location, attendees_json, description
+            f"""SELECT summary, start_time, end_time, location, attendees_json, description
                FROM calendar_events
                WHERE julianday(start_time) >= julianday(?)
                  AND julianday(start_time) <= julianday(?)
+                 {cal_clause}
                ORDER BY julianday(start_time) ASC
                LIMIT 30""",
-            (now, cutoff),
+            (now, cutoff, *cal_params),
         ).fetchall()
 
     return [
@@ -393,22 +412,29 @@ def get_upcoming_events(
 def get_recent_events(
     database_path: Path,
     days_back: int = 7,
+    calendar_id: str | None = "primary",
 ) -> list[dict[str, Any]]:
-    """Return past events for activity/meeting-load context."""
+    """Return past events for activity/meeting-load context.
+
+    Defaults to the operator's own ``primary`` calendar; pass ``calendar_id=None``
+    to include all calendars (team views).
+    """
     from rebalance.ingest.calendar_helpers import calendar_connection
 
     now = datetime.now(timezone.utc).isoformat()
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).isoformat()
 
+    cal_clause, cal_params = _calendar_id_filter(calendar_id)
     with calendar_connection(database_path) as conn:
         rows = conn.execute(
-            """SELECT summary, start_time, end_time, location, attendees_json
+            f"""SELECT summary, start_time, end_time, location, attendees_json
                FROM calendar_events
                WHERE julianday(start_time) >= julianday(?)
                  AND julianday(start_time) < julianday(?)
+                 {cal_clause}
                ORDER BY julianday(start_time) DESC
                LIMIT 50""",
-            (cutoff, now),
+            (cutoff, now, *cal_params),
         ).fetchall()
 
     return [
@@ -450,9 +476,12 @@ def get_daily_totals(
     database_path: Path,
     days_back: int = 30,
     days_forward: int = 0,
+    calendar_id: str | None = "primary",
 ) -> list[DailyEventTotal]:
-    """Calculate event count and total duration per day (raw, unfiltered).
+    """Calculate event count and total duration per day.
 
+    Defaults to the operator's own ``primary`` calendar so totals aren't inflated
+    by teammate calendars; pass ``calendar_id=None`` to aggregate all calendars.
     Returns days sorted chronologically (oldest first).
     """
     from rebalance.ingest.calendar_helpers import (
@@ -465,13 +494,15 @@ def get_daily_totals(
     start_date = (now - timedelta(days=days_back)).date()
     end_date = (now + timedelta(days=days_forward)).date()
 
+    cal_clause, cal_params = _calendar_id_filter(calendar_id)
     with calendar_connection(database_path) as conn:
         rows = conn.execute(
-            """SELECT start_time, end_time
+            f"""SELECT start_time, end_time
                FROM calendar_events
                WHERE DATE(start_time) >= ? AND DATE(start_time) <= ?
+                 {cal_clause}
                ORDER BY start_time ASC""",
-            (start_date.isoformat(), end_date.isoformat()),
+            (start_date.isoformat(), end_date.isoformat(), *cal_params),
         ).fetchall()
 
     # Aggregate by day
