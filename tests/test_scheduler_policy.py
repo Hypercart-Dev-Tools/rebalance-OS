@@ -242,12 +242,18 @@ class TestPlistTemplates(unittest.TestCase):
     def test_program_arguments_reference_real_files(self):
         for job in POLICY:
             for arg in _parse(job)["ProgramArguments"]:
-                if arg.startswith(FAKE_ROOT + "/"):
-                    rel = arg[len(FAKE_ROOT) + 1:]
-                    self.assertTrue(
-                        (REPO / rel).is_file(),
-                        f"{job}: ProgramArguments references missing file {rel}",
-                    )
+                if not arg.startswith(FAKE_ROOT + "/"):
+                    continue
+                rel = arg[len(FAKE_ROOT) + 1:]
+                # Only executables must exist in the repo. Runtime artifacts
+                # (temp/ logs, state files) are created on first run and are
+                # gitignored — asserting them broke CI on clean checkouts.
+                if not rel.endswith((".py", ".sh")):
+                    continue
+                self.assertTrue(
+                    (REPO / rel).is_file(),
+                    f"{job}: ProgramArguments references missing file {rel}",
+                )
 
     def test_python_direct_jobs_carry_policy_args(self):
         for job, spec in POLICY.items():

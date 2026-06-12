@@ -39,13 +39,17 @@ class ExtractFigmaKeyTests(unittest.TestCase):
 
 class AddFigmaProjectApiTests(unittest.TestCase):
     def test_adds_new_key_and_returns_sync_counts(self) -> None:
+        # Patch the names the handler actually binds (module-level imports in
+        # pulse_server) — never with create=True, which silently masked an
+        # API drift here for months and let the test mutate the operator's
+        # real config (failed 409 locally, wrote real config in CI).
         client = TestClient(pulse_server.app)
 
         with patch.object(pulse_server, "_run_pulse_render") as run_render, \
-             patch("pulse_server.get_figma_file_keys", side_effect=[[], ["VoQWc0fhO020JoxOyqeE1P"]], create=True), \
-             patch("pulse_server.set_figma_file_keys", create=True) as set_keys, \
-             patch("pulse_server.resolve_database_path", create=True, return_value=Path("/tmp/rebalance.db")), \
-             patch("pulse_server.refresh_index", create=True, return_value={
+             patch.object(pulse_server, "add_figma_file_key", return_value=True) as add_key, \
+             patch.object(pulse_server, "get_figma_file_keys", return_value=["VoQWc0fhO020JoxOyqeE1P"]), \
+             patch.object(pulse_server, "resolve_database_path", return_value=Path("/tmp/rebalance.db")), \
+             patch.object(pulse_server, "refresh_index", return_value={
                  "results": [{
                      "scope": "figma",
                      "comments_fetched": 12,
@@ -63,10 +67,9 @@ class AddFigmaProjectApiTests(unittest.TestCase):
         data = res.json()
         self.assertTrue(data["ok"])
         self.assertEqual(data["file_key"], "VoQWc0fhO020JoxOyqeE1P")
-        self.assertFalse(data["already_present"])
         self.assertTrue(data["sync_ok"])
         self.assertEqual(data["comments_fetched"], 12)
-        set_keys.assert_called_once_with(["VoQWc0fhO020JoxOyqeE1P"])
+        add_key.assert_called_once_with("VoQWc0fhO020JoxOyqeE1P")
 
     def test_invalid_input_returns_400(self) -> None:
         client = TestClient(pulse_server.app)
