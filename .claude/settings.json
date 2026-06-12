@@ -59,7 +59,10 @@
       "Write(tests/**)",
       "Write(PROJECT/**)",
       "Bash(REBALANCE_NO_KEYRING=1 .venv/bin/python -c ' *)",
-      "Edit(/.claude/skills/welcome/**)"
+      "Edit(/.claude/skills/welcome/**)",
+      "Bash(sed -n 34,38p PROJECT.md)",
+      "Bash(sed -n 290,294p PROJECT.md)",
+      "Bash(sed -n 654,658p PROJECT.md)"
     ]
   }
 }

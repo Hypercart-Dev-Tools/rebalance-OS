@@ -6,7 +6,7 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
-## [0.39.2] - 2026-06-11
+## [0.39.3] - 2026-06-12
 
 ### Changed
 - **Sidebar reminders now match the "show reminders" Slack command** — same sections (Due Today → Due after today → Due within last 7 days → Due older than 7 days), same chronological sort, same global A/B/C labels, and resolved assignee display names. The sidebar reads `display.*` fields from the published git-pulse file (which Sleuth's v1.4.184+ export already pre-renders) instead of extracting raw `reminder_message_text` from SQLite. Falls back to the previous flat SQLite list when the published file is unavailable. Addresses the follow-up noted in sleuth-app CHANGELOG v1.4.184.
