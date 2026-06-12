@@ -6,6 +6,52 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.37.0] - 2026-06-11
+
+### Added
+
+- **Phase 5 lifecycle contract — `src/rebalance/ingest/lifecycle.py`.** Two
+  machine-readable maps the Phase 6 welcome agent will render: the project
+  lifecycle ownership table (discovery → review → confirmation → persistence →
+  inference → prioritization, each with one owner and a write-semantics
+  vocabulary) and the setup stage machine (config, vault, GitHub PAT, optional
+  Calendar/Gmail auth, registry, projections) with `done`/`now`/`next`/`blocked`
+  statuses and per-stage remediation hints. `onboarding_status` is now a thin
+  view over it (legacy `steps` list preserved).
+- **Discovery provenance end to end.** `Project.provenance` field
+  (`remote-activity` | `vault-note` | `inferred`; `local-scan` reserved for the
+  Phase 6 git-pulse promotion); candidates stamped at discovery, persisted via
+  `custom_fields_json` (same pattern as `external`), lifted back to top level by
+  `get_projects`.
+- **Onboarding E2E tests** (`tests/test_onboarding_e2e.py`): discover →
+  confirm → list promote path, provenance round-trip, read-only discovery,
+  setup status flipping to done. **Lifecycle contract tests**
+  (`tests/test_lifecycle_contract.py`, 13 tests): blocked propagation,
+  exactly-one-now, optional-stays-offered, re-poll stability.
+- **Thin Phase 6 spike** (`scripts/spike_welcome_status.py`): disposable driver
+  that walks the status contract on a sandbox fresh machine (all assertions
+  pass) and renders "where am I" for the real machine via `--real`.
+
+### Fixed
+
+- **Discovery no longer creates the registry file.** `discover_candidates`
+  called `load_registry`, which writes the default registry when missing — so
+  merely running discovery flipped `registry_exists` to done before any
+  confirmation. New `read_registry` (pure read) used on the discovery path.
+- **Inference can no longer clobber curated registry rows.**
+  `sync_inferred_project_registry` skips any name owned by a non-inference row
+  (the upsert is name-keyed and would have overwritten curated
+  summary/priority/custom_fields wholesale); skips are reported in
+  `InferenceSummary.skipped_curated_*` and echoed by the CLI.
+
+### Changed
+
+- **One text normalizer.** `normalize_match_text` in `project_classifier` is
+  the canonical implementation; `project_inference` and `project_priority`
+  delegate (was three identical copies).
+- **ARCHITECTURE.md** documents the registry write discipline and the
+  lifecycle module.
+
 ## [0.36.0] - 2026-06-11
 
 ### Added

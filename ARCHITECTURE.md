@@ -136,7 +136,14 @@ Project Registry ────▶ registry.py +              MD registry → proj
 | Figma comments | `rebalance refresh` | `refresh_index` | opt-in |
 | Focus 5 | `refresh_index(scope=["focus5"])`, `rebalance serve` / pulse server | web `/focus-5` route | opt-in |
 | ask_self inventory | `refresh_index(scope=["ask_self"])` | `list_ask_self_repos` | opt-in |
-| Project registry | `rebalance ingest preflight`, `ingest sync` | `list_projects`, `run_preflight`, `confirm_projects`, `onboarding_status` | on demand |
+| Project registry | `rebalance ingest preflight`, `ingest sync`, `onboard` | `list_projects`, `run_preflight`, `confirm_projects`, `onboarding_status` | on demand |
+
+> Registry write discipline (Phase 5, `ingest/lifecycle.py`): discovery is
+> read-only and stamps candidates with `provenance` (remote-activity /
+> vault-note; local-scan reserved); `confirm_and_write` is the only curated
+> write path; activity inference maintains only rows it created (marked
+> `inference.generated_by`) and never touches curated rows; priority rules
+> overlay at read time and are never persisted.
 
 > Preferred write path: `refresh_index(scope=[...])` is the orchestrated entry
 > point. Several source-specific CLI/MCP write commands still exist for
@@ -448,8 +455,16 @@ src/rebalance/
   doctor.py                — installation health checks; backs `rebalance doctor`
   ingest/
     config.py              — secrets storage (temp/rbos.config)
-    registry.py            — project registry sync (Markdown ↔ YAML ↔ SQLite)
-    preflight.py           — onboarding discovery + confirmation
+    registry.py            — project registry sync (Markdown ↔ YAML ↔ SQLite);
+                              read_registry (pure read) vs load_registry (write-path)
+    preflight.py           — onboarding discovery (read-only, provenance-stamped)
+                              + confirmation — the only curated registry write path
+    lifecycle.py           — Phase 5 lifecycle contract: setup stage map with
+                              done/now/next/blocked statuses + remediation (backs
+                              onboarding_status), and the project-lifecycle
+                              ownership table (write semantics per stage —
+                              discovery read_only, confirmation gated, inference
+                              machine-owned, prioritization read-time overlay)
     github_scan.py         — GitHub Events API collector + per-project balance query
     github_knowledge.py    — per-repo artifact sync (issues/PRs/comments/commits/checks) + embedding
     github_watch.py        — watched/external repo reconciliation and repo-watch logic
@@ -496,6 +511,8 @@ scripts/                   — Operator entry points (not part of the importable
                               browser mirror of the dashboard) from the same SQLite
                               knowledge base; atomic via tmp+replace; supports --watch
   _bootstrap.py            — single sys.path shim for directly-run scripts (src/ + scripts/)
+  spike_welcome_status.py  — disposable Phase 6 spike: drives the lifecycle status
+                              contract (sandbox walkthrough + --real "where am I")
   lib/scheduler_common.sh  — shared launchd job runtime: env bootstrap, dated logs,
                               job-lifecycle events, retention (sourced by *_sync.sh)
   lib/install_common.sh    — shared installer flow: always-unload, render template,
