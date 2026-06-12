@@ -24,7 +24,7 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 
 | ✅ Most recently completed phase | ⏭️ What's next |
 |---|---|
-| **Phase 0 PASSED — GO (2026-06-12).** All three gate criteria cleared: net-new median **~58%** (≥20%), **5/5 Noel-confirmed catches** + precision ≥50%, blinded preference **Noel 4/5 · Gemini 5/5** (both ≥3/5). Owner-bias finding strengthens it. Full scoring in the [progress log](#phase-0-progress-log). | **Phase 1 — productize Matt's calendar** (single agent, Sonnet High per the [mode policy](#execution-modes--ultra-code-vs-sonnet-high-decided-2026-06-12)): schema migration (composite PK + `person`), `team_calendars` list config, Gemini inference wired from GSM, then **Ultra Code** pre-merge review of the export seam. |
+| **Phase 1 in progress (2026-06-12)** — privacy leaks closed + **migration 0005 applied to the live DB** (composite PK `(id, calendar_id)` + `person`, atomic, hardened by a 16-finding adversarial review). 611 rows preserved, integrity ok. Commits c3a2bb7, 04b5939. | **Finish Phase 1:** `team_calendars` list config + per-person attribution + Gemini-from-GSM inference + observability/tests + `/phase-qa`, then **Ultra Code** pre-merge review before `main`. (Also: canonicalize own-calendar=`primary`, review finding #4.) |
 
 ---
 
@@ -270,10 +270,11 @@ is the goal (verify).**
 Keep it one `Collector` — no new dispatch branches (registry stays clean). **Matt only** (decision #4):
 a single second calendar, modeled so the Phase-2 jump to N people is config, not a refactor.
 
-- [ ] **🔴 BLOCKING — close the export leak (decision #3, gap #4):** add `WHERE calendar_id = 'primary'` to `export_calendar_snapshot` ([sync_snapshot.py:99-107](src/rebalance/ingest/sync_snapshot.py#L99-L107)) so teammate rows never reach the pulse repo. Add a regression test asserting a non-primary row is absent from the export. *(Do this first — every pulse-sync run currently re-exports Matt's rows to `rebalance-git-pulse`.)*
-- [ ] **🔴 BLOCKING — fix reader contamination (gap #5):** filter/segregate by `calendar_id` in `get_upcoming_events` / `get_recent_events` / `get_daily_totals` ([calendar.py:360-475](src/rebalance/ingest/calendar.py#L360-L475)) and `_gather_calendar_context` so Matt's blocks stop bleeding into Noel's *own* dashboard/`ask`/pulse views and double-counting daily totals.
-- [ ] **Clean up the Phase-0 Matt rows** *(pending Noel's call — see progress log):* either `DELETE FROM calendar_events WHERE calendar_id='<matt>'` (reverse the spike; Phase 1 re-syncs cleanly) **or** keep them and rely on the filters above. Decide before Phase 1 ships.
-- [ ] **Schema migration** (numbered `.sql` in [db/migrations/](src/rebalance/ingest/db/migrations/) — next is `0005`; **first table-rebuild in this repo**, no in-place PK ALTER in SQLite): composite PK `(id, calendar_id)`; add `person TEXT`; add index `(calendar_id, start_time)`. Standard create-new/copy/drop/rename per [migrations/README.md](src/rebalance/ingest/db/migrations/README.md). Only **1 real ID collision** exists today, so this is foundational, not urgent — sequence it *after* the two leaks are closed.
+- [x] **Export leak closed (c3a2bb7, decision #3 / gap #4):** `export_calendar_snapshot` now filters `WHERE calendar_id = 'primary'` (default deny) + regression test. Teammate rows never reach the pulse repo.
+- [x] **Reader contamination fixed (c3a2bb7 + 04b5939, gap #5):** `calendar_id`-scoped (default `'primary'`, `None` = all) via a shared `_calendar_id_filter` helper in `get_upcoming_events` / `get_recent_events` / `get_daily_totals`, plus `querier` vacation check, `pulse._query_calendar_upcoming`, **and the review-found `scripts/dashboard.py` (TUI + web/pulse.html) + `scripts/spike_morning_brief.py`** readers. Reader-scope + off-machine + no-contamination tests added.
+- [x] **Phase-0 Matt rows deleted (2026-06-12):** `DELETE WHERE calendar_id='<matt>'` — table primary-only (611). Phase 1 re-syncs cleanly behind the filters.
+- [x] **Schema migration 0005 — DONE & applied to live DB (04b5939):** composite PK `(id, calendar_id)` + `person TEXT` + index `(calendar_id, start_time)`. First table-rebuild in the repo; made **atomic** (BEGIN/COMMIT + `migrate.py` rollback-on-error) after the adversarial review found a non-atomic re-run could destroy all calendar data. Applied to live DB: v4→v5, 611 rows preserved, integrity ok. Backup at `rebalance.db.pre-0005.bak`.
+- [ ] **Canonicalize "own calendar = `primary`" (review finding #4 — medium):** the new privacy filters hardcode the literal `'primary'`, while `daily_report`/`project_inference`/`note_builder` scope by `config.calendar_id`. For the default config (`calendar_id='primary'`) these agree, but an operator who set `calendar_id` to an email would get empty exports/pulse/vacation. Resolve when wiring `team_calendars`: define one source of truth for the own-calendar id (or enforce the operator's own calendar is always stored under `'primary'`), and add a test with `config.calendar_id` set to an email.
 - [ ] **Config**: add `team_calendars: [{person, calendar_id}]` (a **list from day one**) to [calendar_config.py](src/rebalance/ingest/calendar_config.py); a 1-element list handles Matt now and makes Phase 2's N-person generalization config-only, not a second migration. Keep single `calendar_id` for back-compat.
 - [ ] **Refresh**: `_refresh_calendar` syncs `primary` + the one team calendar; per-calendar timing/counts in the result envelope (window stays bounded).
 - [x] **Pulse repo privacy confirmed (2026-06-12):** `Hypercart-Dev-Tools/rebalance-git-pulse` is **PRIVATE** (`gh repo view`). The gating concern (decision #3) is satisfied for visibility; the code-level export filter above is still required (default deny).
@@ -425,6 +426,16 @@ de-duped, with the arm mapping sealed in `.ab_key.json` and the LLM judge's vote
 - **🔴 LIVE gap 2 — reader contamination:** the dashboard/`ask`/pulse calendar readers don't filter `calendar_id`, so Matt's blocks are currently mixed into Noel's *own* views + double-counted. Blocking Phase-1 fix.
 - **Doc corrected:** decision #3, gaps #4/#5, and the ethos "Locality" bullet now state the true (un-enforced) state and record that `rebalance-git-pulse` is PRIVATE so future sessions don't re-flag it.
 - **Open decision for Noel:** delete the Phase-0 Matt rows now (clean reverse) vs keep them behind the new filters. Pulse-sync re-exports them each run until one of those lands.
+
+**2026-06-12 (Phase 1 — privacy fixes + migration 0005 shipped under adversarial review).**
+- Noel: *delete Matt rows, then start Phase 1.* Done. Matt's 155 rows deleted (table primary-only, 611).
+- **Both leaks closed:** export filter (c3a2bb7) + every personal-view reader scoped to `primary` — `calendar.py` readers + `querier` vacation + `pulse._query_calendar_upcoming`, **plus the review-found `scripts/dashboard.py` (TUI + web/pulse.html) and `scripts/spike_morning_brief.py`**.
+- **Migration 0005 written, then run through a 4-dimension adversarial review workflow** (Ultracode; 25 agents, 21 findings, **16 confirmed**):
+  - **BLOCKER (fixed):** the non-atomic rebuild (`DROP IF EXISTS` at top + `executescript` autocommit) could **destroy all calendar data** on an interrupted re-run. Wrapped 0005 in `BEGIN/COMMIT` + added rollback-on-error to `migrate.py`; empirically verified a forced mid-script failure leaves the original table intact.
+  - **HIGH (fixed):** `scripts/dashboard.py` leaked teammate rows into the TUI + pulse.html; added the missing pulse-off-machine / querier-vacation / upcoming-reader / migration-value regression tests.
+  - **MEDIUM (deferred, tracked above):** own-calendar = `'primary'` canonicalization (finding #4) — resolve with the `team_calendars` config.
+- **Applied 0005 to the live DB:** v4→v5, **611 rows preserved**, composite PK + `person` + indexes, `integrity_check: ok`. Backup `rebalance.db.pre-0005.bak`. Commits **c3a2bb7**, **04b5939**. Full suite **866 passed**.
+- **Remaining Phase 1:** `team_calendars` list config + per-person attribution + Gemini-from-GSM inference + observability/tests + `/phase-qa`, then the **Ultra Code pre-merge review** before `main`.
 
 ---
 
