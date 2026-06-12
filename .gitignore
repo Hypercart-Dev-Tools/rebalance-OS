@@ -52,3 +52,4 @@ scripts/com.rebalance-os.*.plist
 *.pem
 *.key
 *.p12
+/relay
