@@ -6,6 +6,32 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.38.0] - 2026-06-11
+
+### Added
+
+- **Phase 6 (slices 1–3) — lifecycle contract v2 + the welcome agent's front
+  ends.** `CONTRACT_VERSION` 2 in `ingest/lifecycle.py`:
+  - `REBALANCE_NO_KEYRING=1` makes every keyring helper a no-op — the
+    injection seam that lets hermetic walkthroughs run on an operator machine
+    without seeing real secrets (Phase 5 spike finding #1).
+  - `skipped` status: optional stages can be deliberately skipped (persisted
+    via `set_onboarding_stage_skipped` in rbos.config; new
+    `skip_onboarding_stage` MCP tool, optional-only) instead of being offered
+    as `next` forever; completing a stage always wins over a stale skip
+    marker (spike finding #2).
+  - Machine-executable `executor` hints per stage (`mcp:` / `cli:` /
+    `script:` vocabulary) alongside human remediation prose (spike finding #3).
+- **`/welcome` skill** (`.claude/skills/welcome/SKILL.md`): conversational
+  onboarding agent — renders where-am-I from one `onboarding_status` call per
+  turn, dispatches stages via executor hints, verifies each stage flips to
+  done, offers-then-skips optional auth, runs the provenance-grouped promote
+  review, graduates into the Phase 4 scheduler installers + first pulse.
+  Secrets never enter the transcript; resume works from the contract.
+- **`rebalance onboard --status`**: the no-LLM parity client — renders the
+  same lifecycle stage map (glyphs for done/now/next/blocked/skipped, fix
+  hints for now/blocked) from one `evaluate_setup` call.
+
 ## [0.37.0] - 2026-06-11
 
 ### Added

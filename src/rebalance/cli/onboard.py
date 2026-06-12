@@ -19,6 +19,49 @@ from rebalance.paths import (
 )
 
 
+# Status glyphs — same vocabulary the /welcome skill renders; the CLI is the
+# no-LLM parity client of the lifecycle contract.
+_STATUS_GLYPHS = {
+    "done": "[x]",
+    "now": " ->",
+    "next": "( )",
+    "blocked": " !!",
+    "skipped": "(s)",
+}
+
+
+def _render_setup_status(database: Path | None) -> None:
+    """Render the setup stage map (where am I / what's next) from one
+    evaluate_setup call — the contract is the source of truth, never this
+    renderer."""
+    from rebalance.ingest.config import get_vault_path
+    from rebalance.ingest.lifecycle import evaluate_setup
+
+    vault = (get_vault_path() or "").strip()
+    try:
+        db = database or resolve_database_path()
+    except DatabaseNotFoundError:
+        db = canonical_database_path()
+
+    report = evaluate_setup(
+        vault_path=Path(vault).expanduser() if vault else None,
+        database_path=db,
+    )
+    typer.echo(
+        f"rebalance setup — complete: {report['setup_complete']}"
+        + (f" · current step: {report['now']}" if report["now"] else "")
+    )
+    for stage in report["stages"]:
+        optional = " (optional)" if stage["optional"] else ""
+        skipped_note = " — skipped; re-enterable" if stage["status"] == "skipped" else ""
+        typer.echo(
+            f"  {_STATUS_GLYPHS[stage['status']]} {stage['title']}{optional}"
+            f" — {stage['detail']}{skipped_note}"
+        )
+        if stage["status"] in ("now", "blocked"):
+            typer.echo(f"      fix: {stage['remediation']}")
+
+
 @app.command("onboard")
 def onboard_cmd(
     vault_path: str = typer.Option(
@@ -31,12 +74,18 @@ def onboard_cmd(
     skip_refresh: bool = typer.Option(
         False, "--skip-refresh", help="Skip the initial data refresh."
     ),
+    status: bool = typer.Option(
+        False, "--status",
+        help="Render the setup stage map (where am I / what's next) and exit.",
+    ),
     database: Path | None = DBOption(),
 ) -> None:
     """Guided onboarding: persist the GitHub token, discover & register projects, refresh.
 
     One command for the sequence that was previously only an agent-driven MCP
     flow — so it doesn't fall between the cracks. Idempotent: safe to re-run.
+    `--status` renders the same lifecycle stage map the /welcome agent and
+    onboarding_status MCP tool serve.
     """
     from dataclasses import asdict, is_dataclass
 
@@ -47,6 +96,10 @@ def onboard_cmd(
     )
     from rebalance.ingest.index_ops import refresh_index
     from rebalance.ingest.preflight import confirm_and_write, discover_candidates
+
+    if status:
+        _render_setup_status(database)
+        return
 
     # 1. Vault path.
     vault = (vault_path or "").strip() or (get_vault_path() or "")
