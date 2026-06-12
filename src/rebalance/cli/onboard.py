@@ -215,4 +215,73 @@ def onboard_cmd(
         else:
             typer.echo("Initial refresh complete.")
 
-    typer.echo("\nOnboarding done. Run `rebalance doctor` to verify the install.")
+    # 7. Optional stages + graduation — CLI parity with the /welcome flow.
+    #    Interactive only: --yes must never launch OAuth browser flows or
+    #    install launchd jobs silently.
+    if not yes:
+        _offer_optional_stages(db)
+    else:
+        typer.echo(
+            "\nOptional next steps (skipped under --yes): Calendar/Gmail OAuth "
+            "(scripts/setup_*_oauth.py), scheduler fleet (scripts/install_scheduler.sh), "
+            "first pulse (scripts/pulse_web_sync.sh)."
+        )
+
+    typer.echo("\nOnboarding done. Run `rebalance onboard --status` for the stage map"
+               " and `rebalance doctor` to verify the install.")
+
+
+def _offer_optional_stages(database: Path | None) -> None:
+    """Offer each incomplete optional stage from the lifecycle contract.
+
+    Stage list, executors, and skip persistence all come from the contract —
+    this function only renders prompts and dispatches `cli:`/`script:`
+    executors (the same hints the /welcome agent uses).
+    """
+    import shlex
+    import subprocess
+
+    import questionary
+
+    from rebalance.ingest.config import get_vault_path, set_onboarding_stage_skipped
+    from rebalance.ingest.lifecycle import evaluate_setup
+    from rebalance.paths import find_project_root
+
+    vault = (get_vault_path() or "").strip()
+    report = evaluate_setup(
+        vault_path=Path(vault).expanduser() if vault else None,
+        database_path=database,
+    )
+    repo_root = find_project_root(Path(__file__).resolve())
+    offered = [
+        s for s in report["stages"]
+        if s["optional"] and s["status"] in ("next", "blocked", "skipped")
+    ]
+    if not offered:
+        return
+
+    typer.echo("\nOptional steps:")
+    for stage in offered:
+        if stage["status"] == "blocked":
+            typer.echo(f"  - {stage['title']}: blocked ({stage['detail']}) — skipping offer.")
+            continue
+        run_it = questionary.confirm(
+            f"{stage['title']} — set up now?", default=False
+        ).ask()
+        if not run_it:
+            set_onboarding_stage_skipped(stage["id"])
+            typer.echo(f"  Skipped {stage['title']} — re-enterable via `rebalance onboard` or /welcome.")
+            continue
+        set_onboarding_stage_skipped(stage["id"], False)
+        kind, _, target = stage["executor"].partition(":")
+        if kind == "script":
+            cmd = [".venv/bin/python", target]
+        elif kind == "cli" and target.startswith("bash "):
+            cmd = shlex.split(target)
+        else:
+            typer.echo(f"  Run manually: {stage['remediation']}")
+            continue
+        typer.echo(f"  Running: {' '.join(cmd)}")
+        proc = subprocess.run(cmd, cwd=repo_root)
+        if proc.returncode != 0:
+            typer.echo(f"  ! {stage['title']} exited {proc.returncode} — fix: {stage['remediation']}", err=True)
