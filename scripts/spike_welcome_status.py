@@ -26,7 +26,7 @@ import _bootstrap  # noqa: F401
 from rebalance.ingest.lifecycle import SETUP_STAGES, evaluate_setup
 
 CONFIG = "rebalance.ingest.config"
-GLYPHS = {"done": "[x]", "now": "->", "next": "( )", "blocked": "!!"}
+GLYPHS = {"done": "[x]", "now": "->", "next": "( )", "blocked": "!!", "skipped": "(s)"}
 
 
 def render(report: dict) -> None:
@@ -85,6 +85,7 @@ def sandbox_walkthrough() -> int:
                 ))
                 stack.enter_context(patch(f"{CONFIG}.get_calendar_oauth_token_json", lambda: None))
                 stack.enter_context(patch(f"{CONFIG}.get_gmail_oauth_token_json", lambda: None))
+                stack.enter_context(patch(f"{CONFIG}.get_onboarding_skipped_stages", lambda: list(state.get("skipped", []))))
                 return evaluate_setup(vault_path=vault, database_path=db)
 
         def status(report: dict, stage_id: str) -> str:

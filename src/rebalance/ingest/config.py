@@ -32,8 +32,22 @@ CONFIG_ENV_VAR = "REBALANCE_CONFIG"
 KEYRING_SERVICE = "rebalance-os"
 
 
+# Hermetic-sandbox seam (Phase 6 spike finding): the OS keyring is
+# machine-global, so a "clean sandbox" walkthrough on an operator machine
+# would see the real secrets. Setting REBALANCE_NO_KEYRING=1 makes every
+# keyring helper a no-op; resolution falls through to rbos.config / env,
+# which sandboxes already control via REBALANCE_CONFIG.
+KEYRING_DISABLE_ENV_VAR = "REBALANCE_NO_KEYRING"
+
+
+def _keyring_disabled() -> bool:
+    return bool(os.environ.get(KEYRING_DISABLE_ENV_VAR, "").strip())
+
+
 def _keyring_get(key: str) -> str | None:
     """Return a secret from the OS keyring, or None if unavailable/unset."""
+    if _keyring_disabled():
+        return None
     try:
         import keyring  # noqa: PLC0415
         return keyring.get_password(KEYRING_SERVICE, key)
@@ -43,6 +57,8 @@ def _keyring_get(key: str) -> str | None:
 
 def _keyring_set(key: str, value: str) -> bool:
     """Write a secret to the OS keyring. Returns True on success."""
+    if _keyring_disabled():
+        return False
     try:
         import keyring  # noqa: PLC0415
         keyring.set_password(KEYRING_SERVICE, key, value)
@@ -53,6 +69,8 @@ def _keyring_set(key: str, value: str) -> bool:
 
 def _keyring_delete(key: str) -> bool:
     """Delete a secret from the OS keyring. Returns True on success."""
+    if _keyring_disabled():
+        return False
     try:
         import keyring  # noqa: PLC0415
         import keyring.errors  # noqa: PLC0415
@@ -259,6 +277,35 @@ def set_vault_path(path: str) -> None:
     config = _read_config()
     config["vault_path"] = path.strip()
     _write_config(config)
+
+
+def get_onboarding_skipped_stages() -> list[str]:
+    """Optional setup stages the operator deliberately skipped.
+
+    Consumed by the lifecycle status contract (Phase 6): a skipped optional
+    stage reports status ``skipped`` instead of being offered as ``next``
+    forever. Config key: onboarding_skipped_stages
+    """
+    config = _read_config()
+    value = config.get("onboarding_skipped_stages")
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def set_onboarding_stage_skipped(stage_id: str, skipped: bool = True) -> list[str]:
+    """Mark or unmark an optional setup stage as deliberately skipped.
+
+    Returns the updated skip list. Idempotent in both directions.
+    """
+    config = _read_config()
+    current = config.get("onboarding_skipped_stages")
+    stages = {str(item) for item in current} if isinstance(current, list) else set()
+    if skipped:
+        stages.add(stage_id)
+    else:
+        stages.discard(stage_id)
+    config["onboarding_skipped_stages"] = sorted(stages)
+    _write_config(config)
+    return sorted(stages)
 
 
 # ---------------------------------------------------------------------------

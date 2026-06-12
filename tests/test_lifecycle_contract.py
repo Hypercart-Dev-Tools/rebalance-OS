@@ -79,17 +79,19 @@ class SetupStageMapTests(unittest.TestCase):
         self.assertEqual(optional, {"calendar_auth", "gmail_auth"})
 
 
-class EvaluateSetupTests(unittest.TestCase):
-    """Drive the status machine through sandbox scenarios with mocked config."""
+class _EvaluateHarness(unittest.TestCase):
+    """Shared sandbox driver for the status machine (mocked config)."""
 
     def _evaluate(self, *, config=True, vault_ok=True, token=True,
-                  calendar=False, gmail=False, vault_dir=None, db=None):
+                  calendar=False, gmail=False, vault_dir=None, db=None,
+                  skipped=()):
         vault = vault_dir
         with patch(f"{CONFIG}.get_config_path") as config_path, \
              patch(f"{CONFIG}.get_vault_path") as vault_path, \
              patch(f"{CONFIG}.get_github_token") as gh_token, \
              patch(f"{CONFIG}.get_calendar_oauth_token_json") as cal_tok, \
-             patch(f"{CONFIG}.get_gmail_oauth_token_json") as gm_tok:
+             patch(f"{CONFIG}.get_gmail_oauth_token_json") as gm_tok, \
+             patch(f"{CONFIG}.get_onboarding_skipped_stages") as skip_list:
             fake_cfg = Path(vault or tempfile.gettempdir()) / "rbos.config"
             if config:
                 fake_cfg.parent.mkdir(parents=True, exist_ok=True)
@@ -99,6 +101,7 @@ class EvaluateSetupTests(unittest.TestCase):
             gh_token.return_value = "tok" if token else None
             cal_tok.return_value = '{"token": "x"}' if calendar else None
             gm_tok.return_value = '{"token": "x"}' if gmail else None
+            skip_list.return_value = list(skipped)
             return evaluate_setup(
                 vault_path=Path(vault) if vault else None,
                 database_path=db,
@@ -107,6 +110,8 @@ class EvaluateSetupTests(unittest.TestCase):
     def _status(self, report, stage_id):
         return next(s for s in report["stages"] if s["id"] == stage_id)["status"]
 
+
+class EvaluateSetupTests(_EvaluateHarness):
     def test_missing_pat_blocks_downstream_registry(self):
         with tempfile.TemporaryDirectory() as tmp:
             report = self._evaluate(token=False, vault_dir=tmp)
@@ -158,6 +163,66 @@ class EvaluateSetupTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             report = self._evaluate(vault_dir=tmp)
         self.assertEqual(report["contract_version"], lifecycle.CONTRACT_VERSION)
+
+
+class ContractV2Tests(_EvaluateHarness):
+    """Phase 6 slice 1: skipped status, executor hints, keyring seam."""
+
+    def test_skipped_optional_stage_reports_skipped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._evaluate(vault_dir=tmp, skipped=["calendar_auth"])
+        self.assertEqual(self._status(report, "calendar_auth"), "skipped")
+        self.assertEqual(self._status(report, "gmail_auth"), "next")
+
+    def test_completing_a_stage_wins_over_stale_skip_marker(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._evaluate(
+                vault_dir=tmp, calendar=True, skipped=["calendar_auth"]
+            )
+        self.assertEqual(self._status(report, "calendar_auth"), "done")
+
+    def test_skip_state_is_persisted_and_reversible(self):
+        from rebalance.ingest import config as config_module
+        from rebalance.ingest.config import (
+            get_onboarding_skipped_stages,
+            set_onboarding_stage_skipped,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            orig = config_module.CONFIG_PATH
+            config_module.CONFIG_PATH = Path(tmp) / "rbos.config"
+            try:
+                self.assertEqual(get_onboarding_skipped_stages(), [])
+                self.assertEqual(set_onboarding_stage_skipped("calendar_auth"), ["calendar_auth"])
+                self.assertEqual(set_onboarding_stage_skipped("calendar_auth"), ["calendar_auth"])  # idempotent
+                self.assertEqual(get_onboarding_skipped_stages(), ["calendar_auth"])
+                self.assertEqual(set_onboarding_stage_skipped("calendar_auth", False), [])
+            finally:
+                config_module.CONFIG_PATH = orig
+
+    def test_every_stage_has_a_valid_executor(self):
+        from rebalance.ingest.lifecycle import EXECUTOR_KINDS
+
+        for stage in SETUP_STAGES:
+            kind, sep, target = stage.executor.partition(":")
+            self.assertTrue(sep and target, f"{stage.id}: executor missing")
+            self.assertIn(kind, EXECUTOR_KINDS, f"{stage.id}: unknown executor kind")
+
+    def test_executor_surfaces_in_evaluate_output(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            report = self._evaluate(vault_dir=tmp)
+        by_id = {s["id"]: s for s in report["stages"]}
+        self.assertEqual(by_id["github_token_set"]["executor"], "mcp:setup_github_token")
+
+    def test_keyring_seam_disables_all_keyring_io(self):
+        import os
+
+        from rebalance.ingest import config as config_module
+
+        with patch.dict(os.environ, {"REBALANCE_NO_KEYRING": "1"}):
+            self.assertIsNone(config_module._keyring_get("github_token"))
+            self.assertFalse(config_module._keyring_set("k", "v"))
+            self.assertFalse(config_module._keyring_delete("k"))
 
 
 class WriteSemanticsEnforcementTests(unittest.TestCase):

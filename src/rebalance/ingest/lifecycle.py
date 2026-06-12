@@ -26,10 +26,16 @@ single source of truth the Phase 6 welcome agent — and any other client
                   includes reachable optional stages, so agents offer rather
                   than silently skip them
    - ``blocked``  incomplete and at least one prerequisite is not done
+   - ``skipped``  optional stage the operator deliberately skipped (persisted
+                  in rbos.config via ``set_onboarding_stage_skipped``); still
+                  re-enterable — completing it flips it to ``done``, and
+                  un-skipping returns it to ``next`` (contract v2)
 
-   Whether deliberately-skipped optional stages need a distinct ``skipped``
-   status (vs. staying ``next``) is an open question for the Phase 6 spike —
-   answering it requires persisted skip state, which is Phase 6 scope.
+Each stage also carries an ``executor`` hint — the machine-actionable way to
+complete it, in a small vocabulary the welcome agent can dispatch on:
+``mcp:<tool>`` (call an MCP tool), ``cli:<command>`` (run a CLI command),
+``script:<path>`` (run a repo script; OAuth consent flows). Remediation prose
+stays human-facing; the executor is for agents (contract v2, spike finding).
 
 Adding a stage = adding one entry to the relevant tuple (plus, for setup
 stages, a check function). Clients pick it up without edits.
@@ -41,13 +47,16 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
 
-CONTRACT_VERSION = 1
+CONTRACT_VERSION = 2
 
 STATUS_DONE = "done"
 STATUS_NOW = "now"
 STATUS_NEXT = "next"
 STATUS_BLOCKED = "blocked"
-SETUP_STATUS_VALUES = (STATUS_DONE, STATUS_NOW, STATUS_NEXT, STATUS_BLOCKED)
+STATUS_SKIPPED = "skipped"
+SETUP_STATUS_VALUES = (STATUS_DONE, STATUS_NOW, STATUS_NEXT, STATUS_BLOCKED, STATUS_SKIPPED)
+
+EXECUTOR_KINDS = ("mcp", "cli", "script")
 
 WRITE_SEMANTICS_VALUES = (
     "read_only",
@@ -160,6 +169,7 @@ class SetupStage:
     title: str
     check: Callable[["SetupContext"], tuple[bool, str]]
     remediation: str
+    executor: str = ""  # "<kind>:<target>", kind in EXECUTOR_KINDS
     optional: bool = False
     requires: tuple[str, ...] = ()
 
@@ -247,12 +257,14 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
         title="Operator config",
         check=_check_config_exists,
         remediation="Any config write creates it — e.g. `rebalance config set-vault-path <path>`.",
+        executor="cli:rebalance config set-vault-path <path>",
     ),
     SetupStage(
         id="vault_path_set",
         title="Obsidian vault path",
         check=_check_vault_path_set,
         remediation="Run `rebalance config set-vault-path <path>` with an existing folder.",
+        executor="cli:rebalance config set-vault-path <path>",
         requires=("config_exists",),
     ),
     SetupStage(
@@ -260,6 +272,7 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
         title="GitHub PAT",
         check=_check_github_token,
         remediation="Use the setup_github_token MCP tool or `rebalance config set-github-token`.",
+        executor="mcp:setup_github_token",
     ),
     SetupStage(
         id="calendar_auth",
@@ -268,6 +281,7 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
         title="Google Calendar",
         check=_check_calendar_auth,
         remediation="Run `python scripts/setup_calendar_oauth.py` and complete the browser consent.",
+        executor="script:scripts/setup_calendar_oauth.py",
         optional=True,
         requires=("config_exists",),
     ),
@@ -276,6 +290,7 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
         title="Gmail",
         check=_check_gmail_auth,
         remediation="Run `python scripts/setup_gmail_oauth.py` and complete the browser consent.",
+        executor="script:scripts/setup_gmail_oauth.py",
         optional=True,
         requires=("config_exists",),
     ),
@@ -284,6 +299,7 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
         title="Project registry confirmed",
         check=_check_registry_exists,
         remediation="Run run_preflight, review candidates, then confirm_projects (or `rebalance onboard`).",
+        executor="mcp:run_preflight",
         requires=("vault_path_set", "github_token_set"),
     ),
     SetupStage(
@@ -291,6 +307,7 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
         title="projects.yaml projection",
         check=_check_projection_exists,
         remediation="confirm_projects pull-syncs it; or run `rebalance ingest sync --mode pull`.",
+        executor="mcp:confirm_projects",
         requires=("registry_exists",),
     ),
     SetupStage(
@@ -298,6 +315,7 @@ SETUP_STAGES: tuple[SetupStage, ...] = (
         title="SQLite registry synced",
         check=_check_db_synced,
         remediation="confirm_projects pull-syncs it; or run `rebalance ingest sync --mode pull`.",
+        executor="mcp:confirm_projects",
         requires=("registry_exists",),
     ),
 )
@@ -332,7 +350,10 @@ def evaluate_setup(
     Pure read: every check is local and side-effect free, so calling this
     repeatedly (an agent re-polling "where am I") is always safe.
     """
+    from rebalance.ingest.config import get_onboarding_skipped_stages
+
     ctx = SetupContext(vault_path=vault_path, database_path=database_path)
+    skipped_ids = set(get_onboarding_skipped_stages())
 
     results: dict[str, dict[str, Any]] = {}
     for stage in SETUP_STAGES:
@@ -344,16 +365,20 @@ def evaluate_setup(
             "requires": list(stage.requires),
             "complete": complete,
             "detail": detail,
+            "executor": stage.executor,
         }
 
     now_assigned = False
     for stage in SETUP_STAGES:
         entry = results[stage.id]
         if entry["complete"]:
+            # Completing a stage always wins over a stale skip marker.
             entry["status"] = STATUS_DONE
             continue
         deps_done = all(results[dep]["complete"] for dep in stage.requires)
-        if not deps_done:
+        if stage.optional and stage.id in skipped_ids:
+            entry["status"] = STATUS_SKIPPED
+        elif not deps_done:
             entry["status"] = STATUS_BLOCKED
         elif not now_assigned and not stage.optional:
             entry["status"] = STATUS_NOW

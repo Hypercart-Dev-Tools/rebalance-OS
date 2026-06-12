@@ -42,6 +42,39 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         return report
 
     @mcp.tool()
+    def skip_onboarding_stage(stage_id: str, skipped: bool = True) -> dict[str, Any]:
+        """
+        Mark (or unmark) an OPTIONAL setup stage as deliberately skipped.
+
+        A skipped stage reports status ``skipped`` in onboarding_status
+        instead of being offered as ``next`` forever; it stays re-enterable —
+        completing it later flips it to ``done``. Only optional stages
+        (e.g. calendar_auth, gmail_auth) can be skipped.
+        """
+        from rebalance.ingest.config import set_onboarding_stage_skipped
+        from rebalance.ingest.lifecycle import SETUP_STAGES
+
+        stage = next((s for s in SETUP_STAGES if s.id == stage_id), None)
+        if stage is None:
+            return {
+                "ok": False,
+                "error": f"unknown stage {stage_id!r}",
+                "optional_stages": [s.id for s in SETUP_STAGES if s.optional],
+            }
+        if not stage.optional:
+            return {
+                "ok": False,
+                "error": f"stage {stage_id!r} is required and cannot be skipped",
+                "optional_stages": [s.id for s in SETUP_STAGES if s.optional],
+            }
+        return {
+            "ok": True,
+            "stage_id": stage_id,
+            "skipped": skipped,
+            "skipped_stages": set_onboarding_stage_skipped(stage_id, skipped),
+        }
+
+    @mcp.tool()
     def setup_github_token(token: str) -> dict[str, Any]:
         """
         Validate a GitHub PAT against the /user endpoint and store it.
