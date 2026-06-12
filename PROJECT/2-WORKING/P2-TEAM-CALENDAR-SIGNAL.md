@@ -40,6 +40,8 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 - [HiQS ethos: privacy, consent, leak-control](#hiqs-ethos-privacy-consent-leak-control)
 - [Phase 0 — captured A/B bundles (raw results)](#phase-0--captured-ab-bundles-raw-results)
 - [Phase 0 progress log](#phase-0-progress-log)
+- [Phase 3 — entity_graph attribution layer (deferred)](#phase-3--entity_graph-attribution-layer-v06-deferred)
+- [Prior art & reuse (3-source deep research)](#prior-art--reuse-3-source-deep-research-2026-06-12)
 
 ---
 
@@ -448,3 +450,46 @@ scorer still produces the verdict; the graph makes the [levers](#tunable-levers-
 (redundancy penalty, owner-bias correction, attribution) *more robust and explainable*. The Phase-1
 `person` column is its **first edge** (`person worked_on`), so Phase 1 already lays the foundation.
 **Sequence:** ship v0.5 on the lever scorer first; add `entity_graph` as a v0.6 robustness upgrade.
+
+---
+
+## Prior art & reuse (3-source deep research, 2026-06-12)
+
+Three independent deep-research passes — **Gemini, Perplexity, ChatGPT** (full reports in
+[SIGNAL-GENERATION/REFERENCES/](PROJECT/2-WORKING/SIGNAL-GENERATION/REFERENCES/)) — found largely
+*disjoint* sets of small repos yet **all three converge on the same verdict: greenfield.** No active
+OSS project ranks "what to work on next / what's about to drop" from *ingested cross-source* signals,
+blends a *team* dimension, or distinguishes *redundant vs net-new* signal. That scoring/blending layer
+has **zero prior art** anywhere in ~40 repos surveyed.
+
+**Strategic read (load-bearing):** the *plumbing* — local SQLite + calendar/GitHub/Slack/email
+connectors + MCP — is now a **commodity pattern**, and two brand-new repos
+([OWL](https://github.com/msaule/owl) · [DevRecall](https://github.com/pavelpilyak/devrecall) —
+both verified live, 1★, Mar/Jun 2026) independently converged on exactly it. **We already have that
+layer.** So the moat is **not** ingestion/dashboard/MCP — it's the **lever-based ranking brain + the
+team-calendar blind-spot logic**, which nobody has. Spend original effort there ([v0.5 levers](#tunable-levers--v05--decided-2026-06-12),
+[Phase 3 entity_graph](#phase-3--entity_graph-attribution-layer-v06-deferred)); treat plumbing as reference, not foundation.
+
+**Consolidated reuse map** (study/borrow — we have the substrate, so nothing is fork-wholesale):
+
+| Need | Best source | Confidence |
+|---|---|---|
+| Lever / ranking math | **Taskwarrior urgency coefficients** — signed, tunable per-attribute coefficients; the mature template for our [levers](#tunable-levers--v05--decided-2026-06-12) | High (well-known; Perplexity) |
+| Token efficiency → Gemini synthesis | **TOON** (Token-Oriented Object Notation) — ~30–60% fewer tokens on uniform arrays, has SDK + arXiv benchmark | Verified real (Gemini) |
+| Cross-teammate identity resolution | **SortingHat / GrimoireLab** — "same person across GitHub/Slack/Calendar"; needed for Jose/Jinhui + the entity_graph | High (ChatGPT + Perplexity) |
+| Dropped-ball / stall detection | **Dex** (12-day stall threshold) + **ai-chief-of-staff** "open loops" weekly-review prompt; **Crucix** "sweep-delta" (deterministic diff → LLM only to categorize) | Mixed; Crucix verified real |
+| Connector / normalization reference | **DevLake** domain schema + **Onyx** connectors | High (all 3) — reference only |
+| Local briefing assembly | **LifeOS** `briefing_server` fan-out-then-synthesize | Low (two different small repos share the name) |
+
+**Verification ledger (HiQS honesty):** independently confirmed live — OWL, DevRecall,
+[jsgilmore/second-brain](https://github.com/jsgilmore/second-brain) (Postgres, not SQLite; I'd wrongly
+called this "fabricated" — my *search* missed a 0★ repo), TOON, Crucix, hourgit, second-brain-cloudflare.
+Relayed-but-unverified — ChatGPT's unique finds (tamon-ai/tamon, taylorwilsdon/google_workspace_mcp,
+mplanav/LifeOS) and most star counts. Caveats: "LifeOS" = **two different** repos across reports
+(`nbramia/` vs `mplanav/`); ChatGPT's `citeturn…` tokens are internal, not resolvable URLs; Gemini
+inflated some star counts.
+
+**This does not change the plan — it validates it** and supplies reuse references. The build sequence
+stands: Phase 1 leak/contamination fixes → schema migration → v0.5 lever scorer (Taskwarrior-style,
+TOON-serialized to Gemini) → Phase 3 entity_graph (SortingHat-style attribution). A datasets-rider
+sweep (offline-eval data for the ranker/dropped-ball detector) is still out with the agents.
