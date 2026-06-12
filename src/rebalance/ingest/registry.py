@@ -14,6 +14,17 @@ class Project(BaseModel):
     status: str = "active"
     summary: str = ""
     repos: list[str] = Field(default_factory=list)
+    # When true, every repo under ``repos`` is an EXTERNAL repo to monitor for
+    # everyone's activity (commits/PRs), not the operator's own work. Watched
+    # externals enter the watched set and get a whole-repo github_activity rollup
+    # (see rebalance.ingest.github_watch). A dedicated "Watched — …" project with
+    # external: true is the intended container.
+    external: bool = False
+    # Where this project entered the system (lifecycle contract, Phase 5):
+    # "remote-activity" (GitHub activity discovery), "vault-note" (vault title
+    # discovery), "inferred" (activity inference); "local-scan" is reserved for
+    # the Phase 6 git-pulse promotion. "" = legacy/operator-entered rows.
+    provenance: str = ""
     obsidian_folder: str | None = None
     tags: list[str] = Field(default_factory=list)
     value_level: str | None = None
@@ -69,13 +80,28 @@ def _extract_yaml_block(markdown: str) -> dict[str, Any]:
     return parsed
 
 
-def load_registry(registry_path: Path) -> Registry:
+def read_registry(registry_path: Path) -> Registry:
+    """Pure read: parse the registry file, or return an empty Registry when
+    it doesn't exist. Never touches the filesystem — the right call for
+    read-only paths (discovery) where creating the registry file would lie
+    to the setup-status contract (`registry_exists` flipping done before any
+    confirmation)."""
     if not registry_path.exists():
-        registry_path.parent.mkdir(parents=True, exist_ok=True)
-        registry_path.write_text(_default_registry_markdown(), encoding="utf-8")
+        return Registry()
     raw = registry_path.read_text(encoding="utf-8")
     parsed = _extract_yaml_block(raw)
     return Registry.model_validate(parsed)
+
+
+def load_registry(registry_path: Path) -> Registry:
+    """Read the registry, creating the default file first when missing.
+
+    Write-path variant: only confirmation-gated flows should call this —
+    read-only paths use :func:`read_registry`."""
+    if not registry_path.exists():
+        registry_path.parent.mkdir(parents=True, exist_ok=True)
+        registry_path.write_text(_default_registry_markdown(), encoding="utf-8")
+    return read_registry(registry_path)
 
 
 def save_registry(registry_path: Path, registry: Registry) -> None:
@@ -103,6 +129,17 @@ Sections:
 def _registry_to_projection(registry: Registry) -> dict[str, Any]:
     projects = []
     for project in registry.active_projects:
+        # Persist the typed ``external`` flag inside custom_fields_json so it
+        # round-trips through the project_registry table without a schema column
+        # (get_projects already decodes custom_fields, and read paths that open
+        # via ensure_project_schema without running migrations keep working).
+        custom_fields = dict(project.custom_fields)
+        if project.external:
+            custom_fields["external"] = True
+        # Same pattern as ``external``: provenance rides in custom_fields_json
+        # so it round-trips through the fixed project_registry columns.
+        if project.provenance:
+            custom_fields["provenance"] = project.provenance
         projects.append(
             {
                 "name": project.name,
@@ -114,7 +151,7 @@ def _registry_to_projection(registry: Registry) -> dict[str, Any]:
                 "repos": project.repos,
                 "obsidian_folder": project.obsidian_folder,
                 "tags": project.tags,
-                "custom_fields": project.custom_fields,
+                "custom_fields": custom_fields,
             }
         )
     return {"projects": projects}
@@ -173,18 +210,26 @@ def _push_from_projection(registry: Registry, projects_yaml_path: Path) -> Regis
     for item in projects:
         if not isinstance(item, dict):
             continue
+        custom_fields = dict(item.get("custom_fields", {}) or {})
+        external = bool(item.get("external") or custom_fields.pop("external", False))
+        # Like external: provenance rides custom_fields in the projection and
+        # must be lifted back to the typed field on push, or the round-trip
+        # desyncs the model from its custom_fields copy.
+        provenance = str(item.get("provenance") or custom_fields.pop("provenance", "") or "")
         transformed.append(
             Project(
                 name=str(item.get("name", "")).strip(),
                 status=str(item.get("status", "active")),
                 summary=str(item.get("summary", "")),
                 repos=list(item.get("repos", []) or []),
+                external=external,
+                provenance=provenance,
                 obsidian_folder=item.get("obsidian_folder"),
                 tags=list(item.get("tags", []) or []),
                 value_level=item.get("value_level"),
                 priority_tier=item.get("priority_tier"),
                 risk_level=item.get("risk_level"),
-                custom_fields=dict(item.get("custom_fields", {}) or {}),
+                custom_fields=custom_fields,
             )
         )
 
@@ -274,5 +319,33 @@ def get_projects(
                 d[target_key] = json.loads(raw) if raw else default
             except (json.JSONDecodeError, ValueError):
                 d[target_key] = default
+        # Lift provenance back to the top level so DB reads match the
+        # candidate/Project shape (it is persisted inside custom_fields).
+        d["provenance"] = (d["custom_fields"] or {}).get("provenance", "")
         result.append(d)
     return result
+
+
+def get_external_repos(database_path: Path) -> list[str]:
+    """Return the external/watched repos declared in the project registry.
+
+    These are repos from any project flagged ``external: true`` (persisted in
+    ``custom_fields_json``) — monitored for everyone's activity, regardless of
+    project status. Normalized to ``owner/name`` and de-duplicated. This is the
+    source consumed by ``get_watched_repos`` and the watched-repo rollup.
+    """
+    from rebalance.ingest.config import normalize_github_repo_name
+
+    repos: list[str] = []
+    for project in get_projects(database_path):
+        custom_fields = project.get("custom_fields") or {}
+        if not custom_fields.get("external"):
+            continue
+        for repo in project.get("repos") or []:
+            try:
+                normalized = normalize_github_repo_name(repo)
+            except ValueError:
+                continue
+            if normalized not in repos:
+                repos.append(normalized)
+    return repos

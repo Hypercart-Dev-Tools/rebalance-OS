@@ -116,8 +116,10 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         """
         Show which GitHub repos are currently being monitored, and where each
         one came from. The merged "watched" list = (project registry ∪ recent
-        activity from github_activity) − ignored. This is the same set
-        refresh_index syncs.
+        activity from github_activity ∪ recently-pushed ∪ external/watched repos)
+        − ignored. This is the same set refresh_index syncs. The ``external_repos``
+        bucket is third-party repos (registry projects flagged ``external: true``)
+        monitored for everyone's activity, not just your own.
 
         Use this when:
           - The user asks "is X being monitored?"
@@ -130,6 +132,27 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         """
         from rebalance.ingest.index_ops import get_watched_repos
         return get_watched_repos(database_path, since_days=since_days)
+
+    @mcp.tool()
+    def list_ask_self_repos() -> dict[str, Any]:
+        """
+        Inventory every repo on this device that has an ask_self RAG index,
+        cross-referenced against the watched-repos set.
+
+        Each entry reports its local path, derived GitHub identity
+        (owner/repo), whether the index is actually built, chunk/file counts,
+        embedding model, last-ingest time, the device it lives on, and a
+        ``watched`` flag (True when Rebalance already monitors that repo). The
+        ``summary`` block totals built vs. watched and lists the devices seen.
+
+        Read-only over the ``ask_self_indexes`` table. Populate/refresh it with
+        refresh_index(scope=["ask_self"]) — this tool does not scan the disk.
+
+        Use this to answer "which of my projects have a queryable local brain,
+        and which machine is it on?".
+        """
+        from rebalance.ingest.ask_self_scan import summarize_ask_self_indexes
+        return summarize_ask_self_indexes(database_path)
 
     @mcp.tool()
     def publish_pulse(
@@ -169,6 +192,9 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         query: str,
         sources: list[str] | None = None,
         top_k: int = 10,
+        updated_after: str | None = None,
+        repo: str | None = None,
+        hybrid: bool = True,
     ) -> list[dict[str, Any]]:
         """
         Vector search across the unified semantic index (vault chunks +
@@ -184,6 +210,11 @@ def register(mcp: FastMCP, database_path: Path) -> None:
             sources: Filter to any of ["vault"], ["github"], ["email"], or
                 any combination of them. Defaults to all indexed sources.
             top_k: Number of results.
+            updated_after: ISO-8601 date/datetime string (e.g. "2026-05-01").
+                Excludes documents updated before this point. Useful for
+                date-bounded investigations without raw SQL fallback.
+            repo: Restrict GitHub results to one repo in ``owner/name`` form.
+                Non-GitHub results are unaffected.
         """
         from rebalance.ingest.semantic_index import query as _semantic_query
         return _semantic_query(
@@ -191,4 +222,7 @@ def register(mcp: FastMCP, database_path: Path) -> None:
             query,
             top_k=top_k,
             source_filter=sources,
+            updated_after=updated_after,
+            repo=repo,
+            hybrid=hybrid,
         )

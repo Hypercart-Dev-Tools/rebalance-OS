@@ -66,6 +66,8 @@ import urllib.request
 from datetime import datetime, timezone
 from pathlib import Path
 
+import _bootstrap  # noqa: F401  — puts src/ on sys.path for rebalance.* imports
+
 DEVICE_NAME: str = socket.gethostname()
 
 REPO = "Hypercart-Dev-Tools/rebalance-OS"
@@ -330,7 +332,6 @@ def _issue_body(check_name: str, status: str, detail: str, hint: str, source: st
 # ---------------------------------------------------------------------------
 
 def run_doctor_checks() -> list[dict]:
-    sys.path.insert(0, str(_REPO_ROOT / "src"))
     from rebalance.doctor import run_doctor  # noqa: PLC0415
     report = run_doctor()
     return [
@@ -519,7 +520,6 @@ def llm_triage(
 # ---------------------------------------------------------------------------
 
 def _resolve_token() -> str:
-    sys.path.insert(0, str(_REPO_ROOT / "src"))
     from rebalance.ingest.config import get_github_token_with_source  # noqa: PLC0415
     token, source = get_github_token_with_source()
     if not token:

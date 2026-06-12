@@ -15,6 +15,7 @@ Usage:
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -22,6 +23,9 @@ from typing import Any
 
 from rebalance.ingest.config import normalize_github_repo_name
 from rebalance.ingest._http import GITHUB_API, GitHubClient
+
+logger = logging.getLogger(__name__)
+
 MAX_EVENT_PAGES = 3  # Hard limit documented by GitHub
 
 # Activity band definitions — shared with preflight.py for segmentation.
@@ -157,6 +161,11 @@ def _get_login(token: str) -> str:
     status, data = _get(f"{GITHUB_API}/user", token)
     if status == 403 or status == 429:
         raise GitHubApiError("Rate limited fetching /user", status, is_rate_limit=True)
+    if status == 401:
+        # Authoritative deauth signal: the PAT was revoked, expired, or lost a
+        # required scope. Log it to the unified auth trail before raising.
+        from rebalance.ingest import auth_log
+        auth_log.log_github_auth_failed(status, endpoint="/user")
     if status != 200 or not isinstance(data, dict):
         raise GitHubApiError(f"Failed to fetch /user: HTTP {status}", status)
     login = data.get("login")
@@ -303,12 +312,81 @@ def validate_github_token(token: str) -> dict[str, Any]:
         or {"valid": False, "login": "", "scopes": [], "error": "..."}
     """
     # No retries: a bad token should fail fast for the onboarding flow.
+    from rebalance.ingest import auth_log
+
     status, data, headers = GitHubClient(token, retries=1).get_with_headers("/user")
     if status == 200 and isinstance(data, dict):
         scopes_header = headers.get("x-oauth-scopes", "")
         scopes = [s.strip() for s in scopes_header.split(",") if s.strip()]
-        return {"valid": True, "login": data.get("login", ""), "scopes": scopes}
-    return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {status}"}
+        login = data.get("login", "")
+        auth_log.log_github_token_validated(login, scopes)
+        return {"valid": True, "login": login, "scopes": scopes, "status": status}
+    auth_log.log_github_token_invalid(status)
+    return {"valid": False, "login": "", "scopes": [], "error": f"HTTP {status}", "status": status}
+
+
+def resolve_working_token(primary_token: str) -> str:
+    """Return a GitHub token that currently authenticates, falling back to gh CLI.
+
+    If *primary_token* validates, it is returned unchanged. If it is rejected
+    with **401** (revoked / expired / deauthorized PAT) *and* the host is
+    authorized for the ``gh`` CLI, fall back to gh's token (option A), then
+    persist it to keyring + ``rbos.config`` so background launchd jobs recover
+    too (option D), and return it. Any other failure (rate-limit 403/429, no gh
+    login, gh token also invalid, network error) returns the primary token
+    unchanged so the caller surfaces the real error — this never makes a refresh
+    worse than before.
+
+    The gh fallback only resolves interactively: launchd's stripped environment
+    cannot run ``gh``, so background jobs get the persisted token from a prior
+    interactive heal instead.
+    """
+    if not primary_token:
+        return primary_token
+    try:
+        check = validate_github_token(primary_token)
+        if check.get("valid"):
+            return primary_token
+        if check.get("status") != 401:
+            return primary_token  # rate-limit / transient — not a deauth
+        from rebalance.ingest import auth_log, config
+
+        gh_token = config.get_github_token_via_gh()
+        if not gh_token or gh_token == primary_token:
+            return primary_token  # no usable backup
+        gh_check = validate_github_token(gh_token)
+        if not gh_check.get("valid"):
+            return primary_token  # gh's token is no good either
+        logger.warning(
+            "GitHub PAT rejected (401); fell back to the gh CLI token and "
+            "persisted it (keyring + config) so background jobs recover."
+        )
+        auth_log.log_github_gh_fallback(gh_check.get("login", ""))
+        config.set_github_token(gh_token, source="gh-fallback")  # option D: heal the persisted copy
+        return gh_token
+    except Exception:  # noqa: BLE001 — resolution must never break the refresh
+        return primary_token
+
+
+def scan_and_store_github_activity(
+    database_path: Path,
+    *,
+    token: str,
+    since_days: int,
+    ignored_repos: list[str] | None = None,
+) -> tuple[GitHubScanResult, list[str]]:
+    """Source-owned entry point for the GitHub activity scan: scan -> filter
+    ignored repos -> upsert. CLI `github-scan` (and any collector) share this so
+    no surface imports the leaf scan_github / upsert_github_activity directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2). Returns (result, skipped_repos).
+    """
+    if ignored_repos is None:
+        from rebalance.ingest.config import get_github_ignored_repos
+        ignored_repos = get_github_ignored_repos()
+    result = scan_github(token=token, days=since_days)
+    skipped = filter_ignored_repo_activity(result, ignored_repos)
+    upsert_github_activity(database_path, result)
+    return result, skipped
 
 
 def scan_github(token: str, days: int = 30) -> GitHubScanResult:

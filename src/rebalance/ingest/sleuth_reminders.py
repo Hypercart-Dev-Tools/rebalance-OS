@@ -87,9 +87,10 @@ class SleuthSyncResult:
     updated_count: int
     unchanged_count: int
     retired_count: int = 0
+    source_refresh: str | None = None  # file source: status of the pre-read git refresh
 
     def as_dict(self) -> dict[str, Any]:
-        return {
+        out = {
             "workspace_name": self.workspace_name,
             "fetched_at": self.fetched_at,
             "total_reminder_count": self.total_reminder_count,
@@ -99,6 +100,9 @@ class SleuthSyncResult:
             "unchanged_count": self.unchanged_count,
             "retired_count": self.retired_count,
         }
+        if self.source_refresh is not None:
+            out["source_refresh"] = self.source_refresh
+        return out
 
 
 # ---------------------------------------------------------------------------
@@ -166,12 +170,100 @@ def _iso_or_none(value: datetime | None) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def _local_source_path(base_url: str) -> Path | None:
+    """If ``base_url`` denotes a local file (a ``file://`` URL or a plain absolute/
+    ``~`` path), return its resolved Path; otherwise None (it's an http(s) endpoint).
+
+    This is the "published file" source: instead of reaching the Sleuth box over an
+    SSH tunnel, the box pushes the rebalance JSON to a private git repo (git-pulse),
+    and we read the locally-synced copy. See SLEUTH_SYNC.md.
+    """
+    raw = (base_url or "").strip()
+    if raw.startswith("file://"):
+        raw = raw[len("file://"):]
+    elif not (raw.startswith("/") or raw.startswith("~")):
+        return None
+    # Require an absolute or ~-anchored path. A relative file:// path would resolve
+    # against the process cwd — which differs between an interactive shell and the
+    # launchd daemon — so reject it outright rather than read the wrong file.
+    if not (raw.startswith("/") or raw.startswith("~")):
+        raise SleuthApiError(
+            f"Sleuth file source must be an absolute or ~-anchored path, got: {base_url!r}"
+        )
+    return Path(raw).expanduser()
+
+
+def _refresh_file_source(file_path: Path) -> str:
+    """Best-effort, **non-destructive** refresh of the export clone before reading.
+
+    `git fetch` then check out ONLY the export file from its upstream ref. Deliberately
+    avoids `git pull --rebase --autostash`: the same clone may be a writer for other
+    jobs (pulse-sync), and a rebase there can race/conflict. Fetch never touches the
+    working tree, and the scoped checkout updates only the export file — not the other
+    jobs' files. Never raises; returns a short status string for the sync result."""
+    import subprocess
+
+    def _git(cwd: Path, *args: str) -> str:
+        return subprocess.run(
+            ["git", "-C", str(cwd), *args],
+            capture_output=True, text=True, timeout=60, check=True,
+        ).stdout.strip()
+
+    try:
+        root = Path(_git(file_path.parent, "rev-parse", "--show-toplevel")).resolve()
+        # Run subsequent git ops FROM the repo root so the checkout pathspec (which git
+        # resolves relative to cwd, not the repo root) matches.
+        rel = file_path.resolve().relative_to(root)
+        upstream = _git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
+        _git(root, "fetch", "--quiet")
+        _git(root, "checkout", upstream, "--", str(rel))
+        return "ok"
+    except subprocess.CalledProcessError as exc:
+        return f"skipped (git: {(exc.stderr or '').strip()[:120] or exc.returncode})"
+    except Exception as exc:  # noqa: BLE001 — freshness is best-effort
+        return f"skipped ({type(exc).__name__})"
+
+
+def _read_payload_from_file(path: Path) -> dict[str, Any]:
+    """Read the published rebalance export from a local file.
+
+    The published file IS the API's ``data`` object (no ``{success, data}``
+    wrapper), so it's returned directly — same shape `_fetch_payload` yields for
+    the HTTP path.
+    """
+    try:
+        text = path.read_text(encoding="utf-8")
+    except FileNotFoundError as exc:
+        raise SleuthApiError(
+            f"Sleuth reminders file not found: {path}. Is the git-pulse repo cloned "
+            f"and pulled on this device? See SLEUTH_SYNC.md."
+        ) from exc
+    except OSError as exc:
+        raise SleuthApiError(f"Cannot read Sleuth reminders file {path}: {exc}") from exc
+
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise SleuthApiError(f"Sleuth reminders file is invalid JSON ({path}): {exc}") from exc
+
+    if not isinstance(data, dict) or "reminders" not in data:
+        raise SleuthApiError(f"Sleuth reminders file missing a 'reminders' array: {path}")
+    return data
+
+
 def _fetch_payload(
     base_url: str,
     token: str,
     workspace_name: str,
     active_only: bool,
 ) -> dict[str, Any]:
+    # File source (published export): read the locally-synced JSON directly. The
+    # file's own activeOnly filter is whatever the publisher chose, so the caller's
+    # active_only flag does not re-filter here.
+    file_path = _local_source_path(base_url)
+    if file_path is not None:
+        return _read_payload_from_file(file_path)
+
     active_param = "true" if active_only else "false"
     url = (
         f"{base_url.rstrip('/')}"
@@ -266,7 +358,45 @@ def ensure_sleuth_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_sleuth_reminders_active "
         "ON sleuth_reminders(is_active)"
     )
+    # Source-level metadata (key/value), e.g. the publisher heartbeat
+    # `export_generated_at`. Used by `doctor` to detect a dead publisher — a
+    # signal the per-row `last_synced_at` cannot give (local re-reads keep
+    # bumping it even when the upstream export has gone stale).
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS sleuth_sync_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
     conn.commit()
+
+
+EXPORT_GENERATED_AT_KEY = "export_generated_at"
+
+
+def get_export_generated_at(database_path: Path) -> datetime | None:
+    """Read the publisher heartbeat (`exportGeneratedAt`) last persisted by a sync.
+
+    Returns None if no file-source export has been ingested yet (e.g. http source,
+    or the publisher predates the heartbeat). Doctor compares this to now."""
+    if not database_path.exists():
+        return None
+    conn = sqlite3.connect(database_path)
+    try:
+        row = conn.execute(
+            "SELECT value FROM sleuth_sync_meta WHERE key = ?", (EXPORT_GENERATED_AT_KEY,)
+        ).fetchone() if _table_exists(conn, "sleuth_sync_meta") else None
+    finally:
+        conn.close()
+    return _parse_datetime(row[0]) if row and row[0] else None
+
+
+def _table_exists(conn: sqlite3.Connection, name: str) -> bool:
+    return conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (name,)
+    ).fetchone() is not None
 
 
 _UPDATE_FIELDS = (
@@ -318,6 +448,90 @@ def _row_differs(existing: sqlite3.Row, desired: dict[str, Any]) -> bool:
 # ---------------------------------------------------------------------------
 
 
+_EXPECTED_FILE_SOURCE_TYPE = "sleuth-reminders-file"
+
+
+def _validate_payload_contract(
+    data: dict[str, Any], *, workspace_name: str, is_file_source: bool
+) -> list[SleuthReminder]:
+    """Validate the export contract and every reminder entry BEFORE any DB write.
+
+    Reconciliation retires DB rows absent from the response, so a wrong-workspace
+    file, a truncated/partial export, or publisher contract drift could silently
+    flip still-active reminders to stale. Guard against that: any mismatch raises
+    SleuthApiError (which aborts before the transaction), so a bad payload never
+    poisons the table.
+    """
+    # 1. Workspace must match what we asked for — never write a file's rows under a
+    #    different workspace than the one it claims (and that we requested).
+    payload_ws = str(data.get("workspaceName") or "")
+    if payload_ws != workspace_name:
+        raise SleuthApiError(
+            f"Sleuth payload workspace {payload_ws!r} != requested {workspace_name!r} "
+            f"— refusing to reconcile (wrong file/endpoint?)"
+        )
+
+    # 2. The published file must be a complete active-only export — that's the
+    #    contract the active_only=False retirement sweep relies on. Drift here is
+    #    exactly what would wrongly retire live reminders.
+    if is_file_source:
+        filters = data.get("filters")
+        if not isinstance(filters, dict) or filters.get("activeOnly") is not True:
+            raise SleuthApiError(
+                "Sleuth file source missing filters.activeOnly=true — refusing to reconcile"
+            )
+        source = data.get("source")
+        source_type = source.get("type") if isinstance(source, dict) else None
+        if source_type != _EXPECTED_FILE_SOURCE_TYPE:
+            raise SleuthApiError(
+                f"Sleuth file source.type {source_type!r} != {_EXPECTED_FILE_SOURCE_TYPE!r} "
+                f"— refusing to reconcile"
+            )
+
+    # 3. Every entry must be a dict with a usable reminderId. Reject the whole batch
+    #    on any malformed item (a silently-dropped item would look like a retirement).
+    reminders_raw = data.get("reminders")
+    if not isinstance(reminders_raw, list):
+        raise SleuthApiError("Sleuth payload 'reminders' is not a list")
+    reminders: list[SleuthReminder] = []
+    for index, item in enumerate(reminders_raw):
+        if not isinstance(item, dict):
+            raise SleuthApiError(f"Sleuth reminder at index {index} is not an object")
+        rid = item.get("reminderId")
+        if not isinstance(rid, str) or not rid.strip():
+            raise SleuthApiError(f"Sleuth reminder at index {index} is missing 'reminderId'")
+        reminders.append(_to_reminder(item))
+    return reminders
+
+
+def sync_sleuth(
+    database_path: Path,
+    *,
+    active_only: bool = False,
+    which: str = "production",
+    refresh_source: bool = True,
+) -> SleuthSyncResult:
+    """Source-owned entry point for the Sleuth reminders sync.
+
+    Resolves credentials (``config.get_sleuth_credentials``) then runs
+    :func:`sync_sleuth_reminders`. This is the single path the CLI (`sleuth-sync`),
+    the MCP tool (`sleuth_sync_reminders`), and the `sleuth` collector all call —
+    so no user-facing surface imports the leaf ``sync_sleuth_reminders`` directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2).
+    """
+    from rebalance.ingest.config import get_sleuth_credentials
+
+    env = get_sleuth_credentials(which)
+    return sync_sleuth_reminders(
+        base_url=env["SLEUTH_WEB_API_BASE_URL"],
+        token=env["SLEUTH_WEB_API_TOKEN"],
+        workspace_name=env["SLEUTH_WORKSPACE_NAME"],
+        database_path=database_path,
+        active_only=active_only,
+        refresh_source=refresh_source,
+    )
+
+
 def sync_sleuth_reminders(
     base_url: str,
     token: str,
@@ -325,17 +539,28 @@ def sync_sleuth_reminders(
     database_path: Path,
     *,
     active_only: bool = False,
+    refresh_source: bool = True,
 ) -> SleuthSyncResult:
-    """Fetch reminders from Sleuth and upsert them into sleuth_reminders."""
+    """Fetch reminders from Sleuth and upsert them into sleuth_reminders.
+
+    For a file source, the local export clone is refreshed (best-effort, non-
+    destructive) before reading so every entry point — CLI, MCP, daily refresh —
+    gets fresh data. Pass ``refresh_source=False`` for an explicit offline read."""
+    from rebalance.ingest import auth_log
     from rebalance.ingest.db import db_connection
+
+    file_path = _local_source_path(base_url)
+    is_file_source = file_path is not None
+
+    source_refresh: str | None = None
+    if is_file_source and refresh_source:
+        source_refresh = _refresh_file_source(file_path)
 
     data = _fetch_payload(base_url, token, workspace_name, active_only)
 
-    reminders_raw = data.get("reminders") or []
-    if not isinstance(reminders_raw, list):
-        raise SleuthApiError("Sleuth API response 'reminders' is not a list")
-
-    reminders = [_to_reminder(item) for item in reminders_raw if isinstance(item, dict)]
+    reminders = _validate_payload_contract(
+        data, workspace_name=workspace_name, is_file_source=is_file_source
+    )
 
     now_iso = datetime.now(timezone.utc).isoformat()
     inserted = updated = unchanged = 0
@@ -470,11 +695,21 @@ def sync_sleuth_reminders(
                     (now_iso,),
                 )
             retired = cur.rowcount or 0
+
+        # Persist the publisher heartbeat so doctor can detect a dead publisher
+        # independently of our local last_synced_at (which we bump on every reread).
+        export_generated_at = data.get("exportGeneratedAt")
+        if isinstance(export_generated_at, str) and export_generated_at.strip():
+            conn.execute(
+                "INSERT INTO sleuth_sync_meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (EXPORT_GENERATED_AT_KEY, export_generated_at.strip()),
+            )
         conn.commit()
 
-    return SleuthSyncResult(
+    result = SleuthSyncResult(
         workspace_name=str(data.get("workspaceName") or workspace_name),
-        fetched_at=str(data.get("fetchedAt") or ""),
+        fetched_at=str(data.get("exportGeneratedAt") or data.get("fetchedAt") or ""),
         total_reminder_count=int(data.get("totalReminderCount") or 0),
         returned_reminder_count=int(
             data.get("returnedReminderCount")
@@ -485,4 +720,17 @@ def sync_sleuth_reminders(
         updated_count=updated,
         unchanged_count=unchanged,
         retired_count=retired,
+        source_refresh=source_refresh,
     )
+    auth_log.log_sleuth_sync_succeeded(
+        workspace=result.workspace_name,
+        source_mode="file-source" if is_file_source else "web-api",
+        returned=result.returned_reminder_count,
+        total=result.total_reminder_count,
+        inserted=result.inserted_count,
+        updated=result.updated_count,
+        unchanged=result.unchanged_count,
+        retired=result.retired_count,
+        source_refresh=result.source_refresh,
+    )
+    return result

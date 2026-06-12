@@ -1,5 +1,16 @@
 # Sleuth → rebalance-OS: Production Cutover Checklist
 
+> **Status: COMPLETED 2026-06-05.** rebalance now pulls **production** reminders
+> (workspace `neochrome`) over the SSH tunnel (`http://127.0.0.1:12020`, launchd
+> `com.rebalance-os.sleuth-tunnel`). Two issues were fixed during cutover:
+> (1) the tunnel authenticated by key but the rebuilt prod box had **no key
+> installed** → installed the Mac Studio's `~/.ssh/id_ed25519.pub` in the box's
+> `authorized_keys`; (2) the config still pointed at the **dev** box
+> (`neochrome-dev`) → repointed to the production creds from
+> `~/secrets/sleuth/sleuth-web-api-production.env` (kept in keyring). The dev
+> integration (`104.238.130.109`, `neochrome-dev`) remains available for manual
+> use. First production sync returned 24/24 reminders.
+
 **Trigger:** Sleuth has been deployed to the production host (`<prod-host>`) on
 a HEAD that includes commit `15725ec` (`Add rebalance reminders API export`) or later.
 
@@ -175,5 +186,10 @@ If prod sync misbehaves:
   unencrypted. Token can be sniffed in transit. Acceptable for current data
   sensitivity; revisit (SSH tunnel, nginx+TLS, or firewall allowlist) if the
   reminder content ever includes anything more sensitive than today's mix.
+  > **SUPERSEDED (2026-06-04):** production no longer exposes `:2020` publicly —
+  > the port is firewalled and reached via an SSH tunnel
+  > (`base_url=http://127.0.0.1:12020`, launchd agent `com.rebalance-os.sleuth-tunnel`).
+  > Dev remains direct. See [SLEUTH_SYNC.md](../../SLEUTH_SYNC.md) for current setup
+  > and troubleshooting.
 - **Dev pull is preserved, not removed.** `rebalance sleuth-sync --env development`
   remains available for ad-hoc dev queries.

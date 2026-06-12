@@ -224,7 +224,7 @@ class DashboardTerminalThemeTests(unittest.TestCase):
         ):
             dashboard._do_refresh()
 
-        refresh.assert_called_once_with(dashboard.DB_PATH, scope=["github"], include_semantic=False)
+        refresh.assert_called_once_with(dashboard.DB_PATH, scope=["github"])
         snapshot = dashboard.REFRESH.snapshot()
         self.assertEqual(snapshot["status"], "ok")
         self.assertEqual(snapshot["last_profile"]["slowest_repo"], "example/repo")

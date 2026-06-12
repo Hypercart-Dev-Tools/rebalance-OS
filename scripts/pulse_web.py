@@ -34,8 +34,7 @@ from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(PROJECT_ROOT / "src"))
-sys.path.insert(0, str(PROJECT_ROOT / "scripts"))
+import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
 
 # Reuse the TUI's data layer so both views move in lockstep.
 from dashboard import (  # type: ignore  # noqa: E402
@@ -45,6 +44,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     fetch_open_prs,
     fetch_org_activity,
     fetch_recent_emails,
+    fetch_recent_figma,
     fetch_recent_github,
     fetch_repo_activity_counts,
     fetch_sleuth_due,
@@ -55,8 +55,19 @@ from dashboard import (  # type: ignore  # noqa: E402
     _truncate,
 )
 from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
-from rebalance.ingest.index_ops import get_index_status  # noqa: E402
+from rebalance.health import HealthStatus, compute_health_status  # noqa: E402
+from rebalance.ingest.config import get_figma_file_keys  # noqa: E402
+from rebalance.ingest.index_ops import COLLECTORS, get_index_status  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
+from rebalance.web_components import (  # noqa: E402
+    ITEM_SUB_GLYPHS,
+    KIND_GLYPHS,
+    RB_BUTTON_CSS,
+    RB_CHROME_CSS,
+    RB_TOKENS_CSS,
+    button_link,
+    render_shell,
+)
 
 CONFIG_PATH = PROJECT_ROOT / "temp" / "rbos.config"
 DEFAULT_OUT = PROJECT_ROOT / "web" / "pulse.html"
@@ -69,6 +80,27 @@ HEALTH_ISSUES_URL = (
 MAX_GOAL_HISTORY = 3
 PRIMARY_GOAL_LIMIT = 3
 SECONDARY_TODO_LIMIT = 6
+STREAM_SOURCE_EXCLUDE = frozenset({"ask_self", "code", "focus5", "semantic", "sync"})
+STREAM_DISPLAY = {
+    "github": {"label": "GitHub", "kbd": "G", "sort": 10},
+    "vault": {"label": "Vault", "kbd": "V", "sort": 20},
+    "calendar": {"label": "Calendar", "kbd": "C", "sort": 30},
+    "sleuth": {"label": "Sleuth", "kbd": "S", "sort": 40},
+    "email": {"label": "Email", "kbd": "E", "sort": 50},
+    "figma": {"label": "Figma", "kbd": "F", "sort": 60},
+}
+STREAM_COUNT_KEYS = (
+    "messages",
+    "comments",
+    "reminders",
+    "events",
+    "items",
+    "chunks",
+    "files",
+    "repos",
+    "documents",
+    "activity_records",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -316,6 +348,68 @@ def load_vault_path() -> Path | None:
     return Path(vp).expanduser() if vp else None
 
 
+def _stream_sort_key(name: str) -> tuple[int, str]:
+    meta = STREAM_DISPLAY.get(name) or {}
+    return int(meta.get("sort") or 999), name
+
+
+def _stream_label(name: str) -> str:
+    meta = STREAM_DISPLAY.get(name) or {}
+    label = str(meta.get("label") or "").strip()
+    return label or name.replace("_", " ").title()
+
+
+def _stream_kbd(name: str) -> str:
+    meta = STREAM_DISPLAY.get(name) or {}
+    kbd = str(meta.get("kbd") or "").strip()
+    if kbd:
+        return kbd[:2]
+    for char in _stream_label(name):
+        if char.isalnum():
+            return char.upper()
+    return "?"
+
+
+def _stream_count(source_status: dict[str, Any]) -> int:
+    for key in STREAM_COUNT_KEYS:
+        value = source_status.get(key)
+        if isinstance(value, bool):
+            continue
+        if isinstance(value, (int, float)):
+            return int(value)
+    return 0
+
+
+def build_stream_rows(
+    status: dict[str, Any],
+    *,
+    live_counts: dict[str, int] | None = None,
+) -> list[dict[str, Any]]:
+    """Return the sidebar stream rows from registered user-facing collectors.
+
+    The list is derived from the collector registry plus the ``index_status``
+    source blocks, so opt-in connectors such as email and figma render even
+    before they are configured or synced. For streams the page already renders
+    directly, ``live_counts`` can override the stored totals so the sidebar
+    badges stay aligned with the visible feed lengths.
+    """
+    sources = status.get("sources") or {}
+    names = [
+        name for name in COLLECTORS
+        if name not in STREAM_SOURCE_EXCLUDE and name in sources
+    ]
+    names.sort(key=_stream_sort_key)
+    return [
+        {
+            "name": name,
+            "label": _stream_label(name),
+            "kbd": _stream_kbd(name),
+            "count": int((live_counts or {}).get(name, _stream_count(sources.get(name) or {}))),
+        }
+        for name in names
+    ]
+
+
 # ---------------------------------------------------------------------------
 # Health report counter — reads local JSONL log, no GitHub API call
 # ---------------------------------------------------------------------------
@@ -361,14 +455,14 @@ def fetch_health_filed_count(days: int = 30) -> int:
 # ---------------------------------------------------------------------------
 
 KIND_GLYPH = {
-    "commit":  ("●", "ok"),
-    "item":    ("◆", "info"),
-    "comment": ("○", "muted"),
+    "commit":  (KIND_GLYPHS["commit"],  "ok"),
+    "item":    (KIND_GLYPHS["item"],    "info"),
+    "comment": (KIND_GLYPHS["comment"], "muted"),
 }
 
 ITEM_SUB_GLYPH = {
-    "issue":        ("✦", "warn"),
-    "pull_request": ("⇡", "info"),
+    "issue":        (ITEM_SUB_GLYPHS["issue"],        "warn"),
+    "pull_request": (ITEM_SUB_GLYPHS["pull_request"], "info"),
 }
 
 
@@ -456,74 +550,17 @@ def _latest_collector_activity(status: dict[str, Any]) -> str | None:
     return latest_raw
 
 
-def _status_timestamp(status: dict[str, Any], key: str) -> str | None:
-    sources = status.get("sources") or {}
-    semantic = status.get("semantic_index") or {}
-    mapping = {
-        "vault": (sources.get("vault") or {}).get("last_ingested_at"),
-        "github data": (sources.get("github") or {}).get("activity_last_scanned_at")
-        or (sources.get("github") or {}).get("documents_last_fetched_at"),
-        "calendar": (sources.get("calendar") or {}).get("last_fetched_at"),
-        "sleuth": (sources.get("sleuth") or {}).get("last_synced_at"),
-        "gmail": (sources.get("email") or {}).get("last_synced_at"),
-        "semantic": semantic.get("last_embedded_at"),
-    }
-    return mapping.get(key)
-
-
-def _source_recently_succeeded(status: dict[str, Any], key: str, now: datetime, *, within_hours: int = 36) -> bool:
-    raw = _status_timestamp(status, key)
-    dt = _parse_iso(raw)
-    if dt is None:
-        return False
-    return (now - dt).total_seconds() <= within_hours * 3600
-
-
-def _visible_problem_checks(checks: list[Check], status: dict[str, Any], now: datetime) -> list[Check]:
-    visible: list[Check] = []
-    for check in checks:
-        if check.status not in {FAIL, WARN}:
-            continue
-        if (
-            check.status == WARN
-            and check.name in {"vault", "calendar", "gmail", "sleuth"}
-            and _source_recently_succeeded(status, check.name, now)
-        ):
-            continue
-        visible.append(check)
-    return visible
-
-
-def _ordered_problem_checks(checks: list[Check], status: dict[str, Any], now: datetime) -> list[Check]:
-    def priority(check: Check) -> tuple[int, int, str]:
-        severity = 0 if check.status == FAIL else 1
-        launchd = 1 if check.name.startswith("launchd:") else 0
-        return (severity, launchd, check.name)
-
-    return sorted(
-        _visible_problem_checks(checks, status, now),
-        key=priority,
-    )
-
-
 def render_health_banner(
-    checks: list[Check],
-    status: dict[str, Any],
+    health: HealthStatus,
     now: datetime,
     last_activity: str | None,
 ) -> str:
-    problems = _ordered_problem_checks(checks, status, now)
+    problems = health.problems
     if not problems:
         return ""
 
-    failures = [check for check in problems if check.status == FAIL]
-    warnings = [check for check in problems if check.status == WARN]
-    tone = "danger" if failures else "warn"
-    status_text = (
-        f"{len(failures)} error{'s' if len(failures) != 1 else ''}"
-        if failures
-        else f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}"
-    )
+    tone = "danger" if health.failures else "warn"
+    status_text = health.status_text
     activity_text = _ago(last_activity, now=now) if last_activity else "never"
     copy_text = _health_banner_copy_text(
         problems,
@@ -533,10 +570,16 @@ def render_health_banner(
 
     items = []
     for check in problems[:4]:
+        fix = (
+            f'<span class="health-banner-fix">→ {_esc(_short_text(check.hint, 120))}</span>'
+            if check.hint
+            else ""
+        )
         items.append(
             f'<span class="health-banner-item">'
             f'<span class="health-banner-name">{_esc(check.name)}</span>'
             f'<span class="health-banner-detail">{_esc(_short_text(check.detail, 120))}</span>'
+            f"{fix}"
             f"</span>"
         )
     if len(problems) > 4:
@@ -564,17 +607,15 @@ def render_health_banner(
 
 
 def render_sync_chip(
-    checks: list[Check],
-    status: dict[str, Any],
+    health: HealthStatus,
     last_activity: str | None,
     now: datetime,
 ) -> str:
-    problems = _ordered_problem_checks(checks, status, now)
     activity_text = _ago(last_activity, now=now) if last_activity else "—"
-    if any(check.status == FAIL for check in problems):
+    if health.verdict == FAIL:
         tone = "danger"
         label = f"Collector degraded · {activity_text}"
-    elif problems:
+    elif health.verdict == WARN:
         tone = "warn"
         label = f"Collector warnings · {activity_text}"
     else:
@@ -702,7 +743,7 @@ def render_hero(
     )
     date_str = now.strftime("%A, %B %-d")
     open_link = (
-        f'<a class="hero-open" href="{_esc(obsidian_url)}">Open in Obsidian ↗</a>'
+        button_link("Open in Obsidian", obsidian_url, cls="hero-open")
         if obsidian_url else ""
     )
     undo_html = ""
@@ -934,13 +975,24 @@ def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
             badges.append('<span class="pr-badge approved">approved</span>')
         elif rd in ("changes_requested", "review_required"):
             badges.append('<span class="pr-badge review">review</span>')
+        cs = pr.get("check_status") or ""
+        if cs == "failing":
+            badges.append('<span class="pr-badge ci-fail">✗ CI</span>')
+        elif cs == "mixed":
+            badges.append('<span class="pr-badge ci-mixed">~ CI</span>')
+        elif cs == "pending":
+            badges.append('<span class="pr-badge ci-pending">⟳ CI</span>')
 
         badge_html = " ".join(badges)
         title_html = f'<a href="{url}" target="_blank" rel="noopener noreferrer">#{num} {_esc(title)}</a>'
 
-        fresh_attr = ' data-fresh' if not pr["is_stale"] else ''
+        row_attrs = ''
+        if not pr["is_stale"]:
+            row_attrs += ' data-fresh'
+        if pr.get("ci_failing"):
+            row_attrs += ' data-ci-fail'
         items.append(f"""
-        <li class="pr-row"{fresh_attr}>
+        <li class="pr-row"{row_attrs}>
           <span class="pr-age {age_cls}">{age_label}</span>
           <div>
             <div class="pr-title">{title_html} {badge_html}</div>
@@ -952,16 +1004,22 @@ def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
         """)
 
     stale_count = sum(1 for pr in rows if pr["is_stale"])
+    fail_count  = sum(1 for pr in rows if pr.get("ci_failing"))
     stale_btn = (
-        f' · <button class="pr-filter-btn" data-pr-filter>'
+        f' · <button class="pr-filter-btn" data-pr-filter-stale>'
         f'{stale_count} stale</button>'
         if stale_count else ""
+    )
+    fail_btn = (
+        f' · <button class="pr-filter-btn ci" data-pr-filter-ci>'
+        f'{fail_count} failing CI</button>'
+        if fail_count else ""
     )
     return f"""
     <section class="card open-prs" id="open-prs-card">
       <header class="card-head">
         <h2>Open PRs</h2>
-        <span class="card-head-meta">{len(rows)} newest{stale_btn}</span>
+        <span class="card-head-meta">{len(rows)} open{stale_btn}{fail_btn}</span>
       </header>
       <ol class="open-prs-list">{''.join(items)}</ol>
     </section>
@@ -1002,6 +1060,7 @@ def render_index_health(status: dict[str, Any], now: datetime) -> str:
         ("Calendar events",  (sources.get("calendar") or {}).get("events"),                (sources.get("calendar") or {}).get("last_fetched_at"),           "info"),
         ("Sleuth reminders", (sources.get("sleuth")   or {}).get("reminders"),             (sources.get("sleuth")   or {}).get("last_synced_at"),            "info"),
         ("Email messages",   (sources.get("email")    or {}).get("messages"),              (sources.get("email")    or {}).get("last_synced_at"),            "info"),
+        ("Figma comments",   (sources.get("figma")    or {}).get("comments"),              (sources.get("figma")    or {}).get("last_synced_at"),            "info"),
         ("Semantic docs",    semantic.get("total_documents"),                              semantic.get("last_embedded_at"),                                  "ok"),
     ]
     items = []
@@ -1109,18 +1168,117 @@ def render_recent_emails(
     """
 
 
-def render_sidebar(
+def render_recent_figma(
+    rows: list[dict[str, Any]],
+    now: datetime,
+    *,
+    tz: ZoneInfo,
+    limit: int,
+    stored_total: int,
+    configured_keys: list[str],
+    last_synced_at: str | None,
+) -> str:
+    configured_total = len(configured_keys)
+    sync_text = _ago(last_synced_at, now=now) if last_synced_at else "never synced"
+    chips = "".join(
+        f'<span class="figma-key-chip" title="{_esc(key)}">{_esc(key)}</span>'
+        for key in configured_keys
+    ) or '<span class="figma-key-empty">No Figma project IDs configured yet.</span>'
+
+    form = f"""
+      <form id="figma-project-form" class="figma-config-form">
+        <div class="figma-config-label">Add Figma project ID</div>
+        <div class="figma-config-help">Paste a Figma file key or full design URL. rebalance adds it to <code>figma_file_keys</code> and syncs comments.</div>
+        <div class="figma-config-row">
+          <input
+            id="figma-project-input"
+            class="figma-project-input"
+            type="text"
+            placeholder="Figma file key or design URL"
+            autocomplete="off"
+            spellcheck="false"
+          >
+          <button id="figma-project-submit" class="figma-project-btn" type="submit">Add + sync</button>
+        </div>
+        <div id="figma-project-status" class="figma-project-status subtle">
+          Tracking {configured_total} project ID{'s' if configured_total != 1 else ''} · last sync { _esc(sync_text) }
+        </div>
+        <div class="figma-key-list">{chips}</div>
+      </form>
+    """
+
+    if not rows:
+        return f"""
+    <section class="card figma-comments">
+      <header class="card-head">
+        <h2>Recent Figma comments</h2>
+        <span class="card-head-meta">{stored_total} stored · {configured_total} project{'s' if configured_total != 1 else ''}</span>
+      </header>
+      <div class="empty">No stored Figma comments yet.</div>
+      <footer class="card-foot">{form}</footer>
+    </section>
+    """
+
+    items = []
+    for row in rows:
+        author = _normalize_html_text(row.get("user_handle") or "") or _normalize_html_text(row.get("user_id") or "") or "Figma user"
+        message = _truncate(_normalize_html_text(row.get("message") or ""), 220) or "(empty comment)"
+        when = _ago(row.get("created_at") or row.get("synced_at"), now=now)
+        resolved = bool(row.get("resolved_at"))
+        resolved_badge = '<span class="figma-badge resolved">resolved</span>' if resolved else ""
+        file_key = _normalize_html_text(row.get("file_key") or "")
+        items.append(f"""
+        <li class="figma-row">
+          <div class="figma-row-main">
+            <div class="figma-row-message">{_esc(message)}</div>
+            <div class="figma-row-meta">
+              <span class="figma-row-author">{_esc(author)}</span>
+              <span class="figma-row-dot">·</span>
+              <span class="figma-row-file" title="{_esc(file_key)}">{_esc(file_key)}</span>
+              <span class="figma-row-dot">·</span>
+              <span class="figma-row-when">{_esc(when)}</span>
+              {f'<span class="figma-row-dot">·</span>{resolved_badge}' if resolved_badge else ''}
+            </div>
+          </div>
+          <div class="figma-row-side">
+            <div class="figma-row-time">{_esc(_format_dt_short(row.get("created_at") or row.get("synced_at"), tz=tz))}</div>
+          </div>
+        </li>
+        """)
+
+    return f"""
+    <section class="card figma-comments">
+      <header class="card-head">
+        <h2>Recent Figma comments</h2>
+        <span class="card-head-meta">latest {min(len(rows), limit)} shown · {stored_total} stored</span>
+      </header>
+      <ol class="figma-list">{''.join(items)}</ol>
+      <footer class="card-foot">{form}</footer>
+    </section>
+    """
+
+
+def build_nav_data(
     *,
     in_progress: int,
     cal_rows: list[dict[str, Any]],
     sleuth_rows: list[dict[str, Any]],
     sleuth_synced: bool,
-    streams: dict[str, int],
+    streams: list[dict[str, Any]],
     drift_total: int,
     semantic_total: int,
+    notices: list[Check] | None = None,
     tz: ZoneInfo,
     now: datetime,
-) -> str:
+) -> dict[str, Any]:
+    """Render the sidebar's dynamic sections to HTML and bundle them for
+    ``render_sidebar``.
+
+    This is the data/I-O-aware half that lives in pulse_web (it uses the Slack /
+    Sleuth helpers and the DB-derived rows). The pure shell that frames these
+    strings lives in :func:`rebalance.web_components.render_sidebar`, which keeps
+    that module stdlib-only.
+    """
     cal_items = []
     for ev in cal_rows:
         when = _format_dt_short(ev.get("start_time"), tz=tz)
@@ -1173,118 +1331,55 @@ def render_sidebar(
                 '</li>'
             )
 
-    return f"""
-    <aside class="sidebar">
-      <div class="brand">
-        <div class="dot"></div>
-        <div>
-          <div class="crumb">rebalanceOS Pulse <span class="sep">›</span> Today</div>
-        </div>
-      </div>
-      <nav>
-        <ul class="nav-list">
-          <li class="active"><span>Today</span><span class="badge">{in_progress}</span></li>
-        </ul>
+    # Notices — intentional / non-actionable WARNs, demoted off the verdict but
+    # kept visible in a scrollable module.
+    notice_items = []
+    for c in (notices or []):
+        detail = _truncate(_compact_whitespace(c.detail), 140)
+        hint = _truncate(_compact_whitespace(c.hint), 140) if c.hint else ""
+        hint_html = f'<div class="side-row-hint">→ {_esc(hint)}</div>' if hint else ""
+        notice_items.append(f"""
+          <li class="side-row notice-row">
+            <div class="side-row-title">{_esc(c.name)}</div>
+            <div class="side-row-meta">{_esc(detail)}</div>
+            {hint_html}
+          </li>
+        """)
+    notices_section = ""
+    if notice_items:
+        notices_section = f"""
+        <div class="nav-section-label">Notices <span class="side-count">{len(notice_items)}</span></div>
+        <ul class="side-list notices-scroll">{''.join(notice_items)}</ul>
+        """
 
-        <div class="nav-section-label">Calendar</div>
-        <ul class="side-list">{''.join(cal_items)}</ul>
-
-        <div class="nav-section-label">Reminders</div>
-        <ul class="side-list">{''.join(sleuth_items)}</ul>
-
-        <div class="nav-section-label">Streams</div>
-        <ul class="streams">
-          <li><span class="kbd">G</span><span>GitHub</span><span class="badge">{streams.get('github', 0)}</span></li>
-          <li><span class="kbd">V</span><span>Vault</span><span class="badge">{streams.get('vault', 0)}</span></li>
-          <li><span class="kbd">C</span><span>Calendar</span><span class="badge">{streams.get('calendar', 0)}</span></li>
-          <li><span class="kbd">S</span><span>Sleuth</span><span class="badge">{streams.get('sleuth', 0)}</span></li>
-        </ul>
-      </nav>
-      <footer class="sidebar-foot subtle">Drift {drift_total} · {semantic_total:,} docs</footer>
-    </aside>
-    """
+    return {
+        "badge": in_progress,
+        "cal_html": "".join(cal_items),
+        "sleuth_html": "".join(sleuth_items),
+        "notices_html": notices_section,
+        "streams": streams,
+        "drift_total": drift_total,
+        "semantic_total": semantic_total,
+    }
 
 
 # ---------------------------------------------------------------------------
 # Page assembly
 # ---------------------------------------------------------------------------
 
-CSS = """
-:root {
-  --bg: #f3efe7;
-  --panel: #ffffff;
-  --border: #e3ddd0;
-  --fg: #1d2024;
-  --fg-muted: #5b5750;
-  --fg-dim: #8a857c;
-  --accent: #1f6feb;
-  --ok: #2f7437;
-  --warn: #a65f00;
-  --danger: #c0392b;
-  --info: #1d6fa8;
-  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.04);
-}
-* { box-sizing: border-box; }
-html, body { margin: 0; padding: 0; }
-body {
-  font: 13px/1.45 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-  color: var(--fg);
-  background: var(--bg);
-  -webkit-font-smoothing: antialiased;
-}
-code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--fg-muted); }
-.subtle { color: var(--fg-dim); font-size: 12px; }
-h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
-h1 { font-size: 22px; }
-h2 { font-size: 14px; color: var(--fg); }
-
-.app { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
-
-/* Sidebar */
-.sidebar {
-  border-right: 1px solid var(--border);
-  padding: 20px 14px;
-  display: flex; flex-direction: column;
-  background: linear-gradient(180deg, #f8f4ec 0%, #f3efe7 100%);
-}
-.brand { display: flex; align-items: center; gap: 8px; padding: 0 6px 22px; }
-.brand .dot { width: 22px; height: 22px; background: var(--accent); border-radius: 5px; }
-.crumb { font-weight: 600; }
-.crumb .sep { color: var(--fg-dim); margin: 0 4px; font-weight: 400; }
-.nav-section-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); padding: 18px 8px 6px; }
-.nav-list { list-style: none; margin: 0; padding: 0; }
-.nav-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--fg); cursor: default; }
-.nav-list li.active { background: rgba(31,111,235,.10); color: var(--fg); font-weight: 500; }
-.nav-list .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
-.nav-list .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: #fff; text-align: center; }
-.sidebar-foot { margin-top: auto; padding: 8px; font-variant-numeric: tabular-nums; }
-
-/* Sidebar lists (calendar + reminders) */
-.side-list { list-style: none; margin: 0; padding: 0; }
-.side-row { padding: 7px 8px; border-radius: 6px; }
-.side-row + .side-row { margin-top: 1px; }
-.side-row:hover { background: rgba(0,0,0,.03); }
-.side-row.has-link { padding: 0; }
-.side-row-link { display: block; padding: 7px 8px; color: inherit; text-decoration: none; border-radius: 6px; }
-.side-row-link:hover { background: rgba(124,196,255,.10); }
-.side-row-link:hover .side-row-title { color: var(--info); }
-.side-row-title { font-size: 12.5px; line-height: 1.35; color: var(--fg); font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
-.side-row-meta { font-size: 11.5px; color: var(--fg-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
-.side-row.empty .side-row-meta { font-style: italic; }
-
-/* Streams: compact 4-row list */
-.streams { list-style: none; margin: 0; padding: 0; }
-.streams li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
-.streams .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
-.streams .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: #fff; text-align: center; }
+# Page-LOCAL CSS for the dashboard only: hero/goals/health-banner/repo-pie/
+# topbar/email/open-prs/charts + the responsive @media collapse (which is
+# interleaved with page rules and so stays here). The shared tokens + chrome
+# come from RB_TOKENS_CSS + RB_CHROME_CSS; render_shell() injects this slice
+# between them and RB_BUTTON_CSS. Leading "\n\n" reproduces the blank line the
+# original single CSS literal had between the chrome and the hero rules.
+PAGE_CSS = """
 
 /* Hero "Open in Obsidian" link */
-.hero-open { color: var(--accent); text-decoration: none; margin-left: 8px; font-size: 12px; }
-.hero-open:hover { text-decoration: underline; }
+.hero-open { margin-left: 8px; }  /* visual styling now from the shared .rb-btn */
 .card-foot .strong { color: var(--fg); font-weight: 500; }
 
 /* Main */
-.main { padding: 22px 28px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .topbar { display: flex; align-items: flex-start; justify-content: space-between; }
 .topbar .crumb { color: var(--fg-muted); font-weight: 500; padding-top: 4px; }
 .topbar-right { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
@@ -1315,6 +1410,23 @@ h2 { font-size: 14px; color: var(--fg); }
 .refresh-btn:disabled { opacity: .55; cursor: progress; }
 .pulse-filter { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--fg); width: 220px; }
 .pulse-filter:focus { outline: none; border-color: var(--accent); }
+/* Search mode toggle (Filter | Ask) + chat results */
+.search-wrap { position: relative; display: inline-flex; align-items: center; gap: 8px; }
+.search-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; }
+.search-mode-btn { font: inherit; font-size: 12px; line-height: 1; padding: 6px 10px; border: 0; background: transparent; color: var(--fg-muted); cursor: pointer; }
+.search-mode-btn + .search-mode-btn { border-left: 1px solid var(--border); }
+.search-mode-btn.is-active { background: var(--accent); color: #fff; }
+.search-wrap.mode-ask .pulse-filter { width: 300px; border-color: var(--accent); }
+.chat-results { position: absolute; top: calc(100% + 6px); right: 0; width: 480px; max-width: 70vw; max-height: 62vh; overflow-y: auto; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px; z-index: 60; text-align: left; }
+.chat-meta, .chat-status { font-size: 12px; color: var(--fg-dim); padding: 2px 4px 8px; }
+.chat-status.error { color: var(--danger); }
+.chat-cite-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.chat-cite { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.chat-cite-head { display: flex; align-items: baseline; gap: 8px; }
+.chat-cite-source { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #fff; background: var(--fg-dim); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+.chat-cite-title { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
+.chat-cite-score { font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
+.chat-cite-preview { font-size: 12px; color: var(--fg-muted); margin-top: 4px; line-height: 1.4; }
 .is-hidden-by-filter { display: none !important; }
 .health-banner {
   display: grid;
@@ -1334,6 +1446,25 @@ h2 { font-size: 14px; color: var(--fg); }
 .health-banner-danger {
   border-color: rgba(192,57,43,.18);
   background: linear-gradient(90deg, rgba(192,57,43,.11), rgba(255,255,255,.96));
+}
+/* Sidebar Notices module — scrollable viewer for demoted WARNs */
+.side-count {
+  display: inline-block; margin-left: 6px; padding: 0 6px;
+  font-size: 10px; font-weight: 600; line-height: 16px; border-radius: 999px;
+  background: rgba(120,120,128,.16); color: var(--fg-dim);
+}
+.notices-scroll {
+  max-height: 168px;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+.notices-scroll::-webkit-scrollbar { width: 7px; }
+.notices-scroll::-webkit-scrollbar-thumb {
+  background: rgba(120,120,128,.32); border-radius: 4px;
+}
+.side-row.notice-row .side-row-hint {
+  color: var(--fg-dim); font-size: 11px; margin-top: 2px;
 }
 .health-banner-lead {
   display: inline-flex;
@@ -1441,6 +1572,7 @@ h2 { font-size: 14px; color: var(--fg); }
 /* Card */
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); overflow: hidden; }
 .card-head { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 18px 10px; }
+.card-head-meta { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .card-foot { padding: 10px 18px 14px; border-top: 1px solid var(--border); }
 
 /* Hero */
@@ -1685,6 +1817,143 @@ h2 { font-size: 14px; color: var(--fg); }
   background: rgba(192,57,43,.08);
 }
 
+/* Recent Figma comments */
+.figma-comments .card-head { align-items: center; }
+.figma-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  max-height: 540px;
+  overflow-y: auto;
+}
+.figma-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+  align-items: start;
+}
+.figma-row:first-child { border-top: 0; }
+.figma-row-main { min-width: 0; }
+.figma-row-message {
+  color: var(--fg);
+  font-size: 12.75px;
+  line-height: 1.45;
+  margin-bottom: 4px;
+}
+.figma-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  color: var(--fg-dim);
+  font-size: 11.5px;
+}
+.figma-row-author { color: var(--fg-muted); font-weight: 600; }
+.figma-row-file {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--fg-dim);
+}
+.figma-row-dot { color: var(--fg-dim); }
+.figma-row-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.figma-row-time {
+  color: var(--fg-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.figma-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 600;
+  border: 1px solid var(--border);
+  background: #fff;
+}
+.figma-badge.resolved {
+  color: var(--ok);
+  border-color: rgba(47,116,55,.22);
+  background: rgba(47,116,55,.08);
+}
+.figma-config-form {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.figma-config-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--fg-dim);
+}
+.figma-config-help {
+  color: var(--fg-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+.figma-config-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 10px;
+}
+.figma-project-input {
+  font: inherit;
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: #fff;
+  color: var(--fg);
+}
+.figma-project-input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+.figma-project-btn {
+  font: inherit;
+  padding: 9px 14px;
+  border: 0;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  cursor: pointer;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.figma-project-btn:disabled {
+  opacity: .55;
+  cursor: progress;
+}
+.figma-project-status.is-error { color: var(--danger); }
+.figma-project-status.is-success { color: var(--ok); }
+.figma-key-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.figma-key-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--fg-muted);
+  font-size: 11.5px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.figma-key-empty {
+  color: var(--fg-dim);
+  font-size: 11.5px;
+}
+
 /* KV lists (watched / health) */
 .kv-list { list-style: none; padding: 6px 18px 10px; margin: 0; }
 .kv-list li { display: grid; grid-template-columns: 1fr auto auto; gap: 10px; padding: 6px 0; align-items: baseline; }
@@ -1716,6 +1985,10 @@ h2 { font-size: 14px; color: var(--fg); }
   .email-row { grid-template-columns: 1fr; }
   .email-row-side { align-items: flex-start; }
   .email-row-time { white-space: normal; }
+  .figma-row { grid-template-columns: 1fr; }
+  .figma-row-side { align-items: flex-start; }
+  .figma-row-time { white-space: normal; }
+  .figma-config-row { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; align-items: stretch; gap: 12px; }
   .topbar > div:last-child { flex-wrap: wrap; }
   .health-banner { grid-template-columns: 1fr; }
@@ -1750,7 +2023,11 @@ h2 { font-size: 14px; color: var(--fg); }
 .pr-badge.draft  { color: var(--fg-dim); border-color: var(--border); }
 .pr-badge.review { color: var(--warn); border-color: rgba(166,95,0,.25); background: rgba(166,95,0,.07); }
 .pr-badge.approved { color: var(--ok); border-color: rgba(47,116,55,.25); background: rgba(47,116,55,.07); }
-/* Stale filter toggle */
+/* CI check-status badges */
+.pr-badge.ci-fail    { color: var(--danger); border-color: rgba(192,57,43,.25); background: rgba(192,57,43,.07); }
+.pr-badge.ci-mixed   { color: var(--warn);   border-color: rgba(166,95,0,.25);  background: rgba(166,95,0,.07);  }
+.pr-badge.ci-pending { color: var(--fg-dim); border-color: var(--border); }
+/* Stale / CI filter toggles */
 .pr-filter-btn {
   font: inherit; font-size: 12px; font-weight: 600;
   padding: 2px 8px; border-radius: 999px; cursor: pointer;
@@ -1759,7 +2036,11 @@ h2 { font-size: 14px; color: var(--fg); }
 }
 .pr-filter-btn:hover  { background: rgba(166,95,0,.16); }
 .pr-filter-btn.active { background: var(--warn); color: #fff; border-color: var(--warn); }
-.open-prs.filter-stale .pr-row[data-fresh] { display: none; }
+.pr-filter-btn.ci              { border-color: rgba(192,57,43,.30); background: rgba(192,57,43,.08); color: var(--danger); }
+.pr-filter-btn.ci:hover        { background: rgba(192,57,43,.16); }
+.pr-filter-btn.ci.active       { background: var(--danger); color: #fff; border-color: var(--danger); }
+.open-prs.filter-stale .pr-row[data-fresh]    { display: none; }
+.open-prs.filter-ci    .pr-row:not([data-ci-fail]) { display: none; }
 
 /* Health pill */
 .health-pill {
@@ -1777,7 +2058,18 @@ h2 { font-size: 14px; color: var(--fg); }
 }
 .health-pill.has-issues .health-dot { background: var(--warn); }
 .health-pill.has-issues { border-color: rgba(166,95,0,.25); color: var(--warn); }
+/* Activity metric (auto-filed count), not a health verdict: neutral dot, no
+   glow, so it never reads as a green "all-clear" next to the collector chip. */
+.health-pill.metric:not(.has-issues) .health-dot { background: var(--fg-dim); animation: none; }
+.health-pill.metric:not(.has-issues) { color: var(--fg-dim); }
 """
+
+# Full page stylesheet, single-sourced: shared tokens + shared chrome (incl. the
+# base resets) by reference, then this page's local rules. Same bytes the old
+# inline literal produced; render_shell() composes the live <style> the same way
+# (it appends RB_BUTTON_CSS after page_css), so this constant is the documented
+# whole and the assembler is the live path.
+CSS = RB_TOKENS_CSS + RB_CHROME_CSS + PAGE_CSS
 
 
 PULSE_JS = r"""
@@ -1861,16 +2153,84 @@ PULSE_JS = r"""
   if (input) {
     const rows = Array.from(document.querySelectorAll(FILTER_TARGETS));
     const haystacks = rows.map(r => (r.textContent || '').toLowerCase());
+    const wrap = input.closest('.search-wrap');
+    const chatResults = document.getElementById('chat-results');
+    const modeBtns = Array.from(document.querySelectorAll('.search-mode-btn'));
+    let mode = 'filter';
+
+    const clearFilter = () => rows.forEach(r => r.classList.remove('is-hidden-by-filter'));
     const apply = () => {
       const q = input.value.trim().toLowerCase();
       for (let i = 0; i < rows.length; i++) {
         rows[i].classList.toggle('is-hidden-by-filter', q !== '' && !haystacks[i].includes(q));
       }
     };
-    input.addEventListener('input', apply);
+    const hideChat = () => { if (chatResults) { chatResults.hidden = true; chatResults.innerHTML = ''; } };
+
+    const renderChat = (data) => {
+      if (!chatResults) return;
+      if (data && data.error) {
+        chatResults.innerHTML = `<div class="chat-status error">${escapeHtml(data.error)}</div>`;
+        return;
+      }
+      const cites = (data && data.citations) || [];
+      if (!cites.length) { chatResults.innerHTML = '<div class="chat-status">No matches.</div>'; return; }
+      const items = cites.map((c) => {
+        const score = (c.score != null) ? `<span class="chat-cite-score">${Math.round(c.score * 100)}%</span>` : '';
+        const title = escapeHtml(c.title || c.path || '(untitled)');
+        const preview = escapeHtml((c.preview || '').slice(0, 240));
+        return `<li class="chat-cite">
+            <div class="chat-cite-head">
+              <span class="chat-cite-source">${escapeHtml(c.source || '')}</span>
+              <span class="chat-cite-title" title="${escapeHtml(c.path || '')}">${title}</span>
+              ${score}
+            </div>
+            <div class="chat-cite-preview">${preview}</div>
+          </li>`;
+      }).join('');
+      const ms = (data.elapsed_ms != null) ? ` · ${data.elapsed_ms} ms` : '';
+      chatResults.innerHTML = `<div class="chat-meta">${cites.length} result${cites.length !== 1 ? 's' : ''}${ms}</div><ul class="chat-cite-list">${items}</ul>`;
+    };
+
+    const runChat = async () => {
+      const q = input.value.trim();
+      if (!q || !chatResults) return;
+      chatResults.hidden = false;
+      chatResults.innerHTML = '<div class="chat-status">Searching… (first query loads the model)</div>';
+      try {
+        const res = await fetch('/api/chat', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ query: q, scope: 'all', top_k: 8 }),
+        });
+        renderChat(await res.json());
+      } catch (err) {
+        chatResults.innerHTML = `<div class="chat-status error">${escapeHtml(String(err))}</div>`;
+      }
+    };
+
+    const setMode = (m) => {
+      mode = (m === 'ask') ? 'ask' : 'filter';
+      modeBtns.forEach(b => b.classList.toggle('is-active', b.dataset.mode === mode));
+      if (wrap) wrap.classList.toggle('mode-ask', mode === 'ask');
+      input.placeholder = (mode === 'ask') ? 'Ask your data…  (Enter)' : 'Filter visible rows…';
+      if (mode === 'ask') { clearFilter(); } else { hideChat(); apply(); }
+    };
+
+    modeBtns.forEach(b => b.addEventListener('click', () => { setMode(b.dataset.mode); input.focus(); }));
+    input.addEventListener('input', () => { if (mode === 'filter') apply(); });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && mode === 'ask') { e.preventDefault(); runChat(); }
+    });
     document.addEventListener('keydown', (e) => {
       if (e.key === '/' && document.activeElement !== input) { e.preventDefault(); input.focus(); }
-      if (e.key === 'Escape' && document.activeElement === input) { input.value = ''; apply(); input.blur(); }
+      if (e.key === 'Escape' && document.activeElement === input) {
+        if (mode === 'ask') { hideChat(); } else { input.value = ''; apply(); }
+        input.blur();
+      }
+    });
+    document.addEventListener('click', (e) => {
+      if (mode === 'ask' && wrap && !wrap.contains(e.target)) hideChat();
     });
   }
 
@@ -1989,6 +2349,65 @@ PULSE_JS = r"""
     });
   }
 
+  const figmaForm = document.getElementById('figma-project-form');
+  const figmaInput = document.getElementById('figma-project-input');
+  const figmaSubmit = document.getElementById('figma-project-submit');
+  const figmaStatus = document.getElementById('figma-project-status');
+
+  const setFigmaStatus = (message, state = '') => {
+    if (!figmaStatus) return;
+    figmaStatus.textContent = message;
+    figmaStatus.classList.remove('is-error', 'is-success');
+    if (state) figmaStatus.classList.add(state);
+  };
+
+  if (figmaForm && figmaInput && figmaSubmit) {
+    figmaForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const project = figmaInput.value.trim();
+      if (!project) {
+        setFigmaStatus('Enter a Figma project ID or paste a Figma URL.', 'is-error');
+        figmaInput.focus();
+        return;
+      }
+
+      const original = figmaSubmit.textContent;
+      figmaSubmit.disabled = true;
+      figmaSubmit.textContent = 'Adding…';
+      setFigmaStatus('Saving project ID and syncing Figma comments…');
+
+      try {
+        const res = await fetch('/api/figma/projects', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ project }),
+        });
+        const data = await res.json();
+        if (!res.ok) {
+          const detail = data?.detail || data?.error || ('request failed: ' + res.status);
+          throw new Error(String(detail));
+        }
+
+        if (data.sync_ok === false) {
+          const reason = data.sync_error ? ` Sync issue: ${data.sync_error}` : '';
+          setFigmaStatus(`Stored ${data.file_key}.${reason} Reloading…`, 'is-error');
+        } else {
+          const prefix = data.already_present ? 'Re-synced' : 'Added';
+          const comments = Number(data.comments_fetched || 0);
+          setFigmaStatus(`${prefix} ${data.file_key} · ${comments} comment${comments === 1 ? '' : 's'} fetched. Reloading…`, 'is-success');
+        }
+        figmaInput.value = '';
+        window.setTimeout(() => location.reload(), 700);
+      } catch (err) {
+        console.warn('figma add project failed:', err);
+        setFigmaStatus(`Could not add Figma project: ${String(err)}`, 'is-error');
+      } finally {
+        figmaSubmit.disabled = false;
+        figmaSubmit.textContent = original;
+      }
+    });
+  }
+
   // Repo activity doughnut (Chart.js, loaded via CDN with defer).
   const initRepoPie = () => {
     const canvas = document.getElementById('repo-pie-canvas');
@@ -2089,38 +2508,31 @@ PULSE_JS = r"""
     window.addEventListener('load', initOrgPie, { once: true });
   }
 
-  // PR stale filter toggle
+  // PR filter toggles (stale + failing CI — independent, composable)
   const prCard = document.getElementById('open-prs-card');
-  const prFilterBtn = prCard && prCard.querySelector('[data-pr-filter]');
-  if (prFilterBtn) {
-    prFilterBtn.addEventListener('click', () => {
-      const active = prCard.classList.toggle('filter-stale');
-      prFilterBtn.classList.toggle('active', active);
-      prFilterBtn.textContent = active
-        ? prFilterBtn.textContent.replace('stale', 'stale ✕')
-        : prFilterBtn.textContent.replace(' ✕', '');
-    });
+  if (prCard) {
+    const staleBtn = prCard.querySelector('[data-pr-filter-stale]');
+    if (staleBtn) {
+      staleBtn.addEventListener('click', () => {
+        const active = prCard.classList.toggle('filter-stale');
+        staleBtn.classList.toggle('active', active);
+        staleBtn.textContent = active
+          ? staleBtn.textContent.replace('stale', 'stale ✕')
+          : staleBtn.textContent.replace(' ✕', '');
+      });
+    }
+    const ciBtn = prCard.querySelector('[data-pr-filter-ci]');
+    if (ciBtn) {
+      ciBtn.addEventListener('click', () => {
+        const active = prCard.classList.toggle('filter-ci');
+        ciBtn.classList.toggle('active', active);
+        ciBtn.textContent = active
+          ? ciBtn.textContent.replace('failing CI', 'failing CI ✕')
+          : ciBtn.textContent.replace(' ✕', '');
+      });
+    }
   }
 })();
-"""
-
-
-def render_page(*, title: str, body_html: str, now: datetime, refresh_seconds: int) -> str:
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>{_esc(title)}</title>
-  <style>{CSS}</style>
-  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>
-</head>
-<body>
-{body_html}
-<!-- generated {now.isoformat()} -->
-<script>{PULSE_JS}</script>
-</body>
-</html>
 """
 
 
@@ -2160,10 +2572,12 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     cal_rows = fetch_calendar_upcoming(now, limit=6)
     sleuth_rows = fetch_sleuth_due(limit=6)
     email_rows = fetch_recent_emails(limit=30)
+    figma_rows = fetch_recent_figma(limit=12)
     repo_pie_days = 7
     repo_pie_rows = fetch_repo_activity_counts(days=repo_pie_days, limit=12)
     status = get_index_status(DB_PATH)
     doctor_report = run_doctor(DB_PATH)
+    figma_keys = get_figma_file_keys()
     # Sleuth has synced at least once iff sources.sleuth.last_synced_at is set.
     # Lets the sidebar tell a genuinely empty inbox apart from a sync that has
     # never run (e.g. missing Sleuth credentials) — no false "Inbox clear".
@@ -2172,20 +2586,28 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     )
 
     in_progress = sum(1 for g in goals if not g["done"])
-    streams = {
-        "github": len(gh_rows),
-        "vault": len(vault_rows),
-        "calendar": len(cal_rows),
-        "sleuth": len(sleuth_rows),
-    }
+    streams = build_stream_rows(
+        status,
+        live_counts={
+            "github": len(gh_rows),
+            "vault": len(vault_rows),
+            "calendar": len(cal_rows),
+            "sleuth": len(sleuth_rows),
+            "email": len(email_rows),
+        },
+    )
     semantic_total = ((status.get("semantic_index") or {}).get("total_documents")) or 0
     email_total = int(((status.get("sources") or {}).get("email") or {}).get("messages") or 0)
+    figma_source = (status.get("sources") or {}).get("figma") or {}
+    figma_total = int(figma_source.get("comments") or 0)
     freshness = status.get("freshness") or {}
     drift_total = sum(int(v) for v in freshness.values() if isinstance(v, int))
 
     last_activity = _latest_collector_activity(status)
     last_vault = vault_rows[0] if vault_rows else None
-    health_filed_30d = fetch_health_filed_count(days=30)
+    health_filed_30d = fetch_health_filed_count(days=1)
+    # One reconciled verdict drives every health pill, so they can't contradict.
+    health_status = compute_health_status(doctor_report.checks, status, now)
 
     tz_source_label, tz_is_fallback = _resolve_tz_source()
     offset = local_now.strftime("%z")
@@ -2199,40 +2621,46 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     )
     system_now_class = "system-now tz-fallback" if tz_is_fallback else "system-now"
 
-    body = f"""
-    <div class="app">
-      {render_sidebar(
-          in_progress=in_progress,
-          cal_rows=cal_rows,
-          sleuth_rows=sleuth_rows,
-          sleuth_synced=sleuth_synced,
-          streams=streams,
-          drift_total=drift_total,
-          semantic_total=semantic_total,
-          tz=TZ,
-          now=now,
-      )}
-      <main class="main">
+    nav_data = build_nav_data(
+        in_progress=in_progress,
+        cal_rows=cal_rows,
+        sleuth_rows=sleuth_rows,
+        sleuth_synced=sleuth_synced,
+        streams=streams,
+        drift_total=drift_total,
+        semantic_total=semantic_total,
+        notices=health_status.notices,
+        tz=TZ,
+        now=now,
+    )
+    main_inner = f"""
         <div class="topbar">
           <div class="crumb">Pulse <span style="color:var(--fg-dim); margin:0 4px">›</span> Today</div>
           <div class="topbar-right">
             <div class="topbar-row">
-              <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
+              <div class="search-wrap">
+                <div class="search-mode" role="group" aria-label="Search mode">
+                  <button type="button" class="search-mode-btn is-active" data-mode="filter">Filter</button>
+                  <button type="button" class="search-mode-btn" data-mode="ask">Ask</button>
+                </div>
+                <input id="pulse-filter" class="pulse-filter" type="search" placeholder="Filter visible rows…" autocomplete="off" spellcheck="false">
+                <div id="chat-results" class="chat-results" hidden></div>
+              </div>
               <span class="{system_now_class}" title="{_esc(system_now_title)}">System: {_esc(system_now_str)} <span class="tz-key">{_esc(system_now_tz)} · {_esc(TZ.key)}</span></span>
             </div>
             <div class="topbar-row">
-              {render_sync_chip(doctor_report.checks, status, last_activity, now)}
+              {render_sync_chip(health_status, last_activity, now)}
               <a href="{_esc(HEALTH_ISSUES_URL)}" target="_blank" rel="noopener noreferrer"
-                 class="health-pill{' has-issues' if health_filed_30d else ''}"
-                 title="Health issues filed in the last 30 days — click to view on GitHub">
+                 class="health-pill metric{' has-issues' if health_filed_30d else ''}"
+                 title="GitHub issues the health reporter auto-filed in the last day — click to view on GitHub">
                 <span class="health-dot"></span>
-                Health: {health_filed_30d} report{'s' if health_filed_30d != 1 else ''} filed (30d)
+                Auto-filed: {health_filed_30d} issue{'s' if health_filed_30d != 1 else ''} (1d)
               </a>
               <button id="pulse-refresh" class="refresh-btn">Refresh</button>
             </div>
           </div>
         </div>
-        {render_health_banner(doctor_report.checks, status, now, last_activity)}
+        {render_health_banner(health_status, now, last_activity)}
         {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
         <div class="grid">
           <div class="col">
@@ -2240,6 +2668,15 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           </div>
           <div class="col">
             {render_watched(watched, now)}
+            {render_recent_figma(
+                figma_rows,
+                now,
+                tz=TZ,
+                limit=12,
+                stored_total=figma_total,
+                configured_keys=figma_keys,
+                last_synced_at=figma_source.get("last_synced_at"),
+            )}
             {render_repo_pie(repo_pie_rows, days=repo_pie_days)}
           </div>
         </div>
@@ -2255,10 +2692,21 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
         <div class="full-row">
           {render_index_health(status, now)}
         </div>
-      </main>
-    </div>
-    """
-    return render_page(title="rebalance pulse · Today", body_html=body, now=now, refresh_seconds=refresh_seconds)
+      """
+    head_extra = (
+        '\n  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.4/dist/chart.umd.min.js" defer></script>'
+    )
+    body_extra = f"\n<!-- generated {now.isoformat()} -->\n<script>{PULSE_JS}</script>\n"
+    return render_shell(
+        "rebalance pulse · Today",
+        main_inner,
+        active="today",
+        wide=True,
+        nav_data=nav_data,
+        page_css=PAGE_CSS,
+        head_extra=head_extra,
+        body_extra=body_extra,
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -7,22 +7,17 @@
 #
 # Single source of truth: this is the same orchestration the MCP publish_pulse
 # tool exposes to interactive agents.
+#
+# Freshness policy: this job READS what the ingest jobs wrote — it does not
+# refresh sources itself. The :00 slot deliberately trails the previous hour's
+# vault (:15) and github (:45) syncs, so the pulse reflects data at most ~1h old.
+#
+# Policy: SCHEDULER.md (job com.rebalance-os.pulse-sync).
 
 set -euo pipefail
 
-REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="$REBALANCE_DIR/.venv/bin/python"
-export PYTHONPATH="$REBALANCE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-LOG_DIR="$REBALANCE_DIR/temp/logs"
-
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/pulse_sync_$(date +%Y-%m-%d).log"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
-}
-
-cd "$REBALANCE_DIR"
+source "$(cd "$(dirname "$0")" && pwd)/lib/scheduler_common.sh"
+rb_job_init "pulse-sync" 14
 
 log "=== rebalance pulse sync starting ==="
 
@@ -57,7 +52,6 @@ case $EXIT_CODE in
     *) log "=== pulse sync exited with code $EXIT_CODE ===" ;;
 esac
 
-# Retain 14 days of pulse logs.
-find "$LOG_DIR" -name "pulse_sync_*.log" -mtime +14 -delete 2>/dev/null || true
+rb_trim_logs
 
 exit $EXIT_CODE

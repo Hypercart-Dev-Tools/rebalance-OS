@@ -15,23 +15,43 @@ from rebalance.ingest.db import migrate
 
 
 class MigrationRunnerTests(unittest.TestCase):
-    def test_fresh_database_is_stamped_at_baseline(self) -> None:
+    def test_fresh_database_is_stamped_then_migrated_to_latest(self) -> None:
+        # A fresh DB is stamped at the baseline, then brought up to the latest
+        # available migration. The expected final version is the highest
+        # NNNN_*.sql prefix (or the baseline if no migrations exist yet), so this
+        # stays correct as migrations accrue without hardcoding a number.
+        expected = max(
+            [v for v, _ in migrate.discover_migrations()] + [BASELINE_SCHEMA_VERSION]
+        )
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "rebalance.db"
             with db_connection(db_path, ensure_schema) as conn:
                 version = run_migrations(conn)
-                self.assertEqual(version, BASELINE_SCHEMA_VERSION)
-                self.assertEqual(current_schema_version(conn), BASELINE_SCHEMA_VERSION)
+                self.assertEqual(version, expected)
+                self.assertEqual(current_schema_version(conn), expected)
+                # The baseline is always recorded, regardless of later migrations.
+                recorded = {
+                    int(r[0]) for r in conn.execute("SELECT version FROM schema_version")
+                }
+                self.assertIn(BASELINE_SCHEMA_VERSION, recorded)
 
     def test_run_migrations_is_idempotent(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "rebalance.db"
             with db_connection(db_path, ensure_schema) as conn:
-                run_migrations(conn)
+                first = run_migrations(conn)
+                rows_first = conn.execute(
+                    "SELECT COUNT(*) FROM schema_version"
+                ).fetchone()[0]
                 second = run_migrations(conn)
-                self.assertEqual(second, BASELINE_SCHEMA_VERSION)
-                rows = conn.execute("SELECT COUNT(*) FROM schema_version").fetchone()[0]
-                self.assertEqual(rows, 1)
+                rows_second = conn.execute(
+                    "SELECT COUNT(*) FROM schema_version"
+                ).fetchone()[0]
+                # Re-running changes nothing: same version, no new rows.
+                self.assertEqual(second, first)
+                self.assertEqual(rows_second, rows_first)
+                # One row per applied version: baseline + each migration.
+                self.assertEqual(rows_first, 1 + len(migrate.discover_migrations()))
 
     def test_pending_migration_is_applied_once(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

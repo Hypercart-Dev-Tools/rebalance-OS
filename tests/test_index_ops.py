@@ -11,7 +11,9 @@ from rebalance.ingest.index_ops import _refresh_dashboard_note, _refresh_github,
 
 
 class IndexOpsTests(unittest.TestCase):
-    def test_github_dry_run_can_skip_semantic_embedding(self) -> None:
+    def test_github_dry_run_embeds_github_documents(self) -> None:
+        # Phase 3: github refresh embeds github_documents (source-table enrichment),
+        # but semantic projection is owned by the semantic stage, not this collector.
         with tempfile.TemporaryDirectory() as tmpdir:
             result = _refresh_github(
                 Path(tmpdir) / "rebalance.db",
@@ -19,23 +21,11 @@ class IndexOpsTests(unittest.TestCase):
                 since_days=30,
                 repos=["example/repo"],
                 dry_run=True,
-                include_semantic=False,
             )
 
-        self.assertIn("skip semantic embedding", result["steps"])
+        self.assertIn("embed_github_documents()", result["steps"])
+        self.assertNotIn("semantic_backfill(source=['github'])", result["steps"])
         self.assertNotIn("semantic_embed(source=['github'])", result["steps"])
-
-    def test_github_dry_run_keeps_semantic_embedding_by_default(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            result = _refresh_github(
-                Path(tmpdir) / "rebalance.db",
-                token="test-token",
-                since_days=30,
-                repos=["example/repo"],
-                dry_run=True,
-            )
-
-        self.assertIn("semantic_embed(source=['github'])", result["steps"])
 
     def test_full_refresh_dry_run_plans_dashboard_note_update(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

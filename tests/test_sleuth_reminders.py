@@ -13,6 +13,8 @@ from urllib.error import HTTPError
 
 from rebalance.ingest.sleuth_reminders import (
     SleuthApiError,
+    _local_source_path,
+    get_export_generated_at,
     sync_sleuth_reminders,
 )
 
@@ -54,6 +56,31 @@ def _success_payload(reminders=None):
             "reminders": reminders,
         },
     }
+
+
+def _file_payload(
+    reminders=None,
+    *,
+    workspace="neochrome-dev",
+    active_only=True,
+    source_type="sleuth-reminders-file",
+    export_generated_at="2026-06-05T14:00:00.000Z",
+):
+    """The published-file shape: the API's `data` object (no {success,data} wrapper),
+    with the active-only export contract the consumer validates."""
+    if reminders is None:
+        reminders = [_fixture_reminder()]
+    payload = {
+        "workspaceName": workspace,
+        "totalReminderCount": len(reminders),
+        "returnedReminderCount": len(reminders),
+        "filters": {"activeOnly": active_only, "states": []},
+        "source": {"type": source_type, "relativePath": "data/runtime/reminders/x.json"},
+        "reminders": reminders,
+    }
+    if export_generated_at is not None:
+        payload["exportGeneratedAt"] = export_generated_at
+    return payload
 
 
 class _FakeResponse:
@@ -253,6 +280,137 @@ class SleuthRemindersTests(unittest.TestCase):
         self.assertIn("500", str(ctx.exception))
         self.assertEqual(ctx.exception.status, 500)
         self.assertNotIn("not-a-real-token", str(ctx.exception))
+
+
+class SleuthFileSourceTests(unittest.TestCase):
+    """The published-file source: read a locally-synced rebalance JSON, no HTTP."""
+
+    def setUp(self) -> None:
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmpdir.cleanup)
+        self.root = Path(self._tmpdir.name)
+        self.db_path = self.root / "rebalance.db"
+        self.export_path = self.root / "reminders-neochrome.json"
+        self._write_export(_file_payload())
+
+    def _write_export(self, payload: dict) -> None:
+        self.export_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+
+    def _sync(self, *, workspace="neochrome-dev"):
+        return sync_sleuth_reminders(
+            base_url=f"file://{self.export_path}",
+            token="unused",
+            workspace_name=workspace,
+            database_path=self.db_path,
+            active_only=True,
+        )
+
+    def test_local_source_path_detects_file_vs_http(self) -> None:
+        # http(s) endpoints are NOT a file source.
+        self.assertIsNone(_local_source_path("http://127.0.0.1:12020"))
+        self.assertIsNone(_local_source_path("https://example.test/api"))
+        # file:// URLs, absolute paths, and ~ paths are.
+        self.assertEqual(_local_source_path("file:///tmp/x.json"), Path("/tmp/x.json"))
+        self.assertEqual(_local_source_path("/abs/x.json"), Path("/abs/x.json"))
+        self.assertEqual(
+            _local_source_path("~/git-pulse-sync/r.json"),
+            Path("~/git-pulse-sync/r.json").expanduser(),
+        )
+
+    def test_file_source_rejects_relative_path(self) -> None:
+        with self.assertRaises(SleuthApiError) as ctx:
+            sync_sleuth_reminders(
+                base_url="file://relative/reminders.json",
+                token="unused",
+                workspace_name="neochrome",
+                database_path=self.db_path,
+                active_only=True,
+            )
+        self.assertIn("absolute", str(ctx.exception))
+
+    def test_file_source_ingests_without_http(self) -> None:
+        # urlopen must never be called for a file source.
+        with patch(
+            "rebalance.ingest.sleuth_reminders.urllib.request.urlopen",
+            side_effect=AssertionError("HTTP must not be used for a file source"),
+        ):
+            result = self._sync()
+        self.assertEqual(result.inserted_count, 1)
+        self.assertEqual(result.workspace_name, "neochrome-dev")
+        with sqlite3.connect(self.db_path) as conn:
+            row = conn.execute(
+                "SELECT is_active FROM sleuth_reminders WHERE reminder_id = 'R-001'"
+            ).fetchone()
+        self.assertEqual(row[0], 1)
+
+    # --- contract validation: a bad payload must NOT reconcile/retire -----------
+
+    def _assert_no_reconcile(self, payload, *, workspace="neochrome-dev", needle=""):
+        """A contract violation must raise AND leave the DB untouched (no table/rows)."""
+        self._write_export(payload)
+        with self.assertRaises(SleuthApiError) as ctx:
+            self._sync(workspace=workspace)
+        if needle:
+            self.assertIn(needle, str(ctx.exception))
+        # No write should have happened — the sleuth_reminders table must not exist yet.
+        with sqlite3.connect(self.db_path) as conn:
+            tbl = conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='sleuth_reminders'"
+            ).fetchone()
+        self.assertIsNone(tbl)
+
+    def test_file_source_wrong_workspace_refuses(self) -> None:
+        self._assert_no_reconcile(_file_payload(workspace="some-other-ws"), needle="workspace")
+
+    def test_file_source_not_active_only_refuses(self) -> None:
+        self._assert_no_reconcile(_file_payload(active_only=False), needle="activeOnly")
+
+    def test_file_source_wrong_source_type_refuses(self) -> None:
+        self._assert_no_reconcile(_file_payload(source_type="something-else"), needle="source.type")
+
+    def test_file_source_non_dict_entry_refuses(self) -> None:
+        payload = _file_payload(reminders=[_fixture_reminder(), "not-a-dict"])
+        self._assert_no_reconcile(payload, needle="index 1")
+
+    def test_file_source_missing_reminder_id_refuses(self) -> None:
+        bad = _fixture_reminder()
+        del bad["reminderId"]
+        self._assert_no_reconcile(_file_payload(reminders=[bad]), needle="reminderId")
+
+    def test_file_source_persists_export_heartbeat(self) -> None:
+        self._write_export(_file_payload(export_generated_at="2026-06-05T14:00:00.000Z"))
+        self._sync()
+        beat = get_export_generated_at(self.db_path)
+        self.assertIsNotNone(beat)
+        self.assertEqual(beat.year, 2026)
+        self.assertEqual(beat.hour, 14)
+
+    def test_get_export_generated_at_absent_returns_none(self) -> None:
+        # Fresh DB that has never synced — no heartbeat persisted.
+        self.assertIsNone(get_export_generated_at(self.root / "never.db"))
+
+    def test_file_source_missing_file_raises_clearly(self) -> None:
+        with self.assertRaises(SleuthApiError) as ctx:
+            sync_sleuth_reminders(
+                base_url=f"file://{self.root / 'does-not-exist.json'}",
+                token="unused",
+                workspace_name="neochrome",
+                database_path=self.db_path,
+                active_only=True,
+            )
+        self.assertIn("not found", str(ctx.exception))
+
+    def test_file_source_invalid_json_raises(self) -> None:
+        self.export_path.write_text("{ not json", encoding="utf-8")
+        with self.assertRaises(SleuthApiError) as ctx:
+            sync_sleuth_reminders(
+                base_url=f"file://{self.export_path}",
+                token="unused",
+                workspace_name="neochrome",
+                database_path=self.db_path,
+                active_only=True,
+            )
+        self.assertIn("invalid JSON", str(ctx.exception))
 
 
 if __name__ == "__main__":

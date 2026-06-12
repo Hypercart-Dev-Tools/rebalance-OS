@@ -51,6 +51,30 @@ _STOPWORDS = frozenset(
 
 _WORD_RE = re.compile(r"[a-zA-Z]{2,}")
 
+# ---------------------------------------------------------------------------
+# Secret redaction — applied to every chunk body before storage/embedding.
+# Patterns cover the most common accidentally-committed credential formats.
+# Add new patterns here; they take effect on the next vault ingest.
+# ---------------------------------------------------------------------------
+
+_SECRET_PATTERNS = re.compile(
+    r'sk-ant-[A-Za-z0-9\-_]{20,}'   # Anthropic sk-ant-
+    r'|sk-[A-Za-z0-9]{20,}'          # OpenAI / generic sk-
+    r'|ghp_[A-Za-z0-9]{35,}'         # GitHub PAT (36 chars typical)
+    r'|gho_[A-Za-z0-9]{35,}'         # GitHub OAuth token
+    r'|github_pat_[A-Za-z0-9_]{20,}' # GitHub fine-grained PAT
+    r'|AIza[A-Za-z0-9\-_]{35,}'      # Google API key (39 chars total)
+    r'|AKIA[A-Za-z0-9]{16}'          # AWS access key ID (exactly 20 chars)
+    r'|xoxb-[0-9]+-[A-Za-z0-9\-]+'  # Slack bot token
+    r'|xoxp-[0-9]+-[A-Za-z0-9\-]+'  # Slack user token
+    r'|ya29\.[A-Za-z0-9\-_]{20,}'   # Google OAuth access token
+)
+
+
+def _redact_secrets(text: str) -> str:
+    """Replace known secret patterns with a placeholder before indexing."""
+    return _SECRET_PATTERNS.sub("[REDACTED]", text)
+
 
 # ---------------------------------------------------------------------------
 # Result type
@@ -74,6 +98,24 @@ class IngestResult:
 # ---------------------------------------------------------------------------
 # Core ingestion
 # ---------------------------------------------------------------------------
+
+
+def ingest_notes_command(
+    vault_path: Path,
+    database_path: Path,
+    *,
+    exclude_patterns: list[str] | None = None,
+    dry_run: bool = False,
+) -> IngestResult:
+    """Source-owned 1:1 wrapper over :func:`ingest_vault` so CLI / dashboard /
+    calendar surfaces don't import the leaf ingest_vault directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2)."""
+    return ingest_vault(
+        vault_path=vault_path,
+        database_path=database_path,
+        exclude_patterns=exclude_patterns,
+        dry_run=dry_run,
+    )
 
 
 def ingest_vault(
@@ -180,15 +222,16 @@ def ingest_vault(
             )
             file_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-            # Insert chunks
+            # Insert chunks — redact secrets before storage and embedding
             for chunk in parsed.chunks:
-                chunk_hash = hashlib.sha256(chunk.body.encode("utf-8")).hexdigest()
+                safe_body = _redact_secrets(chunk.body)
+                chunk_hash = hashlib.sha256(safe_body.encode("utf-8")).hexdigest()
                 conn.execute(
                     """INSERT INTO chunks
                        (file_id, chunk_index, heading, heading_level, body, char_count, content_hash)
                        VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (file_id, chunk.chunk_index, chunk.heading, chunk.heading_level,
-                     chunk.body, chunk.char_count, chunk_hash),
+                     safe_body, chunk.char_count, chunk_hash),
                 )
                 total_chunks += 1
 

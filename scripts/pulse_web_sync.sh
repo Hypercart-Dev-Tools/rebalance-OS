@@ -7,28 +7,22 @@
 # This is the local HTML mirror, not the markdown→private-repo flow. The
 # markdown publish lives in pulse_sync.sh on a separate hourly schedule.
 #
+# Freshness policy: read-only derived stage — renders whatever the ingest
+# jobs (daily/vault/github sync) last wrote. It never refreshes sources.
+#
 # Robustness notes:
 #   - pulse_web.py writes atomically (tmp + replace), so a crashed run leaves
 #     the previous web/pulse.html in place rather than truncating it.
 #   - Reads SQLite in WAL mode and does not block the writers (daily-sync,
 #     vault-sync). PRAGMA busy_timeout=30000 covers the edge cases.
 #   - No network calls, no git push. Local file only.
+#
+# Policy: SCHEDULER.md (job com.rebalance-os.pulse-web-sync).
 
 set -euo pipefail
 
-REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="$REBALANCE_DIR/.venv/bin/python"
-export PYTHONPATH="$REBALANCE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
-LOG_DIR="$REBALANCE_DIR/temp/logs"
-
-mkdir -p "$LOG_DIR"
-LOG_FILE="$LOG_DIR/pulse_web_sync_$(date +%Y-%m-%d).log"
-
-log() {
-    echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
-}
-
-cd "$REBALANCE_DIR"
+source "$(cd "$(dirname "$0")" && pwd)/lib/scheduler_common.sh"
+rb_job_init "pulse-web-sync" 14
 
 log "=== rebalance pulse-web sync starting ==="
 
@@ -40,7 +34,6 @@ else
     log "=== pulse-web sync FAILED (exit $EXIT_CODE) ==="
 fi
 
-# Retain 14 days of logs, matching pulse_sync.sh.
-find "$LOG_DIR" -name "pulse_web_sync_*.log" -mtime +14 -delete 2>/dev/null || true
+rb_trim_logs
 
 exit $EXIT_CODE

@@ -139,6 +139,69 @@ def ensure_semantic_schema(conn: sqlite3.Connection) -> None:
             value   TEXT NOT NULL
         )
     """)
+
+    # Phase 1 hybrid retrieval: an FTS5 lexical index over title+body, beside the
+    # vec0 ANN index. A standalone FTS5 table (keeps its own copy of title+body —
+    # robust, vs the external-content variant whose backfill proved flaky here),
+    # kept in sync with semantic_documents by triggers and joined back on
+    # ``rowid = semantic_documents.id``. Fused with the vector ranking via RRF in
+    # semantic_index.query(). Degrades to ANN-only if FTS5 is unavailable.
+    #
+    # Lives in ensure (not a numbered migration) by design — it is a self-healing
+    # derived index and the read path (query()) opens the DB without migrations.
+    # This is the documented virtual-index exception; see db/migrations/README.md.
+    # Bump FTS_VERSION to force a clean drop+rebuild of the FTS table on every DB
+    # (e.g. if its definition changes). Guards against a stale/incompatible FTS
+    # table that an older code path may have left with rows but an empty index.
+    FTS_VERSION = "1"
+    try:
+        _row = conn.execute(
+            "SELECT value FROM semantic_embedding_meta WHERE key='fts_version'"
+        ).fetchone()
+        if (_row[0] if _row else None) != FTS_VERSION:
+            conn.execute("DROP TABLE IF EXISTS semantic_documents_fts")
+            for _t in ("ai", "ad", "au"):
+                conn.execute(f"DROP TRIGGER IF EXISTS semantic_documents_fts_{_t}")
+        conn.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS semantic_documents_fts USING fts5(title, body)"
+        )
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS semantic_documents_fts_ai
+            AFTER INSERT ON semantic_documents BEGIN
+                INSERT INTO semantic_documents_fts(rowid, title, body)
+                VALUES (new.id, new.title, new.body);
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS semantic_documents_fts_ad
+            AFTER DELETE ON semantic_documents BEGIN
+                DELETE FROM semantic_documents_fts WHERE rowid = old.id;
+            END
+        """)
+        conn.execute("""
+            CREATE TRIGGER IF NOT EXISTS semantic_documents_fts_au
+            AFTER UPDATE ON semantic_documents BEGIN
+                DELETE FROM semantic_documents_fts WHERE rowid = old.id;
+                INSERT INTO semantic_documents_fts(rowid, title, body)
+                VALUES (new.id, new.title, new.body);
+            END
+        """)
+        # One-time backfill for DBs that already had documents before the FTS
+        # table existed (triggers only catch writes from here on).
+        fts_n = conn.execute("SELECT count(*) FROM semantic_documents_fts").fetchone()[0]
+        doc_n = conn.execute("SELECT count(*) FROM semantic_documents").fetchone()[0]
+        if fts_n == 0 and doc_n > 0:
+            conn.execute(
+                "INSERT INTO semantic_documents_fts(rowid, title, body) "
+                "SELECT id, title, body FROM semantic_documents"
+            )
+        conn.execute(
+            "INSERT OR REPLACE INTO semantic_embedding_meta(key, value) VALUES('fts_version', ?)",
+            (FTS_VERSION,),
+        )
+    except sqlite3.DatabaseError:
+        pass  # FTS5 not compiled in — hybrid retrieval falls back to ANN-only
+
     conn.commit()
 
 
@@ -569,6 +632,11 @@ def ensure_project_schema(conn: sqlite3.Connection) -> None:
 # Schema changes from here on are forward-only migration files in db/migrations/
 # (applied by db/migrate.py). This number never changes and the ensure_*_schema
 # functions stay frozen at the baseline — see db/migrations/README.md.
+#
+# Exception: idempotent self-healing virtual indexes (the vec0 embedding tables
+# and the semantic_documents_fts FTS5 index) are created in ensure_*_schema, not
+# migrations — they are rebuildable derived indexes that must self-heal and cover
+# read paths that don't run migrations. See the README "Exception" section.
 BASELINE_SCHEMA_VERSION = 1
 
 

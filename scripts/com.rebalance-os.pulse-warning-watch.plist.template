@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.rebalance-os.pulse-warning-watch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{PYTHON}}</string>
+        <string>{{REBALANCE_DIR}}/scripts/pulse_warning_watch.py</string>
+        <string>--url</string>
+        <string>http://127.0.0.1:8767/</string>
+        <string>--log</string>
+        <string>{{REBALANCE_DIR}}/temp/pulse-warning-watch.jsonl</string>
+        <string>--state</string>
+        <string>{{REBALANCE_DIR}}/temp/pulse-warning-watch.state.json</string>
+        <!-- Optional local Gemma/Ollama triage notes: add two string pairs
+             here, "ollama-base-url" (e.g. http://127.0.0.1:11434/v1) and
+             "ollama-model" (e.g. gemma3:12b), each flag prefixed with two
+             hyphens. (Spelled out because XML comments cannot contain
+             double hyphens.) -->
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Minute</key><integer>45</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>{{REBALANCE_DIR}}/temp/logs/pulse-warning-watch-stdout.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>{{REBALANCE_DIR}}/temp/logs/pulse-warning-watch-stderr.log</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>KeepAlive</key>
+    <false/>
+
+    <key>ProcessType</key>
+    <string>Background</string>
+</dict>
+</plist>

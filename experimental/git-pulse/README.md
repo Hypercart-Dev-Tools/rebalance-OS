@@ -302,3 +302,43 @@ rm -rf ~/.config/git-pulse
 ```
 
 The sync repo on GitHub is yours to keep or delete.
+
+## Triage and Self-Repair
+
+The pulse sync loop includes a finite-state-machine (FSM) repair layer that handles push failures without human intervention. It lives in `src/rebalance/repair.py` and is invoked automatically when `collect.sh` or the hourly pulse publisher fails to push.
+
+### States
+
+| State | Meaning |
+|-------|---------|
+| `PENDING` | Attempting deterministic repair |
+| `REPAIRED` | Push succeeded — terminal success |
+| `ESCALATED` | Deterministic repair exhausted; Gemini selected the next action |
+| `DEAD` | Terminal failure — circuit breaker hit or all attempts exhausted |
+
+### How it works
+
+1. **Deterministic repair (first).** The FSM tries a preferred action — typically `pull --rebase` — up to a configurable limit (default: 2 attempts). If it succeeds, the state moves to `REPAIRED` and the loop exits.
+
+2. **LLM escalation (second).** If deterministic repair is exhausted, the FSM calls Gemini 3.1 Flash-Lite with the error context and a bounded menu of named actions. Gemini picks one action by name — it cannot issue free-form commands. The selected action runs once. If it succeeds, the state moves to `REPAIRED`.
+
+3. **Circuit breakers.** Some errors skip repair entirely and go straight to `DEAD` — auth failures, missing repos, permission denials, and other conditions where retrying would never help.
+
+### LLM key resolution
+
+The Gemini API key is resolved in this order:
+1. **Google Secret Manager** — if `GOOGLE_CLOUD_PROJECT` is set, the FSM reads the secret named by `GEMINI_SECRET_NAME` (default: `gemini-api-key`) from Secret Manager.
+2. **Environment variables** — `GEMINI_API_KEY` or `GOOGLE_API_KEY` as a fallback.
+
+If no key is found, LLM escalation is skipped and the FSM goes straight to `DEAD` after deterministic attempts are exhausted. The sync will retry on the next hourly tick.
+
+To use Secret Manager, install the optional dependency:
+```bash
+pip install "rebalance-os[gcp]"
+```
+
+### Safety properties
+
+- **Bounded action set.** Gemini picks from a named list defined in code — it cannot execute arbitrary shell commands.
+- **Single LLM call.** The FSM calls Gemini at most once per push failure (configurable via `max_llm_attempts`).
+- **No key in shell env or zshrc.** The key is pulled at runtime from Secret Manager or a process-level env var — never written to a dotfile where background agents could pick it up.

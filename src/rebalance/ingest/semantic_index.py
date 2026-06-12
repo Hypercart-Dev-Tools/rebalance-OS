@@ -16,6 +16,7 @@ from rebalance.ingest.db import (
     ensure_github_schema,
     ensure_schema,
     ensure_semantic_schema,
+    run_migrations,
 )
 from rebalance.ingest.db import semantic as sem
 from rebalance.ingest.embedder import (
@@ -50,6 +51,25 @@ class SemanticEmbedResult:
     elapsed_seconds: float
 
 
+@dataclass
+class SemanticDoc:
+    """One source-agnostic semantic document yielded by a registry provider.
+
+    A SourceModule's ``semantic_docs(conn)`` provider yields these; the
+    flag-gated provider path in :func:`backfill_semantic_documents` maps each
+    onto :func:`upsert_document`. This keeps new sources off the legacy
+    if-ladder.
+    """
+
+    source_pk: str
+    doc_kind: str
+    title: str
+    body: str
+    metadata: dict
+    created_at: str
+    updated_at: str
+
+
 def _default_embed_texts(texts: list[str], model_name: str) -> list[list[float]]:
     model, tokenizer = _load_model(model_name)
     return _embed_batch(model, tokenizer, texts)
@@ -63,21 +83,72 @@ def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
-def _normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
+# ---------------------------------------------------------------------------
+# Shared retrieval contracts — exported so callers never re-derive them.
+# ---------------------------------------------------------------------------
+
+# The canonical set of source names that constitute "work artifacts" in the
+# unified semantic index. Used by chat_with_data and any surface that needs to
+# express the product concept of "all ingested work".
+WORK_SOURCES: tuple[str, ...] = ("vault", "github", "email")
+
+
+def scope_to_sources(scope: str) -> list[str]:
+    """Map a product scope alias to semantic source_type values.
+
+    Canonical scope vocabulary:
+      "work"  → ingested work artifacts (vault, github, email)
+      "code"  → federated code/docs corpus (ask_self)
+      "all"   → both work and code
+
+    Callers must NOT define their own scope→sources mapping; import this.
+    """
+    if scope == "work":
+        return list(WORK_SOURCES)
+    if scope == "code":
+        return ["code"]
+    return [*WORK_SOURCES, "code"]  # "all"
+
+
+def normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
+    """Validate and deduplicate a raw source-type list against the legal set.
+
+    Returns a tuple of accepted source_type strings. Raises ``ValueError`` for
+    any unrecognised value. Callers that need CLI-friendly errors should catch
+    ``ValueError`` and re-raise in a surface-appropriate form.
+
+    This is the canonical owner of the semantic source vocabulary. CLI and MCP
+    wrappers must delegate here instead of maintaining their own allowed sets.
+    """
     if source_types is None:
-        return ("vault", "github", "email")
+        return WORK_SOURCES
     normalized = []
     for value in source_types:
         item = value.strip().lower()
         if not item:
             continue
         if item == "all":
-            return ("vault", "github", "email")
-        if item not in {"vault", "github", "calendar", "sleuth", "email"}:
-            raise ValueError(f"Unsupported source type: {value}")
+            return WORK_SOURCES
+        # The legal set = the current literal sources PLUS any source a
+        # registered collector exposes via a ``semantic_docs`` provider (e.g.
+        # ``figma``). Lazy/function-local import avoids an import cycle
+        # (index_ops imports SemanticDoc from this module). The default and the
+        # ``'all'`` return tuple above are intentionally left as the legacy
+        # triad — deriving them from the registry is a later PR.
+        from rebalance.ingest.index_ops import _semantic_source_names
+        legal = {"vault", "github", "calendar", "sleuth", "email", "code"} | set(
+            _semantic_source_names()
+        )
+        if item not in legal:
+            raise ValueError(f"Unsupported source type: {value!r}")
         if item not in normalized:
             normalized.append(item)
     return tuple(normalized)
+
+
+# Keep the private name alive so any internal caller not yet migrated still
+# works — remove after all call sites are updated.
+_normalize_sources = normalize_sources
 
 
 def upsert_document(
@@ -330,13 +401,101 @@ def sync_email_documents(conn: Any) -> dict[str, int]:
     }
 
 
-def backfill_semantic_documents(
+def sync_code_documents(conn: Any, repo_root: Path) -> dict[str, int]:
+    """Backfill semantic documents from the local source tree (source_type='code').
+
+    Unlike the other syncs, the source is the *filesystem*, not a DB table — the
+    code collector walks ``repo_root`` and AST-chunks Python modules. Change
+    detection is by content hash + file mtime, so unchanged files stay
+    ``unchanged`` across runs (no needless re-embed).
+    """
+    ensure_semantic_schema(conn)
+    from rebalance.ingest.code_collector import collect_code_chunks
+
+    chunks = collect_code_chunks(Path(repo_root))
+    inserted = updated = unchanged = 0
+    seen_source_pks: set[str] = set()
+    for ch in chunks:
+        source_pk = f"{ch.path}::{ch.symbol}"
+        seen_source_pks.add(source_pk)
+        _, state = upsert_document(
+            conn,
+            source_type="code",
+            source_table="code",
+            source_pk=source_pk,
+            doc_kind=ch.doc_kind,
+            title=f"{ch.path} :: {ch.symbol}",
+            body=ch.body,
+            metadata={
+                "path": ch.path,
+                "symbol": ch.symbol,
+                "parent_symbol": ch.parent_symbol,
+                "language": ch.language,
+                "start_line": ch.start_line,
+            },
+            created_at=ch.mtime_iso,
+            updated_at=ch.mtime_iso,
+        )
+        if state == "inserted":
+            inserted += 1
+        elif state == "updated":
+            updated += 1
+        else:
+            unchanged += 1
+
+    deleted = _delete_missing_docs(conn, source_type="code", seen_source_pks=seen_source_pks)
+    return {
+        "total": len(chunks),
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "deleted": deleted,
+    }
+
+
+# Registry sources route through the flag-gated provider path below. Each maps
+# to the source table recorded on its ``semantic_documents`` rows. Kept as a
+# small explicit map (rather than read off the collector) so the backfill has
+# no hard dependency on collector internals — adding a SourceModule means one
+# entry here next to its registration.
+_REGISTRY_SOURCE_TABLES: dict[str, str] = {"figma": "figma_comments"}
+
+# Sources already handled by the legacy if-ladder; the provider path skips them.
+_LADDER_SOURCES: frozenset[str] = frozenset({"vault", "github", "email", "code"})
+
+
+def project_semantic_documents(
     database_path: Path,
     *,
     source_types: Iterable[str] | None = None,
     repo_full_name: str = "",
 ) -> SemanticBackfillResult:
-    """Populate ``semantic_documents`` from existing source tables."""
+    """Source-owned facade over :func:`backfill_semantic_documents` for the
+    `semantic-backfill` maintenance command, so the CLI doesn't import the leaf
+    directly (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2)."""
+    return backfill_semantic_documents(
+        database_path=database_path,
+        source_types=source_types,
+        repo_full_name=repo_full_name,
+    )
+
+
+def backfill_semantic_documents(
+    database_path: Path,
+    *,
+    source_types: Iterable[str] | None = None,
+    repo_full_name: str = "",
+    repo_root: Path | None = None,
+    use_registry_providers: bool = False,
+) -> SemanticBackfillResult:
+    """Populate ``semantic_documents`` from existing source tables (+ the source
+    tree when ``code`` is requested).
+
+    When ``use_registry_providers`` is True, any selected source NOT handled by
+    the legacy if-ladder but registered with a ``semantic_docs`` provider (e.g.
+    ``figma``) is backfilled via that provider — the registry-driven strangler
+    path. The if-ladder is otherwise untouched.
+    """
     start = time.monotonic()
     selected_sources = _normalize_sources(source_types)
     inserted = updated = unchanged = deleted = total = 0
@@ -368,6 +527,51 @@ def backfill_semantic_documents(
             unchanged += result["unchanged"]
             deleted += result["deleted"]
             total += result["total"]
+        if "code" in selected_sources:
+            if repo_root:
+                root = repo_root
+            else:
+                from rebalance.paths import resolve_project_root
+                root = resolve_project_root(Path(__file__))
+            result = sync_code_documents(conn, root)
+            inserted += result["inserted"]
+            updated += result["updated"]
+            unchanged += result["unchanged"]
+            deleted += result["deleted"]
+            total += result["total"]
+        # Registry-driven provider path (strangler). Runs alongside — never
+        # replacing — the if-ladder above. Only sources NOT in the ladder that
+        # carry a ``semantic_docs`` provider are iterated here.
+        if use_registry_providers:
+            from rebalance.ingest.index_ops import COLLECTORS
+            for source in selected_sources:
+                if source in _LADDER_SOURCES:
+                    continue
+                collector = COLLECTORS.get(source)
+                if collector is None or collector.semantic_docs is None:
+                    continue
+                run_migrations(conn)
+                source_table = _REGISTRY_SOURCE_TABLES.get(source, source)
+                for doc in collector.semantic_docs(conn):
+                    _, state = upsert_document(
+                        conn,
+                        source_type=source,
+                        source_table=source_table,
+                        source_pk=doc.source_pk,
+                        doc_kind=doc.doc_kind,
+                        title=doc.title,
+                        body=doc.body,
+                        metadata=doc.metadata,
+                        created_at=doc.created_at,
+                        updated_at=doc.updated_at,
+                    )
+                    total += 1
+                    if state == "inserted":
+                        inserted += 1
+                    elif state == "updated":
+                        updated += 1
+                    else:
+                        unchanged += 1
         conn.commit()
 
     return SemanticBackfillResult(
@@ -378,6 +582,30 @@ def backfill_semantic_documents(
         unchanged_count=unchanged,
         deleted_count=deleted,
         elapsed_seconds=round(time.monotonic() - start, 2),
+    )
+
+
+def embed_semantic_pending(
+    database_path: Path,
+    *,
+    source_types: Iterable[str] | None = None,
+    model_name: str = DEFAULT_EMBED_MODEL,
+    batch_size: int = 32,
+    min_chars: int = 1,
+    force_reembed: bool = False,
+    embed_texts: EmbedTexts | None = None,
+) -> SemanticEmbedResult:
+    """Source-owned facade over :func:`embed_pending` for the `semantic-embed`
+    maintenance command, so the CLI doesn't import the leaf directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2)."""
+    return embed_pending(
+        database_path=database_path,
+        source_types=source_types,
+        model_name=model_name,
+        batch_size=batch_size,
+        min_chars=min_chars,
+        force_reembed=force_reembed,
+        embed_texts=embed_texts,
     )
 
 
@@ -460,6 +688,27 @@ def embed_pending(
     )
 
 
+def _rrf_fuse(
+    result_lists: list[list[Any]], top_k: int, *, k: int = 60
+) -> list[Any]:
+    """Reciprocal-rank fusion of ranked row lists, keyed on ``doc_id``.
+
+    Rank-based, so the vector (distance) and lexical (bm25) scales never have to
+    be compared. Dedupe by doc_id; when a doc is in both lists, keep the row that
+    carries a ``distance`` (the vector hit) so a similarity score can be shown.
+    """
+    scores: dict[Any, float] = {}
+    rowmap: dict[Any, Any] = {}
+    for rows in result_lists:
+        for rank, row in enumerate(rows):
+            doc_id = row["doc_id"]
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+            if doc_id not in rowmap or row["distance"] is not None:
+                rowmap[doc_id] = row
+    ordered = sorted(scores, key=lambda d: -scores[d])
+    return [rowmap[d] for d in ordered[:top_k]]
+
+
 def query(
     database_path: Path,
     query_text: str,
@@ -467,19 +716,47 @@ def query(
     top_k: int = 10,
     model_name: str = DEFAULT_EMBED_MODEL,
     source_filter: Iterable[str] | None = None,
+    updated_after: str | None = None,
+    repo: str | None = None,
     embed_texts: EmbedTexts | None = None,
+    hybrid: bool = True,
 ) -> list[dict[str, Any]]:
-    """Semantic search across the unified semantic index."""
-    selected_sources = _normalize_sources(source_filter)
+    """Semantic search across the unified semantic index.
+
+    Args:
+        updated_after: ISO-8601 string (e.g. ``"2026-05-01"``); exclude docs
+                       updated before this date/time.
+        repo: Restrict github results to one repo (``owner/name``).
+        hybrid: Fuse the vector (ANN) ranking with an FTS5 lexical ranking via
+                RRF — better recall on exact identifiers/paths/config keys. Set
+                False for pure ANN (also the automatic fallback when FTS5 is
+                unavailable or the query has no lexical terms).
+    """
+    selected_sources = normalize_sources(source_filter)
     embed_fn = embed_texts or _default_embed_texts
     query_vec = _vec_to_bytes(embed_fn([query_text], model_name)[0])
+    # Fetch a deeper pool per retriever so RRF has material to fuse.
+    pool = max(top_k * 4, 24) if hybrid else top_k
 
     with db_connection(database_path, ensure_semantic_schema) as conn:
-        rows = sem.search_semantic_documents(conn, query_vec, top_k, selected_sources)
+        vec_rows = sem.search_semantic_documents(
+            conn, query_vec, pool, selected_sources,
+            updated_after=updated_after, repo=repo,
+        )
+        fts_rows = (
+            sem.search_semantic_documents_fts(
+                conn, query_text, pool, selected_sources,
+                updated_after=updated_after, repo=repo,
+            )
+            if hybrid else []
+        )
+
+    rows = _rrf_fuse([vec_rows, fts_rows], top_k) if fts_rows else vec_rows[:top_k]
 
     results: list[dict[str, Any]] = []
     for row in rows:
         metadata = json.loads(row["metadata_json"]) if row["metadata_json"] else {}
+        distance = row["distance"]
         results.append(
             {
                 "doc_id": row["doc_id"],
@@ -491,7 +768,7 @@ def query(
                 "body_preview": row["body_preview"],
                 "metadata": metadata,
                 "updated_at": row["updated_at"],
-                "similarity_score": round(1.0 - row["distance"], 4),
+                "similarity_score": round(1.0 - distance, 4) if distance is not None else None,
             }
         )
     return results

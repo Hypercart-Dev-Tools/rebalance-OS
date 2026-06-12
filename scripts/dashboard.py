@@ -43,7 +43,7 @@ from rich.table import Table
 from rich.text import Text
 
 # Make `rebalance.*` importable when running the script straight from the repo.
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
+import _bootstrap  # noqa: E402, F401
 
 from rebalance.ingest.config import (  # noqa: E402
     get_calendar_ignored_summaries,
@@ -59,6 +59,7 @@ from rebalance.ingest.index_ops import (  # noqa: E402
     refresh_index,
 )
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
+from rebalance.web_components import ITEM_SUB_GLYPHS, KIND_GLYPHS  # noqa: E402
 
 
 try:
@@ -235,7 +236,7 @@ def _write_refresh_profile(result: dict[str, Any]) -> None:
 def _do_refresh() -> None:
     REFRESH.start()
     try:
-        result = refresh_index(DB_PATH, scope=["github"], include_semantic=False)
+        result = refresh_index(DB_PATH, scope=["github"])
         _write_refresh_profile(result)
         REFRESH.succeed(_summarize_refresh_profile(result))
     except Exception as exc:  # noqa: BLE001
@@ -537,10 +538,12 @@ def fetch_open_prs(limit: int = 10, stale_days: int = 2) -> list[dict[str, Any]]
                 """
                 SELECT repo_full_name, number, title, author_login,
                        created_at, updated_at, is_draft,
-                       review_decision, html_url
+                       review_decision, html_url, check_status
                 FROM github_items
                 WHERE item_type = 'pull_request' AND state = 'open'
-                ORDER BY created_at DESC
+                ORDER BY
+                  CASE WHEN check_status IN ('failing','mixed') THEN 0 ELSE 1 END,
+                  created_at DESC
                 LIMIT ?
                 """,
                 (limit,),
@@ -565,9 +568,11 @@ def fetch_open_prs(limit: int = 10, stale_days: int = 2) -> list[dict[str, Any]]
             "updated_at":     r[5],
             "is_draft":       bool(r[6]),
             "review_decision": r[7] or "",
-            "html_url":       r[8] or "",
-            "age_days":       age_days,
-            "is_stale":       age_days > stale_days,
+            "html_url":        r[8] or "",
+            "check_status":    r[9] or "",
+            "age_days":        age_days,
+            "is_stale":        age_days > stale_days,
+            "ci_failing":      (r[9] or "") in ("failing", "mixed"),
         })
     return out
 
@@ -655,20 +660,40 @@ def fetch_recent_emails(limit: int = 30) -> list[dict[str, Any]]:
         return []
 
 
+def fetch_recent_figma(limit: int = 12) -> list[dict[str, Any]]:
+    """Newest non-empty Figma comments, across all configured files."""
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT file_key, comment_id, parent_id, message, user_id, user_handle,
+                       created_at, resolved_at, synced_at
+                FROM figma_comments
+                WHERE TRIM(COALESCE(message, '')) <> ''
+                ORDER BY COALESCE(created_at, synced_at) DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [dict(r) for r in rows]
+    except Exception:  # noqa: BLE001 — empty DB before first sync
+        return []
+
+
 # ---------------------------------------------------------------------------
 # Renderers
 # ---------------------------------------------------------------------------
 
 
 KIND_GLYPH = {
-    "commit": ("●", PALETTE["ok"]),
-    "item": ("◆", PALETTE["info"]),
-    "comment": ("○", PALETTE["fg_muted"]),
+    "commit":  (KIND_GLYPHS["commit"],  PALETTE["ok"]),
+    "item":    (KIND_GLYPHS["item"],    PALETTE["info"]),
+    "comment": (KIND_GLYPHS["comment"], PALETTE["fg_muted"]),
 }
 
 ITEM_SUB_GLYPH = {
-    "issue": ("✦", PALETTE["warn"]),
-    "pull_request": ("⇡", PALETTE["info"]),
+    "issue":        (ITEM_SUB_GLYPHS["issue"],        PALETTE["warn"]),
+    "pull_request": (ITEM_SUB_GLYPHS["pull_request"], PALETTE["info"]),
 }
 
 

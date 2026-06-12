@@ -23,7 +23,8 @@ from pathlib import Path
 from typing import Any
 
 
-TOKEN_PATH = Path.home() / ".config" / "rebalance-os" / "google-calendar-oauth"
+from rebalance.paths import resolve_oauth_token_path
+TOKEN_PATH = resolve_oauth_token_path("calendar")
 CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 CALENDAR_WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
 
@@ -78,21 +79,63 @@ def _credentials_have_scopes(creds: Any, required_scopes: list[str]) -> bool:
 
 
 def _load_credentials(required_scopes: list[str] | None = None) -> Any:
-    """Load OAuth2 credentials from the stored token file."""
-    if not TOKEN_PATH.exists():
-        raise FileNotFoundError(
-            f"Calendar OAuth token not found at {TOKEN_PATH}. "
-            "Run the OAuth flow first (see PROJECT.md — P2 Google Calendar)."
-        )
-    with open(TOKEN_PATH, "rb") as f:
-        creds = pickle.load(f)
+    """Load OAuth2 credentials — keyring first, pickle file as the launchd fallback.
 
-    # Refresh if expired
+    keyring (interactive primary) ↔ the pickle file (launchd reads this; the
+    keychain is unreachable from the daily-sync's stripped environment). On
+    refresh, the rotated access token is written back to BOTH so each stays
+    current.
+    """
+    import json as _json
+
+    from rebalance.ingest.auth_log import (
+        log_token_missing,
+        log_token_refresh_failed,
+        log_token_refreshed,
+    )
+    from rebalance.ingest.config import (
+        get_calendar_oauth_token_json,
+        set_calendar_oauth_token_json,
+    )
+
+    creds = None
+    blob = get_calendar_oauth_token_json()
+    if blob:
+        try:
+            from google.oauth2.credentials import Credentials
+            creds = Credentials.from_authorized_user_info(_json.loads(blob))
+        except Exception:  # noqa: BLE001 — corrupt/legacy blob → fall back to pickle
+            creds = None
+
+    if creds is None:
+        if not TOKEN_PATH.exists():
+            log_token_missing(str(TOKEN_PATH))
+            raise FileNotFoundError(
+                f"Calendar OAuth token not found (keyring empty and no file at {TOKEN_PATH}). "
+                "Run the OAuth flow first (see PROJECT.md — P2 Google Calendar)."
+            )
+        with open(TOKEN_PATH, "rb") as f:
+            creds = pickle.load(f)
+
+    # Refresh if expired — persist the rotated access token to both stores.
     if creds.expired and creds.refresh_token:
         from google.auth.transport.requests import Request
-        creds.refresh(Request())
-        with open(TOKEN_PATH, "wb") as f:
-            pickle.dump(creds, f)
+        try:
+            creds.refresh(Request())
+            # record=False: an access-token refresh is not a re-authorization.
+            set_calendar_oauth_token_json(creds.to_json(), source="refresh", record=False)
+            try:
+                with open(TOKEN_PATH, "wb") as f:
+                    pickle.dump(creds, f)
+            except OSError:
+                pass
+            log_token_refreshed(
+                expiry=creds.expiry.isoformat() if creds.expiry else None,
+                token_path=str(TOKEN_PATH),
+            )
+        except Exception as exc:
+            log_token_refresh_failed(error=str(exc), token_path=str(TOKEN_PATH))
+            raise
 
     if required_scopes and not _credentials_have_scopes(creds, required_scopes):
         raise PermissionError(
@@ -118,6 +161,31 @@ from rebalance.ingest.db import ensure_calendar_schema  # noqa: F401
 # ---------------------------------------------------------------------------
 # Fetch + persist
 # ---------------------------------------------------------------------------
+
+
+def refresh_calendar_source(
+    database_path: Path,
+    *,
+    calendar_id: str = "",
+    days_back: int = 30,
+    days_forward: int = 7,
+) -> CalendarSyncResult:
+    """Source-owned entry point for the calendar sync.
+
+    Resolves the calendar id (explicit arg, else ``CalendarConfig``) and runs
+    :func:`sync_calendar`. The CLI (`calendar-sync`) and the `calendar` collector
+    share this so no surface imports the leaf ``sync_calendar`` directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2).
+    """
+    from rebalance.ingest.calendar_config import CalendarConfig
+
+    resolved = calendar_id or CalendarConfig.load().calendar_id
+    return sync_calendar(
+        database_path=database_path,
+        calendar_id=resolved,
+        days_back=days_back,
+        days_forward=days_forward,
+    )
 
 
 def sync_calendar(

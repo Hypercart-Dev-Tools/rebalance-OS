@@ -8,13 +8,17 @@
 #   Start:    scripts/pulse_server.sh
 #   Open:     http://127.0.0.1:8767/
 #   Stop:     Ctrl-C
+#
+# Policy: SCHEDULER.md (job com.rebalance-os.pulse-server).
 
 set -euo pipefail
 
-REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-PYTHON="$REBALANCE_DIR/.venv/bin/python"
-export PYTHONPATH="$REBALANCE_DIR/src${PYTHONPATH:+:$PYTHONPATH}"
+source "$(cd "$(dirname "$0")" && pwd)/lib/scheduler_common.sh"
+
 PORT="${PULSE_PORT:-8767}"
 
-cd "$REBALANCE_DIR"
+# Daemon: mark started only — exec replaces this shell, so an EXIT trap for
+# completed/failed events would never fire. launchd KeepAlive owns restarts.
+rb_job_mark_started "pulse-server"
+
 exec "$PYTHON" scripts/pulse_server.py --port "$PORT" "$@"

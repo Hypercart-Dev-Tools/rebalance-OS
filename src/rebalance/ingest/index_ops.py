@@ -17,11 +17,14 @@ from pathlib import Path
 from typing import Any, Callable, Iterable
 
 from rebalance.ingest.config import (
+    get_figma_file_keys,
+    get_figma_token,
     get_github_token,
     get_vault_path,
 )
 from rebalance.ingest.db import db_connection, ensure_semantic_schema, run_migrations
 from rebalance.ingest.registry import get_projects
+from rebalance.ingest.semantic_index import SemanticDoc
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +45,7 @@ class Collector:
     refresh:
         Callable executed for live runs. Receives ``(db_path, **opts)`` where
         ``opts`` includes every refresh_index kwarg the collector might want
-        (since_days, vault_path, token, repos, include_semantic, ...). Unknown
+        (since_days, vault_path, token, repos, ...). Unknown
         keys must be ignored. Must return a ``dict`` whose first key is
         ``"scope": "<name>"`` so the caller can correlate results.
     requires:
@@ -50,16 +53,46 @@ class Collector:
         ``"github_token"``. Failures surface as structured errors rather than
         exceptions, mirroring the legacy refresh_index error envelope.
     included_in_all:
-        If True (default), the collector runs when the user requests
-        ``scope=["all"]``. Set False for opt-in collectors (e.g. heavy or
-        narrowly-scoped sources).
+        If True (default), the collector is part of the default refresh recipe
+        (a no-scope `rebalance refresh`). For raw sources this also makes them
+        part of the ``all`` token. Set False for opt-in collectors (e.g. figma,
+        focus5, ask_self) that must be requested by name.
+    kind:
+        Architectural classification — one of ``raw_source`` / ``derived_scan``
+        / ``projection`` / ``export`` (see COLLECTOR-PATH-AND-PORTABILITY-AUDIT).
+        Only ``raw_source`` collectors are raw incoming data; derived scans,
+        projections, and exports are *stages*, not sources. ``raw_source`` is the
+        default so external integrations register a source unless they say otherwise.
+    semantic_docs:
+        Optional registry-driven provider that yields :class:`SemanticDoc`
+        rows for the unified semantic index. When present, the source becomes
+        a *SourceModule*: the flag-gated provider path in
+        ``backfill_semantic_documents`` iterates it instead of an if-ladder
+        branch. ``None`` (default) preserves the legacy vault/github/email/code
+        ladder unchanged.
+    secrets:
+        Optional names of secret config keys this collector consumes (e.g.
+        ``("figma_token",)``). Informational metadata for tooling; not used by
+        the dispatcher itself.
     """
 
     name: str
     refresh: Callable[..., dict[str, Any]]
     requires: tuple[str, ...] = ()
     included_in_all: bool = True
+    kind: str = "raw_source"
+    semantic_docs: Callable[[Any], Iterable["SemanticDoc"]] | None = None
+    secrets: tuple[str, ...] = ()
 
+
+# A Collector that also exposes a ``semantic_docs`` provider is the spine of a
+# registry-driven SourceModule (the strangler path). The alias names that role
+# without forking the dataclass.
+SourceModule = Collector
+
+
+# Architectural classification for collectors (COLLECTOR-PATH-AND-PORTABILITY-AUDIT).
+_COLLECTOR_KINDS = {"raw_source", "derived_scan", "projection", "export"}
 
 COLLECTORS: dict[str, Collector] = {}
 
@@ -76,6 +109,11 @@ def register_collector(collector: Collector, *, replace: bool = False) -> None:
         )
     if collector.name == "all":
         raise ValueError(f"Reserved collector name: {collector.name!r}")
+    if collector.kind not in _COLLECTOR_KINDS:
+        raise ValueError(
+            f"Collector {collector.name!r} has invalid kind {collector.kind!r}; "
+            f"expected one of {sorted(_COLLECTOR_KINDS)}."
+        )
     if collector.name in COLLECTORS and not replace:
         raise ValueError(
             f"Collector {collector.name!r} already registered; pass replace=True to override."
@@ -89,9 +127,31 @@ def _scope_values() -> tuple[str, ...]:
     return tuple(COLLECTORS.keys()) + ("all",)
 
 
-def _all_scope_names() -> list[str]:
-    """Return the collector names that run for ``scope=["all"]``."""
+def _raw_source_scopes() -> list[str]:
+    """The raw incoming sources — the only ``kind == "raw_source"`` collectors
+    that are all-eligible. This is what the ``all`` token expands to (Decision A);
+    derived scans / projections / exports are stages, attached intentionally."""
+    return [n for n, c in COLLECTORS.items() if c.kind == "raw_source" and c.included_in_all]
+
+
+def _default_refresh_scopes() -> list[str]:
+    """The default full-refresh recipe (registration order): all raw sources plus
+    the all-eligible follow-on stages (code, semantic, sync). This is what a
+    no-scope `rebalance refresh` / `refresh_index(scope=None)` runs — raw sources
+    first, then the derived/projection/export stages that read them."""
     return [name for name, c in COLLECTORS.items() if c.included_in_all]
+
+
+def _all_scope_names() -> list[str]:
+    """Collectors the ``all`` token expands to — the raw incoming sources only
+    (Decision A). Derived scans / projections / exports are NOT in ``all``; they
+    run as named follow-on stages in the default recipe (:func:`_default_refresh_scopes`)."""
+    return _raw_source_scopes()
+
+
+def _semantic_source_names() -> list[str]:
+    """Return registered collectors that expose a ``semantic_docs`` provider."""
+    return [n for n, c in COLLECTORS.items() if c.semantic_docs is not None]
 
 
 # Legacy SCOPE_VALUES: retained so callers importing the constant continue to
@@ -126,7 +186,7 @@ def _safe_meta(conn: Any, table: str) -> dict[str, str]:
 
 def _normalize_scope(scope: Iterable[str] | str | None) -> list[str]:
     if scope is None:
-        return ["all"]
+        return _default_refresh_scopes()
     if isinstance(scope, str):
         items = [scope]
     else:
@@ -142,7 +202,7 @@ def _normalize_scope(scope: Iterable[str] | str | None) -> list[str]:
         if v not in cleaned:
             cleaned.append(v)
     if not cleaned:
-        return ["all"]
+        return _default_refresh_scopes()
     if "all" in cleaned:
         return _all_scope_names()
     return cleaned
@@ -199,6 +259,24 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "messages": _safe_count(conn, "email_messages"),
             "last_synced_at": _safe_max(conn, "email_messages", "synced_at"),
             "newest_received_at": _safe_max(conn, "email_messages", "received_at"),
+        }
+
+        payload["sources"]["figma"] = {
+            "comments": _safe_count(conn, "figma_comments"),
+            "last_synced_at": _safe_max(conn, "figma_comments", "synced_at"),
+            "newest_comment_at": _safe_max(conn, "figma_comments", "created_at"),
+        }
+
+        try:
+            built = conn.execute(
+                "SELECT COUNT(*) FROM ask_self_indexes WHERE index_built = 1"
+            ).fetchone()[0]
+        except Exception:
+            built = None
+        payload["sources"]["ask_self"] = {
+            "repos": _safe_count(conn, "ask_self_indexes"),
+            "built_indexes": built,
+            "last_scanned_at": _safe_max(conn, "ask_self_indexes", "scanned_at"),
         }
 
         # Semantic index
@@ -297,8 +375,6 @@ def _refresh_vault(
         "steps": [
             f"ingest_vault(vault={vault_path})",
             "embed_chunks()",
-            "semantic_backfill(source=['vault'])",
-            "semantic_embed(source=['vault'])",
         ]
     }
     if dry_run:
@@ -306,10 +382,6 @@ def _refresh_vault(
 
     from rebalance.ingest.note_ingester import ingest_vault
     from rebalance.ingest.embedder import embed_chunks
-    from rebalance.ingest.semantic_index import (
-        backfill_semantic_documents,
-        embed_pending,
-    )
 
     ingest_result = ingest_vault(
         vault_path=vault_path,
@@ -318,8 +390,6 @@ def _refresh_vault(
         dry_run=False,
     )
     embed_result = embed_chunks(database_path=database_path)
-    backfill = backfill_semantic_documents(database_path, source_types=["vault"])
-    sem_embed = embed_pending(database_path, source_types=["vault"])
 
     return {
         "scope": "vault",
@@ -338,19 +408,6 @@ def _refresh_vault(
             "embedded": embed_result.embedded_chunks,
             "skipped_unchanged": embed_result.skipped_unchanged,
             "elapsed_seconds": embed_result.elapsed_seconds,
-        },
-        "semantic_backfill": {
-            "total": backfill.total_documents,
-            "inserted": backfill.inserted_count,
-            "updated": backfill.updated_count,
-            "deleted": backfill.deleted_count,
-            "elapsed_seconds": backfill.elapsed_seconds,
-        },
-        "semantic_embed": {
-            "total": sem_embed.total_docs,
-            "embedded": sem_embed.embedded_docs,
-            "skipped_unchanged": sem_embed.skipped_unchanged,
-            "elapsed_seconds": sem_embed.elapsed_seconds,
         },
     }
 
@@ -377,6 +434,8 @@ def _activity_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
     Passive events such as starring/watching a repo may create GitHub Events
     API entries, but they must not auto-monitor a repo.
     """
+    from rebalance.ingest.github_watch import WATCHED_LOGIN
+
     repos: list[str] = []
     try:
         with db_connection(database_path) as conn:
@@ -385,13 +444,14 @@ def _activity_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
                 SELECT DISTINCT repo_full_name
                 FROM github_activity
                 WHERE scan_date >= date('now', ?)
+                  AND login != ?
                   AND (
                     commits + pushes + prs_opened + prs_merged
                     + issues_opened + issue_comments + reviews
                   ) > 0
                 ORDER BY repo_full_name
                 """,
-                (f"-{int(since_days)} days",),
+                (f"-{int(since_days)} days", WATCHED_LOGIN),
             ).fetchall()
             for r in rows:
                 repo = (r["repo_full_name"] or "").strip()
@@ -438,6 +498,21 @@ def _pushed_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
     return repos
 
 
+def _external_repos(database_path: Path) -> list[str]:
+    """External/watched repos drawn from the project registry (external: true).
+
+    Always-on (not windowed), like ``_project_repos`` — a watched external repo
+    should be synced every refresh regardless of recent activity, since the point
+    is to catch other people's activity the operator's events feed never sees.
+    """
+    try:
+        from rebalance.ingest.registry import get_external_repos
+
+        return get_external_repos(database_path)
+    except Exception:  # noqa: BLE001
+        return []
+
+
 def get_watched_repos(
     database_path: Path,
     *,
@@ -446,16 +521,18 @@ def get_watched_repos(
     """Return the canonical view of which repos are monitored.
 
     The merged ``watched`` list = (project_repos ∪ activity_repos ∪
-    pushed_repos) − ignored. Callers (``refresh_index``,
+    pushed_repos ∪ external_repos) − ignored. Callers (``refresh_index``,
     ``list_watched_repos`` MCP tool, the ``raw`` diagnostic) consume the
     same source of truth so the user can never wonder "what's actually
-    being synced?"
+    being synced?". ``external_repos`` are third-party repos monitored for
+    everyone's activity (see ``rebalance.ingest.github_watch``).
     """
     from rebalance.ingest.config import get_github_ignored_repos
 
     project = _project_repos(database_path)
     activity = _activity_repos(database_path, since_days=since_days)
     pushed = _pushed_repos(database_path, since_days=since_days)
+    external = _external_repos(database_path)
     ignored = sorted(get_github_ignored_repos())
     # Ignored entries are stored lowercased (CLI normalizes on add);
     # watched-set sources keep GitHub's original casing. Compare on lowercase
@@ -467,7 +544,7 @@ def get_watched_repos(
     pushed_set = set(pushed)
 
     watched: list[str] = []
-    for repo in project + activity + pushed:
+    for repo in project + external + activity + pushed:
         if repo.lower() in ignored_lower:
             continue
         if repo not in watched:
@@ -483,6 +560,7 @@ def get_watched_repos(
         "project_repos": project,
         "activity_repos": activity,
         "pushed_repos": pushed,
+        "external_repos": external,
         "auto_discovered": auto_discovered,
         "ignored": ignored,
         "since_days": since_days,
@@ -502,22 +580,18 @@ def _refresh_github(
     since_days: int,
     repos: list[str],
     dry_run: bool,
-    include_semantic: bool = True,
 ) -> dict[str, Any]:
     initial_target_repos = _resolve_repos_for_refresh(database_path, repos)
+    external_count = len(
+        [r for r in initial_target_repos if r.lower() in {e.lower() for e in _external_repos(database_path)}]
+    )
     plan_steps = [
         "sync_pushed_repos()",
         f"github_scan(days={since_days})",
         f"sync_github_repo() x ~{len(initial_target_repos)} repos (after auto-discovery)",
+        f"reconcile_watched_repo() x {external_count} external repos (rollup or purge)",
+        "embed_github_documents()",
     ]
-    if include_semantic:
-        plan_steps.extend([
-            "embed_github_documents()",
-            "semantic_backfill(source=['github'])",
-            "semantic_embed(source=['github'])",
-        ])
-    else:
-        plan_steps.append("skip semantic embedding")
     if dry_run:
         return {
             "scope": "github",
@@ -568,7 +642,31 @@ def _refresh_github(
         except Exception as e:
             repo_results.append({"repo": repo, "error": str(e)})
 
-    result: dict[str, Any] = {
+    # External/watched repos: after their artifacts are synced above, reconcile a
+    # whole-repo github_activity rollup so everyone's activity surfaces in the
+    # org-activity dashboards/reports. Idempotent + bidirectional — a watched repo
+    # that's become active local/cloud work has its sentinel rollup purged instead
+    # (see github_watch.reconcile_watched_repo) so it never double-counts.
+    from rebalance.ingest.github_watch import reconcile_watched_repo
+
+    external_set = {r.lower() for r in _external_repos(database_path)}
+    watched_activity: list[dict[str, Any]] = []
+    for repo in target_repos:
+        if repo.lower() not in external_set:
+            continue
+        try:
+            watched_activity.append(
+                reconcile_watched_repo(
+                    database_path, repo, token, since_days=since_days
+                )
+            )
+        except Exception as e:  # noqa: BLE001 — one repo must not abort the run
+            watched_activity.append({"repo": repo, "error": str(e)})
+
+    from rebalance.ingest.github_knowledge import embed_github_documents
+
+    gh_embed = embed_github_documents(database_path=database_path)
+    return {
         "scope": "github",
         "dry_run": False,
         "pushed_repos_sync": {
@@ -586,45 +684,14 @@ def _refresh_github(
             "skipped_ignored": len(skipped),
         },
         "artifact_sync": repo_results,
-    }
-    if not include_semantic:
-        result["semantic"] = {
-            "skipped": True,
-            "reason": "include_semantic=False",
-        }
-        return result
-
-    from rebalance.ingest.github_knowledge import embed_github_documents
-    from rebalance.ingest.semantic_index import (
-        backfill_semantic_documents,
-        embed_pending,
-    )
-
-    gh_embed = embed_github_documents(database_path=database_path)
-    backfill = backfill_semantic_documents(database_path, source_types=["github"])
-    sem_embed = embed_pending(database_path, source_types=["github"])
-    result.update({
+        "watched_activity": watched_activity,
         "github_embed": {
             "total": gh_embed.total_docs,
             "embedded": gh_embed.embedded_docs,
             "skipped_unchanged": gh_embed.skipped_unchanged,
             "elapsed_seconds": gh_embed.elapsed_seconds,
         },
-        "semantic_backfill": {
-            "total": backfill.total_documents,
-            "inserted": backfill.inserted_count,
-            "updated": backfill.updated_count,
-            "deleted": backfill.deleted_count,
-            "elapsed_seconds": backfill.elapsed_seconds,
-        },
-        "semantic_embed": {
-            "total": sem_embed.total_docs,
-            "embedded": sem_embed.embedded_docs,
-            "skipped_unchanged": sem_embed.skipped_unchanged,
-            "elapsed_seconds": sem_embed.elapsed_seconds,
-        },
-    })
-    return result
+    }
 
 
 def _refresh_calendar(database_path: Path, *, since_days: int, dry_run: bool) -> dict[str, Any]:
@@ -657,18 +724,32 @@ def _refresh_sleuth(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     if dry_run:
         return {"scope": "sleuth", "dry_run": True, "steps": ["sync_sleuth_reminders()"]}
 
-    from rebalance.cli import _load_sleuth_env
-    from rebalance.ingest.sleuth_reminders import sync_sleuth_reminders
+    from rebalance.ingest.sleuth_reminders import sync_sleuth
 
-    env = _load_sleuth_env()
-    result = sync_sleuth_reminders(
-        base_url=env["SLEUTH_WEB_API_BASE_URL"],
-        token=env["SLEUTH_WEB_API_TOKEN"],
-        workspace_name=env["SLEUTH_WORKSPACE_NAME"],
-        database_path=database_path,
-        active_only=False,
-    )
+    # Single source-owned path (CLI / MCP / collector all call sync_sleuth). For a
+    # file source it refreshes the export clone itself (best-effort, non-destructive)
+    # and reports it as `source_refresh`. No more ingest->cli back-import.
+    result = sync_sleuth(database_path, active_only=False)
     return {"scope": "sleuth", "dry_run": False, **result.as_dict()}
+
+
+def _refresh_code(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Code projection into semantic_documents is owned by the semantic stage (Phase 3).
+
+    Running scope=['code'] alone is a no-op. The default recipe and
+    scope=['semantic'] both include code via _refresh_semantic_only.
+    """
+    if dry_run:
+        return {
+            "scope": "code",
+            "dry_run": True,
+            "steps": ["(code projection deferred to semantic stage)"],
+        }
+    return {
+        "scope": "code",
+        "dry_run": False,
+        "note": "code projection runs in the semantic stage; use scope=['semantic'] to index code",
+    }
 
 
 def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
@@ -694,18 +775,16 @@ def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
         return {
             "scope": "email",
             "dry_run": True,
-            "steps": ["sync_gmail()", "semantic_backfill(email)"],
+            "steps": ["sync_gmail()"],
         }
 
     from rebalance.ingest.gmail import GmailAuthError, sync_gmail
-    from rebalance.ingest.semantic_index import backfill_semantic_documents
 
     try:
         sync_result = sync_gmail(database_path=database_path)
     except GmailAuthError as exc:
         return {"scope": "email", "dry_run": False, "error": str(exc)}
 
-    semantic = backfill_semantic_documents(database_path, source_types=["email"])
     return {
         "scope": "email",
         "dry_run": False,
@@ -715,31 +794,110 @@ def _refresh_email(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
         "messages_updated": sync_result.messages_updated,
         "query_filter": sync_result.query_filter,
         "elapsed_seconds": sync_result.elapsed_seconds,
-        "semantic_backfill": {
-            "total": semantic.total_documents,
-            "inserted": semantic.inserted_count,
-            "updated": semantic.updated_count,
-            "elapsed_seconds": semantic.elapsed_seconds,
-        },
     }
 
 
+def _refresh_figma(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Refresh Figma comments (source_type='figma') — the first SourceModule.
+
+    Modeled on :func:`_refresh_email`: sync upstream, then run the unified
+    semantic backfill (via the registry-driven provider path) and embed. The
+    token is read from keyring/rbos.config; both a missing token and a missing
+    file-key allow-list surface as honest structured envelopes, never as silent
+    success.
+    """
+    file_keys = get_figma_file_keys()
+    if dry_run:
+        return {
+            "scope": "figma",
+            "dry_run": True,
+            "file_keys": file_keys,
+            "steps": [
+                f"sync_figma_comments(files={len(file_keys)})",
+            ],
+        }
+
+    token = (get_figma_token() or "").strip()
+    if not token:
+        return {
+            "scope": "figma",
+            "dry_run": False,
+            "error": (
+                "Figma token not configured. Set it with "
+                "`rebalance config set-figma-token` (stored in keyring)."
+            ),
+        }
+    if not file_keys:
+        return {
+            "scope": "figma",
+            "dry_run": False,
+            "skipped": True,
+            "reason": "No Figma file keys configured. Set figma_file_keys in temp/rbos.config.",
+        }
+
+    from rebalance.ingest.figma import sync_figma_comments
+
+    sync_result = sync_figma_comments(
+        database_path=database_path,
+        file_keys=file_keys,
+        token=token,
+    )
+
+    return {
+        "scope": "figma",
+        "dry_run": False,
+        "files_requested": sync_result.files_requested,
+        "files_synced": sync_result.files_synced,
+        "comments_fetched": sync_result.comments_fetched,
+        "comments_inserted": sync_result.comments_inserted,
+        "comments_updated": sync_result.comments_updated,
+        "comments_unchanged": sync_result.comments_unchanged,
+        "errors": sync_result.errors,
+        "elapsed_seconds": sync_result.elapsed_seconds,
+    }
+
+
+def _all_semantic_sources() -> list[str]:
+    """All sources that project into the unified semantic index.
+
+    Derived from the registry so new sources with a ``semantic_docs`` provider
+    are automatically included without a second manual edit. The legacy
+    if-ladder sources (vault / github / email / code) project via the
+    if-ladder in ``backfill_semantic_documents`` without needing a
+    ``semantic_docs`` provider; registry-driven sources (figma, …) use the
+    provider path. Add a new source to either the ladder or the registry —
+    it will appear here automatically.
+    """
+    _LADDER = ["vault", "github", "email", "code"]
+    registry_extra = [n for n in _semantic_source_names() if n not in _LADDER]
+    return _LADDER + registry_extra
+
+
 def _refresh_semantic_only(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    sources = _all_semantic_sources()
     if dry_run:
         return {
             "scope": "semantic",
             "dry_run": True,
-            "steps": ["semantic_backfill(all)", "semantic_embed(all)"],
+            "steps": [
+                f"semantic_backfill(sources={sources}, use_registry_providers=True)",
+                f"semantic_embed(sources={sources})",
+            ],
         }
     from rebalance.ingest.semantic_index import (
         backfill_semantic_documents,
         embed_pending,
     )
-    backfill = backfill_semantic_documents(database_path, source_types=["vault", "github", "email"])
-    sem_embed = embed_pending(database_path, source_types=["vault", "github", "email"])
+    backfill = backfill_semantic_documents(
+        database_path,
+        source_types=sources,
+        use_registry_providers=True,
+    )
+    sem_embed = embed_pending(database_path, source_types=sources)
     return {
         "scope": "semantic",
         "dry_run": False,
+        "sources": sources,
         "semantic_backfill": {
             "total": backfill.total_documents,
             "inserted": backfill.inserted_count,
@@ -785,7 +943,6 @@ def _refresh_dashboard_note(
     from rebalance.ingest.note_builder import build_dashboard_note_content, write_dashboard_note
     from rebalance.ingest.embedder import embed_chunks
     from rebalance.ingest.note_ingester import ingest_vault
-    from rebalance.ingest.semantic_index import backfill_semantic_documents, embed_pending
 
     markdown = build_dashboard_note_content(
         database_path,
@@ -796,8 +953,6 @@ def _refresh_dashboard_note(
     note_file = write_dashboard_note(output_path, markdown)
     ingest_result = ingest_vault(vault_path=vault_path, database_path=database_path)
     embed_result = embed_chunks(database_path=database_path)
-    backfill = backfill_semantic_documents(database_path, source_types=["vault"])
-    sem_embed = embed_pending(database_path, source_types=["vault"])
 
     return {
         "scope": "dashboard",
@@ -818,19 +973,6 @@ def _refresh_dashboard_note(
             "skipped_unchanged": embed_result.skipped_unchanged,
             "elapsed_seconds": embed_result.elapsed_seconds,
         },
-        "semantic_backfill": {
-            "total": backfill.total_documents,
-            "inserted": backfill.inserted_count,
-            "updated": backfill.updated_count,
-            "deleted": backfill.deleted_count,
-            "elapsed_seconds": backfill.elapsed_seconds,
-        },
-        "semantic_embed": {
-            "total": sem_embed.total_docs,
-            "embedded": sem_embed.embedded_docs,
-            "skipped_unchanged": sem_embed.skipped_unchanged,
-            "elapsed_seconds": sem_embed.elapsed_seconds,
-        },
     }
 
 
@@ -842,7 +984,6 @@ def refresh_index(
     since_days: int = 30,
     repos: list[str] | None = None,
     dry_run: bool = False,
-    include_semantic: bool = True,
     update_dashboard_note: bool = True,
 ) -> dict[str, Any]:
     """Run the configured ingest pipelines for ``scope`` and return a summary.
@@ -850,17 +991,15 @@ def refresh_index(
     ``scope`` accepts any combination of ``vault``, ``github``, ``calendar``,
     ``sleuth``, ``email``, ``semantic``, or ``all``. ``dry_run=True`` returns
     the planned steps without touching the DB or network.
+
+    ``update_dashboard_note`` triggers an optional Obsidian write-back: a
+    markdown dashboard note is written to the vault after a full refresh.
+    It is a documented side-output, not a core contract — callers that run
+    without a vault (CI, portable installs) set this to ``False``.
     """
     db_path = Path(database_path).expanduser().resolve()
     requested_scopes = _normalize_scope(scope)
-    full_refresh_requested = set(requested_scopes) == {
-        "vault",
-        "github",
-        "calendar",
-        "sleuth",
-        "email",
-        "semantic",
-    }
+    full_refresh_requested = scope is None or "all" in (scope or [])
     started = time.monotonic()
     results: list[dict[str, Any]] = []
     errors: list[dict[str, Any]] = []
@@ -892,17 +1031,30 @@ def refresh_index(
                 ),
             })
             requested_scopes = [s for s in requested_scopes if s != "github"]
+        elif not dry_run:
+            # If the stored PAT is deauthorized (401), fall back to the gh CLI
+            # token and persist it so this and the launchd jobs recover. No-op
+            # when the PAT is valid or gh is unavailable (e.g. under launchd).
+            from rebalance.ingest.github_scan import resolve_working_token
+            resolved_token = resolve_working_token(resolved_token)
 
     repos_list = list(repos or [])
+
+    # Figma PAT (keyring → rbos.config). Resolved so a missing token surfaces as
+    # the structured "missing required options" envelope below rather than an
+    # exception inside the collector. Only resolved when figma is in scope.
+    resolved_figma_token = ""
+    if "figma" in requested_scopes:
+        resolved_figma_token = (get_figma_token() or "").strip()
 
     # Per-collector kwargs bundle. Each collector ignores keys it doesn't need.
     collector_opts: dict[str, Any] = {
         "vault_path": resolved_vault,
         "token": resolved_token,
+        "figma_token": resolved_figma_token,
         "since_days": since_days,
         "repos": repos_list,
         "dry_run": dry_run,
-        "include_semantic": include_semantic,
     }
 
     # Bring the database schema to the latest version before any collector
@@ -925,6 +1077,14 @@ def refresh_index(
             missing_reqs.append("vault_path")
         if "github_token" in collector.requires and not collector_opts.get("token"):
             missing_reqs.append("github_token")
+        # Skip the figma_token precondition on dry runs so the planned-steps
+        # preview (which needs no PAT) still renders; live runs require it.
+        if (
+            "figma_token" in collector.requires
+            and not dry_run
+            and not collector_opts.get("figma_token")
+        ):
+            missing_reqs.append("figma_token")
         if missing_reqs:
             errors.append({"scope": s, "error": f"missing required options: {missing_reqs}"})
             continue
@@ -985,7 +1145,6 @@ def _github_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
         since_days=opts["since_days"],
         repos=opts.get("repos") or [],
         dry_run=opts["dry_run"],
-        include_semantic=opts.get("include_semantic", True),
     )
 
 
@@ -1001,8 +1160,149 @@ def _email_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_email(db_path, dry_run=opts["dry_run"])
 
 
+def _code_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_code(db_path, dry_run=opts["dry_run"])
+
+
+def _figma_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_figma(db_path, dry_run=opts["dry_run"])
+
+
 def _semantic_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_semantic_only(db_path, dry_run=opts["dry_run"])
+
+
+def _refresh_sync(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Export calendar + email snapshots to the sync subfolder in the pulse repo."""
+    from rebalance.ingest.config import get_pulse_config, get_sync_subdir
+    from rebalance.ingest.sync_snapshot import (
+        commit_and_push_sync,
+        export_calendar_snapshot,
+        export_email_snapshot,
+        get_device_id,
+    )
+
+    cfg = get_pulse_config()
+    pulse_target = cfg.get("pulse_target_path", "")
+    if not pulse_target:
+        return {
+            "scope": "sync",
+            "dry_run": dry_run,
+            "error": "pulse_target_path not configured — run: rebalance config set-pulse-config pulse_target_path=<path>",
+        }
+
+    target_repo = Path(pulse_target).expanduser().resolve()
+    sync_subdir = get_sync_subdir()
+    sync_dir = target_repo / sync_subdir
+    device_id = get_device_id()
+
+    if dry_run:
+        return {
+            "scope": "sync",
+            "dry_run": True,
+            "steps": [
+                f"export_calendar_snapshot(window_days=90) → {sync_dir}/calendar/{device_id}.json",
+                f"export_email_snapshot(limit=1000) → {sync_dir}/email/{device_id}.json",
+                f"git add {sync_subdir}/ && git commit && git push → {target_repo}",
+            ],
+        }
+
+    import time
+    started = time.monotonic()
+    cal_path = export_calendar_snapshot(database_path, sync_dir, device_id=device_id)
+    email_path = export_email_snapshot(database_path, sync_dir, device_id=device_id)
+
+    import json as _json
+    generated_at = _json.loads(cal_path.read_text(encoding="utf-8"))["generated_at"]
+    git_result = commit_and_push_sync(
+        target_repo, sync_subdir, device_id=device_id, generated_at=generated_at
+    )
+
+    return {
+        "scope": "sync",
+        "dry_run": False,
+        "device_id": device_id,
+        "calendar_snapshot": str(cal_path.relative_to(target_repo)),
+        "email_snapshot": str(email_path.relative_to(target_repo)),
+        "git": git_result,
+        "elapsed_seconds": round(time.monotonic() - started, 2),
+    }
+
+
+def _sync_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_sync(db_path, dry_run=opts["dry_run"])
+
+
+def _refresh_ask_self(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Walk this device for ask_self-enabled repos and record their indexes.
+
+    Discovery-only: reads each repo's ask_self harness + index metadata
+    (read-only) and upserts one row per repo into ``ask_self_indexes``. Does not
+    build or refresh any RAG index itself. Opt-in (``included_in_all=False``)
+    because it walks the filesystem; run explicitly via
+    ``refresh_index(scope=["ask_self"])``.
+    """
+    from rebalance.ingest.config import get_repo_scan_roots
+
+    roots = get_repo_scan_roots()
+    if dry_run:
+        return {
+            "scope": "ask_self",
+            "dry_run": True,
+            "scan_roots": roots,
+            "steps": [
+                f"scan_ask_self_repos(roots={roots})",
+                "read each ask_self index repo_metadata (read-only)",
+                "upsert ask_self_indexes (keyed by device_id, local_path)",
+            ],
+        }
+
+    from rebalance.ingest.ask_self_scan import sync_ask_self_indexes
+
+    result = sync_ask_self_indexes(database_path, roots=roots)
+    return {"scope": "ask_self", "dry_run": False, **result.as_dict()}
+
+
+def _ask_self_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_ask_self(db_path, dry_run=opts["dry_run"])
+
+
+def _refresh_focus5(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Scan device-local git repos and rebuild the Focus 5 roster.
+
+    Discovers active local repos (bounded zero-config walk), probes per-repo
+    git signals, and persists both the full signal cache and the ranked top-5
+    roster. Local-git-first: the GitHub corpus is enrichment only. Opt-in
+    (``included_in_all=False``) because it walks the filesystem and shells git;
+    run explicitly via ``refresh_index(scope=["focus5"])`` or lazily from the
+    web view when the roster TTL has expired.
+    """
+    from rebalance.ingest.config import get_focus5_ranking_mode, get_focus5_scan_roots
+
+    roots = get_focus5_scan_roots()
+    mode = get_focus5_ranking_mode()
+    if dry_run:
+        return {
+            "scope": "focus5",
+            "dry_run": True,
+            "scan_roots": roots,
+            "ranking_mode": mode,
+            "steps": [
+                f"iter_git_repos(roots={roots})",
+                "probe per-repo signals (read-only git status/log + .git stats)",
+                "replace focus5_repo_signals for this device (off-roster cache)",
+                f"rank via {mode!r} strategy and replace focus5_roster (top 5)",
+            ],
+        }
+
+    from rebalance.ingest.focus5_scan import sync_focus5
+
+    result = sync_focus5(database_path, roots=roots, mode=mode)
+    return {"scope": "focus5", "dry_run": False, **result.as_dict()}
+
+
+def _focus5_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    return _refresh_focus5(db_path, dry_run=opts["dry_run"])
 
 
 register_collector(Collector("vault", _vault_adapter, requires=("vault_path",)))
@@ -1010,4 +1310,26 @@ register_collector(Collector("github", _github_adapter, requires=("github_token"
 register_collector(Collector("calendar", _calendar_adapter))
 register_collector(Collector("sleuth", _sleuth_adapter))
 register_collector(Collector("email", _email_adapter))
-register_collector(Collector("semantic", _semantic_adapter))
+register_collector(Collector("code", _code_adapter, kind="derived_scan"))
+register_collector(Collector("semantic", _semantic_adapter, kind="projection"))
+register_collector(Collector("sync", _sync_adapter, kind="export"))
+register_collector(Collector("focus5", _focus5_adapter, included_in_all=False, kind="derived_scan"))
+register_collector(Collector("ask_self", _ask_self_adapter, included_in_all=False, kind="derived_scan"))
+
+# Figma — the first registry-driven SourceModule. Imported here (not at module
+# top) so figma.py — and its later, optional dependencies — only load when the
+# registry is constructed; figma.py's own top imports stay limited to
+# rebalance.ingest.db, so no mlx/embedder is pulled in. included_in_all=False
+# keeps it opt-in (requires a PAT + an explicit file-key allow-list).
+from rebalance.ingest.figma import figma_semantic_docs  # noqa: E402
+
+register_collector(
+    Collector(
+        "figma",
+        _figma_adapter,
+        requires=("figma_token",),
+        secrets=("figma_token", "figma_file_keys"),
+        semantic_docs=figma_semantic_docs,
+        included_in_all=False,
+    )
+)

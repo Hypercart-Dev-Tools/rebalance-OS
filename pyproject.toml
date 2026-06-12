@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rebalance-os"
-version = "0.31.4"
+version = "0.35.0"
 description = "Local-first workday operating system with MCP tools and Obsidian ingest"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -16,6 +16,7 @@ dependencies = [
   "questionary>=2.0.1",
   "mcp>=1.0.0",
   "sqlite-vec>=0.1.6",
+  "keyring>=25.0.0",
 ]
 
 [project.optional-dependencies]
@@ -30,6 +31,9 @@ embeddings = [
 server = [
   "fastapi>=0.110.0",
   "uvicorn[standard]>=0.29.0",
+]
+gcp = [
+  "google-cloud-secret-manager>=2.0.0",
 ]
 
 [project.scripts]

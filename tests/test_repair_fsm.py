@@ -16,15 +16,15 @@ def _ok() -> RepairResult:
 def _fail(error: str = "transient failure") -> RepairResult:
     return RepairResult(ok=False, error=error)
 
-def _make_fsm(actions: dict, *, preferred: str | None = None, api_key: str | None = None, max_det: int = 2, max_haiku: int = 1) -> RepairFSM:
+def _make_fsm(actions: dict, *, preferred: str | None = None, api_key: str | None = None, max_det: int = 2, max_llm: int = 1) -> RepairFSM:
     return RepairFSM(
         actions=actions,
         action_descriptions={k: k for k in actions},
         preferred_action=preferred,
         error_context="test context",
         max_deterministic_attempts=max_det,
-        max_haiku_attempts=max_haiku,
-        haiku_api_key=api_key,
+        max_llm_attempts=max_llm,
+        llm_api_key=api_key,
     )
 
 
@@ -56,7 +56,7 @@ class TestDeterministicRepair(unittest.TestCase):
         state = fsm.run("some push error")
         self.assertEqual(state.status, RepairStatus.REPAIRED)
         self.assertEqual(state.attempts, 1)
-        self.assertEqual(state.haiku_attempts, 0)
+        self.assertEqual(state.llm_attempts, 0)
 
     def test_succeeds_second_attempt(self) -> None:
         calls = [0]
@@ -69,12 +69,12 @@ class TestDeterministicRepair(unittest.TestCase):
         self.assertEqual(state.status, RepairStatus.REPAIRED)
         self.assertEqual(state.attempts, 2)
 
-    def test_dead_after_max_attempts_no_haiku(self) -> None:
+    def test_dead_after_max_attempts_no_llm(self) -> None:
         fsm = _make_fsm({"fix": lambda: _fail("still broken")}, max_det=2, api_key=None)
         state = fsm.run("push rejected")
         self.assertEqual(state.status, RepairStatus.DEAD)
         self.assertEqual(state.attempts, 2)
-        self.assertIn("ANTHROPIC_API_KEY", " ".join(state.log))
+        self.assertIn("GEMINI_API_KEY", " ".join(state.log))
 
     def test_unrecoverable_initial_error_skips_immediately(self) -> None:
         called = [False]
@@ -106,9 +106,9 @@ class TestDeterministicRepair(unittest.TestCase):
 # Haiku escalation
 # ---------------------------------------------------------------------------
 
-class TestHaikuEscalation(unittest.TestCase):
-    def test_haiku_called_after_deterministic_exhaustion(self) -> None:
-        with patch.object(RepairFSM, "_haiku_triage", return_value="secondary"):
+class TestLLMEscalation(unittest.TestCase):
+    def test_llm_called_after_deterministic_exhaustion(self) -> None:
+        with patch.object(RepairFSM, "_llm_triage", return_value="secondary"):
             fsm = _make_fsm(
                 {"primary": lambda: _fail("failed"), "secondary": _ok},
                 preferred="primary",
@@ -116,44 +116,44 @@ class TestHaikuEscalation(unittest.TestCase):
             )
             state = fsm.run("push rejected")
         self.assertEqual(state.status, RepairStatus.REPAIRED)
-        self.assertEqual(state.haiku_attempts, 1)
+        self.assertEqual(state.llm_attempts, 1)
         self.assertTrue(any("escalating" in line for line in state.log))
 
-    def test_haiku_invalid_action_goes_dead(self) -> None:
-        with patch.object(RepairFSM, "_haiku_triage", return_value="completely_unknown_action"):
+    def test_llm_invalid_action_goes_dead(self) -> None:
+        with patch.object(RepairFSM, "_llm_triage", return_value="completely_unknown_action"):
             fsm = _make_fsm({"fix": lambda: _fail()}, api_key="test-key")
             state = fsm.run("push rejected")
         self.assertEqual(state.status, RepairStatus.DEAD)
         self.assertTrue(any("invalid" in line or "unknown" in line for line in state.log))
 
-    def test_haiku_none_response_goes_dead(self) -> None:
-        with patch.object(RepairFSM, "_haiku_triage", return_value=None):
+    def test_llm_none_response_goes_dead(self) -> None:
+        with patch.object(RepairFSM, "_llm_triage", return_value=None):
             fsm = _make_fsm({"fix": lambda: _fail()}, api_key="test-key")
             state = fsm.run("push rejected")
         self.assertEqual(state.status, RepairStatus.DEAD)
 
-    def test_haiku_action_also_fails_goes_dead(self) -> None:
-        with patch.object(RepairFSM, "_haiku_triage", return_value="fix"):
-            fsm = _make_fsm({"fix": lambda: _fail("still broken after haiku")}, api_key="test-key")
+    def test_llm_action_also_fails_goes_dead(self) -> None:
+        with patch.object(RepairFSM, "_llm_triage", return_value="fix"):
+            fsm = _make_fsm({"fix": lambda: _fail("still broken after llm")}, api_key="test-key")
             state = fsm.run("push rejected")
         self.assertEqual(state.status, RepairStatus.DEAD)
-        self.assertEqual(state.haiku_attempts, 1)
+        self.assertEqual(state.llm_attempts, 1)
 
     def test_skipped_when_no_api_key(self) -> None:
         fsm = _make_fsm({"fix": lambda: _fail()}, api_key=None)
         state = fsm.run("push rejected")
         self.assertEqual(state.status, RepairStatus.DEAD)
-        self.assertEqual(state.haiku_attempts, 0)
-        self.assertTrue(any("ANTHROPIC_API_KEY" in line for line in state.log))
+        self.assertEqual(state.llm_attempts, 0)
+        self.assertTrue(any("GEMINI_API_KEY" in line for line in state.log))
 
-    def test_haiku_capped_at_max_attempts(self) -> None:
+    def test_llm_capped_at_max_attempts(self) -> None:
         calls = [0]
         def triage(self_inner, state):  # noqa: ARG001
             calls[0] += 1
             return "fix"
 
-        with patch.object(RepairFSM, "_haiku_triage", triage):
-            fsm = _make_fsm({"fix": lambda: _fail()}, api_key="test-key", max_haiku=1)
+        with patch.object(RepairFSM, "_llm_triage", triage):
+            fsm = _make_fsm({"fix": lambda: _fail()}, api_key="test-key", max_llm=1)
             fsm.run("push rejected")
         self.assertEqual(calls[0], 1)
 
@@ -167,14 +167,14 @@ class TestRepairState(unittest.TestCase):
         state = RepairState(
             status=RepairStatus.DEAD,
             attempts=2,
-            haiku_attempts=1,
+            llm_attempts=1,
             log=["a", "b"],
             final_error="boom",
         )
         d = state.as_dict()
         self.assertEqual(d["status"], "dead")
         self.assertEqual(d["attempts"], 2)
-        self.assertEqual(d["haiku_attempts"], 1)
+        self.assertEqual(d["llm_attempts"], 1)
         self.assertEqual(d["log"], ["a", "b"])
         self.assertEqual(d["final_error"], "boom")
 

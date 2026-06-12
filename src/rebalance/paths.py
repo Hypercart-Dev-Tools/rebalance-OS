@@ -301,6 +301,61 @@ if __name__ == "__main__":
 
 
 # ---------------------------------------------------------------------------
+# Project root resolver  (replaces scattered parents[N] hacks)
+# ---------------------------------------------------------------------------
+
+def find_project_root(start: Path | None = None) -> Path | None:
+    """Walk up from *start* looking for a project marker (.git / pyproject.toml).
+
+    Returns the root ``Path`` if found, ``None`` if not.  This is the
+    ``None``-returning twin of :func:`resolve_project_root` (which raises).
+    Prefer this in callers that have a sensible fallback when the root is
+    absent (e.g. config-path resolution), and :func:`resolve_project_root`
+    in callers that must abort on missing root.
+    """
+    return _walk_up_for_project_root(start)
+
+
+def resolve_project_root(start: Path | None = None) -> Path:
+    """Resolve the project root by walking up from ``start`` looking for a project marker.
+
+    Pass ``Path(__file__)`` from any module to find the repo root robustly,
+    regardless of install depth. Safer than ``parents[3]`` which silently
+    returns a wrong directory when the package layout changes.
+
+    Raises ``RuntimeError`` if no project root (.git or pyproject.toml) is
+    found. In practice this only happens in non-editable wheel installs where
+    the source tree is absent — call sites that write to ``temp/`` should
+    catch this and redirect to an env-var override instead.
+    """
+    root = _walk_up_for_project_root(start)
+    if root is None:
+        raise RuntimeError(
+            f"No project root (.git or pyproject.toml) found walking up from "
+            f"{(start or Path.cwd()).resolve()}"
+        )
+    return root
+
+
+# ---------------------------------------------------------------------------
+# OAuth token path resolver  (used by calendar.py + gmail.py)
+# ---------------------------------------------------------------------------
+
+def resolve_oauth_token_path(service: str) -> Path:
+    """Return the fallback OAuth token file path for a named Google service.
+
+    Used when the OS keyring is unavailable (e.g., launchd's stripped env).
+    Tokens live in the user-level config directory alongside ``config.json``
+    (respects ``$XDG_CONFIG_HOME``), so both config and tokens move together
+    when the user relocates their config dir.
+
+    Example: ``resolve_oauth_token_path("calendar")`` →
+        ``~/.config/rebalance-os/google-calendar-oauth``
+    """
+    return USER_CONFIG_DIR / f"google-{service}-oauth"
+
+
+# ---------------------------------------------------------------------------
 # Secrets resolver
 # ---------------------------------------------------------------------------
 

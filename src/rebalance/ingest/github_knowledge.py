@@ -317,6 +317,37 @@ def purge_github_repo_data(
     )
 
 
+def sync_github_artifacts(
+    database_path: Path,
+    repos: list[str],
+    *,
+    token: str,
+    since_days: int = DEFAULT_SYNC_DAYS,
+    on_repo_start: Callable[[str], None] | None = None,
+    on_repo_result: Callable[[str, GitHubKnowledgeSyncResult], None] | None = None,
+) -> None:
+    """Source-owned entry point for the GitHub artifact sync across repos.
+
+    Streaming + fail-fast: ``on_repo_start`` fires before each repo's sync and
+    ``on_repo_result`` after, so the caller controls per-repo progress output;
+    exceptions propagate (no per-repo swallowing — the loop aborts on first
+    failure, preserving today's behavior). CLI `github-sync-artifacts` uses this
+    so it no longer imports the leaf sync_github_repo
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2).
+    """
+    for repo in repos:
+        if on_repo_start is not None:
+            on_repo_start(repo)
+        result = sync_github_repo(
+            database_path=database_path,
+            repo_full_name=repo,
+            token=token,
+            since_days=since_days,
+        )
+        if on_repo_result is not None:
+            on_repo_result(repo, result)
+
+
 def sync_github_repo(
     database_path: Path,
     repo_full_name: str,
@@ -823,6 +854,29 @@ def sync_github_repo(
 def _default_embed_texts(texts: list[str], model_name: str) -> list[list[float]]:
     model, tokenizer = _load_model(model_name)
     return _embed_batch(model, tokenizer, texts)
+
+
+def refresh_github_embeddings(
+    database_path: Path,
+    *,
+    model_name: str = DEFAULT_EMBED_MODEL,
+    batch_size: int = 32,
+    min_chars: int = MIN_EMBED_CHARS,
+    force_reembed: bool = False,
+    embed_texts: EmbedTexts | None = None,
+) -> GitHubEmbedResult:
+    """Source-owned 1:1 facade over :func:`embed_github_documents` so CLI
+    `github-embed` doesn't import the leaf directly (forwards all flags + the
+    embed_texts test seam). COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2.
+    """
+    return embed_github_documents(
+        database_path=database_path,
+        model_name=model_name,
+        batch_size=batch_size,
+        min_chars=min_chars,
+        force_reembed=force_reembed,
+        embed_texts=embed_texts,
+    )
 
 
 def embed_github_documents(

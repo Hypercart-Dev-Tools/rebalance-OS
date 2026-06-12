@@ -1,0 +1,43 @@
+{
+  "count": 3,
+  "next": "https://links.example.com/api/bookmarks/?limit=2&offset=2",
+  "previous": null,
+  "results": [
+    {
+      "id": 101,
+      "url": "https://sqlite.org/vec/",
+      "title": "sqlite-vec: vector search in SQLite",
+      "description": "A tiny, dependency-free vector search extension for SQLite that runs anywhere SQLite runs.",
+      "notes": "Use this for the rebalance semantic index. KNN via the MATCH operator on a vec0 virtual table.",
+      "website_title": "sqlite-vec",
+      "website_description": "Vector search SQLite extension",
+      "web_archive_snapshot_url": "",
+      "favicon_url": "https://links.example.com/static/favicon/sqlite.png",
+      "preview_image_url": "",
+      "is_archived": false,
+      "unread": false,
+      "shared": false,
+      "tag_names": ["database", "embeddings", "sqlite"],
+      "date_added": "2026-06-01T10:00:00Z",
+      "date_modified": "2026-06-02T09:30:00Z"
+    },
+    {
+      "id": 102,
+      "url": "https://github.com/sissbruecker/linkding",
+      "title": "linkding — self-hosted bookmark manager",
+      "description": "Minimal, fast bookmark service you can self-host. Has a token-authenticated REST API.",
+      "notes": "Candidate first external plugin for rebalance-OS. /api/bookmarks/ is paginated.",
+      "website_title": "linkding",
+      "website_description": "Self-hosted bookmarks",
+      "web_archive_snapshot_url": "",
+      "favicon_url": "",
+      "preview_image_url": "",
+      "is_archived": false,
+      "unread": true,
+      "shared": false,
+      "tag_names": ["selfhosted", "bookmarks", "api"],
+      "date_added": "2026-06-03T14:12:00Z",
+      "date_modified": "2026-06-03T14:12:00Z"
+    }
+  ]
+}

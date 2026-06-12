@@ -27,7 +27,7 @@ Two-Layer LLM
 User (via MCP host: VS Code, Claude Desktop, etc.)
 ```
 
-Every data source follows the same pattern: **collect → normalize → store → query**. Adding a new source means implementing one collector and one `_gather_*` function. The query layer and LLM layers are source-agnostic.
+Every raw incoming source follows the same pattern: **collect → normalize → store → query**. The collector registry in `index_ops.py` currently also includes derived local scans and post-ingest/export jobs (`code`, `semantic`, `sync`, `focus5`, `ask_self`), so not every registered scope is a raw upstream signal. The query layer and LLM layers are source-agnostic once data is in SQLite.
 
 ### Sync model (in plain English)
 
@@ -50,7 +50,7 @@ Detailed per-source mechanics live in [Storage Layer → Sync semantics per sour
 
 ## Signal Sources
 
-Each source has a priority, a collector module, and a target table. For detailed field specs and status, see [PROJECT.md — Signals](./PROJECT.md).
+Raw incoming sources have a priority, a collector module, and a target table. For detailed field specs and status, see [PROJECT.md — Signals](./PROJECT.md).
 
 | Priority | Source | Collector | Storage | Vectorized | Status |
 |----------|--------|-----------|---------|------------|--------|
@@ -59,6 +59,19 @@ Each source has a priority, a collector module, and a target table. For detailed
 | P2 | Google Calendar | `calendar.py` | `calendar_events` table (default window 30d back / 7d forward; no auto-deletion) | No — structured event data | Active |
 | P3 | Sleuth reminders (Slack) | `sleuth_reminders.py` | `sleuth_reminders` table | No — structured reminder rows | Active |
 | P4 | Email (Gmail) | `gmail.py` + `semantic_index.py` | `email_messages` | Yes — subject + snippet participate in the unified semantic index | Active (Phase 1, shipped 2026-05-12): newest 100 `in:inbox` messages per run; metadata + snippet only, no body parsing yet |
+| P4 | Figma comments | `figma.py` + `semantic_index.py` | `figma_comments` | Yes — registry-provider semantic docs for comments | Active (opt-in): requires a PAT plus explicit `figma_file_keys` allow-list |
+
+### Other registered collector scopes
+
+These are registered in `index_ops.py` and dispatch through the same `refresh_index()` orchestrator, but they are not raw upstream data sources:
+
+| Scope | Kind | Purpose | Included in `all` |
+|---|---|---|---|
+| `code` | derived local scan | AST/code chunk collection into the unified semantic index | Yes |
+| `semantic` | projection stage | Unified semantic backfill + embed maintenance | Yes |
+| `sync` | export stage | Export calendar/email snapshots to the pulse sync repo | Yes |
+| `focus5` | derived local scan | Build the device-local Focus 5 roster + signal cache | No |
+| `ask_self` | derived local scan | Inventory ask_self indexes on this device | No |
 
 ### Source → Table fanout
 
@@ -94,9 +107,17 @@ Sleuth Web API ──────▶ sleuth_reminders.py       Bearer auth, stdl
   (Vultr dev :2020)                                GET /workspace/<name>/
                                                    reminders?format=rebalance
 
-Gmail API ───────────▶ gmail.py                  Google ADC (gmail.readonly), ──▶ email_messages
+Gmail API ───────────▶ gmail.py                  desktop OAuth (gmail.readonly), ──▶ email_messages
   (gmail.googleapis.com)                           filter in:inbox by default,
                                                    newest 100 messages/run
+
+Gmail MCP connector ─▶ gmail.py                  agent-pushed message payloads ─▶ email_messages
+  (opt-in push path)                               via ingest_email_messages()
+
+Figma Comments API ───▶ figma.py                 file-key allow-list + PAT    ──▶ figma_comments
+  (api.figma.com)                                                                        │
+                                                                                         └─▶ semantic_documents
+                                                                                             semantic_embeddings
 
 Project Registry ────▶ registry.py +              MD registry → projects.yaml ──▶ project_registry
   (vault markdown)     preflight.py                → SQLite projection
@@ -111,29 +132,61 @@ Project Registry ────▶ registry.py +              MD registry → proj
 | Obsidian vault | `rebalance ingest notes`, `ingest embed`, `query`, `search` | `query_notes`, `search_vault` | 1 + 2 |
 | Google Calendar | `rebalance calendar-sync`, `calendar-create-event`, `calendar-snap-edges`, `calendar-daily-report`, `calendar-weekly-report` | `create_calendar_event`, `review_timesheet`, `classify_event`, `snap_calendar_edges` | 4 |
 | Sleuth reminders | `rebalance sleuth-sync` | `sleuth_sync_reminders` | 5 |
-| Project registry | `rebalance ingest preflight`, `ingest sync` | `list_projects`, `run_preflight`, `confirm_projects`, `onboarding_status` | on demand |
+| Email (Gmail) | `rebalance refresh`, `semantic-backfill`, `semantic-query` | `refresh_index`, `semantic_query`, `ingest_gmail_messages` | 6 |
+| Figma comments | `rebalance refresh` | `refresh_index` | opt-in |
+| Focus 5 | `refresh_index(scope=["focus5"])`, `rebalance serve` / pulse server | web `/focus-5` route | opt-in |
+| ask_self inventory | `refresh_index(scope=["ask_self"])` | `list_ask_self_repos` | opt-in |
+| Project registry | `rebalance ingest preflight`, `ingest sync`, `onboard` | `list_projects`, `run_preflight`, `confirm_projects`, `onboarding_status` | on demand |
+
+> Registry write discipline (Phase 5, `ingest/lifecycle.py`): discovery is
+> read-only and stamps candidates with `provenance` (remote-activity /
+> vault-note; local-scan reserved); `confirm_and_write` is the only curated
+> write path; activity inference maintains only rows it created (marked
+> `inference.generated_by`) and never touches curated rows; priority rules
+> overlay at read time and are never persisted.
+
+> Preferred write path: `refresh_index(scope=[...])` is the orchestrated entry
+> point. Several source-specific CLI/MCP write commands still exist for
+> historical/operator reasons, but some of them bypass the collector/orchestrator
+> layer and call leaf ingest functions directly.
+
+> **Sleuth production is read from a published file — no inbound access.** The
+> Sleuth box pushes its reminders to a private git repo
+> (`rebalance-git-pulse:sync/sleuth/reminders-<ws>.json`); rebalance-OS reads the
+> local clone (`base_url` is a `file://`/local path). No SSH tunnel, no open port.
+> See [SLEUTH_SYNC.md](SLEUTH_SYNC.md). (Dev still hits the API directly.)
 
 ### Credentials
 
 | Source | Secret store | Mechanism |
 |---|---|---|
-| GitHub | `temp/rbos.config` (JSON, gitignored) | PAT with `repo:read` |
-| Google Calendar | `~/secrets/google-calendar.env` + pickled OAuth token | OAuth 2.0 user consent |
+| GitHub | OS keyring + `temp/rbos.config` fallback; `gh` CLI as last-resort read fallback | PAT with `repo:read`; persisted to both keyring and config for launchd reachability |
+| Google Calendar | `google-calendar.env` (client credentials) via `resolve_secret_path()` + pickled OAuth user-token at `resolve_oauth_token_path("calendar")` → `~/.config/rebalance-os/google-calendar-oauth` | OAuth 2.0 user consent |
 | Sleuth | `~/secrets/sleuth-web-api-development.env` (mode 600) | Bearer token, 64-hex |
+| Gmail | Desktop OAuth token in keyring + `~/.config/rebalance-os/google-gmail-oauth` fallback, or MCP push-ingest mode | `gmail.readonly` desktop OAuth, or agent-pushed `ingest_gmail_messages` path when `gmail_ingest_method=mcp` |
+| Figma | OS keyring for PAT + `temp/rbos.config` for file-key allow-list | Personal access token + explicit file selection |
 | Obsidian vault | none | filesystem read only |
 
-Env-file paths resolve via [src/rebalance/paths.py](src/rebalance/paths.py)::`resolve_secret_path(name)` — the layered chain is `REBALANCE_SECRETS_DIR` env var → `secrets_dir` field in `~/.config/rebalance-os/config.json` (set via `rebalance config set-secrets-dir`) → `~/secrets/` legacy default. Both `GOOGLE_CALENDAR_ENV_PATH` and `SLEUTH_ENV_PATH` in [src/rebalance/cli.py](src/rebalance/cli.py) use this resolver, so the repo is portable across operator home directories without hardcoded paths. Both files should sit at mode 600. Env files are parsed manually (no `python-dotenv`). Nothing with a secret value is committed.
+Env-file paths resolve via [src/rebalance/paths.py](src/rebalance/paths.py)::`resolve_secret_path(name)` — the layered chain is `REBALANCE_SECRETS_DIR` env var → `secrets_dir` field in `~/.config/rebalance-os/config.json` (set via `rebalance config set-secrets-dir`) → `~/secrets/` legacy default. The domain CLI loaders (for example, [src/rebalance/cli/calendar.py](src/rebalance/cli/calendar.py) and [src/rebalance/cli/sleuth.py](src/rebalance/cli/sleuth.py)) use this resolver, so the repo is portable across operator home directories without hardcoded env-file paths. Env files should sit at mode 600. Env files are parsed manually (no `python-dotenv`). Nothing with a secret value is committed.
 
 ### Adding a New Source
 
-1. **Collector** — write `src/rebalance/ingest/<source>.py` following the `sleuth_reminders.py` or `github_scan.py` shape: a dataclass for one record, a `sync_*()` function that fetches → normalizes → upserts, and a module-local `ensure_<source>_schema(conn)`. Use `db_connection(path, ensure_fn)` from `db.py`.
-2. **Schema** — keep the `CREATE TABLE` inside `ensure_<source>_schema`. Only promote to `db.py` if more than one module needs it. Use existing tables for unstructured text that should be embedded.
-3. **Credentials** — filesystem secrets live in `~/secrets/<source>.env` with a loader next to `_load_google_calendar_env` / `_load_sleuth_env` in `cli.py`. Never add credentials to `temp/rbos.config`.
-4. **Context gatherer** — add a `_gather_<source>_context()` function in `querier.py`. It reads from SQLite and returns `list[dict]`.
-5. **Prompt section** — add a block in `_build_prompt()` to format the new context for the LLM.
-6. **CLI + MCP** — add a Typer subcommand in `cli.py`, and wrap as an MCP tool in `mcp_server.py` if the source needs on-demand querying beyond `ask`.
-7. **Daily sync** — append a step to `scripts/daily_sync.sh` with the `&& OK || FAILED` guard if the source should refresh unattended.
-8. **Tests** — add `tests/test_<source>.py` that stubs the outbound call (patch `urlopen` for HTTP, filesystem for local sources). Verify insert / unchanged / update semantics.
+> **The current preferred way to add a source is the collector / `SourceModule`
+> contract — see [src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py)
+> and the developer guide [PLUGINS.md](./PLUGINS.md).** It covers the registry
+> descriptor, the optional `semantic_docs` provider, secrets/keyring, numbered
+> migrations, and tests, with Figma as the worked example. The steps below are
+> the practical recipe for the built-in sources.
+
+1. **Collector** — write `src/rebalance/ingest/<source>.py` following the `sleuth_reminders.py` or `github_scan.py` shape: a dataclass for one record, a `sync_*()` function that fetches → normalizes → upserts, and a module-local `ensure_<source>_schema(conn)`. Use `db_connection(path, ensure_fn)` from the `ingest/db/` package.
+2. **Schema** — keep the `CREATE TABLE` inside `ensure_<source>_schema`. Only promote to the shared `ingest/db/` package if more than one module needs it. Use existing tables for unstructured text that should be embedded.
+3. **Registry** — register the source in `index_ops.py` with `register_collector(Collector(...))`. Add `requires=...` and `semantic_docs=...` metadata if the source needs preconditions or participates in the unified semantic index.
+4. **Credentials** — if the source uses env-style secret files, resolve them through `resolve_secret_path()` and a small domain loader (see `cli/calendar.py` / `cli/sleuth.py`). Never hardcode secrets in repo files.
+5. **Context gatherer** — add a `_gather_<source>_context()` function in `querier.py` only if the source should participate in `ask()`.
+6. **Prompt section** — add a block in `_build_prompt()` to format the new context for the LLM only if the source participates in synthesis.
+7. **CLI + MCP** — add thin wrappers in `src/rebalance/cli/*` and `src/rebalance/mcp/tools/*` if the source needs direct user-facing operations beyond `refresh_index()`.
+8. **Scheduled refresh** — ensure `included_in_all` and any explicit scheduler usage match the source's intended unattended behavior.
+9. **Tests** — add `tests/test_<source>.py` that stubs the outbound call (patch `urlopen` for HTTP, filesystem for local sources). Verify insert / unchanged / update semantics.
 
 No changes needed to the query layer, LLM synthesis, or MCP transport.
 
@@ -152,7 +205,7 @@ Project Registry (writer: registry.py)
 GitHub activity (writer: github_scan.py)
   github_activity            — per-repo event counts, keyed by (login, repo, scan_date)
 
-GitHub artifacts (writer: github_knowledge.py; schema in db.py::ensure_github_schema)
+GitHub artifacts (writer: github_knowledge.py; schema in `ingest/db/`)
   github_repo_meta           — repo-level metadata (default branch, issue/project support)
   github_branches            — local branch inventory for promotion/release inference
   github_labels              — label dictionary per repo
@@ -167,9 +220,12 @@ GitHub artifacts (writer: github_knowledge.py; schema in db.py::ensure_github_sc
   github_embeddings          — sqlite-vec virtual table for artifact embeddings
   github_embedding_meta      — model name + dim for the GitHub corpus
 
-Unified Semantic Index (writers: semantic_index.py, index_ops.py)
+Unified Semantic Index (single writer: the `semantic` collector stage in index_ops.py)
   semantic_documents         — canonical cross-source document rows (vault chunks +
-                               GitHub issues/PRs/comments/commits). Writer:
+                               GitHub issues/PRs/comments/commits, Gmail
+                               messages, and registry-provider sources such as
+                               Figma comments). Written exclusively by
+                               _refresh_semantic_only() via
                                semantic_index.py::backfill_semantic_documents().
                                Consumed by semantic_query() and the LLM context layer.
   semantic_embeddings        — sqlite-vec virtual table, float[1024], keyed by
@@ -186,6 +242,11 @@ Embeddings (writer: embedder.py)
   embeddings                 — sqlite-vec virtual table, float[1024], keyed by chunk_id
   embedding_meta             — model name, dimension, last embed timestamp
 
+Email (writer: gmail.py)
+  email_messages             — message metadata + snippet, keyed by Gmail message_id.
+                               Upsert-only rolling window (newest matching messages);
+                               also projected into semantic_documents.
+
 Google Calendar (writer: calendar.py)
   calendar_events            — event id, summary, start/end, location, attendees, description
                                Keyed by Google event ID (INSERT OR REPLACE). Default sync window
@@ -198,6 +259,16 @@ Sleuth reminders (writer: sleuth_reminders.py)
                                first_seen_at preserved across syncs. Rows are never
                                deleted — state transitions (scheduled → posted → completed)
                                are mirrored as UPDATEs.
+
+Figma (writer: figma.py)
+  figma_comments             — comment rows keyed by Figma comment key, synced from
+                               an explicit file-key allow-list. Also projected into
+                               semantic_documents via the registry-provider path.
+
+Device-local inventories / derived jobs
+  ask_self_indexes           — per-device inventory of ask_self indexes found on disk
+  focus5_repo_signals        — cached per-repo Focus 5 signals for the current device
+  focus5_roster              — persisted top-5 Focus 5 roster snapshot
 ```
 
 ### Sync semantics per source
@@ -218,13 +289,29 @@ Every source is incremental, but the meaning of "incremental" depends on what th
 
 All consumers read from the same SQLite file. The query layer is source-agnostic.
 
+**Read-side ownership model (Phase 3, Option C):**
+
+| Surface | Role | Owner |
+|---|---|---|
+| `semantic_query()` MCP tool | Unified raw retrieval primitive | `semantic_index.query()` — owns source vocabulary, freshness, hybrid RRF |
+| `chat_with_data()` | Citations-first interactive retrieval | `chat.py` — owns scope aliases (`work`/`code`/`all`), citation shaping; delegates retrieval to `semantic_index` |
+| `ask()` | Broad mixed-context synthesis/orchestration | `querier.py` — owns project/calendar/temporal framing; not the canonical retrieval primitive |
+| `query_notes()`, `query_github_context()` | Legacy per-source lookups | Facades over older per-source indexes; use `semantic_query()` for new work |
+
 ```
 SQLite @ $REBALANCE_DB
    │
-   ├──▶ querier.py::ask()          ── semantic + keyword recall across vault,
-   │                                   GitHub corpus, calendar, project registry,
-   │                                   vault activity, temporal context
-   │                                   (optionally synthesized by local Qwen3)
+   ├──▶ semantic_index.query()     ── unified raw retrieval primitive
+   │    (MCP: semantic_query)          source vocab + hybrid RRF
+   │         │
+   │         ├──▶ chat_with_data() ── citations-first presentation layer
+   │         │    (dashboard /api/chat)  scope aliases, citation shaping
+   │         │
+   │         └──▶ ask() (partial)  ── contributes to synthesis context
+   │
+   ├──▶ querier.py::ask()          ── broad orchestrator: gathers project,
+   │    (MCP: ask, CLI: ask)           calendar, temporal + semantic signals;
+   │                                   synthesizes via local Qwen3 (optional)
    │
    ├──▶ daily_report.py /          ── per-day / per-week calendar rollups
    │    weekly_report.py              with project classification
@@ -235,11 +322,11 @@ SQLite @ $REBALANCE_DB
    ├──▶ github_readiness.py /      ── release-state inference + issue↔PR
    │    github_reconciliation.py       close candidates
    │
-   └──▶ mcp_server.py              ── exposes all of the above as MCP tools
+   └──▶ mcp/server.py              ── exposes all of the above as MCP tools
                                        to Claude Code, Claude Desktop, etc.
 ```
 
-`querier.py` is the central orchestrator. A single `ask()` call:
+`querier.py` is the synthesis orchestrator (not the retrieval primitive). A single `ask()` call:
 
 1. **Gathers context** from all sources in parallel-ready functions:
    - `_gather_project_context()` — registry entries + repos map
@@ -287,20 +374,22 @@ User sees final answer
 
 Four ways the pipeline runs:
 
-1. **Interactive CLI** — `rebalance <subcommand>` via the Typer app. Ad-hoc and one-shot workflows (`calendar-create-event`, `github-release-readiness`, `sleuth-sync --json`, `profile-sync`, `raw`, etc.). `rebalance` invoked with no arguments launches the live dashboard (mode 4). `rebalance raw [--minutes N] [--watch S] [--json]` is a calibration probe: 1 GitHub API request per invocation, classifies recent events as captured / pending / unwatched against the local pipeline state, used to verify that commits/PRs/issues are making it into rebalanceOS.
+1. **Interactive CLI** — `rebalance <subcommand>` via the Typer package under `src/rebalance/cli/`. Ad-hoc and one-shot workflows (`calendar-create-event`, `github-release-readiness`, `sleuth-sync --json`, `profile-sync`, `raw`, etc.). `rebalance` invoked with no arguments launches the live dashboard (mode 4). `rebalance raw [--minutes N] [--watch S] [--json]` is a calibration probe: 1 GitHub API request per invocation, classifies recent events as captured / pending / unwatched against the local pipeline state, used to verify that commits/PRs/issues are making it into rebalanceOS.
 
-2. **Unattended scheduled syncs** — five scheduled launchd jobs cooperate, plus a sixth long-running one:
+2. **Unattended scheduled syncs** — a launchd fleet of ten jobs. [SCHEDULER.md](SCHEDULER.md) is the policy table (single source of truth for labels, cadences, scopes, prerequisites, and outputs; enforced by `tests/test_scheduler_policy.py`). The six data/render jobs, conceptually:
 
-   - **Daily all-source sync** ([scripts/daily_sync.sh](scripts/daily_sync.sh) / [scripts/com.rebalance-os.daily-sync.plist.template](scripts/com.rebalance-os.daily-sync.plist.template)) at 06:30 local time, plus on boot/login if 06:30 was missed. Calls `refresh_index(scope=["all"])`, which walks every source: vault → github → calendar → sleuth → unified semantic index. "All" means *every source*, **not** a full re-download — each step uses its own incremental logic from [Sync semantics per source](#sync-semantics-per-source). Per-scope failures are captured in the result's `errors` list rather than aborting the run.
-   - **Hourly vault refresh** ([scripts/vault_sync.sh](scripts/vault_sync.sh) / [scripts/com.rebalance-os.vault-sync.plist.template](scripts/com.rebalance-os.vault-sync.plist.template)) at HH:15 from 06:15 to 23:15. Calls `refresh_index(scope=["vault"])` only — keeps notes edited mid-day visible in the dashboard / pulse / semantic search without waiting for the next morning's full sync. Vault ingest is cheap (~0.02s with no changes) and fully offline.
+   - **Daily all-scope sync** ([scripts/daily_sync.sh](scripts/daily_sync.sh) / [scripts/com.rebalance-os.daily-sync.plist.template](scripts/com.rebalance-os.daily-sync.plist.template)) at 06:30 local time, plus on boot/login if 06:30 was missed. Calls `refresh_index()` with no scope (the **default recipe**): all raw sources (`vault`, `github`, `calendar`, `sleuth`, `email`) followed by the derived/projection/export stages (`code`, `semantic`, `sync`). Note: `scope=["all"]` is *not* the same as the default recipe — after Phase 1b, `all` expands to raw sources only; the default no-scope path runs the full recipe including follow-on stages. Opt-in scopes (`figma`, `focus5`, `ask_self`) are never included automatically. Per-scope failures are captured in `errors` rather than aborting the run.
+   - **Hourly vault refresh** ([scripts/vault_sync.sh](scripts/vault_sync.sh) / [scripts/com.rebalance-os.vault-sync.plist.template](scripts/com.rebalance-os.vault-sync.plist.template)) at HH:15 from 06:15 to 23:15. Calls `refresh_index(scope=["vault", "semantic"])` — keeps notes edited mid-day visible in **both** the dashboard/pulse (vault ingest) and **semantic search** (semantic projection stage). Vault ingest with no changes is ~0.02s; the semantic stage only embeds rows where content changed, so it is also cheap on idle runs.
    - **Hourly pulse publish** ([scripts/pulse_sync.sh](scripts/pulse_sync.sh) / [scripts/com.rebalance-os.pulse-sync.plist.template](scripts/com.rebalance-os.pulse-sync.plist.template)) on the hour, 06:00 to 23:00. Renders the operator pulse markdown and pushes it to the configured private repo, but only when the rendered content actually changed since the previous run.
    - **30-minute pulse-web refresh** ([scripts/pulse_web_sync.sh](scripts/pulse_web_sync.sh) / [scripts/com.rebalance-os.pulse-web-sync.plist.template](scripts/com.rebalance-os.pulse-web-sync.plist.template)) every 30 minutes from 06:00 to 23:30. Calls [scripts/pulse_web.py](scripts/pulse_web.py) to regenerate the local `web/pulse.html` mirror of the dashboard. Atomic via tmp+replace (a crashed run leaves the previous HTML intact). No network, no git push — separate from the markdown→private-repo flow above.
    - **Hourly GitHub sync** ([scripts/github_sync.sh](scripts/github_sync.sh) / [scripts/com.rebalance-os.github-sync.plist.template](scripts/com.rebalance-os.github-sync.plist.template)) — a narrower github-only refresh independent of the daily full sync, for environments that want fresher GitHub data without paying the full multi-source cost.
    - **Pulse server (long-running, not scheduled)** ([scripts/pulse_server.sh](scripts/pulse_server.sh) / [scripts/com.rebalance-os.pulse-server.plist.template](scripts/com.rebalance-os.pulse-server.plist.template)) — a FastAPI/uvicorn server on `127.0.0.1:8767` with `RunAtLoad` + `KeepAlive` (autostart at login, restart on crash, `ThrottleInterval=30s`). Adds an interactive layer (real Refresh button + filter) on top of the static `web/pulse.html` the pulse-web job regenerates. Loopback bind is enforced in [scripts/pulse_server.py](scripts/pulse_server.py). Unlike the five scheduled jobs above, it runs continuously rather than firing on a calendar interval.
 
-   The shell scripts derive `REBALANCE_DIR` from their own location, and the `.plist.template` files use a `{{REBALANCE_DIR}}` placeholder that each `install_*_scheduler.sh` substitutes with the local checkout path before writing into `~/Library/LaunchAgents/`. The rendered plists are gitignored — the templates are the only checked-in form, so a clone on any machine installs cleanly with no per-user editing.
+   The remaining four jobs (health-check hourly, health-check-triage 3×/day, pulse-warning-watch every 15 min, obsidian-rollover at midnight) are operational/maintenance agents — see [SCHEDULER.md](SCHEDULER.md).
 
-3. **MCP tool handlers** — [src/rebalance/mcp_server.py](src/rebalance/mcp_server.py) wraps ingestors and readers as MCP tools. Host agents (Claude Code / Claude Desktop) call these on demand. `REBALANCE_DB` env var resolves the shared DB path.
+   Wrapper scripts source [scripts/lib/scheduler_common.sh](scripts/lib/scheduler_common.sh) for env bootstrap (repo root, venv python, `PYTHONPATH`), per-day logs under `temp/logs/`, job-lifecycle events into `auth_activity.jsonl`, and log retention. Installers source [scripts/lib/install_common.sh](scripts/lib/install_common.sh) for one normalized flow: always-unload, render the `.plist.template` (`{{REBALANCE_DIR}}`, `{{PYTHON}}`, `{{HOME}}`), `plutil -lint`, load, poll-verify registration. The rendered plists in `~/Library/LaunchAgents/` are gitignored — the templates are the only checked-in form, so a clone on any machine installs cleanly with no per-user editing.
+
+3. **MCP tool handlers** — [src/rebalance/mcp/server.py](src/rebalance/mcp/server.py) registers the tools; [src/rebalance/mcp_server.py](src/rebalance/mcp_server.py) remains as the backward-compatibility shim for older launch commands. Host agents (Claude Code / Claude Desktop) call these on demand. `REBALANCE_DB` env var resolves the shared DB path.
 
 4. **Live dashboard** — [scripts/dashboard.py](scripts/dashboard.py) is a Rich Live monitor that polls the local SQLite every 2 seconds (cheap; no network) and runs `refresh_index(scope=["github"])` in a background thread every 10 minutes so the underlying data actually changes. Launch via `rebalance` (no args) or `rebalance dashboard`. Press `r` to trigger an immediate GitHub refresh, `q` (or Ctrl+C) to quit. Theming and cadence are env-var controlled (`PULSE_INVERSE`, `PULSE_TICK`, `PULSE_AUTO_MIN`, `REBALANCE_TZ`). The dashboard is intentionally read-only against the same DB the MCP server and the launchd jobs write to.
 
@@ -308,7 +397,7 @@ Four ways the pipeline runs:
 
 ## MCP Tool Surface
 
-Tools are registered in `mcp_server.py:create_server()`. All tools share the same `database_path` resolved at server startup from `REBALANCE_DB`.
+Tools are registered in [src/rebalance/mcp/server.py](src/rebalance/mcp/server.py)::`create_server()`. [src/rebalance/mcp_server.py](src/rebalance/mcp_server.py) is a backward-compatibility shim so older launch commands still work. All tools share the same `database_path` resolved at server startup from `REBALANCE_DB`.
 
 | Category | Tool | Purpose |
 |----------|------|---------|
@@ -329,6 +418,7 @@ Tools are registered in `mcp_server.py:create_server()`. All tools share the sam
 | Onboarding | `setup_github_token` | Validate and store GitHub PAT |
 | Onboarding | `run_preflight` | Discover project candidates (read-only) |
 | Onboarding | `confirm_projects` | Write registry and sync |
+| Onboarding | `ingest_gmail_messages` | Agent-pushed Gmail ingest path for installs using `gmail_ingest_method=mcp` |
 | Calendar | `create_calendar_event` | Create a Google Calendar event via local OAuth |
 | Calendar | `review_timesheet` | Surface unclassified calendar events that need a project decision |
 | Calendar | `classify_event` | Persist an include/exclude/project classification for an event |
@@ -347,29 +437,52 @@ Tool specs (params, returns, dependencies): see [MCP.md](./MCP.md).
 src/rebalance/
   __init__.py              — package version
   __main__.py              — CLI entry point
-  cli.py                   — typer commands (ingest, config, query, ask, search)
-  mcp_server.py            — FastMCP server, all tool registrations
+  cli/                     — Typer command package split by domain
+  mcp/                     — FastMCP server + tool modules
+  mcp_server.py            — backward-compatibility shim to rebalance.mcp.server
   paths.py                 — centralized path resolver. `resolve_database_path()` and
                               `resolve_secret_path()` walk a layered chain (explicit
-                              flag → env var → cwd walk-up for project marker → user
-                              config at ~/.config/rebalance-os/config.json). Single
+                              flag → env var → canonical app-data path → user
+                              config → cwd walk-up for project marker). Single
                               source of truth for "where is the DB / secrets dir?"
-                              Configure user defaults via `rebalance config
-                              set-default-database` and `set-secrets-dir`.
+                              `resolve_project_root(Path(__file__))` (walk-up) is the
+                              stable repo-root resolver used throughout the codebase —
+                              replaces all `parents[N]` hacks. `resolve_oauth_token_path(service)`
+                              returns the canonical launchd-reachable token path for
+                              Google OAuth services. Configure user defaults via
+                              `rebalance config set-default-database` and `set-secrets-dir`.
+  web.py                   — FastAPI local dashboard/web surfaces (`/`, `/focus-5`, `/auth-log`, etc.)
+  doctor.py                — installation health checks; backs `rebalance doctor`
   ingest/
     config.py              — secrets storage (temp/rbos.config)
-    registry.py            — project registry sync (Markdown ↔ YAML ↔ SQLite)
-    preflight.py           — onboarding discovery + confirmation
+    registry.py            — project registry sync (Markdown ↔ YAML ↔ SQLite);
+                              read_registry (pure read) vs load_registry (write-path)
+    preflight.py           — onboarding discovery (read-only, provenance-stamped)
+                              + confirmation — the only curated registry write path
+    lifecycle.py           — Phase 5/6 lifecycle contract: setup stage map with
+                              done/now/next/blocked/skipped statuses, executor
+                              hints, and remediation (backs onboarding_status and
+                              the /welcome skill), plus the project-lifecycle
+                              ownership table (write semantics per stage —
+                              discovery read_only, confirmation gated, inference
+                              machine-owned, prioritization read-time overlay)
+    local_repos.py         — local checkout discovery (Phase 6.1): scan
+                              local_repo_roots for git checkouts, GitHub identity
+                              from origin, unpushed-commit counts; feeds
+                              provenance=local-scan candidates + the doctor's
+                              unpushed-work check
     github_scan.py         — GitHub Events API collector + per-project balance query
     github_knowledge.py    — per-repo artifact sync (issues/PRs/comments/commits/checks) + embedding
+    github_watch.py        — watched/external repo reconciliation and repo-watch logic
     github_readiness.py    — release-readiness inference over the local GitHub corpus (read-only)
     github_reconciliation.py — issue ↔ PR close-candidate inference (read-only)
-    db.py                  — shared DB connection, schema, sqlite-vec loading
+    db/                    — shared DB connection, schema, migrations, sqlite-vec loading
     md_parser.py           — pure markdown parsing (frontmatter, wikilinks, tags, chunking)
     note_ingester.py       — vault walker, delta detection, TF-IDF keywords
     embedder.py            — mlx-embeddings batch embed + ANN query
     semantic_index.py      — unified semantic index: backfill, embed, and query across
-                              vault + GitHub sources (semantic_documents / semantic_embeddings)
+                              vault + GitHub + email, plus registry-provider sources
+                              such as Figma (semantic_documents / semantic_embeddings)
     index_ops.py           — single entry point for refresh_index() and index_status();
                               orchestrates the full ingest pipeline so agents don't
                               need to know individual CLI command ordering
@@ -378,6 +491,10 @@ src/rebalance/
     calendar_helpers.py    — duration/math utilities consumed by calendar tools
     calendar_snap.py       — edge-snapping logic for slightly overlapping calendar events
     sleuth_reminders.py    — Sleuth Web API collector (Bearer auth, urllib) + upsert
+    gmail.py               — Gmail collector / MCP push-ingest write path into email_messages
+    figma.py               — Figma comments collector + registry-provider semantic_docs
+    ask_self_scan.py       — device-local ask_self index inventory collector
+    focus5_scan.py         — Focus 5 repo-signal scan + roster builder
     slack_users.py         — Slack user-id → friendly-name lookup, file-mtime cached;
                               feeds the dashboard sleuth panel and the pulse markdown
     diagnose.py            — repo-level diagnostic that walks the watched-repos +
@@ -390,6 +507,7 @@ src/rebalance/
                               lovable, local-vscode, human)
     project_classifier.py  — calendar event → project matcher for timesheet reports
     project_inference.py   — project inference from note titles / calendar summaries
+    note_builder.py        — dashboard markdown renderer / write-back for the vault note
     audit.py               — structured audit logging (append_audit_entry)
     querier.py             — multi-source context gathering + local LLM synthesis
 
@@ -398,17 +516,20 @@ scripts/                   — Operator entry points (not part of the importable
   pulse_web.py             — render module: regenerates web/pulse.html (the local
                               browser mirror of the dashboard) from the same SQLite
                               knowledge base; atomic via tmp+replace; supports --watch
+  _bootstrap.py            — single sys.path shim for directly-run scripts (src/ + scripts/)
+  spike_welcome_status.py  — disposable Phase 6 spike: drives the lifecycle status
+                              contract (sandbox walkthrough + --real "where am I")
+  lib/scheduler_common.sh  — shared launchd job runtime: env bootstrap, dated logs,
+                              job-lifecycle events, retention (sourced by *_sync.sh)
+  lib/install_common.sh    — shared installer flow: always-unload, render template,
+                              plutil -lint, load, poll-verify (sourced by install_*.sh)
   daily_sync.sh            — daily_sync launchd entry (mode 2)
   vault_sync.sh            — hourly vault-only launchd entry (mode 2)
   pulse_sync.sh            — hourly pulse-publish (markdown→private repo) launchd entry (mode 2)
   pulse_web_sync.sh        — 30-minute pulse-web (web/pulse.html) launchd entry (mode 2)
-  install_scheduler.sh     — install/reload the daily launchd job
-  install_vault_scheduler.sh — install/reload the hourly vault launchd job
-  install_pulse_scheduler.sh — install/reload the hourly pulse-markdown launchd job
-  install_pulse_web_scheduler.sh — install/reload the 30-min pulse-web launchd job
-  install_github_scheduler.sh — install/reload the hourly github-only launchd job
-  install_pulse_server_scheduler.sh — install/reload the long-running pulse-server launchd job
   github_sync.sh           — github-only launchd entry (mode 2)
+  install_*.sh             — one installer per launchd job (see SCHEDULER.md for the
+                              job ↔ installer table; all delegate to lib/install_common.sh)
   setup_calendar_oauth.py  — interactive OAuth consent flow for Google Calendar
   build_extension.py       — native extension builder
   ask-self-ingest.sh       — self-ingest shell wrapper (portable mode, requires ASK_SELF_PATH)

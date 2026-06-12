@@ -93,6 +93,8 @@ Data sources
 
 The MCP server speaks standard JSON-RPC — no LLM-specific logic inside it. Any MCP-compatible client works without modification.
 
+The scheduled side of the diagram (the launchd fleet: daily/hourly syncs, pulse publishing, health checks) is governed by the policy table in [SCHEDULER.md](SCHEDULER.md) — job cadences, scopes, prerequisites, and the runbook live there.
+
 For layer roles, tool surface, server configuration, and host adapter setup (Claude Desktop, Cursor, VS Code, Continue), see **[MCP.md](./MCP.md)**.
 
 ---
@@ -156,7 +158,30 @@ The result is an AI assistant that actually knows your work — because it's rea
 - [ ] Slack integration beyond reminder/task signals
 - [ ] Email → project auto-correlation (classifier already applied to calendar; extending to `gmail_messages`)
 
+## Documentation
+
+| Guide | What's in it |
+|-------|--------------|
+| [GMAIL.md](./GMAIL.md) | Gmail inbox ingest — `oauth` (keyring) vs `mcp` methods, durable Internal tokens, query filters, troubleshooting |
+| [GOOGLE_CALENDAR.md](./GOOGLE_CALENDAR.md) | Google Calendar timesheets — setup, team config, event creation, project aggregation |
+| [MCP.md](./MCP.md) | MCP layer — tool surface, server config, host adapters (Claude Desktop, Cursor, VS Code, Continue) |
+| [UPGRADE.md](./UPGRADE.md) | Keyring credential model + multi-device upgrade steps |
+| [DASHBOARD.md](./DASHBOARD.md) | Local web/activity dashboard |
+| [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture and data flow |
+| [PROJECT.md](./PROJECT.md) · [PROJECT/](./PROJECT/README.md) | Execution source-of-truth and the plan-doc index |
+| [AGENTS.md](./AGENTS.md) | Conventions for AI agents working in this repo |
+
+---
+
 ## Getting Started
+
+### Fastest path — `/welcome`
+
+After cloning and installing (Step 1 below), open the repo in Claude Code and type `/welcome`. The welcome agent walks you from zero to your first rendered pulse: it checks where you are (`onboarding_status` — resumable any time, even days later), runs each step itself (GitHub PAT validation, optional Google Calendar/Gmail OAuth, project discovery), asks you which discovered repos to promote to monitored, then installs the scheduled sync fleet and opens your first pulse. You only click OAuth consent screens and answer promote/skip questions — secrets never appear in the chat.
+
+Prefer no agent? `rebalance onboard` is the same guided journey as a CLI wizard, and `rebalance onboard --status` shows the stage map ("where am I / what's next") at any time. To start over: `rebalance reset` (dry-run by default; your vault is never touched).
+
+The manual steps below remain for reference and for environments without an MCP host.
 
 ### Prerequisites
 
@@ -275,23 +300,43 @@ For the full guide — including team setup, Claude Code prompts, and project de
 
 ### Step 5 — Connect Gmail (optional)
 
-The Gmail ingest uses Google Application Default Credentials and stores
-message metadata plus Gmail-provided snippets only. It does not parse full
-message bodies in Phase 1.
+The Gmail ingest stores message metadata plus Gmail-provided snippets only —
+it does not parse full message bodies. There are two ways to feed it, and you
+pick one with `rebalance config set-gmail-method`:
 
-**5a. Enable the Gmail API once**
+| Method | When to use | Credential |
+|---|---|---|
+| `oauth` *(default)* | Autonomous / scheduled sync (launchd, cron) | Desktop OAuth token in keyring |
+| `mcp` | You drive rebalance from an MCP host (e.g. Claude) | None — an agent calls `ingest_gmail_messages` |
+
+**Option A — `oauth` (self-contained, works under launchd)**
+
+A one-time browser consent stores a read-only Gmail token in your OS keyring
+(with a launchd-reachable file fallback) — the same model as Calendar:
 
 ```bash
-gcloud services enable gmail.googleapis.com
+python scripts/setup_gmail_oauth.py        # opens a browser, requests gmail.readonly
+rebalance config migrate-to-keyring        # move the token into keyring
+rebalance config set-gmail-method oauth
 ```
 
-**5b. Authorize this device**
+> `gmail.readonly` is a Google-*restricted* scope. This flow uses **your own**
+> Desktop OAuth client with the consent screen in **Testing** mode (add your
+> account as a test user), which can request it **without** formal app
+> verification. That is why this path works where
+> `gcloud auth application-default login --scopes=…gmail.readonly` does not —
+> the shared gcloud ADC client is generally not authorized for restricted Gmail
+> scopes, so ADC tokens 403 with "insufficient authentication scopes."
+
+**Option B — `mcp` (no local credential)**
 
 ```bash
-gcloud auth application-default login --scopes=https://www.googleapis.com/auth/gmail.readonly,https://www.googleapis.com/auth/cloud-platform
+rebalance config set-gmail-method mcp
 ```
 
-This stores the token at `~/.config/gcloud/application_default_credentials.json`.
+`email_messages` is then populated by an agent (e.g. Claude) using the Gmail
+MCP connector, which calls the `ingest_gmail_messages` tool. A scheduled job
+cannot trigger this — an agent has to. No local Gmail credential is needed.
 
 **5c. Optional: narrow the inbox query**
 
@@ -307,9 +352,13 @@ If unset, rebalance defaults to `in:inbox`.
 
 **5d. Sync and verify**
 
-Call the MCP refresh entry point with `scope=["email"]`, then confirm the
-`email` block appears in `index_status()` and email hits show up in
-`semantic_query()`.
+Run `rebalance refresh` (the full pipeline syncs email in `oauth` mode), or from
+an MCP host call `refresh_index(scope=["email"])`. Confirm the `email` block
+appears in `index_status()`, email hits show up in `semantic_query()`, and
+`rebalance doctor` reports `gmail — OK`.
+
+For the full guide — both ingest methods, durable (Internal) tokens, query
+filters, troubleshooting, and Claude Code prompts — see [GMAIL.md](./GMAIL.md).
 
 ### Step 6 — Start using with Claude Code
 

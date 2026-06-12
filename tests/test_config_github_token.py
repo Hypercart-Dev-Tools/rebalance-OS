@@ -29,15 +29,24 @@ from rebalance.ingest.config import (
 )
 
 
+def _no_keyring(test_case: unittest.TestCase) -> None:
+    """Patch keyring helpers to simulate unavailable keyring (file-only path)."""
+    test_case.addCleanup(patch.stopall)
+    patch.object(config_module, "_keyring_get", return_value=None).start()
+    patch.object(config_module, "_keyring_set", return_value=False).start()
+    patch.object(config_module, "_keyring_delete", return_value=False).start()
+
+
 class GitHubTokenResolutionTests(unittest.TestCase):
     """Cover the four resolution paths: config-set, gh-fallback, neither, explicit-clear."""
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
-        # Redirect CONFIG_PATH at the module level so reads/writes hit a scratch file.
         self._orig_path = config_module.CONFIG_PATH
         config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+        # Simulate keyring unavailable so these tests exercise the rbos.config path.
+        _no_keyring(self)
 
     def tearDown(self) -> None:
         config_module.CONFIG_PATH = self._orig_path
@@ -72,6 +81,73 @@ class GitHubTokenResolutionTests(unittest.TestCase):
     def test_get_github_token_returns_only_token_for_backward_compat(self) -> None:
         set_github_token("ghp_fromconfig0000")
         self.assertEqual(get_github_token(), "ghp_fromconfig0000")
+
+
+class GitHubTokenKeyringTests(unittest.TestCase):
+    """Cover the keyring-backed resolution path."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._orig_path = config_module.CONFIG_PATH
+        config_module.CONFIG_PATH = Path(self._tmp.name) / "rbos.config"
+
+    def tearDown(self) -> None:
+        config_module.CONFIG_PATH = self._orig_path
+
+    def test_keyring_token_wins_over_config(self) -> None:
+        """Keyring takes priority over rbos.config."""
+        with patch.object(config_module, "_keyring_get", return_value="ghp_fromkeyring"), \
+             patch.object(config_module, "_keyring_set", return_value=True), \
+             patch.object(config_module, "_keyring_delete", return_value=True):
+            token, source = get_github_token_with_source()
+        self.assertEqual(token, "ghp_fromkeyring")
+        self.assertEqual(source, "keyring")
+
+    def test_set_token_writes_to_keyring_and_keeps_config_fallback(self) -> None:
+        """set_github_token writes to keyring AND keeps the rbos.config copy.
+
+        The config copy is the deliberate launchd safety net: launchd jobs run
+        with a stripped environment and may not reach the user keychain, so they
+        fall back to rbos.config (see set_github_token's docstring and
+        doctor._check_token, which warns when the token is keyring-only).
+        """
+        # Pre-seed rbos.config with a legacy token to prove it's overwritten.
+        cfg_path = config_module.CONFIG_PATH
+        cfg_path.write_text('{"github_token": "ghp_legacy"}', encoding="utf-8")
+
+        stored: dict = {}
+        def fake_set(key: str, value: str) -> bool:
+            stored[key] = value
+            return True
+
+        with patch.object(config_module, "_keyring_set", side_effect=fake_set), \
+             patch.object(config_module, "_keyring_get", return_value=None):
+            set_github_token("ghp_new")
+
+        self.assertEqual(stored.get("github_token"), "ghp_new")
+        # Config fallback retained, overwritten with the new token.
+        import json as _json
+        saved = _json.loads(cfg_path.read_text())
+        self.assertEqual(saved.get("github_token"), "ghp_new")
+
+    def test_auto_migration_moves_token_from_config_to_keyring(self) -> None:
+        """On first read, a token in rbos.config is silently migrated to keyring."""
+        cfg_path = config_module.CONFIG_PATH
+        cfg_path.write_text('{"github_token": "ghp_legacy"}', encoding="utf-8")
+
+        stored: dict = {}
+        def fake_set(key: str, value: str) -> bool:
+            stored[key] = value
+            return True
+
+        with patch.object(config_module, "_keyring_get", return_value=None), \
+             patch.object(config_module, "_keyring_set", side_effect=fake_set):
+            token, source = get_github_token_with_source()
+
+        self.assertEqual(token, "ghp_legacy")
+        self.assertEqual(source, "config")
+        self.assertEqual(stored.get("github_token"), "ghp_legacy")
 
 
 class GhCliFallbackErrorHandlingTests(unittest.TestCase):

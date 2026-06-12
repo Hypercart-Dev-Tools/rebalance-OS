@@ -9,14 +9,20 @@ Phase 1 scope:
 - metadata + Gmail-provided snippet only; no MIME body extraction
 - upsert keyed on Gmail's ``message_id``
 
-Auth: Application Default Credentials (ADC). Setup is documented in
-README. The runtime probe here fails loudly with the exact gcloud
-command if the credentials are missing or lack the Gmail scope.
+Auth: desktop OAuth (browser consent once via
+``scripts/setup_gmail_oauth.py``), stored in the OS keyring with a
+pickle-file fallback that launchd can read. This mirrors the Calendar
+credential model exactly — keyring primary, file fallback, rotated
+access tokens written back to both on refresh. A user's own OAuth
+client (Testing mode) can request the restricted ``gmail.readonly``
+scope without app verification, which the shared gcloud ADC client
+cannot — so this path works for public cloners where ADC did not.
 """
 
 from __future__ import annotations
 
 import json
+import pickle
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -29,10 +35,14 @@ GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
 DEFAULT_QUERY_FILTER = "in:inbox"
 DEFAULT_MAX_RESULTS = 100
 
-GCLOUD_LOGIN_HINT = (
-    "gcloud auth application-default login "
-    "--scopes=https://www.googleapis.com/auth/gmail.readonly,"
-    "https://www.googleapis.com/auth/cloud-platform"
+# launchd-reachable fallback for the OAuth token (keychain is unreachable from
+# the daily-sync's stripped environment). Mirrors calendar's TOKEN_PATH.
+from rebalance.paths import resolve_oauth_token_path
+TOKEN_PATH = resolve_oauth_token_path("gmail")
+
+GMAIL_SETUP_HINT = (
+    "python scripts/setup_gmail_oauth.py   "
+    "(one-time browser consent; then `rebalance config migrate-to-keyring`)"
 )
 
 
@@ -57,40 +67,90 @@ class GmailSyncResult:
 
 
 class GmailAuthError(RuntimeError):
-    """Raised when ADC credentials are missing or lack the Gmail scope."""
+    """Raised when the Gmail OAuth token is missing or lacks the Gmail scope."""
 
 
-def _load_adc_credentials() -> Any:
-    """Load Application Default Credentials with the Gmail readonly scope.
+def _credentials_have_scopes(creds: Any, required_scopes: list[str]) -> bool:
+    """Return True if the credentials cover every required scope."""
+    current = set(getattr(creds, "scopes", []) or [])
+    return all(scope in current for scope in required_scopes)
 
-    Fails loudly with the exact ``gcloud`` command needed to fix the most
-    common failure modes (no ADC at all, or ADC without Gmail scope).
+
+def _load_credentials(required_scopes: list[str] | None = None) -> Any:
+    """Load OAuth2 credentials — keyring first, pickle file as the launchd fallback.
+
+    Mirrors :func:`rebalance.ingest.calendar._load_credentials`: keyring
+    (interactive primary) ↔ the pickle file (launchd reads this; the keychain
+    is unreachable from the daily-sync's stripped environment). On refresh, the
+    rotated access token is written back to BOTH so each stays current.
     """
-    try:
-        import google.auth
-        from google.auth.exceptions import DefaultCredentialsError
-    except ImportError as exc:
-        raise GmailAuthError(
-            "google-auth is required for Gmail ingest. Install with: "
-            "pip install 'rebalance-os[calendar]' (the calendar extra "
-            "already pulls in google-auth dependencies)."
-        ) from exc
+    import json as _json
 
-    try:
-        creds, _project = google.auth.default(scopes=[GMAIL_READONLY_SCOPE])
-    except DefaultCredentialsError as exc:
+    from rebalance.ingest.auth_log import (
+        log_token_missing,
+        log_token_refresh_failed,
+        log_token_refreshed,
+    )
+    from rebalance.ingest.config import (
+        get_gmail_oauth_token_json,
+        set_gmail_oauth_token_json,
+    )
+
+    creds = None
+    blob = get_gmail_oauth_token_json()
+    if blob:
+        try:
+            from google.oauth2.credentials import Credentials
+            creds = Credentials.from_authorized_user_info(_json.loads(blob))
+        except Exception:  # noqa: BLE001 — corrupt/legacy blob → fall back to pickle
+            creds = None
+
+    if creds is None:
+        if not TOKEN_PATH.exists():
+            log_token_missing(str(TOKEN_PATH), source="gmail")
+            raise GmailAuthError(
+                f"Gmail OAuth token not found (keyring empty and no file at {TOKEN_PATH}).\n"
+                f"  Run: {GMAIL_SETUP_HINT}\n"
+                "  Or switch to the Gmail MCP connector: `gmail_ingest_method=mcp`."
+            )
+        with open(TOKEN_PATH, "rb") as f:
+            creds = pickle.load(f)
+
+    # Refresh if expired — persist the rotated access token to both stores.
+    if creds.expired and creds.refresh_token:
+        from google.auth.transport.requests import Request
+        try:
+            creds.refresh(Request())
+            # record=False: an access-token refresh is not a re-authorization.
+            set_gmail_oauth_token_json(creds.to_json(), source="refresh", record=False)
+            try:
+                with open(TOKEN_PATH, "wb") as f:
+                    pickle.dump(creds, f)
+            except OSError:
+                pass
+            log_token_refreshed(
+                expiry=creds.expiry.isoformat() if creds.expiry else None,
+                token_path=str(TOKEN_PATH),
+                source="gmail",
+            )
+        except Exception as exc:
+            log_token_refresh_failed(error=str(exc), token_path=str(TOKEN_PATH), source="gmail")
+            raise
+
+    if required_scopes and not _credentials_have_scopes(creds, required_scopes):
         raise GmailAuthError(
-            "No Application Default Credentials found. Run:\n"
-            f"  {GCLOUD_LOGIN_HINT}"
-        ) from exc
+            "Gmail OAuth token does not include the required scope "
+            f"({', '.join(required_scopes)}). Current: {getattr(creds, 'scopes', []) or []}.\n"
+            f"  Re-run: {GMAIL_SETUP_HINT}"
+        )
 
     return creds
 
 
 def _build_service() -> Any:
-    """Build a Gmail API v1 service client using ADC."""
+    """Build a Gmail API v1 service client from the desktop OAuth token."""
     from googleapiclient.discovery import build
-    creds = _load_adc_credentials()
+    creds = _load_credentials(required_scopes=[GMAIL_READONLY_SCOPE])
     return build("gmail", "v1", credentials=creds, cache_discovery=False)
 
 
@@ -206,11 +266,11 @@ def sync_gmail(
         ).execute()
     except Exception as exc:
         if _is_insufficient_scope_error(exc):
+            from rebalance.ingest import auth_log
+            auth_log.log_gmail_scope_insufficient(str(exc))
             raise GmailAuthError(
-                "ADC token is missing the Gmail readonly scope. Re-run:\n"
-                f"  {GCLOUD_LOGIN_HINT}\n"
-                "(Adding new scopes requires re-running the login command — "
-                "it does not merge with previous scopes silently.)"
+                "Gmail OAuth token is missing the gmail.readonly scope. Re-run:\n"
+                f"  {GMAIL_SETUP_HINT}"
             ) from exc
         raise
     message_refs = list_response.get("messages", []) or []
@@ -282,6 +342,19 @@ def sync_gmail(
         query_filter=query_filter,
         elapsed_seconds=round(time.monotonic() - start, 2),
     )
+
+
+def push_email_messages(
+    database_path: Path,
+    messages: list[dict[str, Any]],
+) -> GmailSyncResult:
+    """Source-owned entry point for the MCP Gmail push-ingest: upsert the
+    caller-provided messages into email_messages. The MCP tool uses this so it
+    no longer imports the leaf ingest_email_messages directly
+    (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2). Semantic projection is owned
+    by the semantic stage (Phase 3) and runs as a follow-on step.
+    """
+    return ingest_email_messages(database_path, messages)
 
 
 def ingest_email_messages(

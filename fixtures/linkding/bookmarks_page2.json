@@ -1,0 +1,25 @@
+{
+  "count": 3,
+  "next": null,
+  "previous": "https://links.example.com/api/bookmarks/?limit=2",
+  "results": [
+    {
+      "id": 103,
+      "url": "https://example.com/oauth-troubleshooting",
+      "title": "Debugging OAuth token refresh failures",
+      "description": "Checklist for diagnosing expired refresh tokens and clock-skew 401s in OAuth flows.",
+      "notes": "Relevant to the calendar OAuth setup path.",
+      "website_title": "",
+      "website_description": "",
+      "web_archive_snapshot_url": "",
+      "favicon_url": "",
+      "preview_image_url": "",
+      "is_archived": true,
+      "unread": false,
+      "shared": false,
+      "tag_names": ["oauth", "auth", "debugging"],
+      "date_added": "2026-05-20T08:00:00Z",
+      "date_modified": "2026-05-28T16:45:00Z"
+    }
+  ]
+}

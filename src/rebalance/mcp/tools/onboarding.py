@@ -5,67 +5,74 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from rebalance.ingest.config import get_config_path, get_github_token, set_github_token, set_vault_path
+from rebalance.ingest.config import get_github_token, set_github_token, set_vault_path
 from rebalance.ingest.github_scan import validate_github_token
 from rebalance.ingest.preflight import confirm_and_write, discover_candidates
-from rebalance.ingest.registry import get_projects
 
 
 def register(mcp: FastMCP, database_path: Path) -> None:
     @mcp.tool()
     def onboarding_status(vault_path: str) -> dict[str, Any]:
         """
-        Check which onboarding steps are complete.
+        Report the full setup lifecycle: every stage (config, vault, GitHub
+        PAT, optional Calendar/Gmail auth, registry, projections) with a
+        ``done`` / ``now`` / ``next`` / ``blocked`` status and a remediation
+        hint, so the host agent always knows where the operator is and what
+        comes next. Pure read — safe to call repeatedly.
 
-        Returns a list of steps with completion status so the host agent
-        knows where to resume.  DB path is resolved from REBALANCE_DB
-        (same as all server tools).
+        The stage map is owned by ``rebalance.ingest.lifecycle`` (the Phase 5
+        contract); this tool is a thin view over it. The legacy ``steps``
+        list is preserved for existing clients. DB path is resolved from
+        REBALANCE_DB (same as all server tools).
         """
+        from rebalance.ingest.lifecycle import evaluate_setup, project_lifecycle_map
+
         vp = Path(vault_path).expanduser().resolve()
-        registry_path = vp / "Projects" / "00-project-registry.md"
-        projects_yaml_path = vp / "projects.yaml"
+        report = evaluate_setup(vault_path=vp, database_path=database_path)
 
-        steps: list[dict[str, Any]] = []
+        # Ownership table: which function owns each project-lifecycle stage
+        # and whether it may write — the agent's map of the write discipline.
+        report["project_lifecycle"] = project_lifecycle_map()
 
-        config_path = get_config_path()
-        steps.append({
-            "name": "config_exists",
-            "complete": config_path.exists(),
-            "detail": str(config_path),
-        })
+        # Legacy shape: flat steps with name/complete/detail.
+        report["steps"] = [
+            {"name": s["id"], "complete": s["complete"], "detail": s["detail"]}
+            for s in report["stages"]
+        ]
+        return report
 
-        token = get_github_token()
-        steps.append({
-            "name": "github_token_set",
-            "complete": token is not None,
-            "detail": "Token is configured" if token else "No token found",
-        })
+    @mcp.tool()
+    def skip_onboarding_stage(stage_id: str, skipped: bool = True) -> dict[str, Any]:
+        """
+        Mark (or unmark) an OPTIONAL setup stage as deliberately skipped.
 
-        steps.append({
-            "name": "registry_exists",
-            "complete": registry_path.exists(),
-            "detail": str(registry_path),
-        })
+        A skipped stage reports status ``skipped`` in onboarding_status
+        instead of being offered as ``next`` forever; it stays re-enterable —
+        completing it later flips it to ``done``. Only optional stages
+        (e.g. calendar_auth, gmail_auth) can be skipped.
+        """
+        from rebalance.ingest.config import set_onboarding_stage_skipped
+        from rebalance.ingest.lifecycle import SETUP_STAGES
 
-        steps.append({
-            "name": "projection_exists",
-            "complete": projects_yaml_path.exists(),
-            "detail": str(projects_yaml_path),
-        })
-
-        db_has_rows = False
-        if database_path.exists():
-            try:
-                db_has_rows = len(get_projects(database_path)) > 0
-            except Exception:
-                pass
-        steps.append({
-            "name": "db_synced",
-            "complete": db_has_rows,
-            "detail": str(database_path),
-        })
-
-        return {"steps": steps}
+        stage = next((s for s in SETUP_STAGES if s.id == stage_id), None)
+        if stage is None:
+            return {
+                "ok": False,
+                "error": f"unknown stage {stage_id!r}",
+                "optional_stages": [s.id for s in SETUP_STAGES if s.optional],
+            }
+        if not stage.optional:
+            return {
+                "ok": False,
+                "error": f"stage {stage_id!r} is required and cannot be skipped",
+                "optional_stages": [s.id for s in SETUP_STAGES if s.optional],
+            }
+        return {
+            "ok": True,
+            "stage_id": stage_id,
+            "skipped": skipped,
+            "skipped_stages": set_onboarding_stage_skipped(stage_id, skipped),
+        }
 
     @mcp.tool()
     def setup_github_token(token: str) -> dict[str, Any]:
@@ -142,17 +149,19 @@ def register(mcp: FastMCP, database_path: Path) -> None:
 
         Each *messages* dict accepts: ``message_id`` (required), ``thread_id``,
         ``from_address``, ``from_name``, ``subject``, ``snippet``,
-        ``received_at``, and ``labels`` (list of label strings). The new rows
-        are also projected into the semantic index.
+        ``received_at``, and ``labels`` (list of label strings). Rows are stored
+        immediately; semantic projection runs in the next ``semantic`` stage
+        (``semantic_pending: true`` in this result signals that). To make new
+        messages searchable right away, follow up with
+        ``refresh_index(scope=["semantic"])``.
         """
-        from rebalance.ingest.gmail import ingest_email_messages
-        from rebalance.ingest.semantic_index import backfill_semantic_documents
+        from rebalance.ingest.gmail import push_email_messages
 
-        result = ingest_email_messages(database_path, messages)
-        backfill_semantic_documents(database_path, source_types=["email"])
+        result = push_email_messages(database_path, messages)
         return {
             "messages_listed": result.messages_listed,
             "messages_stored": result.messages_stored,
             "messages_inserted": result.messages_inserted,
             "messages_updated": result.messages_updated,
+            "semantic_pending": True,
         }

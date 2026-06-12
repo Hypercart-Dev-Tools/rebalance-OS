@@ -83,6 +83,24 @@ def _vec_to_bytes(vec: list[float]) -> bytes:
 # ---------------------------------------------------------------------------
 
 
+def embed_vault_chunks(
+    database_path: Path,
+    *,
+    model_name: str = DEFAULT_MODEL,
+    batch_size: int = 32,
+    force_reembed: bool = False,
+) -> EmbedResult:
+    """Source-owned facade over :func:`embed_chunks` (the vault chunk-embedding
+    pass) so CLI / dashboard / calendar surfaces don't import the leaf embed_chunks
+    directly (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2)."""
+    return embed_chunks(
+        database_path=database_path,
+        model_name=model_name,
+        batch_size=batch_size,
+        force_reembed=force_reembed,
+    )
+
+
 def embed_chunks(
     database_path: Path,
     *,

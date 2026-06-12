@@ -7,6 +7,7 @@ source-table reads that feed the backfill. This module owns the column layout.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Sequence
 
@@ -146,10 +147,13 @@ def delete_semantic_documents(
     conn: sqlite3.Connection, doc_ids: list[int]
 ) -> None:
     """Delete ``semantic_embeddings`` + ``semantic_documents`` rows for *doc_ids*."""
-    conn.executemany(
-        "DELETE FROM semantic_embeddings WHERE rowid = ?",
-        [(doc_id,) for doc_id in doc_ids],
-    )
+    try:
+        conn.executemany(
+            "DELETE FROM semantic_embeddings WHERE rowid = ?",
+            [(doc_id,) for doc_id in doc_ids],
+        )
+    except sqlite3.OperationalError:
+        pass  # vec0 unavailable (FTS-only / no sqlite-vec) — no embeddings to clear
     conn.executemany(
         "DELETE FROM semantic_documents WHERE id = ?",
         [(doc_id,) for doc_id in doc_ids],
@@ -249,6 +253,19 @@ def email_messages_for_semantic(conn: sqlite3.Connection) -> list[sqlite3.Row]:
                snippet, received_at, labels_json, synced_at
         FROM email_messages
         ORDER BY received_at DESC
+        """
+    ).fetchall()
+
+
+def figma_comments_for_semantic(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every Figma comment, newest first — the input for the Figma backfill."""
+    return conn.execute(
+        """
+        SELECT comment_key, file_key, comment_id, parent_id, message,
+               user_id, user_handle, created_at, resolved_at, order_id,
+               client_meta_json, reactions_json, synced_at
+        FROM figma_comments
+        ORDER BY created_at DESC
         """
     ).fetchall()
 
@@ -417,12 +434,33 @@ def search_semantic_documents(
     query_vec: bytes,
     top_k: int,
     source_types: Sequence[str],
+    *,
+    updated_after: str | None = None,
+    repo: str | None = None,
 ) -> list[sqlite3.Row]:
     """Vector search over ``semantic_embeddings``, nearest first.
 
-    Restricts results to the given *source_types*.
+    Args:
+        source_types: Restrict to these source families (e.g. ["vault", "github"]).
+        updated_after: ISO-8601 timestamp string; exclude docs updated before this.
+        repo: Filter to a specific GitHub repo (``owner/name``); only applies to
+              github-sourced documents whose metadata_json contains repo_full_name.
     """
     placeholders = ", ".join("?" for _ in source_types)
+    params: list = [query_vec, top_k, *source_types]
+
+    extra_clauses = []
+    if updated_after:
+        extra_clauses.append("AND sd.updated_at >= ?")
+        params.append(updated_after)
+    if repo:
+        extra_clauses.append(
+            "AND (sd.source_type != 'github' OR "
+            "LOWER(JSON_EXTRACT(sd.metadata_json, '$.repo_full_name')) = LOWER(?))"
+        )
+        params.append(repo)
+
+    extra_sql = "\n          ".join(extra_clauses)
     return conn.execute(
         f"""
         SELECT
@@ -440,7 +478,90 @@ def search_semantic_documents(
         JOIN semantic_documents sd ON sd.id = se.rowid
         WHERE se.embedding MATCH ? AND se.k = ?
           AND sd.source_type IN ({placeholders})
+          {extra_sql}
         ORDER BY se.distance
         """,
-        [query_vec, top_k, *source_types],
+        params,
     ).fetchall()
+
+
+def _fts_match_query(query_text: str) -> str:
+    """Turn a natural-language query into a safe FTS5 MATCH expression.
+
+    Alphanumeric tokens (len ≥ 2), each double-quoted to neutralize FTS5 operator
+    syntax, OR-ed for recall. Underscores are split (matching FTS5's unicode61
+    tokenizer), so ``auth_log`` in the query becomes ``"auth" OR "log"`` and
+    matches the same tokens the content was indexed under.
+    """
+    tokens = re.findall(r"[A-Za-z0-9]{2,}", query_text or "")
+    if not tokens:
+        return ""
+    # de-dupe while preserving order, cap to keep the MATCH expression bounded
+    seen: dict[str, None] = {}
+    for t in tokens:
+        seen.setdefault(t.lower(), None)
+    return " OR ".join(f'"{t}"' for t in list(seen)[:24])
+
+
+def search_semantic_documents_fts(
+    conn: sqlite3.Connection,
+    query_text: str,
+    top_k: int,
+    source_types: Sequence[str],
+    *,
+    updated_after: str | None = None,
+    repo: str | None = None,
+) -> list[sqlite3.Row]:
+    """Lexical (FTS5) search over title+body, best (lowest bm25) first.
+
+    Same column shape as :func:`search_semantic_documents` so the two can be
+    fused uniformly — ``distance`` is NULL here; ``fts_rank`` carries the bm25
+    score. Returns ``[]`` if the query has no usable terms or FTS5 is missing.
+    """
+    match = _fts_match_query(query_text)
+    if not match:
+        return []
+
+    placeholders = ", ".join("?" for _ in source_types)
+    params: list = [match, *source_types]
+
+    extra_clauses = []
+    if updated_after:
+        extra_clauses.append("AND sd.updated_at >= ?")
+        params.append(updated_after)
+    if repo:
+        extra_clauses.append(
+            "AND (sd.source_type != 'github' OR "
+            "LOWER(JSON_EXTRACT(sd.metadata_json, '$.repo_full_name')) = LOWER(?))"
+        )
+        params.append(repo)
+    params.append(top_k)
+    extra_sql = "\n          ".join(extra_clauses)
+
+    try:
+        return conn.execute(
+            f"""
+            SELECT
+                sd.id AS doc_id,
+                NULL AS distance,
+                sd.source_type,
+                sd.source_table,
+                sd.source_pk,
+                sd.doc_kind,
+                sd.title,
+                SUBSTR(sd.body, 1, 400) AS body_preview,
+                sd.metadata_json,
+                sd.updated_at,
+                bm25(semantic_documents_fts) AS fts_rank
+            FROM semantic_documents_fts
+            JOIN semantic_documents sd ON sd.id = semantic_documents_fts.rowid
+            WHERE semantic_documents_fts MATCH ?
+              AND sd.source_type IN ({placeholders})
+              {extra_sql}
+            ORDER BY fts_rank
+            LIMIT ?
+            """,
+            params,
+        ).fetchall()
+    except sqlite3.DatabaseError:
+        return []  # FTS5 unavailable or malformed match → ANN-only upstream

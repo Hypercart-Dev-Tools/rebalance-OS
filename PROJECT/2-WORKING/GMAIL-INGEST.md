@@ -1,3 +1,10 @@
+> **What rebalance ships (2026-06-04):** Option 2 below — the Gmail API + local
+> Desktop OAuth flow — implemented in [scripts/setup_gmail_oauth.py](../../scripts/setup_gmail_oauth.py).
+> The token is stored in the OS **keyring** (not a loose `token.json`), with a
+> pickle-file fallback for launchd, exactly mirroring the Calendar credential
+> model. See README → "Step 5 — Connect Gmail" for the operator steps. This
+> note is kept as background on the alternatives.
+
 If you are building a local CLI app and want to read your own Gmail, you have two distinct paths. You can either use the App Password workaround to skip OAuth entirely, or you can use Google's official "Desktop App" OAuth flow, which only requires you to authenticate via a browser once.
 
 ### Option 1: IMAP + Google App Password (The "No OAuth" Shortcut)

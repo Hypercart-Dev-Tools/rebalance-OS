@@ -1,5 +1,525 @@
 # Changelog
 
+> **Maintainers — there is no `[Unreleased]` section in this project.** Every fix
+> or feature takes a version bump at commit/merge time (semver: MAJOR = breaking ·
+> MINOR = feature · PATCH = fix) under a `## [x.y.z] - YYYY-MM-DD` heading. Do
+> **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
+> current dated version instead. See AGENTS.md → "Versioning & Changelog".
+
+## [0.39.1] - 2026-06-11
+
+### Fixed
+
+- **Phase 6 adversarial-review fixes (Gemini).** Status precedence is now
+  `done` > `blocked` > `skipped` — a skip marker never masks unmet
+  prerequisites (the review's "hard to reverse later" call, fixed before any
+  client depends on it). Ctrl+C during a CLI optional-stage offer no longer
+  persists a skip. Executor dispatch survives non-checkout installs (absolute
+  venv python, `sys.executable` fallback, remediation listing when no repo
+  root). OAuth status checks now probe the token FILE the collectors actually
+  read, not just the keyring (hermetic mode skips the machine-global path).
+  Detached HEADs are no longer flagged as unpushed work. `rebalance reset`
+  sweeps the canonical DB path in half-reset states, enumerates
+  `sleuth_web_api`, and removes OAuth token files (verified live: 2 files +
+  5 secrets found that 0.39.0 missed). Declined with rationale: `com.user.*`
+  agents stay outside reset's footprint; launchctl/mtime graduation checks
+  stay in the doctor (the contract remains filesystem-pure).
+
+## [0.39.0] - 2026-06-11
+
+### Added
+
+- **Phase 6 complete — the welcome agent ships end to end.**
+  - *Graduation stages:* `schedulers_installed` and `first_pulse` join the
+    lifecycle contract (optional, after `db_synced`) with patchable seams for
+    hermetic sandboxes; clients picked them up with zero edits.
+  - *CLI parity finished:* interactive `rebalance onboard` now offers each
+    incomplete optional stage (Calendar/Gmail OAuth, scheduler fleet, first
+    pulse) by dispatching the contract's executor hints; declining persists
+    the skip. `--yes` never launches OAuth or installs jobs silently.
+  - *Local discovery (6.1):* `ingest/local_repos.py` promotes the git-pulse
+    scanner — scan `local_repo_roots` for checkouts, parse GitHub identity,
+    measure unpushed commits; discovery surfaces uncovered on-disk repos as
+    `provenance=local-scan` candidates ("found on disk — promote?"). New
+    doctor check `local repos` WARNs on unpushed work as an ongoing signal.
+  - *Reset path:* `rebalance reset` — dry-run by default, `--force` executes;
+    unloads/removes the launchd fleet, deletes config + knowledge base,
+    enumerates keyring secrets (deleted only with `--include-keyring`), vault
+    never touched.
+  - *Hermetic walkthrough:* `tests/test_welcome_walkthrough.py` drives clone →
+    first pulse with real config writes in 0.06s. It caught a second
+    machine-global escape: the gh-CLI token fallback leaked the operator's
+    real login into "fresh" sandboxes — new `REBALANCE_HERMETIC=1` disables
+    keyring *and* gh-CLI fallbacks.
+  - *Docs:* README Getting Started leads with `/welcome` (manual steps kept
+    as reference); PROJECT.md v1.1 note updated — a future desktop UI is now
+    just another client of the same state machine; demo transcript committed
+    as the skill's UX baseline.
+
+## [0.38.0] - 2026-06-11
+
+### Added
+
+- **Phase 6 (slices 1–3) — lifecycle contract v2 + the welcome agent's front
+  ends.** `CONTRACT_VERSION` 2 in `ingest/lifecycle.py`:
+  - `REBALANCE_NO_KEYRING=1` makes every keyring helper a no-op — the
+    injection seam that lets hermetic walkthroughs run on an operator machine
+    without seeing real secrets (Phase 5 spike finding #1).
+  - `skipped` status: optional stages can be deliberately skipped (persisted
+    via `set_onboarding_stage_skipped` in rbos.config; new
+    `skip_onboarding_stage` MCP tool, optional-only) instead of being offered
+    as `next` forever; completing a stage always wins over a stale skip
+    marker (spike finding #2).
+  - Machine-executable `executor` hints per stage (`mcp:` / `cli:` /
+    `script:` vocabulary) alongside human remediation prose (spike finding #3).
+- **`/welcome` skill** (`.claude/skills/welcome/SKILL.md`): conversational
+  onboarding agent — renders where-am-I from one `onboarding_status` call per
+  turn, dispatches stages via executor hints, verifies each stage flips to
+  done, offers-then-skips optional auth, runs the provenance-grouped promote
+  review, graduates into the Phase 4 scheduler installers + first pulse.
+  Secrets never enter the transcript; resume works from the contract.
+- **`rebalance onboard --status`**: the no-LLM parity client — renders the
+  same lifecycle stage map (glyphs for done/now/next/blocked/skipped, fix
+  hints for now/blocked) from one `evaluate_setup` call.
+
+## [0.37.0] - 2026-06-11
+
+### Added
+
+- **Phase 5 lifecycle contract — `src/rebalance/ingest/lifecycle.py`.** Two
+  machine-readable maps the Phase 6 welcome agent will render: the project
+  lifecycle ownership table (discovery → review → confirmation → persistence →
+  inference → prioritization, each with one owner and a write-semantics
+  vocabulary) and the setup stage machine (config, vault, GitHub PAT, optional
+  Calendar/Gmail auth, registry, projections) with `done`/`now`/`next`/`blocked`
+  statuses and per-stage remediation hints. `onboarding_status` is now a thin
+  view over it (legacy `steps` list preserved).
+- **Discovery provenance end to end.** `Project.provenance` field
+  (`remote-activity` | `vault-note` | `inferred`; `local-scan` reserved for the
+  Phase 6 git-pulse promotion); candidates stamped at discovery, persisted via
+  `custom_fields_json` (same pattern as `external`), lifted back to top level by
+  `get_projects`.
+- **Onboarding E2E tests** (`tests/test_onboarding_e2e.py`): discover →
+  confirm → list promote path, provenance round-trip, read-only discovery,
+  setup status flipping to done. **Lifecycle contract tests**
+  (`tests/test_lifecycle_contract.py`, 13 tests): blocked propagation,
+  exactly-one-now, optional-stays-offered, re-poll stability.
+- **Thin Phase 6 spike** (`scripts/spike_welcome_status.py`): disposable driver
+  that walks the status contract on a sandbox fresh machine (all assertions
+  pass) and renders "where am I" for the real machine via `--real`.
+
+### Fixed
+
+- **Discovery no longer creates the registry file.** `discover_candidates`
+  called `load_registry`, which writes the default registry when missing — so
+  merely running discovery flipped `registry_exists` to done before any
+  confirmation. New `read_registry` (pure read) used on the discovery path.
+- **Inference can no longer clobber curated registry rows.**
+  `sync_inferred_project_registry` skips any name owned by a non-inference row
+  (the upsert is name-keyed and would have overwritten curated
+  summary/priority/custom_fields wholesale); skips are reported in
+  `InferenceSummary.skipped_curated_*` and echoed by the CLI.
+
+### Changed
+
+- **One text normalizer.** `normalize_match_text` in `project_classifier` is
+  the canonical implementation; `project_inference` and `project_priority`
+  delegate (was three identical copies).
+- **ARCHITECTURE.md** documents the registry write discipline and the
+  lifecycle module.
+
+## [0.36.0] - 2026-06-11
+
+### Added
+
+- **Phase 4 scheduler consolidation — SCHEDULER.md policy table.** Single source
+  of truth for the 10-job launchd fleet (labels, cadences, scopes, prerequisites,
+  outputs), the intentional freshness model (vault-sync embeds semantically every
+  hour; github-sync defers semantic backfill to daily-sync), and the operator
+  runbook. Enforced hermetically by `tests/test_scheduler_policy.py` (17 tests:
+  plistlib template rendering, cadence/label/RunAtLoad conformance, wrapper policy
+  lines, installer flow, doc coverage — no `launchctl` anywhere).
+- **Shared launchd runtime** `scripts/lib/scheduler_common.sh`: env bootstrap,
+  per-day logs, job-lifecycle events, retention trimming — sourced by
+  `daily_sync.sh`, `vault_sync.sh`, `github_sync.sh`, `pulse_sync.sh`,
+  `pulse_web_sync.sh`, `pulse_server.sh` (each shrank to its policy payload).
+- **Shared installer flow** `scripts/lib/install_common.sh`: always-unload,
+  template render (`{{REBALANCE_DIR}}`/`{{PYTHON}}`/`{{HOME}}`), `plutil -lint`,
+  load, poll-verified registration. All `install_*.sh` are now thin wrappers; new
+  installers added for the jobs that had none: `install_health_check_scheduler.sh`,
+  `install_health_check_triage_scheduler.sh`, `install_obsidian_rollover_scheduler.sh`
+  (plus a tracked `com.rebalance-os.obsidian-rollover.plist.template` for the
+  previously hand-created plist).
+- **`scripts/_bootstrap.py`** — the single remaining `sys.path` shim for
+  directly-run scripts (was 7 inserts across 5 scripts: `pulse_web.py`,
+  `pulse_server.py`, `dashboard.py`, `chat_eval.py`, `health_issue_reporter.py`).
+
+### Fixed
+
+- **Invalid XML in two plist templates.** `pulse-warning-watch` and
+  `health-check-triage` templates carried `--` inside XML comments — rejected by
+  expat (plutil tolerates it). Caught by the new conformance tests.
+- **Stale `IGNORED_FILES` entries** in `scripts/audit_modules.py` (`db.py`,
+  `ask-self-ingest-throttled.py`) unblocked the module audit.
+
+### Changed
+
+- **config.py imports `find_project_root` at module level** — the circular-import
+  risk that justified the Phase-1 lazy import no longer exists (`paths.py` imports
+  nothing from the package). Closes both Phase-1 deferred items.
+- **ARCHITECTURE.md / README.md** point at SCHEDULER.md as the scheduler
+  authority; file map documents `scripts/lib/` and `_bootstrap.py`.
+
+## [0.35.0] - 2026-06-10
+
+### Added
+
+- **Phase 5 collector test coverage.** `tests/test_phase5_collector_smoke.py` (13 tests):
+  - Smoke tests (dry-run) for all 5 raw sources: vault, calendar, sleuth, email (oauth
+    and MCP-skip modes), plus github (already covered in `test_index_ops.py`).
+  - Auth/config failure tests for all 5 sources via the `refresh_index` error envelope:
+    vault missing path, github missing token, calendar/sleuth API exceptions, email
+    `GmailAuthError` returned inline rather than raised.
+  - Idempotency tests: vault second-run reports 0 new/updated files (real SQLite);
+    calendar result shape is stable across identical calls; github dry-run planning
+    is deterministic.
+
+### Changed
+
+- **ARCHITECTURE.md updated for Phase 4/5 contracts.** Calendar credential row now
+  references `resolve_oauth_token_path("calendar")`; `paths.py` entry documents
+  `resolve_project_root` and `resolve_oauth_token_path` as the stable path resolvers.
+
+## [0.34.0] - 2026-06-10
+
+### Changed
+
+- **Portability contract cleanup (Phase 4).** All `parents[N]` path hacks replaced
+  by `resolve_project_root(Path(__file__))` (walk-up resolver in `paths.py`) across
+  `cli/_core.py`, `ingest/token_meta.py`, `ingest/auth_log.py`,
+  `ingest/semantic_index.py`, and `chat.py`.
+- **Auth token paths centralized.** `resolve_oauth_token_path(service)` added to
+  `paths.py`; `calendar.py` and `gmail.py` now call it instead of hardcoding
+  `Path.home() / ".config" / "rebalance-os" / ...`.
+- **Sleuth client-mapping is config-first.** `sleuth_grouping._find_client_mapping_path()`
+  checks `rbos.config["sleuth_client_mapping_path"]` (via new
+  `config.get_sleuth_client_mapping_path()`) before falling back to the heuristic
+  sibling-checkout path.
+- **`update_dashboard_note` documented as optional output.** `refresh_index` docstring
+  clarifies that the Obsidian write-back is a documented side-output, not a required
+  control-plane dependency; callers without a vault set `update_dashboard_note=False`.
+- **Operator config contract recorded.** `temp/rbos.config` (gitignored) is the
+  repo-local operator store; `~/.config/rebalance-os/config.json` (`USER_CONFIG_DIR`)
+  holds cross-repo/user defaults.
+
+## [0.33.0] - 2026-06-10
+
+### Changed
+
+- **Semantic projection is now stage-owned (single writer).** The `semantic`
+  collector is the sole writer of `semantic_documents` and `semantic_embeddings`.
+  Per-source `_refresh_*` functions no longer call `backfill_semantic_documents`
+  or `embed_pending` inline — sources write their raw tables only; the `semantic`
+  stage handles all projection and embedding as a follow-on step. This fixes the
+  email-never-embedded gap and makes semantic freshness predictable: documents
+  become searchable on the next `semantic` run (included in every default recipe).
+- **`semantic` stage now covers all five sources.** `_ALL_SEMANTIC_SOURCES =
+  ["vault","github","email","code","figma"]` — the semantic stage projects the
+  full set, including `code` (previously only run when the code collector ran) and
+  `figma` (via the registry-driven provider path).
+- **`include_semantic` parameter removed from `refresh_index` and `_refresh_github`.**
+  Semantic work is no longer an opt-out flag on individual source refreshes; it
+  runs as its own stage. Passing `include_semantic` was previously the only way to
+  skip it — use `scope=["github"]` (without `"semantic"`) for source-only refreshes.
+
+## [0.32.0] - 2026-06-10
+
+### Changed
+
+- **Code & docs search now uses Gemini embeddings.** The code-intelligence
+  search index was rebuilt on a higher-quality Gemini embedding model instead of
+  the local model, improving retrieval relevance. Trade-off: querying it now
+  requires the API key and the index is built per environment rather than shipped
+  prebuilt. The separate activity/data search index stays fully local by design.
+- **A full "all" refresh now means all raw incoming sources.** Refreshing "all"
+  covers the raw sources (calendar, GitHub, vault notes, Slack reminders, email);
+  the derived search-projection and export steps run as named follow-on stages of
+  the default full refresh. A no-argument refresh still does everything, so
+  scheduled and daily syncs are unchanged. Also fixed a latent bug where an
+  unscoped refresh could skip vault notes.
+- **Every data source is now explicitly classified.** Raw sources, local scans,
+  the search-projection stage, and the export stage are modeled distinctly instead
+  of being treated as interchangeable peers — clearer refresh behavior and a guard
+  against future drift.
+- **Unified the data write paths.** All command-line and assistant-facing
+  data-write operations now flow through a single owned path per source instead of
+  calling low-level ingest functions directly, so behavior stays consistent across
+  the CLI, the assistant tools, and scheduled syncs. Behavior is preserved and is
+  protected by an automated check that fails the build if a new bypass is added.
+
+### Added
+
+- **Sleuth reminder graph page (`/sleuth-graph`).** Cytoscape.js force-directed
+  graph (CDN, `cose` layout) visualizing active reminders as compound nodes
+  clustered inside their group (client / GitHub / channel / other). Cross-group
+  GitHub URL connections render as dashed blue edges. Hover any reminder node
+  for a tooltip with full task text, channel, and state; click to highlight its
+  neighborhood. Color-coded legend by group kind. Linked from the sidebar nav
+  as "Reminder Graph". No bundling — single CDN `<script>` tag.
+
+- **Sleuth reminder grouping + home page search.** Active Sleuth reminders are
+  now clustered by inferred relationship and surfaced directly on the web app
+  home page (`/`). Grouping mirrors the Sleuth `show-me` rules (ported from
+  `reminder-clustering.js`): shared GitHub URL (transitive union-find) →
+  same client (channel/repo-pattern from `client-channel-mapping.json`) →
+  same channel (2+ members) → Other. A live search input filters task text
+  across all groups client-side. Connection surfacing (`find_connections`) is
+  also available for building the suggestion system. Logic lives in
+  `src/rebalance/ingest/sleuth_grouping.py` (47 tests).
+
+- **CI check status on Open PRs panel.** `check_status` (already collected
+  per-PR via the GitHub check-runs API) is now surfaced in the dashboard.
+  Each PR row shows an inline badge (`✗ CI` / `~ CI` / `⟳ CI`) for
+  failing, mixed, and pending states. A red **"N failing CI"** filter button
+  appears alongside the existing stale toggle — both are independent and
+  composable (clicking one doesn't clear the other). Failing/mixed PRs are
+  sorted to the top of the fetch so they always appear within the limit
+  regardless of age. No new API calls, no schema changes, no backfill.
+  Header label updated "N newest" → "N open" to reflect the new sort order.
+
+- **Auth-log page search filter.** The `/auth-log` page now has a live filter
+  input. Typing a substring (e.g. `github`, a device name, a detail value)
+  narrows the table client-side; typing an issue keyword (`error`/`errors`/
+  `fail`/`failure`/`failed`/`warning`/`warnings`/`issue`/`issues`) switches to a
+  severity filter that shows only error (`danger`) and warning (`warn`) rows. A
+  live `N / M shown` counter accompanies the box. Pure client-side JS over the
+  already-rendered rows (each tagged with `data-severity`); no backend change.
+
+- **Obsidian daily-notes rollover utility.** A nightly launchd job
+  (`utilities/obsidian_daily_rollover.py` + the `utilities/obsidian_rollover.sh`
+  wrapper) that, at midnight, prepends `0. Today's Notes.md` to the top of
+  `0. Yesterday.md` under a dated header (a rolling, newest-first log) and blanks
+  Today's Notes so each morning starts clean. Auto-creates Today's Notes if it
+  goes missing, guarded against churn by a **vault sentinel** (won't write unless
+  the real vault is mounted — checks `0. Now.md`) and a **circuit breaker** (trips
+  after 3 auto-creates in 24h to stop a sync-loop spewing conflict copies; reset
+  with `--setup`). The job runs through a `/bin/bash` wrapper rather than execing
+  python directly so it inherits the existing Full Disk Access grant and needs no
+  new TCC entry to reach the `~/Documents` vault; launchd stdout/stderr are kept
+  outside `~/Documents` (in `~/Library/Logs`). Surfaces in `rebalance doctor` as
+  `launchd:obsidian-rollover`.
+
+- **Monitor external GitHub repos in the unified pipeline.** You can now watch
+  third-party repos for *everyone's* activity (commits/PRs), not just your own.
+  Declare them in the project registry with a project flagged `external: true`
+  and list the repos under `repos` (see `rebalance.ingest.registry.get_external_repos`).
+  No second pipeline: external repos enter the canonical watched set
+  (`get_watched_repos` gains an `external_repos` source) and are artifact-synced by
+  the existing `sync_github_repo`, so they immediately appear in the repo-scoped
+  feeds, open-PRs panel, semantic search, and readiness tools. The one added step
+  (`rebalance.ingest.github_watch`) derives a whole-repo `github_activity` rollup
+  under a sentinel login so external repos also surface in the org-activity
+  dashboards/reports (`note_builder` org view, `dashboard.fetch_org_activity`) and
+  in a new "Watched repos (external activity)" section of the hourly pulse.
+  - **De-dupe / pause across the clone lifecycle.** A watched repo can become
+    active work — cloned and worked locally, or driven through a cloud agent — and
+    later go quiet again, possibly oscillating (Claude Code cloud → local → Codex
+    cloud → local). `reconcile_watched_repo` is recomputed every refresh and is
+    idempotent + bidirectional: when the repo is active work (signals:
+    `focus5_repo_signals` local clone with a recent commit, `github_pushed_repos`
+    push/collab access, real per-login activity, or cloud-agent authored commits)
+    it **suppresses and purges** the sentinel rollup so it never double-counts
+    against your own per-login rows; when the work goes quiet it **resumes**.
+    Artifact tables dedupe by sha/number, so the rollup is the only layer that
+    needs reconciling, and it's kept mutually exclusive with the owned rows.
+
+- **Figma comments land as the first plugin `SourceModule`.** Onboards Figma
+  through the registry-driven plugin contract (`PROJECT/2-WORKING/PLUGINS.md`),
+  reusing the prior figma-collector client **without** the hardcoded `if "figma"`
+  branches it had scattered through the core. The frozen `Collector` descriptor
+  (`index_ops.py`) gains optional `semantic_docs` (a `conn -> Iterable[SemanticDoc]`
+  provider) + `secrets`, a `SourceModule = Collector` alias, and
+  `_semantic_source_names()`. `semantic_index.backfill_semantic_documents` gains a
+  flag-gated `use_registry_providers` iteration path that runs **alongside** the
+  existing vault/github/email/code if-ladder — a strangler, so existing-source
+  vectorization is provably unchanged (the if-ladder removal is a later
+  parity-gated PR). A module *yields* `SemanticDoc`s; the index owns
+  hash/upsert/embed.
+  - `figma.py` (client, `X-Figma-Token` header) + a `figma_semantic_docs()`
+    provider (skips empty/reaction-only comments); `0004_add_figma_comments.sql`
+    **renumbered from the prior `0002`** — a duplicate `0002` would be silently
+    skipped on an already-stamped DB and the table never created (the
+    no-silent-happy-errors trap). Keyring-backed `get/set/clear_figma_token`
+    (mirrors `github_token`, not cleartext) + `get/set_figma_file_keys`; registered
+    `included_in_all=False` (PAT-gated, opt-in via `scope=["figma"]`).
+  - Verified live against a real Figma file: **686 comments** ingested →
+    `figma_comments` → `semantic_documents` → embedded → semantic query returns the
+    relevant comments. Tests inject a fake client + `embed_texts` (no
+    PAT/network/mlx, per the embedder's Apple-Silicon lock).
+
+- **Sleuth production now reads a published file — SSH tunnel removed.** Replaced
+  the SSH-tunnel pull of the firewalled prod Sleuth API with a read of a file the
+  Sleuth box **pushes** to the private `rebalance-git-pulse` repo
+  (`sync/sleuth/reminders-<ws>.json`; the publisher lives in the `sleuth-app`
+  repo). `sync_sleuth_reminders` now treats a `file://`/local-path `base_url` as a
+  local-file source (`_local_source_path` / `_read_payload_from_file`) and reads
+  the locally-synced clone directly — **no inbound access, no SSH key, no open
+  port, no tunnel**. An `http(s)://` `base_url` still uses the live API, so **dev
+  is unchanged** (the dev box is reachable directly). Configure with
+  `rebalance config set-sleuth --base-url "~/git-pulse-sync/sync/sleuth/reminders-neochrome.json" --token file-source --workspace neochrome`.
+  - **Removed** the now-obsolete tunnel apparatus:
+    `scripts/com.rebalance-os.sleuth-tunnel.plist.template` and
+    `scripts/install_sleuth_tunnel_scheduler.sh` (deleted; the local LaunchAgent is
+    unloaded). Rewrote `SLEUTH_SYNC.md` for the file model and updated the
+    `ARCHITECTURE.md` / `UPGRADE.md` pointers.
+  - **Review hardening (blocking + should-fix from external review):**
+    - **Contract validation before any DB write** — a wrong-workspace file, a
+      truncated/partial export, or publisher drift no longer silently retires live
+      reminders. `_validate_payload_contract` rejects (raises `SleuthApiError`,
+      aborting before the transaction) on `workspaceName` mismatch, a file source
+      missing `filters.activeOnly=true` / wrong `source.type`, or any `reminders[]`
+      entry that isn't a dict with a non-empty `reminderId` (previously silently
+      dropped — which reads as a retirement). Relative `file://` paths are rejected.
+    - **Publisher heartbeat → real staleness detection.** The publisher now stamps
+      an hourly-rounded `exportGeneratedAt`; the consumer persists it in a new
+      `sleuth_sync_meta` table and `rebalance doctor` compares **that source
+      timestamp** (not the local `last_synced_at`, which re-reads keep bumping) to
+      now — warning past ~3h. A dead publisher is now visible instead of looking
+      fresh forever.
+    - **Freshness is shared + non-destructive.** Moved the pre-read clone refresh
+      out of `_refresh_sleuth` into `sync_sleuth_reminders` (so CLI, MCP, and daily
+      refresh all get fresh data, not just the launchd path), and replaced
+      `git pull --rebase --autostash` with `git fetch` + a scoped checkout of only
+      the export file — it can't race/conflict with other jobs writing the same
+      clone. Status surfaces as `source_refresh`; opt out with `refresh_source=False`.
+  - **Tests:** `tests/test_sleuth_reminders.py` grew to 25 cases — source detection,
+    relative-path rejection, file ingest (HTTP asserted unused), the five contract
+    violations (each asserted to leave the table untouched), heartbeat persistence,
+    and missing-file / invalid-JSON. Full suite green (507 passed).
+  - **One-command device onboarding** — `scripts/setup_sleuth_file_source.sh` clones
+    the private export repo (or reuses/pulls it), points rebalance at the local
+    export file (`config set-sleuth` → file source), and verifies with
+    `sleuth-sync` + `doctor`. Idempotent; `--workspace` / `--clone-dir` / `--repo-url`
+    flags. Documented as the primary path in `SLEUTH_SYNC.md`.
+
+- **GitHub deauth resilience — gh-CLI token fallback (options A + D).** When the
+  stored GitHub PAT is rejected with **401** (revoked / expired / lost a scope)
+  during a refresh, the collector now falls back to the `gh` CLI's token if the
+  host is authorized for it (A), then **persists** that token to keyring +
+  `rbos.config` so the launchd background jobs recover too (D). Wired into
+  `refresh_index` (covers `rebalance refresh`, the `refresh_index` MCP tool, and
+  launchd) at token-resolution time, so `sync_pushed_repos`, `scan_github`, and
+  per-repo sync all use the working token. Only triggers on 401 (rate-limit
+  403/429 is left alone) and only resolves interactively (launchd's stripped
+  environment cannot run `gh` — it relies on the persisted heal). New helpers:
+  `config.get_github_token_via_gh()` and `github_scan.resolve_working_token()`.
+  A `gh_fallback` event is written to the unified auth log (a *recovery*, not a
+  failure — so `rebalance doctor` shows the integration as healed once it fires).
+  The explicit `rebalance github-scan --token` command is unchanged (it respects
+  the token you pass and never auto-persists gh's token).
+- `validate_github_token()` now returns the HTTP `status` alongside `valid`, so
+  callers can distinguish a 401 deauth from a 403 rate-limit.
+
+### Fixed
+
+- **Semantic embedding was silently inert on this Mac — the `embeddings` extra was
+  never installed.** `refresh_index(...)`'s embed step failed with `No module named
+  'mlx_embeddings'` (surfaced as a per-scope error envelope, not a crash), so
+  `semantic_documents` rows stayed **un-embedded** and `semantic_query` / `ask()`
+  degraded to FTS/lexical hits only (no vector-kNN ranking). Root cause:
+  `ingest/embedder.py` is correct — it loads via **`mlx-embeddings`**
+  (`load`/`generate` → `output.text_embeds`; model `Qwen/Qwen3-Embedding-0.6B`,
+  1024-dim, unit-norm) — but `mlx-embeddings` is the optional `embeddings` extra in
+  `pyproject.toml` and had simply never been installed into the venv.
+  - **Fix (environment, not code):** `.venv/bin/python -m pip install -e ".[embeddings]"`
+    (Apple-Silicon only; first model load downloads ~1.2 GB from HuggingFace).
+    Confirmed: 686 Figma comments embedded in ~15s and real vector+FTS queries
+    return relevant results. There is **no code change** — wherever semantic
+    embedding runs (interactive shell + the launchd refresh hosts) must have the
+    extra installed; CI installs base deps only by design.
+  - **Why the library matters (cross-repo provenance, for future retrieval):** an
+    embedding checkpoint must load via `mlx-embeddings` (native pooled,
+    L2-normalized embeddings), **not** `mlx-lm` — `mlx-lm` is a causal-LM loader
+    that rejects an embedding checkpoint's flat weights ("Received N parameters not
+    in model") and produces a fast, valid-but-**empty** index. rebalance-OS was
+    already on the right library; the sibling `ask-self` repo hit and fixed the
+    `mlx-lm` mistake first — see its `CHANGELOG.md` **0.6.0** ("qwen-mlx … now load
+    via `mlx-embeddings`") and **0.7.4** (L2-normalize vectors at every `vec0`
+    boundary; `vec0` ranks by L2 distance, so unit-norm vectors give
+    cosine-equivalent ranking — `mlx-embeddings` returns unit-norm `text_embeds`).
+  - **Footprint caveat:** `mlx-embeddings 0.1.0` pulls a heavy transitive stack
+    (`mlx`, `mlx-lm`, `mlx-audio`, `mlx-vlm`, `transformers` 5, `numpy` 2, `pandas`
+    3, `opencv`) and upgraded `starlette` 1.0.0 → 1.2.1 — verified FastAPI-compatible
+    (`pip check` clean, 621 tests pass).
+
+- Corrected the stale claim that `set_github_token()` "removes any legacy
+  plaintext copy from `rbos.config`" (see 0.31.6 below). It deliberately writes
+  **both** keyring and `rbos.config` — the config copy is the launchd safety net
+  (launchd's stripped environment may not reach the keychain), which
+  `doctor._check_token` relies on. Updated the stale unit test to match.
+
+## [0.31.10] - 2026-06-08
+
+### Added
+
+- **Sleuth sync success events now appear in the unified auth log.** Successful reminder syncs emit a dedicated Sleuth success event with the source mode and sync counts, so the system log can distinguish "source saved" from "source verified by a real sync."
+
+### Changed
+
+- **The auth-log UI now shows a green success badge for Sleuth file-source syncs.** When a published-file Sleuth sync completes, the System Log renders a clear `file source synced` success label instead of only leaving the earlier blue `token (re)set` marker.
+
+## [0.31.9] - 2026-06-08
+
+### Added
+
+- **Pulse homepage Figma module.** The home page now shows a `Recent Figma comments` card with the newest stored comments, tracked project IDs, and last-sync context so Figma activity is visible alongside GitHub, email, and calendar signals.
+- **One-step Figma project add flow on the homepage.** A new `Add Figma project ID` form accepts either a raw Figma file key or a full Figma URL, appends the normalized key to local config, triggers a Figma sync, and regenerates the page so newly-added files appear without a manual config edit.
+
+### Changed
+
+- **Streams list now reflects the available connectors programmatically.** The sidebar stream list is derived from the registered source set instead of a hard-coded subset, so optional connectors such as Email and Figma always appear even before they are heavily populated.
+
+## [0.31.8] - 2026-06-04
+
+### Fixed
+
+- **Stickies-to-Obsidian launchd install now carries the real vault target.**
+  The standalone installer now renders `STICKIES_DIR`, `OBSIDIAN_FILE`, and
+  `STATE_FILE` into the launchd plist so background syncs target the intended
+  vault note instead of always falling back to the demo default path.
+
+## [0.31.7] - 2026-06-04
+
+### Added
+
+- **Stickies-to-Obsidian standalone utility.** Added a lightweight macOS
+  utility that incrementally imports Apple Stickies note content into an
+  Obsidian markdown file with SHA-256 deduplication, dry-run previews, atomic
+  prepend writes, and a launchd template plus installer for background sync.
+
+## [0.31.6] - 2026-06-01
+
+### Added
+
+- **`keyring` integration (Issue #39 Phase 0)** — secrets now stored in the OS keyring
+  (macOS Keychain, Windows Credential Locker) via the `keyring` library.
+  Resolution order: keyring → `rbos.config` (legacy, auto-migrated on first read) → `gh-cli`.
+  `set_github_token()` writes to keyring and removes any legacy plaintext copy from
+  `rbos.config`. `clear_github_token()` clears both. Keyring unavailable (headless CI,
+  no backend) silently falls back to `rbos.config` — no behaviour change on those hosts.
+- **Calendar OAuth keyring support** — `get/set/clear_calendar_oauth_token_json()` in
+  `config.py` for storing serialized Google OAuth2 token in keyring; existing pickle
+  fallback preserved until migration is complete.
+- **`sync_subdir` config key** — `get_sync_subdir()` / `set_sync_subdir()` in `config.py`
+  (default `"sync"`). Foundation for Issue #39 device snapshot sharing within the existing
+  pulse repo: `{pulse_target_path}/sync/calendar/<device_id>.json`, etc.
+- **`rebalance config doctor` keyring section** — shows OS keyring backend, GitHub token
+  source (`keyring` / `config` / `gh-cli`), and Calendar OAuth keyring status.
+
+### Changed
+
+- `keyring>=25.0.0` added to core dependencies in `pyproject.toml`.
+
 ## [0.31.5] - 2026-06-01
 
 ### Added

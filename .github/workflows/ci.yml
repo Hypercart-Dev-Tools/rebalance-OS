@@ -25,10 +25,14 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -e ".[calendar]"
+          # server extra: rebalance.web imports FastAPI at module level, so
+          # the web-surface tests need it. pytest: the suite is pytest-run
+          # locally and some modules are pytest-style (unittest discover
+          # can't collect them, and one imports pytest at module scope).
+          pip install -e ".[calendar,server]" pytest
 
       - name: Run tests
-        run: python -m unittest discover tests -v
+        run: python -m pytest tests/ -q
 
       - name: Check for raw datetime parsing (use parse_calendar_dt)
         run: |

@@ -92,6 +92,15 @@ After clicking Allow, the script prints a list of your Google Calendars and thei
 
 > Your login token is saved locally at `~/.config/rebalance-os/google-calendar-oauth` and is never stored in the repo.
 > The OAuth token belongs to the authorizing user account on that machine. It is separate from the bundled Desktop app client configuration.
+>
+> **Adopt the keyring credential model** (recommended) — rebalance stores
+> credentials in the OS keyring as the primary, with the file above as a
+> launchd-reachable fallback. After authorizing, run:
+> ```bash
+> rebalance config migrate-to-keyring
+> ```
+> This is idempotent and also picks up a freshly re-authed token if you run the
+> OAuth flow again later. See [UPGRADE.md](./UPGRADE.md) for the full credential model.
 
 ---
 
@@ -397,9 +406,12 @@ The CLI still uses the same underlying `create_calendar_event(...)` implementati
 
 ### Write-scope validation
 
-Before any write, the command reads `~/secrets/google-calendar.env`, loads the pickled token from `GOOGLE_CALENDAR_TOKEN_PATH`, and verifies the token includes `GOOGLE_CALENDAR_REQUIRED_WRITE_SCOPE`.
+Before any write, the command loads the OAuth token (resolved **keyring first,
+then the `~/.config/rebalance-os/google-calendar-oauth` pickle fallback**) and
+verifies it includes the Calendar write scope (`https://www.googleapis.com/auth/calendar`).
 
-If the scope is missing, the command exits non-zero and prints the reauth command from the env file. It does **not** attempt the write with a read-only token.
+If the scope is missing, the command exits non-zero and prints the reauth
+command. It does **not** attempt the write with a read-only token.
 
 Before creating anything, the command also searches the target calendar for an existing event with the same title and same start date.
 
@@ -517,7 +529,27 @@ To automate it on macOS or Linux, add it to your crontab (`crontab -e`):
 | Times look wrong | Update `timezone` in `temp/calendar_config.json` to your local timezone |
 | Project names still look heuristic (`Cr`, `Ai`, `Smart`) | Sync your canonical registry into the same SQLite database so `project_registry` is available to the calendar report |
 | I do not use Obsidian | Add `projects` directly to `temp/calendar_config.json`; the report will use that fallback automatically |
-| Need to re-authorize | Re-run Step 1 — your previous token may have expired |
+| Need to re-authorize | Re-run Step 1, then `rebalance config migrate-to-keyring` to refresh the keyring copy |
+| **Re-authorizing every few days** | Your OAuth consent screen is in *Testing* mode — Google revokes refresh tokens after **7 days**. Fix below. |
+
+### Durable tokens — stop the weekly re-auth
+
+If you keep having to re-authorize, the OAuth consent screen for the bundled
+client is in **"Testing"** publishing status, which expires refresh tokens after
+7 days.
+
+- **Google Workspace accounts:** set the consent screen **User Type → Internal**
+  in the Cloud Console
+  (`https://console.cloud.google.com/auth/audience?project=YOUR_PROJECT`).
+  Internal apps have **no 7-day expiry**, need **no verification**, and need **no
+  test-user whitelist**. This is console-only (no `gcloud` command exists for it).
+- **Personal Gmail accounts:** publish the app ("In production") to stop the
+  clock, or accept periodic re-auth.
+
+After flipping to Internal, re-mint once so the token is issued under the new
+status: `python scripts/setup_calendar_oauth.py --write-access --test` then
+`rebalance config migrate-to-keyring`. The same client backs Gmail — see
+[GMAIL.md](./GMAIL.md).
 
 **Common questions**
 

@@ -1,10 +1,14 @@
 """
 Configuration loader for rebalance — secrets, API credentials, etc.
 
-Storage path: temp/rbos.config (gitignored, at workspace root)
-Format: JSON
+Non-secret config:  temp/rbos.config (gitignored, JSON)
+Secrets:            OS keyring via the `keyring` library
+                    (macOS Keychain, Windows Credential Locker, etc.)
+                    Service name: KEYRING_SERVICE = "rebalance-os"
 
-Future: Migrate sensitive fields to keyring library when multi-user or compliance required.
+Migration: any secret still in rbos.config is silently moved to keyring
+on first read and removed from the file.  The rbos.config legacy path
+serves as a fallback when keyring is unavailable (e.g. headless CI).
 """
 
 from __future__ import annotations
@@ -13,23 +17,90 @@ import json
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any
+
+from rebalance.paths import find_project_root
 
 
 # Override seam for tests. When None, resolve from the active checkout/env.
 CONFIG_PATH: Path | None = None
 CONFIG_ENV_VAR = "REBALANCE_CONFIG"
-_PROJECT_MARKERS = (".git", "pyproject.toml")
+
+# Keyring service name — all secrets stored under this service.
+KEYRING_SERVICE = "rebalance-os"
+
+
+# Hermetic-sandbox seams (Phase 6 spike finding + walkthrough finding): the
+# OS keyring AND the gh CLI are machine-global, so a "clean sandbox"
+# walkthrough on an operator machine would see the real secrets through
+# either. REBALANCE_NO_KEYRING=1 makes every keyring helper a no-op;
+# REBALANCE_HERMETIC=1 additionally disables the gh-CLI token fallback —
+# resolution then reads only rbos.config, which sandboxes control via
+# REBALANCE_CONFIG / CONFIG_PATH.
+KEYRING_DISABLE_ENV_VAR = "REBALANCE_NO_KEYRING"
+HERMETIC_ENV_VAR = "REBALANCE_HERMETIC"
+
+
+def _hermetic() -> bool:
+    return bool(os.environ.get(HERMETIC_ENV_VAR, "").strip())
+
+
+def _keyring_disabled() -> bool:
+    return _hermetic() or bool(os.environ.get(KEYRING_DISABLE_ENV_VAR, "").strip())
+
+
+def _keyring_get(key: str) -> str | None:
+    """Return a secret from the OS keyring, or None if unavailable/unset."""
+    if _keyring_disabled():
+        return None
+    try:
+        import keyring  # noqa: PLC0415
+        return keyring.get_password(KEYRING_SERVICE, key)
+    except Exception:  # noqa: BLE001 — keyring backend missing or locked
+        return None
+
+
+def _keyring_set(key: str, value: str) -> bool:
+    """Write a secret to the OS keyring. Returns True on success."""
+    if _keyring_disabled():
+        return False
+    try:
+        import keyring  # noqa: PLC0415
+        keyring.set_password(KEYRING_SERVICE, key, value)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _keyring_delete(key: str) -> bool:
+    """Delete a secret from the OS keyring. Returns True on success."""
+    if _keyring_disabled():
+        return False
+    try:
+        import keyring  # noqa: PLC0415
+        import keyring.errors  # noqa: PLC0415
+        keyring.delete_password(KEYRING_SERVICE, key)
+        return True
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _migrate_to_keyring(config_key: str) -> str | None:
+    """If *config_key* is in rbos.config but not keyring, move it to keyring silently.
+
+    Returns the migrated value, or None if nothing to migrate.
+    """
+    config = _read_config()
+    value = config.get(config_key)
+    if not value:
+        return None
+    if _keyring_set(config_key, value):
+        del config[config_key]
+        _write_config(config)
+    return value
 _GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
-
-
-def _project_root_from(start: Path) -> Path | None:
-    current = start.resolve()
-    for candidate in (current, *current.parents):
-        if any((candidate / marker).exists() for marker in _PROJECT_MARKERS):
-            return candidate
-    return None
 
 
 def _resolved_config_path() -> Path:
@@ -40,11 +111,11 @@ def _resolved_config_path() -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
 
-    cwd_root = _project_root_from(Path.cwd())
+    cwd_root = find_project_root(Path.cwd())
     if cwd_root is not None:
         return cwd_root / "temp" / "rbos.config"
 
-    module_root = _project_root_from(Path(__file__).resolve())
+    module_root = find_project_root(Path(__file__).resolve())
     if module_root is not None:
         return module_root / "temp" / "rbos.config"
 
@@ -106,46 +177,93 @@ def _try_gh_cli_token() -> str | None:
     return token or None
 
 
+def get_github_token_via_gh() -> str | None:
+    """Return the token the ``gh`` CLI is currently authorized with, or None.
+
+    Public wrapper over the gh-cli probe so other modules (e.g. the scan's
+    401-deauth fallback) can use the ambient gh login as a backup credential
+    without reaching into a private helper. Only resolvable interactively —
+    launchd's stripped environment cannot run ``gh``.
+    """
+    return _try_gh_cli_token()
+
+
 def get_github_token_with_source() -> tuple[str | None, str | None]:
     """
     Resolve a GitHub token. Returns (token, source) where source is one of:
-      "config"  — token came from temp/rbos.config
+      "keyring" — token stored in the OS keyring (preferred)
+      "config"  — token still in temp/rbos.config (legacy; auto-migrated on read)
       "gh-cli"  — fell back to `gh auth token`
-      None      — neither available
+      None      — not available
 
-    Resolution order is config first, then gh CLI. This keeps explicit
-    PATs authoritative when both are present, so a user who set a token
-    deliberately won't be silently overridden by an ambient gh login.
+    Resolution order: keyring → rbos.config (with auto-migration) → gh-cli.
+    Explicit PATs always win over the ambient gh login.
     """
-    config = _read_config()
-    token = config.get("github_token")
+    token = _keyring_get("github_token")
+    if token:
+        return token, "keyring"
+    # Legacy path — auto-migrate to keyring on first read
+    token = _migrate_to_keyring("github_token")
     if token:
         return token, "config"
-    token = _try_gh_cli_token()
-    if token:
-        return token, "gh-cli"
+    if not _hermetic():  # gh login is machine-global — hermetic mode skips it
+        token = _try_gh_cli_token()
+        if token:
+            return token, "gh-cli"
     return None, None
 
 
 def get_github_token() -> str | None:
-    """
-    Get GitHub token. Falls back to `gh auth token` if no PAT is in config.
-
-    Config key: github_token
-    """
+    """Get GitHub token (keyring → rbos.config → gh-cli)."""
     token, _source = get_github_token_with_source()
     return token
 
 
-def set_github_token(token: str) -> None:
-    """Store GitHub PAT in config."""
+def classify_github_token(token: str) -> str:
+    """Human label for a GitHub token by its prefix — for the re-auth log."""
+    for prefix, label in (
+        ("github_pat_", "fine-grained PAT"),
+        ("ghp_", "classic PAT"),
+        ("gho_", "gh OAuth (rotates)"),
+        ("ghs_", "app installation token"),
+        ("ghu_", "user-to-server token"),
+    ):
+        if token.startswith(prefix):
+            return label
+    return "unknown"
+
+
+def set_github_token(token: str, *, source: str = "manual") -> None:
+    """Store GitHub PAT in the OS keyring AND rbos.config.
+
+    Both stores are written so launchd jobs (which run with a stripped
+    environment and may not reach the user keychain) can always fall back
+    to rbos.config. keyring is preferred for interactive reads; config is
+    the launchd safety net.
+
+    *source* records how this (re-)authorization happened (``manual`` via the
+    CLI, ``gh-fallback`` via the 401 auto-heal); it is logged to the unified
+    auth log as a ``token_set`` event so the re-auth cadence — and the gap
+    between successive deauths — is visible.
+    """
+    cleaned = token.strip()
+    _keyring_set("github_token", cleaned)  # best-effort; ignored if unavailable
     config = _read_config()
-    config["github_token"] = token.strip()
+    config["github_token"] = cleaned
     _write_config(config)
+    try:  # never let logging break a credential write
+        from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
+        kind = classify_github_token(cleaned)
+        auth_log.log_github_token_set(kind, source=source)
+        # Sidecar: remember when THIS token value was first added (lifetime tracking).
+        token_meta.record_token_set("github", cleaned, kind=kind, source=source)
+    except Exception:  # noqa: BLE001
+        pass
 
 
 def clear_github_token() -> None:
-    """Remove the stored GitHub PAT from config (e.g. to switch to `gh auth token`)."""
+    """Remove the stored GitHub PAT from both keyring and rbos.config."""
+    _keyring_delete("github_token")
     config = _read_config()
     if "github_token" in config:
         del config["github_token"]
@@ -167,6 +285,161 @@ def set_vault_path(path: str) -> None:
     config = _read_config()
     config["vault_path"] = path.strip()
     _write_config(config)
+
+
+def get_local_repo_roots() -> list[str]:
+    """Folders to scan for local git checkouts (Phase 6.1 local discovery).
+
+    Empty list = local scanning is off. Config key: local_repo_roots
+    """
+    config = _read_config()
+    value = config.get("local_repo_roots")
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def set_local_repo_roots(roots: list[str]) -> None:
+    """Store the local-scan root folders in config."""
+    config = _read_config()
+    config["local_repo_roots"] = [str(r).strip() for r in roots if str(r).strip()]
+    _write_config(config)
+
+
+def get_onboarding_skipped_stages() -> list[str]:
+    """Optional setup stages the operator deliberately skipped.
+
+    Consumed by the lifecycle status contract (Phase 6): a skipped optional
+    stage reports status ``skipped`` instead of being offered as ``next``
+    forever. Config key: onboarding_skipped_stages
+    """
+    config = _read_config()
+    value = config.get("onboarding_skipped_stages")
+    return [str(item) for item in value] if isinstance(value, list) else []
+
+
+def set_onboarding_stage_skipped(stage_id: str, skipped: bool = True) -> list[str]:
+    """Mark or unmark an optional setup stage as deliberately skipped.
+
+    Returns the updated skip list. Idempotent in both directions.
+    """
+    config = _read_config()
+    current = config.get("onboarding_skipped_stages")
+    stages = {str(item) for item in current} if isinstance(current, list) else set()
+    if skipped:
+        stages.add(stage_id)
+    else:
+        stages.discard(stage_id)
+    config["onboarding_skipped_stages"] = sorted(stages)
+    _write_config(config)
+    return sorted(stages)
+
+
+# ---------------------------------------------------------------------------
+# Figma
+# ---------------------------------------------------------------------------
+#
+# The Figma personal access token is a secret, so it follows the same
+# keyring-primary / rbos.config-fallback discipline as the GitHub token (see
+# get_github_token / set_github_token / clear_github_token). File keys are NOT
+# secret — the comments API is file-scoped, so the collector needs an explicit
+# allow-list — and live in plain rbos.config.
+
+
+def get_figma_token() -> str | None:
+    """Return the configured Figma personal access token (keyring → rbos.config).
+
+    Mirrors :func:`get_github_token`: keyring is the preferred store, with
+    rbos.config as the launchd-safe fallback. Any cleartext token still in
+    rbos.config is auto-migrated into keyring on first read.
+    """
+    token = _keyring_get("figma_token")
+    if token:
+        return token
+    # Legacy / launchd path — auto-migrate to keyring on first read.
+    token = _migrate_to_keyring("figma_token")
+    if token:
+        return token
+    config = _read_config()
+    value = config.get("figma_token")
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
+
+
+def set_figma_token(token: str) -> None:
+    """Store the Figma PAT in the OS keyring AND rbos.config.
+
+    Both stores are written so launchd jobs (stripped environment, no keychain
+    access) can fall back to rbos.config. keyring is preferred for interactive
+    reads. Mirrors :func:`set_github_token` minus the GitHub-specific auth-log
+    and gh-cli machinery.
+    """
+    cleaned = token.strip()
+    _keyring_set("figma_token", cleaned)  # best-effort; ignored if unavailable
+    config = _read_config()
+    config["figma_token"] = cleaned
+    _write_config(config)
+
+
+def clear_figma_token() -> None:
+    """Remove the stored Figma PAT from both keyring and rbos.config."""
+    _keyring_delete("figma_token")
+    config = _read_config()
+    if "figma_token" in config:
+        del config["figma_token"]
+        _write_config(config)
+
+
+def get_figma_file_keys() -> list[str]:
+    """Return configured Figma file keys to scan for comments.
+
+    Config key: ``figma_file_keys``. The Figma comments API is file-scoped, so
+    the collector needs this explicit allow-list. Not secret — plain config.
+    """
+    config = _read_config()
+    value = config.get("figma_file_keys")
+    if not isinstance(value, list):
+        return []
+    keys: list[str] = []
+    for item in value:
+        if not isinstance(item, str):
+            continue
+        key = item.strip()
+        if key and key not in keys:
+            keys.append(key)
+    return keys
+
+
+def set_figma_file_keys(file_keys: list[str]) -> None:
+    """Store the Figma file keys scanned by the Figma comments collector."""
+    config = _read_config()
+    keys: list[str] = []
+    for item in file_keys:
+        key = str(item or "").strip()
+        if key and key not in keys:
+            keys.append(key)
+    config["figma_file_keys"] = keys
+    _write_config(config)
+
+
+_figma_key_lock = threading.Lock()
+
+
+def add_figma_file_key(file_key: str) -> bool:
+    """Add one Figma file key to the allow-list.
+
+    Returns True when the key was newly added, False when it was already present.
+    The stored list remains de-duplicated in insertion order.
+    """
+    key = str(file_key or "").strip()
+    if not key:
+        raise ValueError("file_key must be non-empty")
+    with _figma_key_lock:
+        existing = get_figma_file_keys()
+        if key in existing:
+            return False
+        set_figma_file_keys(existing + [key])
+        return True
 
 
 def get_gmail_query_filter() -> str | None:
@@ -191,6 +464,229 @@ def set_gmail_query_filter(query: str) -> None:
     _write_config(config)
 
 
+# ---------------------------------------------------------------------------
+# Health notices — demote intentional/non-actionable WARNs to a calmer tier
+# ---------------------------------------------------------------------------
+
+def get_health_notice_patterns() -> list[str]:
+    """Return check-name substrings the user has demoted to "notices".
+
+    A health WARN whose name contains one of these (case-insensitive) is shown
+    in a separate, low-key Notices section instead of counting toward the
+    "collector attention needed" verdict. Intended for *intentional* states
+    (e.g. a deliberately narrow Gmail filter that reads "stale") or
+    *non-actionable-from-here* ones (another machine's pulse collector). FAIL
+    checks are never demoted. Config key: ``health_notices`` (list of strings).
+    """
+    config = _read_config()
+    raw = config.get("health_notices")
+    if isinstance(raw, list):
+        return [str(p).strip() for p in raw if str(p).strip()]
+    return []
+
+
+def add_health_notice_pattern(pattern: str) -> bool:
+    """Add a notice pattern. Returns True if added, False if blank/duplicate."""
+    pattern = pattern.strip()
+    if not pattern:
+        return False
+    config = _read_config()
+    patterns = config.get("health_notices")
+    if not isinstance(patterns, list):
+        patterns = []
+    if pattern in patterns:
+        return False
+    patterns.append(pattern)
+    config["health_notices"] = patterns
+    _write_config(config)
+    return True
+
+
+def remove_health_notice_pattern(pattern: str) -> bool:
+    """Remove a notice pattern. Returns True if it was present and removed."""
+    pattern = pattern.strip()
+    config = _read_config()
+    patterns = config.get("health_notices")
+    if not isinstance(patterns, list) or pattern not in patterns:
+        return False
+    patterns.remove(pattern)
+    config["health_notices"] = patterns
+    _write_config(config)
+    return True
+
+
+# ---------------------------------------------------------------------------
+# ask_self federation (chat_with_data code/doc retrieval)
+# ---------------------------------------------------------------------------
+
+def get_ask_self_path() -> str | None:
+    """Return the ask-self install path for chat federation, or None.
+
+    Resolution: ``ASK_SELF_PATH`` env first (per-shell override), then the
+    ``ask_self_path`` config key (persisted, so the dashboard server can
+    federate too). See PROJECT/2-WORKING/CHAT-WITH-DATA.md.
+    """
+    env = os.environ.get("ASK_SELF_PATH")
+    if env and env.strip():
+        return env.strip()
+    value = _read_config().get("ask_self_path")
+    return value.strip() if isinstance(value, str) and value.strip() else None
+
+
+def set_ask_self_path(path: str) -> None:
+    """Persist the ask-self install path used for chat federation."""
+    config = _read_config()
+    config["ask_self_path"] = path.strip()
+    _write_config(config)
+
+
+def get_repo_scan_roots() -> list[str]:
+    """Return the directories repo-discovery collectors walk on this device.
+
+    Shared by the Focus 5 repo collector and the ask_self index inventory —
+    a generic "where do this machine's repos live" setting, not specific to
+    ask_self (hence the neutral name; see COLLECTOR-PATH-AND-PORTABILITY-AUDIT).
+
+    Config key: ``repo_scan_roots`` (list of absolute dirs). The legacy
+    ``ask_self_scan_roots`` key is still honored as a fallback. When unset,
+    defaults to the common dev-checkout parents that actually exist on this
+    machine, falling back to the home directory. Keeping this configurable
+    means a full-tree walk of ``$HOME`` is opt-in rather than the default.
+    """
+    config = _read_config()
+    raw = config.get("repo_scan_roots")
+    if not isinstance(raw, list):
+        raw = config.get("ask_self_scan_roots")  # back-compat: pre-decouple key
+    if isinstance(raw, list):
+        roots = [str(p).strip() for p in raw if str(p).strip()]
+        if roots:
+            return roots
+    home = Path.home()
+    candidates = [
+        home / "Documents" / "GitHub-Repos",
+        home / "Documents" / "GitHub",
+        home / "GitHub",
+        home / "code",
+        home / "src",
+        home / "dev",
+        home / "repos",
+        home / "Projects",
+    ]
+    existing = [str(c) for c in candidates if c.is_dir()]
+    return existing or [str(home)]
+
+
+def set_repo_scan_roots(roots: list[str]) -> None:
+    """Store the directories repo-discovery collectors walk. Config key: ``repo_scan_roots``."""
+    cleaned = [str(Path(p).expanduser()) for p in roots if str(p).strip()]
+    config = _read_config()
+    config["repo_scan_roots"] = cleaned
+    _write_config(config)
+
+
+# Deprecated pre-decouple aliases — kept so existing imports keep working while
+# the COLLECTOR-PATH-AND-PORTABILITY-AUDIT rename settles. Prefer the repo_* names.
+get_ask_self_scan_roots = get_repo_scan_roots
+set_ask_self_scan_roots = set_repo_scan_roots
+
+
+def get_focus5_scan_roots() -> list[str]:
+    """Return the directories the Focus 5 collector walks for git repos.
+
+    Config key: ``focus5_scan_roots``. When unset, reuses the shared
+    zero-config discovery defaults (:func:`get_repo_scan_roots`) so the
+    operator never has to configure repo locations — Focus 5 just keeps its own
+    overridable key for the day the two surfaces want different scopes.
+    """
+    config = _read_config()
+    raw = config.get("focus5_scan_roots")
+    if isinstance(raw, list):
+        roots = [str(p).strip() for p in raw if str(p).strip()]
+        if roots:
+            return roots
+    return get_repo_scan_roots()
+
+
+def get_focus5_ranking_mode() -> str:
+    """Return the active Focus 5 ranking mode. Config key: ``focus5_ranking_mode``.
+
+    Defaults to ``dirty_first`` (surface uncommitted/unpushed work first). The
+    value is validated by the collector against the registered strategies; an
+    unknown mode is surfaced as a collector error rather than silently ignored.
+    """
+    config = _read_config()
+    mode = config.get("focus5_ranking_mode")
+    if isinstance(mode, str) and mode.strip():
+        return mode.strip()
+    return "dirty_first"
+
+
+def set_focus5_ranking_mode(mode: str) -> None:
+    """Store the Focus 5 ranking mode. Config key: ``focus5_ranking_mode``."""
+    config = _read_config()
+    config["focus5_ranking_mode"] = mode.strip()
+    _write_config(config)
+
+
+def get_focus5_hidden_repos() -> list[str]:
+    """Return repo identities the operator has hidden from the Focus 5 roster.
+
+    Config key: ``focus5_hidden_repos`` (a list of identity strings). Each entry
+    is a repo's ``repo_full_name`` (``owner/repo``) when it has a remote, else its
+    device-local path — the same identity :func:`focus5_repo_identity` derives.
+    This is a *display* filter (hide from the board); it is independent of
+    ``github_ignored_repos``, which suppresses GitHub *ingest*.
+    """
+    value = _read_config().get("focus5_hidden_repos")
+    if not isinstance(value, list):
+        return []
+    seen: list[str] = []
+    for item in value:
+        if isinstance(item, str) and item.strip() and item.strip() not in seen:
+            seen.append(item.strip())
+    return seen
+
+
+def set_focus5_hidden_repos(repos: list[str]) -> None:
+    """Store the canonical Focus 5 hidden-repo list. Config key: ``focus5_hidden_repos``."""
+    cleaned: list[str] = []
+    for r in repos:
+        s = str(r).strip()
+        if s and s not in cleaned:
+            cleaned.append(s)
+    config = _read_config()
+    config["focus5_hidden_repos"] = cleaned
+    _write_config(config)
+
+
+def add_focus5_hidden_repo(repo: str) -> bool:
+    """Hide one repo from the Focus 5 roster. Returns False if already hidden."""
+    identity = repo.strip()
+    if not identity:
+        return False
+    existing = get_focus5_hidden_repos()
+    if identity in existing:
+        return False
+    existing.append(identity)
+    set_focus5_hidden_repos(existing)
+    return True
+
+
+def remove_focus5_hidden_repo(repo: str) -> bool:
+    """Un-hide one repo. Returns False if it was not hidden."""
+    identity = repo.strip()
+    existing = get_focus5_hidden_repos()
+    if identity not in existing:
+        return False
+    set_focus5_hidden_repos([item for item in existing if item != identity])
+    return True
+
+
+def is_focus5_repo_hidden(repo: str) -> bool:
+    """Return True when *repo*'s identity is in the Focus 5 hidden list."""
+    return repo.strip() in set(get_focus5_hidden_repos())
+
+
 GMAIL_INGEST_METHODS = ("oauth", "mcp")
 
 
@@ -199,7 +695,10 @@ def get_gmail_ingest_method() -> str:
 
     Config key: ``gmail_ingest_method``.
 
-    - ``oauth`` — the autonomous path: ``sync_gmail`` fetches via Google ADC.
+    - ``oauth`` — the autonomous path: ``sync_gmail`` fetches via a desktop
+      OAuth token (browser consent once via ``scripts/setup_gmail_oauth.py``,
+      stored in keyring with a pickle-file fallback for launchd). Mirrors the
+      Calendar credential model.
     - ``mcp``   — email_messages is populated externally by an agent using the
       Gmail MCP connector (see ``ingest_email_messages``). The launchd email
       job does not fetch in this mode — it cannot reach an MCP connector.
@@ -550,4 +1049,275 @@ def set_pulse_config(**values: Any) -> None:
         if value is None:
             continue
         config[key] = str(value).strip() if isinstance(value, str) else value
+    _write_config(config)
+
+
+# ---------------------------------------------------------------------------
+# Calendar OAuth token (keyring-backed)
+# ---------------------------------------------------------------------------
+
+def get_calendar_oauth_token_json() -> str | None:
+    """Return the serialized Google OAuth2 token JSON from keyring, or None if absent."""
+    return _keyring_get("calendar_oauth_token")
+
+
+def set_calendar_oauth_token_json(token_json: str, *, source: str = "manual", record: bool = True) -> bool:
+    """Store the serialized Google OAuth2 token JSON in keyring.
+
+    Returns True on success. If keyring is unavailable, returns False and the
+    caller should fall back to the existing pickle-file storage path.
+
+    When *record* is True (an explicit (re)authorization — migration or OAuth
+    flow — not an automatic access-token refresh), logs a `token_set` auth-log
+    event + sidecar metadata keyed on the stable ``refresh_token`` so the
+    authorization's age is tracked (and not reset on every access-token refresh).
+    """
+    ok = _keyring_set("calendar_oauth_token", token_json)
+    if ok and record:
+        try:  # never let logging break a credential write
+            import json as _json
+            from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
+            refresh = str((_json.loads(token_json) or {}).get("refresh_token") or "")
+            auth_log.log_calendar_token_set(source=source)
+            if refresh:
+                token_meta.record_token_set("calendar", refresh, kind="google oauth", source=source)
+        except Exception:  # noqa: BLE001
+            pass
+    return ok
+
+
+def clear_calendar_oauth_token() -> None:
+    """Remove the Calendar OAuth token from keyring."""
+    _keyring_delete("calendar_oauth_token")
+
+
+# ---------------------------------------------------------------------------
+# Gmail OAuth token (keyring-backed) — mirrors the Calendar helpers above
+# ---------------------------------------------------------------------------
+
+def get_gmail_oauth_token_json() -> str | None:
+    """Return the serialized Gmail OAuth2 token JSON from keyring, or None if absent."""
+    return _keyring_get("gmail_oauth_token")
+
+
+def set_gmail_oauth_token_json(token_json: str, *, source: str = "manual", record: bool = True) -> bool:
+    """Store the serialized Gmail OAuth2 token JSON in keyring.
+
+    Returns True on success. If keyring is unavailable, returns False and the
+    caller should fall back to the pickle-file storage path (launchd-reachable).
+
+    When *record* is True (an explicit (re)authorization — migration or OAuth
+    flow — not an automatic access-token refresh), logs a `token_set` auth-log
+    event + sidecar metadata keyed on the stable ``refresh_token`` so the
+    authorization's age is tracked (and not reset on every access-token refresh).
+    """
+    ok = _keyring_set("gmail_oauth_token", token_json)
+    if ok and record:
+        try:  # never let logging break a credential write
+            import json as _json
+            from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
+            refresh = str((_json.loads(token_json) or {}).get("refresh_token") or "")
+            auth_log.log_gmail_token_set(source=source)
+            if refresh:
+                token_meta.record_token_set("gmail", refresh, kind="google oauth", source=source)
+        except Exception:  # noqa: BLE001
+            pass
+    return ok
+
+
+def clear_gmail_oauth_token() -> None:
+    """Remove the Gmail OAuth token from keyring."""
+    _keyring_delete("gmail_oauth_token")
+
+
+# ---------------------------------------------------------------------------
+# Sync repo config (Issue #39 — multi-device snapshot sharing)
+# ---------------------------------------------------------------------------
+
+def get_sync_subdir() -> str:
+    """Return the subfolder within pulse_target_path used for device snapshots.
+
+    Defaults to 'sync'. Snapshots are written as:
+      {pulse_target_path}/{sync_subdir}/calendar/{device_id}.json
+      {pulse_target_path}/{sync_subdir}/email/{device_id}.json
+    """
+    config = _read_config()
+    return str(config.get("sync_subdir") or "sync")
+
+
+def set_sync_subdir(subdir: str) -> None:
+    """Override the sync subfolder name (default: 'sync')."""
+    config = _read_config()
+    config["sync_subdir"] = subdir.strip()
+    _write_config(config)
+
+
+# ---------------------------------------------------------------------------
+# LLM API keys
+# ---------------------------------------------------------------------------
+
+def get_anthropic_api_key() -> str | None:
+    """Return the Anthropic API key from the environment, or None if absent."""
+    return os.environ.get("ANTHROPIC_API_KEY")
+
+
+def get_gemini_api_key() -> str | None:
+    """Return the Gemini API key.
+
+    Resolution order:
+      1. Google Secret Manager (requires google-cloud-secret-manager and
+         GOOGLE_CLOUD_PROJECT env var; secret name from GEMINI_SECRET_NAME,
+         default "gemini-api-key")
+      2. GEMINI_API_KEY environment variable
+      3. GOOGLE_API_KEY environment variable
+    """
+    project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+    if project:
+        secret_name = os.environ.get("GEMINI_SECRET_NAME", "gemini-api-key")
+        try:
+            from google.cloud import secretmanager  # noqa: PLC0415
+            client = secretmanager.SecretManagerServiceClient()
+            resource = f"projects/{project}/secrets/{secret_name}/versions/latest"
+            response = client.access_secret_version(request={"name": resource})
+            value = response.payload.data.decode("utf-8").strip()
+            if value:
+                return value
+        except Exception:  # noqa: BLE001 — library absent or secret missing
+            pass
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+
+# ---------------------------------------------------------------------------
+# Sleuth credentials
+# ---------------------------------------------------------------------------
+
+_SLEUTH_REQUIRED = ("SLEUTH_WEB_API_BASE_URL", "SLEUTH_WEB_API_TOKEN", "SLEUTH_WORKSPACE_NAME")
+
+
+SLEUTH_KEYRING_KEY = "sleuth_web_api"  # JSON blob in keyring + rbos.config
+
+
+def _sleuth_creds_complete(values: object) -> dict[str, str] | None:
+    """Return normalized creds if every required key is present and non-empty."""
+    if not isinstance(values, dict):
+        return None
+    out = {k: str(values.get(k) or "").strip() for k in _SLEUTH_REQUIRED}
+    return out if all(out.values()) else None
+
+
+def set_sleuth_credentials(
+    base_url: str, token: str, workspace: str, *, source: str = "manual"
+) -> None:
+    """Store Sleuth Web API creds in the OS keyring AND rbos.config.
+
+    Mirrors set_github_token: keyring is the interactive primary; rbos.config is
+    the launchd safety net (the Sleuth daily-sync runs unattended and cannot reach
+    the keychain). Logs a `token_set` auth-log event + sidecar first-added metadata.
+    """
+    import json as _json
+
+    creds = {
+        "SLEUTH_WEB_API_BASE_URL": base_url.strip(),
+        "SLEUTH_WEB_API_TOKEN": token.strip(),
+        "SLEUTH_WORKSPACE_NAME": workspace.strip(),
+    }
+    _keyring_set(SLEUTH_KEYRING_KEY, _json.dumps(creds))
+    config = _read_config()
+    config[SLEUTH_KEYRING_KEY] = creds
+    _write_config(config)
+    try:  # never let logging break a credential write
+        from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
+        auth_log.log_sleuth_credentials_set(source=source, workspace=creds["SLEUTH_WORKSPACE_NAME"])
+        token_meta.record_token_set(
+            "sleuth", creds["SLEUTH_WEB_API_TOKEN"], kind="sleuth web api", source=source
+        )
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def clear_sleuth_credentials() -> None:
+    """Remove Sleuth creds from keyring + rbos.config (the env file is left alone)."""
+    _keyring_delete(SLEUTH_KEYRING_KEY)
+    config = _read_config()
+    if SLEUTH_KEYRING_KEY in config:
+        del config[SLEUTH_KEYRING_KEY]
+        _write_config(config)
+
+
+def get_sleuth_credentials(which: str = "production") -> dict[str, str]:
+    """Resolve Sleuth Web API creds: keyring → rbos.config → legacy env file.
+
+    Mirrors the github token resolution (keyring-primary + config fallback for
+    launchd) so secrets are stored consistently. The operator-owned
+    ``sleuth-web-api-{which}.env`` remains a backward-compatible fallback.
+
+    Raises FileNotFoundError if nothing resolves; ValueError if a resolved source
+    is missing required keys.
+    """
+    import json as _json
+
+    blob = _keyring_get(SLEUTH_KEYRING_KEY)
+    if blob:
+        try:
+            creds = _sleuth_creds_complete(_json.loads(blob))
+        except (ValueError, TypeError):
+            creds = None
+        if creds:
+            return creds
+    creds = _sleuth_creds_complete(_read_config().get(SLEUTH_KEYRING_KEY))
+    if creds:
+        return creds
+    return _read_sleuth_env_file(which)
+
+
+def _read_sleuth_env_file(which: str = "production") -> dict[str, str]:
+    """Legacy fallback — load Sleuth creds from the operator-owned env file.
+
+    Looks up ``sleuth-web-api-{which}.env`` (default: production), falling back to
+    the development env file. Raises FileNotFoundError if neither exists, or
+    ValueError if required keys are missing.
+    """
+    from rebalance.paths import resolve_secret_path
+
+    primary = resolve_secret_path(f"sleuth-web-api-{which}.env")
+    fallback = resolve_secret_path("sleuth-web-api-development.env")
+    if primary.exists():
+        path = primary
+    elif fallback.exists():
+        path = fallback
+    else:
+        raise FileNotFoundError(
+            f"Sleuth env file not found: tried {primary} then {fallback}"
+        )
+
+    values: dict[str, str] = {}
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        values[key.strip()] = value.strip()
+
+    missing = [k for k in _SLEUTH_REQUIRED if not values.get(k)]
+    if missing:
+        raise ValueError(
+            f"Sleuth env file missing required keys: {', '.join(missing)} (in {path})"
+        )
+    return values
+
+
+def get_sleuth_client_mapping_path() -> str:
+    """Return the configured path to client-channel-mapping.json, or '' if unset.
+
+    When set, sleuth_grouping.py uses this path instead of the sibling-checkout
+    heuristic. Set with ``rebalance config set-sleuth-mapping-path <path>`` or
+    directly in temp/rbos.config under ``sleuth_client_mapping_path``.
+    """
+    return str(_read_config().get("sleuth_client_mapping_path", ""))
+
+
+def set_sleuth_client_mapping_path(path: str) -> None:
+    """Store the path to client-channel-mapping.json in rbos.config."""
+    config = _read_config()
+    config["sleuth_client_mapping_path"] = path
     _write_config(config)

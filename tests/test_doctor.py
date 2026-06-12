@@ -8,6 +8,7 @@ DB) and the report aggregation logic.
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from rebalance.doctor import (
     FAIL,
@@ -15,10 +16,13 @@ from rebalance.doctor import (
     WARN,
     Check,
     DoctorReport,
+    _check_auth_failures,
     _check_calendar,
     _check_gmail,
     _check_pulse,
+    _check_pulse_collectors,
     _check_sleuth,
+    _diagnostics_index,
     run_doctor,
 )
 from rebalance.ingest.db import db_connection, ensure_baseline_schema, run_migrations
@@ -120,24 +124,32 @@ class DoctorCheckTests(unittest.TestCase):
 class IntegrationCheckTests(unittest.TestCase):
     """Sleuth / Gmail / Calendar credential checks."""
 
+    # _check_sleuth now resolves keyring → config → env file; these exercise the
+    # env-file fallback with keyring/config explicitly empty.
     def test_sleuth_missing_env_warns(self) -> None:
         import rebalance.paths as paths_mod
+        from rebalance.ingest import config as config_mod
 
         original = paths_mod.resolve_secret_path
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(config_mod, "_keyring_get", return_value=None), \
+             patch.object(config_mod, "_read_config", return_value={}):
             paths_mod.resolve_secret_path = lambda name: Path(tmp) / name
             try:
                 check = _check_sleuth()
             finally:
                 paths_mod.resolve_secret_path = original
         self.assertEqual(check.status, WARN)
-        self.assertIn("env file", check.detail)
+        self.assertIn("credentials", check.detail)
 
     def test_sleuth_incomplete_env_warns(self) -> None:
         import rebalance.paths as paths_mod
+        from rebalance.ingest import config as config_mod
 
         original = paths_mod.resolve_secret_path
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(config_mod, "_keyring_get", return_value=None), \
+             patch.object(config_mod, "_read_config", return_value={}):
             env = Path(tmp) / "sleuth-web-api-production.env"
             env.write_text("SLEUTH_WEB_API_BASE_URL=https://x\n", encoding="utf-8")
             paths_mod.resolve_secret_path = lambda name: Path(tmp) / name
@@ -146,43 +158,41 @@ class IntegrationCheckTests(unittest.TestCase):
             finally:
                 paths_mod.resolve_secret_path = original
         self.assertEqual(check.status, WARN)
-        self.assertIn("missing keys", check.detail)
+        self.assertIn("missing", check.detail)
 
-    def test_sleuth_complete_env_ok(self) -> None:
-        import rebalance.paths as paths_mod
-
-        original = paths_mod.resolve_secret_path
-        with tempfile.TemporaryDirectory() as tmp:
-            env = Path(tmp) / "sleuth-web-api-production.env"
-            env.write_text(
-                "SLEUTH_WEB_API_BASE_URL=https://x\n"
-                "SLEUTH_WEB_API_TOKEN=tok\n"
-                "SLEUTH_WORKSPACE_NAME=ws\n",
-                encoding="utf-8",
-            )
-            paths_mod.resolve_secret_path = lambda name: Path(tmp) / name
-            try:
-                check = _check_sleuth()
-            finally:
-                paths_mod.resolve_secret_path = original
+    def test_sleuth_complete_keyring_ok(self) -> None:
+        # Creds in keyring → OK regardless of env files (the new primary path).
+        from rebalance.ingest import config as config_mod
+        import json
+        blob = json.dumps({
+            "SLEUTH_WEB_API_BASE_URL": "https://x",
+            "SLEUTH_WEB_API_TOKEN": "tok",
+            "SLEUTH_WORKSPACE_NAME": "ws",
+        })
+        with patch.object(config_mod, "_keyring_get", return_value=blob):
+            check = _check_sleuth()
         self.assertEqual(check.status, OK)
+        self.assertIn("keyring", check.detail)
 
     def test_calendar_token_presence(self) -> None:
+        # _check_calendar now resolves keyring → file; force keyring empty to test
+        # the file-presence path.
         import rebalance.ingest.calendar as cal_mod
+        from rebalance.ingest import config as config_mod
 
         original = cal_mod.TOKEN_PATH
-        with tempfile.TemporaryDirectory() as tmp:
+        with tempfile.TemporaryDirectory() as tmp, \
+             patch.object(config_mod, "get_calendar_oauth_token_json", return_value=None):
             cal_mod.TOKEN_PATH = Path(tmp) / "oauth"
             try:
                 calendar_check = _check_calendar()
                 self.assertEqual(calendar_check.status, WARN)
-                self.assertEqual(
-                    calendar_check.detail,
-                    "Cached data showing. Calendar needs to be re-setup.",
-                )
+                self.assertIn("no Calendar OAuth credentials", calendar_check.detail)
                 self.assertTrue(calendar_check.hint.startswith("🔧 "))
                 cal_mod.TOKEN_PATH.write_bytes(b"token-bytes")
-                self.assertEqual(_check_calendar().status, OK)
+                ok_check = _check_calendar()
+                self.assertEqual(ok_check.status, OK)
+                self.assertIn("token file", ok_check.detail)
             finally:
                 cal_mod.TOKEN_PATH = original
 
@@ -205,6 +215,119 @@ class IntegrationCheckTests(unittest.TestCase):
         check = _check_gmail(None)
         self.assertEqual(check.name, "gmail")
         self.assertIn(check.status, (OK, WARN, FAIL))
+
+
+class AuthFailureCheckTests(unittest.TestCase):
+    """_check_auth_failures reads the unified auth log via auth_log."""
+
+    def test_no_history_emits_no_checks(self) -> None:
+        with patch("rebalance.ingest.auth_log.latest_event_by_source", return_value={}):
+            self.assertEqual(_check_auth_failures(), [])
+
+    def test_all_recovered_emits_single_ok(self) -> None:
+        latest = {
+            "github": {"event": "token_validated", "ts": "2026-06-02T10:00:00+00:00", "device": "mac"},
+            "calendar": {"event": "token_refreshed", "ts": "2026-06-02T09:00:00+00:00", "device": "mac"},
+        }
+        with patch("rebalance.ingest.auth_log.latest_event_by_source", return_value=latest):
+            checks = _check_auth_failures()
+        self.assertEqual(len(checks), 1)
+        self.assertEqual(checks[0].status, OK)
+        self.assertEqual(checks[0].name, "auth log")
+
+    def test_active_failure_warns_per_source(self) -> None:
+        latest = {
+            # github's latest event is a failure → active deauth
+            "github": {"event": "auth_failed", "ts": "2026-06-02T12:00:00+00:00", "device": "studio"},
+            # calendar recovered → no warn
+            "calendar": {"event": "flow_succeeded", "ts": "2026-06-02T11:00:00+00:00", "device": "studio"},
+        }
+        with patch("rebalance.ingest.auth_log.latest_event_by_source", return_value=latest):
+            checks = _check_auth_failures()
+        names = {c.name: c for c in checks}
+        self.assertIn("auth:github", names)
+        self.assertEqual(names["auth:github"].status, WARN)
+        self.assertIn("auth_failed", names["auth:github"].detail)
+        self.assertIn("studio", names["auth:github"].detail)
+        self.assertTrue(names["auth:github"].hint)  # per-source remediation hint
+        self.assertNotIn("auth:calendar", names)  # recovered, not flagged
+
+    def test_never_crashes_on_reader_error(self) -> None:
+        with patch(
+            "rebalance.ingest.auth_log.latest_event_by_source",
+            side_effect=RuntimeError("boom"),
+        ):
+            self.assertEqual(_check_auth_failures(), [])
+
+
+class PulseCollectorCheckTests(unittest.TestCase):
+    """_check_pulse_collectors maps pulse_health states to OK/WARN checks."""
+
+    def _health(self, name, state, *, healthy, age_hours, failures=0, examples=""):
+        from rebalance.ingest.pulse_health import CollectorHealth
+
+        h = CollectorHealth(
+            device_id=name, device_name=name, last_scan_utc=None,
+            repo_scan_failures=failures, scan_failure_examples=examples,
+        )
+        h.state, h.age_hours = state, age_hours
+        return h
+
+    def test_alive_is_ok_degraded_and_alert_warn(self) -> None:
+        devices = [
+            self._health("Broken", "DEGRADED", healthy=False, age_hours=0.3,
+                         failures=4, examples="repo-a"),
+            self._health("Stale", "ALERT", healthy=False, age_hours=30.0),
+            self._health("Fine", "ALIVE", healthy=True, age_hours=1.0),
+        ]
+        with patch(
+            "rebalance.ingest.pulse_health.read_collector_health",
+            return_value=devices,
+        ):
+            checks = _check_pulse_collectors()
+        by = {c.name: c for c in checks}
+        self.assertEqual(by["pulse collector:Broken"].status, WARN)
+        self.assertIn("4 repo scan failures", by["pulse collector:Broken"].detail)
+        self.assertIn("repo-a", by["pulse collector:Broken"].detail)
+        self.assertEqual(by["pulse collector:Stale"].status, WARN)
+        self.assertIn("1.2d ago", by["pulse collector:Stale"].detail)  # 30h → days
+        self.assertEqual(by["pulse collector:Fine"].status, OK)
+
+    def test_empty_when_no_collectors(self) -> None:
+        with patch(
+            "rebalance.ingest.pulse_health.read_collector_health", return_value=[]
+        ):
+            self.assertEqual(_check_pulse_collectors(), [])
+
+    def test_never_crashes_on_reader_error(self) -> None:
+        with patch(
+            "rebalance.ingest.pulse_health.read_collector_health",
+            side_effect=RuntimeError("boom"),
+        ):
+            self.assertEqual(_check_pulse_collectors(), [])
+
+
+class DiagnosticsIndexTests(unittest.TestCase):
+    """_diagnostics_index maps every observability surface as OK info rows."""
+
+    def test_index_lists_surfaces_and_is_informational(self) -> None:
+        checks = _diagnostics_index()
+        names = {c.name for c in checks}
+        # The map always includes the static surfaces.
+        self.assertIn("diagnostics: git-pulse", names)
+        self.assertIn("diagnostics: repo probes", names)
+        self.assertIn("diagnostics: health reporter", names)
+        # All informational — never gate exit status.
+        self.assertTrue(all(c.status == OK for c in checks))
+
+    def test_index_never_raises_if_auth_log_unavailable(self) -> None:
+        with patch(
+            "rebalance.ingest.auth_log.latest_event_by_source",
+            side_effect=RuntimeError("boom"),
+        ):
+            checks = _diagnostics_index()
+        # auth-log row is skipped on error, but the static surfaces remain.
+        self.assertTrue(any(c.name == "diagnostics: git-pulse" for c in checks))
 
 
 if __name__ == "__main__":

@@ -20,7 +20,7 @@ from rebalance.ingest.gmail import (
 )
 from rebalance.ingest.index_ops import SCOPE_VALUES, _normalize_scope, _refresh_email, get_index_status
 from rebalance.ingest.semantic_index import (
-    _normalize_sources,
+    normalize_sources as _normalize_sources,
     backfill_semantic_documents,
 )
 
@@ -256,7 +256,7 @@ class SyncGmailTests(unittest.TestCase):
             with self.assertRaises(GmailAuthError) as ctx:
                 sync_gmail(db_path, query_filter="in:inbox", service=_FailingService())
         message = str(ctx.exception)
-        self.assertIn("gcloud auth application-default login", message)
+        self.assertIn("setup_gmail_oauth.py", message)
         self.assertIn("gmail.readonly", message)
 
     def test_other_403s_are_not_rewritten_as_scope_errors(self) -> None:
@@ -393,7 +393,8 @@ class RefreshEmailDryRunTests(unittest.TestCase):
         self.assertEqual(result["scope"], "email")
         self.assertTrue(result["dry_run"])
         self.assertIn("sync_gmail()", result["steps"])
-        self.assertIn("semantic_backfill(email)", result["steps"])
+        # Phase 3: semantic projection is now owned by the semantic stage, not the email collector
+        self.assertNotIn("semantic_backfill(email)", result["steps"])
 
     def test_dry_run_reports_mcp_mode(self) -> None:
         self._config_module.set_gmail_ingest_method("mcp")

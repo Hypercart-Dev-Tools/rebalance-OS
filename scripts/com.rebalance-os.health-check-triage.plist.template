@@ -19,7 +19,7 @@
     </array>
 
     <!-- 3× per day: 8 AM, 2 PM, 8 PM local time — adjust Hour values to taste.
-         The --llm-daily-limit 8 cap is the backstop; CB-2 will cut off the third
+         The llm-daily-limit 8 cap is the backstop; CB-2 will cut off the third
          run if the first two exhausted the quota. -->
     <key>StartCalendarInterval</key>
     <array>

@@ -8,15 +8,15 @@ client names into the repo.
 
 from __future__ import annotations
 
-import re
 from typing import Any
 
 from rebalance.ingest.config import get_project_priority_rules
+from rebalance.ingest.project_classifier import normalize_match_text
 
-
-def normalize_priority_text(text: str) -> str:
-    """Normalize names/aliases for project priority matching."""
-    return " ".join(re.sub(r"[^a-z0-9]+", " ", text.casefold()).split())
+# Phase 5: one normalizer across classifier/inference/priority — the
+# canonical implementation lives in project_classifier. Name kept for
+# this module's existing call sites.
+normalize_priority_text = normalize_match_text
 
 
 def _project_aliases(project: dict[str, Any]) -> set[str]:

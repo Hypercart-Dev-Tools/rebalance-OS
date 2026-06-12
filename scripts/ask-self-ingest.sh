@@ -4,9 +4,30 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+# Resolve the ask-self checkout. Explicit ASK_SELF_PATH wins; otherwise
+# autodetect — no per-machine absolute path baked in.
 if [ -z "${ASK_SELF_PATH:-}" ]; then
-    echo "ASK_SELF_PATH is not set. Point it at your ask-self checkout, e.g.:" >&2
-    echo "    export ASK_SELF_PATH=\"\$HOME/Documents/GitHub/ask-self\"" >&2
+    for _candidate in \
+        "$REPO_ROOT/../ask-self" \
+        "$HOME/Documents/GitHub-Repos/ask-self" \
+        "$HOME/Documents/GitHub/ask-self" \
+        "$HOME/ask-self"; do
+        if [ -f "$_candidate/ask_self_query.py" ]; then
+            ASK_SELF_PATH="$(cd "$_candidate" && pwd)"
+            break
+        fi
+    done
+fi
+if [ -z "${ASK_SELF_PATH:-}" ] && command -v ask-self >/dev/null 2>&1; then
+    _bin="$(command -v ask-self)"
+    _root="$(cd "$(dirname "$_bin")/.." && pwd)"
+    if [ -f "$_root/ask_self_query.py" ]; then
+        ASK_SELF_PATH="$_root"
+    fi
+fi
+if [ -z "${ASK_SELF_PATH:-}" ]; then
+    echo "ask-self: could not locate your ask-self checkout." >&2
+    echo "    Set ASK_SELF_PATH, e.g.: export ASK_SELF_PATH=\"\$HOME/Documents/GitHub-Repos/ask-self\"" >&2
     exit 1
 fi
 HARNESS_CONFIG="$REPO_ROOT/ask_self/ask_self_harness.json"
@@ -68,13 +89,19 @@ if ! has_flag "--mode" "$@"; then
 fi
 
 EMBED_PROVIDER="$(read_harness_json "((data.get('embedding') or {}).get('provider'))")"
-if [ "$EMBED_PROVIDER" = "qwen-local" ]; then
-    export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-    export ASK_SELF_QWEN_BATCH_SIZE="${ASK_SELF_QWEN_BATCH_SIZE:-8}"
-    export ASK_SELF_QWEN_MAX_TOKENS="${ASK_SELF_QWEN_MAX_TOKENS:-2048}"
-    if ! has_flag "--concurrency" "$@"; then
-        DEFAULT_ARGS+=(--concurrency 1)
-    fi
+case "$EMBED_PROVIDER" in
+    qwen-local|qwen-mlx)
+        # ask-self disables local Qwen providers by default (gemini-first upstream);
+        # re-enable for this portable local-Qwen repo so no Gemini key is needed.
+        export ASK_SELF_ENABLE_QWEN="${ASK_SELF_ENABLE_QWEN:-1}"
+        export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
+        export ASK_SELF_QWEN_BATCH_SIZE="${ASK_SELF_QWEN_BATCH_SIZE:-8}"
+        export ASK_SELF_QWEN_MAX_TOKENS="${ASK_SELF_QWEN_MAX_TOKENS:-2048}"
+        ;;
+esac
+# qwen-local rides the PyTorch/MPS path and needs serial embedding; qwen-mlx does not.
+if [ "$EMBED_PROVIDER" = "qwen-local" ] && ! has_flag "--concurrency" "$@"; then
+    DEFAULT_ARGS+=(--concurrency 1)
 fi
 
 GITHUB_OWNER="$(read_harness_json "((data.get('github') or {}).get('owner'))")"

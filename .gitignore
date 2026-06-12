@@ -5,15 +5,19 @@ PROJECT/.scrub-log.jsonl
 temp/rag/
 temp/ask-self-rag.env
 temp/ask-self*.log
-# ask-self portable DB sidecars (the *.sqlite itself is committed)
-ask_self/index/*__embed_cache.sqlite
-ask_self/index/*__embed_cache.sqlite-shm
-ask_self/index/*__embed_cache.sqlite-wal
+# ask-self index is a LOCAL build artifact, not committed.
+# (Switched to Gemini embeddings → the index is no longer key-free portable,
+#  so a committed binary buys nothing; each environment reingests with a key.)
+ask_self/index/*.sqlite
+ask_self/index/*.sqlite-shm
+ask_self/index/*.sqlite-wal
 ask_self/index/*__events.jsonl
 ask_self/index/.DS_Store
 # transient scratch from ask-self ingest runs
 /ask_self_ingest.out
 /ask_self_ingest.err
+# generated arch-doc fallback (ARCHITECTURE.md is hand-maintained; ask-self writes here)
+/ASK_SELF.md
 logs/
 __pycache__/
 *.pyc
@@ -48,3 +52,4 @@ scripts/com.rebalance-os.*.plist
 *.pem
 *.key
 *.p12
+/relay
