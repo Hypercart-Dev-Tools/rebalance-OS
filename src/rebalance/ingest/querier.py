@@ -374,7 +374,31 @@ def _synthesize_gemini(
     )
     with urllib.request.urlopen(req, timeout=30) as resp:
         payload = _json.loads(resp.read().decode())
-    return payload["candidates"][0]["content"]["parts"][0]["text"].strip()
+
+    # Defensive parse: a MAX_TOKENS / SAFETY response is valid JSON but may carry
+    # no candidates or no text parts. Bare subscripting raised a KeyError/
+    # IndexError that ask() mislabelled as a hard "Gemini synthesis failed";
+    # surface a clear, accurate error (with finishReason/blockReason) so the
+    # fallback log is meaningful. A truncated response that still produced some
+    # text returns that partial text rather than discarding it.
+    # Mirrors note_builder._synthesize_gemini's guard.
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        block = (payload.get("promptFeedback") or {}).get("blockReason")
+        raise RuntimeError(
+            "Gemini response had no candidates"
+            + (f" (blockReason={block})" if block else "")
+        )
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    text = "\n".join(p.get("text", "").strip() for p in parts if p.get("text")).strip()
+    if not text:
+        finish = candidates[0].get("finishReason")
+        raise RuntimeError(
+            "Gemini response had no text"
+            + (f" (finishReason={finish})" if finish else "")
+        )
+    return text
 
 
 def _synthesize(prompt: str, model_name: str = DEFAULT_CHAT_MODEL, max_tokens: int = 512) -> str:
