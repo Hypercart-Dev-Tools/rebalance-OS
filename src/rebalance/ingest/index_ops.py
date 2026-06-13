@@ -1117,14 +1117,29 @@ def refresh_index(
 
     # Bring the database schema to the latest version before any collector
     # writes to it. Skipped on dry runs, which must not touch the DB.
+    migrations_ok = True
     if not dry_run:
         try:
             with db_connection(db_path) as conn:
                 run_migrations(conn)
         except Exception as e:  # noqa: BLE001 — error envelope mirrors collector contract
             errors.append({"scope": "migrations", "error": str(e)})
+            migrations_ok = False
 
     for s in requested_scopes:
+        # If schema migration failed the DB is in an unknown/incomplete shape;
+        # running a collector would only produce confusing secondary errors
+        # (e.g. writing a column the migration was meant to add) and waste API
+        # calls. Record each scope as skipped behind the single migrations error
+        # rather than letting collectors write to a half-migrated schema.
+        if not migrations_ok:
+            results.append({
+                "scope": s,
+                "dry_run": False,
+                "skipped": True,
+                "reason": "schema migration failed",
+            })
+            continue
         collector = COLLECTORS.get(s)
         if collector is None:
             errors.append({"scope": s, "error": f"no collector registered for scope {s!r}"})
