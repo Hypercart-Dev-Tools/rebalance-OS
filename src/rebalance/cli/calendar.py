@@ -235,24 +235,30 @@ def _emit_calendar_create_result(output_format: str, data: dict[str, object]) ->
 @app.command("calendar-sync")
 def calendar_sync_cmd(
     database: Path | None = DBOption(),
-    calendar_id: str = typer.Option("", help="Calendar ID or email (default: from config, then 'primary')"),
+    calendar_id: str = typer.Option(
+        "",
+        help=(
+            "Calendar ID or email to sync. Omit to sync your own calendar "
+            "(stored as 'primary'); an explicit value is synced verbatim under "
+            "that id."
+        ),
+    ),
     days_back: int = typer.Option(30, help="Days back to fetch (use 365 for initial backfill)"),
     days_forward: int = typer.Option(7, help="Days forward to fetch"),
 ) -> None:
     """Sync Google Calendar events to SQLite for historical queries."""
     from rebalance.ingest.calendar import refresh_calendar_source
-    from rebalance.ingest.calendar_config import CalendarConfig
-
-    if not calendar_id:
-        config = CalendarConfig.load()
-        calendar_id = config.calendar_id
 
     try:
         db_path = resolve_database_path(database)
     except DatabaseNotFoundError as exc:
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
-    typer.echo(f"Syncing calendar '{calendar_id}' ({days_back} days back, {days_forward} days forward)...")
+
+    target = f"calendar '{calendar_id}'" if calendar_id else "your own calendar (primary)"
+    typer.echo(f"Syncing {target} ({days_back} days back, {days_forward} days forward)...")
+    # Pass the raw override (empty => operator's own calendar): refresh_calendar_source
+    # resolves config + canonicalises only the operator default, never an explicit id.
     result = refresh_calendar_source(
         database_path=db_path,
         calendar_id=calendar_id,
@@ -260,9 +266,9 @@ def calendar_sync_cmd(
         days_forward=days_forward,
     )
     typer.echo(
-        f"Calendar sync complete: fetched={result.events_fetched}, "
-        f"stored={result.events_stored}, window={result.window_start}..{result.window_end} "
-        f"({result.elapsed_seconds}s)"
+        f"Calendar sync complete: calendar='{result.calendar_id}', "
+        f"fetched={result.events_fetched}, stored={result.events_stored}, "
+        f"window={result.window_start}..{result.window_end} ({result.elapsed_seconds}s)"
     )
 
 

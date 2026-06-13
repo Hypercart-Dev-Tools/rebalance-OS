@@ -41,6 +41,7 @@ class CalendarSyncResult:
     window_start: str
     window_end: str
     elapsed_seconds: float
+    calendar_id: str = ""  # the calendar actually fetched/stored (post-resolution)
 
 
 @dataclass
@@ -174,22 +175,23 @@ def refresh_calendar_source(
     """Source-owned entry point for the calendar sync.
 
     Resolves the calendar id (explicit arg, else ``CalendarConfig``) and runs
-    :func:`sync_calendar`. The CLI (`calendar-sync`) and the `calendar` collector
-    share this so no surface imports the leaf ``sync_calendar`` directly
+    :func:`sync_calendar`. The CLI (`calendar-sync`) uses this so no surface
+    imports the leaf ``sync_calendar`` directly
     (COLLECTOR-PATH-AND-PORTABILITY-AUDIT Phase 2).
 
-    For the operator's own calendar the stored ``calendar_id`` is always
-    normalised to ``"primary"`` so DB filters are always correct regardless of
-    what the operator wrote in ``calendar_config.json``.
+    The operator's *own default* calendar (no explicit ``calendar_id``, resolved
+    from config) is stored as ``"primary"`` — Google's alias for the
+    authenticated user's default calendar — so DB read/export filters stay
+    correct. An EXPLICIT ``calendar_id`` (e.g. ``calendar-sync --calendar-id``)
+    is synced verbatim under that id: the caller asked for a specific calendar
+    and must get exactly that, not a silent rewrite to ``"primary"``.
     """
-    from rebalance.ingest.calendar_config import CalendarConfig
+    from rebalance.ingest.calendar_config import CalendarConfig, OPERATOR_CALENDAR_ID
 
+    explicit = bool(calendar_id)
     resolved = calendar_id or CalendarConfig.load().calendar_id
-    # Canonicalise: "primary" is the Google alias for the authenticated user's
-    # default calendar. Storing it normalised keeps all WHERE calendar_id='primary'
-    # filters correct even if the operator set their email in the config.
-    if person is None and resolved != "primary":
-        resolved = "primary"
+    if person is None and not explicit and resolved != OPERATOR_CALENDAR_ID:
+        resolved = OPERATOR_CALENDAR_ID
     return sync_calendar(
         database_path=database_path,
         calendar_id=resolved,
@@ -310,6 +312,7 @@ def sync_calendar(
         window_start=time_min[:10],
         window_end=time_max[:10],
         elapsed_seconds=round(time.monotonic() - start, 2),
+        calendar_id=calendar_id,
     )
 
 

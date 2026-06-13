@@ -21,11 +21,14 @@ Schema:
   }
 
 Field notes:
-  - ``calendar_id``: the operator's own Google Calendar ID. "primary" is the
-    Google alias for the authenticated user's default calendar and is the
-    canonical stored value. index_ops always syncs the operator's calendar
-    as "primary" regardless of this field; change it only for direct CLI usage
-    (``calendar-sync``) if your primary has a non-standard ID.
+  - ``calendar_id``: legacy/compat field — effectively unused. The operator's
+    own calendar is ALWAYS synced and stored as "primary" (Google's alias for
+    the authenticated user's default calendar) by both the orchestrated refresh
+    (index_ops, which hardcodes "primary") and ``calendar-sync`` with no
+    override (which canonicalises the default to "primary"). Changing this
+    field therefore has no effect on the operator sync. To sync a *different*
+    calendar ad-hoc, pass ``calendar-sync --calendar-id <id>`` — those events
+    are stored verbatim under that id, kept separate from your "primary" data.
   - ``team_calendars``: list of teammate calendars to ingest. Each entry must
     have ``person`` (short label used in the ``person`` DB column, e.g. "matthew")
     and ``calendar_id`` (the Google Calendar ID, e.g. a group calendar address).
