@@ -43,11 +43,14 @@ mapped to exclude_titles.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from rebalance.tz_utils import local_tz
+
+logger = logging.getLogger(__name__)
 
 # __file__ = src/rebalance/ingest/calendar_config.py
 # .parent (ingest) .parent (rebalance) .parent (src) .parent (repo root)
@@ -117,8 +120,22 @@ class CalendarConfig:
                 continue
             person = str(item.get("person", "")).strip()
             cal_id = str(item.get("calendar_id", "")).strip()
-            if person and cal_id:
-                entries.append(TeamCalendarEntry(person=person, calendar_id=cal_id))
+            if not (person and cal_id):
+                continue
+            if cal_id.casefold() == OPERATOR_CALENDAR_ID:
+                # 'primary' is reserved for the operator's own calendar. A team
+                # entry stored under it would be exported off-machine to the
+                # pulse repo (export filters calendar_id='primary'), leaking
+                # teammate data — the exact P2 privacy invariant we must hold.
+                # Drop the entry loudly rather than mislabel teammate rows.
+                logger.warning(
+                    "ignoring team_calendars entry for person=%r: calendar_id "
+                    "%r is reserved for the operator's own calendar and would "
+                    "leak teammate events to the pulse repo",
+                    person, cal_id,
+                )
+                continue
+            entries.append(TeamCalendarEntry(person=person, calendar_id=cal_id))
         return entries
 
     @staticmethod
