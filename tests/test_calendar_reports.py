@@ -363,9 +363,24 @@ class CalendarSyncConfigResolutionTests(unittest.TestCase):
 
 
 class CalendarIdFilterTests(unittest.TestCase):
-    """Reports should only include events from the configured calendar_id."""
+    """The operator's daily report shows only their own canonical 'primary' events.
 
-    def test_daily_report_filters_by_calendar_id(self) -> None:
+    Under P2 the operator's calendar is always stored as 'primary' (index_ops /
+    refresh_calendar_source canonicalise it regardless of config.calendar_id),
+    and team calendars are person-attributed under non-'primary' ids that must
+    never surface in the operator's personal report. So the report filters to
+    OPERATOR_CALENDAR_ID, not config.calendar_id.
+
+    (Pre-P2 this asserted the opposite — that config.calendar_id repointed the
+    report at an arbitrary calendar. That contract was the source of the
+    write/read asymmetry bug: operator events stored as 'primary' became
+    invisible whenever config.calendar_id was non-'primary'.)
+    """
+
+    def test_daily_report_shows_only_operator_primary_events(self) -> None:
+        # config.calendar_id is deliberately non-'primary' to prove the report
+        # no longer keys off it: the operator's 'primary' events appear and the
+        # team-cal events are excluded.
         config = _make_config("decimal", calendar_id="team-cal")
         events_team = [
             ("t1", "Team event", "2026-04-01T17:00:00+00:00", "2026-04-01T18:00:00+00:00"),
@@ -379,8 +394,8 @@ class CalendarIdFilterTests(unittest.TestCase):
             _insert_events(db, events_personal, calendar_id="primary")
             report = generate_daily_report(db, date(2026, 4, 1), config, priority_rules=[])
 
-        self.assertIn("Team event", report)
-        self.assertNotIn("Personal event", report)
+        self.assertIn("Personal event", report)
+        self.assertNotIn("Team event", report)
         self.assertIn("1 event", report)
 
 
