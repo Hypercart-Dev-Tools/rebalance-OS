@@ -62,7 +62,31 @@
       "Edit(/.claude/skills/welcome/**)",
       "Bash(sed -n 34,38p PROJECT.md)",
       "Bash(sed -n 290,294p PROJECT.md)",
-      "Bash(sed -n 654,658p PROJECT.md)"
+      "Bash(sed -n 654,658p PROJECT.md)",
+      "Bash(.venv/bin/python temp/phase0_repair_and_shared.py)",
+      "Bash(.venv/bin/python temp/ab_judge_gemini.py)",
+      "Bash(REBALANCE_DB='/Users/noelsaw/Library/Application Support/rebalance-os/rebalance.db' .venv/bin/python -c ' *)",
+      "Bash(python -m pytest tests/test_sync_snapshot.py tests/test_calendar_reader_scope.py tests/test_calendar_composite_pk_migration.py -q)",
+      "Bash(python -m pytest tests/test_calendar_composite_pk_migration.py tests/test_calendar_reader_scope.py tests/test_sync_snapshot.py -q)",
+      "Bash(python -m pytest tests/test_calendar_reader_scope.py -q)",
+      "Bash(python -m pytest tests/test_calendar_composite_pk_migration.py -q)",
+      "Bash(echo \"EXIT: $?\")",
+      "mcp__rebalance__refresh_index",
+      "Bash(sqlite3 \"/Users/noelsaw/Library/Application Support/rebalance-os/rebalance.db\" \"SELECT person, COUNT\\(*\\) as events FROM calendar_events WHERE calendar_id != 'primary' GROUP BY person ORDER BY person;\")",
+      "Bash(python3 -c ' *)",
+      "Bash(python3 -c \"from rebalance.ingest.calendar_config import CalendarConfig, TeamCalendarEntry; print\\('import OK'\\); c=CalendarConfig.load\\(\\); print\\('team_calendars:', c.team_calendars\\)\")",
+      "Bash(find . -name note_builder.py)",
+      "Bash(find . -name project_inference.py)",
+      "Bash(sed -n '80,95p' src/rebalance/mcp/tools/calendar.py)",
+      "Bash(sed -n '320,340p' src/rebalance/ingest/daily_report.py)",
+      "Bash(sed -n '215,245p' /Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/project_inference.py)",
+      "Bash(sed -n '175,200p' /Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/note_builder.py)",
+      "Bash(/Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -)",
+      "Bash(echo \"---EXIT $?---\")",
+      "Bash(sed -n '216,230p' src/rebalance/ingest/daily_report.py)",
+      "Bash(sed -n '183,196p' src/rebalance/ingest/note_builder.py)",
+      "Bash(sed -n '228,240p' src/rebalance/ingest/project_inference.py)",
+      "Bash(sed -n '104,115p' src/rebalance/ingest/calendar_config.py)"
     ]
   }
 }
