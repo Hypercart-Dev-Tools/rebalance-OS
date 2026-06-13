@@ -730,13 +730,30 @@ def _refresh_calendar(database_path: Path, *, since_days: int, dry_run: bool) ->
             "calendar sync: person=%s calendar_id=%s days_back=%d",
             tc.person, tc.calendar_id, since_days,
         )
-        tr = sync_calendar(
-            database_path=database_path,
-            calendar_id=tc.calendar_id,
-            person=tc.person,
-            days_back=since_days,
-            days_forward=7,
-        )
+        try:
+            tr = sync_calendar(
+                database_path=database_path,
+                calendar_id=tc.calendar_id,
+                person=tc.person,
+                days_back=since_days,
+                days_forward=7,
+            )
+        except Exception as e:  # noqa: BLE001 — one teammate calendar must not abort the run
+            # A revoked share / 404 / transient 5xx on one teammate calendar
+            # (the most failure-prone input — third-party shares change outside
+            # the operator's control) must not discard the operator's own
+            # already-committed sync result or suppress the dashboard note.
+            # Mirror _refresh_github's per-repo isolation.
+            logger.warning(
+                "calendar sync failed: person=%s calendar_id=%s error=%s",
+                tc.person, tc.calendar_id, e,
+            )
+            team_results.append({
+                "person": tc.person,
+                "calendar_id": tc.calendar_id,
+                "error": str(e),
+            })
+            continue
         logger.info(
             "calendar sync done: person=%s fetched=%d stored=%d",
             tc.person, tr.events_fetched, tr.events_stored,
