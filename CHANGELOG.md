@@ -6,6 +6,30 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.40.0] - 2026-06-12
+
+P2 Phase 1 — team-calendar signal — plus a max-effort code-review hardening pass
+(findings A–G) and a follow-up external review.
+
+### Added
+- **Team-calendar signal (P2 Phase 1).** `calendar_config.json` gains a `team_calendars` list (`{person, calendar_id}`); `refresh_index` syncs each teammate calendar alongside the operator's own and attributes rows via a new `person` column on `calendar_events`.
+- **`calendar_events` composite primary key** (migration `0005`): row identity is now `(id, calendar_id)` so the same Google event id can coexist on the operator's and a teammate's calendar; adds the `person` column and a `(calendar_id, start_time)` index.
+- **Gemini cloud synthesis** for `ask()` (preferred over local Qwen), with the API key resolved from Google Secret Manager.
+
+### Fixed
+- **`calendar-sync` crashed on pre-0005 databases** — `sync_calendar` (the only writer of `calendar_events`) now runs migrations at the write chokepoint, so callers that skip `refresh_index` (notably the `calendar-sync` CLI) no longer hit `OperationalError: no such column: person`.
+- **One inaccessible teammate calendar aborted the whole calendar refresh** — the `team_calendars` loop now isolates per-calendar failures (mirroring the GitHub loop), so a revoked/404 teammate calendar no longer discards the operator's own sync result or suppresses the dashboard note.
+- **Operator reports/timesheet/inference came up empty under a non-'primary' config** — `get_day_data`, `note_builder`, and `project_inference` now read the operator's canonical `'primary'` rows (new `OPERATOR_CALENDAR_ID` constant) instead of `config.calendar_id`.
+- **Teammate-data export leak via misconfig** — a `team_calendars` entry whose `calendar_id` is the reserved `'primary'` is now rejected at config load (it would otherwise be exported off-machine to the pulse repo).
+- **Gemini synthesis crashed on MAX_TOKENS/SAFETY responses** — `_synthesize_gemini` parses defensively, raising a clear error (with finishReason/blockReason) and returning partial text instead of a raw `KeyError`/`IndexError`.
+- **Collectors ran against a half-migrated schema** — `refresh_index` now skips collectors (recording each scope as skipped) when `run_migrations` fails, instead of emitting confusing secondary errors.
+- **`calendar-sync --calendar-id` was silently ignored** — an explicit calendar id is now synced verbatim; only the operator's own default calendar is canonicalised to `'primary'`. `CalendarSyncResult` reports the calendar actually synced.
+- **Gemini key resolution** — `get_gemini_api_key` adds a `gcloud secrets versions access` fallback (the documented P2 pattern) so the key resolves even without the optional GCP Python package; env vars still short-circuit first.
+
+### Changed
+- **Migration runner owns each migration's transaction.** Migration files must no longer carry their own `BEGIN`/`COMMIT`; the runner wraps each one so a bare multi-statement migration that fails mid-script rolls back atomically (previously only self-wrapped migrations were safe). `0005` and the migrations README updated.
+- **Version metadata reconciled.** `pyproject.toml` (`0.35.0`) and `rebalance.__version__` (`0.39.2`) were stale relative to the changelog and are now aligned to `0.40.0`.
+
 ## [0.39.3] - 2026-06-12
 
 ### Changed
