@@ -23,13 +23,20 @@ log "=== rebalance pulse sync starting ==="
 
 "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1
 import json
+import os
 import sys
 from rebalance.ingest.pulse import publish_pulse
 from rebalance.paths import resolve_database_path
 
 db_path = resolve_database_path()
 print(f"database={db_path}")
-result = publish_pulse(db_path, dry_run=False, push=True)
+# Push is on by default. A device can opt out (render + commit locally only,
+# letting the git-pulse collector own the push) by setting PULSE_PUSH=false in
+# its launchd plist — this avoids redundant push conflicts on the shared
+# live-pulse.md when origin advances between runs.
+push = os.environ.get("PULSE_PUSH", "true").strip().lower() not in ("0", "false", "no", "off")
+print(f"push={push} (PULSE_PUSH={os.environ.get('PULSE_PUSH', 'unset')})")
+result = publish_pulse(db_path, dry_run=False, push=push)
 # Drop the rendered markdown from the log to keep it readable; the file on
 # disk is the artifact.
 result.pop("markdown", None)
