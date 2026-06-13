@@ -250,9 +250,18 @@ def sync_calendar(
 
     # Persist
     from rebalance.ingest.calendar_helpers import calendar_connection
+    from rebalance.ingest.db import run_migrations
 
     stored = 0
     with calendar_connection(database_path) as conn:
+        # Ensure the schema is fully migrated before writing the ``person``
+        # column (migration 0005). ``refresh_index`` migrates up front, but
+        # direct callers — e.g. the ``calendar-sync`` CLI — reach this leaf
+        # without that step and would otherwise hit a pre-0005 table and crash
+        # with "no such column: person". This is the single writer of
+        # calendar_events, so guaranteeing the schema here covers every path.
+        # Idempotent: a cheap no-op once the database is at the latest version.
+        run_migrations(conn)
         for event in all_events:
             event_id = event.get("id", "")
             summary = event.get("summary", "")

@@ -29,19 +29,15 @@ def _fake_event(event_id: str, summary: str) -> dict:
 
 
 def _seed_db(db: Path) -> None:
-    conn = sqlite3.connect(db)
-    conn.execute("""
-        CREATE TABLE calendar_events (
-            id TEXT NOT NULL, summary TEXT, start_time TEXT NOT NULL,
-            end_time TEXT, location TEXT, attendees_json TEXT,
-            calendar_id TEXT NOT NULL DEFAULT 'primary',
-            status TEXT, description TEXT, fetched_at TEXT NOT NULL,
-            person TEXT,
-            PRIMARY KEY (id, calendar_id)
-        )
-    """)
-    conn.execute("CREATE TABLE IF NOT EXISTS schema_version (version INTEGER)")
-    conn.commit()
+    # Build a *real* fully-migrated database (composite PK + person column come
+    # from migration 0005) rather than hand-rolling the table. The hand-rolled
+    # form both masked the pre-0005 crash path and shipped a malformed
+    # schema_version ledger; run_migrations gives the authentic current schema.
+    from rebalance.ingest.db.connection import get_connection
+    from rebalance.ingest.db.migrate import run_migrations
+
+    conn = get_connection(db)
+    run_migrations(conn)
     conn.close()
 
 
