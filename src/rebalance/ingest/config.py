@@ -1165,15 +1165,23 @@ def get_gemini_api_key() -> str | None:
     """Return the Gemini API key.
 
     Resolution order:
-      1. Google Secret Manager (requires google-cloud-secret-manager and
-         GOOGLE_CLOUD_PROJECT env var; secret name from GEMINI_SECRET_NAME,
-         default "gemini-api-key")
-      2. GEMINI_API_KEY environment variable
-      3. GOOGLE_API_KEY environment variable
+      1. Google Secret Manager via the ``google-cloud-secret-manager`` Python
+         package (requires GOOGLE_CLOUD_PROJECT; secret name from
+         GEMINI_SECRET_NAME, default "gemini-api-key").
+      2. GEMINI_API_KEY environment variable.
+      3. GOOGLE_API_KEY environment variable.
+      4. Google Secret Manager via the ``gcloud secrets versions access`` CLI —
+         the pattern the P2 design specifies (P2 decision #5). This last-resort
+         path means a machine that can reach the secret through gcloud but lacks
+         the optional Python package/env still resolves the key instead of
+         silently falling back to local Qwen. It only runs when nothing above
+         resolved, so it adds no cost to the common env-var or package setups.
     """
+    secret_name = os.environ.get("GEMINI_SECRET_NAME", "gemini-api-key")
     project = os.environ.get("GOOGLE_CLOUD_PROJECT")
+
+    # 1. Python SDK (explicit project required).
     if project:
-        secret_name = os.environ.get("GEMINI_SECRET_NAME", "gemini-api-key")
         try:
             from google.cloud import secretmanager  # noqa: PLC0415
             client = secretmanager.SecretManagerServiceClient()
@@ -1182,9 +1190,42 @@ def get_gemini_api_key() -> str | None:
             value = response.payload.data.decode("utf-8").strip()
             if value:
                 return value
-        except Exception:  # noqa: BLE001 — library absent or secret missing
+        except Exception:  # noqa: BLE001 — library absent or secret missing; try below
             pass
-    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+
+    # 2-3. Environment variables (fast path for the common dev setup).
+    env_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if env_key:
+        return env_key
+
+    # 4. gcloud CLI fallback (the documented P2 pattern) — last resort.
+    return _gemini_key_via_gcloud(project, secret_name)
+
+
+def _gemini_key_via_gcloud(project: str | None, secret_name: str) -> str | None:
+    """Fetch the Gemini secret with ``gcloud secrets versions access``.
+
+    Returns None on any failure (gcloud absent, unauthenticated, or the secret
+    is unreadable). Uses gcloud's active project when GOOGLE_CLOUD_PROJECT is
+    unset. The arg list is fixed (no shell), so the env-derived secret name
+    cannot inject.
+    """
+    import shutil  # noqa: PLC0415
+    import subprocess  # noqa: PLC0415
+
+    if not shutil.which("gcloud"):
+        return None
+    cmd = ["gcloud", "secrets", "versions", "access", "latest", "--secret", secret_name]
+    if project:
+        cmd += ["--project", project]
+    try:
+        completed = subprocess.run(
+            cmd, capture_output=True, text=True, timeout=15, check=True
+        )
+    except Exception:  # noqa: BLE001 — gcloud missing/unauthed/secret absent
+        return None
+    value = completed.stdout.strip()
+    return value or None
 
 
 # ---------------------------------------------------------------------------
