@@ -42,6 +42,7 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 - [Phase 0 progress log](#phase-0-progress-log)
 - [Phase 3 — entity_graph attribution layer (deferred)](#phase-3--entity_graph-attribution-layer-v06-deferred)
 - [Prior art & reuse (3-source deep research)](#prior-art--reuse-3-source-deep-research-2026-06-12)
+- [Sleuth outcome log — dropped-ball label oracle (cross-project)](#sleuth-outcome-log--dropped-ball-label-oracle-cross-project)
 
 ---
 
@@ -108,7 +109,7 @@ the "pattern library / model with levers" idea made concrete.
 | **Redundancy penalty** | How hard to suppress a teammate item already echoed in the operator's own data | The *additivity* knob; the content de-dup is its hard floor |
 | **Vagueness discount** | Down-weight "Slack&Emails"/"Cron research"; up-weight named PR/issue/incident/email actions | The judge-calibration rule, as a threshold |
 | **Owner-bias correction** | Up-weight team *operational/client* work because the operator's own GitHub stream is skewed toward his *own tooling/system* work (Noel's disclosure, 2026-06-12) | **Default ON** — see the Phase-0 exit-artifact note |
-| **Drop sensitivity** | How aggressively to flag blocked/stale *delegated* work ("about to be dropped") | The NMI-vault blocker catch (06-11) is the canonical hit |
+| **Drop sensitivity** | How aggressively to flag blocked/stale *delegated* work ("about to be dropped") | The NMI-vault blocker catch (06-11) is the canonical hit. Ground-truth labels: [Sleuth outcome log](#sleuth-outcome-log--dropped-ball-label-oracle-cross-project) |
 
 The decision rule the spike validated — *"prefer the teammate signal when it's not already in my
 own data, and especially when my own stream structurally can't see it"* — is the default tuning,
@@ -448,6 +449,11 @@ de-duped, with the arm mapping sealed in `.ab_key.json` and the LLM judge's vote
 - **Applied 0005 to the live DB:** v4→v5, **611 rows preserved**, composite PK + `person` + indexes, `integrity_check: ok`. Backup `rebalance.db.pre-0005.bak`. Commits **c3a2bb7**, **04b5939**. Full suite **866 passed**.
 - **Remaining Phase 1:** `team_calendars` list config + per-person attribution + Gemini-from-GSM inference + observability/tests + `/phase-qa`, then the **Ultra Code pre-merge review** before `main`.
 
+**2026-06-12 (cross-project link captured) — Sleuth's outcome log = HiQS's dropped-ball label oracle.**
+- The Sleuth reminder feed in Arm A is **active-state only** (`activeOnly: true` snapshot via `pulse._query_day_activity()`); it discards reminder *outcomes* — and *delegation* outcomes — which is exactly what the [drop-sensitivity lever](#tunable-levers--v05--decided-2026-06-12) and the dropped-ball detector need, and what the datasets-rider sweep concluded must be self-logged (no public corpus has real dropped-ball labels). New section: [Sleuth outcome log — dropped-ball label oracle](#sleuth-outcome-log--dropped-ball-label-oracle-cross-project).
+- **Staging:** bootstrap dropped-ball labels now by diffing the existing ~5-min `rebalance-git-pulse` snapshot history (crude event log, zero Sleuth changes); consume a first-class Sleuth completion/event export later (pairs with the Phase 3 entity_graph `reminder` edges).
+- **Sleuth side:** Noel committed to running the Sleuth `P3` (event-sourced core) Phase-0 spike; the sleuth-app `P3` doc now names HiQS as the downstream consumer and records the delegation edge (`assigneeId` vs `originalSenderId`) as the no-prior-art delegated-dropped-ball label.
+
 ---
 
 ## Phase 3 — entity_graph attribution layer (v0.6, deferred)
@@ -515,3 +521,72 @@ inflated some star counts.
 stands: Phase 1 leak/contamination fixes → schema migration → v0.5 lever scorer (Taskwarrior-style,
 TOON-serialized to Gemini) → Phase 3 entity_graph (SortingHat-style attribution). A datasets-rider
 sweep (offline-eval data for the ranker/dropped-ball detector) is still out with the agents.
+
+---
+
+## Sleuth outcome log — dropped-ball label oracle (cross-project)
+
+> **Why this is here:** Sleuth reminders are already a signal in Arm A, but only as a
+> *current-state snapshot*. The one thing HiQS's dropped-ball detector actually needs —
+> **outcomes over time, including *delegated* outcomes** — is exactly what that snapshot throws
+> away. Sleuth's planned event-sourced core (sleuth-app `P3`, `PROJECT/1-INBOX/P3-EVENT-SOURCED-CORE.md`)
+> turns it into a cheap, trustworthy export. Captured in the main doc so it isn't lost.
+
+**Where Sleuth sits today.** Sleuth reminders enter Arm A via `pulse._query_day_activity()` (0.39.3
+reads the pre-rendered `display.*` sections from the published git-pulse file). That feed is
+`filters.activeOnly: true` — **active reminders only.** When a reminder is completed, snoozed, or
+cancelled it simply *vanishes* from the next snapshot; the outcome is never recorded or read.
+
+**Why that's the gap under the part HiQS actually sells.** The [drop-sensitivity lever](#tunable-levers--v05--decided-2026-06-12)
+and the dropped-ball detector are the core value (Phase 0: 5/5 confirmed catches). But a snapshot
+can say "X is still open," not "X was committed and never finished," and it is blind to the
+*delegation* outcome — *did the person Noel delegated to actually do it?* The canonical Phase-0
+catch (06-11: **Bloomz HPOS switchover BLOCKED by NMI vault — work Noel had delegated**) is a
+**delegated dropped ball.** Sleuth reminders already carry `assigneeId` vs `originalSenderId` (the
+delegation edge *X asked Y*); the outcome that completes the label — Y finished / Y never did — is
+the single fact the snapshot discards.
+
+**This is also the eval oracle.** The datasets-rider sweep (last line of [Prior art](#prior-art--reuse-3-source-deep-research-2026-06-12))
+keeps landing on the same wall: no public corpus joins multi-source activity with *real*
+dropped-ball labels, so the detector's answer-key has to be self-logged. Sleuth reminder outcomes
+**are** that answer-key — and the highest-precision label source in the whole signal set, because a
+reminder is a *declared intent with a verifiable outcome* where GitHub/calendar/email are only
+activity *traces*. The no-prior-art feature the 3-source scan flagged — **cross-source dropped-ball
+detection over delegated work** — is reachable the moment the outcome export exists.
+
+**The upstream enabler (sleuth-app side, not ours to build).** Sleuth `P3` funnels every reminder
+state change through one chokepoint that *appends an immutable event* (`ReminderCreated` /
+`Completed` / `Snoozed` / `Cancelled`) as the authoritative write. A completion/event projection
+exported to `rebalance-git-pulse` is then a one-function fold beside today's snapshot. Two reasons
+it must be `P3`, not just "read Sleuth's `CompletionStore`": (1) the Sleuth review caught that
+today's store can **drop a completion on shutdown** — a lossy label set injects *phantom*
+dropped-balls and silently poisons the detector; authoritative append makes the labels complete.
+**Label integrity, not just durability.** (2) Event sourcing carries the full
+created→scheduled→completed/dropped *sequence per reminder*, which is what cycle-time and
+snooze-as-low-priority features need. **Noel has committed to running the `P3` Phase-0 spike on the
+sleuth-app side**; that doc now names HiQS as the downstream consumer.
+
+**Staging — earn it, HiQS-style.**
+
+- **Now (v0.5, zero Sleuth changes):** `rebalance-git-pulse` is a git repo that commits the
+  active-reminder snapshot every ~5 min, so **its commit history is already a crude event log.**
+  Diff consecutive snapshots (present at T, gone at T+1 → completed/dropped around then) to
+  reconstruct created→dropped labels and stand up the dropped-ball eval harness **before any Sleuth
+  work lands.** Lossy — hourly heartbeat granularity, can't separate completed from cancelled,
+  snoozes invisible — but enough to prove the signal earns the integration. (This is literally
+  Sleuth `P3`'s own git-as-log idea, used early and read-only.)
+- **Later (pairs with [Phase 3 entity_graph](#phase-3--entity_graph-attribution-layer-v06-deferred)):**
+  consume the first-class completion/event export → high-fidelity labels + delegation outcomes,
+  landing as edges on the `reminder` entity (`reminder completed` / `reminder dropped` /
+  `person delegated_to`), feeding the drop-sensitivity lever and owner-bias correction with
+  *behavior*, not just current counts.
+
+**Honest limits.** Sleuth only labels commitments that *became reminders* — high precision, partial
+recall (plenty of dropped work never passes through Sleuth). Per-workspace volume is small
+(tens–hundreds) — fine for heuristics and offline eval, thin for heavy per-user ML. And it depends
+on the export bridge being built on the Sleuth side; until then the git-pulse-diff bootstrap is the
+stand-in.
+
+**Bottom line:** Sleuth's log is HiQS's **dropped-ball label oracle** — the missing answer-key for
+the detector the datasets-rider sweep is scoping, and the only source that carries *delegation*
+outcomes. Snapshot now (bootstrap), first-class export later (Sleuth `P3`).
