@@ -10,7 +10,12 @@ from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from rebalance.ingest.calendar_config import CalendarConfig, filter_events, load_review_decisions
+from rebalance.ingest.calendar_config import (
+    OPERATOR_CALENDAR_ID,
+    CalendarConfig,
+    filter_events,
+    load_review_decisions,
+)
 from rebalance.ingest.calendar_helpers import event_duration_minutes
 from rebalance.ingest.config import get_gemini_api_key
 from rebalance.ingest.db import db_connection, ensure_calendar_schema
@@ -189,7 +194,9 @@ def _load_recent_calendar_activity(
               AND DATE(start_time) <= ?
             ORDER BY start_time DESC
             """,
-            (config.calendar_id, start_date.isoformat(), target_date.isoformat()),
+            # Operator rows are canonically stored as 'primary' (see
+            # OPERATOR_CALENDAR_ID); config.calendar_id would miss them.
+            (OPERATOR_CALENDAR_ID, start_date.isoformat(), target_date.isoformat()),
         ).fetchall()
 
     events = [

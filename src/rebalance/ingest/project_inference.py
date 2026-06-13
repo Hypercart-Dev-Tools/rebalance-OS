@@ -8,7 +8,11 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from rebalance.ingest.calendar_config import CalendarConfig, filter_events
+from rebalance.ingest.calendar_config import (
+    OPERATOR_CALENDAR_ID,
+    CalendarConfig,
+    filter_events,
+)
 from rebalance.ingest.calendar_helpers import event_duration_minutes, parse_calendar_dt
 from rebalance.ingest.config import get_github_ignored_repos
 from rebalance.ingest.db import (
@@ -232,7 +236,9 @@ def _load_calendar_events(
               AND DATE(start_time) BETWEEN ? AND ?
             ORDER BY start_time ASC
             """,
-            (config.calendar_id, min_date, max_date),
+            # Operator rows are canonically stored as 'primary' (see
+            # OPERATOR_CALENDAR_ID); config.calendar_id would miss them.
+            (OPERATOR_CALENDAR_ID, min_date, max_date),
         ).fetchall()
 
     events = [

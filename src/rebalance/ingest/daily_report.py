@@ -15,6 +15,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from rebalance.ingest.calendar_config import (
+    OPERATOR_CALENDAR_ID,
     CalendarConfig,
     filter_events,
     load_review_decisions,
@@ -221,7 +222,9 @@ def get_day_data(
                WHERE DATE(start_time) = ?
                  AND calendar_id = ?
                ORDER BY start_time ASC""",
-            (date_str, config.calendar_id),
+            # Operator rows are canonically stored as 'primary'; filtering on
+            # config.calendar_id would miss them whenever it is non-'primary'.
+            (date_str, OPERATOR_CALENDAR_ID),
         ).fetchall()
 
     events = [

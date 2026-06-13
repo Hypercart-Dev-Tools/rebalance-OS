@@ -54,6 +54,14 @@ from rebalance.tz_utils import local_tz
 DEFAULT_CONFIG_PATH = Path(__file__).parent.parent.parent.parent / "temp" / "calendar_config.json"
 REVIEW_DECISIONS_PATH = Path(__file__).parent.parent.parent.parent / "temp" / "review_decisions.json"
 
+# The operator's own calendar is always stored under this canonical id — the
+# Google alias for the authenticated user's default calendar. index_ops and
+# refresh_calendar_source normalise the operator's stored rows to it regardless
+# of what ``calendar_id`` says in config, so every operator-scoped read MUST
+# filter on this constant (not ``config.calendar_id``) for write/read to agree.
+# It is also the reserved value a team_calendars entry may not use.
+OPERATOR_CALENDAR_ID = "primary"
+
 DEFAULT_CONFIG: dict[str, Any] = {
     "calendar_id": "primary",
     "team_calendars": [],
