@@ -78,15 +78,22 @@ def run_migrations(conn: sqlite3.Connection) -> int:
     for mig_version, path in discover_migrations():
         if mig_version <= version:
             continue
+        script = path.read_text(encoding="utf-8")
         try:
-            conn.executescript(path.read_text(encoding="utf-8"))
+            # The runner owns the transaction, so atomicity never depends on a
+            # migration file wrapping itself in BEGIN ... COMMIT. executescript()
+            # issues an implicit COMMIT first (flushing the baseline stamp), then
+            # runs the wrapped script as one explicit transaction. If any
+            # statement fails mid-script the transaction is left open and the
+            # except below rolls the whole migration back — the database stays at
+            # the prior version with the original tables intact, never
+            # half-applied. Migration files therefore MUST NOT contain their own
+            # transaction control (see migrations/README.md); a nested BEGIN
+            # would raise and the migration would roll back rather than apply.
+            conn.executescript(f"BEGIN;\n{script}\nCOMMIT;")
             _stamp(conn, mig_version)
             conn.commit()
         except Exception:
-            # A migration that opens its own transaction (BEGIN ... COMMIT) leaves
-            # it open if a statement fails mid-script; roll back so a destructive
-            # table rebuild is atomic — the database stays at the prior version
-            # with the original tables intact, rather than half-applied.
             conn.rollback()
             raise
         version = mig_version

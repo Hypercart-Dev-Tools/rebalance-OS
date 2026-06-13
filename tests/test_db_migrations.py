@@ -80,21 +80,22 @@ class MigrationRunnerTests(unittest.TestCase):
             finally:
                 migrate.MIGRATIONS_DIR = original_dir
 
-    def test_failed_migration_rolls_back_atomically(self) -> None:
-        # A migration that wraps a destructive table rebuild in BEGIN ... COMMIT
-        # must be atomic: if a statement fails mid-script, the runner rolls back
-        # so the ORIGINAL table and data survive and the version does not advance.
+    def test_failed_bare_migration_rolls_back_atomically(self) -> None:
+        # A BARE multi-statement migration (no BEGIN/COMMIT — the form the README
+        # endorses) that fails mid-script must still be atomic: the runner wraps
+        # it in a transaction and rolls back, so the ORIGINAL table and data
+        # survive and the version does not advance. Before the runner owned the
+        # transaction, executescript auto-committed each statement and the early
+        # statements (the dropped/renamed table) were lost — this is the gap.
         with tempfile.TemporaryDirectory() as tmp:
             mig_dir = Path(tmp) / "migrations"
             mig_dir.mkdir()
             (mig_dir / "0002_bad_rebuild.sql").write_text(
-                "BEGIN;\n"
                 "CREATE TABLE keepme_new (id TEXT NOT NULL, v TEXT, PRIMARY KEY(id));\n"
                 "INSERT INTO keepme_new (id, v) SELECT id, v FROM keepme;\n"
                 "DROP TABLE keepme;\n"
                 "ALTER TABLE keepme_new RENAME TO keepme;\n"
-                "INSERT INTO keepme (nonexistent_col) VALUES ('x');\n"  # fails here
-                "COMMIT;\n",
+                "INSERT INTO keepme (nonexistent_col) VALUES ('x');\n",  # fails here
                 encoding="utf-8",
             )
             db_path = Path(tmp) / "rebalance.db"
@@ -108,11 +109,69 @@ class MigrationRunnerTests(unittest.TestCase):
                     conn.commit()
                     with self.assertRaises(Exception):
                         run_migrations(conn)
-                    # Original table + data fully intact after the rollback.
+                    # Original table + data fully intact after the rollback — the
+                    # DROP/RENAME earlier in the script must NOT have stuck.
                     rows = conn.execute(
                         "SELECT id, v FROM keepme ORDER BY id").fetchall()
                     self.assertEqual([tuple(r) for r in rows], [("a", "1"), ("b", "2")])
+                    # The scratch table must not survive either.
+                    leftover = conn.execute(
+                        "SELECT name FROM sqlite_master WHERE name = 'keepme_new'"
+                    ).fetchall()
+                    self.assertEqual(leftover, [])
                     # Version did not advance past the baseline.
+                    self.assertEqual(
+                        current_schema_version(conn), BASELINE_SCHEMA_VERSION)
+            finally:
+                migrate.MIGRATIONS_DIR = original_dir
+
+    def test_bare_multi_statement_migration_applies_atomically(self) -> None:
+        # The happy path for the README-endorsed bare form: a successful
+        # multi-statement migration applies fully and advances the version.
+        with tempfile.TemporaryDirectory() as tmp:
+            mig_dir = Path(tmp) / "migrations"
+            mig_dir.mkdir()
+            (mig_dir / "0002_two_tables.sql").write_text(
+                "CREATE TABLE alpha (id INTEGER PRIMARY KEY);\n"
+                "CREATE TABLE beta (id INTEGER PRIMARY KEY);\n",
+                encoding="utf-8",
+            )
+            db_path = Path(tmp) / "rebalance.db"
+            original_dir = migrate.MIGRATIONS_DIR
+            migrate.MIGRATIONS_DIR = mig_dir
+            try:
+                with db_connection(db_path, ensure_schema) as conn:
+                    self.assertEqual(run_migrations(conn), 2)
+                    conn.execute("SELECT COUNT(*) FROM alpha")
+                    conn.execute("SELECT COUNT(*) FROM beta")
+            finally:
+                migrate.MIGRATIONS_DIR = original_dir
+
+    def test_self_wrapped_migration_is_rejected_and_rolls_back(self) -> None:
+        # A migration that opens its own BEGIN now hits a nested-transaction error
+        # under the runner's wrapper and is rolled back rather than applied — the
+        # README forbids self-wrapping, and the failure must be safe (no partial
+        # apply, version unchanged).
+        with tempfile.TemporaryDirectory() as tmp:
+            mig_dir = Path(tmp) / "migrations"
+            mig_dir.mkdir()
+            (mig_dir / "0002_self_wrapped.sql").write_text(
+                "BEGIN;\n"
+                "CREATE TABLE should_not_exist (id INTEGER PRIMARY KEY);\n"
+                "COMMIT;\n",
+                encoding="utf-8",
+            )
+            db_path = Path(tmp) / "rebalance.db"
+            original_dir = migrate.MIGRATIONS_DIR
+            migrate.MIGRATIONS_DIR = mig_dir
+            try:
+                with db_connection(db_path, ensure_schema) as conn:
+                    with self.assertRaises(Exception):
+                        run_migrations(conn)
+                    leftover = conn.execute(
+                        "SELECT name FROM sqlite_master WHERE name = 'should_not_exist'"
+                    ).fetchall()
+                    self.assertEqual(leftover, [])
                     self.assertEqual(
                         current_schema_version(conn), BASELINE_SCHEMA_VERSION)
             finally:

@@ -7,11 +7,12 @@
 -- index on (calendar_id, start_time) for per-calendar day-window queries.
 --
 -- SQLite cannot ALTER a primary key in place, so the table is rebuilt
--- (create -> copy -> drop -> rename). ATOMICITY: the whole rebuild runs inside
--- one explicit transaction (BEGIN ... COMMIT). migrate.py rolls back on any
--- error, so a crash mid-rebuild leaves the ORIGINAL calendar_events fully intact
--- and the migration simply re-runs next time — there is no window where the only
--- copy of the data lives in the scratch table.
+-- (create -> copy -> drop -> rename). ATOMICITY: the runner (migrate.py) wraps
+-- every migration in a single transaction and rolls back on any error, so a
+-- crash mid-rebuild leaves the ORIGINAL calendar_events fully intact and the
+-- migration simply re-runs next time — there is no window where the only copy
+-- of the data lives in the scratch table. This file therefore carries NO BEGIN/
+-- COMMIT of its own (a nested BEGIN would error under the runner's transaction).
 --
 -- Notes:
 --   * The old PK guaranteed `id` was unique, so (id, calendar_id) is trivially
@@ -20,8 +21,6 @@
 --     NULLs in non-INTEGER PRIMARY KEY columns unless told otherwise.
 --   * Explicit column lists (not SELECT *) so the new `person` column defaults
 --     to NULL on copy.
-
-BEGIN;
 
 DROP TABLE IF EXISTS calendar_events_new;
 
@@ -55,5 +54,3 @@ CREATE INDEX IF NOT EXISTS idx_calendar_start
     ON calendar_events(start_time);
 CREATE INDEX IF NOT EXISTS idx_calendar_id_start
     ON calendar_events(calendar_id, start_time);
-
-COMMIT;

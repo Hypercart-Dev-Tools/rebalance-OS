@@ -47,10 +47,19 @@ still follows the migration rule above.
    after the highest existing file, zero-padded to four digits (`0002`, `0003`, …).
 2. Write forward-only SQL. Be defensive — prefer `IF EXISTS` / `IF NOT EXISTS`
    so a partially-applied run can be re-run safely.
-3. That's it. `run_migrations()` discovers the file, applies it once, and records
-   the new version in the `schema_version` table.
+3. **Do not add your own `BEGIN` / `COMMIT`.** The runner wraps every migration
+   in a single transaction and rolls back on any error, so a multi-statement
+   migration that fails mid-script is atomic — the database stays at the prior
+   version with the original tables intact, never half-applied. A file that
+   opens its own transaction would hit a nested `BEGIN` and be rolled back
+   instead of applied. (The rare statement that cannot run inside a transaction —
+   `VACUUM`, `PRAGMA foreign_keys` toggles around a table rebuild — is not
+   supported by the wrapper; raise it before writing such a migration.)
+4. That's it. `run_migrations()` discovers the file, applies it once inside its
+   transaction, and records the new version in the `schema_version` table.
 
-Example — `0002_add_repo_topic.sql`:
+Example — `0002_add_repo_topic.sql` (no transaction control — the runner
+provides it):
 
 ```sql
 ALTER TABLE github_repo_meta ADD COLUMN topics_json TEXT;
