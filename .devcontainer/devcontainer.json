@@ -1,0 +1,5 @@
+{
+  "name": "rebalance-OS",
+  "image": "mcr.microsoft.com/devcontainers/python:3.13",
+  "forwardPorts": [8787]
+}
