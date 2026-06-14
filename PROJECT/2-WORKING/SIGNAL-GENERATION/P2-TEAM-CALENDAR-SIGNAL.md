@@ -18,6 +18,13 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 > to get dropped." Phase 0 is an A/B test that must **earn** Phase 1. We are willing to
 > kill this if the signal is mostly redundant with GitHub + Slack.
 
+> **Related infra (cross-link):** the `rebalance-git-pulse` repo this project
+> exports to and reads from is being refactored — see
+> [GIT-PULSE-REFACTOR.md](PROJECT/2-WORKING/GIT-PULSE-REFACTOR.md). That refactor
+> is **intentionally gated to start only after this project's Phase 1 is merged to
+> `main`** (it touches `sync_snapshot.py` / `index_ops.py` / `pulse.py` and the
+> per-device export naming). No action needed here — noted so the dependency is visible.
+
 ---
 
 ## Status at a glance
