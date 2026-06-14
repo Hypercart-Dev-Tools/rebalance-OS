@@ -24,7 +24,7 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 
 | ✅ Most recently completed phase | ⏭️ What's next |
 |---|---|
-| **Phase 1 COMPLETE (2026-06-12)** — all blocking items shipped: privacy leaks closed, migration 0005 applied (composite PK + `person` column, atomic), `team_calendars` config (matthew/jose/jinhui), per-person sync attribution, operator calendar canonicalized to `'primary'`, Gemini-from-GSM wiring, 12 new tests (878 total). Live sync confirmed: operator 243 · matthew 239 · jose 3 · jinhui 7 events. Commits c3a2bb7, 04b5939, 788e879, **6588c8a**. | **`/code-review ultra`** (pre-merge review on `development` branch), triage findings, merge to `main`, push. Then **Phase 2**: v0.5 dashboard view + `ask` parity + Jose/Jinhui onboarding. |
+| **Phase 1 COMPLETE (2026-06-12) + HARDENED (2026-06-13)** — all blocking items shipped: privacy leaks closed, migration 0005 applied (composite PK + `person` column, atomic), `team_calendars` config (matthew/jose/jinhui), per-person sync attribution, operator calendar canonicalized to `'primary'`, Gemini-from-GSM wiring. Then **two review passes** (local A–G + external F1–F4) fixed with regression tests, shipped as **0.40.0** (878 → **916 tests**). Live sync confirmed: operator 243 · matthew 239 · jose 3 · jinhui 7 events. Commits c3a2bb7, 04b5939, 788e879, **6588c8a**; hardening e9e8e3b…99448cc. | **Optional** cloud `claude ultrareview` (3rd independent pass) → `/phase-qa` SOLID+DRY gate → **merge `development` → `main`, push**. Then **Phase 2**: v0.5 dashboard view + `ask` parity + Jose/Jinhui onboarding. |
 
 ---
 
@@ -274,8 +274,8 @@ a single second calendar, modeled so the Phase-2 jump to N people is config, not
 - [x] **Export leak closed (c3a2bb7, decision #3 / gap #4):** `export_calendar_snapshot` now filters `WHERE calendar_id = 'primary'` (default deny) + regression test. Teammate rows never reach the pulse repo.
 - [x] **Reader contamination fixed (c3a2bb7 + 04b5939, gap #5):** `calendar_id`-scoped (default `'primary'`, `None` = all) via a shared `_calendar_id_filter` helper in `get_upcoming_events` / `get_recent_events` / `get_daily_totals`, plus `querier` vacation check, `pulse._query_calendar_upcoming`, **and the review-found `scripts/dashboard.py` (TUI + web/pulse.html) + `scripts/spike_morning_brief.py`** readers. Reader-scope + off-machine + no-contamination tests added.
 - [x] **Phase-0 Matt rows deleted (2026-06-12):** `DELETE WHERE calendar_id='<matt>'` — table primary-only (611). Phase 1 re-syncs cleanly behind the filters.
-- [x] **Schema migration 0005 — DONE & applied to live DB (04b5939):** composite PK `(id, calendar_id)` + `person TEXT` + index `(calendar_id, start_time)`. First table-rebuild in the repo; made **atomic** (BEGIN/COMMIT + `migrate.py` rollback-on-error) after the adversarial review found a non-atomic re-run could destroy all calendar data. Applied to live DB: v4→v5, 611 rows preserved, integrity ok. Backup at `rebalance.db.pre-0005.bak`.
-- [x] **Canonicalize "own calendar = `primary`" (review finding #4 — 6588c8a):** `refresh_calendar_source()` now normalises the operator's own calendar to `'primary'` regardless of `config.calendar_id`; `_refresh_calendar` in `index_ops.py` always passes `calendar_id="primary"` for the operator sync. All DB filters remain correct even if an operator previously set an email in the config.
+- [x] **Schema migration 0005 — DONE & applied to live DB (04b5939):** composite PK `(id, calendar_id)` + `person TEXT` + index `(calendar_id, start_time)`. First table-rebuild in the repo; made **atomic** after the adversarial review found a non-atomic re-run could destroy all calendar data. *Originally* via self-wrapped `BEGIN/COMMIT`; **hardened 2026-06-13 (review finding F)** so the **`migrate.py` runner owns the transaction** and rolls back on error — `0005` no longer self-wraps, and bare future migrations are atomic too (migrations README updated). Applied to live DB: v4→v5, 611 rows preserved, integrity ok. Backup at `rebalance.db.pre-0005.bak`.
+- [x] **Canonicalize "own calendar = `primary`" (review finding #4 — 6588c8a; refined 2026-06-13 — F1):** `_refresh_calendar` in `index_ops.py` always passes `calendar_id="primary"` for the operator sync, and `refresh_calendar_source()` canonicalises the operator's **default** calendar to `'primary'`. **F1 refinement:** an *explicit* `calendar-sync --calendar-id <id>` is now synced **verbatim** (it was being silently rewritten to `'primary'`); only the no-override operator default canonicalises. `config.calendar_id` is therefore a vestigial/compat field (see its field note in [calendar_config.py](src/rebalance/ingest/calendar_config.py)). All DB filters remain correct.
 - [x] **Config (6588c8a):** `TeamCalendarEntry` dataclass + `team_calendars: list[TeamCalendarEntry]` added to [calendar_config.py](src/rebalance/ingest/calendar_config.py) with `field(default_factory=list)` (no positional-arg breakage). `temp/calendar_config.json` populated with matthew, jose, jinhui (gitignored).
 - [x] **Refresh (6588c8a):** `_refresh_calendar` syncs `primary` (operator, `person=None`) + each `team_calendars` entry (`person=<label>`); structured INFO log lines per sync; result envelope includes `team_calendars: [{person, calendar_id, events_fetched, events_stored}]`.
 - [x] **Pulse repo privacy confirmed (2026-06-12):** `Hypercart-Dev-Tools/rebalance-git-pulse` is **PRIVATE** (`gh repo view`). The gating concern (decision #3) is satisfied for visibility; the code-level export filter above is still required (default deny).
@@ -284,6 +284,25 @@ a single second calendar, modeled so the Phase-2 jump to N people is config, not
 - [x] **Inference path (decision #5 — 6588c8a):** `querier.ask()` now tries `_synthesize_gemini()` first (key via `get_gemini_api_key()` → GSM/env, never logged); falls back to local Qwen if key absent or call fails. Same REST pattern as [repair.py](src/rebalance/repair.py).
 - [x] **Observability/tests (6588c8a):** 12 new tests (878 total) — `TeamCalendarEntry` load/save/edge cases, person attribution (operator=NULL, teammate=label, composite PK coexistence). Structured INFO log lines per sync in `_refresh_calendar`.
 - [ ] **SOLID + DRY gate** (see [standing constraints](#standing-design-constraints-phase-1-onward)): run `/phase-qa` before final merge — deferred to post Ultra Code review session.
+
+### Phase 1 hardening — review outcomes (2026-06-13)
+
+Two independent review passes on `development` after Phase 1; **every finding fixed with a regression test**, shipped as **0.40.0** (916 tests green).
+
+- **Local max-effort review — findings A–G** (`e9e8e3b`…`f0b53be`):
+  - **A** — `calendar-sync` crashed on pre-0005 DBs → `sync_calendar` (the only writer of `calendar_events`) now runs `run_migrations` at the write chokepoint.
+  - **B** — one inaccessible teammate calendar aborted the whole calendar refresh → per-calendar `try/except` isolates failures (mirrors the GitHub loop).
+  - **C** — operator reports/timesheet/inference came up empty under a non-`'primary'` config → `get_day_data`/`note_builder`/`project_inference` filter the canonical `OPERATOR_CALENDAR_ID`.
+  - **D** — a `team_calendars` entry with `calendar_id: "primary"` leaked teammate data off-machine → rejected at config load.
+  - **E** — Gemini synthesis crashed on MAX_TOKENS/SAFETY responses → defensive parse (clear error + partial-text return).
+  - **F** — migration atomicity depended on each `.sql` self-wrapping → the **runner now owns the transaction**; 0005 de-wrapped; README rule added.
+  - **G** — collectors ran against a half-migrated schema on migration failure → `refresh_index` gates collectors behind the migration result.
+- **External review (`PROJECT/RELAY/f0b53be-REVIEW.md`) — findings F1–F4** (`88cdb73`…`99448cc`):
+  - **F1** — `calendar-sync --calendar-id` was silently rewritten to `'primary'` → explicit ids synced verbatim; `config.calendar_id` documented as vestigial.
+  - **F2** — version metadata stale/inconsistent → `pyproject`/`__init__` reconciled + **0.40.0** changelog entry.
+  - **F3** — Gemini key resolver didn't match the locked gcloud design → added a `gcloud secrets versions access` fallback (env still short-circuits).
+  - **F4** — stale "NOT YET IMPLEMENTED" privacy language → decisions #3/#5 marked implemented, leak history preserved for the audit trail.
+- **Still open:** optional cloud `claude ultrareview` (3rd pass), `/phase-qa` gate, then merge `development` → `main`.
 
 ---
 
