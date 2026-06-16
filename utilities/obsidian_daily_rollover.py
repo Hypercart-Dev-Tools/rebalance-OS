@@ -57,9 +57,17 @@ VAULT = Path("/Users/noelsaw/Documents/Noel Saw")
 TODAY_FILE = VAULT / "0. Today's Notes.md"
 YESTERDAY_FILE = VAULT / "0. Yesterday.md"
 
-# Sentinel: a file that already lives in the real vault. If it's absent we assume
-# the vault isn't mounted/synced yet and refuse to create anything.
-VAULT_SENTINEL = VAULT / "0. Now.md"
+# Sentinels: files that live in the real vault. If NONE are present we assume the
+# vault isn't mounted/synced yet and refuse to create anything. Matching on any one
+# of several stable anchor files (not a single name) keeps the guard working even
+# when notes get reorganized/renamed — the failure mode that silently stalled the
+# rollover when the old lone sentinel "0. Now.md" was removed.
+VAULT_SENTINELS = [
+    VAULT / "0. Now.md",
+    VAULT / "0. Goals.md",
+    VAULT / "0. Incoming.md",
+    VAULT / "0. Yesterday.md",
+]
 
 # Circuit breaker: auto-create events are recorded here (kept out of git in temp/).
 STATE_FILE = Path(__file__).resolve().parent.parent / "temp" / "obsidian-rollover-state.json"
@@ -124,8 +132,8 @@ def _reset_breaker() -> None:
 
 # --- Vault / file guards -----------------------------------------------------
 def vault_ready() -> bool:
-    """True only when the real vault is present (sentinel exists)."""
-    return VAULT.is_dir() and VAULT_SENTINEL.exists()
+    """True only when the real vault is present (at least one sentinel exists)."""
+    return VAULT.is_dir() and any(s.exists() for s in VAULT_SENTINELS)
 
 
 def ensure_today_file() -> bool:
@@ -181,7 +189,8 @@ def prepend_to_yesterday(entry: str) -> None:
 
 def rollover(dry_run: bool = False) -> int:
     if not vault_ready():
-        log(f"vault not ready (sentinel '{VAULT_SENTINEL.name}' missing) — "
+        names = ", ".join(f"'{s.name}'" for s in VAULT_SENTINELS)
+        log(f"vault not ready (no sentinel found; looked for {names}) — "
             f"skipping safely. Nothing created or changed.")
         return 0
 
@@ -219,7 +228,8 @@ def rollover(dry_run: bool = False) -> int:
 def show_status() -> int:
     state = _load_state()
     recent = _recent_creates(state)
-    log(f"vault ready: {vault_ready()} (sentinel: {VAULT_SENTINEL})")
+    present = [s.name for s in VAULT_SENTINELS if s.exists()]
+    log(f"vault ready: {vault_ready()} (sentinels present: {present or 'none'})")
     log(f"Today's Notes exists: {TODAY_FILE.exists()}")
     log(f"auto-creates in last 24h: {len(recent)} / {MAX_CREATES_PER_DAY}")
     if len(recent) >= MAX_CREATES_PER_DAY:
@@ -249,7 +259,8 @@ def main(argv: list[str]) -> int:
 
     if args.setup:
         if not vault_ready():
-            log(f"vault not ready (sentinel '{VAULT_SENTINEL.name}' missing) — "
+            names = ", ".join(f"'{s.name}'" for s in VAULT_SENTINELS)
+            log(f"vault not ready (no sentinel found; looked for {names}) — "
                 f"refusing to create files. Mount/sync the vault first.")
             return 1
         _reset_breaker()
