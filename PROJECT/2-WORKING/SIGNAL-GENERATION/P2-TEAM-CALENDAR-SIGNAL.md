@@ -27,6 +27,19 @@ tags: [signal-quality, calendar, team-orchestration, ab-test]
 
 ---
 
+## Anti-goals
+
+Things P2 will not do:
+
+- **Not a general team analytics or reporting platform** — the output is one ranked next-action list per session; not dashboards, burndowns, utilization tracking, or management reporting.
+- **Not ingesting personal calendars** — only company-workspace timesheet calendars with explicit teammate opt-in; personal Google calendars are never a data source.
+- **Not a full knowledge graph** — the Phase 3 entity_graph is a flat SQLite projection over existing tables, not an ontology-based reasoning system; scope is bounded to the relation types defined in Phase 3.
+- **Not a replacement for existing signal sources** — the team calendar augments GitHub activity, Sleuth reminders, vault notes, and email; it does not replace or reduce any of them.
+- **Not a prediction or ML model** — the lever-based scorer is deterministic and tunable; the system does not train on user data or fine-tune models.
+- **Not a multi-tenant or off-machine system** — all data stays in local SQLite; teammate calendar data is never exported to shared infrastructure (export filter enforces default-deny).
+
+---
+
 ## Status at a glance
 
 | ✅ Most recently completed phase | ⏭️ What's next |
@@ -242,6 +255,23 @@ high-quality signal and isn't worth the privacy + maintenance cost. Either outco
 Net effect: every metric-affecting amendment either tightens the gate against B or repairs Arm A's
 data — nothing here makes a pass easier. A pass after these amendments is *more* credible, not less.
 
+### QA Checklist — Phase 0 *(completed 2026-06-12)*
+<!-- phase-qa -->
+> Phase 0 was a throwaway spike — all scripts lived in gitignored `temp/`; no production `src/` code was committed. SOLID/DRY/observability items are N/A. Litmus tests check spike integrity instead.
+- [x] DRY: N/A — no production source files committed (all work in gitignored `temp/`)
+- [x] S (Single Responsibility): N/A — throwaway spike, not in the production source tree
+- [x] O (Open/Closed): N/A — throwaway spike
+- [x] L (Liskov): N/A — throwaway spike
+- [x] I (Interface Segregation): N/A — throwaway spike
+- [x] D (Dependency Inversion): N/A — throwaway spike
+- [x] Observability: N/A — throwaway spike; no failure boundaries in production
+- [x] Spike integrity: harness rebuilt on the dashboard's own `pulse._query_day_activity()` path after GitHub mismatch root-caused (0b) — not a custom one-off query
+- [x] Gate pre-registration: 0f amendments log locked before any vote was cast; no post-scoring rule changes
+- [x] Blind integrity: judge votes sealed in `votes_gemini.json` + `votes_noel.json` before reveal; `.ab_key.json` never printed during scoring
+- [x] De-dup correctness: shared events de-duped content-based (normalized title + same local day) after finding only 1 true ID collision
+- [x] Scope: no deliverable in this phase crosses into anti-goals
+- [x] Deployment: N/A — phase completes locally, ships no remote artifact (asked, confirmed)
+
 ---
 
 ## Standing design constraints (Phase 1 onward)
@@ -311,6 +341,22 @@ Two independent review passes on `development` after Phase 1; **every finding fi
   - **F4** — stale "NOT YET IMPLEMENTED" privacy language → decisions #3/#5 marked implemented, leak history preserved for the audit trail.
 - **Still open:** optional cloud `claude ultrareview` (3rd pass), `/phase-qa` gate, then merge `development` → `main`.
 
+### QA Checklist — Phase 1 *(completed 2026-06-12, hardened 2026-06-13, shipped as 0.40.0)*
+<!-- phase-qa -->
+- [x] DRY: Mostly clean — `_calendar_id_filter` helper (`calendar.py:386`) used consistently by all three reader functions. **Open:** `querier.py:99` contains an inline `WHERE calendar_id = 'primary'` raw SQL in `_gather_temporal_context` that bypasses `_calendar_id_filter` and duplicates the `OPERATOR_CALENDAR_ID` literal — diverges silently if the filter gains a `status != 'cancelled'` guard or changes scope
+- [x] S (Single Responsibility): Mostly clean — sync, read, person-attribution, and export are distinct functions. **Minor open:** `_refresh_calendar` (`index_ops.py:697`) mixes fan-out loop orchestration with result-dict construction (14 keys inline) — worth extracting a `_format_team_result` helper before the team_calendars list grows
+- [x] O (Open/Closed): Clean — new teammates are config (`team_calendars` list), not new if/else branches; `_refresh_calendar` iterates the list generically
+- [x] L (Liskov): N/A — no subtyping in this phase
+- [x] I (Interface Segregation): Clean — `sync_calendar`, `get_recent_events`, `get_daily_totals`, and `export_calendar_snapshot` are separate, non-overlapping interfaces; callers depend only on what they use
+- [x] D (Dependency Inversion): Clean — `sync_calendar` takes `calendar_id` as a param; Gemini key resolution is behind `get_gemini_api_key()` with env/GSM fallback chain
+- [ ] Observability: `querier.py:500-502` — Gemini→Qwen fallback logs Gemini failure at `WARNING` but swallows the secondary Qwen failure into the synthesis string with no `logger.warning` call — dual-failure is indistinguishable from degraded-but-alive in log-based monitoring without string inspection
+- [x] Privacy: export filter `WHERE calendar_id = 'primary'` present and correct in `sync_snapshot.py:106-113`; covered by `test_sync_snapshot.py` and `test_pulse_calendar_scope.py`
+- [x] Migration atomicity: migration runner owns each transaction (`db/migrate.py:62-102`); `0005` does not self-wrap; rollback-on-error verified
+- [x] Per-person failure isolation: `_refresh_calendar` wraps each teammate sync in `try/except`; one inaccessible calendar does not abort the operator sync
+- [x] Teammate data never exported off-machine: default-deny filter enforced at write chokepoint; reserved `'primary'` calendar_id rejected at config load (finding D)
+- [x] Scope: no deliverable in this phase crosses into anti-goals
+- [x] Deployment: N/A — migration ran on local SQLite DB; phase completes locally (asked, confirmed)
+
 ---
 
 ## Phase 2 — v0.5: "What should we work on next" dashboard + N teammates
@@ -323,6 +369,21 @@ Two independent review passes on `development` after Phase 1; **every finding fi
 - [ ] Blend with the goal layer ([PROJECT/1-INBOX/P3-GOAL-LAYER.md](PROJECT/1-INBOX/P3-GOAL-LAYER.md)).
 - [ ] **v0.5 definition of done:** Noel opens the dashboard in a browser and sees a ranked, person-attributed "what should we work on next" list containing ≥1 item his own signals would have missed.
 - [ ] **SOLID + DRY gate** (see [standing constraints](#standing-design-constraints-phase-1-onward)): run `/phase-qa` before marking Phase 2 complete.
+
+### QA Checklist — Phase 2 *(upcoming)*
+<!-- phase-qa -->
+- [ ] DRY: No route handler, `ask()` tool path, or synthesis prompt duplicates the ranking/blending logic from Phase 1 helpers — the Phase-0 harness bundle logic is the spec, productized via shared helpers, not copy-pasted
+- [ ] S (Single Responsibility): The new `web.py` route only renders; ranking/blending lives in a service function; synthesis prompt assembly is separate from the Gemini call
+- [ ] O (Open/Closed): Adding a new teammate (Jose/Jinhui) is config, not a code change to the route or synthesis function
+- [ ] L (Liskov): N/A — no subtyping expected in this phase
+- [ ] I (Interface Segregation): `ask()` MCP tool and the dashboard route share the same ranked-output function — neither forces the other to stub methods it doesn't use
+- [ ] D (Dependency Inversion): Gemini synthesis called through the existing `_synthesize_gemini` adapter, not direct SDK calls in the route or `ask()` handler
+- [ ] Observability: new route and `ask()` team-blend path emit a loggable signal on Gemini failure and on empty ranked output — not a silent empty list
+- [ ] No business logic in the view layer: `web.py` route and `pulse.html` panel contain no ranking, filtering, or scoring logic — those live in the service layer
+- [ ] ask() parity: the ranked list returned by the dashboard route and the `ask()` MCP tool are produced by the same function (same source, same filters, same Gemini prompt)
+- [ ] Teammate data scoped correctly: new route and `ask()` path use the same `calendar_id`-scoped reader functions from Phase 1, not raw unfiltered queries
+- [ ] Scope: no deliverable in this phase crosses into anti-goals — specifically, the output remains one ranked next-action list, not a general reporting view
+- [ ] Deployment: N/A — phase completes locally (`rebalance serve` port 8787, no remote artifact) (asked, confirmed)
 
 ---
 

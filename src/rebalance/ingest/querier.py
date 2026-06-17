@@ -498,6 +498,7 @@ def ask(
                     synthesis = _synthesize(prompt, model_name=chat_model)
                     model_used = f"{chat_model} (gemini-fallback)"
                 except Exception as e2:
+                    logger.warning("Qwen fallback also failed after Gemini failure: %s", e2)
                     synthesis = f"[LLM synthesis failed: {e2}]"
                     model_used = f"{chat_model} (failed)"
         else:
