@@ -474,6 +474,15 @@ def _synthesize(prompt: str, model_name: str = DEFAULT_CHAT_MODEL, max_tokens: i
 # ---------------------------------------------------------------------------
 
 
+# Sidecar attribute name under which a team=True ask() stashes the ranked
+# "what should we work on next" output. It is a DYNAMIC attribute on the returned
+# QueryResult instance — deliberately NOT a dataclass field — so the pinned
+# QueryResult field/dict contract (test_querier EXPECTED_KEYS, retrieval.py's
+# flatten) stays byte-identical for the default operator flow. The MCP layer
+# reads it via getattr(result, NEXT_ACTIONS_ATTR, None).
+NEXT_ACTIONS_ATTR = "_next_actions"
+
+
 def ask(
     query: str,
     database_path: Path,
@@ -482,6 +491,7 @@ def ask(
     since_days: int = 7,
     top_k: int = 8,
     skip_synthesis: bool = False,
+    team: bool = False,
 ) -> QueryResult:
     """
     Answer a natural language question using all available data sources.
@@ -496,6 +506,13 @@ def ask(
         since_days:     Window for GitHub and vault activity context.
         top_k:          Number of semantic search results.
         skip_synthesis: If True, skip local LLM and return raw context only.
+        team:           If True, ALSO compute the ranked "what should we work on
+                        next" list (next_actions.rank_next_actions with
+                        blend_team=True) and stash it on the returned QueryResult
+                        under the NEXT_ACTIONS_ATTR sidecar attribute. Default OFF:
+                        the operator flow + the pinned QueryResult contract stay
+                        byte-identical. Never raises — a degraded rank attaches
+                        nothing extra and ask() returns its normal result.
     """
     start = time.monotonic()
 
@@ -533,7 +550,7 @@ def ask(
 
     elapsed = time.monotonic() - start
 
-    return QueryResult(
+    result = QueryResult(
         query=query,
         synthesis=synthesis,
         vault_context=vault_context,
@@ -546,3 +563,18 @@ def ask(
         model_used=model_used,
         elapsed_seconds=round(elapsed, 2),
     )
+
+    # team=True sidecar: attach the ranked next-actions WITHOUT mutating the
+    # pinned QueryResult fields. Same args a dashboard call would use
+    # (blend_team=True). Never raises out of ask(): a degraded rank just stays
+    # unattached. Import is local so the default operator path never pays for it.
+    if team:
+        try:
+            from rebalance.ingest import next_actions as _next_actions
+
+            ranked = _next_actions.rank_next_actions(database_path, blend_team=True)
+            setattr(result, NEXT_ACTIONS_ATTR, ranked)
+        except Exception as e:  # noqa: BLE001 — team blend must never break ask()
+            logger.warning("team next-actions rank unavailable: %s", e)
+
+    return result

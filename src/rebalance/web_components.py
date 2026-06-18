@@ -180,6 +180,7 @@ h2 { font-size: 14px; color: var(--fg); }
 _NAV_LINKS = (
     ("today", "/", "Today"),
     ("focus5", "/focus-5", "Focus 5"),
+    ("whatsnext", "/whats-next", "What's Next"),
     ("authlog", "/auth-log", "System Log"),
     ("sleuthgraph", "/sleuth-graph", "Reminder Graph"),
 )
@@ -284,6 +285,12 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
             <a href="/focus-5" target="_blank" rel="noopener noreferrer"
                title="Open Focus 5 — the 5 repos you're actively working on (tree health, newest PR, recent commits)">
               <span class="auth-log-icon">🎯</span><span>Focus 5</span>
+            </a>
+          </li>
+          <li class="auth-log-link">
+            <a href="/whats-next" target="_blank" rel="noopener noreferrer"
+               title="Open What's Next — the single ranked list of what to work on next (calendar + GitHub + vault + reminders, team-blended)">
+              <span class="auth-log-icon">🧭</span><span>What's Next</span>
             </a>
           </li>
           <li class="auth-log-link">

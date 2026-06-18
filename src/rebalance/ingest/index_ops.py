@@ -1046,6 +1046,7 @@ def refresh_index(
     repos: list[str] | None = None,
     dry_run: bool = False,
     update_dashboard_note: bool = True,
+    precompute_next_actions: bool = True,
 ) -> dict[str, Any]:
     """Run the configured ingest pipelines for ``scope`` and return a summary.
 
@@ -1057,6 +1058,15 @@ def refresh_index(
     markdown dashboard note is written to the vault after a full refresh.
     It is a documented side-output, not a core contract — callers that run
     without a vault (CI, portable installs) set this to ``False``.
+
+    ``precompute_next_actions`` (P2 v0.5) runs the live Gemini synthesis of the
+    "what should we work on next" ranked list AFTER the data collectors have
+    refreshed, and persists it to the local ``ranked_next_actions`` cache the
+    dashboard route + static pulse panel read. This is the NETWORK-ALLOWED side
+    of the precompute->SQLite decision: it is gated to the full/network refresh
+    (``full_refresh_requested``) and skipped on dry runs and read-only/named-scope
+    runs. A synthesis/network failure NEVER breaks refresh_index — it is logged
+    and the refresh continues.
     """
     db_path = Path(database_path).expanduser().resolve()
     requested_scopes = _normalize_scope(scope)
@@ -1168,6 +1178,49 @@ def refresh_index(
             results.append(collector.refresh(db_path, **collector_opts))
         except Exception as e:  # noqa: BLE001 — error envelope mirrors legacy contract
             errors.append({"scope": s, "error": str(e)})
+
+    # Precompute the P2 v0.5 "what should we work on next" ranked list now that
+    # the collectors above have refreshed the signal. This is the NETWORK-ALLOWED
+    # side of the precompute->SQLite decision (live Gemini synthesis), so it is
+    # gated to the full/network refresh ONLY — never a dry run, a read-only/named
+    # scope, or a half-migrated schema. run_migrations already ran at the
+    # chokepoint above, so the ranked_next_actions table (migration 0006) exists
+    # before persist. A synthesis/network failure NEVER breaks refresh_index.
+    if (
+        precompute_next_actions
+        and full_refresh_requested
+        and not dry_run
+        and migrations_ok
+    ):
+        try:
+            from rebalance.ingest import next_actions
+
+            ranked = next_actions.rank_next_actions(
+                db_path, blend_team=True, synthesize=True
+            )
+            next_actions.persist_ranked_next_actions(db_path, ranked)
+            logger.info(
+                "next_actions precompute: model_used=%s blended=%s count=%d",
+                ranked.model_used or "(none)", ranked.blended, len(ranked.ranked),
+            )
+            results.append({
+                "scope": "next_actions",
+                "dry_run": False,
+                "model_used": ranked.model_used,
+                "blended": ranked.blended,
+                "count": len(ranked.ranked),
+            })
+        except Exception as e:  # noqa: BLE001 — precompute must never break refresh
+            logger.warning("next_actions precompute failed: %s", e)
+            # Deliberately NOT appended to `errors`: a non-essential precompute
+            # failure must not cascade into skipping the dashboard-note write-back
+            # below (which gates on `errors`). Recorded as a non-fatal result note.
+            results.append({
+                "scope": "next_actions",
+                "dry_run": False,
+                "skipped": True,
+                "error": str(e),
+            })
 
     if update_dashboard_note and full_refresh_requested and resolved_vault is not None:
         if errors and not dry_run:

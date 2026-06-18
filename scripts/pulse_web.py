@@ -59,6 +59,7 @@ from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
 from rebalance.health import HealthStatus, compute_health_status  # noqa: E402
 from rebalance.ingest.config import get_figma_file_keys  # noqa: E402
 from rebalance.ingest.index_ops import COLLECTORS, get_index_status  # noqa: E402
+from rebalance.ingest import next_actions  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 from rebalance.web_components import (  # noqa: E402
     ITEM_SUB_GLYPHS,
@@ -864,6 +865,82 @@ def render_recent_activity(
     """
 
 
+def render_work_next(
+    ranked_rows: list[dict[str, Any]],
+    now: datetime,
+    *,
+    computed_at: str | None = None,
+    blended: bool = False,
+    model_used: str | None = None,
+) -> str:
+    """Render the precomputed "what should we work on next" ranked panel.
+
+    PURE: takes PRE-FETCHED ranked rows (each ``RankedAction.as_dict()``) — never
+    fetches. ``person`` labels are LOCAL-DISPLAY-ONLY; this is the static local
+    dashboard (web/pulse.html), never the pushed pulse, so it is safe to render
+    them here. All untrusted text (titles, person labels, evidence, why) is
+    ``_esc``-ed.
+    """
+    if not ranked_rows:
+        return """
+    <section class="card work-next">
+      <header class="card-head"><h2>What should we work on next</h2></header>
+      <div class="empty">No ranked next actions yet — run a refresh to compute.</div>
+    </section>
+    """
+
+    meta_bits = []
+    if computed_at:
+        meta_bits.append(f"computed {_esc(_ago(computed_at, now=now))}")
+    if blended:
+        meta_bits.append("team-blended")
+    if model_used:
+        meta_bits.append(_esc(model_used))
+    meta_html = (
+        f'<span class="card-head-meta">{" · ".join(meta_bits)}</span>'
+        if meta_bits else ""
+    )
+
+    items = []
+    for row in ranked_rows:
+        rank = _esc(row.get("rank") or "")
+        title = _esc(row.get("title") or "")
+        person = row.get("person")
+        source = _esc(row.get("source") or "")
+        project = row.get("project")
+        why = _esc(row.get("why") or "")
+
+        person_html = (
+            f'<span class="wn-person">{_esc(person)}</span>' if person else ""
+        )
+        source_html = f'<span class="wn-source">{source}</span>' if source else ""
+        project_html = (
+            f'<span class="wn-project">{_esc(project)}</span>' if project else ""
+        )
+        why_html = f'<div class="wn-why">{why}</div>' if why else ""
+        items.append(f"""
+        <li class="wn-row">
+          <span class="wn-rank">{rank}</span>
+          <div class="wn-body">
+            <div class="wn-title">{title} {person_html}</div>
+            <div class="wn-meta">{source_html} {project_html}</div>
+            {why_html}
+          </div>
+        </li>
+        """)
+
+    body = "".join(items)
+    return f"""
+    <section class="card work-next">
+      <header class="card-head">
+        <h2>What should we work on next</h2>
+        {meta_html}
+      </header>
+      <ol class="wn-list">{body}</ol>
+    </section>
+    """
+
+
 def render_org_activity(by_org: dict[str, list[dict[str, Any]]], *, days: int) -> str:
     """Doughnut chart of per-repo event counts, sourced from github_activity (no project_registry gate)."""
     if not by_org:
@@ -1618,6 +1695,26 @@ PAGE_CSS = """
 .card-head { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 18px 10px; }
 .card-head-meta { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .card-foot { padding: 10px 18px 14px; border-top: 1px solid var(--border); }
+
+/* What should we work on next */
+.work-next .wn-list { list-style: none; margin: 0; padding: 4px 0 10px; }
+.wn-row { display: flex; gap: 12px; padding: 10px 18px; border-top: 1px solid var(--border); }
+.wn-row:first-child { border-top: none; }
+.wn-rank {
+  flex: 0 0 auto; min-width: 22px; text-align: right;
+  color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums;
+}
+.wn-body { min-width: 0; }
+.wn-title { color: var(--fg); font-weight: 600; }
+.wn-person {
+  margin-left: 6px; padding: 1px 7px; border-radius: 999px;
+  background: var(--border); color: var(--fg-muted);
+  font-size: 11px; font-weight: 600; vertical-align: middle;
+}
+.wn-meta { color: var(--fg-dim); font-size: 12px; margin-top: 2px; }
+.wn-source { text-transform: uppercase; letter-spacing: 0.04em; }
+.wn-project { margin-left: 6px; }
+.wn-why { color: var(--fg-muted); font-size: 13px; margin-top: 3px; }
 
 /* Hero */
 .hero { padding: 22px 24px; }
@@ -2622,6 +2719,25 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     repo_pie_days = 7
     repo_pie_rows = fetch_repo_activity_counts(days=repo_pie_days, limit=12)
     status = get_index_status(DB_PATH)
+
+    # "What should we work on next" — READ the precomputed ranking only. This
+    # path runs in the NO-NETWORK launchd context, so never call rank_next_actions
+    # / Gemini here; the live synthesis happens on the refresh path (stage D). A
+    # missing table on a fresh DB must never break page generation.
+    work_next_rows: list[dict[str, Any]] = []
+    work_next_computed_at: str | None = None
+    work_next_blended = False
+    work_next_model: str | None = None
+    try:
+        ranked = next_actions.load_ranked_next_actions(DB_PATH)
+        if ranked is not None:
+            work_next_rows = [a.as_dict() for a in ranked.ranked]
+            work_next_computed_at = ranked.computed_at or None
+            work_next_blended = ranked.blended
+            work_next_model = ranked.model_used or None
+    except Exception:  # noqa: BLE001 — never let a missing cache break the page
+        work_next_rows = []
+
     doctor_report = run_doctor(DB_PATH)
     figma_keys = get_figma_file_keys()
     # Sleuth has synced at least once iff sources.sleuth.last_synced_at is set.
@@ -2710,6 +2826,9 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
         </div>
         {render_health_banner(health_status, now, last_activity)}
         {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
+        <div class="full-row">
+          {render_work_next(work_next_rows, now, computed_at=work_next_computed_at, blended=work_next_blended, model_used=work_next_model)}
+        </div>
         <div class="grid">
           <div class="col">
             {render_recent_activity(gh_rows, now, last_vault=last_vault, vault_recent_count=len(vault_rows))}

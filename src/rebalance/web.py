@@ -153,6 +153,26 @@ tr:hover td { background: rgba(0,0,0,.03); }
            border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
            line-height: 1.5; }
 .f5-warn b { color: var(--warn); }
+
+/* What's Next — the single ranked "work on next" list. Reuses the shared
+   .badge/.empty rules; only the list/row chrome is page-local. */
+.wn-refresh { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none;
+              margin-left: 10px; }
+.wn-refresh:hover { text-decoration: underline; }
+.wn-meta { font-size: 12px; color: var(--fg-muted); margin-bottom: 16px; }
+.wn-blended { color: var(--ok); }
+.wn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.wn-item { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+           padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start; }
+.wn-rank { font-size: 13px; font-weight: 700; color: var(--fg-dim); min-width: 28px;
+           font-variant-numeric: tabular-nums; }
+.wn-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.wn-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wn-title { font-size: 14px; font-weight: 600; color: var(--fg); word-break: break-word; }
+.wn-why { font-size: 12px; color: var(--fg-muted); line-height: 1.4; }
+.wn-ev { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.wn-ev li { font-size: 11px; color: var(--fg-dim); word-break: break-word; }
+.wn-src { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .04em; }
 """
 
 
@@ -567,6 +587,139 @@ def focus5_hide(req: Focus5HideRequest) -> JSONResponse:
 @app.post("/api/focus5/unhide")
 def focus5_unhide(req: Focus5HideRequest) -> JSONResponse:
     return JSONResponse(focus5_set_hidden(req.repo, hidden=False))
+
+
+# ---------------------------------------------------------------------------
+# What's Next — the single ranked "what should we work on next" view.
+#
+# Pure renderer over a RankedNextActions.as_dict() shape; the handler is
+# control-flow only. Person labels are LOCAL-DISPLAY-ONLY and html.escape'd here
+# (this is the local dashboard, never an export/pushed-pulse path).
+# ---------------------------------------------------------------------------
+
+
+def _wn_person_badge(person: str | None) -> str:
+    """Attribution badge: operator's own items vs a teammate-labelled one.
+
+    ``person`` is None for the operator's own signals (info badge "You") and a
+    teammate label otherwise (neutral badge). The label is html.escape'd by
+    badge_html — it is local-display-only and never exported.
+    """
+    if not person:
+        return badge_html("info", "You")
+    return badge_html("neutral", str(person))
+
+
+def _wn_item(action: dict[str, Any]) -> str:
+    """Render one ranked next-action row (pure). Escapes ALL untrusted text."""
+    rank = action.get("rank") or 0
+    title = html.escape(str(action.get("title") or "(untitled)"))
+    source = html.escape(str(action.get("source") or ""))
+    project = action.get("project")
+    why = str(action.get("why") or "").strip()
+
+    head_bits = [f"<span class='wn-title'>{title}</span>", _wn_person_badge(action.get("person"))]
+    if source:
+        head_bits.append(f"<span class='wn-src'>{source}</span>")
+    if project:
+        head_bits.append(badge_html("neutral", str(project)))
+    head = "<div class='wn-head'>" + "".join(head_bits) + "</div>"
+
+    why_html = f"<div class='wn-why'>{html.escape(why)}</div>" if why else ""
+
+    ev_items = [str(e) for e in (action.get("evidence") or []) if e]
+    if ev_items:
+        ev_lis = "".join(f"<li>{html.escape(e)}</li>" for e in ev_items)
+        ev_html = f"<ul class='wn-ev'>{ev_lis}</ul>"
+    else:
+        ev_html = ""
+
+    return (
+        f"<li class='wn-item'>"
+        f"<div class='wn-rank'>#{int(rank)}</div>"
+        f"<div class='wn-body'>{head}{why_html}{ev_html}</div>"
+        f"</li>"
+    )
+
+
+def _wn_meta(data: dict[str, Any]) -> str:
+    """The 'last computed <relative>' freshness line + synthesis/blended indicator."""
+    computed = _rel_time(data.get("computed_at"))
+    model = html.escape(str(data.get("model_used") or ""))
+    if data.get("blended"):
+        blend = "<span class='wn-blended'>● team-blended</span>"
+    else:
+        blend = "<span class='wn-src'>operator-only</span>"
+    synth = f" · synthesized by <b>{model}</b>" if model else " · deterministic order"
+    when = f"last computed <b>{computed}</b>" if computed else "not computed yet"
+    return f"<div class='wn-meta'>{when} · {blend}{synth}</div>"
+
+
+def _whatsnext_body(data: dict[str, Any]) -> str:
+    """Render the What's Next page body from a RankedNextActions dict (pure)."""
+    refresh_btn = (
+        "<a class='wn-refresh' href='/whats-next?refresh=1' "
+        "title='Recompute now'>↻ Refresh</a>"
+    )
+    ranked = data.get("ranked") or []
+    if not ranked:
+        note = html.escape(str(data.get("note") or "")) if data.get("note") else ""
+        note_html = f"<div class='subtle'>{note}</div>" if note else ""
+        return (
+            f"<h2>🧭 What's Next {refresh_btn}</h2>"
+            "<div class='empty'>Nothing ranked yet. The list builds from your "
+            "calendar, GitHub, vault, reminders and email — blended with teammate "
+            "signal. Hit ↻ Refresh to compute it.</div>"
+            f"{note_html}"
+        )
+    meta = _wn_meta(data)
+    rows = "".join(_wn_item(a) for a in ranked)
+    return (
+        f"<h2>🧭 What's Next {refresh_btn}</h2>{meta}"
+        f"<ul class='wn-list'>{rows}</ul>"
+    )
+
+
+@app.get("/whats-next")
+def whatsnext_page(refresh: bool = False):
+    """Render the ranked 'what should we work on next' view.
+
+    Reads the PRECOMPUTED result via ``load_ranked_next_actions``. On ``?refresh``
+    (or when no precomputed result exists) it recomputes LIVE via
+    ``rank_next_actions`` — the only network-allowed synthesis path — persists it,
+    and Post/Redirect/Get's to drop ``?refresh``. Control-flow only; zero HTML
+    built here. A compute/IO failure degrades to whatever is renderable rather
+    than 500ing.
+    """
+    from rebalance.ingest.next_actions import (
+        get_ranked_meta, load_ranked_next_actions,
+        persist_ranked_next_actions, rank_next_actions,
+    )
+    from rebalance.paths import DatabaseNotFoundError, resolve_database_path
+
+    try:
+        db = resolve_database_path()
+    except DatabaseNotFoundError:
+        body = ("<h2>🧭 What's Next</h2><div class='empty'>No rebalance database found. "
+                "Run <code>rebalance refresh-index</code> first.</div>")
+        return _page("What's Next", body, active="whatsnext", wide=True)
+
+    # Recompute live only when forced or never precomputed — this is the
+    # network-allowed synthesis path. Otherwise read the precomputed cache.
+    meta = get_ranked_meta(db)
+    if refresh or not meta.get("row_count"):
+        try:
+            result = rank_next_actions(db, blend_team=True)
+            persist_ranked_next_actions(db, result)
+        except Exception:  # noqa: BLE001 — a compute failure must not 500 the page
+            pass
+        if refresh:
+            # Post/redirect/get: drop ?refresh so a reload doesn't recompute.
+            return RedirectResponse("/whats-next", status_code=303)
+
+    result = load_ranked_next_actions(db)
+    data = result.as_dict() if result is not None else {"ranked": []}
+    return _page("What's Next", _whatsnext_body(data), active="whatsnext", wide=True)
 
 
 _SYSLOG_TOGGLE_CSS = (
