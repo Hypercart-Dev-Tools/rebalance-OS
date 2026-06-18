@@ -327,9 +327,10 @@ class TestParseRankedSynthesis(unittest.TestCase):
         text = (
             "1. **Fix login PR** | person=operator | source=github | "
             "project=acme/web | evidence=PR #42; gh.com/acme/web/pull/42 | "
-            "why=open PR you own\n"
+            "automation=yes | why=open PR you own\n"
             "2. Customer Escalation Sync | person=matthew | source=calendar | "
-            "project= | evidence=matt 14:00; 45m | why=cross-person, no operator signal"
+            "project= | evidence=matt 14:00; 45m | automation=no | "
+            "why=cross-person, no operator signal"
         )
         actions = na._parse_ranked_synthesis(text)
         self.assertEqual(len(actions), 2)
@@ -345,11 +346,39 @@ class TestParseRankedSynthesis(unittest.TestCase):
         # evidence parsed as a LIST split on '; ' (DSP-03).
         self.assertEqual(a1.evidence, ["PR #42", "gh.com/acme/web/pull/42"])
         self.assertEqual(a1.why, "open PR you own")
+        # automation= parsed from the grammar.
+        self.assertTrue(a1.automation)
 
         self.assertEqual(a2.person, "matthew")
         self.assertEqual(a2.source, "calendar")
         self.assertIsNone(a2.project)  # empty project= → None
         self.assertEqual(a2.evidence, ["matt 14:00", "45m"])
+        self.assertFalse(a2.automation)
+
+    def test_automation_falls_back_to_heuristic_when_omitted(self) -> None:
+        """When the model omits automation=, the deterministic heuristic fills it:
+        a github-sourced item is automation-eligible; a vague calendar hold is not."""
+        text = (
+            "1. Fix the broken deploy | person=operator | source=github | "
+            "project=acme/web | evidence=x | why=ci is red\n"
+            "2. Focus time | person=operator | source=calendar | project= | "
+            "evidence=10:00 | why=deep work block"
+        )
+        actions = na._parse_ranked_synthesis(text)
+        self.assertTrue(actions[0].automation)   # github → eligible
+        self.assertFalse(actions[1].automation)  # vague calendar hold → not
+
+    def test_infer_automation_heuristic(self) -> None:
+        # github source always qualifies.
+        self.assertTrue(na._infer_automation("github", "anything", None))
+        # code/repo keywords in title/project qualify even off github.
+        self.assertTrue(na._infer_automation("sleuth", "wrap up the Binoid plugin", None))
+        self.assertTrue(na._infer_automation("calendar", "Bloomz HPOS migration", "bloomz"))
+        self.assertTrue(na._infer_automation("sleuth", "look at issue #845", None))
+        # meetings / emails / vague holds do not.
+        self.assertFalse(na._infer_automation("calendar", "Team standup", None))
+        self.assertFalse(na._infer_automation("sleuth", "email Rebekah re budget", None))
+        self.assertFalse(na._infer_automation("calendar", "Focus time", None))
 
     def test_rank_integers_are_not_trusted(self) -> None:
         """Negative/zero/duplicate model rank ints are re-sequenced by order."""

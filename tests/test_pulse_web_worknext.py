@@ -1,4 +1,8 @@
-"""Tests for the static pulse "what should we work on next" panel."""
+"""Tests for the static pulse "what's next" teaser.
+
+The full ranked list lives on its own page (the FastAPI ``/whats-next`` route);
+the static dashboard renders only a slim pointer (top item + count + link).
+"""
 
 from __future__ import annotations
 
@@ -19,8 +23,8 @@ import pulse_web  # noqa: E402
 NOW = datetime(2026, 6, 17, 18, 0, tzinfo=timezone.utc)
 
 
-class PulseWebWorkNextTests(unittest.TestCase):
-    def test_render_work_next_renders_ranked_items(self) -> None:
+class PulseWebWorkNextTeaserTests(unittest.TestCase):
+    def test_teaser_shows_top_item_count_link_and_automation(self) -> None:
         rows = [
             {
                 "rank": 1,
@@ -30,6 +34,7 @@ class PulseWebWorkNextTests(unittest.TestCase):
                 "project": "rebalance-OS",
                 "evidence": ["https://example.com/pr/1"],
                 "why": "open PR you authored",
+                "automation": True,
             },
             {
                 "rank": 2,
@@ -38,41 +43,40 @@ class PulseWebWorkNextTests(unittest.TestCase):
                 "source": "calendar",
                 "project": None,
                 "evidence": ["Matt 14:00 (30m)"],
-                "why": "cross-person signal you are not already tracking",
+                "why": "cross-person signal",
+                "automation": False,
             },
         ]
 
         html = pulse_web.render_work_next(
-            rows,
-            NOW,
-            computed_at="2026-06-17T17:30:00+00:00",
-            blended=True,
-            model_used="gemini-2.5-flash",
+            rows, NOW, computed_at="2026-06-17T17:30:00+00:00", blended=True,
         )
 
-        self.assertIn("What should we work on next", html)
-        self.assertIn('class="card work-next"', html)
+        self.assertIn('class="card work-next work-next-teaser"', html)
+        # Top item shown; the link points at the dedicated page.
         self.assertIn("Ship the calendar export fix", html)
-        # Teammate-attributed item with its person badge.
-        self.assertIn("Unblock Matt on the migration", html)
-        self.assertIn('class="wn-person">Matt</span>', html)
-        # Meta indicators.
+        self.assertIn('href="/whats-next"', html)
+        self.assertIn("Open What", html)
+        # Count + automation-ready count + blend + freshness in the meta.
+        self.assertIn("2 ranked", html)
+        self.assertIn("automation-ready", html)
         self.assertIn("team-blended", html)
-        self.assertIn("gemini-2.5-flash", html)
         self.assertIn("computed", html)
-        # No empty-state when rows exist.
+        # The teaser is a POINTER — it does NOT dump the full list.
+        self.assertNotIn("Unblock Matt on the migration", html)
         self.assertNotIn("No ranked next actions yet", html)
 
-    def test_render_work_next_escapes_hostile_input(self) -> None:
+    def test_teaser_top_person_badge_and_escaping(self) -> None:
         rows = [
             {
                 "rank": 1,
                 "title": "<script>alert('xss')</script>",
                 "person": "<b>evil</b>",
                 "source": "github",
-                "project": "<i>proj</i>",
+                "project": None,
                 "evidence": [],
-                "why": "look out <img src=x onerror=1>",
+                "why": "",
+                "automation": True,
             },
         ]
 
@@ -81,35 +85,35 @@ class PulseWebWorkNextTests(unittest.TestCase):
         self.assertNotIn("<script>alert", html)
         self.assertIn("&lt;script&gt;alert", html)
         self.assertNotIn("<b>evil</b>", html)
-        self.assertIn("&lt;b&gt;evil&lt;/b&gt;", html)
-        self.assertNotIn("<i>proj</i>", html)
-        self.assertNotIn("<img src=x", html)
+        self.assertIn('class="wn-person"', html)
+        # Automation indicator on the top item.
+        self.assertIn("wn-auto", html)
 
-    def test_render_work_next_empty_state_when_falsy(self) -> None:
+    def test_teaser_empty_state_links_to_page(self) -> None:
         for rows in ([], None):
             html = pulse_web.render_work_next(rows, NOW)
-            self.assertIn("What should we work on next", html)
             self.assertIn("No ranked next actions yet", html)
-            self.assertIn('class="card work-next"', html)
+            self.assertIn('href="/whats-next"', html)
+            self.assertIn('class="card work-next work-next-teaser"', html)
 
-    def test_render_work_next_omits_meta_when_absent(self) -> None:
+    def test_teaser_omits_automation_count_when_none(self) -> None:
         rows = [
             {
                 "rank": 1,
-                "title": "Solo task",
+                "title": "Plan the Q3 offsite",
                 "person": None,
-                "source": "vault",
+                "source": "calendar",
                 "project": None,
                 "evidence": [],
                 "why": "",
+                "automation": False,
             },
         ]
 
         html = pulse_web.render_work_next(rows, NOW)
 
-        self.assertIn("Solo task", html)
-        self.assertNotIn("team-blended", html)
-        self.assertNotIn('class="card-head-meta"', html)
+        self.assertIn("1 ranked", html)
+        self.assertNotIn("automation-ready", html)
 
 
 if __name__ == "__main__":

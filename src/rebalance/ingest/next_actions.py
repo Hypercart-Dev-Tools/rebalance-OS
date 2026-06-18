@@ -260,6 +260,11 @@ class RankedAction:
     project: str | None = None
     evidence: list[str] = field(default_factory=list)
     why: str = ""
+    # ``automation``: this action looks like a concrete code/repo task that could
+    # be filed as a GitHub issue and handed to a coding agent (Codex / Claude
+    # Code). For now it only drives an "automation" tag in the UI — no issue is
+    # created and no agent is triggered (that hook is future work).
+    automation: bool = False
 
     def as_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -418,10 +423,10 @@ context is thin, return fewer items rather than padding.
 For EACH ranked item, output exactly ONE line in this EXACT pipe grammar — same \
 field order and keys every time:
 
-  <rank>. <title> | person=<operator|TeammateName> | source=<source> | project=<project-or-empty> | evidence=<p1; p2> | why=<one-line reason>
+  <rank>. <title> | person=<operator|TeammateName> | source=<source> | project=<project-or-empty> | evidence=<p1; p2> | automation=<yes|no> | why=<one-line reason>
 
 Rules:
-- Keys are literal and in this order: person= , source= , project= , evidence= , why=
+- Keys are literal and in this order: person= , source= , project= , evidence= , automation= , why=
 - ATTRIBUTION: for an [OWN] item write `person=operator`; for a [TEAMMATE] item \
 write `person=<the teammate name shown in its section header>` (the name after \
 "TEAMMATE:" in that item's bullet).
@@ -429,6 +434,10 @@ write `person=<the teammate name shown in its section header>` (the name after \
 - project= is the project/repo name, or EMPTY if none (write nothing after the `=`).
 - evidence= is 1-2 concrete pointers separated by '; ' (a PR/issue URL or number, a \
 time, a path).
+- automation=yes ONLY if this item is a concrete code/repo task that could be filed \
+as a GitHub issue and handed to a coding agent (Codex / Claude Code) — a bug fix, a \
+named PR/issue/plugin/config change, a refactor, a migration. automation=no for \
+meetings, emails, reviews needing human judgement, planning, or vague holds.
 - why= is a single short reason.
 - Output ONLY the numbered list — no preamble, no trailing commentary, no headers, \
 no grouping, no sub-bullets.
@@ -536,15 +545,47 @@ def _teammate_candidate(blk: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+# Code/repo-task keywords → a task a coding agent (Codex / Claude Code) could pick
+# up from a GitHub issue. Used to infer the ``automation`` tag deterministically
+# (the fallback floor) and when the model omits ``automation=``.
+_AUTOMATION_RE = re.compile(
+    r"\b(fix|bug|implement|refactor|migrat\w*|plugin|deploy|endpoint|api|"
+    r"webhook|schema|query|test\w*|build|ci|merge|revert|patch|release|"
+    r"pr\s*#?\d+|issue\s*#?\d+|gh\s*#?\d+|repo|hotfix|crash|error|regression)\b",
+    re.IGNORECASE,
+)
+
+
+def _infer_automation(source: str, title: str, project: str | None) -> bool:
+    """Heuristic: could this action become a GitHub issue handed to a coding agent?
+
+    Conservative: GitHub-sourced items (commits/PRs/issues) qualify; anything else
+    only qualifies when its title/project names a concrete code/repo task. Meetings,
+    emails, and vague calendar holds stay ``False``. This is the deterministic
+    counterpart to the model's ``automation=`` field — no issue is created here.
+    """
+    if (source or "").lower() == "github":
+        return True
+    haystack = f"{title or ''} {project or ''}"
+    return bool(_AUTOMATION_RE.search(haystack))
+
+
 def _candidate_to_action(c: dict[str, Any], rank: int) -> RankedAction:
+    title = str(c.get("title") or "").strip()[:200]
+    source = str(c.get("source") or "")
+    project = c.get("project")
+    automation = c.get("automation")
+    if automation is None:
+        automation = _infer_automation(source, title, project)
     return RankedAction(
         rank=rank,
-        title=str(c.get("title") or "").strip()[:200],
+        title=title,
         person=c.get("person"),
-        source=str(c.get("source") or ""),
-        project=c.get("project"),
+        source=source,
+        project=project,
         evidence=[e for e in (c.get("evidence") or []) if e],
         why=str(c.get("why") or ""),
+        automation=bool(automation),
     )
 
 
@@ -598,6 +639,7 @@ def _parse_ranked_synthesis(text: str) -> list[RankedAction]:
         project: str | None = None
         evidence: list[str] = []
         why = ""
+        automation: bool | None = None
 
         for fld in parts[1:]:
             if "=" not in fld:
@@ -613,15 +655,21 @@ def _parse_ranked_synthesis(text: str) -> list[RankedAction]:
                 project = val or None
             elif key == "evidence":
                 evidence = [e.strip() for e in val.split(";") if e.strip()]
+            elif key == "automation":
+                automation = val.lower() in ("yes", "true", "1", "y")
             elif key == "why":
                 why = _strip_markdown(val)
 
         if not title:
             continue
+        # Model omitted automation= → fall back to the deterministic heuristic.
+        if automation is None:
+            automation = _infer_automation(source, title, project)
         actions.append(RankedAction(
             rank=0,  # re-sequenced below by emit order
             title=title[:200], person=person, source=source,
             project=project, evidence=evidence, why=why,
+            automation=automation,
         ))
 
     # Re-sequence ranks 1..N by emit order — never trust model rank integers.

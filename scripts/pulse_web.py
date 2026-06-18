@@ -873,70 +873,54 @@ def render_work_next(
     blended: bool = False,
     model_used: str | None = None,
 ) -> str:
-    """Render the precomputed "what should we work on next" ranked panel.
+    """Render a SLIM teaser pointing at the dedicated "What's Next" page.
 
-    PURE: takes PRE-FETCHED ranked rows (each ``RankedAction.as_dict()``) — never
-    fetches. ``person`` labels are LOCAL-DISPLAY-ONLY; this is the static local
-    dashboard (web/pulse.html), never the pushed pulse, so it is safe to render
-    them here. All untrusted text (titles, person labels, evidence, why) is
-    ``_esc``-ed.
+    The full ranked list lives on its OWN page — the FastAPI ``/whats-next`` route,
+    served by pulse_server — so this static dashboard shows only a compact pointer
+    (count + automation-ready count + the top item + a link) and does not crowd the
+    main view. PURE: takes PRE-FETCHED rows (each ``RankedAction.as_dict()``) —
+    never fetches. ``person`` labels are LOCAL-DISPLAY-ONLY (local dashboard, never
+    the pushed pulse); all untrusted text is ``_esc``-ed.
     """
+    link = '<a class="wn-open" href="/whats-next">Open What&#39;s Next &rarr;</a>'
     if not ranked_rows:
-        return """
-    <section class="card work-next">
-      <header class="card-head"><h2>What should we work on next</h2></header>
-      <div class="empty">No ranked next actions yet — run a refresh to compute.</div>
+        return f"""
+    <section class="card work-next work-next-teaser">
+      <header class="card-head"><h2>What&#39;s next</h2></header>
+      <div class="empty">No ranked next actions yet. {link}</div>
     </section>
     """
 
-    meta_bits = []
-    if computed_at:
-        meta_bits.append(f"computed {_esc(_ago(computed_at, now=now))}")
-    if blended:
-        meta_bits.append("team-blended")
-    if model_used:
-        meta_bits.append(_esc(model_used))
-    meta_html = (
-        f'<span class="card-head-meta">{" · ".join(meta_bits)}</span>'
-        if meta_bits else ""
+    total = len(ranked_rows)
+    auto = sum(1 for r in ranked_rows if r.get("automation"))
+    auto_html = (
+        f' · <span class="wn-auto">&#9881; {auto} automation-ready</span>'
+        if auto else ""
+    )
+    when = f"computed {_esc(_ago(computed_at, now=now))}" if computed_at else "not computed yet"
+    blend_html = " · team-blended" if blended else ""
+
+    top = ranked_rows[0]
+    top_title = _esc(top.get("title") or "")
+    top_person = top.get("person")
+    person_html = (
+        f'<span class="wn-person">{_esc(top_person)}</span>' if top_person else ""
+    )
+    top_auto = (
+        '<span class="wn-auto">&#9881;</span>' if top.get("automation") else ""
     )
 
-    items = []
-    for row in ranked_rows:
-        rank = _esc(row.get("rank") or "")
-        title = _esc(row.get("title") or "")
-        person = row.get("person")
-        source = _esc(row.get("source") or "")
-        project = row.get("project")
-        why = _esc(row.get("why") or "")
-
-        person_html = (
-            f'<span class="wn-person">{_esc(person)}</span>' if person else ""
-        )
-        source_html = f'<span class="wn-source">{source}</span>' if source else ""
-        project_html = (
-            f'<span class="wn-project">{_esc(project)}</span>' if project else ""
-        )
-        why_html = f'<div class="wn-why">{why}</div>' if why else ""
-        items.append(f"""
-        <li class="wn-row">
-          <span class="wn-rank">{rank}</span>
-          <div class="wn-body">
-            <div class="wn-title">{title} {person_html}</div>
-            <div class="wn-meta">{source_html} {project_html}</div>
-            {why_html}
-          </div>
-        </li>
-        """)
-
-    body = "".join(items)
     return f"""
-    <section class="card work-next">
+    <section class="card work-next work-next-teaser">
       <header class="card-head">
-        <h2>What should we work on next</h2>
-        {meta_html}
+        <h2>What&#39;s next</h2>
+        <span class="card-head-meta">{total} ranked{auto_html}{blend_html} · {when}</span>
       </header>
-      <ol class="wn-list">{body}</ol>
+      <div class="wn-teaser-top">
+        <span class="wn-rank">1</span>
+        <span class="wn-title">{top_title} {person_html} {top_auto}</span>
+      </div>
+      <div class="wn-teaser-foot">{link}</div>
     </section>
     """
 
@@ -1715,6 +1699,18 @@ PAGE_CSS = """
 .wn-source { text-transform: uppercase; letter-spacing: 0.04em; }
 .wn-project { margin-left: 6px; }
 .wn-why { color: var(--fg-muted); font-size: 13px; margin-top: 3px; }
+/* What's-next teaser (slim pointer to the dedicated /whats-next page) */
+.work-next-teaser .wn-teaser-top { display: flex; align-items: baseline; gap: 8px; padding: 6px 0 2px; }
+.work-next-teaser .wn-teaser-top .wn-rank {
+  flex: none; min-width: 20px; height: 20px; line-height: 20px; text-align: center;
+  border-radius: 999px; background: var(--border); color: var(--fg-muted);
+  font-size: 11px; font-weight: 700;
+}
+.work-next-teaser .wn-teaser-top .wn-title { color: var(--fg); font-size: 14px; }
+.work-next-teaser .wn-teaser-foot { margin-top: 6px; }
+.wn-open { color: var(--accent); font-weight: 600; font-size: 13px; text-decoration: none; }
+.wn-open:hover { text-decoration: underline; }
+.wn-auto { color: var(--warn, #b58900); font-weight: 600; }
 
 /* Hero */
 .hero { padding: 22px 24px; }

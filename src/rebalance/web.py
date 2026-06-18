@@ -626,6 +626,9 @@ def _wn_item(action: dict[str, Any]) -> str:
         head_bits.append(f"<span class='wn-src'>{source}</span>")
     if project:
         head_bits.append(badge_html("neutral", str(project)))
+    if action.get("automation"):
+        # Candidate for a GitHub issue → coding-agent (Codex / Claude Code) hook.
+        head_bits.append(badge_html("warn", "⚙ automation"))
     head = "<div class='wn-head'>" + "".join(head_bits) + "</div>"
 
     why_html = f"<div class='wn-why'>{html.escape(why)}</div>" if why else ""

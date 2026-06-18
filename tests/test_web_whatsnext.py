@@ -89,6 +89,12 @@ class WhatsNextBodyTests(unittest.TestCase):
         self.assertIn("operator-only", body)
         self.assertIn("deterministic order", body)
 
+    def test_automation_tag_renders_only_when_flagged(self) -> None:
+        on = _whatsnext_body(_data([_action(automation=True, title="Fix the deploy")]))
+        self.assertIn("automation", on)
+        off = _whatsnext_body(_data([_action(automation=False, title="Sync with Matt")]))
+        self.assertNotIn("automation", off)
+
     def test_hostile_person_and_title_are_escaped(self) -> None:
         # Person labels are local-display-only but still untrusted: a hostile
         # teammate label / title / evidence must not inject markup.
