@@ -343,21 +343,34 @@ def build_rank_prompt(
         sections.append("\n".join(lines))
 
     # [TEAMMATE] person-attributed blocks — classified project/duration/blocker
-    # PREFERRED over verbatim detail (data minimization).
+    # PREFERRED over verbatim detail (data minimization). The section header
+    # carries each teammate's NAME so the model can echo it verbatim into
+    # ``person=<TeammateName>`` (the attribution mapping in the OUTPUT CONTRACT).
     if blended and teammate_delta:
         lines = ["## [TEAMMATE] Cross-person signals (additive, de-duplicated)"]
+        lines.append(
+            "- These are HIGH-VALUE: a teammate item here has NO matching operator "
+            "signal (it is already the de-duplicated additive delta). A high-evidence "
+            "teammate item with no operator counterpart is the highest-value class — "
+            "surface it at or near the TOP."
+        )
         for blk in teammate_delta:
             who = blk.get("person") or "teammate"
             dur = blk.get("duration_minutes") or 0
             proj = f" {{{blk['project']}}}" if blk.get("project") else ""
+            # Header carries the teammate name → echo it into person=<name>.
             lines.append(
-                f"- [{who}]{proj} {blk['summary']} "
+                f"- [TEAMMATE: {who}]{proj} {blk['summary']} "
                 f"({blk.get('time', '')}, {dur}m)"
             )
         sections.append("\n".join(lines))
 
     # Calibration levers.
     lever_lines = ["## Ranking calibration"]
+    lever_lines.append(
+        "All weights below are multipliers in [0.0, 1.0] where 1.0 = full effect "
+        "and lower = weaker; apply them when ordering items."
+    )
     if weights.owner_bias_correction:
         lever_lines.append(
             "- OWNER-BIAS CORRECTION ON: do not rank an item higher merely because "
@@ -366,8 +379,11 @@ def build_rank_prompt(
             "operator's own busywork."
         )
     lever_lines.append(
-        f"- Discount vague / low-specificity items (vagueness_discount="
-        f"{weights.vagueness_discount})."
+        f"- VAGUENESS, both directions: DOWN-weight vague items (untitled holds, "
+        f"'focus time', 'catch up', generic blocks) by vagueness_discount="
+        f"{weights.vagueness_discount}; UP-weight items naming a concrete artifact "
+        f"(a specific PR/issue number, a named meeting/project) to the same degree. "
+        f"A named PR should outrank a vague hold of equal recency."
     )
     lever_lines.append(
         f"- Penalize an item that merely restates one already counted "
@@ -376,6 +392,11 @@ def build_rank_prompt(
     lever_lines.append(
         f"- A signal that dropped/disappeared moves the ranking "
         f"(drop_sensitivity={weights.drop_sensitivity})."
+    )
+    lever_lines.append(
+        "- DROPPED-BALL CLASS (highest value): a high-evidence teammate item with no "
+        "matching operator signal is the most valuable thing to surface — rank it at "
+        "or near the top."
     )
     lever_lines.append(
         f"- Per-source trust: {json.dumps(weights.per_source)}."
@@ -393,9 +414,24 @@ of concrete next actions — not analytics, not a report, not grouped sections.
 HARD RULE: rank ONLY from the context provided below. Invent nothing. If the \
 context is thin, return fewer items rather than padding.
 
-Apply the ranking calibration. For EACH item output exactly:
-  <rank>. <one-line title> | person=<operator|name> | source=<source> \
-[| project=<project>] — <one-line why> (evidence: <1-2 pointers>)
+## OUTPUT CONTRACT
+For EACH ranked item, output exactly ONE line in this EXACT pipe grammar — same \
+field order and keys every time:
+
+  <rank>. <title> | person=<operator|TeammateName> | source=<source> | project=<project-or-empty> | evidence=<p1; p2> | why=<one-line reason>
+
+Rules:
+- Keys are literal and in this order: person= , source= , project= , evidence= , why=
+- ATTRIBUTION: for an [OWN] item write `person=operator`; for a [TEAMMATE] item \
+write `person=<the teammate name shown in its section header>` (the name after \
+"TEAMMATE:" in that item's bullet).
+- source= is the source token of the item (e.g. github, calendar, sleuth, vault).
+- project= is the project/repo name, or EMPTY if none (write nothing after the `=`).
+- evidence= is 1-2 concrete pointers separated by '; ' (a PR/issue URL or number, a \
+time, a path).
+- why= is a single short reason.
+- Output ONLY the numbered list — no preamble, no trailing commentary, no headers, \
+no grouping, no sub-bullets.
 
 <context>
 {context_block}
@@ -516,56 +552,87 @@ def _candidate_to_action(c: dict[str, Any], rank: int) -> RankedAction:
 # Synthesis parsing
 # ---------------------------------------------------------------------------
 
-_RANK_LINE = re.compile(r"^\s*(\d+)[.)]\s*(.+)$")
+# A list-item line: a leading number (``N.``/``N)``, optionally signed so a
+# stray ``-3.`` still parses) OR a bullet marker (``-``/``*``/``•``), then the
+# payload. The number branch is tried FIRST so ``-3.`` reads as a (bad) rank, not
+# a ``-`` bullet. Ranks are re-sequenced by emit ORDER regardless (model rank
+# integers are NOT trusted — they can be negative/zero/duplicate).
+_LIST_LINE = re.compile(r"^\s*(?:-?\d+\s*[.)]|[-*•])\s+(.+)$")
+
+
+def _strip_markdown(s: str) -> str:
+    """Strip leading/trailing ``**``/``*``/backticks/whitespace from a fragment."""
+    return s.strip().strip("*`").strip()
 
 
 def _parse_ranked_synthesis(text: str) -> list[RankedAction]:
     """Parse the model's flat ranked list back into :class:`RankedAction`.
 
-    Tolerant: matches numbered lines ``N. <title> | person=.. | source=.. — why``.
-    Any line that doesn't match is ignored. Returns ``[]`` if nothing parses, so
-    the caller can fall back to the deterministic candidate ordering.
+    Parses the uniform pipe grammar emitted by :func:`build_rank_prompt`::
+
+        <rank>. <title> | person=<operator|name> | source=<source>
+                | project=<p-or-empty> | evidence=<p1; p2> | why=<reason>
+
+    ``title`` is the text BEFORE the first ` | `; each ` | key=value` field is
+    parsed into person/source/project/evidence(split on '; ' into a list)/why.
+    Ranks are re-sequenced 1..N by emitted ORDER (model rank integers are not
+    trusted). Tolerant of bullet markers (``-``/``*``/``•``) — a bulleted line
+    gets a position-assigned rank. Markdown (``**``) is stripped from the title.
+    Returns ``[]`` when nothing list-shaped parses, so the caller can fall back
+    to the deterministic candidate ordering.
     """
     actions: list[RankedAction] = []
     for line in (text or "").splitlines():
-        m = _RANK_LINE.match(line)
+        m = _LIST_LINE.match(line)
         if not m:
             continue
-        rank = int(m.group(1))
-        rest = m.group(2).strip()
+        rest = m.group(1).strip()
 
-        # Split the title off the first " | " field; pull why off " — ".
-        title = rest
+        # title = everything before the first ` | `; fields follow.
+        # Tolerate stray dash variants of the separator (e.g. "|-", " — ").
+        parts = re.split(r"\s*\|\s*", rest)
+        title = _strip_markdown(parts[0])
+
         person: str | None = None
         source = ""
         project: str | None = None
+        evidence: list[str] = []
         why = ""
 
-        if " — " in rest:
-            head, why = rest.split(" — ", 1)
-        else:
-            head = rest
-        why = why.strip()
-
-        fields = [f.strip() for f in head.split("|")]
-        title = fields[0].strip()
-        for fld in fields[1:]:
-            low = fld.lower()
-            if low.startswith("person="):
-                val = fld.split("=", 1)[1].strip()
+        for fld in parts[1:]:
+            if "=" not in fld:
+                continue
+            key, _, val = fld.partition("=")
+            key = key.strip().lower()
+            val = val.strip()
+            if key == "person":
                 person = None if val.lower() in ("operator", "self", "me", "") else val
-            elif low.startswith("source="):
-                source = fld.split("=", 1)[1].strip()
-            elif low.startswith("project="):
-                project = fld.split("=", 1)[1].strip() or None
+            elif key == "source":
+                source = val
+            elif key == "project":
+                project = val or None
+            elif key == "evidence":
+                evidence = [e.strip() for e in val.split(";") if e.strip()]
+            elif key == "why":
+                why = _strip_markdown(val)
 
         if not title:
             continue
         actions.append(RankedAction(
-            rank=rank, title=title[:200], person=person,
-            source=source, project=project, why=why,
+            rank=0,  # re-sequenced below by emit order
+            title=title[:200], person=person, source=source,
+            project=project, evidence=evidence, why=why,
         ))
+
+    # Re-sequence ranks 1..N by emit order — never trust model rank integers.
+    for i, a in enumerate(actions, 1):
+        a.rank = i
     return actions
+
+
+def _has_structured_field(a: RankedAction) -> bool:
+    """True when a parsed action carries a real structured field (not bare prose)."""
+    return bool(a.person or a.source or a.project or a.evidence)
 
 
 # ---------------------------------------------------------------------------
@@ -579,6 +646,40 @@ def _local_day_window(now: datetime | None, tz: Any) -> tuple[str, datetime, dat
     start = current.replace(hour=0, minute=0, second=0, microsecond=0)
     end = start + timedelta(days=1)
     return start.date().isoformat(), start, end
+
+
+def _operator_temporal_context(
+    database_path: Path, now: datetime | None, tz: Any
+) -> dict[str, Any]:
+    """A minimal OPERATOR-scoped temporal context for the rank prompt.
+
+    Wires the previously-dead Schedule Context branch in :func:`build_rank_prompt`
+    and keeps it on parity with ``querier._build_prompt``. Reuses
+    ``querier._gather_temporal_context`` — which is OPERATOR_CALENDAR_ID-scoped for
+    its vacation inference — so team calendars are NEVER blended into day-type
+    inference. Falls back to a pure day_name + weekday/weekend computation (no DB)
+    if that helper is unavailable, so this NEVER raises.
+    """
+    current = (now.astimezone(tz) if now is not None else datetime.now(tz))
+    tomorrow = current + timedelta(days=1)
+    try:
+        from rebalance.ingest.querier import _gather_temporal_context
+
+        return {
+            "today": _gather_temporal_context(database_path, current),
+            "tomorrow": _gather_temporal_context(database_path, tomorrow),
+        }
+    except Exception:  # noqa: BLE001 — degrade to a DB-free day-type, never raise
+        def _basic(d: datetime) -> dict[str, Any]:
+            weekday = d.weekday()
+            return {
+                "date": d.strftime("%Y-%m-%d"),
+                "day_name": d.strftime("%A"),
+                "day_type": "off" if weekday >= 5 else "workday",
+                "is_weekend": weekday >= 5,
+            }
+
+        return {"today": _basic(current), "tomorrow": _basic(tomorrow)}
 
 
 def _shared_event_ids(
@@ -667,6 +768,7 @@ def rank_next_actions(
                     weights=weights,
                     since_days=since_days,
                     tz=tz,
+                    local_day=local_day,
                 )
     except Exception as exc:  # noqa: BLE001 — never raise out of the keystone
         logger.warning("rank_next_actions: assembly failed: %s", exc)
@@ -700,7 +802,7 @@ def rank_next_actions(
             operator_candidates=operator_actions,
             teammate_delta=teammate_delta,
             weights=weights,
-            temporal_context=None,
+            temporal_context=_operator_temporal_context(database_path, now, tz),
             blended=blended,
         )
         try:
@@ -708,19 +810,45 @@ def rank_next_actions(
 
             synthesis, model_used = _synthesize_with_fallback(prompt)
             parsed = _parse_ranked_synthesis(synthesis)
-            if parsed:
+            # STRUCTURED acceptance gate: only trust the parse over the
+            # deterministic fallback when it is non-empty AND at least half its
+            # items carry a real structured field (person/source/project/evidence).
+            # A degenerate prose/markdown numbered list parses to title-only junk
+            # and is REJECTED here so the good deterministic fallback survives.
+            structured = sum(1 for a in parsed if _has_structured_field(a))
+            if parsed and structured * 2 >= len(parsed):
                 ranked = parsed
             else:
-                note = (note + "; " if note else "") + "synthesis parsed to nothing; using deterministic order"
+                note = (
+                    (note + "; " if note else "")
+                    + "synthesis parsed to nothing useful; using deterministic order"
+                )
+                # Synthesis returned text but parsed-to-nothing-useful WHILE
+                # candidates existed → the interesting failure.
+                if (synthesis or "").strip() and fallback:
+                    logger.warning(
+                        "rank_next_actions: synthesis text did not parse to "
+                        "structured items (parsed=%d, structured=%d, candidates=%d)",
+                        len(parsed), structured, len(fallback),
+                    )
         except Exception as exc:  # noqa: BLE001 — degrade, don't blow up
             logger.warning("rank_next_actions: synthesis failed: %s", exc)
             note = (note + "; " if note else "") + f"synthesis failed: {exc}"
 
     if not ranked:
-        logger.warning(
-            "rank_next_actions: empty ranked output (blended=%s, local_day=%s)",
-            blended, local_day,
-        )
+        if operator_candidates_raw or teammate_delta:
+            # Candidates existed but the ranked list is empty — the interesting case.
+            logger.warning(
+                "rank_next_actions: empty ranked output despite candidates "
+                "(blended=%s, local_day=%s)",
+                blended, local_day,
+            )
+        else:
+            # Zero candidates to begin with — expected (a quiet day / empty DB).
+            logger.info(
+                "rank_next_actions: no candidates to rank (blended=%s, local_day=%s)",
+                blended, local_day,
+            )
 
     return RankedNextActions(
         ranked=ranked,
@@ -734,6 +862,41 @@ def rank_next_actions(
     )
 
 
+# The teammate arm reads a multi-day horizon; the additivity gate counts a
+# trailing-history window so it reflects logging DENSITY, not future scheduling.
+_TEAMMATE_HORIZON_DAYS = 2
+_ADDITIVITY_HISTORY_DAYS = 30
+
+
+def _operator_blocks_over_horizon(
+    conn: Any, *, local_day: str, days_forward: int, tz: Any
+) -> list[dict[str, Any]]:
+    """Operator OPERATOR_CALENDAR_ID blocks for [local_day .. local_day+days_forward].
+
+    The teammate arm reads a multi-day upcoming horizon, so normalized-title dedup
+    needs the operator's titles across the SAME horizon — otherwise a hand-logged
+    duplicate teammate meeting on tomorrow/day-after double-counts against the
+    operator's own future block. Same-local-day comparison is preserved (each block
+    keeps its ``local_day``); this only widens which operator days are visible.
+    """
+    horizon_days = {
+        (datetime.fromisoformat(local_day).date() + timedelta(days=i)).isoformat()
+        for i in range(days_forward + 1)
+    }
+    rows = conn.execute(
+        "SELECT id, summary, start_time, end_time, person "
+        "FROM calendar_events WHERE calendar_id = ?",
+        (OPERATOR_CALENDAR_ID,),
+    ).fetchall()
+    blocks: list[dict[str, Any]] = []
+    for r in rows:
+        block = _calendar_block(r, tz=tz)
+        if block is None or block["local_day"] not in horizon_days:
+            continue
+        blocks.append(block)
+    return blocks
+
+
 def _gather_teammate_delta(
     conn: Any,
     *,
@@ -742,28 +905,39 @@ def _gather_teammate_delta(
     weights: SignalWeights,
     since_days: int,
     tz: Any,
+    local_day: str,
 ) -> tuple[list[dict[str, Any]], bool, str]:
     """Gather the additivity-PASSING teammates' blocks, deduped to the delta.
 
-    Returns ``(teammate_delta, blended, note)``. ``blended`` is True whenever the
-    team arm was actually consulted (even if the delta is empty). Persons are
-    gated by ``team_persons_passing_additivity`` on their in-window event counts.
+    Returns ``(teammate_delta, blended, note)``. ``blended`` means TEAM SIGNAL
+    ACTUALLY CONTRIBUTED: it is ``False`` when there is no roster, no
+    additivity-passing person, OR the dedup delta is empty (the explanatory note
+    still records why). Persons are gated by ``team_persons_passing_additivity`` on
+    their trailing-history event counts (logging density, not future scheduling).
     """
     from rebalance.ingest.calendar import get_team_upcoming_by_person
     from rebalance.ingest.calendar_config import CalendarConfig
 
     roster = [tc.person for tc in CalendarConfig.load().team_calendars]
     if not roster:
-        return [], True, "no team_calendars configured (operator-only)"
+        return [], False, "no team_calendars configured (operator-only)"
 
-    # Per-person event counts in the recent window — the additivity input.
-    since = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+    # Per-person event counts over a bounded TRAILING-HISTORY window
+    # [now-30d, now] — the additivity gate reflects how densely a teammate logs
+    # their calendar, NOT how much future scheduling they happen to have. (An
+    # unbounded future bound would let a single heavily-scheduled week pass a
+    # teammate who never logs history.)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    history_floor = (
+        datetime.now(timezone.utc) - timedelta(days=_ADDITIVITY_HISTORY_DAYS)
+    ).isoformat()
     placeholders = ",".join("?" for _ in roster)
     rows = conn.execute(
         f"SELECT person, COUNT(*) AS n FROM calendar_events "
-        f"WHERE person IN ({placeholders}) AND start_time >= ? "
+        f"WHERE person IN ({placeholders}) "
+        f"AND start_time >= ? AND start_time <= ? "
         f"GROUP BY person",
-        (*roster, since),
+        (*roster, history_floor, now_iso),
     ).fetchall()
     counts = {r["person"]: r["n"] for r in rows}
     # Preserve roster order so the additivity filter is deterministic.
@@ -771,10 +945,12 @@ def _gather_teammate_delta(
     passing = team_persons_passing_additivity(event_counts, weights.min_team_events)
 
     if not passing:
-        return [], True, "no teammate passed the additivity threshold (operator-only)"
+        return [], False, "no teammate passed the additivity threshold (operator-only)"
 
     # get_team_upcoming_by_person is the ONLY reader that SELECTs `person`.
-    raw = get_team_upcoming_by_person(database_path, passing, days_forward=2)
+    raw = get_team_upcoming_by_person(
+        database_path, passing, days_forward=_TEAMMATE_HORIZON_DAYS
+    )
     teammate_blocks: list[dict[str, Any]] = []
     for ev in raw:
         block = _calendar_block(ev, tz=tz)
@@ -783,15 +959,27 @@ def _gather_teammate_delta(
         block["person"] = ev.get("person")
         teammate_blocks.append(block)
 
+    # Dedup against the operator's titles over the SAME multi-day horizon the
+    # teammate read covers (FIX 2 / DSP-05) — comparison stays same-local-day.
+    operator_horizon_blocks = _operator_blocks_over_horizon(
+        conn, local_day=local_day, days_forward=_TEAMMATE_HORIZON_DAYS, tz=tz
+    )
     shared_ids = _shared_event_ids(conn, operator_blocks=operator_blocks, persons=passing)
     delta, dropped = dedup_teammate_blocks(
-        teammate_blocks, operator_blocks, shared_ids=shared_ids
+        teammate_blocks, operator_horizon_blocks, shared_ids=shared_ids
     )
+    # blended is True only when the team arm CONTRIBUTED an additive block.
+    contributed = bool(delta)
     note = (
         f"team blended: {len(passing)} person(s) passed additivity, "
         f"{len(delta)} additive block(s), {dropped} deduped"
+        if contributed
+        else (
+            f"team consulted: {len(passing)} person(s) passed additivity but "
+            f"0 additive block(s) after dedup ({dropped} deduped) — operator-only"
+        )
     )
-    return delta, True, note
+    return delta, contributed, note
 
 
 def _weights_summary(weights: SignalWeights) -> dict[str, Any]:

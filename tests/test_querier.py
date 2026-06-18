@@ -258,8 +258,13 @@ class TeamNextActionsSidecarTests(unittest.TestCase):
         self.assertIs(attached, sentinel)
         self.assertEqual(attached.ranked[0].title, "ship it")
 
-    def test_team_true_parity_with_dashboard_call_args(self) -> None:
-        """PARITY: team=True ranks with the SAME args a dashboard call would use."""
+    def test_team_true_fallback_uses_deterministic_rank_no_synthesis(self) -> None:
+        """No precompute → fall back to a LIVE but DETERMINISTIC rank.
+
+        The interactive ask() path must NOT trigger a second Gemini call: when the
+        cache is absent the fallback is ``rank_next_actions(blend_team=True,
+        synthesize=False)`` — the ranked floor, no LLM round-trip (C4/FIX 5).
+        """
         from rebalance.ingest.next_actions import RankedNextActions
 
         with patch(
@@ -276,6 +281,29 @@ class TeamNextActionsSidecarTests(unittest.TestCase):
             passed_db = call.args[0]
         self.assertEqual(passed_db, self._db)
         self.assertTrue(call.kwargs.get("blend_team"))
+        # The interactive path must request the DETERMINISTIC floor (no synthesis).
+        self.assertFalse(call.kwargs.get("synthesize", True))
+
+    def test_team_true_prefers_cache_and_skips_rank(self) -> None:
+        """A persisted cache row is PREFERRED; rank_next_actions is NOT called.
+
+        Interactive ask(team=True) must never silently pay for a synthesis when a
+        precomputed ranked result already exists (C4/FIX 5)."""
+        from rebalance.ingest.next_actions import RankedNextActions
+
+        cached = RankedNextActions(note="from-cache", blended=True)
+        with patch(
+            "rebalance.ingest.next_actions.load_ranked_next_actions",
+            return_value=cached,
+        ) as mock_load, patch(
+            "rebalance.ingest.next_actions.rank_next_actions",
+        ) as mock_rank:
+            result = ask("status", self._db, skip_synthesis=True, team=True)
+
+        mock_load.assert_called_once()
+        mock_rank.assert_not_called()  # no second synthesis, no deterministic rerun
+        attached = getattr(result, NEXT_ACTIONS_ATTR, None)
+        self.assertIs(attached, cached)
 
     def test_team_true_never_raises_when_rank_degrades(self) -> None:
         """A failing rank_next_actions must not break ask(); no sidecar attaches."""

@@ -8,8 +8,10 @@ from __future__ import annotations
 
 import unittest
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
+from unittest.mock import patch
 
-from rebalance.web import _whatsnext_body
+from rebalance.web import _whatsnext_body, whatsnext_page
 
 
 def _now_iso(**delta) -> str:
@@ -115,6 +117,58 @@ class WhatsNextBodyTests(unittest.TestCase):
         ]))
         self.assertIn("wn-item", body)
         self.assertNotIn("None", body)
+
+
+class WhatsNextRoutePersistsTests(unittest.TestCase):
+    """FIX 4 (C3): when the route computes LIVE (no precompute), it ALWAYS persists
+    the result — even a degraded one — so subsequent normal loads read the cache
+    instead of recomputing live Gemini on every hit."""
+
+    def test_live_compute_persists_even_when_no_precompute(self) -> None:
+        from rebalance.ingest.next_actions import RankedNextActions
+
+        live = RankedNextActions(note="freshly computed", blended=False)
+        with patch(
+            "rebalance.paths.resolve_database_path", return_value=Path("/tmp/x.db")
+        ), patch(
+            "rebalance.ingest.next_actions.get_ranked_meta",
+            return_value={"row_count": 0},  # no precompute yet
+        ), patch(
+            "rebalance.ingest.next_actions.rank_next_actions", return_value=live
+        ) as mock_rank, patch(
+            "rebalance.ingest.next_actions.persist_ranked_next_actions"
+        ) as mock_persist, patch(
+            "rebalance.ingest.next_actions.load_ranked_next_actions", return_value=live
+        ):
+            # refresh=False (a NORMAL first hit with an empty cache).
+            whatsnext_page(refresh=False)
+
+        mock_rank.assert_called_once()
+        # The live result was persisted so the next normal load hits the cache.
+        mock_persist.assert_called_once()
+        persisted = mock_persist.call_args.args[1]
+        self.assertIs(persisted, live)
+
+    def test_persist_failure_is_swallowed_not_500(self) -> None:
+        from rebalance.ingest.next_actions import RankedNextActions
+
+        live = RankedNextActions(note="x")
+        with patch(
+            "rebalance.paths.resolve_database_path", return_value=Path("/tmp/x.db")
+        ), patch(
+            "rebalance.ingest.next_actions.get_ranked_meta",
+            return_value={"row_count": 0},
+        ), patch(
+            "rebalance.ingest.next_actions.rank_next_actions", return_value=live
+        ), patch(
+            "rebalance.ingest.next_actions.persist_ranked_next_actions",
+            side_effect=RuntimeError("disk full"),
+        ), patch(
+            "rebalance.ingest.next_actions.load_ranked_next_actions", return_value=None
+        ):
+            # Must not raise — the swallowed-compute path degrades cleanly.
+            resp = whatsnext_page(refresh=False)
+        self.assertIsNotNone(resp)
 
 
 if __name__ == "__main__":

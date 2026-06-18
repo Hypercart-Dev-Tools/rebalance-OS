@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 
+from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.paths import resolve_oauth_token_path
 TOKEN_PATH = resolve_oauth_token_path("calendar")
 CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
@@ -204,6 +205,9 @@ def refresh_calendar_source(
 def sync_calendar(
     database_path: Path,
     *,
+    # 'primary' here is Google's Calendar API alias for the authenticated user's
+    # default calendar (the write/fetch target), NOT a DB read filter — left as a
+    # literal on purpose (do not swap for OPERATOR_CALENDAR_ID).
     calendar_id: str = "primary",
     person: str | None = None,
     days_back: int = 30,
@@ -318,6 +322,9 @@ def sync_calendar(
 
 def create_calendar_event(
     *,
+    # 'primary' here is Google's Calendar API alias for the authenticated user's
+    # default calendar (the create target), NOT a DB read filter — left as a
+    # literal on purpose (do not swap for OPERATOR_CALENDAR_ID).
     calendar_id: str = "primary",
     summary: str,
     start_time: str,
@@ -463,12 +470,12 @@ def _query_events(
 def get_upcoming_events(
     database_path: Path,
     days_forward: int = 2,
-    calendar_id: str | None = "primary",
+    calendar_id: str | None = OPERATOR_CALENDAR_ID,
 ) -> list[dict[str, Any]]:
     """Return upcoming events from the calendar_events table.
 
-    Defaults to the operator's own ``primary`` calendar; pass ``calendar_id=None``
-    to include all calendars (team views).
+    Defaults to the operator's own ``OPERATOR_CALENDAR_ID`` calendar; pass
+    ``calendar_id=None`` to include all calendars (team views).
     """
     now = datetime.now(timezone.utc).isoformat()
     cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
@@ -529,12 +536,12 @@ def get_team_upcoming_by_person(
 def get_recent_events(
     database_path: Path,
     days_back: int = 7,
-    calendar_id: str | None = "primary",
+    calendar_id: str | None = OPERATOR_CALENDAR_ID,
 ) -> list[dict[str, Any]]:
     """Return past events for activity/meeting-load context.
 
-    Defaults to the operator's own ``primary`` calendar; pass ``calendar_id=None``
-    to include all calendars (team views).
+    Defaults to the operator's own ``OPERATOR_CALENDAR_ID`` calendar; pass
+    ``calendar_id=None`` to include all calendars (team views).
     """
     from rebalance.ingest.calendar_helpers import calendar_connection
 
@@ -593,13 +600,13 @@ def get_daily_totals(
     database_path: Path,
     days_back: int = 30,
     days_forward: int = 0,
-    calendar_id: str | None = "primary",
+    calendar_id: str | None = OPERATOR_CALENDAR_ID,
 ) -> list[DailyEventTotal]:
     """Calculate event count and total duration per day.
 
-    Defaults to the operator's own ``primary`` calendar so totals aren't inflated
-    by teammate calendars; pass ``calendar_id=None`` to aggregate all calendars.
-    Returns days sorted chronologically (oldest first).
+    Defaults to the operator's own ``OPERATOR_CALENDAR_ID`` calendar so totals
+    aren't inflated by teammate calendars; pass ``calendar_id=None`` to aggregate
+    all calendars. Returns days sorted chronologically (oldest first).
     """
     from rebalance.ingest.calendar_helpers import (
         calendar_connection,

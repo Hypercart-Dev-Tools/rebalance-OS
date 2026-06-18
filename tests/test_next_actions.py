@@ -315,6 +315,277 @@ class TestRankNextActions(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# FIX 1 — uniform pipe grammar: prompt ↔ parser round-trip + acceptance gate
+# ---------------------------------------------------------------------------
+
+
+class TestParseRankedSynthesis(unittest.TestCase):
+    def test_round_trips_the_emitted_grammar(self) -> None:
+        """The parser round-trips the EXACT grammar build_rank_prompt emits:
+        person/source/project/evidence/why all populated, evidence a list,
+        ranks re-sequenced, leading **markdown** stripped."""
+        text = (
+            "1. **Fix login PR** | person=operator | source=github | "
+            "project=acme/web | evidence=PR #42; gh.com/acme/web/pull/42 | "
+            "why=open PR you own\n"
+            "2. Customer Escalation Sync | person=matthew | source=calendar | "
+            "project= | evidence=matt 14:00; 45m | why=cross-person, no operator signal"
+        )
+        actions = na._parse_ranked_synthesis(text)
+        self.assertEqual(len(actions), 2)
+
+        a1, a2 = actions
+        # Ranks re-sequenced 1..N by emit order.
+        self.assertEqual([a1.rank, a2.rank], [1, 2])
+        # ** markdown stripped from the title.
+        self.assertEqual(a1.title, "Fix login PR")
+        self.assertEqual(a1.person, None)  # operator → None (local-display invariant)
+        self.assertEqual(a1.source, "github")
+        self.assertEqual(a1.project, "acme/web")
+        # evidence parsed as a LIST split on '; ' (DSP-03).
+        self.assertEqual(a1.evidence, ["PR #42", "gh.com/acme/web/pull/42"])
+        self.assertEqual(a1.why, "open PR you own")
+
+        self.assertEqual(a2.person, "matthew")
+        self.assertEqual(a2.source, "calendar")
+        self.assertIsNone(a2.project)  # empty project= → None
+        self.assertEqual(a2.evidence, ["matt 14:00", "45m"])
+
+    def test_rank_integers_are_not_trusted(self) -> None:
+        """Negative/zero/duplicate model rank ints are re-sequenced by order."""
+        text = (
+            "0. Alpha | person=operator | source=vault | project= | evidence=a | why=x\n"
+            "0. Beta | person=operator | source=vault | project= | evidence=b | why=y\n"
+            "-3. Gamma | person=operator | source=vault | project= | evidence=c | why=z"
+        )
+        actions = na._parse_ranked_synthesis(text)
+        self.assertEqual([a.rank for a in actions], [1, 2, 3])
+        self.assertEqual([a.title for a in actions], ["Alpha", "Beta", "Gamma"])
+
+    def test_bullet_markers_accepted(self) -> None:
+        """Bullets (-, *, •) are accepted and rank-assigned by position."""
+        text = (
+            "- Alpha | person=operator | source=github | project= | evidence=a | why=x\n"
+            "* Beta | person=operator | source=github | project= | evidence=b | why=y\n"
+            "• Gamma | person=operator | source=github | project= | evidence=c | why=z"
+        )
+        actions = na._parse_ranked_synthesis(text)
+        self.assertEqual([a.rank for a in actions], [1, 2, 3])
+        self.assertEqual([a.title for a in actions], ["Alpha", "Beta", "Gamma"])
+
+    def test_degenerate_prose_carries_no_structured_field(self) -> None:
+        """A prose numbered list parses to title-only items — no structured field —
+        so the acceptance gate (in rank_next_actions) will REJECT it."""
+        prose = (
+            "1. We should probably look at the login flow soon.\n"
+            "2. Also the dashboard needs some love and attention.\n"
+            "3. Don't forget to follow up with the team about Q3."
+        )
+        actions = na._parse_ranked_synthesis(prose)
+        # They parse (numbered), but none carries a real structured field.
+        self.assertTrue(actions)
+        self.assertTrue(all(not na._has_structured_field(a) for a in actions))
+
+
+class TestAcceptanceGate(unittest.TestCase):
+    """rank_next_actions keeps the deterministic fallback when synthesis is prose
+    (the DSP-01 regression): the user sees the structured fallback, not prose."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.db = self.tmp / "rebalance.db"
+        _seed_migrated_db(self.db)
+        self.tz = na.local_tz()
+        self._orig_cfg = na.get_pulse_config
+        na.get_pulse_config = lambda: {"github_login": "me", "slack_user_id": None}
+        orig = CalendarConfig.load
+        cfg = CalendarConfig(
+            calendar_id="primary", exclude_titles=[], aggregator_skip_words=[],
+            timezone=self.tz.key, projects=[], hours_format="decimal",
+            team_calendars=[],
+        )
+        CalendarConfig.load = classmethod(lambda cls, *a, **k: cfg)
+        self.addCleanup(lambda: setattr(CalendarConfig, "load", orig))
+
+    def tearDown(self) -> None:
+        na.get_pulse_config = self._orig_cfg
+        self._tmp.cleanup()
+
+    def test_prose_synthesis_rejected_keeps_structured_fallback(self) -> None:
+        _insert_event(self.db, event_id="mine", summary="Ship Release Notes",
+                      start_time=_today_at(9, tz=self.tz),
+                      end_time=_today_at(10, tz=self.tz),
+                      calendar_id="primary", person=None)
+        prose = (
+            "Here is what I think you should do:\n"
+            "1. Maybe take a look at the calendar later.\n"
+            "2. Could be worth catching up on email too."
+        )
+        import rebalance.ingest.querier as querier
+        orig = querier._synthesize_with_fallback
+        querier._synthesize_with_fallback = lambda *a, **k: (prose, "fake-model")
+        try:
+            result = na.rank_next_actions(self.db, blend_team=False, synthesize=True)
+        finally:
+            querier._synthesize_with_fallback = orig
+
+        titles = {a.title for a in result.ranked}
+        # The deterministic (structured) fallback survives — NOT the prose lines.
+        self.assertIn("Ship Release Notes", titles)
+        self.assertNotIn("Maybe take a look at the calendar later.", titles)
+        self.assertIn("nothing useful", result.note)
+
+    def test_structured_synthesis_accepted(self) -> None:
+        _insert_event(self.db, event_id="mine", summary="Ship Release Notes",
+                      start_time=_today_at(9, tz=self.tz),
+                      end_time=_today_at(10, tz=self.tz),
+                      calendar_id="primary", person=None)
+        good = (
+            "1. Cut the release | person=operator | source=github | "
+            "project=acme/web | evidence=PR #9 | why=ready to merge"
+        )
+        import rebalance.ingest.querier as querier
+        orig = querier._synthesize_with_fallback
+        querier._synthesize_with_fallback = lambda *a, **k: (good, "fake-model")
+        try:
+            result = na.rank_next_actions(self.db, blend_team=False, synthesize=True)
+        finally:
+            querier._synthesize_with_fallback = orig
+
+        titles = {a.title for a in result.ranked}
+        self.assertIn("Cut the release", titles)
+
+
+# ---------------------------------------------------------------------------
+# FIX 3 — blended only when team signal actually contributed
+# FIX 6 — additivity window still yields the rich teammate
+# ---------------------------------------------------------------------------
+
+
+class TestBlendedContribution(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.db = self.tmp / "rebalance.db"
+        _seed_migrated_db(self.db)
+        self.tz = na.local_tz()
+        self._orig_cfg = na.get_pulse_config
+        na.get_pulse_config = lambda: {"github_login": "me", "slack_user_id": None}
+
+    def tearDown(self) -> None:
+        na.get_pulse_config = self._orig_cfg
+        self._tmp.cleanup()
+
+    def _patch_roster(self, entries):
+        orig = CalendarConfig.load
+        cfg = CalendarConfig(
+            calendar_id="primary", exclude_titles=[], aggregator_skip_words=[],
+            timezone=self.tz.key, projects=[], hours_format="decimal",
+            team_calendars=entries,
+        )
+        CalendarConfig.load = classmethod(lambda cls, *a, **k: cfg)
+        self.addCleanup(lambda: setattr(CalendarConfig, "load", orig))
+
+    def test_blended_false_when_operator_only_roster(self) -> None:
+        """Empty roster → blended=False (no teammate signal contributed) (C2)."""
+        self._patch_roster([])
+        _insert_event(self.db, event_id="mine", summary="Solo Block",
+                      start_time=_today_at(9, tz=self.tz),
+                      end_time=_today_at(10, tz=self.tz),
+                      calendar_id="primary", person=None)
+        result = na.rank_next_actions(self.db, blend_team=True, synthesize=False)
+        self.assertFalse(result.blended)
+
+    def test_blended_false_when_no_teammate_passes_additivity(self) -> None:
+        """A roster whose only teammate is too sparse → blended=False (C2/C1)."""
+        self._patch_roster([TeamCalendarEntry(
+            person="jose", calendar_id="jose@group.calendar.google.com")])
+        # Seed just ONE historical event — below min_team_events → gated.
+        _insert_event(
+            self.db, event_id="jose-1", summary="Jose standup",
+            start_time=(datetime.now(timezone.utc) - timedelta(days=1)).isoformat(),
+            end_time=(datetime.now(timezone.utc) - timedelta(days=1) + timedelta(minutes=15)).isoformat(),
+            calendar_id="jose@group.calendar.google.com", person="jose")
+        result = na.rank_next_actions(self.db, blend_team=True, synthesize=False)
+        self.assertFalse(result.blended)
+
+    def test_multiday_dedup_against_operator_tomorrow_block(self) -> None:
+        """FIX 2 (DSP-05): a hand-logged duplicate teammate meeting on TOMORROW is
+        deduped against the operator's own tomorrow block — even though the OWN
+        candidate list only covers today — because the operator title map spans the
+        teammate read horizon."""
+        weights = SignalWeights()
+        self._patch_roster([TeamCalendarEntry(
+            person="matthew", calendar_id="matt@group.calendar.google.com")])
+        # Make matthew pass additivity (trailing history).
+        for i in range(weights.min_team_events + 1):
+            _insert_event(
+                self.db, event_id=f"matt-h{i}", summary=f"Matt h{i}",
+                start_time=(datetime.now(timezone.utc) - timedelta(days=2, hours=i)).isoformat(),
+                end_time=(datetime.now(timezone.utc) - timedelta(days=2, hours=i) + timedelta(minutes=20)).isoformat(),
+                calendar_id="matt@group.calendar.google.com", person="matthew")
+
+        # Operator's OWN block TOMORROW (a joint meeting, on operator's calendar).
+        tomorrow = datetime.now(self.tz) + timedelta(days=1)
+        op_start = tomorrow.replace(hour=15, minute=0, second=0, microsecond=0)
+        _insert_event(
+            self.db, event_id="op-tmrw", summary="Quarterly Planning Sync",
+            start_time=op_start.isoformat(),
+            end_time=(op_start + timedelta(minutes=60)).isoformat(),
+            calendar_id="primary", person=None)
+        # Teammate hand-logs the SAME meeting tomorrow under a different id.
+        _insert_event(
+            self.db, event_id="matt-tmrw", summary="Quarterly Planning Sync",
+            start_time=op_start.isoformat(),
+            end_time=(op_start + timedelta(minutes=60)).isoformat(),
+            calendar_id="matt@group.calendar.google.com", person="matthew")
+
+        result = na.rank_next_actions(self.db, blend_team=True, synthesize=False)
+        # The teammate duplicate must NOT appear as a separate matthew-attributed
+        # item — it is deduped against the operator's tomorrow block.
+        matt_dupes = [
+            a for a in result.ranked
+            if a.person == "matthew" and "Quarterly Planning Sync" in a.title
+        ]
+        self.assertEqual(matt_dupes, [])
+
+    def test_additivity_window_still_yields_matthew(self) -> None:
+        """FIX 6: the trailing-history additivity gate still PASSES the rich
+        teammate (matthew) from realistic counts (C1/C6 unaffected)."""
+        from rebalance.ingest.calendar_config import team_persons_passing_additivity
+        weights = SignalWeights()
+        self._patch_roster([TeamCalendarEntry(
+            person="matthew", calendar_id="matt@group.calendar.google.com")])
+        # Seed > min_team_events events within the trailing-history window.
+        for i in range(weights.min_team_events + 2):
+            _insert_event(
+                self.db, event_id=f"matt-{i}", summary=f"Matt {i}",
+                start_time=(datetime.now(timezone.utc) - timedelta(days=2, hours=i)).isoformat(),
+                end_time=(datetime.now(timezone.utc) - timedelta(days=2, hours=i) + timedelta(minutes=30)).isoformat(),
+                calendar_id="matt@group.calendar.google.com", person="matthew")
+        # A distinctive upcoming item so the delta is non-empty → blended True.
+        soon = datetime.now(timezone.utc) + timedelta(hours=3)
+        _insert_event(
+            self.db, event_id="matt-up", summary="Vendor Renewal Review",
+            start_time=soon.isoformat(),
+            end_time=(soon + timedelta(minutes=30)).isoformat(),
+            calendar_id="matt@group.calendar.google.com", person="matthew")
+
+        result = na.rank_next_actions(self.db, blend_team=True, synthesize=False)
+        # Matthew passed → blended True and the teammate item surfaced.
+        self.assertTrue(result.blended)
+        self.assertTrue(any(
+            a.person == "matthew" and "Vendor Renewal Review" in a.title
+            for a in result.ranked
+        ))
+        # The gate helper itself yields exactly ['matthew'] from realistic counts.
+        passing = team_persons_passing_additivity(
+            {"matthew": weights.min_team_events + 2}, weights.min_team_events)
+        self.assertEqual(passing, ["matthew"])
+
+
+# ---------------------------------------------------------------------------
 # Persistence
 # ---------------------------------------------------------------------------
 

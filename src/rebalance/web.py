@@ -15,6 +15,7 @@ GET /auth-log/raw  — raw JSONL file download
 from __future__ import annotations
 
 import html
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,6 +29,8 @@ from rebalance.ingest.auth_log import read_log, _log_path
 from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
 from rebalance.paths import resolve_db
 from rebalance.web_components import badge_html, button_link, render_shell
+
+logger = logging.getLogger(__name__)
 
 # How long a persisted Focus 5 roster stays authoritative before a visit lazily
 # recomputes it. Membership is snapshot-stable for this window; working-tree
@@ -709,10 +712,15 @@ def whatsnext_page(refresh: bool = False):
     meta = get_ranked_meta(db)
     if refresh or not meta.get("row_count"):
         try:
+            # rank_next_actions never raises (it degrades to an empty-but-noted
+            # result). ALWAYS persist whatever it returns — even an empty/degraded
+            # result — so a row exists (row_count>0) and subsequent NORMAL loads
+            # read the cache instead of recomputing live Gemini on every hit
+            # (the ?refresh path stays the explicit recompute path).
             result = rank_next_actions(db, blend_team=True)
             persist_ranked_next_actions(db, result)
-        except Exception:  # noqa: BLE001 — a compute failure must not 500 the page
-            pass
+        except Exception:  # noqa: BLE001 — a compute/persist failure must not 500 the page
+            logger.warning("whatsnext_page: live compute/persist failed", exc_info=True)
         if refresh:
             # Post/redirect/get: drop ?refresh so a reload doesn't recompute.
             return RedirectResponse("/whats-next", status_code=303)

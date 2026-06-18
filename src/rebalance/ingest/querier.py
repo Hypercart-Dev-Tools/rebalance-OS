@@ -565,14 +565,22 @@ def ask(
     )
 
     # team=True sidecar: attach the ranked next-actions WITHOUT mutating the
-    # pinned QueryResult fields. Same args a dashboard call would use
-    # (blend_team=True). Never raises out of ask(): a degraded rank just stays
-    # unattached. Import is local so the default operator path never pays for it.
+    # pinned QueryResult fields. PREFER the persisted cache so the interactive
+    # ask() path never silently pays for a second Gemini round-trip; only when the
+    # cache is absent fall back to a LIVE but DETERMINISTIC rank (synthesize=False
+    # — the ranked floor, no LLM call). Never raises out of ask(): a degraded rank
+    # just stays unattached. Import is local so the default operator path never
+    # pays for it.
     if team:
         try:
             from rebalance.ingest import next_actions as _next_actions
 
-            ranked = _next_actions.rank_next_actions(database_path, blend_team=True)
+            ranked = _next_actions.load_ranked_next_actions(database_path)
+            if ranked is None:
+                # No precompute yet — deterministic ranked floor (no LLM call).
+                ranked = _next_actions.rank_next_actions(
+                    database_path, blend_team=True, synthesize=False
+                )
             setattr(result, NEXT_ACTIONS_ATTR, ranked)
         except Exception as e:  # noqa: BLE001 — team blend must never break ask()
             logger.warning("team next-actions rank unavailable: %s", e)
