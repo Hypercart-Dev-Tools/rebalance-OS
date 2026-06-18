@@ -6,6 +6,32 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.40.1] - 2026-06-17
+
+P2 Phase 1 — privacy-seam QA follow-up. A scoped local review plus a two-model
+`/consult` (Codex + Gemini) of `export_calendar_snapshot` + migration `0005`
+found no leak path and no data-loss scenario; the only finding was a
+single-source-of-truth nit (F1), fixed here.
+
+### Changed
+- **Calendar-scope filters unified to `OPERATOR_CALENDAR_ID`** (F1). The operator-only
+  calendar scope was hardcoded as the literal `'primary'` at six sites; all now use the
+  `OPERATOR_CALENDAR_ID` constant (`calendar_config.py`) for a single source of truth:
+  `sync_snapshot.export_calendar_snapshot` (the off-machine export seam),
+  `pulse._query_calendar_upcoming` (the pushed render), `querier` (vacation check),
+  `index_ops._refresh_calendar` (operator write/canonical store + dry-run + result), and the
+  `scripts/dashboard.py` / `scripts/spike_morning_brief.py` readers. Behaviour is unchanged
+  (`OPERATOR_CALENDAR_ID == "primary"`); the bound value stays fixed (never caller-supplied)
+  and `'primary'` remains reserved at config load, so the no-widening privacy guarantee is
+  preserved. The pulse site's prior "keep this a constant literal" guard is intentionally
+  overridden — each site carries an inline `REVERT PATH` note to inline the literal again if
+  defense-in-depth is ever preferred over DRY.
+
+### Fixed
+- **Stale scheduler-policy test token.** `test_scheduler_policy.py` still required the pulse-sync
+  wrapper to contain `publish_pulse(..., push=True)`, but `72ebd7e` (PULSE_PUSH opt-out) changed the
+  wrapper to `push=push`; the test token is now aligned. Test-only; no runtime behaviour change.
+
 ## [0.40.0] - 2026-06-12
 
 P2 Phase 1 — team-calendar signal — plus a max-effort code-review hardening pass

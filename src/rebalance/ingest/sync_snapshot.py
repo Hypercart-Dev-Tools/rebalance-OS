@@ -41,6 +41,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.db.schema import ensure_calendar_schema, ensure_email_schema
 from rebalance.repair import RepairFSM, RepairResult, RepairStatus
@@ -100,17 +101,23 @@ def export_calendar_snapshot(
     since = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
 
     with db_connection(database_path, ensure_calendar_schema) as conn:
-        # Default deny (P2 decision #3): only the operator's own ('primary')
-        # calendar is ever exported to the pulse repo. Teammate calendars
-        # (calendar_id != 'primary') stay local to the dashboard SQLite.
+        # Default deny (P2 decision #3): only the operator's own calendar
+        # (OPERATOR_CALENDAR_ID) is ever exported to the pulse repo. Teammate
+        # calendars (calendar_id != OPERATOR_CALENDAR_ID) stay local to the
+        # dashboard SQLite.
+        # NOTE (0.40.1, F1): scope unified from a hardcoded 'primary' literal to
+        # the OPERATOR_CALENDAR_ID constant (single source of truth). The bound
+        # value is still FIXED (not caller-supplied) and 'primary' is reserved at
+        # config load (finding D), so the no-widening guarantee is preserved.
+        # REVERT PATH: inline the literal 'primary' here again.
         rows = conn.execute(
             f"""
             SELECT {", ".join(_CALENDAR_COLUMNS)}
             FROM calendar_events
-            WHERE calendar_id = 'primary' AND start_time >= ?
+            WHERE calendar_id = ? AND start_time >= ?
             ORDER BY start_time DESC
             """,
-            (since,),
+            (OPERATOR_CALENDAR_ID, since),
         ).fetchall()
 
     row_dicts = [dict(zip(_CALENDAR_COLUMNS, row)) for row in rows]

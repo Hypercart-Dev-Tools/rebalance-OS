@@ -19,6 +19,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import Any
 
+from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.db import db_connection, ensure_schema, ensure_calendar_schema
 from rebalance.ingest.embedder import query_similar
 
@@ -94,12 +95,15 @@ def _gather_temporal_context(
 
     try:
         with db_connection(database_path, ensure_calendar_schema) as conn:
-            # Check for all-day or spanning events on the target date
+            # Check for all-day or spanning events on the target date.
+            # Operator-only scope (OPERATOR_CALENDAR_ID); unified from a hardcoded
+            # 'primary' literal in 0.40.1 (F1, single source of truth).
+            # REVERT PATH: inline the literal 'primary' here again.
             rows = conn.execute(
                 """SELECT summary FROM calendar_events
-                   WHERE calendar_id = 'primary'
+                   WHERE calendar_id = ?
                      AND start_time <= ? AND end_time >= ?""",
-                (date_str + "T23:59:59", date_str + "T00:00:00"),
+                (OPERATOR_CALENDAR_ID, date_str + "T23:59:59", date_str + "T00:00:00"),
             ).fetchall()
         for row in rows:
             title = (row["summary"] or "").lower()

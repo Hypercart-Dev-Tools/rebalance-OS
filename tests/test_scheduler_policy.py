@@ -85,7 +85,7 @@ POLICY = {
         "wrapper": "scripts/pulse_sync.sh",
         "wrapper_must_contain": [
             'rb_job_init "pulse-sync" 14',
-            "publish_pulse(db_path, dry_run=False, push=True)",
+            "publish_pulse(db_path, dry_run=False, push=push)",
         ],
         "doc_tokens": ["hourly at :00", "publish_pulse(db_path"],
     },

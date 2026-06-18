@@ -33,6 +33,7 @@ from zoneinfo import ZoneInfo
 
 from rebalance.repair import RepairFSM, RepairResult, RepairStatus
 from rebalance.ingest.agent_tags import classify as classify_source
+from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.calendar_helpers import calendar_dt_utc, normalize_aware_utc
 from rebalance.ingest.config import get_github_token, get_pulse_config
 from rebalance.ingest.db import db_connection
@@ -323,19 +324,27 @@ def _query_calendar_upcoming(
     """Today's events with start_time >= now (i.e. still upcoming)."""
     now_utc = normalize_aware_utc(now)
     # Default deny (P2 decision #3): the pulse is committed + pushed off-machine,
-    # so only the operator's own ('primary') calendar may appear here — never a
-    # teammate calendar. Keep this a constant literal; do not parameterize to a
-    # wider scope.
+    # so only the operator's own calendar (OPERATOR_CALENDAR_ID) may appear here —
+    # never a teammate calendar.
+    # NOTE (0.40.1, F1): this site previously inlined the literal 'primary' with a
+    # "do not parameterize to a wider scope" guard. It was unified to the
+    # OPERATOR_CALENDAR_ID constant for single-source-of-truth. The original intent
+    # is preserved: the bound value is a FIXED module constant (NOT a caller-
+    # supplied parameter), and 'primary' is reserved/enforced at config load
+    # (finding D), so the scope still cannot be widened.
+    # REVERT PATH: if defense-in-depth at this pushed-render site is ever preferred
+    # over DRY, inline the literal 'primary' again and restore the original
+    # "do not parameterize to a wider scope" guard comment.
     rows = conn.execute(
         """
         SELECT summary, start_time, end_time, location, status
         FROM calendar_events
-        WHERE calendar_id = 'primary'
+        WHERE calendar_id = ?
           AND julianday(start_time) >= julianday(?)
           AND julianday(start_time) < julianday(?)
         ORDER BY julianday(start_time)
         """,
-        (today_start.isoformat(), tomorrow_start.isoformat()),
+        (OPERATOR_CALENDAR_ID, today_start.isoformat(), tomorrow_start.isoformat()),
     ).fetchall()
     upcoming: list[dict[str, Any]] = []
     for r in rows:

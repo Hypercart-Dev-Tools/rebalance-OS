@@ -320,7 +320,7 @@ a single second calendar, modeled so the Phase-2 jump to N people is config, not
 - [x] **Read side — privacy:** `_gather_calendar_context()` already defaults all readers to `calendar_id="primary"` (implemented in c3a2bb7); teammate rows are stored and attributed but not yet blended into the synthesis prompt (Phase 2 work). The `person` column is the first edge for Phase 3 `entity_graph`.
 - [x] **Inference path (decision #5 — 6588c8a):** `querier.ask()` now tries `_synthesize_gemini()` first (key via `get_gemini_api_key()` → GSM/env, never logged); falls back to local Qwen if key absent or call fails. Same REST pattern as [repair.py](src/rebalance/repair.py).
 - [x] **Observability/tests (6588c8a):** 12 new tests (878 total) — `TeamCalendarEntry` load/save/edge cases, person attribution (operator=NULL, teammate=label, composite PK coexistence). Structured INFO log lines per sync in `_refresh_calendar`.
-- [ ] **SOLID + DRY gate** (see [standing constraints](#standing-design-constraints-phase-1-onward)): run `/phase-qa` before final merge — deferred to post Ultra Code review session.
+- [x] **SOLID + DRY gate** (see [standing constraints](#standing-design-constraints-phase-1-onward)): `/phase-qa` run 2026-06-17 (50468f7) — checklist below filled in; all SOLID items resolved or noted, observability item closed in code. The DRY note (querier inline `'primary'` SQL) was closed by **F1 (0.40.1)** — all six calendar-scope filter sites now use `OPERATOR_CALENDAR_ID`. One non-blocking note remains (`_refresh_calendar` result-dict construction).
 
 ### Phase 1 hardening — review outcomes (2026-06-13)
 
@@ -339,17 +339,46 @@ Two independent review passes on `development` after Phase 1; **every finding fi
   - **F2** — version metadata stale/inconsistent → `pyproject`/`__init__` reconciled + **0.40.0** changelog entry.
   - **F3** — Gemini key resolver didn't match the locked gcloud design → added a `gcloud secrets versions access` fallback (env still short-circuits).
   - **F4** — stale "NOT YET IMPLEMENTED" privacy language → decisions #3/#5 marked implemented, leak history preserved for the audit trail.
-- **Still open:** optional cloud `claude ultrareview` (3rd pass), `/phase-qa` gate, then merge `development` → `main`.
+- **Still open:** merge `development` → `main`. (`/phase-qa` gate run 2026-06-17 — 50468f7; scoped privacy-seam QA + cross-model consult done 2026-06-17 — see below.)
 
-### QA Checklist — Phase 1 *(completed 2026-06-12, hardened 2026-06-13, shipped as 0.40.0)*
+### Phase 1 hardening — privacy-seam QA + cross-model consult (2026-06-17, 0.40.1)
+
+A scoped adversarial review of the **privacy-critical seam** — `export_calendar_snapshot`
++ migration `0005` — chosen over a full 3rd-pass cloud ultrareview per the "don't re-review
+already-tested code" rule (the seam already cleared two passes + 916 tests). Local QA, then a
+two-model **`/consult`** (Codex + Gemini, repo-isolated worktree). All three reads converged:
+
+- **Q1 (leak path): PASS.** No teammate row or `person` label survives either export path
+  (`sync_snapshot` export filter + `_CALENDAR_COLUMNS` omits `person`; `pulse` render is
+  `primary`-only **and** minimized to `summary`/`location`, never `attendees_json`/`description`).
+  Both models tried concrete leak scenarios; both blocked.
+- **Q2 (data loss in 0005): PASS.** Rebuild is atomic (runner-owned transaction + rollback;
+  SQLite DDL is transactional). No table has a FK referencing `calendar_events`, so the
+  `foreign_keys=ON` rebuild hazard does not apply; column-explicit `INSERT` prevents drift;
+  PK widening cannot lose rows.
+- **Only finding — F1 (LOW, fixed in 0.40.1):** the operator-only scope was a hardcoded
+  `'primary'` literal at **six** sites instead of the existing `OPERATOR_CALENDAR_ID` constant.
+  Severity was **fail-closed** (divergence drops operator data, never leaks teammate data), not a
+  blocker. Unified to the constant across `sync_snapshot.py`, `pulse.py`, `querier.py`,
+  `index_ops.py`, `scripts/dashboard.py`, `scripts/spike_morning_brief.py`.
+  - **Revert decision (Noel, 2026-06-17):** unify all six **but** keep a recorded revert path —
+    the `pulse._query_calendar_upcoming` site previously carried an explicit
+    *"keep this a constant literal; do not parameterize to a wider scope"* defense-in-depth guard,
+    intentionally overridden here for single-source-of-truth. Each touched site carries an inline
+    `REVERT PATH` comment, and the CHANGELOG `[0.40.1]` entry records it. **To revert:** inline the
+    literal `'primary'` at the site(s) again (and restore the pulse guard comment) if
+    defense-in-depth is ever preferred over DRY.
+- Raw consult transcripts: `relay-system/2026-06-17/privacy-seam-192658/` (Codex + Gemini).
+
+### QA Checklist — Phase 1 *(completed 2026-06-12, hardened 2026-06-13, shipped as 0.40.0; F1 nit closed in 0.40.1)*
 <!-- phase-qa -->
-- [x] DRY: Mostly clean — `_calendar_id_filter` helper (`calendar.py:386`) used consistently by all three reader functions. **Open:** `querier.py:99` contains an inline `WHERE calendar_id = 'primary'` raw SQL in `_gather_temporal_context` that bypasses `_calendar_id_filter` and duplicates the `OPERATOR_CALENDAR_ID` literal — diverges silently if the filter gains a `status != 'cancelled'` guard or changes scope
+- [x] DRY: Clean — `_calendar_id_filter` helper (`calendar.py:386`) used consistently by all three reader functions. **Closed (F1, 0.40.1):** the inline `WHERE calendar_id = 'primary'` raw SQL in `querier._gather_temporal_context` (and five sibling sites) now binds the `OPERATOR_CALENDAR_ID` constant instead of duplicating the literal — single source of truth for the operator-only scope across export, pulse render, querier, operator write, and the two `scripts/` readers
 - [x] S (Single Responsibility): Mostly clean — sync, read, person-attribution, and export are distinct functions. **Minor open:** `_refresh_calendar` (`index_ops.py:697`) mixes fan-out loop orchestration with result-dict construction (14 keys inline) — worth extracting a `_format_team_result` helper before the team_calendars list grows
 - [x] O (Open/Closed): Clean — new teammates are config (`team_calendars` list), not new if/else branches; `_refresh_calendar` iterates the list generically
 - [x] L (Liskov): N/A — no subtyping in this phase
 - [x] I (Interface Segregation): Clean — `sync_calendar`, `get_recent_events`, `get_daily_totals`, and `export_calendar_snapshot` are separate, non-overlapping interfaces; callers depend only on what they use
 - [x] D (Dependency Inversion): Clean — `sync_calendar` takes `calendar_id` as a param; Gemini key resolution is behind `get_gemini_api_key()` with env/GSM fallback chain
-- [ ] Observability: `querier.py:500-502` — Gemini→Qwen fallback logs Gemini failure at `WARNING` but swallows the secondary Qwen failure into the synthesis string with no `logger.warning` call — dual-failure is indistinguishable from degraded-but-alive in log-based monitoring without string inspection
+- [x] Observability: **CLOSED (50468f7)** — `querier.py:500` now emits `logger.warning("Qwen fallback also failed after Gemini failure: …")` on the dual Gemini→Qwen failure path, so a dual failure is distinguishable from degraded-but-alive in log-based monitoring without string inspection
 - [x] Privacy: export filter `WHERE calendar_id = 'primary'` present and correct in `sync_snapshot.py:106-113`; covered by `test_sync_snapshot.py` and `test_pulse_calendar_scope.py`
 - [x] Migration atomicity: migration runner owns each transaction (`db/migrate.py:62-102`); `0005` does not self-wrap; rollback-on-error verified
 - [x] Per-person failure isolation: `_refresh_calendar` wraps each teammate sync in `try/except`; one inaccessible calendar does not abort the operator sync

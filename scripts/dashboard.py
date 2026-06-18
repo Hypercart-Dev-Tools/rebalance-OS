@@ -50,6 +50,7 @@ from rebalance.ingest.config import (  # noqa: E402
     get_github_ignored_repos,
     get_pulse_config,
 )
+from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID  # noqa: E402
 from rebalance.ingest.calendar_helpers import upcoming_calendar_rows  # noqa: E402
 from rebalance.ingest.db import db_connection  # noqa: E402
 from rebalance.tz_utils import local_tz, parse_utc_iso  # noqa: E402
@@ -510,16 +511,18 @@ def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any
             # ISO text comparisons will drop same-day local morning events once
             # the UTC clock reaches afternoon. upcoming_calendar_rows() below is
             # the authoritative rolling-window filter/sort.
+            # Operator-only scope (OPERATOR_CALENDAR_ID); unified from a 'primary'
+            # literal in 0.40.1 (F1). REVERT PATH: inline the literal 'primary'.
             rows = conn.execute(
                 """
                 SELECT summary, start_time, end_time, location
                 FROM calendar_events
-                WHERE calendar_id = 'primary'
+                WHERE calendar_id = ?
                   AND julianday(start_time) >= julianday(?)
                 ORDER BY julianday(start_time) ASC
                 LIMIT ?
                 """,
-                (now.isoformat(), overfetch),
+                (OPERATOR_CALENDAR_ID, now.isoformat(), overfetch),
             ).fetchall()
     except sqlite3.OperationalError:
         return []

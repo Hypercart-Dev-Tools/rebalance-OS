@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any
 
 # --- repo imports (canonical read paths, same as MCP server / querier) --------
+from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.registry import get_projects
 from rebalance.ingest.github_scan import get_github_balance
 from rebalance.ingest.db import db_connection, ensure_email_schema, ensure_calendar_schema
@@ -205,13 +206,15 @@ def collect_calendar(db: Path) -> tuple[list[dict[str, Any]], str | None]:
         today = _now_local().date().isoformat()
         rows: list[dict[str, Any]] = []
         with db_connection(db, ensure_calendar_schema) as conn:
+            # Operator-only scope (OPERATOR_CALENDAR_ID); unified from a 'primary'
+            # literal in 0.40.1 (F1). REVERT PATH: inline the literal 'primary'.
             recs = conn.execute(
                 """SELECT id, summary, start_time, end_time, location, attendees_json
                    FROM calendar_events
-                   WHERE calendar_id = 'primary'
+                   WHERE calendar_id = ?
                      AND date(start_time) = ?
                    ORDER BY start_time ASC""",
-                (today,),
+                (OPERATOR_CALENDAR_ID, today),
             ).fetchall()
         for ev in recs:
             attendees = json.loads(ev["attendees_json"] or "[]")

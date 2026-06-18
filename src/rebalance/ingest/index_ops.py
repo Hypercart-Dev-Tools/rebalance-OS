@@ -696,12 +696,12 @@ def _refresh_github(
 
 def _refresh_calendar(database_path: Path, *, since_days: int, dry_run: bool) -> dict[str, Any]:
     from rebalance.ingest.calendar import sync_calendar
-    from rebalance.ingest.calendar_config import CalendarConfig
+    from rebalance.ingest.calendar_config import CalendarConfig, OPERATOR_CALENDAR_ID
 
     config = CalendarConfig.load()
 
     if dry_run:
-        steps = [f"sync_calendar(calendar_id='primary', days_back={since_days}) [operator]"]
+        steps = [f"sync_calendar(calendar_id={OPERATOR_CALENDAR_ID!r}, days_back={since_days}) [operator]"]
         for tc in config.team_calendars:
             steps.append(
                 f"sync_calendar(calendar_id={tc.calendar_id!r},"
@@ -709,12 +709,15 @@ def _refresh_calendar(database_path: Path, *, since_days: int, dry_run: bool) ->
             )
         return {"scope": "calendar", "dry_run": True, "steps": steps}
 
-    # Operator's own calendar: always stored as 'primary' (canonical) so that
-    # WHERE calendar_id='primary' filters always cover the operator's data.
-    logger.info("calendar sync: operator calendar_id=primary days_back=%d", since_days)
+    # Operator's own calendar: always stored under OPERATOR_CALENDAR_ID (canonical)
+    # so that the calendar_id filters everywhere cover the operator's data.
+    # NOTE (0.40.1, F1): unified from a hardcoded 'primary' literal to the constant
+    # (single source of truth). REVERT PATH: inline "primary" here and at the read
+    # sites (sync_snapshot.py, pulse.py, querier.py).
+    logger.info("calendar sync: operator calendar_id=%s days_back=%d", OPERATOR_CALENDAR_ID, since_days)
     result = sync_calendar(
         database_path=database_path,
-        calendar_id="primary",
+        calendar_id=OPERATOR_CALENDAR_ID,
         person=None,  # operator rows: person IS NULL by convention
         days_back=since_days,
         days_forward=7,
@@ -768,7 +771,7 @@ def _refresh_calendar(database_path: Path, *, since_days: int, dry_run: bool) ->
     return {
         "scope": "calendar",
         "dry_run": False,
-        "calendar_id": "primary",
+        "calendar_id": OPERATOR_CALENDAR_ID,
         "events_fetched": result.events_fetched,
         "events_stored": result.events_stored,
         "window_start": result.window_start,
