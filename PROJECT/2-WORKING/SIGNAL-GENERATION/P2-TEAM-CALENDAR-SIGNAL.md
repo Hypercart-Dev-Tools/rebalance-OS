@@ -3,8 +3,8 @@ project: "P2 — Team Calendar as a Signal"
 codename: HiQS
 owner: Noel
 created: 2026-06-09
-updated: 2026-06-12
-status: "Phase 1 COMPLETE (2026-06-12) — Ultra Code pre-merge review next, then Phase 2"
+updated: 2026-06-17
+status: "Phase 1 MERGED to main + pushed (0.40.2, 2026-06-17) — Phase 2 is the active next step"
 current_phase: "Phase 2 — v0.5: 'What should we work on next' dashboard + N teammates"
 endgame: "v0.5 — 'What should we work on next?' view in the web dashboard (Gemini-powered, tunable levers)"
 kill_switch: "Willing to kill if Matt's calendar is mostly redundant with GitHub + Slack"
@@ -44,7 +44,7 @@ Things P2 will not do:
 
 | ✅ Most recently completed phase | ⏭️ What's next |
 |---|---|
-| **Phase 1 COMPLETE (2026-06-12) + HARDENED (2026-06-13)** — all blocking items shipped: privacy leaks closed, migration 0005 applied (composite PK + `person` column, atomic), `team_calendars` config (matthew/jose/jinhui), per-person sync attribution, operator calendar canonicalized to `'primary'`, Gemini-from-GSM wiring. Then **two review passes** (local A–G + external F1–F4) fixed with regression tests, shipped as **0.40.0** (878 → **916 tests**). Live sync confirmed: operator 243 · matthew 239 · jose 3 · jinhui 7 events. Commits c3a2bb7, 04b5939, 788e879, **6588c8a**; hardening e9e8e3b…99448cc. | **Optional** cloud `claude ultrareview` (3rd independent pass) → `/phase-qa` SOLID+DRY gate → **merge `development` → `main`, push**. Then **Phase 2**: v0.5 dashboard view + `ask` parity + Jose/Jinhui onboarding. |
+| **Phase 1 COMPLETE + HARDENED + MERGED to `main` (0.40.2, 2026-06-17, pushed)** — all blocking items shipped: privacy leaks closed, migration 0005 applied (composite PK + `person` column, atomic), `team_calendars` config (matthew/jose/jinhui), per-person sync attribution, operator calendar canonicalized to `'primary'`, Gemini-from-GSM wiring. **Three review passes** (local A–G + external F1–F4 → 0.40.0; then a scoped privacy-seam QA + Codex/Gemini `/consult` → F1 literal unification 0.40.1 + `person`-omission regression tests 0.40.2). Now **918 tests green**, `rebalance doctor` clean. `development` = `main` = `aa362cb`. Live sync confirmed: operator 243 · matthew 239 · jose 3 · jinhui 7 events. | **Phase 2 — v0.5** (Ultra Code build-out): the "What should we work on next?" dashboard view + `ask` parity + Jose/Jinhui onboarding. The `rebalance-git-pulse` refactor ([GIT-PULSE-REFACTOR.md](PROJECT/2-WORKING/GIT-PULSE-REFACTOR.md)) is now unblocked (its gate was "Phase 1 merged to `main`"). |
 
 ---
 
@@ -339,7 +339,7 @@ Two independent review passes on `development` after Phase 1; **every finding fi
   - **F2** — version metadata stale/inconsistent → `pyproject`/`__init__` reconciled + **0.40.0** changelog entry.
   - **F3** — Gemini key resolver didn't match the locked gcloud design → added a `gcloud secrets versions access` fallback (env still short-circuits).
   - **F4** — stale "NOT YET IMPLEMENTED" privacy language → decisions #3/#5 marked implemented, leak history preserved for the audit trail.
-- **Still open:** merge `development` → `main`. (`/phase-qa` gate run 2026-06-17 — 50468f7; scoped privacy-seam QA + cross-model consult done 2026-06-17 — see below.)
+- **DONE (2026-06-17):** merged `development` → `main` and pushed (`aa362cb`, 0.40.2). `/phase-qa` gate (50468f7), scoped privacy-seam QA + cross-model consult, F1 literal unification (0.40.1), and `person`-omission regression tests (0.40.2) all landed — see below. Phase 1 fully closed.
 
 ### Phase 1 hardening — privacy-seam QA + cross-model consult (2026-06-17, 0.40.1)
 
