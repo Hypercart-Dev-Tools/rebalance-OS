@@ -405,6 +405,45 @@ def _synthesize_gemini(
     return text
 
 
+def _synthesize_with_fallback(
+    prompt: str,
+    *,
+    chat_model: str = DEFAULT_CHAT_MODEL,
+    max_tokens: int = 1024,
+) -> tuple[str, str]:
+    """Synthesize via the Gemini -> local Qwen ladder.
+
+    Tries Gemini first (key from GSM/env via get_gemini_api_key); on failure
+    logs and falls back to the local Qwen model. On a second failure, emits a
+    dual-failure warning and returns a sentinel. When no Gemini key is present,
+    goes straight to Qwen.
+
+    Returns ``(synthesis_text, model_used)`` where model_used is the Gemini
+    model id, the Qwen model id (optionally annotated), or a "(failed)" marker.
+    """
+    from rebalance.ingest.config import get_gemini_api_key
+
+    gemini_key = get_gemini_api_key()
+    if gemini_key:
+        try:
+            synthesis = _synthesize_gemini(prompt, api_key=gemini_key, max_tokens=max_tokens)
+            return synthesis, DEFAULT_GEMINI_MODEL
+        except Exception as e:
+            logger.warning("Gemini synthesis failed, falling back to local LLM: %s", e)
+            try:
+                synthesis = _synthesize(prompt, model_name=chat_model)
+                return synthesis, f"{chat_model} (gemini-fallback)"
+            except Exception as e2:
+                logger.warning("Qwen fallback also failed after Gemini failure: %s", e2)
+                return f"[LLM synthesis failed: {e2}]", f"{chat_model} (failed)"
+    else:
+        try:
+            synthesis = _synthesize(prompt, model_name=chat_model)
+            return synthesis, chat_model
+        except Exception as e:
+            return f"[Local LLM synthesis failed: {e}]", f"{chat_model} (failed)"
+
+
 def _synthesize(prompt: str, model_name: str = DEFAULT_CHAT_MODEL, max_tokens: int = 512) -> str:
     """Generate a response using a local Qwen chat model via mlx-lm."""
     global _cached_chat_model, _cached_chat_tokenizer, _cached_chat_model_name
@@ -490,28 +529,7 @@ def ask(
             calendar_context,
             temporal_context,
         )
-        from rebalance.ingest.config import get_gemini_api_key
-        gemini_key = get_gemini_api_key()
-        if gemini_key:
-            try:
-                synthesis = _synthesize_gemini(prompt, api_key=gemini_key)
-                model_used = DEFAULT_GEMINI_MODEL
-            except Exception as e:
-                logger.warning("Gemini synthesis failed, falling back to local LLM: %s", e)
-                try:
-                    synthesis = _synthesize(prompt, model_name=chat_model)
-                    model_used = f"{chat_model} (gemini-fallback)"
-                except Exception as e2:
-                    logger.warning("Qwen fallback also failed after Gemini failure: %s", e2)
-                    synthesis = f"[LLM synthesis failed: {e2}]"
-                    model_used = f"{chat_model} (failed)"
-        else:
-            try:
-                synthesis = _synthesize(prompt, model_name=chat_model)
-                model_used = chat_model
-            except Exception as e:
-                synthesis = f"[Local LLM synthesis failed: {e}]"
-                model_used = f"{chat_model} (failed)"
+        synthesis, model_used = _synthesize_with_fallback(prompt, chat_model=chat_model)
 
     elapsed = time.monotonic() - start
 

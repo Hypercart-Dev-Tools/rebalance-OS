@@ -395,6 +395,71 @@ def _calendar_id_filter(calendar_id: str | None) -> tuple[str, tuple]:
     return "AND calendar_id = ?", (calendar_id,)
 
 
+def _person_filter(persons: list[str] | None) -> tuple[str, tuple]:
+    """SQL fragment + params to optionally restrict a query to named teammates.
+
+    Privacy-sensitive sibling of :func:`_calendar_id_filter`: centralizes the
+    ``person`` predicate so the single team-scoped reader is the only place that
+    SELECTs by person. Returns ``("", ())`` when *persons* is ``None``/empty
+    (no restriction); otherwise an ``AND person IN (?,?...)`` clause matching the
+    given labels. Operator rows (``person IS NULL``) never match an ``IN`` list,
+    so they are excluded by construction.
+    """
+    if not persons:
+        return "", ()
+    placeholders = ",".join("?" for _ in persons)
+    return f"AND person IN ({placeholders})", tuple(persons)
+
+
+def _query_events(
+    database_path: Path,
+    *,
+    where: str,
+    params: tuple,
+    order: str = "ASC",
+    limit: int = 30,
+    include_person: bool = False,
+) -> list[dict[str, Any]]:
+    """Shared SELECT/window/row-map body for the upcoming-event readers.
+
+    ``where`` is a fully-formed predicate already containing any optional
+    calendar/person fragments; ``params`` carries its bound values. ``order`` is
+    the ``start_time`` sort direction. ``include_person`` adds the privacy-
+    sensitive ``person`` column to the SELECT and the mapped rows — set ONLY by
+    the in-process team reader, never by operator/export-facing callers.
+    """
+    from rebalance.ingest.calendar_helpers import calendar_connection
+
+    extra_cols = ", person, calendar_id, id" if include_person else ""
+    with calendar_connection(database_path) as conn:
+        rows = conn.execute(
+            f"""SELECT summary, start_time, end_time, location, attendees_json,
+                      description{extra_cols}
+               FROM calendar_events
+               WHERE {where}
+               ORDER BY julianday(start_time) {order}
+               LIMIT {limit}""",
+            params,
+        ).fetchall()
+
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        mapped = {
+            "summary": row["summary"],
+            "start_time": row["start_time"],
+            "end_time": row["end_time"],
+            "location": row["location"],
+            "attendees": json.loads(row["attendees_json"]) if row["attendees_json"] else [],
+            "description": (row["description"] or "")[:200],
+        }
+        if include_person:
+            mapped["person"] = row["person"]
+            mapped["calendar_id"] = row["calendar_id"]
+            mapped["id"] = row["id"]
+        results.append(mapped)
+    return results
+
+
 def get_upcoming_events(
     database_path: Path,
     days_forward: int = 2,
@@ -405,35 +470,60 @@ def get_upcoming_events(
     Defaults to the operator's own ``primary`` calendar; pass ``calendar_id=None``
     to include all calendars (team views).
     """
-    from rebalance.ingest.calendar_helpers import calendar_connection
-
     now = datetime.now(timezone.utc).isoformat()
     cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
 
     cal_clause, cal_params = _calendar_id_filter(calendar_id)
-    with calendar_connection(database_path) as conn:
-        rows = conn.execute(
-            f"""SELECT summary, start_time, end_time, location, attendees_json, description
-               FROM calendar_events
-               WHERE julianday(start_time) >= julianday(?)
-                 AND julianday(start_time) <= julianday(?)
-                 {cal_clause}
-               ORDER BY julianday(start_time) ASC
-               LIMIT 30""",
-            (now, cutoff, *cal_params),
-        ).fetchall()
+    where = (
+        "julianday(start_time) >= julianday(?) "
+        "AND julianday(start_time) <= julianday(?) "
+        f"{cal_clause}"
+    )
+    return _query_events(
+        database_path,
+        where=where,
+        params=(now, cutoff, *cal_params),
+        order="ASC",
+        limit=30,
+    )
 
-    return [
-        {
-            "summary": row["summary"],
-            "start_time": row["start_time"],
-            "end_time": row["end_time"],
-            "location": row["location"],
-            "attendees": json.loads(row["attendees_json"]) if row["attendees_json"] else [],
-            "description": (row["description"] or "")[:200],
-        }
-        for row in rows
-    ]
+
+def get_team_upcoming_by_person(
+    database_path: Path,
+    persons: list[str],
+    days_forward: int = 2,
+) -> list[dict[str, Any]]:
+    """Return upcoming teammate events for the named ``persons`` only.
+
+    The ONLY reader that SELECTs the privacy-sensitive ``person`` column. Operator
+    rows (``person IS NULL``) are excluded by construction — they never match the
+    ``person IN (...)`` predicate. This reader is in-process/local-only (the v0.5
+    "what next" team view); its output, which carries ``person``/``calendar_id``,
+    must NEVER reach the export/pushed-pulse path.
+
+    Returns ``[]`` for an empty ``persons`` list (no teammates → no rows), rather
+    than falling back to an unrestricted scan.
+    """
+    if not persons:
+        return []
+
+    now = datetime.now(timezone.utc).isoformat()
+    cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
+
+    person_clause, person_params = _person_filter(persons)
+    where = (
+        "julianday(start_time) >= julianday(?) "
+        "AND julianday(start_time) <= julianday(?) "
+        f"{person_clause}"
+    )
+    return _query_events(
+        database_path,
+        where=where,
+        params=(now, cutoff, *person_params),
+        order="ASC",
+        limit=30,
+        include_person=True,
+    )
 
 
 def get_recent_events(
