@@ -148,6 +148,49 @@ class TestCalendarSnapshot(unittest.TestCase):
         self.assertIn("My block", summaries)
         self.assertNotIn("Teammate block", summaries)
 
+    def test_person_label_never_exported(self) -> None:
+        # Hard invariant (P2 decision #3): the `person` teammate-identity label
+        # (migration 0005) must NEVER leave the machine. It is enforced today by
+        # _CALENDAR_COLUMNS omitting `person`; this locks it so a future edit that
+        # re-adds `person` to the export columns fails loudly here. Uses the
+        # post-0005 schema (person + composite PK) directly.
+        conn = sqlite3.connect(self.db)
+        conn.execute("""
+            CREATE TABLE calendar_events (
+                id TEXT, summary TEXT, start_time TEXT NOT NULL,
+                end_time TEXT, location TEXT, attendees_json TEXT,
+                calendar_id TEXT NOT NULL DEFAULT 'primary',
+                status TEXT, description TEXT, fetched_at TEXT NOT NULL,
+                person TEXT, PRIMARY KEY (id, calendar_id)
+            )
+        """)
+        # Adversarial: a 'primary' row that still carries a person label, plus a
+        # teammate row. Neither the teammate row nor either label may survive.
+        conn.executemany(
+            "INSERT INTO calendar_events VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+            [("mine", "My block", _future(1), None, None, None,
+              "primary", "confirmed", None, "2026-06-01T00:00:00Z", "OPERATOR_LABEL"),
+             ("mate", "Teammate block", _future(1), None, None, None,
+              "teammate@group.calendar.google.com", "confirmed", None,
+              "2026-06-01T00:00:00Z", "matthew")],
+        )
+        conn.commit()
+        conn.close()
+
+        out = export_calendar_snapshot(self.db, self.sync_dir, device_id="mac")
+        raw = out.read_text()
+        data = json.loads(raw)
+
+        # Only the operator's own row is exported, and `person` is never a key.
+        self.assertEqual({r["calendar_id"] for r in data["rows"]}, {"primary"})
+        self.assertNotIn("Teammate block", [r["summary"] for r in data["rows"]])
+        for row in data["rows"]:
+            self.assertNotIn("person", row)
+        # Defense in depth: no person label survives anywhere in the serialized
+        # payload (catches person leaking via any field, not just a `person` key).
+        self.assertNotIn("OPERATOR_LABEL", raw)
+        self.assertNotIn("matthew", raw)
+
     def test_empty_db_writes_zero_rows(self) -> None:
         _seed_calendar(self.db, [])
         out = export_calendar_snapshot(self.db, self.sync_dir, device_id="mac")

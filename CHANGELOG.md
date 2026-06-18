@@ -6,6 +6,22 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.40.2] - 2026-06-17
+
+P2 Phase 1 — privacy-seam test hardening (follows 0.40.1 F1). A re-run of the
+two-model consult hand-off re-confirmed the seam at HEAD and asked for explicit
+export-path coverage of the `person`-label omission; added below.
+
+### Added
+- **Regression tests locking the `person`-label export omission.** Both off-machine
+  export paths now assert that an adversarial `primary` row *carrying* a person label
+  (plus a teammate row) never leaks the label or the teammate row:
+  `test_sync_snapshot.test_person_label_never_exported` (JSON snapshot) and
+  `test_pulse_calendar_scope.test_person_label_never_in_upcoming` (pushed pulse render).
+  The `person` omission was previously enforced only structurally (`_CALENDAR_COLUMNS`
+  and the narrow pulse `SELECT`); a future edit re-adding `person` to either path now
+  fails loudly. (918 tests.)
+
 ## [0.40.1] - 2026-06-17
 
 P2 Phase 1 — privacy-seam QA follow-up. A scoped local review plus a two-model

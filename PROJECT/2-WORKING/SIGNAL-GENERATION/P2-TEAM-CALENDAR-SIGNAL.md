@@ -369,6 +369,12 @@ two-model **`/consult`** (Codex + Gemini, repo-isolated worktree). All three rea
     literal `'primary'` at the site(s) again (and restore the pulse guard comment) if
     defense-in-depth is ever preferred over DRY.
 - Raw consult transcripts: `relay-system/2026-06-17/privacy-seam-192658/` (Codex + Gemini).
+- **Test hardening (0.40.2):** a re-run of the consult hand-off re-confirmed the seam at HEAD
+  (`041d63d`) — all 6 sites `OPERATOR_CALENDAR_ID`-bound, `person` omitted — and added explicit
+  `person`-label-omission regression tests to **both** export paths
+  (`test_sync_snapshot.test_person_label_never_exported`,
+  `test_pulse_calendar_scope.test_person_label_never_in_upcoming`), locking the invariant that
+  the teammate label never leaves the machine. Suite 916 → **918**.
 
 ### QA Checklist — Phase 1 *(completed 2026-06-12, hardened 2026-06-13, shipped as 0.40.0; F1 nit closed in 0.40.1)*
 <!-- phase-qa -->
