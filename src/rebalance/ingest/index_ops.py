@@ -70,10 +70,6 @@ class Collector:
         ``backfill_semantic_documents`` iterates it instead of an if-ladder
         branch. ``None`` (default) preserves the legacy vault/github/email/code
         ladder unchanged.
-    secrets:
-        Optional names of secret config keys this collector consumes (e.g.
-        ``("figma_token",)``). Informational metadata for tooling; not used by
-        the dispatcher itself.
     """
 
     name: str
@@ -82,7 +78,6 @@ class Collector:
     included_in_all: bool = True
     kind: str = "raw_source"
     semantic_docs: Callable[[Any], Iterable["SemanticDoc"]] | None = None
-    secrets: tuple[str, ...] = ()
 
 
 # A Collector that also exposes a ``semantic_docs`` provider is the spine of a
@@ -1457,7 +1452,6 @@ register_collector(
         "figma",
         _figma_adapter,
         requires=("figma_token",),
-        secrets=("figma_token", "figma_file_keys"),
         semantic_docs=figma_semantic_docs,
         included_in_all=False,
     )

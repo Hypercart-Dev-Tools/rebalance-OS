@@ -211,17 +211,18 @@ place to update OAuth refresh, no new dependencies.
 
 *Zero risk. ~1 line. Do this first; it can ship alone.*
 
-- [ ] Delete `secrets` field from the `Collector` dataclass (`index_ops.py:85`)
-- [ ] Remove `secrets` from the `Collector` docstring (`index_ops.py:73–76`)
-- [ ] Grep confirms zero `.secrets` references remain before deleting
-- [ ] `rebalance refresh_index --dry-run` still enumerates all collectors
+- [x] Delete `secrets` field from the `Collector` dataclass
+- [x] Remove `secrets` from the `Collector` docstring
+- [x] Grep confirms zero `.secrets` references remain (also removed the one
+      write-only assignment at the figma registration)
+- [x] Registry still builds — 11 collectors enumerated
 
 **QA checklist — Phase 1**
-- [ ] DRY: no remaining reference to the removed field anywhere
-- [ ] Behavior unchanged: registry still registers the same N collectors
-- [ ] Tests: existing `tests/` collect→store suite green
-- [ ] `rebalance doctor` clean
-- [ ] Anti-goal check: did **not** "tidy" adjacent fields (`kind`,
+- [x] DRY: no remaining `secrets` reference anywhere in src/tests
+- [x] Behavior unchanged: registry registers the same 11 collectors
+- [x] Tests: full suite **1002 passed, 10 skipped**
+- [x] `rebalance doctor` clean (credential/schema/projects/auth-log all OK)
+- [x] Anti-goal check: did **not** touch adjacent fields (`kind`,
       `included_in_all`) — those stay (see Phase 4)
 
 ---
