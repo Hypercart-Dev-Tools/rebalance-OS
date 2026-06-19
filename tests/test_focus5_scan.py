@@ -573,7 +573,10 @@ class WebRouteTests(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             self.assertFalse(m.called)                       # within TTL → no scan
 
-    def test_stale_roster_triggers_recompute_on_visit(self) -> None:
+    def test_stale_roster_serves_cached_without_blocking_scan(self) -> None:
+        # sync_focus5() is a ~30s synchronous git scan; a stale page load must NOT
+        # run it inline (that made the page look broken). Serve the cached roster
+        # instantly with the "⚠ stale" badge; recompute only on explicit Refresh.
         with tempfile.TemporaryDirectory() as tmp:
             db, dev = self._seed(Path(tmp))
             # Age the snapshot past the 24h TTL.
@@ -584,7 +587,8 @@ class WebRouteTests(unittest.TestCase):
             with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
                 resp = self._get(db)
             self.assertEqual(resp.status_code, 200)
-            self.assertTrue(m.called)                        # TTL expired → recompute
+            self.assertFalse(m.called)                       # stale → no inline scan
+            self.assertIn("⚠ stale", resp.text)             # but the staleness is surfaced
 
 
 # ---------------------------------------------------------------------------

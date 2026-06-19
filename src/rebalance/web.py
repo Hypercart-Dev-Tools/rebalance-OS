@@ -530,10 +530,13 @@ def focus5_page(refresh: bool = False):
                 "Run <code>rebalance refresh-index</code> first.</div>")
         return _page("Focus 5", body, active="focus5", wide=True)
 
-    # Recompute the roster when forced, never built, or past its 24h TTL. The
-    # meta check is a cheap DB read so we don't pay the live-probe render twice.
+    # Recompute the roster only when forced (↻ Refresh) or never built — NOT on a
+    # stale TTL. sync_focus5() is a ~30s synchronous device-local git scan; running
+    # it inline on a stale page load blocked the request and made the page look
+    # broken. A stale roster now renders instantly with the "⚠ stale" badge; the
+    # operator re-ranks on demand via the Refresh button (?refresh=1).
     meta = get_roster_meta(db)
-    if refresh or not meta["roster_size"] or _roster_stale(meta["computed_at"]):
+    if refresh or not meta["roster_size"]:
         try:
             sync_focus5(db)
         except Exception:  # noqa: BLE001 — a scan failure must not 500 the page
