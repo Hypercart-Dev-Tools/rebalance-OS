@@ -22,7 +22,6 @@ cannot — so this path works for public cloners where ADC did not.
 from __future__ import annotations
 
 import json
-import pickle
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -79,72 +78,40 @@ def _credentials_have_scopes(creds: Any, required_scopes: list[str]) -> bool:
 def _load_credentials(required_scopes: list[str] | None = None) -> Any:
     """Load OAuth2 credentials — keyring first, pickle file as the launchd fallback.
 
-    Mirrors :func:`rebalance.ingest.calendar._load_credentials`: keyring
-    (interactive primary) ↔ the pickle file (launchd reads this; the keychain
-    is unreachable from the daily-sync's stripped environment). On refresh, the
-    rotated access token is written back to BOTH so each stays current.
+    Delegates the keyring→pickle→refresh→persist-both flow to
+    :func:`rebalance.ingest.oauth_common.load_credentials`; only the
+    Gmail-specific error messages and scope rule live here.
     """
-    import json as _json
-
-    from rebalance.ingest.auth_log import (
-        log_token_missing,
-        log_token_refresh_failed,
-        log_token_refreshed,
-    )
+    from rebalance.ingest import oauth_common
     from rebalance.ingest.config import (
         get_gmail_oauth_token_json,
         set_gmail_oauth_token_json,
     )
 
-    creds = None
-    blob = get_gmail_oauth_token_json()
-    if blob:
-        try:
-            from google.oauth2.credentials import Credentials
-            creds = Credentials.from_authorized_user_info(_json.loads(blob))
-        except Exception:  # noqa: BLE001 — corrupt/legacy blob → fall back to pickle
-            creds = None
+    def _missing(token_path: str) -> Exception:
+        return GmailAuthError(
+            f"Gmail OAuth token not found (keyring empty and no file at {token_path}).\n"
+            f"  Run: {GMAIL_SETUP_HINT}\n"
+            "  Or switch to the Gmail MCP connector: `gmail_ingest_method=mcp`."
+        )
 
-    if creds is None:
-        if not TOKEN_PATH.exists():
-            log_token_missing(str(TOKEN_PATH), source="gmail")
-            raise GmailAuthError(
-                f"Gmail OAuth token not found (keyring empty and no file at {TOKEN_PATH}).\n"
-                f"  Run: {GMAIL_SETUP_HINT}\n"
-                "  Or switch to the Gmail MCP connector: `gmail_ingest_method=mcp`."
-            )
-        with open(TOKEN_PATH, "rb") as f:
-            creds = pickle.load(f)
-
-    # Refresh if expired — persist the rotated access token to both stores.
-    if creds.expired and creds.refresh_token:
-        from google.auth.transport.requests import Request
-        try:
-            creds.refresh(Request())
-            # record=False: an access-token refresh is not a re-authorization.
-            set_gmail_oauth_token_json(creds.to_json(), source="refresh", record=False)
-            try:
-                with open(TOKEN_PATH, "wb") as f:
-                    pickle.dump(creds, f)
-            except OSError:
-                pass
-            log_token_refreshed(
-                expiry=creds.expiry.isoformat() if creds.expiry else None,
-                token_path=str(TOKEN_PATH),
-                source="gmail",
-            )
-        except Exception as exc:
-            log_token_refresh_failed(error=str(exc), token_path=str(TOKEN_PATH), source="gmail")
-            raise
-
-    if required_scopes and not _credentials_have_scopes(creds, required_scopes):
-        raise GmailAuthError(
+    def _scope_error(creds: Any, required: list[str]) -> Exception:
+        return GmailAuthError(
             "Gmail OAuth token does not include the required scope "
-            f"({', '.join(required_scopes)}). Current: {getattr(creds, 'scopes', []) or []}.\n"
+            f"({', '.join(required)}). Current: {getattr(creds, 'scopes', []) or []}.\n"
             f"  Re-run: {GMAIL_SETUP_HINT}"
         )
 
-    return creds
+    svc = oauth_common.OAuthService(
+        name="gmail",
+        token_path=TOKEN_PATH,
+        get_token_json=get_gmail_oauth_token_json,
+        set_token_json=set_gmail_oauth_token_json,
+        has_scopes=_credentials_have_scopes,
+        missing_error=_missing,
+        scope_error=_scope_error,
+    )
+    return oauth_common.load_credentials(svc, required_scopes)
 
 
 def _build_service() -> Any:
