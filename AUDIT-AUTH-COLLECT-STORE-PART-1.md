@@ -1,7 +1,7 @@
 ---
 title: "Ponytail Audit — Auth + Collect→Store (Part 1 of 2)"
 doc_type: audit + refactor-plan
-status: audit-complete · Phase 3 done (2026-06-18) · Phases 1–2 pending
+status: audit-complete · Phases 1–3 done (2026-06-18) · Phase 4 = deliberate skips
 scope:
   slice_1_auth: "GitHub PAT · Google OAuth (calendar + gmail) · Sleuth bearer · token_meta · auth_log"
   slice_2_collect_store: "Collector registry · refresh_index orchestrator · db/ package · per-source collectors"
@@ -24,7 +24,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 3 — Credential I/O dedup** ✅ (2026-06-18, branch `refactor/phase3-credential-io-dedup`) — done out of order, in isolation, with tests; 1002 tests green, doctor clean | **Phase 1 — Dead code & trivial wins**, then **Phase 2 — Shared helpers** (both still pending) |
+| **Phase 2 — Shared helpers** ✅ (2026-06-18, branch `refactor/phase3-credential-io-dedup`) — adapter factory + parse dedup landed; `_safe_*` consolidation deliberately skipped. All of Phases 1–3 done; 1002 tests green, doctor clean | **Part 2** — query layer · LLM synthesis · MCP surface · CLI · dashboard/pulse · scheduler (Phase 4 here is just recorded skips) |
 
 > **Read me first:** This is two documents in one. The **Audit** (top) is the
 > ground-truth read of the two slices as they stand today. The **Ponytail
@@ -231,25 +231,40 @@ place to update OAuth refresh, no new dependencies.
 
 *Low risk, mechanical. Pure dedup; same options pass through unchanged.*
 
-- [ ] Add `_make_adapter(refresh_fn)` passthrough factory; replace the 10 hand
-      adapters (`index_ops.py:1264–1434`) — ~25 LOC → ~5
-- [ ] Collapse `_safe_count`/`_safe_max`/`_safe_meta` into one
-      `_safe_query(conn, sql, params=())` (`index_ops.py:163–184`); update the
-      ~3 call sites (`index_ops.py:231–268`)
-- [ ] Extract `parse_iso8601(text)->datetime|None` into a shared
-      `ingest/` util; replace hand-rolled copies in `sleuth_reminders.py:113–128`,
-      `github_scan.py:123–125`, and calendar/gmail/figma equivalents
-- [ ] Leave a `# ponytail:` note on `_make_adapter` documenting the passthrough
-      contract (opts are filtered by each `refresh_fn`)
+- [x] Add `_dry_run_adapter(refresh_fn)` factory; replaced the **8**
+      dry_run-only adapters (sleuth, email, code, figma, semantic, sync,
+      ask_self, focus5) with one-line assignments. vault/github/calendar keep
+      their bespoke option-mapping adapters (not boilerplate).
+- [x] **Parse dedup — reused the *existing* `tz_utils.parse_utc_iso`** instead
+      of writing a new util (it already does the `Z`→`+00:00` dance, None on
+      bad/empty, naive→UTC). Migrated the two in-slice hand-rolled copies:
+      `sleuth_reminders._parse_datetime` (kept its non-str guard) and
+      `token_meta.age_text`.
+- [~] **SKIPPED `_safe_count`/`_safe_max`/`_safe_meta` → `_safe_query`.** On
+      inspection this is net-negative: the three return *different shapes*
+      (int / scalar / dict) with different defaults (0 / None / {}); a single
+      raw-row helper would push shaping into ~17 call sites — more code, not
+      less. The three tiny named helpers are already the minimal readable form.
+- [x] Factory carries a docstring documenting the dry_run-only passthrough
+      contract (bespoke sources keep their own adapter).
+
+> **Scope note:** the other hand-rolled `Z`-dance copies (`diagnose.py`,
+> `github_readiness.py`, `note_builder.py`, `pulse_health.py`) are Part-2
+> modules (query/diagnostics/render) — intentionally left for Part 2 to avoid
+> reaching outside this slice.
 
 **QA checklist — Phase 2**
-- [ ] DRY: 10 adapters → 1 factory; 3 `_safe_*` → 1; 4+ date parsers → 1
-- [ ] SOLID: each `refresh_fn` signature untouched; factory adds no new coupling
-- [ ] Observability: `index_status` counts/timestamps identical before/after
-- [ ] Correctness: ISO-8601 util preserves the `Z`→`+00:00` + tz-naive→UTC
-      behavior of every replaced parser (table-test the edge cases)
-- [ ] Tests: `tests/test_*` for sleuth/github/calendar/gmail pass unchanged
-- [ ] Anti-goal: did **not** touch upsert/diff/migration logic
+- [x] DRY: 8 adapters → 1 factory; 2 in-slice date parsers → existing
+      `parse_utc_iso`. (`_safe_*` consolidation deliberately not done — see above.)
+- [x] SOLID: each `refresh_fn` signature untouched; factory adds no new coupling
+- [x] Observability: `index_status` counts/timestamps unchanged (the `_safe_*`
+      helpers it depends on were left as-is)
+- [x] Correctness: parse behavior verified — Z-parse, non-str→None, bad/empty→
+      None/"", naive→UTC, age `6.0h` all preserved
+- [x] Tests: full suite **1002 passed, 10 skipped**; sleuth/calendar/gmail/
+      auth-log tests unchanged
+- [x] Anti-goal: did **not** touch upsert/diff/migration logic, and did **not**
+      reach into Part-2 modules for the remaining parse copies
 
 ---
 

@@ -1256,6 +1256,18 @@ def refresh_index(
 # single source of truth for the ingest pipelines — these adapters are 3-line
 # shims.
 
+def _dry_run_adapter(refresh_fn: Callable[..., dict[str, Any]]) -> Callable[..., dict[str, Any]]:
+    """Adapter for a refresh fn whose only option is ``dry_run``.
+
+    Most stage/source refreshes take no per-source options beyond ``dry_run``;
+    this replaces a separate near-identical two-line adapter for each of them.
+    Sources with bespoke option mapping (vault, github, calendar) keep their own.
+    """
+    def adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+        return refresh_fn(db_path, dry_run=opts["dry_run"])
+    return adapter
+
+
 def _vault_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     vault_path = opts.get("vault_path")
     assert vault_path is not None, "vault collector requires vault_path"
@@ -1276,24 +1288,11 @@ def _calendar_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_calendar(db_path, since_days=opts["since_days"], dry_run=opts["dry_run"])
 
 
-def _sleuth_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_sleuth(db_path, dry_run=opts["dry_run"])
-
-
-def _email_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_email(db_path, dry_run=opts["dry_run"])
-
-
-def _code_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_code(db_path, dry_run=opts["dry_run"])
-
-
-def _figma_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_figma(db_path, dry_run=opts["dry_run"])
-
-
-def _semantic_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_semantic_only(db_path, dry_run=opts["dry_run"])
+_sleuth_adapter = _dry_run_adapter(_refresh_sleuth)
+_email_adapter = _dry_run_adapter(_refresh_email)
+_code_adapter = _dry_run_adapter(_refresh_code)
+_figma_adapter = _dry_run_adapter(_refresh_figma)
+_semantic_adapter = _dry_run_adapter(_refresh_semantic_only)
 
 
 def _refresh_sync(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
@@ -1353,8 +1352,7 @@ def _refresh_sync(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     }
 
 
-def _sync_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_sync(db_path, dry_run=opts["dry_run"])
+_sync_adapter = _dry_run_adapter(_refresh_sync)
 
 
 def _refresh_ask_self(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
@@ -1387,8 +1385,7 @@ def _refresh_ask_self(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     return {"scope": "ask_self", "dry_run": False, **result.as_dict()}
 
 
-def _ask_self_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_ask_self(db_path, dry_run=opts["dry_run"])
+_ask_self_adapter = _dry_run_adapter(_refresh_ask_self)
 
 
 def _refresh_focus5(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
@@ -1425,8 +1422,7 @@ def _refresh_focus5(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     return {"scope": "focus5", "dry_run": False, **result.as_dict()}
 
 
-def _focus5_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_focus5(db_path, dry_run=opts["dry_run"])
+_focus5_adapter = _dry_run_adapter(_refresh_focus5)
 
 
 register_collector(Collector("vault", _vault_adapter, requires=("vault_path",)))
