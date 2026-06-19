@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
-ROUND: 1 / 5
+ROUND: 2 / 5
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -63,6 +63,38 @@ Plan: Phase 1 add `rank_recent_activity` (default), Phase 2 two views (Focus 5 =
 
 **Verification:** N/A — non-executable artifact (plan doc). Code claims were derived from reading the cited source + re-ranking stored signals during the trace.
 **Open questions:** Should `rank_recent_activity` still surface a purely-dirty repo with no operator commits, and if so where should it rank vs a clean recently-committed repo?
-**Commit:** <pending>
+**Commit:** 402d43a
+
+### Round 2 · Reviewer · Codex · 2026-06-19
+**Verdict:** Changes requested
+
+**Basis:** textual only
+
+**Findings & proposals:**
+- [Blocker] The plan equates `_recency` with “operator-authored commit recency,” but the code does not. `_recency()` falls back from `my_last_commit_ts` to `head_reflog_ts` and then `last_commit_ts`, and `_eligible_as_my_work()` also admits dirty repos with no authored commit. As written, Phase 1 can still rank a dirty repo with no operator commit above a clean repo with a recent operator commit, which contradicts the stated product contract. Evidence: `focus5_scan.py:142-154`, `:157-182`, artifact `:100-108`.
+  Proposed fix: use `my_last_commit_ts` as the primary eligibility/ranking signal for `recent_activity`; dirty-only/no-authored repos should be excluded from Focus 5 (left to Dirty Five) or explicitly demoted below all authored-commit repos. Add QA covering “dirty/no-authored vs clean/recent-authored.”
+
+- [Blocker] The Phase 1 default-switch step is incomplete. Runtime selection does not read `DEFAULT_RANKING_MODE`; the collector reads `get_focus5_ranking_mode()`, which hardcodes `"dirty_first"` when config is unset. Changing `DEFAULT_RANKING_MODE` alone is inert. Evidence: `index_ops.py:1401-1421`, `config.py:652-669`, `focus5_scan.py:129`, artifact `:104-106`.
+  Proposed fix: change the default returned by `get_focus5_ranking_mode()` in `config.py`, decide how existing config values behave, and remove/wire the dead constant. QA both: unset→`recent_activity`; explicit `dirty_first` still wins.
+
+- [Blocker] Phase 2 QA says “switching does not re-probe (re-rank from cache),” but the read path always re-probes the top-5 cards’ live tree health on render. A view switch avoids a full-device scan, not all re-probing. Evidence: `focus5_scan.py:724-743`, `:767-778`, `web.py:548-549`, artifact `:124-126`.
+  Proposed fix: reword QA to “switching does not call `sync_focus5()`/does not rescan all repos; it reranks from cached `focus5_repo_signals`.”
+
+- [Should] Phase 2 is underspecified on persistence. `focus5_roster` stores one roster + one `ranking_mode` per device, so Dirty Five needs an explicit choice: transient mode param, rerank-and-persist per switch, or a second persisted roster. Evidence: `focus5_scan.py:523-527`, `:598-603`, `:681-693`, `:753-756`, artifact `:118-126`.
+  Proposed fix: choose one model and QA it, especially “after visiting Dirty Five, reloading `/focus-5` still defaults to recent_activity.”
+
+- [Should] Phase 4 names a `rebalance config` path that does not exist. There are getters/setters for `focus5_scan_roots` but no CLI command. Evidence: `config.py:635-649`, `cli/config_cmds.py:159-193`, artifact `:148-150`.
+  Proposed fix: specify direct config-file mutation / a new CLI command, or phrase as “persist `focus5_scan_roots` in `temp/rbos.config`” and QA with `refresh_index(scope=["focus5"], dry_run=True)`.
+
+- [Pass] Core claims about existing ranking are accurate: `rank_dirty_first` = `(at_risk, _recency)`, `rank_my_work` pins dirty→`now_ts`. Evidence: `focus5_scan.py:157-182`.
+- [Pass] Stale-snapshot diagnosis + Phase 3 mapping sound: `focus5` is `included_in_all=False`; route rescans only on `?refresh=1`/empty. Evidence: `index_ops.py:1436`, `web.py:533-549`.
+- [Pass] Off-roster “needs attention” strip stays compatible with recency-first Focus 5 (built from cached `is_dirty=1 OR ahead>0` not on roster). Evidence: `focus5_scan.py:790-803`, `web.py:351-376`.
+
+**Answers:**
+- Open question: no — a purely-dirty repo with no operator-authored commit should NOT outrank a clean repo with a recent operator commit in default Focus 5. Recommend excluding dirty-only/no-authored from `recent_activity` entirely (Dirty Five / off-roster carry them); softer option = demote below all repos with `my_last_commit_ts`.
+- No 4th root cause beyond A/B/C. The main correction is A’s implementation not yet matching A’s product definition.
+- Tie-breaking is already deterministic: `rank_repos()` sorts by score desc then `local_path`. Evidence: `focus5_scan.py:245-246`. Mention in QA rather than treat as unresolved.
+
+**Commit:** none (comments only)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
