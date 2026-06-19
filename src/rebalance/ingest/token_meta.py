@@ -20,6 +20,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from rebalance.tz_utils import parse_utc_iso
+
 
 def _meta_path() -> Path:
     from rebalance.paths import resolve_project_root
@@ -96,17 +98,9 @@ def current_token_meta(service: str) -> dict[str, Any] | None:
 
 def age_text(iso_ts: str | None, *, now: datetime | None = None) -> str:
     """Compact age like ``6d`` / ``3.2h`` for a stored ISO timestamp; '' if unknown."""
-    if not iso_ts:
+    dt = parse_utc_iso(iso_ts)  # handles trailing-Z + naive→UTC; None on bad/empty
+    if dt is None:
         return ""
-    raw = iso_ts.strip()
-    if raw.endswith("Z"):
-        raw = raw[:-1] + "+00:00"
-    try:
-        dt = datetime.fromisoformat(raw)
-    except ValueError:
-        return ""
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
     now = now or datetime.now(timezone.utc)
     secs = max((now - dt).total_seconds(), 0.0)
     return f"{secs / 86400:.0f}d" if secs >= 86400 else f"{secs / 3600:.1f}h"
