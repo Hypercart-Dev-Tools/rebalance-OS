@@ -1,7 +1,7 @@
 ---
 title: "Focus 5 surfaces the wrong repos — root-cause trace + remediation"
 doc_type: bug-trace + remediation-plan
-status: diagnosed (2026-06-19) · remediation NOT started
+status: diagnosed + plan hardened via Codex relay r2 (2026-06-19) · remediation NOT started
 method: /debug-mantra (reproduce → fail path → falsify → cross-reference)
 owner: noel@neochro.me
 related:
@@ -14,7 +14,7 @@ related:
 
 | Most recently completed | What's next |
 |---|---|
-| **Diagnosis complete** (2026-06-19) — root cause proven by re-ranking stored signals; 3 distinct issues isolated | **Phase 1 — add a recency ranking mode** (the real fix), pending approval |
+| **Plan hardened via Codex relay** (2026-06-19, r2) — 3 Blockers + 2 Shoulds applied; ranking signal, default-switch, and QA corrected against the real code | **Phase 1 — add `recent_activity` mode** (the real fix), pending approval to implement |
 
 ## Symptom (as reported)
 
@@ -88,28 +88,53 @@ working on right now), ranked by operator-authored commit recency — clean,
 freshly-pushed repos included. The current "dirty-first" behavior is a *separate*
 safety lens. Adopt the operator's framing:
 
-- **Focus 5** (default, headline view): most recent operator activity by commit
-  recency. Answers "what am I working on?"
+- **Focus 5** (default, headline view): most recent operator activity ranked by
+  **`my_last_commit_ts`** (operator-*authored* commit recency). Answers "what am
+  I working on?"
 - **Dirty Five** (secondary safety view): the existing `dirty_first` behavior —
   repos with at-risk uncommitted/unpushed work. Answers "what might I lose?"
+
+**Authored-commit contract (relay r2 decision).** "Recency" here means
+`my_last_commit_ts` specifically — **not** the `_recency()` helper, which falls
+back to `head_reflog_ts`/`last_commit_ts` and would let a foreign-push or
+clone/checkout masquerade as my activity. A **dirty repo with no operator commit
+must NOT outrank a clean repo with a recent operator commit** — that would
+reintroduce the bug under a new name. Such dirty-only/no-authored repos are
+**excluded** from Focus 5 and carried by Dirty Five + the off-roster "needs
+attention" strip.
 
 ## Remediation plan
 
 ### Phase 1 — Add a recency ranking mode (the real fix)
 
 - [ ] Add `rank_recent_activity(s, now)` to `focus5_scan.py`:
-      `sort_key = (_recency(s),)`, **no dirty pinning**; eligibility =
-      `_eligible_as_my_work(s)`; reason = `"your commit {ago}"` (or
-      `"uncommitted changes"` when dirty but use the honest `_recency`, not `now`)
+      `sort_key = (s.my_last_commit_ts or 0,)` — rank on **authored** recency, NOT
+      `_recency()` (which would admit foreign-push/clone activity). **No dirty
+      pinning.** Eligibility = `s.my_last_commit_ts is not None` (authored a commit
+      here) — this **excludes** dirty-only/no-authored repos from Focus 5 (they
+      remain in Dirty Five + the off-roster strip). reason = `"your commit {ago}"`.
+      *(Fixes relay r2 [Blocker] #1 — `_recency`/`_eligible_as_my_work` contradicted the product contract.)*
 - [ ] Register in `RANKING_STRATEGIES` as `"recent_activity"`
-- [ ] Set `DEFAULT_RANKING_MODE = "recent_activity"` (and/or set the operator's
-      `focus5_ranking_mode` config) so the headline view is recency by default
-- [ ] Unit tests: clean-but-recent repo outranks an older dirty repo; dirty repo
-      with no commits still eligible via `_recency` fallback
+- [ ] **Flip the runtime default in `config.py::get_focus5_ranking_mode()`** —
+      changing the `DEFAULT_RANKING_MODE` constant alone is **inert** (the collector
+      and `sync_focus5` read the getter, which hardcodes `"dirty_first"` on unset:
+      `config.py:652-669`, `index_ops.py:1404`, `focus5_scan.py:489`). Make the
+      getter default to `recent_activity`; an explicit `focus5_ranking_mode` config
+      value still wins. Point the now-stale `DEFAULT_RANKING_MODE` constant at the
+      same value (or delete it). *(Fixes relay r2 [Blocker] #2.)*
+- [ ] Unit tests: clean-recent-authored repo outranks an older clean-authored repo;
+      a dirty/no-authored repo is **absent** from `recent_activity` (and present in
+      `dirty_first`)
 
 **QA — Phase 1**
 - [ ] Re-ranking the current stored signals under `recent_activity` yields
       hypercart-plugin-mkiii / xyz-3-agents-swarm / giant-brains in the top 5
+- [ ] Dirty-only/no-authored repo (e.g. `eve`, `my_last_commit_ts=None`) does
+      **not** appear in `recent_activity`, but still appears in `dirty_first`
+- [ ] Default resolution: unset config → `get_focus5_ranking_mode()` returns
+      `recent_activity`; explicit `focus5_ranking_mode=dirty_first` config still wins
+- [ ] Ordering is deterministic — `rank_repos()` already sorts score-desc then
+      `local_path` (`focus5_scan.py:246`), so equal-recency ties are stable
 - [ ] `dirty_first` + `my_work` unchanged (no regressions to existing modes)
 - [ ] Pure function preserved (no I/O / clock inside the strategy)
 
@@ -118,11 +143,22 @@ safety lens. Adopt the operator's framing:
 - [ ] Default `/focus-5` → `recent_activity` mode, titled **Focus 5**
 - [ ] Add **Dirty Five** as a second view (separate nav item or a mode toggle on
       the same page) → `dirty_first` mode
+- [ ] **Persistence model (relay r2 [Should]):** the second view is a **transient
+      mode param** — re-rank from the cached `focus5_repo_signals` via
+      `rerank_focus5_from_cache(mode=...)` and render; do **not** overwrite the
+      persisted default roster. `focus5_roster` stays the `recent_activity`
+      snapshot so a later `/focus-5` still defaults correctly.
 - [ ] Reuse the existing `_focus5_body` renderer for both (only the mode + title
       differ); keep the "⚠ stale" badge and ↻ Refresh on both
 
 **QA — Phase 2**
-- [ ] Both views render; switching does not re-probe (re-rank from cache)
+- [ ] Switching views does **not** call `sync_focus5()` / does not rescan the whole
+      device — it reranks from cached `focus5_repo_signals`. (Per-card *live tree
+      health* is still re-probed on render by design — `summarize_focus5
+      with_live_health=True`, `focus5_scan.py:724-778` — that is expected, not a
+      regression.) *(Fixes relay r2 [Blocker] #3 — "no re-probe" was unachievable.)*
+- [ ] After visiting **Dirty Five**, reloading `/focus-5` still defaults to
+      `recent_activity` (transient param did not mutate the persisted roster)
 - [ ] Off-roster "needs attention" strip still reflects dirty/unpushed repos
 
 ### Phase 3 — Freshness (so the roster stops rotting)
@@ -145,13 +181,19 @@ was rejected to avoid thread/race complexity in the web process.
 
 ### Phase 4 — Discovery scope (`rebalance-OS`)
 
-- [ ] Add `rebalance-OS` to the scan set — simplest: `rebalance config` add
-      `/Users/noelsaw/Documents/rebalance-OS` (a root that is itself a repo) to
-      `focus5_scan_roots` (verify discovery handles a root that is a repo)
+- [ ] Add `/Users/noelsaw/Documents/rebalance-OS` (a root that is itself a repo)
+      to `focus5_scan_roots`. **No CLI command edits this key today** (getter/setter
+      exist in `config.py:635-649`; `cli/config_cmds.py` has no `focus5_scan_roots`
+      command) — so either persist it directly in `temp/rbos.config` via the config
+      setter, or add a small CLI command as part of this phase. *(Fixes relay r2
+      [Should] — Phase 4 named a non-existent `rebalance config` path.)*
+- [ ] Verify discovery handles a scan root that is itself a repo (`.git` at root)
 - [ ] Confirm `rebalance-OS` then appears under `recent_activity` (it has very
       recent operator commits)
 
 **QA — Phase 4**
+- [ ] `refresh_index(scope=["focus5"], dry_run=True)` lists `rebalance-OS` among
+      the scanned roots/repos
 - [ ] No accidental broadening that pulls in dozens of unrelated repos
 - [ ] `rebalance-OS` shows with correct branch/ahead-behind/PR enrichment
 

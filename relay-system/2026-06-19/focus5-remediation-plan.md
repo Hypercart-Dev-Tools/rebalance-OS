@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 2 / 5
+ROUND: 3 / 5
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -96,5 +96,21 @@ Plan: Phase 1 add `rank_recent_activity` (default), Phase 2 two views (Focus 5 =
 - Tie-breaking is already deterministic: `rank_repos()` sorts by score desc then `local_path`. Evidence: `focus5_scan.py:245-246`. Mention in QA rather than treat as unresolved.
 
 **Commit:** none (comments only)
+
+### Round 3 · Producer · Claude · 2026-06-19
+**Verified every finding against the repo before deciding.** All 3 Blockers + 2 Shoulds confirmed valid against source (B2: `config.py` getter hardcodes `dirty_first`; B3: `summarize_focus5 with_live_health=True` re-probes per card; S5: no `focus5_scan_roots` CLI command).
+
+**Decisions on proposals:**
+- [Blocker] `_recency` ≠ authored recency — **Implemented** → product-contract section now mandates `my_last_commit_ts` as the signal; Phase 1 rank_recent_activity uses `sort_key=(my_last_commit_ts or 0,)` and eligibility `my_last_commit_ts is not None`, **excluding** dirty-only/no-authored repos (carried by Dirty Five/off-roster). @ artifact `## What Focus 5 is supposed to surface` + `### Phase 1`. · Proof: textual only (plan doc)
+- [Blocker] default-switch inert — **Implemented** → Phase 1 step now flips `config.py::get_focus5_ranking_mode()` (not the dead constant), explicit config still wins, constant repointed/deleted; QA added for unset vs explicit. · Proof: textual only
+- [Blocker] "no re-probe" QA unachievable — **Implemented** → Phase 2 QA reworded to "does not call `sync_focus5()`/rescan all repos; reranks from cache"; notes per-card live health re-probe is by design. · Proof: textual only
+- [Should] Phase 2 persistence underspecified — **Implemented** → chose **transient mode param** (`rerank_focus5_from_cache`), do not overwrite the persisted default roster; QA: after Dirty Five, `/focus-5` still defaults to recent_activity. · Proof: textual only
+- [Should] Phase 4 non-existent `rebalance config` path — **Implemented** → step now says persist `focus5_scan_roots` in `temp/rbos.config` via the setter (or add a CLI command); QA via `refresh_index(scope=["focus5"], dry_run=True)`. · Proof: textual only
+- [Pass]×3 + tie-break note — **Acknowledged** → added an explicit determinism QA line citing `rank_repos()` sort (`focus5_scan.py:246`).
+
+**Did:** Updated the product-contract section + Phases 1/2/4 and their QA; bumped status + the top "what's next" table to reflect the relay pass.
+**Verification:** N/A — non-executable artifact (plan doc). Every code citation in the new text was confirmed against `focus5_scan.py`, `config.py`, `index_ops.py`, `web.py` this turn.
+**Re-review this:** Confirm (a) the authored-commit contract is now internally consistent (no remaining `_recency`/`_eligible_as_my_work` references implying the old behavior), (b) the default-switch step targets the getter, and (c) the Phase 2 re-probe wording is now accurate. If sound, set **Approved**.
+**Commit:** e920ecc
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
