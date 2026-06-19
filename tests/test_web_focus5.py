@@ -203,5 +203,44 @@ class OpenButtonTests(unittest.TestCase):
         self.assertIn("f5-hide", body)                 # ✕ still present
 
 
+class RouteScanTriggerTests(unittest.TestCase):
+    """focus5_page must NOT run the ~30s synchronous sync_focus5 git scan on a
+    stale page load — only on an explicit Refresh or a never-built roster."""
+
+    def _load(self, *, refresh: bool, roster_size: int, computed_at):
+        from unittest.mock import patch
+        from rebalance import web
+
+        meta = {"roster_size": roster_size, "computed_at": computed_at}
+        with patch("rebalance.paths.resolve_database_path", return_value="db"), \
+             patch("rebalance.ingest.focus5_scan.get_roster_meta", return_value=meta), \
+             patch("rebalance.ingest.focus5_scan.summarize_focus5", return_value={"roster": []}), \
+             patch("rebalance.ingest.focus5_scan.sync_focus5") as scan, \
+             patch("rebalance.web._focus5_body", return_value=""), \
+             patch("rebalance.web._page", return_value="OK"):
+            web.focus5_page(refresh=refresh)
+        return scan
+
+    def test_stale_roster_does_not_trigger_blocking_scan(self) -> None:
+        scan = self._load(refresh=False, roster_size=5, computed_at=_now_iso(days=2))
+        scan.assert_not_called()
+
+    def test_never_built_roster_triggers_first_scan(self) -> None:
+        scan = self._load(refresh=False, roster_size=0, computed_at=None)
+        scan.assert_called_once()
+
+    def test_explicit_refresh_triggers_scan(self) -> None:
+        from unittest.mock import patch
+        from rebalance import web
+
+        meta = {"roster_size": 5, "computed_at": _now_iso(days=2)}
+        with patch("rebalance.paths.resolve_database_path", return_value="db"), \
+             patch("rebalance.ingest.focus5_scan.get_roster_meta", return_value=meta), \
+             patch("rebalance.ingest.focus5_scan.sync_focus5") as scan, \
+             patch("rebalance.ingest.focus5_scan.summarize_focus5", return_value={"roster": []}):
+            web.focus5_page(refresh=True)  # returns a redirect before render
+        scan.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
