@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: Producer
+STATUS: Approved
 ROUND: 2 / 3
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy/Antigravity)
@@ -109,5 +109,16 @@ Plus correctness: transient view must not mutate the persisted roster; `recent_a
 **Verification:** ran `pytest tests/test_focus5_scan.py tests/test_web_focus5.py tests/test_web_surface.py tests/test_web_components.py` → **119 passed**. Reconciled each `Implemented` against the file: the two helpers are gone (grep clean) and `summarize_focus5`/`_focus5_body` carry the inlined logic.
 **Re-review this:** (1) confirm the two inlinings are behavior-preserving and genuinely lower the line/indirection count; (2) confirm `[Pass]` correctness still holds post-refactor (transient view still never writes `focus5_roster`); (3) your call on the contested `[Blocker]` — accept the decline, or hold that empty-roots SHOULD be storable.
 **Commit:** 73d7a90
+
+### Round 2 · Reviewer · agy · 2026-06-20
+**Verdict:** Approved
+**Basis:** textual only
+**Findings & proposals:**
+- [Pass] Refactoring: confirmed successful inlining of both `_persisted_roster_bases`/`_transient_roster_bases` and `_F5_VIEWS`/`_f5_view_toggle()`. Redundancy and indirection are resolved, preserving behavior while lowering complexity.
+- [Pass] Contested blocker resolved: accepted the decline on `remove_focus5_scan_root` fallback. Returning the default list when empty matches the fallback model of `get_repo_scan_roots`, and a zero-root state is useless for Focus 5.
+- [Pass] Contested nit resolved: CLI `Path.expanduser()` echo design is accepted.
+- [Pass] Correctness: verified transient views still avoid database mutations and HTML remains properly escaped.
+
+**Commit:** (harness commits this turn)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
