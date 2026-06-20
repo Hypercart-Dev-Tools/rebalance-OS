@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: — (closed)
+STATUS: Approved
 ROUND: 2 / 5
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
@@ -92,5 +92,29 @@ The operator just said "take your turn on this file." Everything you need is **i
 **Verification:** N/A — non-executable artifact (planning doc). Reconciled every `Implemented → @ file:line` against the file via grep before handoff; all anchors present.
 **Re-review this:** (1) Do the two new hard gates (Phase 2 @ :229, Phase 5 @ :315) plus the mitigation rule fully close Blocker 2? (2) Is the resolver-status object now delivered end-to-end (Phase 1 @ :205 → Phase 4 @ :291)? (3) Did applying the docs-in-phase rule create any contradiction with Phase 5's reframed scope @ :323? (4) Any remaining silent drop from UPGRADE.md / SUBSYSTEM-REFACTOR.md not yet covered?
 **Commit:** `469f694` (artifact + relay log)
+
+### Round 2 · Reviewer · Codex · 2026-06-20 08:42 PDT
+**Verdict:** Approved
+**Basis:** N/A — non-executable artifact (re-read the artifact file directly; classifying fixes as textually fixed)
+**Prior fixes:** (each Round-1 finding, verified against the file)
+- Full resolver-status contract is now explicitly delivered by phase outputs @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:205 — textually fixed
+- Additive-before-destructive is now a hard gate, not advisory prose @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:229 — textually fixed
+- Same-phase doc updates now land with each operator-visible behavior change @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:241 — textually fixed
+- Target State now clearly keeps keyring as the interactive primary and limits the new root to fallback secrets @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:163 — textually fixed
+- Auth observability (`auth_activity.jsonl` / `token_meta.json`, fingerprint-only, `first_added_at`) is now preserved in Target State and owned by phases @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:168 — textually fixed
+- Migration idempotency is now explicit in Target State and migration phases @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:169 — textually fixed
+- Opt-in/unconfigured provider policy is now explicit and carried through doctor behavior @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:170 — textually fixed
+- Hermetic-seam protection is now preserved in Phase 1 QA for the new storage contract @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:221 — textually fixed
+**Findings & proposals:** (NEW findings only)
+- none — all Round-1 findings resolved
+- [Pass] Phase 2 and Phase 5 destructive steps are now concretely gated by proven interactive and unattended reads before removal @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:171
+- [Pass] The Phase 1 auth resolver and Phase 4 API-key resolver now use the same six-field status contract end to end @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:206
+- [Pass] Fresh omission-diff found the previously dropped auth-log, idempotency, Figma optionality, docs-in-phase, hermetic-seam, and launchd-safety commitments all represented in the plan; reset coverage for new secret locations is still present in Phase 5 QA @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:333
+**Answers:** (the Producer's 4 re-review questions, point by point)
+- Do the two new hard gates (Phase 2 @ :229, Phase 5 @ :315) plus the mitigation rule fully close Blocker 2? → Yes. The Target State hard-gate rule @ :171 is now operationalized by concrete preconditions in Phase 2 @ :229 and Phase 5 @ :315, with the same rule repeated in Cross-Phase Risks @ :345.
+- Is the resolver-status object now delivered end-to-end (Phase 1 @ :205 → Phase 4 @ :291)? → Yes. Phase 1 defines the full six-field object for auth integrations @ :205-206, and Phase 4 explicitly extends that exact shape to API keys @ :290-291.
+- Did applying the docs-in-phase rule create any contradiction with Phase 5's reframed scope @ :323? → No. Phases 2–4 now own the behavior-changing doc updates @ :241-242, :271-272, :300-301, and Phase 5 is explicitly narrowed to a removal-only consistency sweep @ :323-324.
+- Any remaining silent drop from UPGRADE.md / SUBSYSTEM-REFACTOR.md not yet covered? → None found in the superseded auth-storage slice. The previously missing items are now carried forward, and I did not find a new omission that warrants a finding.
+**Commit:** <pending>
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
