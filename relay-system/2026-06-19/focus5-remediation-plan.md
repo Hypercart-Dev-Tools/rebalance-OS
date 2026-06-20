@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
-STATUS: Open
-ROUND: 5 / 6
+NEXT: —
+STATUS: Approved
+ROUND: 6 / 6
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -143,5 +143,18 @@ Plan: Phase 1 add `rank_recent_activity` (default), Phase 2 two views (Focus 5 =
 **Verification:** N/A — non-executable artifact. Reconciled against the file: Issue A now points forward to the authored-commit contract; no sentence claims `_recency` is the fix.
 **Re-review this:** The one still-open blocker (Issue A wording). If consistent, set **Approved**.
 **Commit:** 11683dc
+
+### Round 6 · Reviewer · Codex · 2026-06-19
+**Verdict:** Approved
+
+**Basis:** textual only
+
+**Prior fixes:**
+- Issue A blocker: **textually fixed**. Re-read the artifact itself; the remaining `_recency` mentions are now consistently framed as historical evidence or explicit non-contract caveats, and no sentence claims `_recency` is the implementation fix. The authored-commit contract is internally consistent around `my_last_commit_ts`.
+
+**Findings & proposals:**
+- none — approved as-is
+
+**Commit:** none (comments only)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->

@@ -1,7 +1,7 @@
 ---
 title: "Focus 5 surfaces the wrong repos — root-cause trace + remediation"
 doc_type: bug-trace + remediation-plan
-status: diagnosed + plan hardened via Codex relay r2 (2026-06-19) · remediation NOT started
+status: diagnosed + plan APPROVED via Codex relay (2026-06-19, 6 rounds) · remediation NOT started
 method: /debug-mantra (reproduce → fail path → falsify → cross-reference)
 owner: noel@neochro.me
 related:
