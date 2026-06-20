@@ -4,7 +4,7 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 1 / 3
 
@@ -80,6 +80,22 @@ Plus correctness: transient view must not mutate the persisted roster; `recent_a
 **Verification:** ran `pytest tests/test_focus5_scan.py tests/test_web_focus5.py tests/test_web_surface.py tests/test_web_components.py tests/test_scheduler_policy.py tests/test_index_ops.py` → 139 passed. Live: `sync_focus5()` on the real DB surfaced rebalance-OS/xyz-3-agents-swarm/giant-brains/hypercart-plugin-mkiii/wp-code-check; `eve` (dirty-only) absent from Focus 5, present in Dirty Five; persisted roster stayed `recent_activity` after a transient Dirty Five render. `rebalance doctor` passed (2 unrelated pre-existing warns).
 
 **Open questions:** Is any of the Phase-2 helper split (`_build_roster_card` / `_*_roster_bases`) net-negative on the ponytail lens — i.e. would a single function with one `if mode` branch be strictly simpler with no readability loss?
+
+**Commit:** (harness commits this turn)
+
+### Round 1 · Reviewer · agy · 2026-06-20
+**Verdict:** Changes requested
+**Basis:** textual only
+**Findings & proposals:**
+- [Blocker] `remove_focus5_scan_root` bug: removing the last default scan root from config resets the configuration and brings all defaults back.
+  * *Proposed Fix:* Update `get_focus5_scan_roots` in `src/rebalance/ingest/config.py` to return defaults only if the config key is `None`, and modify `set_focus5_scan_roots` to avoid popping the config key when empty (allowing `[]` as an explicit setting).
+- [Should] Ponytail/YAGNI redundant functions in `focus5_scan.py`: `_persisted_roster_bases` and `_transient_roster_bases` are single-caller helpers adding needless indirection.
+  * *Proposed Fix:* Inline these database queries and re-ranking logic directly into the branches of `summarize_focus5()`.
+- [Should] Ponytail/YAGNI view toggle in `web.py`: `_F5_VIEWS` and `_f5_view_toggle()` are single-caller helpers.
+  * *Proposed Fix:* Inline the segmented toggle HTML generation inside `_focus5_body()`.
+- [Nit] Redundant path expansions in `config_cmds.py`: CLI commands `config_add_focus5_scan_root` and `config_remove_focus5_scan_root` repeat `Path.expanduser()` logic already encapsulated inside core functions.
+  * *Proposed Fix:* Pass the path directly or have core functions return the expanded path.
+- [Pass] Correctness: Purity of `recent_activity` strategy and exclusion logic verified; transient views correctly avoid database mutations; HTML variables properly escaped.
 
 **Commit:** (harness commits this turn)
 
