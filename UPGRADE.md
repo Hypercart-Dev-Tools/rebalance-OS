@@ -1,5 +1,11 @@
 # UPGRADE — bring a device onto the keyring credential model
 
+> **Status note (2026-06-20).** This document describes the **currently shipped**
+> keyring-plus-fallback operator workflow. For the newer audit of what actually
+> landed, what was deferred, and the forward hardening plan that supersedes this
+> model for future auth-storage work, see
+> [PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md](PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md).
+
 rebalance-OS now stores its external credentials in the **OS keyring**
 (macOS Keychain) as the primary, with a **launchd-reachable fallback** for each
 (launchd's stripped environment can't read the keychain). This replaces the old
@@ -14,6 +20,10 @@ file was missing or in the wrong place.
 > any ingest or collector runs. No manual schema step required.
 
 ## Credential model (after upgrade)
+
+> This table is the **current shipped state**, not the desired end-state. The
+> hardening plan above tracks the follow-up work to remove plaintext repo-local
+> fallbacks and pickle OAuth fallback files.
 
 | Credential | Primary | launchd fallback | Logged on (re)auth |
 |---|---|---|---|

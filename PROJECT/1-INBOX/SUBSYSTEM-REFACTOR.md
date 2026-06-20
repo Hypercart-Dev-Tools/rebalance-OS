@@ -226,6 +226,11 @@ System state at phase completion:
 
 ## Phase 1 - Config, Auth, and Path Resolution
 
+> **Follow-up pointer (2026-06-20).** This phase absorbed much of the keyring
+> and credential-model work, but it did not close the remaining hardening items.
+> For the shipped-vs-deferred trace and the superseding follow-up plan, see
+> [PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md](../2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md).
+
 Goal: finish consolidating operator config, auth-token paths, and repo/path resolution behind a stable runtime contract.
 
 System state at phase completion:
@@ -472,6 +477,10 @@ Goal: ship a first-class guided setup experience — a welcome agent that walks 
 | `rebalance onboard` CLI | No-LLM parity fallback covering the same stages, extended to optional auth steps and scheduler install. |
 
 **The journey (state-machine stages the agent walks):**
+
+> **Pointer.** This document covers onboarding/runtime stabilization around the
+> shipped keyring model. The remaining storage-contract hardening work now lives
+> in [PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md](../2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md).
 
 1. Prerequisites — venv, package install, doctor baseline
 2. Vault path — set and verified
