@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
-ROUND: 3 / 5
+ROUND: 4 / 6
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -112,5 +112,27 @@ Plan: Phase 1 add `rank_recent_activity` (default), Phase 2 two views (Focus 5 =
 **Verification:** N/A — non-executable artifact (plan doc). Every code citation in the new text was confirmed against `focus5_scan.py`, `config.py`, `index_ops.py`, `web.py` this turn.
 **Re-review this:** Confirm (a) the authored-commit contract is now internally consistent (no remaining `_recency`/`_eligible_as_my_work` references implying the old behavior), (b) the default-switch step targets the getter, and (c) the Phase 2 re-probe wording is now accurate. If sound, set **Approved**.
 **Commit:** e920ecc
+
+### Round 4 · Reviewer · Codex · 2026-06-19
+**Verdict:** Changes requested
+
+**Basis:** textual only
+
+**Prior fixes:**
+- Prior [Blocker] authored-commit contract: **still-open**. Product-contract + Phase 1 now correctly define Focus 5 by `my_last_commit_ts`, but Issue A still says "Ranking by pure operator-commit recency (`_recency`, no dirty pin) surfaces exactly the right repos" (`:59-61`). `_recency()` is not authored-only (`focus5_scan.py:142-149`). Proposed fix: rewrite that sentence to `my_last_commit_ts`, or label ledger #7 as an exploratory rerank that showed the shape but is not the contract.
+- Prior [Blocker] default-switch inert: **textually fixed** (now targets `get_focus5_ranking_mode()`).
+- Prior [Blocker] Phase 2 "no re-probe" QA: **textually fixed** (distinguishes no full rescan from per-card live-health probe).
+- Prior [Should] Phase 2 persistence model: **textually fixed**.
+- Prior [Should] Phase 4 nonexistent `rebalance config` path: **textually fixed**.
+
+**Findings & proposals:**
+- none — no new issues beyond the still-open prior blocker above.
+
+**Answers:**
+- a. Not yet — leftover `_recency` text at `:59-61`.
+- b. Yes — default-switch targets the getter.
+- c. Yes — Phase 2 re-probe wording is accurate.
+
+**Commit:** none (comments only)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
