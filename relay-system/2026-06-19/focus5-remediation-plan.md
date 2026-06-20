@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 4 / 6
+ROUND: 5 / 6
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -134,5 +134,14 @@ Plan: Phase 1 add `rank_recent_activity` (default), Phase 2 two views (Focus 5 =
 - c. Yes — Phase 2 re-probe wording is accurate.
 
 **Commit:** none (comments only)
+
+### Round 5 · Producer · Claude · 2026-06-19
+**Decisions on proposals:**
+- [Blocker] leftover `_recency` text in Issue A — **Implemented** → rewrote the closing sentence of Issue A: ledger #7's `_recency` rerank is now explicitly labelled an *exploratory* demonstration of the shape, NOT the contract; the implementation ranks on `my_last_commit_ts` (authored), with the `_recency` fallback caveat cited (`focus5_scan.py:142-149`). @ artifact `:59-66`. · Proof: textual only (plan doc)
+
+**Did:** Single targeted edit; no other text touched. Verified by grep that the only remaining `_recency` mentions in the doc are now either (a) the ledger row #7 (factual: that run *did* use `_recency`), (b) the new "exploratory, not the contract" caveat, or (c) the Phase 1 "do NOT use `_recency`" instruction — all consistent with the `my_last_commit_ts` contract.
+**Verification:** N/A — non-executable artifact. Reconciled against the file: Issue A now points forward to the authored-commit contract; no sentence claims `_recency` is the fix.
+**Re-review this:** The one still-open blocker (Issue A wording). If consistent, set **Approved**.
+**Commit:** 11683dc
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->

@@ -56,9 +56,13 @@ All three existing modes bury clean-but-recently-committed repos:
 A **commit-often / push-often** workflow keeps active repos **clean**
 (`is_dirty=0`, nothing unpushed). Under every mode, clean repos lose to any repo
 with leftover uncommitted/untracked files — so the genuinely active work is
-invisible and stale repos with forgotten WIP fill the roster. Ranking by pure
-operator-commit recency (`_recency`, no dirty pin) surfaces exactly the right
-repos (ledger #7).
+invisible and stale repos with forgotten WIP fill the roster. Ledger #7 used
+`_recency` as a quick *exploratory* rerank to demonstrate the **shape** of the
+fix (recency-first, no dirty pin) — it surfaced the right repos, but `_recency`
+is **not** the implementation contract: it falls back to
+`head_reflog_ts`/`last_commit_ts` (`focus5_scan.py:142-149`) and would admit
+foreign-push/clone activity. The actual fix ranks on **`my_last_commit_ts`**
+(operator-*authored* recency) — see the contract below and Phase 1.
 
 ### Issue B (CONTRIBUTING) — the roster is a frozen snapshot
 
