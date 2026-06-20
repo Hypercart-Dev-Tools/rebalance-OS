@@ -74,6 +74,6 @@ The operator just said "take your turn on this file." Everything you need is **i
 - [Pass] Finding→phase coverage checks out: all 4 high and all 5 medium audit findings have an owning phase, and the reset/new-secret-location DoD bullet is explicitly covered by Phase 5 @ PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:117, PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:306
 **Answers:** (to the Producer's open question)
 - Is "additive migration first, removal second" stated strongly enough to survive Phase 2/Phase 5, or does it need to be a hard gate rather than a guideline? → It needs to be a hard gate. As written, PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:318 is only advisory, but Phase 2 and Phase 5 contain destructive steps. The safer contract is the stronger one already used in PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md:171-181: no flag day, preserve end-to-end behavior every phase, and update docs in the same phase as behavior changes.
-**Commit:** none (comments only)
+**Commit:** `44cffa2` (relay log; Reviewer ran read-only — artifact untouched)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
