@@ -156,6 +156,13 @@ tr:hover td { background: rgba(0,0,0,.03); }
            border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
            line-height: 1.5; }
 .f5-warn b { color: var(--warn); }
+/* Focus 5 / Dirty Five view toggle — a small segmented control. */
+.f5-views { display: inline-flex; gap: 4px; padding: 3px; margin-bottom: 16px;
+            background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.f5-view { font-size: 13px; font-weight: 600; color: var(--fg-muted); text-decoration: none;
+           padding: 4px 12px; border-radius: 6px; }
+.f5-view:hover { color: var(--fg); }
+.f5-view.active { background: rgba(31,111,235,.12); color: var(--accent); }
 
 /* What's Next — the single ranked "work on next" list. Reuses the shared
    .badge/.empty rules; only the list/row chrome is page-local. */
@@ -290,8 +297,9 @@ def index() -> HTMLResponse:
   <li><a href="/focus-5" style="color:var(--accent);font-size:15px;">
       Focus 5</a>
       <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
-      — the 5 repos you're actively working on: working-tree health, newest PR,
-      and recent local commits, ranked by uncommitted/unpushed work first</span>
+      — the 5 repos you're actively working on, ranked by your most recent
+      commits: working-tree health, newest PR, and recent local commits
+      (with a Dirty Five view for uncommitted/unpushed work)</span>
   </li>
   <li><a href="/auth-log" style="color:var(--accent);font-size:15px;">
       System Log</a>
@@ -437,17 +445,49 @@ def _f5_card(card: dict[str, Any]) -> str:
     )
 
 
-def _focus5_body(data: dict[str, Any]) -> str:
-    """Render the Focus 5 page body from a summarize_focus5() dict (pure)."""
-    refresh_btn = "<a class='f5-refresh' href='/focus-5?refresh=1' title='Re-rank now'>↻ Refresh</a>"
+# The two Focus 5 views: the headline "what am I working on?" board and the
+# "what might I lose?" safety board. Only the title, ranking mode, and active
+# toggle differ — the card renderer is shared.
+_F5_VIEWS = (
+    ("focus5", "/focus-5", "🎯 Focus 5"),
+    ("dirty", "/focus-5?view=dirty", "🧹 Dirty Five"),
+)
+
+
+def _f5_view_toggle(active_view: str) -> str:
+    """Segmented Focus 5 / Dirty Five switch; the active view is highlighted."""
+    links = "".join(
+        f"<a class='f5-view{' active' if key == active_view else ''}' href='{href}'>{label}</a>"
+        for key, href, label in _F5_VIEWS
+    )
+    return f"<div class='f5-views'>{links}</div>"
+
+
+def _focus5_body(data: dict[str, Any], *, view: str = "focus5") -> str:
+    """Render the Focus 5 page body from a summarize_focus5() dict (pure).
+
+    *view* selects the headline board (``"focus5"`` → recent_activity) or the
+    safety board (``"dirty"`` → dirty_first). Both reuse this renderer; only the
+    title, the refresh target, the active toggle, and the empty-state copy differ.
+    """
+    is_dirty_view = view == "dirty"
+    title = "🧹 Dirty Five" if is_dirty_view else "🎯 Focus 5"
+    # &amp; — this is an href in an HTML attribute, so the ampersand is entity-encoded.
+    refresh_href = "/focus-5?refresh=1&amp;view=dirty" if is_dirty_view else "/focus-5?refresh=1"
+    refresh_btn = f"<a class='f5-refresh' href='{refresh_href}' title='Re-rank now'>↻ Refresh</a>"
+    toggle = _f5_view_toggle(view)
+    head = f"<h2>{title} {refresh_btn}</h2>{toggle}"
     roster = data.get("roster") or []
     if not roster:
-        return (
-            f"<h2>🎯 Focus 5 {refresh_btn}</h2>"
-            "<div class='empty'>No active repos found yet. The roster builds from "
-            "your local git activity — make a commit or leave uncommitted work in a "
-            "repo under your dev folders, then reload.</div>"
+        empty = (
+            "Nothing at risk — no uncommitted or unpushed work outside the top 5. "
+            "Clean desk."
+            if is_dirty_view else
+            "No active repos found yet. The roster builds from your local git "
+            "activity — make a commit or leave uncommitted work in a repo under "
+            "your dev folders, then reload."
         )
+        return f"{head}<div class='empty'>{empty}</div>"
     mode = html.escape(data.get("ranking_mode") or "")
     computed = _rel_time(data.get("computed_at"))
     # Roster membership is a snapshot (≤24h); tree health is re-probed live. Say
@@ -460,10 +500,7 @@ def _focus5_body(data: dict[str, Any]) -> str:
     )
     strip = _f5_warning_strip(data)
     cards = "".join(_f5_card(c) for c in roster)
-    return (
-        f"<h2>🎯 Focus 5 {refresh_btn}</h2>{meta}{strip}"
-        f"<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}"
-    )
+    return f"{head}{meta}{strip}<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}"
 
 
 # Scoped CSS + JS for the per-card hide (✕) control. Kept in the Focus 5 body so
@@ -517,24 +554,34 @@ def _roster_stale(computed_at: str | None) -> bool:
 
 
 @app.get("/focus-5")
-def focus5_page(refresh: bool = False):
+def focus5_page(refresh: bool = False, view: str = "focus5"):
     from rebalance.ingest.focus5_scan import (
         get_roster_meta, summarize_focus5, sync_focus5,
     )
     from rebalance.paths import DatabaseNotFoundError, resolve_database_path
 
+    # Two views over the SAME device-local snapshot: the default headline board
+    # (recent_activity, persisted in focus5_roster) and the transient "Dirty Five"
+    # safety board (dirty_first, re-ranked from the cached signals on the fly).
+    # Dirty Five never overwrites the persisted roster, so /focus-5 still defaults
+    # to recent_activity afterwards.
+    dirty_view = view == "dirty"
+    page_title = "Dirty Five" if dirty_view else "Focus 5"
+
     try:
         db = resolve_database_path()
     except DatabaseNotFoundError:
-        body = ("<h2>🎯 Focus 5</h2><div class='empty'>No rebalance database found. "
+        body = (f"<h2>🎯 {page_title}</h2><div class='empty'>No rebalance database found. "
                 "Run <code>rebalance refresh-index</code> first.</div>")
-        return _page("Focus 5", body, active="focus5", wide=True)
+        return _page(page_title, body, active="focus5", wide=True)
 
     # Recompute the roster only when forced (↻ Refresh) or never built — NOT on a
     # stale TTL. sync_focus5() is a ~30s synchronous device-local git scan; running
     # it inline on a stale page load blocked the request and made the page look
     # broken. A stale roster now renders instantly with the "⚠ stale" badge; the
-    # operator re-ranks on demand via the Refresh button (?refresh=1).
+    # operator re-ranks on demand via the Refresh button (?refresh=1). The scan
+    # always rebuilds the default (recent_activity) snapshot; the Dirty Five view
+    # then re-ranks that same fresh signal cache.
     meta = get_roster_meta(db)
     if refresh or not meta["roster_size"]:
         try:
@@ -542,11 +589,15 @@ def focus5_page(refresh: bool = False):
         except Exception:  # noqa: BLE001 — a scan failure must not 500 the page
             pass
         if refresh:
-            # Post/redirect/get: drop ?refresh so a browser reload doesn't re-scan.
-            return RedirectResponse("/focus-5", status_code=303)
+            # Post/redirect/get: drop ?refresh so a browser reload doesn't re-scan,
+            # but keep the view the operator was on.
+            target = "/focus-5?view=dirty" if dirty_view else "/focus-5"
+            return RedirectResponse(target, status_code=303)
 
-    data = summarize_focus5(db)  # roster from snapshot; health re-probed live
-    return _page("Focus 5", _focus5_body(data), active="focus5", wide=True)
+    # mode=None → persisted recent_activity roster; mode="dirty_first" → transient
+    # re-rank from the cached signals (no write). Health is re-probed live in both.
+    data = summarize_focus5(db, mode="dirty_first" if dirty_view else None)
+    return _page(page_title, _focus5_body(data, view=view), active="focus5", wide=True)
 
 
 class Focus5HideRequest(BaseModel):

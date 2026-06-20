@@ -597,6 +597,18 @@ class WebRouteTests(unittest.TestCase):
             self.assertEqual(resp.headers["location"], "/focus-5")
             self.assertTrue(m.called)                        # recompute fired
 
+    def test_dirty_view_renders_transiently_without_resync(self) -> None:
+        # /focus-5?view=dirty re-ranks the cached signals under dirty_first; a
+        # fresh roster means no ~30s scan, and the persisted roster is untouched.
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))  # computed_at = just now
+            with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
+                resp = self._get(db, "/focus-5?view=dirty")
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("Dirty Five", resp.text)
+            self.assertIn("widget", resp.text)
+            self.assertFalse(m.called)                       # transient re-rank, no scan
+
     def test_fresh_roster_skips_recompute(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db, _ = self._seed(Path(tmp))  # computed_at = just now
@@ -741,6 +753,51 @@ class Focus5RerankHideTests(_ConfigIsolated):
         import rebalance.web as web
         self.assertEqual(web.focus5_set_hidden("  ", hidden=True),
                          {"ok": False, "error": "empty repo identity"})
+
+
+class Focus5TransientViewTests(_ConfigIsolated):
+    """Dirty Five re-ranks the cached signals under dirty_first WITHOUT disturbing
+    the persisted recent_activity roster (relay r2 persistence model)."""
+
+    def _seed_two(self) -> None:
+        # clean_recent wins recent_activity (newest authored); dirty_old wins
+        # dirty_first (at-risk). So the two modes produce inverted rosters.
+        clean_recent = _sig("clean_recent", device_id="dev", my_last_commit_ts=NOW,
+                            local_path="/repos/clean_recent", repo_full_name="Org/clean_recent")
+        dirty_old = _sig("dirty_old", device_id="dev", is_dirty=True, modified_count=2,
+                        my_last_commit_ts=NOW - 5 * DAY,
+                        local_path="/repos/dirty_old", repo_full_name="Org/dirty_old")
+        _seed_signals(self.db, [clean_recent, dirty_old])
+
+    def test_transient_view_does_not_mutate_persisted_roster(self) -> None:
+        self._seed_two()
+        # Persist the default recent_activity roster.
+        rerank_focus5_from_cache(self.db, device_id="dev", mode="recent_activity")
+        default = summarize_focus5(self.db, device_id="dev",
+                                   with_activity=False, with_live_health=False)
+        self.assertEqual([c["repo_name"] for c in default["roster"]],
+                         ["clean_recent", "dirty_old"])
+        self.assertEqual(default["ranking_mode"], "recent_activity")
+
+        # Transient Dirty Five view: dirty_first ordering, same signal cache.
+        dirty = summarize_focus5(self.db, device_id="dev", mode="dirty_first",
+                                 with_activity=False, with_live_health=False)
+        self.assertEqual(dirty["roster"][0]["repo_name"], "dirty_old")
+        self.assertEqual(dirty["ranking_mode"], "dirty_first")
+
+        # The persisted roster is UNTOUCHED — re-read still recent_activity order.
+        again = summarize_focus5(self.db, device_id="dev",
+                                 with_activity=False, with_live_health=False)
+        self.assertEqual([c["repo_name"] for c in again["roster"]],
+                         ["clean_recent", "dirty_old"])
+        self.assertEqual(again["ranking_mode"], "recent_activity")
+
+    def test_transient_view_carries_signal_freshness(self) -> None:
+        self._seed_two()
+        out = summarize_focus5(self.db, device_id="dev", mode="dirty_first",
+                               with_activity=False, with_live_health=False)
+        # computed_at reflects the cached signals' probed_at (the last sync).
+        self.assertEqual(out["computed_at"], "2026-06-05T00:00:00Z")
 
 
 class Focus5IdentityTests(unittest.TestCase):

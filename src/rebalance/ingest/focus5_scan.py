@@ -747,9 +747,83 @@ def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
     }
 
 
+def _persisted_roster_bases(conn: Any, dev: str) -> list[dict[str, Any]]:
+    """Roster base dicts from the persisted ``focus5_roster`` snapshot (default view)."""
+    rows = conn.execute(
+        "SELECT r.position, r.rank_reason, r.ranking_mode, r.computed_at, s.* "
+        "FROM focus5_roster r JOIN focus5_repo_signals s "
+        "  ON s.device_id=r.device_id AND s.local_path=r.local_path "
+        "WHERE r.device_id=? ORDER BY r.position",
+        (dev,),
+    ).fetchall()
+    return [{k: row[k] for k in row.keys()} for row in rows]
+
+
+def _transient_roster_bases(conn: Any, dev: str, mode: str) -> list[dict[str, Any]]:
+    """Roster base dicts by re-ranking the cached signals under *mode* — NO write.
+
+    The Dirty Five seam: rank the off-roster signal cache in memory and hand back
+    the same base shape the persisted path produces, so ``focus5_roster`` (the
+    default ``recent_activity`` snapshot) is never disturbed. Membership freshness
+    is the signals' ``probed_at`` (all written together by the last sync).
+    """
+    from rebalance.ingest.config import get_focus5_hidden_repos
+    rows = conn.execute(
+        "SELECT * FROM focus5_repo_signals WHERE device_id=?", (dev,)
+    ).fetchall()
+    signals = [_row_to_signals(r) for r in rows]
+    now_ts = int(datetime.now(timezone.utc).timestamp())
+    ranked = rank_repos(signals, mode=mode, now_ts=now_ts,
+                        hidden=get_focus5_hidden_repos())
+    computed_at = signals[0].probed_at if signals else None
+    bases: list[dict[str, Any]] = []
+    for r in ranked:
+        base = asdict(r.signals)
+        base["position"] = r.position
+        base["rank_reason"] = r.reason
+        base["ranking_mode"] = mode
+        base["computed_at"] = computed_at
+        bases.append(base)
+    return bases
+
+
+def _build_roster_card(
+    conn: Any, base: dict[str, Any], *, with_activity: bool, with_live_health: bool,
+) -> dict[str, Any]:
+    """Finish one roster card: coerce flags, attach the open/PR/activity enrichments.
+
+    *base* must already carry every signal column plus ``position``,
+    ``rank_reason``, ``ranking_mode`` and ``computed_at`` — whether that came from
+    the persisted ``focus5_roster`` join or an in-memory rerank. Shared so both
+    the default (persisted) and transient (re-ranked) views render identically.
+    """
+    card = dict(base)
+    card["is_dirty"] = bool(card["is_dirty"])
+    card["has_upstream"] = bool(card["has_upstream"])
+    card["vscode_url"] = vscode_url(card["local_path"])
+    card["newest_pr"] = _newest_pr(conn, card.get("repo_full_name"))
+    card["recent_activity"] = (
+        recent_activity(card["local_path"]) if with_activity else []
+    )
+    # Overlay live working-tree health on top of the stored snapshot so "did I
+    # forget to commit/push?" is answered against now.
+    if with_live_health:
+        lh = live_health(card["local_path"])
+        if lh.get("health_available"):
+            for k in _LIVE_HEALTH_FIELDS:
+                card[k] = lh[k]
+        card["health_available"] = lh.get("health_available", True)
+        card["health_probed_at"] = lh["health_probed_at"]
+    else:
+        card["health_available"] = True
+        card["health_probed_at"] = card.get("probed_at")
+    return card
+
+
 def summarize_focus5(
     database_path: Path, *, device_id: str | None = None,
     with_activity: bool = True, with_live_health: bool = True,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     """Return the roster cards, off-roster warnings, and snapshot metadata.
 
@@ -758,11 +832,20 @@ def summarize_focus5(
     ``vscode_url`` open action, a ``newest_pr`` enrichment (None when the GitHub
     corpus can't supply it), and the last 3 local commits as ``recent_activity``.
 
-    Freshness split (Phase 3): roster *membership* comes from the persisted
-    snapshot, but each card's working-tree **health is re-probed live** here
-    (``with_live_health``) and stamped with ``health_probed_at`` — so commit/push
-    reminders reflect the tree right now, not the last sync. Off-roster warnings
-    stay cached (we never live-sweep the whole machine per request).
+    **Default view** (``mode=None``): roster *membership* comes from the persisted
+    ``focus5_roster`` snapshot (the headline ``recent_activity`` ranking).
+
+    **Transient view** (``mode`` given): the cached ``focus5_repo_signals`` are
+    re-ranked in memory under *mode* and rendered **without rewriting the
+    persisted roster** — this is how the **Dirty Five** view shows ``dirty_first``
+    over the same snapshot while ``/focus-5`` still defaults to ``recent_activity``.
+    Membership freshness then reflects the signals' ``probed_at`` (the last sync).
+
+    Freshness split: roster *membership* comes from the snapshot, but each card's
+    working-tree **health is re-probed live** here (``with_live_health``) and
+    stamped with ``health_probed_at`` — so commit/push reminders reflect the tree
+    right now, not the last sync. Off-roster warnings stay cached (we never
+    live-sweep the whole machine per request).
 
     Both ``with_activity`` and ``with_live_health`` are bounded to the top-5 and
     can be disabled for a pure DB read.
@@ -775,37 +858,16 @@ def summarize_focus5(
     }
     try:
         with db_connection(database_path) as conn:
-            roster_rows = conn.execute(
-                "SELECT r.position, r.rank_reason, r.ranking_mode, r.computed_at, s.* "
-                "FROM focus5_roster r JOIN focus5_repo_signals s "
-                "  ON s.device_id=r.device_id AND s.local_path=r.local_path "
-                "WHERE r.device_id=? ORDER BY r.position",
-                (dev,),
-            ).fetchall()
-
-            roster = []
-            for row in roster_rows:
-                card = {k: row[k] for k in row.keys()}
-                card["is_dirty"] = bool(card["is_dirty"])
-                card["has_upstream"] = bool(card["has_upstream"])
-                card["vscode_url"] = vscode_url(card["local_path"])
-                card["newest_pr"] = _newest_pr(conn, card.get("repo_full_name"))
-                card["recent_activity"] = (
-                    recent_activity(card["local_path"]) if with_activity else []
-                )
-                # Overlay live working-tree health on top of the stored snapshot
-                # so "did I forget to commit/push?" is answered against now.
-                if with_live_health:
-                    lh = live_health(card["local_path"])
-                    if lh.get("health_available"):
-                        for k in _LIVE_HEALTH_FIELDS:
-                            card[k] = lh[k]
-                    card["health_available"] = lh.get("health_available", True)
-                    card["health_probed_at"] = lh["health_probed_at"]
-                else:
-                    card["health_available"] = True
-                    card["health_probed_at"] = card.get("probed_at")
-                roster.append(card)
+            bases = (
+                _transient_roster_bases(conn, dev, mode)
+                if mode is not None
+                else _persisted_roster_bases(conn, dev)
+            )
+            roster = [
+                _build_roster_card(conn, b, with_activity=with_activity,
+                                   with_live_health=with_live_health)
+                for b in bases
+            ]
 
             roster_paths = {c["local_path"] for c in roster}
             # Hidden repos are suppressed from the off-roster attention strip too —
