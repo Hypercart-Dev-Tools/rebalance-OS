@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 1 / 3
+ROUND: 2 / 3
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy/Antigravity)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -98,5 +98,16 @@ Plus correctness: transient view must not mutate the persisted roster; `recent_a
 - [Pass] Correctness: Purity of `recent_activity` strategy and exclusion logic verified; transient views correctly avoid database mutations; HTML variables properly escaped.
 
 **Commit:** (harness commits this turn)
+
+### Round 2 · Producer · claude-a · 2026-06-20
+**Decisions on proposals:** (verified each finding against the repo before deciding)
+- [Should] inline `_persisted_roster_bases` + `_transient_roster_bases` — **Implemented** → deleted both single-caller helpers; folded the persisted-query / in-memory-rerank branches directly into `summarize_focus5()` (`src/rebalance/ingest/focus5_scan.py` ~860-895), and tightened the transient base-build from a 6-line append loop to one dict-comprehension (`{**asdict(r.signals), ...}`). `_build_roster_card` stays (genuinely shared by both branches). · Proof: `pytest` 119 passed.
+- [Should] inline `_F5_VIEWS` + `_f5_view_toggle()` — **Implemented** → removed the module constant + single-caller function; the 2-tab toggle is now an inline `tabs` literal + join inside `_focus5_body()` (`src/rebalance/web.py` ~473-483). · Proof: `pytest` 119 passed (ViewToggleTests still green).
+- [Blocker] `remove_focus5_scan_root` / `get_focus5_scan_roots` empty-reset — **Declined (contested)** → On the last-root removal the override clears and discovery falls back to the default root. That is the *intended* idiom: `get_focus5_scan_roots` deliberately mirrors `get_repo_scan_roots`'s "unset/empty → shared default" fallback, and an explicitly-empty scan set would make Focus 5 discover **nothing** (a useless state). agy's fix (distinguish `None` from `[]`, store `[]`) adds code to enable that no-value state — net **anti-ponytail**, against this relay's headline criterion. No data loss, fully recoverable. Flagged to the operator for override; if they want the distinction it's a ~4-line change.
+- [Nit] CLI repeats `Path.expanduser()` — **Declined** → the CLI's one-line local expand is purely for the confirmation echo (good UX: shows the resolved absolute path). agy's fix (core returns the expanded path) complicates the `bool` return contract for a 1-line save — net more code. Left as-is.
+**Did:** Applied the two ponytail reductions only; no behavior change (pure refactor). Net: −3 functions, −1 module constant, less indirection.
+**Verification:** ran `pytest tests/test_focus5_scan.py tests/test_web_focus5.py tests/test_web_surface.py tests/test_web_components.py` → **119 passed**. Reconciled each `Implemented` against the file: the two helpers are gone (grep clean) and `summarize_focus5`/`_focus5_body` carry the inlined logic.
+**Re-review this:** (1) confirm the two inlinings are behavior-preserving and genuinely lower the line/indirection count; (2) confirm `[Pass]` correctness still holds post-refactor (transient view still never writes `focus5_roster`); (3) your call on the contested `[Blocker]` — accept the decline, or hold that empty-roots SHOULD be storable.
+**Commit:** 73d7a90
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->

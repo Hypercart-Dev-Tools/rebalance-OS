@@ -747,46 +747,6 @@ def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
     }
 
 
-def _persisted_roster_bases(conn: Any, dev: str) -> list[dict[str, Any]]:
-    """Roster base dicts from the persisted ``focus5_roster`` snapshot (default view)."""
-    rows = conn.execute(
-        "SELECT r.position, r.rank_reason, r.ranking_mode, r.computed_at, s.* "
-        "FROM focus5_roster r JOIN focus5_repo_signals s "
-        "  ON s.device_id=r.device_id AND s.local_path=r.local_path "
-        "WHERE r.device_id=? ORDER BY r.position",
-        (dev,),
-    ).fetchall()
-    return [{k: row[k] for k in row.keys()} for row in rows]
-
-
-def _transient_roster_bases(conn: Any, dev: str, mode: str) -> list[dict[str, Any]]:
-    """Roster base dicts by re-ranking the cached signals under *mode* — NO write.
-
-    The Dirty Five seam: rank the off-roster signal cache in memory and hand back
-    the same base shape the persisted path produces, so ``focus5_roster`` (the
-    default ``recent_activity`` snapshot) is never disturbed. Membership freshness
-    is the signals' ``probed_at`` (all written together by the last sync).
-    """
-    from rebalance.ingest.config import get_focus5_hidden_repos
-    rows = conn.execute(
-        "SELECT * FROM focus5_repo_signals WHERE device_id=?", (dev,)
-    ).fetchall()
-    signals = [_row_to_signals(r) for r in rows]
-    now_ts = int(datetime.now(timezone.utc).timestamp())
-    ranked = rank_repos(signals, mode=mode, now_ts=now_ts,
-                        hidden=get_focus5_hidden_repos())
-    computed_at = signals[0].probed_at if signals else None
-    bases: list[dict[str, Any]] = []
-    for r in ranked:
-        base = asdict(r.signals)
-        base["position"] = r.position
-        base["rank_reason"] = r.reason
-        base["ranking_mode"] = mode
-        base["computed_at"] = computed_at
-        bases.append(base)
-    return bases
-
-
 def _build_roster_card(
     conn: Any, base: dict[str, Any], *, with_activity: bool, with_live_health: bool,
 ) -> dict[str, Any]:
@@ -858,11 +818,35 @@ def summarize_focus5(
     }
     try:
         with db_connection(database_path) as conn:
-            bases = (
-                _transient_roster_bases(conn, dev, mode)
-                if mode is not None
-                else _persisted_roster_bases(conn, dev)
-            )
+            if mode is None:
+                # Default view: membership from the persisted recent_activity snapshot.
+                rows = conn.execute(
+                    "SELECT r.position, r.rank_reason, r.ranking_mode, r.computed_at, s.* "
+                    "FROM focus5_roster r JOIN focus5_repo_signals s "
+                    "  ON s.device_id=r.device_id AND s.local_path=r.local_path "
+                    "WHERE r.device_id=? ORDER BY r.position",
+                    (dev,),
+                ).fetchall()
+                bases = [{k: row[k] for k in row.keys()} for row in rows]
+            else:
+                # Transient view (Dirty Five): re-rank the cached signals in memory
+                # under *mode* — never writes focus5_roster, so the default snapshot
+                # stays put. Freshness = the signals' probed_at (the last sync).
+                from rebalance.ingest.config import get_focus5_hidden_repos
+                signals = [
+                    _row_to_signals(r) for r in conn.execute(
+                        "SELECT * FROM focus5_repo_signals WHERE device_id=?", (dev,)
+                    ).fetchall()
+                ]
+                now_ts = int(datetime.now(timezone.utc).timestamp())
+                ranked = rank_repos(signals, mode=mode, now_ts=now_ts,
+                                    hidden=get_focus5_hidden_repos())
+                computed_at = signals[0].probed_at if signals else None
+                bases = [
+                    {**asdict(r.signals), "position": r.position, "rank_reason": r.reason,
+                     "ranking_mode": mode, "computed_at": computed_at}
+                    for r in ranked
+                ]
             roster = [
                 _build_roster_card(conn, b, with_activity=with_activity,
                                    with_live_health=with_live_health)

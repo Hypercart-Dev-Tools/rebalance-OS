@@ -445,24 +445,6 @@ def _f5_card(card: dict[str, Any]) -> str:
     )
 
 
-# The two Focus 5 views: the headline "what am I working on?" board and the
-# "what might I lose?" safety board. Only the title, ranking mode, and active
-# toggle differ — the card renderer is shared.
-_F5_VIEWS = (
-    ("focus5", "/focus-5", "🎯 Focus 5"),
-    ("dirty", "/focus-5?view=dirty", "🧹 Dirty Five"),
-)
-
-
-def _f5_view_toggle(active_view: str) -> str:
-    """Segmented Focus 5 / Dirty Five switch; the active view is highlighted."""
-    links = "".join(
-        f"<a class='f5-view{' active' if key == active_view else ''}' href='{href}'>{label}</a>"
-        for key, href, label in _F5_VIEWS
-    )
-    return f"<div class='f5-views'>{links}</div>"
-
-
 def _focus5_body(data: dict[str, Any], *, view: str = "focus5") -> str:
     """Render the Focus 5 page body from a summarize_focus5() dict (pure).
 
@@ -475,7 +457,12 @@ def _focus5_body(data: dict[str, Any], *, view: str = "focus5") -> str:
     # &amp; — this is an href in an HTML attribute, so the ampersand is entity-encoded.
     refresh_href = "/focus-5?refresh=1&amp;view=dirty" if is_dirty_view else "/focus-5?refresh=1"
     refresh_btn = f"<a class='f5-refresh' href='{refresh_href}' title='Re-rank now'>↻ Refresh</a>"
-    toggle = _f5_view_toggle(view)
+    # Segmented Focus 5 / Dirty Five toggle (active view highlighted).
+    tabs = (("focus5", "/focus-5", "🎯 Focus 5"), ("dirty", "/focus-5?view=dirty", "🧹 Dirty Five"))
+    toggle = "<div class='f5-views'>" + "".join(
+        f"<a class='f5-view{' active' if k == view else ''}' href='{href}'>{label}</a>"
+        for k, href, label in tabs
+    ) + "</div>"
     head = f"<h2>{title} {refresh_btn}</h2>{toggle}"
     roster = data.get("roster") or []
     if not roster:
