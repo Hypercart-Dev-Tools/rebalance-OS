@@ -276,6 +276,14 @@ class DiscoveryTests(unittest.TestCase):
             twice = list(iter_git_repos([root, root / "nested"]))
             self.assertEqual(len({p for p in twice}), 1)
 
+    def test_root_that_is_itself_a_repo_is_discovered(self) -> None:
+        # Phase 4: rebalance-OS is a scan root that is ITSELF a repo (.git at the
+        # top level). Passing the repo dir as a root must yield it (and stop there).
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(Path(tmp), "self_repo")
+            found = list(iter_git_repos([repo]))
+            self.assertEqual([p.name for p in found], ["self_repo"])
+
 
 # ---------------------------------------------------------------------------
 # Real git: probe signals
@@ -682,6 +690,35 @@ class Focus5HiddenConfigTests(_ConfigIsolated):
         self.assertTrue(remove_focus5_hidden_repo("Org/a"))
         self.assertFalse(remove_focus5_hidden_repo("Org/a"))
         self.assertEqual(get_focus5_hidden_repos(), ["/repos/b"])
+
+
+class Focus5ScanRootsConfigTests(_ConfigIsolated):
+    def test_add_seeds_from_effective_then_appends_and_is_idempotent(self) -> None:
+        from rebalance.ingest.config import (
+            add_focus5_scan_root, get_focus5_scan_roots, remove_focus5_scan_root,
+        )
+        default = get_focus5_scan_roots()  # effective default (repo_scan_roots)
+        self.assertTrue(add_focus5_scan_root("/tmp/extra-root"))
+        roots = get_focus5_scan_roots()
+        self.assertIn("/tmp/extra-root", roots)
+        for d in default:
+            self.assertIn(d, roots)        # existing scope preserved, not dropped
+        self.assertFalse(add_focus5_scan_root("/tmp/extra-root"))  # idempotent
+        self.assertTrue(remove_focus5_scan_root("/tmp/extra-root"))
+        self.assertNotIn("/tmp/extra-root", get_focus5_scan_roots())
+
+    def test_add_expands_user_home(self) -> None:
+        from rebalance.ingest.config import add_focus5_scan_root, get_focus5_scan_roots
+        add_focus5_scan_root("~/some-dev-dir")
+        self.assertTrue(
+            any(r.endswith("/some-dev-dir") and "~" not in r
+                for r in get_focus5_scan_roots())
+        )
+
+    def test_empty_path_rejected(self) -> None:
+        from rebalance.ingest.config import add_focus5_scan_root
+        with self.assertRaises(ValueError):
+            add_focus5_scan_root("   ")
 
 
 class Focus5RankingModeDefaultTests(_ConfigIsolated):

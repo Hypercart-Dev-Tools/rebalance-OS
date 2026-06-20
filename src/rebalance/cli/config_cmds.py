@@ -14,6 +14,7 @@ from rebalance.cli._core import config_app
 from rebalance.ingest.audit import append_audit_entry
 from rebalance.ingest.config import (
     add_focus5_hidden_repo,
+    add_focus5_scan_root,
     add_github_ignored_repo,
     add_github_related_repo,
     add_health_notice_pattern,
@@ -21,6 +22,7 @@ from rebalance.ingest.config import (
     get_anthropic_api_key,
     get_config_path,
     get_focus5_hidden_repos,
+    get_focus5_scan_roots,
     get_gemini_api_key,
     get_github_ignored_repos,
     get_github_related_repos,
@@ -32,6 +34,7 @@ from rebalance.ingest.config import (
     get_vault_path,
     normalize_github_repo_name,
     remove_focus5_hidden_repo,
+    remove_focus5_scan_root,
     remove_github_ignored_repo,
     remove_github_related_repo,
     remove_health_notice_pattern,
@@ -191,6 +194,42 @@ def config_list_focus5_hidden_repos() -> None:
         return
     for repo in repos:
         typer.echo(repo)
+
+
+@config_app.command("add-focus5-scan-root")
+def config_add_focus5_scan_root(
+    path: str = typer.Argument(..., help="Directory the Focus 5 collector should walk for git repos"),
+) -> None:
+    """Add one directory to the Focus 5 scan roots (a root may itself be a repo)."""
+    expanded = str(Path(path.strip()).expanduser())
+    added = add_focus5_scan_root(path)
+    _focus5_rerank_after_change()
+    if added:
+        typer.echo(f"✓ Added Focus 5 scan root: {expanded}")
+        typer.echo("  Run `rebalance refresh-index --scope focus5` to discover repos under it.")
+    else:
+        typer.echo(f"✓ Already a Focus 5 scan root: {expanded}")
+
+
+@config_app.command("remove-focus5-scan-root")
+def config_remove_focus5_scan_root(
+    path: str = typer.Argument(..., help="Scan-root directory to stop walking"),
+) -> None:
+    """Remove one directory from the Focus 5 scan roots."""
+    expanded = str(Path(path.strip()).expanduser())
+    removed = remove_focus5_scan_root(path)
+    _focus5_rerank_after_change()
+    if removed:
+        typer.echo(f"✓ Removed Focus 5 scan root: {expanded}")
+    else:
+        typer.echo(f"✓ Not a Focus 5 scan root: {expanded}")
+
+
+@config_app.command("list-focus5-scan-roots")
+def config_list_focus5_scan_roots() -> None:
+    """List the directories the Focus 5 collector walks (effective, incl. defaults)."""
+    for root in get_focus5_scan_roots():
+        typer.echo(root)
 
 
 @config_app.command("add-github-related-repo")

@@ -649,6 +649,67 @@ def get_focus5_scan_roots() -> list[str]:
     return get_repo_scan_roots()
 
 
+def set_focus5_scan_roots(roots: list[str]) -> None:
+    """Store the directories the Focus 5 collector walks. Config key: ``focus5_scan_roots``.
+
+    Paths are expanded and de-duplicated. An empty list clears the override so
+    discovery falls back to the shared ``repo_scan_roots`` defaults (see
+    :func:`get_focus5_scan_roots`). This key is Focus-5-only — it never touches
+    the ask_self / repo discovery scope.
+    """
+    cleaned: list[str] = []
+    for p in roots:
+        s = str(p).strip()
+        if not s:
+            continue
+        expanded = str(Path(s).expanduser())
+        if expanded not in cleaned:
+            cleaned.append(expanded)
+    config = _read_config()
+    if cleaned:
+        config["focus5_scan_roots"] = cleaned
+    else:
+        config.pop("focus5_scan_roots", None)
+    _write_config(config)
+
+
+def add_focus5_scan_root(root: str) -> bool:
+    """Add one directory to the Focus 5 scan roots. Returns True if newly added.
+
+    Seeds the override from the current *effective* roots (which may be the shared
+    discovery default) before appending, so adding a root never silently drops the
+    existing scope. A root that is itself a git repo (``.git`` at its top level) is
+    fine — discovery yields it and stops at its boundary.
+    """
+    s = str(root).strip()
+    if not s:
+        raise ValueError("scan root must be a non-empty path")
+    expanded = str(Path(s).expanduser())
+    current = get_focus5_scan_roots()
+    if expanded in current:
+        return False
+    set_focus5_scan_roots([*current, expanded])
+    return True
+
+
+def remove_focus5_scan_root(root: str) -> bool:
+    """Remove one directory from the Focus 5 scan roots. Returns True if it was present.
+
+    Reifies the effective roots first (so removing from an unset/default scope is
+    well-defined), drops the path, and persists the remainder; removing the last
+    explicit root clears the override back to the discovery default.
+    """
+    s = str(root).strip()
+    if not s:
+        return False
+    expanded = str(Path(s).expanduser())
+    current = get_focus5_scan_roots()
+    if expanded not in current:
+        return False
+    set_focus5_scan_roots([r for r in current if r != expanded])
+    return True
+
+
 def get_focus5_ranking_mode() -> str:
     """Return the active Focus 5 ranking mode. Config key: ``focus5_ranking_mode``.
 
