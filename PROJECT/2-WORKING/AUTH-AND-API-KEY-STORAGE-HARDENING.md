@@ -160,13 +160,15 @@ The practical outcome is that the project was **re-scoped**, not abandoned: it b
 The target storage contract is:
 
 - `temp/rbos.config` contains no secrets, tokens, OAuth blobs, or API keys.
-- Every durable local secret lives outside the repo in one user-level secret root owned by rebalance.
+- Keyring remains the interactive primary store. Every durable local *fallback* secret lives outside the repo in one user-level secret root owned by rebalance — this root replaces the repo-local plaintext and pickle fallbacks, **not** keyring itself.
 - Every secret file and token file is written atomically with enforced `0600` file mode and `0700` directory mode.
 - Google OAuth fallback uses JSON authorized-user blobs, not pickle.
-- Every integration exposes one structured resolver contract:
+- Every integration exposes one structured resolver contract, delivered as a concrete status object by a phase (Phase 1 for auth, Phase 4 for API keys):
   `source`, `primary_store`, `fallback_store`, `launchd_safe`, `last_validated_at`, `permission_ok`.
-- Doctor fails loudly on insecure file modes, deprecated stores, or unresolved migrations.
-- Migration is additive first, destructive last: legacy stores remain readable until the new path is proven, then get removed explicitly.
+- Auth-activity logging and per-token metadata are preserved: every new write, migration, and refresh still records to `temp/logs/auth_activity.jsonl` and `temp/logs/token_meta.json` (fingerprint-only, `first_added_at` retained), matching the shipped contract in [UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:36).
+- Every secret-store migration is idempotent — safe to re-run with no duplicate side effects, matching today's `migrate-to-keyring` ([UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:132)).
+- Doctor fails loudly on insecure file modes, deprecated stores, or unresolved migrations — and distinguishes `optional+unconfigured` (clean skip, no warning) from `configured+broken/insecure` (warn/fail).
+- Migration is additive first, destructive last — a **hard gate, not a guideline**: no phase removes a fallback before its replacement is proven for both interactive and unattended (launchd) reads.
 
 ## Phase 0 - Durability Spike
 
@@ -196,12 +198,16 @@ Goal: create the single runtime contract before moving data.
 - [ ] Introduce one secret-storage module that owns:
   secret root resolution, atomic writes, permission enforcement, safe reads, source labeling, and migration helpers.
   Observable result: GitHub/Figma/Sleuth/OAuth loaders call the same storage primitives instead of hand-rolling file behavior.
+- [ ] Route auth-activity and token-metadata writes through the storage module.
+  Observable result: every secret write still appends to `temp/logs/auth_activity.jsonl` and updates `temp/logs/token_meta.json` (fingerprint-only, `first_added_at` preserved), so the observability shipped in [UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:36) survives the storage migration.
 - [ ] Add explicit secret descriptors per integration.
   Observable result: each credential declares primary store, fallback store, serialization format, and validation hook in one place.
+- [ ] Emit one structured resolver-status object per integration with the full field set.
+  Observable result: each resolver returns `source`, `primary_store`, `fallback_store`, `launchd_safe`, `last_validated_at`, and `permission_ok` — the complete Target State contract, not a subset. (Phase 4 extends the same shape to API keys.)
 - [ ] Enforce file and directory mode on every write.
   Observable result: storage writers call one helper that creates dirs with `0700` and files with `0600`.
 - [ ] Upgrade doctor to check posture, not just presence.
-  Observable result: doctor reports source, path, permissions, deprecated-store usage, and migration-needed state.
+  Observable result: doctor reports source, path, permissions, deprecated-store usage, and migration-needed state — and distinguishes `optional+unconfigured` (clean skip) from `configured+broken/insecure` (warn/fail).
 - [ ] Add contract tests for storage invariants.
   Observable result: tests fail if a new write path stores secrets in repo-local config or writes insecure modes.
 
@@ -212,10 +218,15 @@ Goal: create the single runtime contract before moving data.
 - [ ] Launchd-safe fallback still resolves when keyring is unavailable.
 - [ ] No runtime code outside the storage module writes secret-bearing files directly.
 - [ ] CI includes a contract test that forbids secret keys in `temp/rbos.config`.
+- [ ] Storage module, resolver-status, and doctor checks are testable under hermetic seams — no test reads machine-global keyring/`gh`/file tokens unless it opts in (preserves the seams closed in [PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md:524)).
+- [ ] The resolver-status object returns all six fields for every integration.
+- [ ] Auth-activity / token-meta writes are exercised by tests (fingerprint-only, `first_added_at` retained on re-write).
 
 ## Phase 2 - Remove Repo-Local Secret Persistence
 
 Goal: make `temp/rbos.config` truly non-secret.
+
+**Gate (hard):** this phase may stop repo-local secret writes only after Phase 0/1 have proven the new store resolves on both interactive and unattended (launchd) reads. Additive first — the new store is written and proven before any old key is deleted.
 
 - [ ] Remove GitHub PAT writes to `temp/rbos.config`.
   Observable result: `set_github_token()` writes to the new secret store; `rbos.config` no longer receives `github_token`.
@@ -224,9 +235,11 @@ Goal: make `temp/rbos.config` truly non-secret.
 - [ ] Remove Sleuth credential writes to `temp/rbos.config`.
   Observable result: `sleuth_web_api` leaves repo-local config entirely; file-source mode remains supported without a token.
 - [ ] Add explicit migration command(s) for secret-bearing config keys.
-  Observable result: one migration command lifts secrets out of `temp/rbos.config`, verifies the new location, then deletes the old keys.
+  Observable result: one migration command lifts secrets out of `temp/rbos.config`, verifies the new location, then deletes the old keys. The command is idempotent — safe to re-run, reporting "already migrated ✓" with no duplicate side effects.
 - [ ] Add a repo-local config linter or doctor check.
   Observable result: presence of secret-looking keys in `temp/rbos.config` is surfaced as a failure.
+- [ ] Update operator docs in this same phase.
+  Observable result: UPGRADE and README credential tables reflect the new GitHub/Figma/Sleuth storage location the moment the behavior changes — not deferred to Phase 5 (per the same-phase doc rule in [PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md:181)).
 
 ### QA Checklist
 
@@ -235,6 +248,8 @@ Goal: make `temp/rbos.config` truly non-secret.
 - [ ] launchd jobs still authenticate after migration.
 - [ ] Tests verify `temp/rbos.config` stays secret-free after each setter runs.
 - [ ] Figma and Sleuth opt-in paths still work after migration.
+- [ ] Re-running the migration command is a no-op (idempotency test).
+- [ ] UPGRADE/README credential tables are updated in this phase, not Phase 5.
 
 ## Phase 3 - Replace Pickle OAuth Fallback and Stabilize Google OAuth
 
@@ -245,12 +260,16 @@ Goal: make Google OAuth durable without pickle or ambiguous ownership.
 - [ ] Make setup scripts write both durable stores in one pass.
   Observable result: after a successful browser consent, keyring and JSON fallback are both current; no follow-up migrate step is required for the happy path.
 - [ ] Add versioned migration from legacy pickle files.
-  Observable result: old token files are read once, converted to JSON, validated, and retired.
+  Observable result: old token files are read once, converted to JSON, validated, and retired. The conversion is idempotent — re-running finds JSON already present and does not re-import or duplicate.
+- [ ] Preserve auth-activity logging across OAuth conversion and refresh.
+  Observable result: pickle→JSON migration and every token refresh still record to `auth_activity.jsonl` / `token_meta.json`, so Google-token lifetime stays measurable.
 - [ ] Decide the future of the embedded shared Google client.
   Observable result: one explicit policy:
   keep it as the supported default, or support user-provided client config as the primary path and demote the embedded client to fallback/dev use.
 - [ ] Harden Google auth diagnostics.
   Observable result: doctor tells the user whether the active Google token came from keyring, JSON fallback, migrated pickle, or an expired/invalid state.
+- [ ] Update Google OAuth docs in this same phase.
+  Observable result: GMAIL and GOOGLE_CALENDAR docs describe the JSON fallback (not pickle) when the behavior changes, not in Phase 5.
 
 ### QA Checklist
 
@@ -258,6 +277,8 @@ Goal: make Google OAuth durable without pickle or ambiguous ownership.
 - [ ] Refreshed access tokens persist back to JSON and keyring.
 - [ ] Corrupt JSON fallback produces a clean remediation path.
 - [ ] Legacy pickle migration is covered by tests.
+- [ ] Legacy pickle migration is idempotent (re-run is a no-op).
+- [ ] A token refresh still appends to `auth_activity.jsonl` / `token_meta.json`.
 - [ ] No runtime path still imports `pickle` for OAuth token storage.
 
 ## Phase 4 - Unify API Key Resolution and Diagnostics
@@ -267,13 +288,17 @@ Goal: give API-key integrations the same durability contract as auth integration
 - [ ] Decide which API keys should remain env-only and which need durable local storage.
   Observable result: explicit per-provider policy for Anthropic, Gemini, and any future LLM/provider keys.
 - [ ] Wrap Gemini resolution behind the same source-reporting contract.
-  Observable result: callers receive not just a value but a source label such as `secret-manager-sdk`, `env`, `gcloud`, or `local-secret-store`.
+  Observable result: callers receive the full resolver-status shape from Phase 1 (`source`, `primary_store`, `fallback_store`, `launchd_safe`, `last_validated_at`, `permission_ok`) with a source label such as `secret-manager-sdk`, `env`, `gcloud`, or `local-secret-store` — not just a value.
 - [ ] Add optional durable local storage for scheduled or unattended API-key use.
   Observable result: launchd-safe use does not depend on an operator shell environment unless policy explicitly says env-only.
+- [ ] Define an explicit per-provider doctor policy.
+  Observable result: doctor distinguishes `optional+unconfigured` (e.g. Figma, or an env-only provider with no key set — clean skip, no warning, per [UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:94)) from `configured+broken/insecure` (warn/fail), so posture checks do not turn opt-in integrations into noise.
 - [ ] Expose API-key posture in doctor.
   Observable result: doctor names the source and durability of each provider key, not just whether a value exists.
 - [ ] Remove surprising ambient fallbacks where policy says explicit config is required.
   Observable result: hidden dependency on whatever `gcloud` account happens to be active is either surfaced clearly or removed.
+- [ ] Update provider docs in this same phase.
+  Observable result: per-provider key docs match the shipped resolver order when Phase 4 lands, not in Phase 5.
 
 ### QA Checklist
 
@@ -287,14 +312,16 @@ Goal: give API-key integrations the same durability contract as auth integration
 
 Goal: remove legacy paths only after the new contract is proven in the field.
 
+**Gate (hard):** legacy reads may be removed only after the migration report is clean, doctor is green, and both fresh and migrated launchd paths are proven end-to-end.
+
 - [ ] Add one migration report command.
   Observable result: operators can see which credentials are still in legacy locations and what will be moved.
 - [ ] Decommission secret-bearing config keys from runtime reads.
   Observable result: runtime no longer reads `github_token`, `figma_token`, or `sleuth_web_api` from `temp/rbos.config`.
 - [ ] Decommission OAuth pickle fallback reads.
   Observable result: runtime no longer reads `google-calendar-oauth` or `google-gmail-oauth` as pickle files.
-- [ ] Update all operator docs.
-  Observable result: README, UPGRADE, GMAIL, GOOGLE_CALENDAR, and onboarding docs state one accurate storage model.
+- [ ] Final operator-doc consistency sweep (removal-only).
+  Observable result: the per-phase doc updates (Phases 2–4) are already landed; this phase only confirms README, UPGRADE, GMAIL, GOOGLE_CALENDAR, and onboarding docs are mutually consistent and adds the "legacy store removed" notes.
 - [ ] Add regression tests for "no secrets in repo-local config."
   Observable result: CI fails if a future change reintroduces secret persistence into the repo tree.
 
@@ -315,9 +342,10 @@ Goal: remove legacy paths only after the new contract is proven in the field.
 
 Mitigation rules:
 
-- additive migration first, removal second
+- additive migration first, removal second — a **hard gate**: no fallback is removed before its replacement is proven for both interactive and unattended (launchd) reads
 - one integration proven end-to-end before widening rollout
 - explicit doctor checks before deleting legacy paths
+- docs updated in the same phase that changes operator behavior (per [PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md:181))
 - contract tests that fail CI on secret regressions
 
 ## Definition of Done
@@ -327,5 +355,8 @@ Mitigation rules:
 - [ ] All durable secret files are outside the repo with enforced `0600` / `0700` permissions.
 - [ ] Google OAuth fallback is JSON-based, not pickle-based.
 - [ ] Doctor reports source, durability, and posture for every auth and API-key integration.
+- [ ] Each integration's resolver exposes the full six-field status contract; doctor distinguishes `optional+unconfigured` from `configured+broken/insecure`.
+- [ ] Auth-activity logging and per-token metadata survive every migration, JSON conversion, and refresh.
+- [ ] Every secret-store migration is idempotent (safe to re-run).
 - [ ] Fresh install and migrated install both work with the documented steps.
 - [ ] CI includes contract coverage for storage location, permissions, and migration behavior.

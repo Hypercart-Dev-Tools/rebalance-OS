@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 1 / 5
+ROUND: 2 / 5
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -75,5 +75,22 @@ The operator just said "take your turn on this file." Everything you need is **i
 **Answers:** (to the Producer's open question)
 - Is "additive migration first, removal second" stated strongly enough to survive Phase 2/Phase 5, or does it need to be a hard gate rather than a guideline? → It needs to be a hard gate. As written, PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md:318 is only advisory, but Phase 2 and Phase 5 contain destructive steps. The safer contract is the stronger one already used in PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md:171-181: no flag day, preserve end-to-end behavior every phase, and update docs in the same phase as behavior changes.
 **Commit:** `44cffa2` (relay log; Reviewer ran read-only — artifact untouched)
+
+### Round 2 · Producer · Claude · 2026-06-20 08:05 PDT
+**Pre-decision verification:** Read the artifact and confirmed every cited line; independently verified the 3 "silent drop" claims against the sources before deciding — `auth_activity.jsonl`/`token_meta.json` + `first_added_at` + fingerprint-only (UPGRADE.md:36), Figma "skips cleanly when unconfigured — no doctor warning" (UPGRADE.md:94), `migrate-to-keyring` "is **idempotent**" (UPGRADE.md:132), and the stronger rollout rule "No phase should require a flag day" / "docs must be updated in the same phase that changes operator behavior" (SUBSYSTEM-REFACTOR.md:174,181). All four checked out. Operator approved "apply all."
+**Decisions on proposals:** (operator-approved — all Implemented)
+- [Blocker] Resolver contract not fully delivered by any phase — **Implemented** → added a dedicated Phase 1 deliverable emitting the full six-field resolver-status object @ AUTH-AND-API-KEY-STORAGE-HARDENING.md:205, extended the same shape to API keys in Phase 4 @ :291, and reworded the Target State bullet to say a phase delivers it @ :166. · Proof: textual only (non-executable doc).
+- [Blocker] Additive-before-destructive is a note, not a gate — **Implemented** → promoted to a **hard gate** in Target State @ :171, added explicit `**Gate (hard)**` preconditions to Phase 2 @ :229 (prove unattended reads first) and Phase 5 @ :315 (migration-report clean + doctor green + launchd proven), and hardened the mitigation rule. · Proof: textual only.
+- [Blocker] Docs updated too late — **Implemented** → added same-phase doc deliverables to Phase 2 @ :241, Phase 3 @ :299, Phase 4 @ :297; reframed Phase 5's "Update all operator docs" to a removal-only consistency sweep @ :323; added the same-phase rule to mitigation rules. · Proof: textual only.
+- [Should] Target State keyring ambiguity — **Implemented** → clarified that keyring stays the interactive primary and the new root replaces plaintext/pickle *fallbacks*, not keyring @ :163. · Proof: textual only.
+- [Should] Auth observability silently dropped — **Implemented** → preservation bullet in Target State @ :168, Phase 1 deliverable @ :201, Phase 3 refresh/conversion deliverable, plus QA lines in Phases 1/3 and a DoD bullet @ :359. · Proof: textual only.
+- [Should] Migration idempotency dropped — **Implemented** → idempotency added to Target State @ :169, Phase 2 migration cmd @ :238, Phase 3 pickle→JSON, QA in both, and DoD @ :360. · Proof: textual only.
+- [Should] Figma opt-in policy dropped — **Implemented** → per-provider doctor policy distinguishing `optional+unconfigured` from `configured+broken/insecure` in Target State @ :170, Phase 1 doctor @ :210, and a dedicated Phase 4 deliverable @ :295. · Proof: textual only.
+- [Should] Hermetic-seam invariant not carried forward — **Implemented** → Phase 1 QA line requiring the new store/resolver/doctor be testable under hermetic seams with no machine-global reads unless opted in @ :221. · Proof: textual only.
+- [Pass] Finding→phase coverage — no action (acknowledged sound).
+**Did:** Applied all 8 actionable findings across Target State, Phases 1–5, Cross-Phase mitigation rules, and Definition of Done. No new scope added beyond the findings.
+**Verification:** N/A — non-executable artifact (planning doc). Reconciled every `Implemented → @ file:line` against the file via grep before handoff; all anchors present.
+**Re-review this:** (1) Do the two new hard gates (Phase 2 @ :229, Phase 5 @ :315) plus the mitigation rule fully close Blocker 2? (2) Is the resolver-status object now delivered end-to-end (Phase 1 @ :205 → Phase 4 @ :291)? (3) Did applying the docs-in-phase rule create any contradiction with Phase 5's reframed scope @ :323? (4) Any remaining silent drop from UPGRADE.md / SUBSYSTEM-REFACTOR.md not yet covered?
+**Commit:** <pending>
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
