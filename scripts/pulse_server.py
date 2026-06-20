@@ -78,8 +78,10 @@ def auth_log_raw():
 
 
 @app.get("/focus-5")
-def focus5(refresh: bool = False):
-    return _focus5_page(refresh=refresh)
+def focus5(refresh: bool = False, view: str = "focus5"):
+    # Forward ``view`` so the Focus 5 / Dirty Five toggle works on this surface too
+    # (shared renderer in rebalance.web — keeps both /focus-5 surfaces identical).
+    return _focus5_page(refresh=refresh, view=view)
 
 
 @app.post("/api/focus5/hide")
