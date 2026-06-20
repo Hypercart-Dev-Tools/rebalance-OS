@@ -126,7 +126,9 @@ class RankVerdict:
 # A ranking strategy maps (signals, now_epoch) -> verdict. Pure: no I/O, no clock.
 RankingStrategy = Callable[[RepoSignals, int], RankVerdict]
 
-DEFAULT_RANKING_MODE = "dirty_first"
+# The headline Focus 5 view: "what am I working on right now?" Kept in lockstep
+# with config.get_focus5_ranking_mode()'s unset default — change both together.
+DEFAULT_RANKING_MODE = "recent_activity"
 
 
 def _humanize_ago(ts: int | None, now_ts: int) -> str:
@@ -182,6 +184,29 @@ def rank_dirty_first(s: RepoSignals, now_ts: int) -> RankVerdict:
     return RankVerdict(eligible, (1 if at_risk else 0, _recency(s)), reason)
 
 
+def rank_recent_activity(s: RepoSignals, now_ts: int) -> RankVerdict:
+    """My most recently *authored* active repos (DEFAULT — the headline Focus 5).
+
+    Answers "what am I working on right now?" Ranks purely on operator-authored
+    commit recency (``my_last_commit_ts``) with **no dirty pinning**, so a clean,
+    freshly-pushed repo I committed to an hour ago outranks a repo sitting on
+    someone else's stale WIP. That is the whole point: a commit-often/push-often
+    workflow keeps active repos clean, and every other mode buries them under any
+    repo with leftover uncommitted files.
+
+    Eligibility requires that I authored a commit here (``my_last_commit_ts is not
+    None``). A dirty-only / never-authored repo is therefore **excluded** from
+    Focus 5 — it is carried by ``dirty_first`` (the Dirty Five safety view) and
+    the off-roster "needs attention" strip instead. Ranking on ``my_last_commit_ts``
+    specifically (not :func:`_recency`, which falls back to head-reflog/any-author
+    commit time) keeps a foreign push or a clone/checkout from masquerading as my
+    activity.
+    """
+    eligible = s.my_last_commit_ts is not None
+    reason = f"your commit {_humanize_ago(s.my_last_commit_ts, now_ts)}"
+    return RankVerdict(eligible, (s.my_last_commit_ts or 0,), reason)
+
+
 def rank_any_touch(s: RepoSignals, now_ts: int) -> RankVerdict:
     """Anything I've touched — broadest, includes clone/fetch/checkout activity.
 
@@ -196,6 +221,7 @@ def rank_any_touch(s: RepoSignals, now_ts: int) -> RankVerdict:
 
 
 RANKING_STRATEGIES: dict[str, RankingStrategy] = {
+    "recent_activity": rank_recent_activity,
     "my_work": rank_my_work,
     "dirty_first": rank_dirty_first,
     "any_touch": rank_any_touch,

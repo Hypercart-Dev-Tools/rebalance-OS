@@ -115,6 +115,38 @@ class RankingTests(unittest.TestCase):
         self.assertEqual([r.signals.repo_name for r in ranked], ["dirty", "clean"])
         self.assertIn("modified", ranked[0].reason)
 
+    def test_recent_activity_ranks_authored_recency_without_dirty_pin(self) -> None:
+        # The headline view. A clean repo I committed to 1h ago must outrank a
+        # dirty repo I last authored 5d ago — the exact inversion dirty_first
+        # makes. No dirty pinning here.
+        clean_recent = _sig("clean_recent", my_last_commit_ts=NOW - HOUR)
+        dirty_old = _sig("dirty_old", is_dirty=True, modified_count=4,
+                         my_last_commit_ts=NOW - 5 * DAY)
+        ranked = rank_repos([dirty_old, clean_recent], mode="recent_activity", now_ts=NOW)
+        self.assertEqual([r.signals.repo_name for r in ranked],
+                         ["clean_recent", "dirty_old"])
+        self.assertIn("your commit", ranked[0].reason)
+
+    def test_recent_activity_excludes_dirty_only_no_authored_repo(self) -> None:
+        # A repo with leftover WIP but NO operator-authored commit (e.g. a clone
+        # I dirtied but never committed to) must NOT appear in recent_activity —
+        # admitting it would reintroduce the "junk buries my real work" bug. It
+        # still surfaces under dirty_first (the Dirty Five safety view).
+        dirty_only = _sig("dirty_only", is_dirty=True, modified_count=2,
+                          my_last_commit_ts=None)
+        mine = _sig("mine", my_last_commit_ts=NOW - 2 * DAY)
+        recent = rank_repos([dirty_only, mine], mode="recent_activity", now_ts=NOW)
+        self.assertEqual([r.signals.repo_name for r in recent], ["mine"])
+        dirty = {r.signals.repo_name for r in
+                 rank_repos([dirty_only, mine], mode="dirty_first", now_ts=NOW)}
+        self.assertIn("dirty_only", dirty)  # but Dirty Five still carries it
+
+    def test_recent_activity_orders_among_clean_authored_repos(self) -> None:
+        older = _sig("older", my_last_commit_ts=NOW - 3 * DAY)
+        newer = _sig("newer", my_last_commit_ts=NOW - HOUR)
+        ranked = rank_repos([older, newer], mode="recent_activity", now_ts=NOW)
+        self.assertEqual([r.signals.repo_name for r in ranked], ["newer", "older"])
+
     def test_my_work_excludes_never_committed_clean_clone(self) -> None:
         # Dormant third-party clone: someone else's recent commit, none of mine,
         # clean tree. The spike's failure case — must NOT be eligible.
@@ -640,9 +672,32 @@ class Focus5HiddenConfigTests(_ConfigIsolated):
         self.assertEqual(get_focus5_hidden_repos(), ["/repos/b"])
 
 
+class Focus5RankingModeDefaultTests(_ConfigIsolated):
+    def test_unset_defaults_to_recent_activity(self) -> None:
+        from rebalance.ingest.config import get_focus5_ranking_mode
+        # Fresh config (no focus5_ranking_mode key) → the headline view.
+        self.assertEqual(get_focus5_ranking_mode(), "recent_activity")
+
+    def test_explicit_mode_still_wins(self) -> None:
+        from rebalance.ingest.config import (
+            get_focus5_ranking_mode, set_focus5_ranking_mode,
+        )
+        set_focus5_ranking_mode("dirty_first")
+        self.assertEqual(get_focus5_ranking_mode(), "dirty_first")
+
+    def test_default_matches_module_constant(self) -> None:
+        # The getter's unset default and DEFAULT_RANKING_MODE must not drift.
+        from rebalance.ingest.config import get_focus5_ranking_mode
+        from rebalance.ingest.focus5_scan import DEFAULT_RANKING_MODE
+        self.assertEqual(get_focus5_ranking_mode(), DEFAULT_RANKING_MODE)
+
+
 class Focus5RerankHideTests(_ConfigIsolated):
     def _dirty(self, name: str) -> RepoSignals:
+        # Dirty AND authored, so it's eligible under every mode (recent_activity
+        # — the default rerank_focus5_from_cache uses — as well as dirty_first).
         return _sig(name, device_id="dev", is_dirty=True, modified_count=1,
+                    my_last_commit_ts=NOW - HOUR,
                     local_path=f"/repos/{name}", repo_full_name=f"Org/{name}")
 
     def test_hide_rerank_drops_repo_then_unhide_restores(self) -> None:

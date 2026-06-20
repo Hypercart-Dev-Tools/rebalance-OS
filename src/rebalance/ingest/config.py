@@ -652,15 +652,23 @@ def get_focus5_scan_roots() -> list[str]:
 def get_focus5_ranking_mode() -> str:
     """Return the active Focus 5 ranking mode. Config key: ``focus5_ranking_mode``.
 
-    Defaults to ``dirty_first`` (surface uncommitted/unpushed work first). The
-    value is validated by the collector against the registered strategies; an
-    unknown mode is surfaced as a collector error rather than silently ignored.
+    Defaults to ``recent_activity`` — the headline "what am I working on right
+    now?" view, ranked by operator-authored commit recency (clean, freshly-pushed
+    repos included). The older ``dirty_first`` safety view ("what might I lose?")
+    is still selectable, and is reachable transiently as the **Dirty Five** web
+    view without changing this default. An explicit ``focus5_ranking_mode`` config
+    value still wins. The value is validated by the collector against the
+    registered strategies; an unknown mode is surfaced as a collector error rather
+    than silently ignored.
+
+    Keep this unset-default in lockstep with
+    ``focus5_scan.DEFAULT_RANKING_MODE``.
     """
     config = _read_config()
     mode = config.get("focus5_ranking_mode")
     if isinstance(mode, str) and mode.strip():
         return mode.strip()
-    return "dirty_first"
+    return "recent_activity"
 
 
 def set_focus5_ranking_mode(mode: str) -> None:
