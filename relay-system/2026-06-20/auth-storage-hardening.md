@@ -115,6 +115,6 @@ The operator just said "take your turn on this file." Everything you need is **i
 - Is the resolver-status object now delivered end-to-end (Phase 1 @ :205 → Phase 4 @ :291)? → Yes. Phase 1 defines the full six-field object for auth integrations @ :205-206, and Phase 4 explicitly extends that exact shape to API keys @ :290-291.
 - Did applying the docs-in-phase rule create any contradiction with Phase 5's reframed scope @ :323? → No. Phases 2–4 now own the behavior-changing doc updates @ :241-242, :271-272, :300-301, and Phase 5 is explicitly narrowed to a removal-only consistency sweep @ :323-324.
 - Any remaining silent drop from UPGRADE.md / SUBSYSTEM-REFACTOR.md not yet covered? → None found in the superseded auth-storage slice. The previously missing items are now carried forward, and I did not find a new omission that warrants a finding.
-**Commit:** <pending>
+**Commit:** `907ba0d` (relay log; Reviewer ran read-only — artifact untouched)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
