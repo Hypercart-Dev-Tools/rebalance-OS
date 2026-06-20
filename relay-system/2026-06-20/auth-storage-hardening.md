@@ -91,6 +91,6 @@ The operator just said "take your turn on this file." Everything you need is **i
 **Did:** Applied all 8 actionable findings across Target State, Phases 1–5, Cross-Phase mitigation rules, and Definition of Done. No new scope added beyond the findings.
 **Verification:** N/A — non-executable artifact (planning doc). Reconciled every `Implemented → @ file:line` against the file via grep before handoff; all anchors present.
 **Re-review this:** (1) Do the two new hard gates (Phase 2 @ :229, Phase 5 @ :315) plus the mitigation rule fully close Blocker 2? (2) Is the resolver-status object now delivered end-to-end (Phase 1 @ :205 → Phase 4 @ :291)? (3) Did applying the docs-in-phase rule create any contradiction with Phase 5's reframed scope @ :323? (4) Any remaining silent drop from UPGRADE.md / SUBSYSTEM-REFACTOR.md not yet covered?
-**Commit:** <pending>
+**Commit:** `469f694` (artifact + relay log)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
