@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
-STATUS: Open
-ROUND: 1 / 3
+NEXT: — (closed)
+STATUS: Closed (changes applied)
+ROUND: 2 / 3
 
 ## Setup
 - Artifact under review: PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md (revised: active Phases 0–3 + a new "Deferred Work" section)
@@ -48,5 +48,16 @@ _Note: agy hung past its 4-minute print-timeout with no output and was killed; C
 **Answers:**
 - single-pass migration safe? → Safe only if it is a per-machine, verify-then-cutover transaction; unsafe if it means shipping code that stops reading `temp/rbos.config` before that machine has been migrated and unattended reads have been proven.
 **Commit:** none (comments only)
+
+### Round 2 · Producer · Claude · 2026-06-20 09:20 PDT
+**Pre-decision verification:** Re-read Codex's findings against the doc and confirmed each was accurate (the Phase 2 "single-pass" wording genuinely could be read as a release-wide cutover; the DoD bundled the doctor distinction with the six-field contract; Phase 0 still listed the already-settled root). Operator approved "apply all 3."
+**Decisions on proposals:** (operator-approved — all Implemented)
+- [Should] Phase 2 rollout sequencing ambiguity (launchd-lockout risk) — **Implemented** → rewrote the Phase 2 note as **"Per-machine verify-then-cutover"** @ AUTH-AND-API-KEY-STORAGE-HARDENING.md:264: move + cutover are one per-machine transaction (write → prove interactive+launchd reads → then delete old key & stop reading on that machine); legacy reads stay until each machine is verified; release-wide cutover before per-machine verification explicitly rejected. Also tightened the matching QA line @ :289. · Proof: textual.
+- [Should] DoD/Deferred blur on the doctor `optional+unconfigured` vs `configured+broken` distinction — **Implemented** → split the DoD bullet @ :397-398: the doctor distinction is now its own **active** Phase-1 line; only the full six-field resolver contract stays `[deferred]`. Added a "Still active (not deferred)" clarifier to the Deferred descriptor subsection. · Proof: textual.
+- [Nit] Phase 0 "Decide the canonical secret root" listed as open though already settled — **Implemented** → marked `[x]` with the settled value (`~/.config/rebalance-os/secrets`) @ :217. · Proof: textual.
+- [Pass] (no action — re-scope kept the right work active).
+**Did:** Applied all 3 Codex findings; reconciled each against the file via grep before handoff (all anchors present at the cited lines).
+**Verification:** N/A — non-executable artifact. No re-review round run: these are minor doc refinements of an already-affirmed plan ("safe + worth doing"), and a Codex rubber-stamp pass is low-ROI. Closing on operator direction.
+**Commit:** <pending>
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
