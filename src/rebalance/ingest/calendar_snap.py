@@ -1,14 +1,25 @@
 """
-Google Calendar edge-snapping — detect slightly overlapping timed events
-and trim Event 1's end to 1 minute before Event 2's start so adjacent
-events have clean boundaries.
+Google Calendar edge-snapping — detect slightly overlapping timed events and
+report a clean boundary between them.
+
+This module is detection/reporting only. It never modifies the calendar: the
+calendar is the system of record for time tracking, and writing computed edges
+back to it would alter source data. Overlaps are surfaced so a human can fix
+them in the calendar directly.
+
+Time-accuracy note:
+  When two events overlap, the suggested boundary trims Event 1's end to
+  ``Event 2's start - snap_gap_minutes``. ``snap_gap_minutes`` defaults to 0,
+  which makes the boundary contiguous (no gap, no time lost). Any positive
+  value leaves an unrecorded gap of that many minutes on every resolved
+  overlap — i.e. it silently discards real time. Keep it at 0 for accurate
+  time calculations; a non-zero value is reported back as a warning.
 
 Rules:
-  - Only 2-event overlaps are auto-resolved. 3+ event clusters are
+  - Only 2-event overlaps get a suggested boundary. 3+ event clusters are
     skipped and reported for manual cleanup.
   - All-day events are ignored entirely.
   - Operates day-by-day, with a batch mode up to 7 days.
-  - Dry-run by default; pass apply=True to actually patch Google Calendar.
 """
 
 from __future__ import annotations
@@ -20,7 +31,6 @@ from typing import Any
 
 from rebalance.ingest.calendar import (
     CALENDAR_READONLY_SCOPE,
-    CALENDAR_WRITE_SCOPE,
     _build_service,
 )
 from rebalance.ingest.calendar_helpers import parse_calendar_dt
@@ -38,7 +48,7 @@ class OverlapPair:
     event1_id: str
     event1_summary: str
     event1_original_end: str  # ISO datetime
-    event1_new_end: str  # ISO datetime (Event2.start - 1 minute)
+    event1_new_end: str  # ISO datetime (Event2.start - snap_gap_minutes; gapless at 0)
     event2_id: str
     event2_summary: str
     event2_start: str  # ISO datetime
@@ -67,12 +77,16 @@ class SnapDayResult:
 
 @dataclass
 class SnapEdgesResult:
-    """Aggregate result across all requested days."""
+    """Aggregate result across all requested days.
+
+    Detection/reporting only — the calendar is never modified.
+    """
 
     days: list[SnapDayResult] = field(default_factory=list)
     total_snapped: int = 0
     total_skipped_clusters: int = 0
-    applied: bool = False
+    gap_minutes: int = 0
+    warning: str = ""
     elapsed_seconds: float = 0.0
 
 
@@ -88,8 +102,13 @@ def _is_allday_event(event: dict[str, Any]) -> bool:
 
 def _detect_overlaps(
     events: list[dict[str, Any]],
+    gap_minutes: int = 0,
 ) -> tuple[list[OverlapPair], list[SkippedCluster], int]:
     """Detect overlapping event pairs from a sorted list of timed events.
+
+    ``gap_minutes`` is the gap left between a resolved pair (Event 1's
+    suggested end = Event 2's start - gap_minutes). Defaults to 0 (contiguous,
+    no time lost); any positive value discards that many minutes per overlap.
 
     Returns (overlap_pairs, skipped_clusters, skipped_allday_count).
     """
@@ -155,7 +174,7 @@ def _detect_overlaps(
                 )
                 continue
 
-            new_end_dt = ev2_start_dt - timedelta(minutes=1)
+            new_end_dt = ev2_start_dt - timedelta(minutes=gap_minutes)
             overlap_mins = int((ev1_end_dt - ev2_start_dt).total_seconds() / 60)  # raw-ok: one-off calc
 
             # Preserve timezone from original event
@@ -226,30 +245,6 @@ def _fetch_day_events(
     return all_events
 
 
-def _patch_event_end(
-    service: Any,
-    calendar_id: str,
-    event_id: str,
-    new_end_iso: str,
-    original_end_timezone: str | None = None,
-) -> dict[str, Any]:
-    """Patch a single event's end time via the Google Calendar API."""
-    end_body: dict[str, str] = {"dateTime": new_end_iso}
-    if original_end_timezone:
-        end_body["timeZone"] = original_end_timezone
-
-    return (
-        service.events()
-        .patch(
-            calendarId=calendar_id,
-            eventId=event_id,
-            body={"end": end_body},
-            sendUpdates="none",
-        )
-        .execute()
-    )
-
-
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -261,28 +256,11 @@ def snap_day_edges(
     target_date: date,
     timezone_name: str,
     *,
-    apply: bool = False,
+    gap_minutes: int = 0,
 ) -> SnapDayResult:
-    """Detect and optionally fix overlapping edges for a single day."""
+    """Detect overlapping edges for a single day (read-only; never patches)."""
     events = _fetch_day_events(service, calendar_id, target_date, timezone_name)
-    pairs, skipped, allday_count = _detect_overlaps(events)
-
-    if apply:
-        for pair in pairs:
-            # Extract timezone from original event if present
-            original_tz = None
-            for ev in events:
-                if ev["id"] == pair.event1_id:
-                    original_tz = ev.get("end", {}).get("timeZone")
-                    break
-
-            _patch_event_end(
-                service,
-                calendar_id,
-                pair.event1_id,
-                pair.event1_new_end,
-                original_end_timezone=original_tz,
-            )
+    pairs, skipped, allday_count = _detect_overlaps(events, gap_minutes=gap_minutes)
 
     return SnapDayResult(
         date=target_date.isoformat(),
@@ -299,16 +277,21 @@ def snap_edges(
     start_date: date,
     num_days: int = 1,
     timezone_name: str,
-    apply: bool = False,
+    gap_minutes: int = 0,
 ) -> SnapEdgesResult:
-    """Detect and optionally fix overlapping calendar edges across multiple days.
+    """Detect overlapping calendar edges across multiple days.
+
+    Detection/reporting only — the calendar is never modified. Overlaps are
+    returned for a human to resolve in the calendar directly.
 
     Args:
         calendar_id: Google Calendar ID.
         start_date: First day to process.
         num_days: Number of consecutive days (1-7).
         timezone_name: IANA timezone for day boundaries.
-        apply: If True, patches Google Calendar. Default is dry-run.
+        gap_minutes: Gap left between a resolved pair. Keep at 0 for accurate
+            time tracking; any positive value discards that many minutes per
+            overlap and is reported back as a warning.
 
     Raises:
         ValueError: If num_days is outside 1-7.
@@ -316,22 +299,34 @@ def snap_edges(
     if not 1 <= num_days <= 7:
         raise ValueError(f"num_days must be between 1 and 7, got {num_days}")
 
+    gap_minutes = max(0, int(gap_minutes))
+
     start = time.monotonic()
-    required_scope = CALENDAR_WRITE_SCOPE if apply else CALENDAR_READONLY_SCOPE
-    service = _build_service(required_scopes=[required_scope])
+    # Read-only by design: this tool reports overlaps, it never writes to the
+    # calendar, so it only ever needs read scope.
+    service = _build_service(required_scopes=[CALENDAR_READONLY_SCOPE])
 
     days: list[SnapDayResult] = []
     for offset in range(num_days):
         target = start_date + timedelta(days=offset)
         day_result = snap_day_edges(
-            service, calendar_id, target, timezone_name, apply=apply
+            service, calendar_id, target, timezone_name, gap_minutes=gap_minutes
         )
         days.append(day_result)
+
+    warning = ""
+    if gap_minutes != 0:
+        warning = (
+            f"snap_gap_minutes={gap_minutes}: leaves a {gap_minutes}-minute "
+            "unrecorded gap on every resolved overlap, which understates tracked "
+            "time. Set snap_gap_minutes to 0 for accurate time calculations."
+        )
 
     return SnapEdgesResult(
         days=days,
         total_snapped=sum(len(d.snapped) for d in days),
         total_skipped_clusters=sum(len(d.skipped_clusters) for d in days),
-        applied=apply,
+        gap_minutes=gap_minutes,
+        warning=warning,
         elapsed_seconds=round(time.monotonic() - start, 2),
     )
