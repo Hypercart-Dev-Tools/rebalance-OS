@@ -21,23 +21,23 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 1 started (2026-06-20).** The keystone `secret_store` module landed: atomic, permission-enforced (`0600`/`0700`) writes; safe reads that never raise; JSON helpers; a `permission_ok` posture check; and the six-field `ResolverStatus` contract — covered by 11 contract tests ([src/rebalance/ingest/secret_store.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/secret_store.py:1), [tests/test_secret_store.py](/Users/noelsaw/Documents/rebalance-OS/tests/test_secret_store.py:1)). The canonical secret root (a Phase 0 decision) was settled inline: `~/.config/rebalance-os/secrets`. | **Wire integrations to the module.** Route the GitHub/Figma/Sleuth/OAuth loaders through `secret_store` (they still hand-roll file behavior and dual-write to `temp/rbos.config`), add per-integration secret descriptors, and upgrade doctor to report `ResolverStatus` posture. Phase 0's remaining spike items (launchd-safe read proof, JSON-vs-pickle refresh proof) still gate Phase 2's destructive steps. |
+| **Phase 1 started (2026-06-20).** The keystone `secret_store` module landed: atomic, permission-enforced (`0600`/`0700`) writes; safe reads that never raise; JSON helpers; a `permission_ok` posture check; and the six-field `ResolverStatus` contract — covered by 11 contract tests ([src/rebalance/ingest/secret_store.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/secret_store.py:1), [tests/test_secret_store.py](/Users/noelsaw/Documents/rebalance-OS/tests/test_secret_store.py:1)). The canonical secret root (a Phase 0 decision) was settled inline: `~/.config/rebalance-os/secrets`. | **Lazy re-scope (2026-06-20).** A ponytail pass cut the plan to its load-bearing core: keep Phases 0–3 (permission hardening — done — + move secrets out of the repo tree + pickle→JSON), and push the consistency/fleet machinery (per-integration resolver wiring, API-key unification, migration-report + decommission ceremony) into [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet). Next active step: wire the GitHub/Figma/Sleuth/OAuth loaders to call `secret_store` and move their fallbacks out of `temp/rbos.config`. |
 
 ## Table of Contents
 
 1. [Status and Supersession](#status-and-supersession)
-2. [Trace of the Original Keyring Project](#trace-of-the-original-keyring-project)
-3. [What Actually Shipped](#what-actually-shipped)
-4. [What Was Deferred or Re-Scoped](#what-was-deferred-or-re-scoped)
-5. [How It Currently Works](#how-it-currently-works)
-6. [Current Audit Findings](#current-audit-findings)
-7. [Target State](#target-state)
-8. [Phase 0 - Durability Spike](#phase-0---durability-spike)
-9. [Phase 1 - Secret Store Contract and Permission Enforcement](#phase-1---secret-store-contract-and-permission-enforcement)
-10. [Phase 2 - Remove Repo-Local Secret Persistence](#phase-2---remove-repo-local-secret-persistence)
-11. [Phase 3 - Replace Pickle OAuth Fallback and Stabilize Google OAuth](#phase-3---replace-pickle-oauth-fallback-and-stabilize-google-oauth)
-12. [Phase 4 - Unify API Key Resolution and Diagnostics](#phase-4---unify-api-key-resolution-and-diagnostics)
-13. [Phase 5 - Migration, Decommissioning, and Docs Cleanup](#phase-5---migration-decommissioning-and-docs-cleanup)
+2. [Scope: Active vs Deferred](#scope-active-vs-deferred)
+3. [Trace of the Original Keyring Project](#trace-of-the-original-keyring-project)
+4. [What Actually Shipped](#what-actually-shipped)
+5. [What Was Deferred or Re-Scoped](#what-was-deferred-or-re-scoped)
+6. [How It Currently Works](#how-it-currently-works)
+7. [Current Audit Findings](#current-audit-findings)
+8. [Target State](#target-state)
+9. [Phase 0 - Durability Spike](#phase-0---durability-spike)
+10. [Phase 1 - Secret Store Contract and Permission Enforcement](#phase-1---secret-store-contract-and-permission-enforcement)
+11. [Phase 2 - Remove Repo-Local Secret Persistence](#phase-2---remove-repo-local-secret-persistence)
+12. [Phase 3 - Replace Pickle OAuth Fallback and Stabilize Google OAuth](#phase-3---replace-pickle-oauth-fallback-and-stabilize-google-oauth)
+13. [Deferred Work (YAGNI until multi-operator / fleet)](#deferred-work-yagni-until-multi-operator--fleet)
 14. [Cross-Phase Risks](#cross-phase-risks)
 15. [Definition of Done](#definition-of-done)
 
@@ -53,6 +53,16 @@ Pointers back to the older documents:
 
 This doc supersedes those older docs only for the unresolved follow-up question:
 how to move from the currently shipped credential model to a cleaner, more durable, less brittle secret-storage contract.
+
+## Scope: Active vs Deferred
+
+**Re-scoped 2026-06-20 after a ponytail pass.** rebalance-OS is a single-operator tool on ~3 personal Macs, and the public-repo commit-leak path is already closed (`temp/` is gitignored, the config file untracked). The load-bearing work is small and stays **active**:
+
+- **Phase 0–1:** the `secret_store` keystone — atomic writes + enforced `0600`/`0700` (already shipped and tested).
+- **Phase 2:** move the GitHub/Figma/Sleuth fallbacks out of the repo tree and stop reading them from `temp/rbos.config`.
+- **Phase 3:** replace the pickle OAuth fallback with JSON — the one real durability win, since a Python/library bump can render a pickle unreadable and silently break unattended refresh.
+
+Everything that models a multi-operator / audited-fleet world is **deferred, not dropped** — see [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet): per-integration descriptors + six-field resolver wiring, Phase 4 (API-key unification — env-only is already the right contract), and the migration-report + staged decommission ceremony. Each deferral names the signal that should revive it, so the active plan still reaches the core end state (no live secrets under the repo root, modes enforced, JSON not pickle) without carrying fleet machinery this deployment has no use for.
 
 ## Trace of the Original Keyring Project
 
@@ -188,8 +198,7 @@ The target storage contract is:
 - Keyring remains the interactive primary store. Every durable local *fallback* secret lives outside the repo in one user-level secret root owned by rebalance — this root replaces the repo-local plaintext and pickle fallbacks, **not** keyring itself.
 - Every secret file and token file is written atomically with enforced `0600` file mode and `0700` directory mode.
 - Google OAuth fallback uses JSON authorized-user blobs, not pickle.
-- Every integration exposes one structured resolver contract, delivered as a concrete status object by a phase (Phase 1 for auth, Phase 4 for API keys):
-  `source`, `primary_store`, `fallback_store`, `launchd_safe`, `last_validated_at`, `permission_ok`.
+- (target; per-integration wiring **deferred**) Every integration *can* expose one structured resolver contract — `source`, `primary_store`, `fallback_store`, `launchd_safe`, `last_validated_at`, `permission_ok`. The `ResolverStatus` type ships in Phase 1; wiring all integrations to emit it lives in [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet).
 - Auth-activity logging and per-token metadata are preserved: every new write, migration, and refresh still records to `temp/logs/auth_activity.jsonl` and `temp/logs/token_meta.json` (fingerprint-only, `first_added_at` retained), matching the shipped contract in [UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:36).
 - Every secret-store migration is idempotent — safe to re-run with no duplicate side effects, matching today's `migrate-to-keyring` ([UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:132)).
 - Doctor fails loudly on insecure file modes, deprecated stores, or unresolved migrations — and distinguishes `optional+unconfigured` (clean skip, no warning) from `configured+broken/insecure` (warn/fail).
@@ -228,10 +237,7 @@ Goal: create the single runtime contract before moving data.
   Progress: module + primitives shipped in [src/rebalance/ingest/secret_store.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/secret_store.py:1) (migration helpers + loader wiring still to come; loaders do not yet call it).
 - [ ] Route auth-activity and token-metadata writes through the storage module.
   Observable result: every secret write still appends to `temp/logs/auth_activity.jsonl` and updates `temp/logs/token_meta.json` (fingerprint-only, `first_added_at` preserved), so the observability shipped in [UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:36) survives the storage migration.
-- [ ] Add explicit secret descriptors per integration.
-  Observable result: each credential declares primary store, fallback store, serialization format, and validation hook in one place.
-- [ ] Emit one structured resolver-status object per integration with the full field set.
-  Observable result: each resolver returns `source`, `primary_store`, `fallback_store`, `launchd_safe`, `last_validated_at`, and `permission_ok` — the complete Target State contract, not a subset. (Phase 4 extends the same shape to API keys.)
+- [→] Per-integration secret descriptors and six-field resolver-status wiring → **deferred** (see [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet)). The `ResolverStatus` type already exists; wiring all five integrations to emit it is consistency machinery, not a durability fix.
 - [ ] Enforce file and directory mode on every write.
   Observable result: storage writers call one helper that creates dirs with `0700` and files with `0600`.
 - [ ] Upgrade doctor to check posture, not just presence.
@@ -246,15 +252,16 @@ Goal: create the single runtime contract before moving data.
 - [ ] Launchd-safe fallback still resolves when keyring is unavailable.
 - [ ] No runtime code outside the storage module writes secret-bearing files directly.
 - [ ] CI includes a contract test that forbids secret keys in `temp/rbos.config`.
-- [ ] Storage module, resolver-status, and doctor checks are testable under hermetic seams — no test reads machine-global keyring/`gh`/file tokens unless it opts in (preserves the seams closed in [PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md:524)).
-- [ ] The resolver-status object returns all six fields for every integration.
+- [ ] Storage module and doctor checks are testable under hermetic seams — no test reads machine-global keyring/`gh`/file tokens unless it opts in (preserves the seams closed in [PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md:524)).
 - [ ] Auth-activity / token-meta writes are exercised by tests (fingerprint-only, `first_added_at` retained on re-write).
 
 ## Phase 2 - Remove Repo-Local Secret Persistence
 
 Goal: make `temp/rbos.config` truly non-secret.
 
-**Gate (hard):** this phase may stop repo-local secret writes only after Phase 0/1 have proven the new store resolves on both interactive and unattended (launchd) reads. Additive first — the new store is written and proven before any old key is deleted.
+**Gate (hard):** stop repo-local secret writes only after Phase 0/1 prove the new store resolves on both interactive and unattended (launchd) reads. Additive first — write and prove the new store before deleting any old key.
+
+**Single-pass migration (single operator):** because there is one operator on ~3 machines, this phase both *moves* secrets to the new store **and** *stops reading* them from `temp/rbos.config` in the same pass — there is no separate fleet-style decommission phase. That ceremony (a `migration report` command, a staged decommission gate) is deferred; see [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet).
 
 - [ ] Remove GitHub PAT writes to `temp/rbos.config`.
   Observable result: `set_github_token()` writes to the new secret store; `rbos.config` no longer receives `github_token`.
@@ -277,7 +284,9 @@ Goal: make `temp/rbos.config` truly non-secret.
 - [ ] Tests verify `temp/rbos.config` stays secret-free after each setter runs.
 - [ ] Figma and Sleuth opt-in paths still work after migration.
 - [ ] Re-running the migration command is a no-op (idempotency test).
-- [ ] UPGRADE/README credential tables are updated in this phase, not Phase 5.
+- [ ] UPGRADE/README credential tables are updated in this phase.
+- [ ] CI regression test: no secret-looking key ever appears in `temp/rbos.config` (folded up from the former Phase 5).
+- [ ] After migration, runtime no longer reads `github_token` / `figma_token` / `sleuth_web_api` from `temp/rbos.config` (single-pass decommission).
 
 ## Phase 3 - Replace Pickle OAuth Fallback and Stabilize Google OAuth
 
@@ -291,9 +300,7 @@ Goal: make Google OAuth durable without pickle or ambiguous ownership.
   Observable result: old token files are read once, converted to JSON, validated, and retired. The conversion is idempotent — re-running finds JSON already present and does not re-import or duplicate.
 - [ ] Preserve auth-activity logging across OAuth conversion and refresh.
   Observable result: pickle→JSON migration and every token refresh still record to `auth_activity.jsonl` / `token_meta.json`, so Google-token lifetime stays measurable.
-- [ ] Decide the future of the embedded shared Google client.
-  Observable result: one explicit policy:
-  keep it as the supported default, or support user-provided client config as the primary path and demote the embedded client to fallback/dev use.
+- [→] Decide the future of the embedded shared Google client → **deferred** (see [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet)) — an onboarding-policy question, orthogonal to storage durability.
 - [ ] Harden Google auth diagnostics.
   Observable result: doctor tells the user whether the active Google token came from keyring, JSON fallback, migrated pickle, or an expired/invalid state.
 - [ ] Update Google OAuth docs in this same phase.
@@ -309,7 +316,43 @@ Goal: make Google OAuth durable without pickle or ambiguous ownership.
 - [ ] A token refresh still appends to `auth_activity.jsonl` / `token_meta.json`.
 - [ ] No runtime path still imports `pickle` for OAuth token storage.
 
-## Phase 4 - Unify API Key Resolution and Diagnostics
+## Deferred Work (YAGNI until multi-operator / fleet)
+
+**Re-scoped 2026-06-20 (ponytail pass).** The items below model a multi-operator / audited-fleet world that this single-operator, ~3-Mac deployment does not have yet. They are **deferred, not dropped** — each names the signal that should revive it. The active plan (Phases 0–3) still reaches the core end state: no live secrets under the repo root, `0600`/`0700` enforced, JSON (not pickle) OAuth fallback. What's parked here is the *consistency machinery and fleet ceremony* layered on top — it adds maintenance surface without changing any unattended failure mode for one operator.
+
+### Deferred — per-integration secret descriptors + six-field resolver wiring (from Phase 1)
+
+The `ResolverStatus` dataclass already ships; deferred is the descriptor layer plus wiring every one of the five integrations to populate and surface all six fields.
+
+- Why: none of the six fields changes an unattended failure mode (expired token, keyring-unavailable-under-launchd, pickle incompatibility, permission denied) — this is uniformity, not durability. A registry for five hardcoded get/set pairs is indirection that makes the code harder to read.
+- Revisit when: a second operator, or a CI/fleet audit, needs a uniform machine-readable credential-posture report.
+
+### Deferred — decide the future of the embedded shared Google client (from Phase 3)
+
+- Why: orthogonal to storage durability. The shared embedded client works; choosing user-provided-client-as-primary is an onboarding-policy question, not a hardening one.
+- Revisit when: onboarding a non-Noel user who cannot use the embedded client.
+
+### Deferred — migration-report command + staged decommission ceremony (former Phase 5)
+
+The *outcome* (stop writing/reading secrets from `temp/rbos.config`, retire pickle) is folded into the active Phases 2 and 3 as a single-pass migration — one machine, migrate it, done. The existing `rebalance reset` already enumerates secret locations. What's deferred is the fleet *tooling* and gating below.
+
+- [ ] Add one migration report command.
+  Observable result: operators can see which credentials are still in legacy locations and what will be moved.
+- [ ] Staged decommission gate (separate from the move).
+  Observable result: legacy reads removed only after a migration report is clean, doctor is green, and both fresh and migrated launchd paths are proven end-to-end. (For one operator this collapses into the Phase 2 single-pass.)
+- [ ] Final operator-doc consistency sweep (removal-only).
+  Observable result: confirms README, UPGRADE, GMAIL, GOOGLE_CALENDAR, and onboarding docs are mutually consistent and adds the "legacy store removed" notes (per-phase doc updates already land in Phases 2–3).
+
+QA (revive with the above): fresh-machine onboarding from docs only; an upgraded machine migrates without manual file surgery; docs/doctor/runtime report the same contract; `rebalance reset` enumerates and removes the new secret locations; legacy stores readable during migration and unread after decommissioning.
+
+- Revisit when: more than a handful of machines need a coordinated, auditable migration.
+
+### Deferred — Phase 4: Unify API Key Resolution and Diagnostics (wholesale)
+
+- Why: Anthropic is already env-only (`ANTHROPIC_API_KEY`, [config.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/config.py:1254)) — the correct, durable, launchd-injectable contract. Gemini's Secret-Manager/env/`gcloud` chain is messier, but the fix is "pick one and document the order," not "build a unified resolver." No safety or durability gain for one operator.
+- Revisit when: a provider key must be rotated centrally across machines, or a third LLM provider arrives with its own resolution chain.
+
+Original phase content, preserved:
 
 Goal: give API-key integrations the same durability contract as auth integrations.
 
@@ -325,48 +368,15 @@ Goal: give API-key integrations the same durability contract as auth integration
   Observable result: doctor names the source and durability of each provider key, not just whether a value exists.
 - [ ] Remove surprising ambient fallbacks where policy says explicit config is required.
   Observable result: hidden dependency on whatever `gcloud` account happens to be active is either surfaced clearly or removed.
-- [ ] Update provider docs in this same phase.
-  Observable result: per-provider key docs match the shipped resolver order when Phase 4 lands, not in Phase 5.
 
-### QA Checklist
-
-- [ ] Tests cover env-only, local-store, Secret Manager, and missing-key paths.
-- [ ] Doctor output includes source labels for LLM/API keys.
-- [ ] A background job can use the intended provider key without an interactive shell.
-- [ ] Gemini does not silently switch sources without an observable status signal.
-- [ ] Provider-specific docs match the shipped resolver order.
-
-## Phase 5 - Migration, Decommissioning, and Docs Cleanup
-
-Goal: remove legacy paths only after the new contract is proven in the field.
-
-**Gate (hard):** legacy reads may be removed only after the migration report is clean, doctor is green, and both fresh and migrated launchd paths are proven end-to-end.
-
-- [ ] Add one migration report command.
-  Observable result: operators can see which credentials are still in legacy locations and what will be moved.
-- [ ] Decommission secret-bearing config keys from runtime reads.
-  Observable result: runtime no longer reads `github_token`, `figma_token`, or `sleuth_web_api` from `temp/rbos.config`.
-- [ ] Decommission OAuth pickle fallback reads.
-  Observable result: runtime no longer reads `google-calendar-oauth` or `google-gmail-oauth` as pickle files.
-- [ ] Final operator-doc consistency sweep (removal-only).
-  Observable result: the per-phase doc updates (Phases 2–4) are already landed; this phase only confirms README, UPGRADE, GMAIL, GOOGLE_CALENDAR, and onboarding docs are mutually consistent and adds the "legacy store removed" notes.
-- [ ] Add regression tests for "no secrets in repo-local config."
-  Observable result: CI fails if a future change reintroduces secret persistence into the repo tree.
-
-### QA Checklist
-
-- [ ] A fresh machine can complete onboarding with only the documented steps.
-- [ ] An upgraded machine can migrate without manual file surgery.
-- [ ] Docs, doctor, and runtime report the same storage contract.
-- [ ] `rebalance reset` enumerates and removes the new secret locations correctly.
-- [ ] Legacy stores are readable during migration and unread after decommissioning.
+QA (revive with the above): tests cover env-only, local-store, Secret Manager, and missing-key paths; doctor output includes source labels for LLM/API keys; a background job can use the intended provider key without an interactive shell; Gemini does not silently switch sources without an observable status signal; provider-specific docs match the shipped resolver order.
 
 ## Cross-Phase Risks
 
 - The main availability risk is breaking unattended launchd jobs while improving secret hygiene.
 - The main migration risk is losing a refresh token during Google OAuth conversion.
 - The main UX risk is forcing users through more steps than the current setup flow.
-- The main contract risk is fixing GitHub/Figma/Sleuth but leaving API-key sources fragmented.
+- The API-key fragmentation risk is **accepted** for now — Phase 4 is deferred (env-only is already the right contract; see [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet)).
 
 Mitigation rules:
 
@@ -382,8 +392,8 @@ Mitigation rules:
 - [ ] `temp/rbos.config` is truly non-secret.
 - [ ] All durable secret files are outside the repo with enforced `0600` / `0700` permissions.
 - [ ] Google OAuth fallback is JSON-based, not pickle-based.
-- [ ] Doctor reports source, durability, and posture for every auth and API-key integration.
-- [ ] Each integration's resolver exposes the full six-field status contract; doctor distinguishes `optional+unconfigured` from `configured+broken/insecure`.
+- [ ] Doctor reports source, permissions, and posture for every auth integration (API-key posture is deferred — see Deferred Work).
+- [deferred] Each integration's resolver exposes the full six-field status contract; doctor distinguishes `optional+unconfigured` from `configured+broken/insecure` — see Deferred Work.
 - [ ] Auth-activity logging and per-token metadata survive every migration, JSON conversion, and refresh.
 - [ ] Every secret-store migration is idempotent (safe to re-run).
 - [ ] Fresh install and migrated install both work with the documented steps.
