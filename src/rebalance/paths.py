@@ -108,9 +108,26 @@ def _load_user_config() -> dict:
         return {}
 
 
+def _chmod_quiet(path: Path, mode: int) -> None:
+    """Best-effort chmod — config/secret files must not be world-readable.
+
+    Mirrors `secret_store.harden_mode`; inlined here because `paths` is lower in
+    the import graph than `secret_store` (which imports `paths`).
+    """
+    try:
+        path.chmod(mode)
+    except OSError:
+        pass
+
+
 def _save_user_config(data: dict) -> None:
     USER_CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    # 0700 dir / 0600 file: USER_CONFIG_DIR holds OAuth token files and the
+    # secret store; the audit found these at 0755/0644. See
+    # PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md (Phase 1).
+    _chmod_quiet(USER_CONFIG_DIR, 0o700)
     USER_CONFIG_FILE.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+    _chmod_quiet(USER_CONFIG_FILE, 0o600)
 
 
 def _walk_up_for_project_root(start: Path | None = None) -> Path | None:

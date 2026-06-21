@@ -77,6 +77,7 @@ def load_credentials(svc: OAuthService, required_scopes: list[str] | None = None
             try:
                 with open(svc.token_path, "wb") as f:
                     pickle.dump(creds, f)
+                svc.token_path.chmod(0o600)  # ponytail: guard the pickle fallback's mode until Phase 3 swaps it for JSON
             except OSError:
                 pass
             log_token_refreshed(
