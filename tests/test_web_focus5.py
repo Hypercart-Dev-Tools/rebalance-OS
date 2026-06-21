@@ -148,6 +148,29 @@ class FocusBodyTests(unittest.TestCase):
         self.assertIn("unavailable", body)
 
 
+class ViewToggleTests(unittest.TestCase):
+    """The Focus 5 / Dirty Five segmented toggle, shared by both views."""
+
+    def test_default_view_is_focus5_and_shows_both_tabs(self) -> None:
+        body = _focus5_body(_data([_card()]))
+        self.assertIn("🎯 Focus 5", body)
+        self.assertIn("f5-views", body)             # toggle present
+        self.assertIn("🧹 Dirty Five", body)        # the other tab is linked
+        self.assertIn("?view=dirty", body)          # link to the dirty view
+
+    def test_dirty_view_is_titled_and_keeps_view_on_refresh(self) -> None:
+        body = _focus5_body(_data([_card()], ranking_mode="dirty_first"), view="dirty")
+        self.assertIn("🧹 Dirty Five", body)
+        self.assertIn("f5-view active", body)       # a tab is marked active
+        self.assertIn("refresh=1&amp;view=dirty", body)  # refresh stays on Dirty Five
+
+    def test_dirty_empty_state_differs_from_default(self) -> None:
+        body = _focus5_body(_data([]), view="dirty")
+        self.assertIn("Nothing at risk", body)
+        self.assertNotIn("No active repos found", body)
+        self.assertIn("f5-views", body)             # toggle still shown when empty
+
+
 class RosterStaleTests(unittest.TestCase):
     def test_missing_is_stale(self) -> None:
         self.assertTrue(_roster_stale(None))

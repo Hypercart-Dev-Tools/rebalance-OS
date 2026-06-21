@@ -29,7 +29,7 @@ rebalance can feed `email_messages` two ways. Pick one with
 
 | Method | When to use | Credential | Autonomous? |
 |--------|-------------|------------|-------------|
-| `oauth` *(default)* | You want scheduled, hands-off sync (launchd/cron) | Desktop OAuth token in keyring (pickle fallback for launchd) | ✅ Yes |
+| `oauth` *(default)* | You want scheduled, hands-off sync (launchd/cron) | Desktop OAuth token in keyring (JSON secret-store fallback for launchd) | ✅ Yes |
 | `mcp` | You drive rebalance from an MCP host (e.g. Claude) | None — an agent calls `ingest_gmail_messages` | ❌ Needs an agent to trigger |
 
 > Why a desktop OAuth token instead of `gcloud` ADC? `gmail.readonly` is a
@@ -90,22 +90,25 @@ Pick your Google account and approve **read-only** Gmail access. If you see an
 **Advanced → Go to rebalance OS (unsafe)** — it's your own client. The `--test`
 flag reads your Gmail profile afterward to confirm it worked.
 
-> Your token is saved locally at `~/.config/rebalance-os/google-gmail-oauth`
-> (a launchd-reachable pickle) and is never stored in the repo.
+> Your token is saved to the OS **keyring** (primary) and a JSON fallback in the
+> out-of-repo secret store (`~/.config/rebalance-os/secrets/google-gmail-oauth`,
+> `0600`). It is never stored in the repo.
 
-### Step 2: Move the token into keyring
+### Step 2: nothing — both stores are written in one pass
 
-rebalance stores credentials in the OS **keyring** as the primary, with the
-pickle file as a launchd-reachable fallback (launchd's stripped environment
-can't read the Keychain). Adopt the keyring model with:
+As of the auth-storage hardening (Phase 3), `setup_gmail_oauth.py` writes the
+OS **keyring** (primary) **and** the JSON secret-store fallback after consent —
+no follow-up `migrate-to-keyring` step. launchd's stripped environment can't read
+the Keychain, so unattended jobs fall back to the JSON file. Verify with:
 
 ```bash
-rebalance config migrate-to-keyring
+rebalance doctor
 ```
 
-This is idempotent and also picks up a **freshly re-authed** token — if you re-run
-`setup_gmail_oauth.py` later, run `migrate-to-keyring` again to push the new
-token into keyring.
+> Upgrading from an older device that still has a pickle token? Run
+> `rebalance config migrate-secrets` once — it converts the legacy pickle to JSON
+> and retires it. (A scheduled sync also self-heals: the pickle migrates to JSON
+> on the next run.)
 
 ### Step 3: Select the method, narrow the query, sync
 
@@ -230,8 +233,9 @@ On `mcp` mode, ask your agent to refresh whenever you want fresh email.
 - **Do I need my own Google Cloud app or `client_secret.json`?** No — the repo
   bundles the Desktop OAuth client. You authorize your own account locally; the
   token belongs to you and stays on your machine.
-- **Where is my token stored?** Keyring (primary) + `~/.config/rebalance-os/google-gmail-oauth`
-  (launchd fallback). Never in the repo.
+- **Where is my token stored?** Keyring (primary) + a JSON fallback in the secret
+  store (`~/.config/rebalance-os/secrets/google-gmail-oauth`, `0600`, launchd
+  fallback). Never in the repo.
 - **Why read-only?** rebalance only reads. The requested scope is
   `gmail.readonly` and nothing else.
 - **Can I switch methods later?** Yes — `rebalance config set-gmail-method oauth|mcp`

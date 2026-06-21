@@ -74,9 +74,10 @@ POLICY = {
         "wrapper": "scripts/github_sync.sh",
         "wrapper_must_contain": [
             'rb_job_init "github-sync" 14',
-            'scope=["github"]',
+            # Focus 5 piggybacks this hourly cadence (no standalone launchd job).
+            'scope=["github", "focus5"]',
         ],
-        "doc_tokens": ["hourly at :45", '["github"]'],
+        "doc_tokens": ["hourly at :45", '["github", "focus5"]'],
     },
     "pulse-sync": {
         "calendar": _hourly(0),

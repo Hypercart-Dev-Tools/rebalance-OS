@@ -126,7 +126,9 @@ class RankVerdict:
 # A ranking strategy maps (signals, now_epoch) -> verdict. Pure: no I/O, no clock.
 RankingStrategy = Callable[[RepoSignals, int], RankVerdict]
 
-DEFAULT_RANKING_MODE = "dirty_first"
+# The headline Focus 5 view: "what am I working on right now?" Kept in lockstep
+# with config.get_focus5_ranking_mode()'s unset default — change both together.
+DEFAULT_RANKING_MODE = "recent_activity"
 
 
 def _humanize_ago(ts: int | None, now_ts: int) -> str:
@@ -182,6 +184,29 @@ def rank_dirty_first(s: RepoSignals, now_ts: int) -> RankVerdict:
     return RankVerdict(eligible, (1 if at_risk else 0, _recency(s)), reason)
 
 
+def rank_recent_activity(s: RepoSignals, now_ts: int) -> RankVerdict:
+    """My most recently *authored* active repos (DEFAULT — the headline Focus 5).
+
+    Answers "what am I working on right now?" Ranks purely on operator-authored
+    commit recency (``my_last_commit_ts``) with **no dirty pinning**, so a clean,
+    freshly-pushed repo I committed to an hour ago outranks a repo sitting on
+    someone else's stale WIP. That is the whole point: a commit-often/push-often
+    workflow keeps active repos clean, and every other mode buries them under any
+    repo with leftover uncommitted files.
+
+    Eligibility requires that I authored a commit here (``my_last_commit_ts is not
+    None``). A dirty-only / never-authored repo is therefore **excluded** from
+    Focus 5 — it is carried by ``dirty_first`` (the Dirty Five safety view) and
+    the off-roster "needs attention" strip instead. Ranking on ``my_last_commit_ts``
+    specifically (not :func:`_recency`, which falls back to head-reflog/any-author
+    commit time) keeps a foreign push or a clone/checkout from masquerading as my
+    activity.
+    """
+    eligible = s.my_last_commit_ts is not None
+    reason = f"your commit {_humanize_ago(s.my_last_commit_ts, now_ts)}"
+    return RankVerdict(eligible, (s.my_last_commit_ts or 0,), reason)
+
+
 def rank_any_touch(s: RepoSignals, now_ts: int) -> RankVerdict:
     """Anything I've touched — broadest, includes clone/fetch/checkout activity.
 
@@ -196,6 +221,7 @@ def rank_any_touch(s: RepoSignals, now_ts: int) -> RankVerdict:
 
 
 RANKING_STRATEGIES: dict[str, RankingStrategy] = {
+    "recent_activity": rank_recent_activity,
     "my_work": rank_my_work,
     "dirty_first": rank_dirty_first,
     "any_touch": rank_any_touch,
@@ -721,9 +747,43 @@ def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
     }
 
 
+def _build_roster_card(
+    conn: Any, base: dict[str, Any], *, with_activity: bool, with_live_health: bool,
+) -> dict[str, Any]:
+    """Finish one roster card: coerce flags, attach the open/PR/activity enrichments.
+
+    *base* must already carry every signal column plus ``position``,
+    ``rank_reason``, ``ranking_mode`` and ``computed_at`` — whether that came from
+    the persisted ``focus5_roster`` join or an in-memory rerank. Shared so both
+    the default (persisted) and transient (re-ranked) views render identically.
+    """
+    card = dict(base)
+    card["is_dirty"] = bool(card["is_dirty"])
+    card["has_upstream"] = bool(card["has_upstream"])
+    card["vscode_url"] = vscode_url(card["local_path"])
+    card["newest_pr"] = _newest_pr(conn, card.get("repo_full_name"))
+    card["recent_activity"] = (
+        recent_activity(card["local_path"]) if with_activity else []
+    )
+    # Overlay live working-tree health on top of the stored snapshot so "did I
+    # forget to commit/push?" is answered against now.
+    if with_live_health:
+        lh = live_health(card["local_path"])
+        if lh.get("health_available"):
+            for k in _LIVE_HEALTH_FIELDS:
+                card[k] = lh[k]
+        card["health_available"] = lh.get("health_available", True)
+        card["health_probed_at"] = lh["health_probed_at"]
+    else:
+        card["health_available"] = True
+        card["health_probed_at"] = card.get("probed_at")
+    return card
+
+
 def summarize_focus5(
     database_path: Path, *, device_id: str | None = None,
     with_activity: bool = True, with_live_health: bool = True,
+    mode: str | None = None,
 ) -> dict[str, Any]:
     """Return the roster cards, off-roster warnings, and snapshot metadata.
 
@@ -732,11 +792,20 @@ def summarize_focus5(
     ``vscode_url`` open action, a ``newest_pr`` enrichment (None when the GitHub
     corpus can't supply it), and the last 3 local commits as ``recent_activity``.
 
-    Freshness split (Phase 3): roster *membership* comes from the persisted
-    snapshot, but each card's working-tree **health is re-probed live** here
-    (``with_live_health``) and stamped with ``health_probed_at`` — so commit/push
-    reminders reflect the tree right now, not the last sync. Off-roster warnings
-    stay cached (we never live-sweep the whole machine per request).
+    **Default view** (``mode=None``): roster *membership* comes from the persisted
+    ``focus5_roster`` snapshot (the headline ``recent_activity`` ranking).
+
+    **Transient view** (``mode`` given): the cached ``focus5_repo_signals`` are
+    re-ranked in memory under *mode* and rendered **without rewriting the
+    persisted roster** — this is how the **Dirty Five** view shows ``dirty_first``
+    over the same snapshot while ``/focus-5`` still defaults to ``recent_activity``.
+    Membership freshness then reflects the signals' ``probed_at`` (the last sync).
+
+    Freshness split: roster *membership* comes from the snapshot, but each card's
+    working-tree **health is re-probed live** here (``with_live_health``) and
+    stamped with ``health_probed_at`` — so commit/push reminders reflect the tree
+    right now, not the last sync. Off-roster warnings stay cached (we never
+    live-sweep the whole machine per request).
 
     Both ``with_activity`` and ``with_live_health`` are bounded to the top-5 and
     can be disabled for a pure DB read.
@@ -749,37 +818,40 @@ def summarize_focus5(
     }
     try:
         with db_connection(database_path) as conn:
-            roster_rows = conn.execute(
-                "SELECT r.position, r.rank_reason, r.ranking_mode, r.computed_at, s.* "
-                "FROM focus5_roster r JOIN focus5_repo_signals s "
-                "  ON s.device_id=r.device_id AND s.local_path=r.local_path "
-                "WHERE r.device_id=? ORDER BY r.position",
-                (dev,),
-            ).fetchall()
-
-            roster = []
-            for row in roster_rows:
-                card = {k: row[k] for k in row.keys()}
-                card["is_dirty"] = bool(card["is_dirty"])
-                card["has_upstream"] = bool(card["has_upstream"])
-                card["vscode_url"] = vscode_url(card["local_path"])
-                card["newest_pr"] = _newest_pr(conn, card.get("repo_full_name"))
-                card["recent_activity"] = (
-                    recent_activity(card["local_path"]) if with_activity else []
-                )
-                # Overlay live working-tree health on top of the stored snapshot
-                # so "did I forget to commit/push?" is answered against now.
-                if with_live_health:
-                    lh = live_health(card["local_path"])
-                    if lh.get("health_available"):
-                        for k in _LIVE_HEALTH_FIELDS:
-                            card[k] = lh[k]
-                    card["health_available"] = lh.get("health_available", True)
-                    card["health_probed_at"] = lh["health_probed_at"]
-                else:
-                    card["health_available"] = True
-                    card["health_probed_at"] = card.get("probed_at")
-                roster.append(card)
+            if mode is None:
+                # Default view: membership from the persisted recent_activity snapshot.
+                rows = conn.execute(
+                    "SELECT r.position, r.rank_reason, r.ranking_mode, r.computed_at, s.* "
+                    "FROM focus5_roster r JOIN focus5_repo_signals s "
+                    "  ON s.device_id=r.device_id AND s.local_path=r.local_path "
+                    "WHERE r.device_id=? ORDER BY r.position",
+                    (dev,),
+                ).fetchall()
+                bases = [{k: row[k] for k in row.keys()} for row in rows]
+            else:
+                # Transient view (Dirty Five): re-rank the cached signals in memory
+                # under *mode* — never writes focus5_roster, so the default snapshot
+                # stays put. Freshness = the signals' probed_at (the last sync).
+                from rebalance.ingest.config import get_focus5_hidden_repos
+                signals = [
+                    _row_to_signals(r) for r in conn.execute(
+                        "SELECT * FROM focus5_repo_signals WHERE device_id=?", (dev,)
+                    ).fetchall()
+                ]
+                now_ts = int(datetime.now(timezone.utc).timestamp())
+                ranked = rank_repos(signals, mode=mode, now_ts=now_ts,
+                                    hidden=get_focus5_hidden_repos())
+                computed_at = signals[0].probed_at if signals else None
+                bases = [
+                    {**asdict(r.signals), "position": r.position, "rank_reason": r.reason,
+                     "ranking_mode": mode, "computed_at": computed_at}
+                    for r in ranked
+                ]
+            roster = [
+                _build_roster_card(conn, b, with_activity=with_activity,
+                                   with_live_health=with_live_health)
+                for b in bases
+            ]
 
             roster_paths = {c["local_path"] for c in roster}
             # Hidden repos are suppressed from the off-roster attention strip too —
