@@ -34,25 +34,26 @@ def _mem_config(cfg: dict):
 
 
 class DualStoreSecretTests(unittest.TestCase):
-    def test_set_writes_both_keyring_and_config(self) -> None:
+    def test_set_writes_keyring_and_secret_store(self) -> None:
+        from rebalance.ingest import secret_store
         cfg: dict = {}
         ms, mg, md, mr, mw, kr = _mem_config(cfg)
         with ms, mg, md, mr, mw:
             config._set_secret_dual_store("k", "v")
-        self.assertEqual(kr.get("k"), "v")
-        self.assertEqual(cfg.get("k"), "v")
+        self.assertEqual(kr.get("k"), "v")                         # keyring (primary)
+        self.assertEqual(secret_store.read_secret_file("k"), "v")  # durable fallback
+        self.assertNotIn("k", cfg)                                 # Phase 2: NOT rbos.config
 
     def test_durable_fallback_when_keyring_unavailable(self) -> None:
         # keyring write fails → secret persists to the out-of-repo secret store
-        # (the preferred launchd-safe fallback) AND still to rbos.config
-        # (additive, until Phase 2 removes it), and resolves from the store.
+        # (Phase 2: rbos.config is NOT written) and resolves from the store.
         cfg: dict = {}
         with patch.object(config, "_keyring_set", return_value=False), \
              patch.object(config, "_keyring_get", return_value=None), \
              patch.object(config, "_read_config", side_effect=lambda: dict(cfg)), \
              patch.object(config, "_write_config", side_effect=lambda c: (cfg.clear(), cfg.update(c))):
             config._set_secret_dual_store("github_token", "ghp_x")
-            self.assertEqual(cfg.get("github_token"), "ghp_x")  # config still written (additive)
+            self.assertNotIn("github_token", cfg)  # Phase 2: config no longer written
             value, source = config._get_secret_dual_store("github_token")
         self.assertEqual(value, "ghp_x")
         self.assertEqual(source, "secret-store")
@@ -69,6 +70,7 @@ class DualStoreSecretTests(unittest.TestCase):
 
 class CallbackIsolationTests(unittest.TestCase):
     def test_set_github_token_survives_logging_failure(self) -> None:
+        from rebalance.ingest import secret_store
         cfg: dict = {}
         with patch.object(config, "_keyring_set", return_value=False), \
              patch.object(config, "_read_config", side_effect=lambda: dict(cfg)), \
@@ -76,7 +78,8 @@ class CallbackIsolationTests(unittest.TestCase):
              patch("rebalance.ingest.auth_log.log_github_token_set", side_effect=RuntimeError("boom")), \
              patch("rebalance.ingest.token_meta.record_token_set"):
             config.set_github_token("ghp_y")  # must not raise
-        self.assertEqual(cfg.get("github_token"), "ghp_y")
+        # keyring down + logging blew up, but the secret store still persisted it.
+        self.assertEqual(secret_store.read_secret_file("github_token"), "ghp_y")
 
     def test_google_oauth_set_survives_logging_failure(self) -> None:
         blob = '{"refresh_token": "rt"}'

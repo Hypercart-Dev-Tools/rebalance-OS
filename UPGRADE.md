@@ -27,11 +27,16 @@ file was missing or in the wrong place.
 
 | Credential | Primary | launchd fallback | Logged on (re)auth |
 |---|---|---|---|
-| GitHub PAT | keyring | `temp/rbos.config` | `auth_log` `token_set` + `token_meta` |
-| Sleuth sync source | keyring | `temp/rbos.config` | same |
+| GitHub PAT | keyring | secret store (`~/.config/rebalance-os/secrets/github_token`, `0600`) | `auth_log` `token_set` + `token_meta` |
+| Sleuth sync source | keyring | secret store (`~/.config/rebalance-os/secrets/sleuth_web_api`, `0600`) | same |
 | Google Calendar OAuth | keyring | pickle file (`~/.config/rebalance-os/google-calendar-oauth`) | same |
 | Gmail OAuth (oauth mode) | keyring | pickle file (`~/.config/rebalance-os/google-gmail-oauth`) | same |
-| Figma PAT (opt-in) | keyring | `temp/rbos.config` | — (not auth-logged; set manually) |
+| Figma PAT (opt-in) | keyring | secret store (`~/.config/rebalance-os/secrets/figma_token`, `0600`) | — (not auth-logged; set manually) |
+
+> **Phase 2 (2026-06-20):** GitHub / Sleuth / Figma fallbacks moved out of repo-local
+> `temp/rbos.config` into the permission-enforced out-of-repo **secret store**. On each
+> device run `rebalance config migrate-secrets` after `git pull`, then `rebalance doctor`.
+> Google OAuth still uses pickle fallback files (Phase 3 converts those to JSON).
 
 Each (re)authorization is recorded in `temp/logs/auth_activity.jsonl` (event
 stream) and `temp/logs/token_meta.json` (per-token sidecar with `first_added_at`,

@@ -46,10 +46,11 @@ def test_secret_store_preferred_over_config(seams):
     assert config_module._get_secret_dual_store("github_token") == ("LIVE_from_store", "secret-store")
 
 
-def test_config_still_written_additive(seams):
-    # Phase 1 is additive — rbos.config still receives the secret (Phase 2 removes it).
+def test_config_no_longer_receives_secret(seams):
+    # Phase 2: the secret goes to keyring + secret store, NOT rbos.config.
     config_module._set_secret_dual_store("github_token", "ghp_abc")
-    assert config_module._read_config().get("github_token") == "ghp_abc"
+    assert "github_token" not in config_module._read_config()
+    assert secret_store.read_secret_file("github_token") == "ghp_abc"
 
 
 def test_config_only_machine_still_resolves(seams):

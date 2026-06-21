@@ -115,9 +115,9 @@ def _check_token() -> Check:
     """Flag a token that background launchd jobs cannot reach.
 
     launchd has a stripped environment: gh-cli auth and env vars are unavailable.
-    A token in keyring or rbos.config is reachable; gh-cli-only is not.
-    set_github_token() now writes to both, so keyring-sourced tokens are fine
-    as long as a config copy also exists.
+    A token in keyring or a file fallback (the out-of-repo secret store, or
+    legacy rbos.config) is reachable; gh-cli-only is not. Phase 2 made the secret
+    store the durable launchd fallback (rbos.config is no longer written).
     """
     from rebalance.ingest.config import get_github_token_with_source, _read_config
 
@@ -136,17 +136,27 @@ def _check_token() -> Check:
             "token only reachable via gh-cli — launchd jobs will fail",
             "run `rebalance config set-github-token` to persist it",
         )
-    # keyring is preferred for interactive reads; confirm config copy also exists
-    # so launchd can fall back if keychain is unavailable in its session
-    config_has_token = bool(_read_config().get("github_token"))
-    if source == "keyring" and not config_has_token:
+    # keyring is the interactive primary; launchd (stripped env, maybe no
+    # keychain) needs a file fallback. Phase 2: the out-of-repo secret store is
+    # that fallback (rbos.config is legacy and no longer written).
+    from rebalance.ingest import secret_store
+    in_secret_store = secret_store.read_secret_file("github_token") is not None
+    in_config = bool(_read_config().get("github_token"))
+    if source == "keyring" and not (in_secret_store or in_config):
         return Check(
             "github token",
             WARN,
             "token in keyring only — launchd session may not reach keychain",
-            "run `rebalance config set-github-token` to write the config fallback",
+            "run `rebalance config set-github-token` to write the secret-store fallback",
         )
-    detail = f"stored in {source} + config (reachable by launchd)"
+    locations = []
+    if source == "keyring":
+        locations.append("keyring")
+    if in_secret_store:
+        locations.append("secret store")
+    if in_config:
+        locations.append("config (legacy)")
+    detail = f"stored in {' + '.join(locations) or source} (reachable by launchd)"
     # Sidecar lifetime: how long has THIS token value been in use? Surfaces a
     # short-lived PAT (dies every few days) vs a durable one.
     try:
@@ -207,6 +217,24 @@ def _check_secret_permissions() -> Check:
     if root.is_dir():
         candidates.extend(p for p in root.iterdir() if p.is_file())
     return _secret_permission_check(candidates)
+
+
+def _check_repo_local_secrets() -> Check:
+    """Flag any live secret still persisted in repo-local rbos.config (Phase 2)."""
+    from rebalance.ingest import config as _config
+
+    try:
+        present = _config.repo_local_secret_keys_present()
+    except Exception:  # noqa: BLE001 — doctor must never crash
+        return Check("repo-local secrets", OK, "could not read rbos.config")
+    if present:
+        return Check(
+            "repo-local secrets",
+            WARN,
+            f"{len(present)} secret key(s) still in temp/rbos.config: {', '.join(present)}",
+            "run `rebalance config migrate-secrets` to lift them into the secret store",
+        )
+    return Check("repo-local secrets", OK, "temp/rbos.config holds no live secrets")
 
 
 def _check_vault() -> Check:
@@ -766,6 +794,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     report.checks.extend(db_checks)
     report.checks.append(_check_token())
     report.checks.append(_check_secret_permissions())
+    report.checks.append(_check_repo_local_secrets())
     report.checks.append(_check_vault())
     report.checks.append(_check_unpushed_work())
 

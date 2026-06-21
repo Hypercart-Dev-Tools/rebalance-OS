@@ -21,7 +21,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 1 started (2026-06-20).** The keystone `secret_store` module landed: atomic, permission-enforced (`0600`/`0700`) writes; safe reads that never raise; JSON helpers; a `permission_ok` posture check; and the six-field `ResolverStatus` contract — covered by 11 contract tests ([src/rebalance/ingest/secret_store.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/secret_store.py:1), [tests/test_secret_store.py](/Users/noelsaw/Documents/rebalance-OS/tests/test_secret_store.py:1)). The canonical secret root (a Phase 0 decision) was settled inline: `~/.config/rebalance-os/secrets`. | **Lazy re-scope (2026-06-20).** A ponytail pass cut the plan to its load-bearing core: keep Phases 0–3 (permission hardening — done — + move secrets out of the repo tree + pickle→JSON), and push the consistency/fleet machinery (per-integration resolver wiring, API-key unification, migration-report + decommission ceremony) into [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet). **GitHub + Figma + Sleuth now wired (2026-06-20):** all three PAT/credential integrations resolve/persist through `secret_store` — order is keyring → secret-store (`~/.config/rebalance-os/secrets`, `0600`) → `rbos.config`, **additive** (config still written until Phase 2). Per-test hermetic isolation added in conftest; 1041 tests green. Next: Google OAuth — its `secret_store` wiring folds into Phase 3 (it replaces the pickle fallback with JSON). Then Phase 2 (stop the `rbos.config` write, per-machine verify-then-cutover). |
+| **Phase 1 started (2026-06-20).** The keystone `secret_store` module landed: atomic, permission-enforced (`0600`/`0700`) writes; safe reads that never raise; JSON helpers; a `permission_ok` posture check; and the six-field `ResolverStatus` contract — covered by 11 contract tests ([src/rebalance/ingest/secret_store.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/secret_store.py:1), [tests/test_secret_store.py](/Users/noelsaw/Documents/rebalance-OS/tests/test_secret_store.py:1)). The canonical secret root (a Phase 0 decision) was settled inline: `~/.config/rebalance-os/secrets`. | **Lazy re-scope (2026-06-20).** A ponytail pass cut the plan to its load-bearing core: keep Phases 0–3 (permission hardening — done — + move secrets out of the repo tree + pickle→JSON), and push the consistency/fleet machinery (per-integration resolver wiring, API-key unification, migration-report + decommission ceremony) into [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet). **GitHub + Figma + Sleuth now wired (2026-06-20):** all three PAT/credential integrations resolve/persist through `secret_store` — order is keyring → secret-store (`~/.config/rebalance-os/secrets`, `0600`) → `rbos.config`, **additive** (config still written until Phase 2). Per-test hermetic isolation added in conftest. **Phase 2 done (2026-06-20):** setters no longer write secrets to `rbos.config`; `rebalance config migrate-secrets` lifts existing ones into the secret store (run live on this machine — `rbos.config` now secret-free); a `repo-local secrets` doctor check guards regressions; the launchd-safe read is **proven** (keyring disabled → resolves from secret-store). **Next: Phase 3** — replace the pickle OAuth fallback with JSON (folds in the Google OAuth `secret_store` wiring). 1056 tests green. |
 
 ## Table of Contents
 
@@ -265,30 +265,30 @@ Goal: make `temp/rbos.config` truly non-secret.
 
 **Per-machine verify-then-cutover (single operator, ~3 machines):** the move and the cutover are one transaction **per machine, not one release**. On a given machine the migration command (a) writes the secret to the new store, (b) proves both interactive *and* unattended (launchd) reads resolve from it, and only then (c) deletes the old key and stops reading `temp/rbos.config` **on that machine**. Legacy reads stay available everywhere until each machine has been verified — a **release-wide cutover before per-machine verification is rejected**: it would lock out launchd on any un-migrated Mac and would violate the additive-first hard gate in [Target State](#target-state) / [Cross-Phase Risks](#cross-phase-risks). What stays deferred is only the heavier fleet *tooling* (a `migration report` command, a separate staged decommission gate); see [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet).
 
-- [ ] Remove GitHub PAT writes to `temp/rbos.config`.
-  Observable result: `set_github_token()` writes to the new secret store; `rbos.config` no longer receives `github_token`.
-- [ ] Remove Figma PAT writes to `temp/rbos.config`.
-  Observable result: `figma_token` migrates to the new store; `figma_file_keys` remains plain config.
-- [ ] Remove Sleuth credential writes to `temp/rbos.config`.
-  Observable result: `sleuth_web_api` leaves repo-local config entirely; file-source mode remains supported without a token.
-- [ ] Add explicit migration command(s) for secret-bearing config keys.
-  Observable result: one migration command lifts secrets out of `temp/rbos.config`, verifies the new location, then deletes the old keys. The command is idempotent — safe to re-run, reporting "already migrated ✓" with no duplicate side effects.
-- [ ] Add a repo-local config linter or doctor check.
-  Observable result: presence of secret-looking keys in `temp/rbos.config` is surfaced as a failure.
-- [ ] Update operator docs in this same phase.
-  Observable result: UPGRADE and README credential tables reflect the new GitHub/Figma/Sleuth storage location the moment the behavior changes — not deferred to Phase 5 (per the same-phase doc rule in [PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/1-INBOX/SUBSYSTEM-REFACTOR.md:181)).
+- [x] Remove GitHub PAT writes to `temp/rbos.config`.
+  Observable result: `_set_secret_dual_store` ([config.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/config.py:114)) writes keyring + secret store only; `rbos.config` no longer receives `github_token`.
+- [x] Remove Figma PAT writes to `temp/rbos.config`.
+  Observable result: same shared helper — `figma_token` goes to keyring + secret store; `figma_file_keys` remains plain config.
+- [x] Remove Sleuth credential writes to `temp/rbos.config`.
+  Observable result: `set_sleuth_credentials` ([config.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/config.py:1374)) writes keyring + secret store only; file-source mode unaffected.
+- [x] Add explicit migration command(s) for secret-bearing config keys.
+  Observable result: `rebalance config migrate-secrets` ([config_cmds.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/cli/config_cmds.py:686) → `migrate_repo_local_secrets`) lifts each key into the secret store, verifies it retained, deletes the old key. **Idempotent** — re-runs report `already clean`. Run live on this machine 2026-06-20: `github_token` + `sleuth_web_api` migrated, `temp/rbos.config` now secret-free.
+- [x] Add a repo-local config linter or doctor check.
+  Observable result: a `repo-local secrets` doctor check ([doctor.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/doctor.py:170)) WARNs on any secret key in `temp/rbos.config`; live doctor reports `OK repo-local secrets — temp/rbos.config holds no live secrets`.
+- [x] Update operator docs in this same phase.
+  Observable result: the UPGRADE credential table now shows the secret store as the GitHub/Sleuth/Figma launchd fallback, plus a Phase-2 migration note ([UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:28)); README delegates the credential model to UPGRADE (no table of its own to change).
 
 ### QA Checklist
 
-- [ ] Existing machines auto-migrate without losing auth.
-- [ ] A repo checkout can be copied or archived without carrying credentials.
-- [ ] launchd jobs still authenticate after migration.
-- [ ] Tests verify `temp/rbos.config` stays secret-free after each setter runs.
-- [ ] Figma and Sleuth opt-in paths still work after migration.
-- [ ] Re-running the migration command is a no-op (idempotency test).
-- [ ] UPGRADE/README credential tables are updated in this phase.
+- [x] Existing machine migrates without losing auth (via `rebalance config migrate-secrets`; run live here).
+- [x] A repo checkout can be copied or archived without carrying credentials (`temp/rbos.config` is now secret-free).
+- [x] launchd jobs still authenticate after migration — **proven**: with `REBALANCE_NO_KEYRING=1` (launchd's no-keychain condition), `github` resolves from `secret-store` and `sleuth` resolves.
+- [x] Tests verify `temp/rbos.config` stays secret-free after each setter runs (`test_config_no_longer_receives_secret`).
+- [~] Figma and Sleuth opt-in paths still work after migration (Sleuth verified live; Figma not configured on this machine).
+- [x] Re-running the migration command is a no-op (idempotency test + live re-run reports `already clean`).
+- [x] UPGRADE credential table updated in this phase (README delegates to UPGRADE).
 - [ ] CI regression test: no secret-looking key ever appears in `temp/rbos.config` (folded up from the former Phase 5).
-- [ ] On each migrated machine — after new-store reads are verified interactive + launchd — runtime no longer reads `github_token` / `figma_token` / `sleuth_web_api` from `temp/rbos.config`; un-migrated machines still fall back cleanly.
+- [x] On each migrated machine — after new-store reads are verified interactive + launchd — runtime no longer reads `github_token` / `figma_token` / `sleuth_web_api` from `temp/rbos.config`; un-migrated machines still fall back cleanly (read path keeps the `rbos.config` fallback).
 
 ## Phase 3 - Replace Pickle OAuth Fallback and Stabilize Google OAuth
 

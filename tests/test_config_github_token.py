@@ -107,15 +107,13 @@ class GitHubTokenKeyringTests(unittest.TestCase):
         self.assertEqual(token, "ghp_fromkeyring")
         self.assertEqual(source, "keyring")
 
-    def test_set_token_writes_to_keyring_and_keeps_config_fallback(self) -> None:
-        """set_github_token writes to keyring AND keeps the rbos.config copy.
-
-        The config copy is the deliberate launchd safety net: launchd jobs run
-        with a stripped environment and may not reach the user keychain, so they
-        fall back to rbos.config (see set_github_token's docstring and
-        doctor._check_token, which warns when the token is keyring-only).
+    def test_set_token_writes_to_keyring_and_secret_store_not_config(self) -> None:
+        """Phase 2: set_github_token writes keyring + secret store; rbos.config is
+        never written. A pre-existing config token is left untouched by `set`
+        (it's removed by `migrate_repo_local_secrets`, not by setters).
         """
-        # Pre-seed rbos.config with a legacy token to prove it's overwritten.
+        from rebalance.ingest import secret_store
+        # Pre-seed rbos.config with a legacy token; `set` must NOT touch it.
         cfg_path = config_module.CONFIG_PATH
         cfg_path.write_text('{"github_token": "ghp_legacy"}', encoding="utf-8")
 
@@ -128,11 +126,11 @@ class GitHubTokenKeyringTests(unittest.TestCase):
              patch.object(config_module, "_keyring_get", return_value=None):
             set_github_token("ghp_new")
 
-        self.assertEqual(stored.get("github_token"), "ghp_new")
-        # Config fallback retained, overwritten with the new token.
+        self.assertEqual(stored.get("github_token"), "ghp_new")              # keyring
+        self.assertEqual(secret_store.read_secret_file("github_token"), "ghp_new")  # secret store
+        # rbos.config is not written by `set`; the legacy value is left for migration.
         import json as _json
-        saved = _json.loads(cfg_path.read_text())
-        self.assertEqual(saved.get("github_token"), "ghp_new")
+        self.assertEqual(_json.loads(cfg_path.read_text()).get("github_token"), "ghp_legacy")
 
     def test_auto_migration_moves_token_from_config_to_keyring(self) -> None:
         """On first read, a token in rbos.config is silently migrated to keyring."""
