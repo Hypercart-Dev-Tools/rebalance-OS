@@ -241,15 +241,16 @@ Goal: create the single runtime contract before moving data.
 - [x] Enforce file and directory mode on every write (runtime write paths).
   Observable result: storage writers harden dirs to `0700` and files to `0600`.
   Done: `secret_store` fallback writes (GitHub/Figma/Sleuth) land at `0600`/`0700`; `_write_config` hardens `temp/rbos.config` ([config.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/config.py:233)); `_save_user_config` hardens `~/.config/rebalance-os/` to `0700` and `config.json` to `0600` ([paths.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/paths.py:111)); the OAuth pickle refresh-write is mode-guarded as an interim until Phase 3 ([oauth_common.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/oauth_common.py:78)). All real files corrected from `0644`/`0755` on 2026-06-20 (audit finding #2 closed). Remaining: the setup-script initial pickle write, folded into Phase 3.
-- [ ] Upgrade doctor to check posture, not just presence.
+- [~] Upgrade doctor to check posture, not just presence.
   Observable result: doctor reports source, path, permissions, deprecated-store usage, and migration-needed state — and distinguishes `optional+unconfigured` (clean skip) from `configured+broken/insecure` (warn/fail).
+  Progress: a `secret permissions` check landed ([doctor.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/doctor.py:164)) — it WARNs on any secret file/dir broader than `0600`/`0700` and skips absent (unconfigured) paths cleanly; live doctor now reports `OK secret permissions — 5 ... at 0600/0700`. Source-per-integration + deprecated-store/migration-needed reporting still to come (the per-integration `source` labelling ties to the deferred resolver wiring).
 - [ ] Add contract tests for storage invariants.
   Observable result: tests fail if a new write path stores secrets in repo-local config or writes insecure modes.
 
 ### QA Checklist
 
 - [ ] New tests cover every storage primitive directly.
-- [ ] Doctor surfaces an insecure mode as WARN or FAIL, not OK.
+- [x] Doctor surfaces an insecure mode as WARN or FAIL, not OK (the `secret permissions` check; tests in [tests/test_doctor_secret_permissions.py](/Users/noelsaw/Documents/rebalance-OS/tests/test_doctor_secret_permissions.py:1)).
 - [ ] Launchd-safe fallback still resolves when keyring is unavailable.
 - [ ] No runtime code outside the storage module writes secret-bearing files directly.
 - [ ] CI includes a contract test that forbids secret keys in `temp/rbos.config`.

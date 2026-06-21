@@ -161,6 +161,54 @@ def _check_token() -> Check:
     return Check("github token", OK, detail)
 
 
+def _secret_permission_check(paths_to_check: list[Path]) -> Check:
+    """Verdict for a set of secret paths: WARN if any is broader than 0600/0700.
+
+    Pure over its input so it is hermetically testable. Posture only — a broad
+    mode is an exposure, not a broken credential, so this WARNs (it does not FAIL
+    and break unattended doctor gating).
+    """
+    import stat as _stat
+
+    from rebalance.ingest import secret_store
+
+    checked = [p for p in paths_to_check if p.exists()]
+    insecure = [p for p in checked if not secret_store.permission_ok(p)]
+    if insecure:
+        labels = ", ".join(
+            f"{p.name}={_stat.S_IMODE(p.stat().st_mode):04o}" for p in insecure
+        )
+        return Check(
+            "secret permissions",
+            WARN,
+            f"{len(insecure)} of {len(checked)} secret path(s) broader than 0600/0700: {labels}",
+            "chmod 600 files / 700 dirs; rebalance writers self-correct on the next write",
+        )
+    return Check(
+        "secret permissions", OK, f"{len(checked)} secret file(s)/dir(s) at 0600/0700"
+    )
+
+
+def _check_secret_permissions() -> Check:
+    """Posture check over every known secret file/dir (Phase 1 hardening)."""
+    from rebalance import paths
+    from rebalance.ingest import config as _config
+    from rebalance.ingest import secret_store
+
+    candidates: list[Path] = [
+        _config._resolved_config_path(),
+        paths.USER_CONFIG_DIR,
+        paths.USER_CONFIG_FILE,
+        paths.resolve_oauth_token_path("calendar"),
+        paths.resolve_oauth_token_path("gmail"),
+        secret_store.secret_store_root(),
+    ]
+    root = secret_store.secret_store_root()
+    if root.is_dir():
+        candidates.extend(p for p in root.iterdir() if p.is_file())
+    return _secret_permission_check(candidates)
+
+
 def _check_vault() -> Check:
     from rebalance.ingest.config import get_vault_path
 
@@ -717,6 +765,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     db_checks, db_path = _check_database(database_path)
     report.checks.extend(db_checks)
     report.checks.append(_check_token())
+    report.checks.append(_check_secret_permissions())
     report.checks.append(_check_vault())
     report.checks.append(_check_unpushed_work())
 
