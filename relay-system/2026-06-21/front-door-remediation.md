@@ -4,7 +4,7 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 1 / 3
 
@@ -54,5 +54,20 @@ The operator just said "take your turn on this file." Everything you need is **i
 **Verification:** N/A — non-executable planning doc.
 **Open questions:** Is the Phase 3 Calendar `mcp`-consumption mode right to leave as a spec-or-build decision, or should the plan commit to one now?
 **Commit:** `858de7d` (artifact pre-committed; this turn requests review)
+
+### Round 1 · Reviewer · Codex · 2026-06-21 13:47 PDT
+**Verdict:** Changes requested
+**Basis:** N/A — non-executable artifact (planning doc; reviewed textually)
+**Findings & proposals:** (Reviewer proposes; does NOT edit the artifact)
+- [Blocker] Phase 3 + Definition of Done — the plan treats Calendar host-connector consumption as both a current doc-path ("README presents two clearly-labeled consumption paths for both Calendar and Gmail") and a maybe-deferred build. That is not reality-safe: if `calendar_ingest_method = mcp` and `ingest_calendar_events` do not exist yet, docs cannot honestly present Calendar host-connector as an available path. Proposed fix: commit Phase 3 now to one branch. Either build Calendar `mcp` mode in-scope, or rewrite every doc-facing/DoD mention so Gmail is "available now" while Calendar is explicitly "planned, not yet supported" until the mode/tool ship, with a revisit trigger.
+- [Should] Phase 3 "Promote Gmail `mcp` mode" / "Add a consumption-path decision callout" — the connector route still depends on a human-gated precondition: the host must actually ship Google connectors and the user must already have connected/consented their Google account there. As written, this can read like any agent user can skip local OAuth. Proposed fix: add that precondition anywhere the connector path is recommended, and make it a QA gate.
+- [Should] Phase 3 "Add a consumption-path decision callout to README Steps 4 and 5" — "links the trade-off" is weaker than the DoD requirement that the cloud-vs-local warning be stated wherever the connector path is offered. A reader can miss the warning if it only lives behind a link. Proposed fix: require one inline sentence in each callout: connector path routes Google data through the host cloud; local OAuth + SQLite remains the local-only path. Keep the link as secondary detail.
+- [Should] Definition of Done / Phase 3 QA — the current gates are partly restating the deliverable instead of proving the behavior. Proposed fix: add a concrete doc-walk gate such as "A reviewer starting from README can identify, for Gmail and Calendar separately, whether the host-connector path is available now, what host preconditions apply, and whether data stays local, without opening code."
+- [Pass] Completeness: every audit bump named in the 2026-06-21 front-door audit has an owning phase: README drift in Phase 1, MLX/Apple-Silicon gate and first-run egress in Phase 2, Calendar/Gmail OAuth wall in Phase 3, root-doc clutter in Phase 4.
+- [Pass] No contradiction found with the shipped auth-storage model in Phase 1: the plan preserves keyring + out-of-repo JSON secret store, removes the stale required `migrate-to-keyring` step, and does not reintroduce pickle as a live path.
+- [Pass] Scope honesty is mostly sound: the plan explicitly keeps GitHub PAT, Google account/OAuth consent, Apple-Silicon hardware, and an Obsidian vault out of "doc fix" scope instead of pretending they are agent-solvable.
+**Answers:** (the Producer's open question)
+- Is the Phase 3 Calendar `mcp`-consumption mode right to leave as a spec-or-build decision, or commit now? → Commit now. For this remediation plan, the safer choice is "spec-and-defer" unless you are explicitly pulling implementation into scope; do not leave it open, and do not document Calendar host-connector consumption as a current path until the mode/tool exist.
+**Commit:** none (comments only)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
