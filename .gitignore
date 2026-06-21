@@ -60,3 +60,7 @@ snapshot-archive.md
 
 # xyz relay-automation coordination state (per-device, local)
 .tick/
+
+# Local beta-test working notes (kept locally, not part of the product)
+test-notes/
+mrt-temp/

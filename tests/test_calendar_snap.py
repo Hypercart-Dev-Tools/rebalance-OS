@@ -1,8 +1,8 @@
-"""Tests for calendar edge-snapping: overlap detection, patch calls, and CLI."""
+"""Tests for calendar edge-snapping: overlap detection (read-only) and gapless default."""
 
 import unittest
 from datetime import date
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock
 
 from rebalance.ingest.calendar_snap import (
     OverlapPair,
@@ -10,7 +10,6 @@ from rebalance.ingest.calendar_snap import (
     SnapDayResult,
     _detect_overlaps,
     _is_allday_event,
-    _patch_event_end,
     snap_day_edges,
 )
 
@@ -88,8 +87,9 @@ class DetectOverlapsTests(unittest.TestCase):
         self.assertEqual(pairs, [])
         self.assertEqual(skipped, [])
 
-    def test_two_event_overlap(self) -> None:
-        """Classic case: Event 1 ends 3 min into Event 2."""
+    def test_two_event_overlap_gapless_default(self) -> None:
+        """Classic case: Event 1 ends 3 min into Event 2. Default is gapless —
+        Event 1's suggested end equals Event 2's start (no time lost)."""
         events = [
             _make_event("1", "Standup", "2026-04-15T09:00:00-07:00", "2026-04-15T10:03:00-07:00"),
             _make_event("2", "Planning", "2026-04-15T10:00:00-07:00", "2026-04-15T11:00:00-07:00"),
@@ -98,9 +98,19 @@ class DetectOverlapsTests(unittest.TestCase):
         self.assertEqual(len(pairs), 1)
         self.assertEqual(pairs[0].event1_id, "1")
         self.assertEqual(pairs[0].event2_id, "2")
-        self.assertEqual(pairs[0].event1_new_end, "2026-04-15T09:59:00-07:00")
+        self.assertEqual(pairs[0].event1_new_end, "2026-04-15T10:00:00-07:00")
         self.assertEqual(pairs[0].overlap_minutes, 3)
         self.assertEqual(skipped, [])
+
+    def test_gap_minutes_leaves_gap(self) -> None:
+        """A positive gap_minutes trims to that many minutes before Event 2's
+        start (the time-losing legacy behavior, now opt-in only)."""
+        events = [
+            _make_event("1", "Standup", "2026-04-15T09:00:00-07:00", "2026-04-15T10:03:00-07:00"),
+            _make_event("2", "Planning", "2026-04-15T10:00:00-07:00", "2026-04-15T11:00:00-07:00"),
+        ]
+        pairs, _, _ = _detect_overlaps(events, gap_minutes=1)
+        self.assertEqual(pairs[0].event1_new_end, "2026-04-15T09:59:00-07:00")
 
     def test_three_event_cluster_skipped(self) -> None:
         """3+ overlapping events should be skipped entirely."""
@@ -176,50 +186,7 @@ class DetectOverlapsTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-# _patch_event_end
-# ---------------------------------------------------------------------------
-
-
-class PatchEventEndTests(unittest.TestCase):
-    def test_patch_called_with_correct_args(self) -> None:
-        mock_service = MagicMock()
-        mock_service.events.return_value.patch.return_value.execute.return_value = {"id": "evt-1"}
-
-        _patch_event_end(
-            mock_service,
-            "cal@example.com",
-            "evt-1",
-            "2026-04-15T09:59:00-07:00",
-        )
-
-        mock_service.events.return_value.patch.assert_called_once_with(
-            calendarId="cal@example.com",
-            eventId="evt-1",
-            body={"end": {"dateTime": "2026-04-15T09:59:00-07:00"}},
-            sendUpdates="none",
-        )
-
-    def test_patch_preserves_timezone(self) -> None:
-        mock_service = MagicMock()
-        mock_service.events.return_value.patch.return_value.execute.return_value = {"id": "evt-1"}
-
-        _patch_event_end(
-            mock_service,
-            "cal@example.com",
-            "evt-1",
-            "2026-04-15T09:59:00-07:00",
-            original_end_timezone="America/Los_Angeles",
-        )
-
-        patch_kwargs = mock_service.events.return_value.patch.call_args.kwargs
-        self.assertEqual(
-            patch_kwargs["body"]["end"]["timeZone"],
-            "America/Los_Angeles",
-        )
-
-
-# ---------------------------------------------------------------------------
-# snap_day_edges (integration with mocked API)
+# snap_day_edges (integration with mocked API) — read-only, never patches
 # ---------------------------------------------------------------------------
 
 
@@ -232,7 +199,8 @@ class SnapDayEdgesTests(unittest.TestCase):
         mock_service.events.return_value.patch.return_value.execute.return_value = {}
         return mock_service
 
-    def test_dry_run_does_not_patch(self) -> None:
+    def test_detects_overlap_without_patching(self) -> None:
+        """Overlaps are detected and reported; the calendar is never patched."""
         events = [
             _make_event("1", "A", "2026-04-15T09:00:00-07:00", "2026-04-15T10:05:00-07:00"),
             _make_event("2", "B", "2026-04-15T10:00:00-07:00", "2026-04-15T11:00:00-07:00"),
@@ -240,25 +208,13 @@ class SnapDayEdgesTests(unittest.TestCase):
         mock_service = self._mock_service_with_events(events)
 
         result = snap_day_edges(
-            mock_service, "primary", date(2026, 4, 15), "America/Los_Angeles", apply=False
+            mock_service, "primary", date(2026, 4, 15), "America/Los_Angeles"
         )
 
         self.assertEqual(len(result.snapped), 1)
+        # Gapless suggested boundary (no time lost), and NO write-back.
+        self.assertEqual(result.snapped[0].event1_new_end, "2026-04-15T10:00:00-07:00")
         mock_service.events.return_value.patch.assert_not_called()
-
-    def test_apply_calls_patch(self) -> None:
-        events = [
-            _make_event("1", "A", "2026-04-15T09:00:00-07:00", "2026-04-15T10:05:00-07:00"),
-            _make_event("2", "B", "2026-04-15T10:00:00-07:00", "2026-04-15T11:00:00-07:00"),
-        ]
-        mock_service = self._mock_service_with_events(events)
-
-        result = snap_day_edges(
-            mock_service, "primary", date(2026, 4, 15), "America/Los_Angeles", apply=True
-        )
-
-        self.assertEqual(len(result.snapped), 1)
-        mock_service.events.return_value.patch.assert_called_once()
 
     def test_no_overlaps_clean_day(self) -> None:
         events = [
@@ -274,6 +230,7 @@ class SnapDayEdgesTests(unittest.TestCase):
         self.assertEqual(len(result.snapped), 0)
         self.assertEqual(len(result.skipped_clusters), 0)
         self.assertEqual(result.total_events_examined, 2)
+        mock_service.events.return_value.patch.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

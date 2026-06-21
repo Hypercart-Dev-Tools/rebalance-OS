@@ -80,6 +80,7 @@ DEFAULT_CONFIG: dict[str, Any] = {
     "timezone": "",  # empty → resolved to device local timezone at load time
     "projects": [],
     "hours_format": "decimal",
+    "snap_gap_minutes": 0,  # 0 = gapless/accurate; any positive value loses time
 }
 
 
@@ -107,6 +108,10 @@ class CalendarConfig:
     projects: list[CalendarProject]
     hours_format: str  # "decimal" (default) or "hm"
     team_calendars: list[TeamCalendarEntry] = field(default_factory=list)
+    # Minutes of gap to leave when snapping an overlapping event's edge.
+    # MUST be 0 for accurate time tracking — any positive value discards that
+    # many minutes of real time on every resolved overlap (see calendar_snap).
+    snap_gap_minutes: int = 0
 
     @property
     def exclude_keywords(self) -> list[str]:
@@ -207,6 +212,7 @@ class CalendarConfig:
             timezone=data.get("timezone") or local_tz().key,
             projects=cls._load_projects(data.get("projects", DEFAULT_CONFIG["projects"])),
             hours_format=hours_fmt,
+            snap_gap_minutes=max(0, int(data.get("snap_gap_minutes", 0) or 0)),
         )
 
     def save(self, config_path: Path | None = None) -> None:
@@ -226,6 +232,7 @@ class CalendarConfig:
                     "aggregator_skip_words": self.aggregator_skip_words,
                     "timezone": self.timezone,
                     "hours_format": self.hours_format,
+                    "snap_gap_minutes": self.snap_gap_minutes,
                     "projects": [
                         {
                             "name": project.name,
