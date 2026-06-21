@@ -231,9 +231,19 @@ def _read_config() -> dict[str, Any]:
 
 
 def _write_config(config: dict[str, Any]) -> None:
-    """Write config to disk with .gitignore safety."""
+    """Write config to disk and harden its mode to ``0600``.
+
+    rbos.config still holds launchd-fallback secrets additively until Phase 2
+    moves them into the secret store, so it is owner-only on disk (the audit
+    found it at 0644). launchd jobs run as the owner, so 0600 stays readable.
+    See PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md.
+    """
+    from . import secret_store  # noqa: PLC0415
+
     _ensure_config_dir()
-    _resolved_config_path().write_text(json.dumps(config, indent=2), encoding="utf-8")
+    path = _resolved_config_path()
+    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    secret_store.harden_mode(path, 0o600)  # best-effort; brief 0644 window is acceptable on a single-user box
 
 
 def normalize_github_repo_name(repo: str) -> str:

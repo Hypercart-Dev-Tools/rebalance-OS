@@ -106,3 +106,20 @@ def test_sleuth_clear_removes_from_secret_store(seams, monkeypatch):
     )
     config_module.clear_sleuth_credentials()
     assert secret_store.read_secret_json("sleuth_web_api") is None
+
+
+# --- rbos.config permission hardening (still secret-bearing until Phase 2) ---
+
+def test_write_config_hardens_to_0600(seams):
+    config_module._write_config({"github_token": "ghp_x", "figma_file_keys": ["a"]})
+    cfg = seams / "rbos.config"
+    assert stat.S_IMODE(cfg.stat().st_mode) == 0o600
+    assert config_module._read_config()["github_token"] == "ghp_x"
+
+
+def test_write_config_corrects_preexisting_broad_mode(seams):
+    cfg = seams / "rbos.config"
+    cfg.write_text("{}")
+    cfg.chmod(0o644)  # the audit's observed posture
+    config_module._write_config({"x": 1})
+    assert stat.S_IMODE(cfg.stat().st_mode) == 0o600

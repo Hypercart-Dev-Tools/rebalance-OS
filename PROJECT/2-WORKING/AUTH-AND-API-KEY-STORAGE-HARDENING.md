@@ -238,8 +238,9 @@ Goal: create the single runtime contract before moving data.
 - [ ] Route auth-activity and token-metadata writes through the storage module.
   Observable result: every secret write still appends to `temp/logs/auth_activity.jsonl` and updates `temp/logs/token_meta.json` (fingerprint-only, `first_added_at` preserved), so the observability shipped in [UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:36) survives the storage migration.
 - [→] Per-integration secret descriptors and six-field resolver-status wiring → **deferred** (see [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet)). The `ResolverStatus` type already exists; wiring all five integrations to emit it is consistency machinery, not a durability fix.
-- [ ] Enforce file and directory mode on every write.
+- [~] Enforce file and directory mode on every write.
   Observable result: storage writers call one helper that creates dirs with `0700` and files with `0600`.
+  Progress: `secret_store` fallback writes (GitHub/Figma/Sleuth) land at `0600`/`0700`, and `_write_config` now hardens `temp/rbos.config` to `0600` via `secret_store.harden_mode` ([config.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/config.py:233)) — the real file was corrected from `0644` on 2026-06-20. Still to harden: `~/.config/rebalance-os/config.json` and the OAuth token files.
 - [ ] Upgrade doctor to check posture, not just presence.
   Observable result: doctor reports source, path, permissions, deprecated-store usage, and migration-needed state — and distinguishes `optional+unconfigured` (clean skip) from `configured+broken/insecure` (warn/fail).
 - [ ] Add contract tests for storage invariants.
