@@ -64,3 +64,45 @@ def test_clear_removes_from_store_and_config(seams):
     assert secret_store.read_secret_file("github_token") is None
     assert "github_token" not in config_module._read_config()
     assert config_module._get_secret_dual_store("github_token") == (None, None)
+
+
+# --- Sleuth (JSON-blob credential, separate from the dual-store helpers) -----
+
+_SLEUTH_CREDS = {
+    "SLEUTH_WEB_API_BASE_URL": "https://sleuth.example",
+    "SLEUTH_WEB_API_TOKEN": "tok_abc",
+    "SLEUTH_WORKSPACE_NAME": "neochrome",
+}
+
+
+def test_sleuth_set_writes_creds_to_secret_store_at_0600(seams, monkeypatch):
+    # Logging is best-effort in set_sleuth_credentials; stub it for a hermetic test.
+    monkeypatch.setattr("rebalance.ingest.auth_log.log_sleuth_credentials_set", lambda **kw: None)
+    monkeypatch.setattr("rebalance.ingest.token_meta.record_token_set", lambda *a, **kw: None)
+
+    config_module.set_sleuth_credentials(
+        _SLEUTH_CREDS["SLEUTH_WEB_API_BASE_URL"],
+        _SLEUTH_CREDS["SLEUTH_WEB_API_TOKEN"],
+        _SLEUTH_CREDS["SLEUTH_WORKSPACE_NAME"],
+    )
+    assert secret_store.read_secret_json("sleuth_web_api") == _SLEUTH_CREDS
+    f = seams / "secrets" / "sleuth_web_api"
+    assert stat.S_IMODE(f.stat().st_mode) == 0o600
+
+
+def test_sleuth_resolves_from_secret_store_when_keyring_down(seams):
+    secret_store.write_secret_json("sleuth_web_api", _SLEUTH_CREDS)
+    creds = config_module.get_sleuth_credentials()
+    assert creds == _SLEUTH_CREDS
+
+
+def test_sleuth_clear_removes_from_secret_store(seams, monkeypatch):
+    monkeypatch.setattr("rebalance.ingest.auth_log.log_sleuth_credentials_set", lambda **kw: None)
+    monkeypatch.setattr("rebalance.ingest.token_meta.record_token_set", lambda *a, **kw: None)
+    config_module.set_sleuth_credentials(
+        _SLEUTH_CREDS["SLEUTH_WEB_API_BASE_URL"],
+        _SLEUTH_CREDS["SLEUTH_WEB_API_TOKEN"],
+        _SLEUTH_CREDS["SLEUTH_WORKSPACE_NAME"],
+    )
+    config_module.clear_sleuth_credentials()
+    assert secret_store.read_secret_json("sleuth_web_api") is None

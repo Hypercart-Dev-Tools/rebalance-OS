@@ -1362,11 +1362,13 @@ def _sleuth_creds_complete(values: object) -> dict[str, str] | None:
 def set_sleuth_credentials(
     base_url: str, token: str, workspace: str, *, source: str = "manual"
 ) -> None:
-    """Store Sleuth Web API creds in the OS keyring AND rbos.config.
+    """Store Sleuth Web API creds in the keyring, the secret store, AND rbos.config.
 
-    Mirrors set_github_token: keyring is the interactive primary; rbos.config is
-    the launchd safety net (the Sleuth daily-sync runs unattended and cannot reach
-    the keychain). Logs a `token_set` auth-log event + sidecar first-added metadata.
+    Mirrors set_github_token: keyring is the interactive primary; the out-of-repo
+    secret store (``~/.config/rebalance-os/secrets``, ``0600``) is the durable
+    launchd-safe fallback; rbos.config is the legacy fallback kept additively
+    until Phase 2 (the Sleuth daily-sync runs unattended and cannot reach the
+    keychain). Logs a `token_set` auth-log event + sidecar first-added metadata.
     """
     import json as _json
 
@@ -1376,6 +1378,11 @@ def set_sleuth_credentials(
         "SLEUTH_WORKSPACE_NAME": workspace.strip(),
     }
     _keyring_set(SLEUTH_KEYRING_KEY, _json.dumps(creds))
+    try:
+        from . import secret_store  # noqa: PLC0415
+        secret_store.write_secret_json(SLEUTH_KEYRING_KEY, creds)
+    except OSError:
+        pass  # best-effort while rbos.config is still the authoritative fallback (Phase 2 flips this)
     config = _read_config()
     config[SLEUTH_KEYRING_KEY] = creds
     _write_config(config)
@@ -1395,11 +1402,12 @@ def clear_sleuth_credentials() -> None:
 
 
 def get_sleuth_credentials(which: str = "production") -> dict[str, str]:
-    """Resolve Sleuth Web API creds: keyring → rbos.config → legacy env file.
+    """Resolve Sleuth creds: keyring → secret store → rbos.config → legacy env file.
 
-    Mirrors the github token resolution (keyring-primary + config fallback for
-    launchd) so secrets are stored consistently. The operator-owned
-    ``sleuth-web-api-{which}.env`` remains a backward-compatible fallback.
+    Mirrors the github token resolution (keyring-primary + out-of-repo secret
+    store + config fallback for launchd) so secrets are stored consistently. The
+    operator-owned ``sleuth-web-api-{which}.env`` remains a backward-compatible
+    fallback.
 
     Raises FileNotFoundError if nothing resolves; ValueError if a resolved source
     is missing required keys.
@@ -1414,6 +1422,11 @@ def get_sleuth_credentials(which: str = "production") -> dict[str, str]:
             creds = None
         if creds:
             return creds
+    # Out-of-repo secret store (preferred launchd-safe fallback).
+    from . import secret_store  # noqa: PLC0415
+    creds = _sleuth_creds_complete(secret_store.read_secret_json(SLEUTH_KEYRING_KEY))
+    if creds:
+        return creds
     creds = _sleuth_creds_complete(_read_config().get(SLEUTH_KEYRING_KEY))
     if creds:
         return creds
