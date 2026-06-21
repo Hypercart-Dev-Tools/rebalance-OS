@@ -34,27 +34,29 @@ def _mem_config(cfg: dict):
 
 
 class DualStoreSecretTests(unittest.TestCase):
-    def test_set_writes_both_keyring_and_config(self) -> None:
+    def test_set_writes_keyring_and_secret_store(self) -> None:
+        from rebalance.ingest import secret_store
         cfg: dict = {}
         ms, mg, md, mr, mw, kr = _mem_config(cfg)
         with ms, mg, md, mr, mw:
             config._set_secret_dual_store("k", "v")
-        self.assertEqual(kr.get("k"), "v")
-        self.assertEqual(cfg.get("k"), "v")
+        self.assertEqual(kr.get("k"), "v")                         # keyring (primary)
+        self.assertEqual(secret_store.read_secret_file("k"), "v")  # durable fallback
+        self.assertNotIn("k", cfg)                                 # Phase 2: NOT rbos.config
 
-    def test_config_only_path_when_keyring_unavailable(self) -> None:
-        # keyring write fails → secret must still persist to rbos.config and
-        # resolve back (this is the launchd safety net).
+    def test_durable_fallback_when_keyring_unavailable(self) -> None:
+        # keyring write fails → secret persists to the out-of-repo secret store
+        # (Phase 2: rbos.config is NOT written) and resolves from the store.
         cfg: dict = {}
         with patch.object(config, "_keyring_set", return_value=False), \
              patch.object(config, "_keyring_get", return_value=None), \
              patch.object(config, "_read_config", side_effect=lambda: dict(cfg)), \
              patch.object(config, "_write_config", side_effect=lambda c: (cfg.clear(), cfg.update(c))):
             config._set_secret_dual_store("github_token", "ghp_x")
-            self.assertEqual(cfg.get("github_token"), "ghp_x")
+            self.assertNotIn("github_token", cfg)  # Phase 2: config no longer written
             value, source = config._get_secret_dual_store("github_token")
         self.assertEqual(value, "ghp_x")
-        self.assertEqual(source, "config")
+        self.assertEqual(source, "secret-store")
 
     def test_clear_removes_from_both(self) -> None:
         cfg: dict = {"k": "v"}
@@ -68,6 +70,7 @@ class DualStoreSecretTests(unittest.TestCase):
 
 class CallbackIsolationTests(unittest.TestCase):
     def test_set_github_token_survives_logging_failure(self) -> None:
+        from rebalance.ingest import secret_store
         cfg: dict = {}
         with patch.object(config, "_keyring_set", return_value=False), \
              patch.object(config, "_read_config", side_effect=lambda: dict(cfg)), \
@@ -75,7 +78,8 @@ class CallbackIsolationTests(unittest.TestCase):
              patch("rebalance.ingest.auth_log.log_github_token_set", side_effect=RuntimeError("boom")), \
              patch("rebalance.ingest.token_meta.record_token_set"):
             config.set_github_token("ghp_y")  # must not raise
-        self.assertEqual(cfg.get("github_token"), "ghp_y")
+        # keyring down + logging blew up, but the secret store still persisted it.
+        self.assertEqual(secret_store.read_secret_file("github_token"), "ghp_y")
 
     def test_google_oauth_set_survives_logging_failure(self) -> None:
         blob = '{"refresh_token": "rt"}'
@@ -136,12 +140,11 @@ class OAuthCommonLoaderTests(unittest.TestCase):
 
         creds = Creds()
         set_token = MagicMock(return_value=True)
-        svc = self._svc(set_token_json=set_token)
+        # keyring returns a blob → reconstructed via _creds_from_json (seamed).
+        svc = self._svc(get_token_json=lambda: '{"refresh_token": "rt"}', set_token_json=set_token)
 
-        with patch("pathlib.Path.exists", return_value=True), \
-             patch("builtins.open", MagicMock()), \
-             patch("rebalance.ingest.oauth_common.pickle.load", return_value=creds), \
-             patch("rebalance.ingest.oauth_common.pickle.dump") as pdump, \
+        with patch("rebalance.ingest.oauth_common._creds_from_json", return_value=creds), \
+             patch("rebalance.ingest.secret_store.write_secret_file") as wsf, \
              patch("google.auth.transport.requests.Request"), \
              patch("rebalance.ingest.auth_log.log_token_refreshed"):
             out = oauth_common.load_credentials(svc, required_scopes=["s"])
@@ -151,8 +154,9 @@ class OAuthCommonLoaderTests(unittest.TestCase):
         set_token.assert_called_once()
         self.assertEqual(set_token.call_args.kwargs.get("record"), False)
         self.assertEqual(set_token.call_args.kwargs.get("source"), "refresh")
-        # ...and the pickle fallback written too.
-        pdump.assert_called_once()
+        # ...and the JSON fallback written to the secret store (not pickle).
+        wsf.assert_called_once()
+        self.assertEqual(wsf.call_args.args[0], "google-calendar-oauth")
 
     def test_missing_token_raises_service_error(self) -> None:
         svc = self._svc(missing_error=lambda p: ValueError("missing"))

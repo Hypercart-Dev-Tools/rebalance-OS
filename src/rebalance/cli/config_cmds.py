@@ -683,6 +683,30 @@ def config_migrate_to_keyring() -> None:
     typer.echo("\nDone. Verify with `rebalance doctor`. (Keyring is per-machine — run this on each device.)")
 
 
+@config_app.command("migrate-secrets")
+def config_migrate_secrets() -> None:
+    """Phase 2: lift secret keys (github/figma/sleuth) out of repo-local rbos.config
+    into the out-of-repo secret store.
+
+    Per-machine and idempotent — for each key still in rbos.config it writes the
+    keyring + secret store, verifies, then deletes the repo-local copy. Run on
+    each device after `git pull`, then verify with `rebalance doctor`.
+    """
+    from rebalance.ingest import config as cfg
+
+    results = cfg.migrate_repo_local_secrets()
+    for key, status in results.items():
+        typer.echo(f"{key}: {status}")
+    # Phase 3: also retire legacy Google OAuth pickle files (JSON fallback only).
+    for service, status in cfg.migrate_oauth_pickles().items():
+        typer.echo(f"google-{service}-oauth: {status}")
+    leftover = cfg.repo_local_secret_keys_present()
+    if leftover:
+        typer.echo(f"\n⚠ still in temp/rbos.config: {', '.join(leftover)} — see FAILED lines above")
+    else:
+        typer.echo("\n✓ temp/rbos.config holds no live secrets. Verify with `rebalance doctor`.")
+
+
 @config_app.command("set-vault")
 def config_set_vault(
     path: Path = typer.Argument(..., exists=True, file_okay=False, dir_okay=True, help="Absolute path to the Obsidian vault root"),

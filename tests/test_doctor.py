@@ -175,26 +175,27 @@ class IntegrationCheckTests(unittest.TestCase):
         self.assertIn("keyring", check.detail)
 
     def test_calendar_token_presence(self) -> None:
-        # _check_calendar now resolves keyring → file; force keyring empty to test
-        # the file-presence path.
-        import rebalance.ingest.calendar as cal_mod
+        # _check_calendar resolves keyring → secret-store JSON → legacy pickle.
+        # Force keyring empty; secret store is conftest-isolated; seam the legacy
+        # pickle path to a tmp dir so the real machine's token doesn't leak in.
         from rebalance.ingest import config as config_mod
+        from rebalance.ingest import secret_store
+        import rebalance.paths as paths_mod
 
-        original = cal_mod.TOKEN_PATH
         with tempfile.TemporaryDirectory() as tmp, \
-             patch.object(config_mod, "get_calendar_oauth_token_json", return_value=None):
-            cal_mod.TOKEN_PATH = Path(tmp) / "oauth"
-            try:
-                calendar_check = _check_calendar()
-                self.assertEqual(calendar_check.status, WARN)
-                self.assertIn("no Calendar OAuth credentials", calendar_check.detail)
-                self.assertTrue(calendar_check.hint.startswith("🔧 "))
-                cal_mod.TOKEN_PATH.write_bytes(b"token-bytes")
-                ok_check = _check_calendar()
-                self.assertEqual(ok_check.status, OK)
-                self.assertIn("token file", ok_check.detail)
-            finally:
-                cal_mod.TOKEN_PATH = original
+             patch.object(config_mod, "get_calendar_oauth_token_json", return_value=None), \
+             patch.object(paths_mod, "resolve_oauth_token_path", return_value=Path(tmp) / "legacy-pickle"):
+            secret_store.delete_secret_file("google-calendar-oauth")  # ensure empty
+            # keyring empty + secret store empty + no legacy pickle → WARN
+            warn_check = _check_calendar()
+            self.assertEqual(warn_check.status, WARN)
+            self.assertIn("no Calendar OAuth credentials", warn_check.detail)
+            self.assertTrue(warn_check.hint.startswith("🔧 "))
+            # A JSON token in the (isolated) secret store → OK via secret-store JSON
+            secret_store.write_secret_file("google-calendar-oauth", '{"token": "t"}')
+            ok_check = _check_calendar()
+            self.assertEqual(ok_check.status, OK)
+            self.assertIn("secret-store JSON", ok_check.detail)
 
     def test_pulse_missing_config_warns(self) -> None:
         import rebalance.ingest.config as config_mod

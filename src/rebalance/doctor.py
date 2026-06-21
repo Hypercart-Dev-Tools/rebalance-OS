@@ -115,9 +115,9 @@ def _check_token() -> Check:
     """Flag a token that background launchd jobs cannot reach.
 
     launchd has a stripped environment: gh-cli auth and env vars are unavailable.
-    A token in keyring or rbos.config is reachable; gh-cli-only is not.
-    set_github_token() now writes to both, so keyring-sourced tokens are fine
-    as long as a config copy also exists.
+    A token in keyring or a file fallback (the out-of-repo secret store, or
+    legacy rbos.config) is reachable; gh-cli-only is not. Phase 2 made the secret
+    store the durable launchd fallback (rbos.config is no longer written).
     """
     from rebalance.ingest.config import get_github_token_with_source, _read_config
 
@@ -136,17 +136,27 @@ def _check_token() -> Check:
             "token only reachable via gh-cli — launchd jobs will fail",
             "run `rebalance config set-github-token` to persist it",
         )
-    # keyring is preferred for interactive reads; confirm config copy also exists
-    # so launchd can fall back if keychain is unavailable in its session
-    config_has_token = bool(_read_config().get("github_token"))
-    if source == "keyring" and not config_has_token:
+    # keyring is the interactive primary; launchd (stripped env, maybe no
+    # keychain) needs a file fallback. Phase 2: the out-of-repo secret store is
+    # that fallback (rbos.config is legacy and no longer written).
+    from rebalance.ingest import secret_store
+    in_secret_store = secret_store.read_secret_file("github_token") is not None
+    in_config = bool(_read_config().get("github_token"))
+    if source == "keyring" and not (in_secret_store or in_config):
         return Check(
             "github token",
             WARN,
             "token in keyring only — launchd session may not reach keychain",
-            "run `rebalance config set-github-token` to write the config fallback",
+            "run `rebalance config set-github-token` to write the secret-store fallback",
         )
-    detail = f"stored in {source} + config (reachable by launchd)"
+    locations = []
+    if source == "keyring":
+        locations.append("keyring")
+    if in_secret_store:
+        locations.append("secret store")
+    if in_config:
+        locations.append("config (legacy)")
+    detail = f"stored in {' + '.join(locations) or source} (reachable by launchd)"
     # Sidecar lifetime: how long has THIS token value been in use? Surfaces a
     # short-lived PAT (dies every few days) vs a durable one.
     try:
@@ -159,6 +169,72 @@ def _check_token() -> Check:
     except Exception:  # noqa: BLE001 — doctor must never crash
         pass
     return Check("github token", OK, detail)
+
+
+def _secret_permission_check(paths_to_check: list[Path]) -> Check:
+    """Verdict for a set of secret paths: WARN if any is broader than 0600/0700.
+
+    Pure over its input so it is hermetically testable. Posture only — a broad
+    mode is an exposure, not a broken credential, so this WARNs (it does not FAIL
+    and break unattended doctor gating).
+    """
+    import stat as _stat
+
+    from rebalance.ingest import secret_store
+
+    checked = [p for p in paths_to_check if p.exists()]
+    insecure = [p for p in checked if not secret_store.permission_ok(p)]
+    if insecure:
+        labels = ", ".join(
+            f"{p.name}={_stat.S_IMODE(p.stat().st_mode):04o}" for p in insecure
+        )
+        return Check(
+            "secret permissions",
+            WARN,
+            f"{len(insecure)} of {len(checked)} secret path(s) broader than 0600/0700: {labels}",
+            "chmod 600 files / 700 dirs; rebalance writers self-correct on the next write",
+        )
+    return Check(
+        "secret permissions", OK, f"{len(checked)} secret file(s)/dir(s) at 0600/0700"
+    )
+
+
+def _check_secret_permissions() -> Check:
+    """Posture check over every known secret file/dir (Phase 1 hardening)."""
+    from rebalance import paths
+    from rebalance.ingest import config as _config
+    from rebalance.ingest import secret_store
+
+    candidates: list[Path] = [
+        _config._resolved_config_path(),
+        paths.USER_CONFIG_DIR,
+        paths.USER_CONFIG_FILE,
+        paths.resolve_oauth_token_path("calendar"),
+        paths.resolve_oauth_token_path("gmail"),
+        secret_store.secret_store_root(),
+    ]
+    root = secret_store.secret_store_root()
+    if root.is_dir():
+        candidates.extend(p for p in root.iterdir() if p.is_file())
+    return _secret_permission_check(candidates)
+
+
+def _check_repo_local_secrets() -> Check:
+    """Flag any live secret still persisted in repo-local rbos.config (Phase 2)."""
+    from rebalance.ingest import config as _config
+
+    try:
+        present = _config.repo_local_secret_keys_present()
+    except Exception:  # noqa: BLE001 — doctor must never crash
+        return Check("repo-local secrets", OK, "could not read rbos.config")
+    if present:
+        return Check(
+            "repo-local secrets",
+            WARN,
+            f"{len(present)} secret key(s) still in temp/rbos.config: {', '.join(present)}",
+            "run `rebalance config migrate-secrets` to lift them into the secret store",
+        )
+    return Check("repo-local secrets", OK, "temp/rbos.config holds no live secrets")
 
 
 def _check_vault() -> Check:
@@ -398,6 +474,20 @@ def _check_sleuth(db_path: Path | None = None) -> Check:
     return Check("sleuth", OK, f"configured (via {where})")
 
 
+def _google_oauth_source(service: str, in_keyring: bool) -> str | None:
+    """Where a Google OAuth token resolves from: keyring → secret-store JSON →
+    legacy pickle. Returns None when nothing is present (unconfigured)."""
+    if in_keyring:
+        return "keyring"
+    from rebalance.ingest import secret_store
+    from rebalance.paths import resolve_oauth_token_path
+    if secret_store.read_secret_file(f"google-{service}-oauth"):
+        return "secret-store JSON"
+    if resolve_oauth_token_path(service).exists():
+        return "legacy pickle (migrates to JSON on next sync)"
+    return None
+
+
 def _check_gmail(db_path: Path | None) -> Check:
     """Gmail ingest — desktop OAuth (``oauth`` mode) or the Gmail MCP connector (``mcp`` mode)."""
     from rebalance.ingest.config import get_gmail_ingest_method
@@ -433,41 +523,36 @@ def _check_gmail(db_path: Path | None) -> Check:
     # oauth mode — desktop OAuth token, resolved keyring → pickle file
     # (mirrors _check_calendar).
     try:
-        from rebalance.ingest.gmail import TOKEN_PATH
         from rebalance.ingest.config import get_gmail_oauth_token_json
     except Exception as exc:  # noqa: BLE001 — doctor must never crash
         return Check("gmail", WARN, f"gmail module unavailable: {exc}")
 
-    in_keyring = bool(get_gmail_oauth_token_json())
-    if not in_keyring and not TOKEN_PATH.exists():
+    source = _google_oauth_source("gmail", bool(get_gmail_oauth_token_json()))
+    if source is None:
         return Check(
             "gmail", WARN,
-            "no Gmail OAuth credentials (keyring empty, no token file)",
-            "🔧 run the Gmail OAuth flow (scripts/setup_gmail_oauth.py), then "
-            "`rebalance config migrate-to-keyring` — or switch to MCP mode "
-            "(`rebalance config set-gmail-method mcp`)",
+            "no Gmail OAuth credentials (keyring + secret store empty, no token file)",
+            "🔧 run the Gmail OAuth flow (scripts/setup_gmail_oauth.py) — or switch "
+            "to MCP mode (`rebalance config set-gmail-method mcp`)",
         )
-    where = "keyring" if in_keyring else "token file"
-    return Check("gmail", OK, f"OAuth token present (via {where})")
+    return Check("gmail", OK, f"OAuth token present (via {source})")
 
 
 def _check_calendar() -> Check:
-    """Google Calendar OAuth — resolved keyring → pickle file."""
+    """Google Calendar OAuth — resolved keyring → secret-store JSON → legacy pickle."""
     try:
-        from rebalance.ingest.calendar import TOKEN_PATH
         from rebalance.ingest.config import get_calendar_oauth_token_json
     except Exception as exc:  # noqa: BLE001
         return Check("calendar", WARN, f"calendar module unavailable: {exc}")
 
-    in_keyring = bool(get_calendar_oauth_token_json())
-    if not in_keyring and not TOKEN_PATH.exists():
+    source = _google_oauth_source("calendar", bool(get_calendar_oauth_token_json()))
+    if source is None:
         return Check(
             "calendar", WARN,
-            "no Calendar OAuth credentials (keyring empty, no token file)",
+            "no Calendar OAuth credentials (keyring + secret store empty, no token file)",
             "🔧 run the Calendar OAuth flow (scripts/setup_calendar_oauth.py)",
         )
-    where = "keyring" if in_keyring else "token file"
-    detail = f"OAuth token present (via {where})"
+    detail = f"OAuth token present (via {source})"
     try:
         from rebalance.ingest import token_meta
         meta = token_meta.current_token_meta("calendar")
@@ -717,6 +802,8 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     db_checks, db_path = _check_database(database_path)
     report.checks.extend(db_checks)
     report.checks.append(_check_token())
+    report.checks.append(_check_secret_permissions())
+    report.checks.append(_check_repo_local_secrets())
     report.checks.append(_check_vault())
     report.checks.append(_check_unpushed_work())
 

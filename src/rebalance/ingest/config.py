@@ -103,27 +103,43 @@ def _migrate_to_keyring(config_key: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Dual-store secret helpers — keyring (interactive primary) + rbos.config
-# (launchd safety net). Shared by the simple single-value secrets (GitHub,
-# Figma). Callers layer their own auth-log / token_meta side effects on top.
+# Dual-store secret helpers — keyring (interactive primary) + the out-of-repo
+# secret store (durable launchd-safe fallback, 0600) + rbos.config (legacy
+# launchd fallback, kept additively until Phase 2 removes it). Shared by the
+# simple single-value secrets (GitHub, Figma). Callers layer their own
+# auth-log / token_meta side effects on top.
+# See PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md (Phase 1).
 # ---------------------------------------------------------------------------
 
 def _set_secret_dual_store(key: str, value: str) -> None:
-    """Write *value* to both the keyring and rbos.config under *key*.
+    """Write *value* to the keyring (interactive primary) and the out-of-repo
+    secret store (durable launchd-reachable fallback, ``0600``).
 
-    keyring is best-effort (ignored if unavailable); rbos.config is the
-    launchd-reachable fallback. Both stores are kept in lockstep so unattended
-    jobs (stripped env, no keychain) can always authenticate.
+    Phase 2: the secret is **no longer written to rbos.config** — the repo-local
+    file holds no live secrets going forward. Existing config secrets are lifted
+    out by ``migrate_repo_local_secrets`` and the read path still falls back to
+    rbos.config for not-yet-migrated machines. Because config is no longer the
+    safety net, this raises loudly if *neither* durable store accepts the secret
+    (rather than silently losing it).
     """
-    _keyring_set(key, value)  # best-effort; ignored if unavailable
-    config = _read_config()
-    config[key] = value
-    _write_config(config)
+    from . import secret_store  # noqa: PLC0415
+
+    keyring_ok = _keyring_set(key, value)  # best-effort; False if unavailable
+    try:
+        secret_store.write_secret_file(key, value)
+        store_ok = True
+    except OSError:
+        store_ok = False
+    if not (keyring_ok or store_ok):
+        raise RuntimeError(f"could not persist secret '{key}' to keyring or secret store")
 
 
 def _clear_secret_dual_store(key: str) -> None:
-    """Remove *key* from both the keyring and rbos.config."""
+    """Remove *key* from the keyring, the secret store, and rbos.config."""
+    from . import secret_store  # noqa: PLC0415
+
     _keyring_delete(key)
+    secret_store.delete_secret_file(key)
     config = _read_config()
     if key in config:
         del config[key]
@@ -131,14 +147,20 @@ def _clear_secret_dual_store(key: str) -> None:
 
 
 def _get_secret_dual_store(key: str) -> tuple[str | None, str | None]:
-    """Resolve a secret: keyring → rbos.config (auto-migrated to keyring on read).
+    """Resolve a secret: keyring → secret store → rbos.config (auto-migrated).
 
-    Returns ``(value, source)`` where source is ``"keyring"``, ``"config"``, or
-    ``None`` when nothing resolves.
+    Returns ``(value, source)`` where source is ``"keyring"``, ``"secret-store"``,
+    ``"config"``, or ``None``. The out-of-repo secret store is preferred over
+    repo-local rbos.config as the launchd-safe fallback.
     """
+    from . import secret_store  # noqa: PLC0415
+
     value = _keyring_get(key)
     if value:
         return value, "keyring"
+    stored = secret_store.read_secret_file(key)
+    if stored and stored.strip():
+        return stored.strip(), "secret-store"
     # Legacy path — auto-migrate to keyring on first read.
     value = _migrate_to_keyring(key)
     if value:
@@ -211,9 +233,19 @@ def _read_config() -> dict[str, Any]:
 
 
 def _write_config(config: dict[str, Any]) -> None:
-    """Write config to disk with .gitignore safety."""
+    """Write config to disk and harden its mode to ``0600``.
+
+    rbos.config still holds launchd-fallback secrets additively until Phase 2
+    moves them into the secret store, so it is owner-only on disk (the audit
+    found it at 0644). launchd jobs run as the owner, so 0600 stays readable.
+    See PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md.
+    """
+    from . import secret_store  # noqa: PLC0415
+
     _ensure_config_dir()
-    _resolved_config_path().write_text(json.dumps(config, indent=2), encoding="utf-8")
+    path = _resolved_config_path()
+    path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+    secret_store.harden_mode(path, 0o600)  # best-effort; brief 0644 window is acceptable on a single-user box
 
 
 def normalize_github_repo_name(repo: str) -> str:
@@ -1223,6 +1255,43 @@ def clear_gmail_oauth_token() -> None:
     _keyring_delete("gmail_oauth_token")
 
 
+def migrate_oauth_pickles() -> dict[str, str]:
+    """Phase 3: retire legacy Google OAuth pickle files, JSON-only going forward.
+
+    For calendar + gmail: if the token is in keyring, write the JSON fallback to
+    the secret store (keyring already stores the authorized-user JSON, so no
+    unpickling/google import is needed) and delete the legacy pickle. If keyring
+    is empty but a pickle exists, leave it — the collector's migrate-on-read
+    converts it on the next sync. Idempotent. Returns ``{service: status}``.
+    """
+    from . import secret_store  # noqa: PLC0415
+    from rebalance.paths import resolve_oauth_token_path  # noqa: PLC0415
+
+    getters = {"calendar": get_calendar_oauth_token_json, "gmail": get_gmail_oauth_token_json}
+    results: dict[str, str] = {}
+    for service, getter in getters.items():
+        store_key = f"google-{service}-oauth"
+        pickle_path = resolve_oauth_token_path(service)
+        blob = getter()
+        if blob:
+            secret_store.write_secret_file(store_key, blob)
+            retired = False
+            if pickle_path.exists():
+                try:
+                    pickle_path.unlink()
+                    retired = True
+                except OSError:
+                    pass
+            results[service] = "JSON fallback written from keyring" + (
+                " · legacy pickle retired" if retired else ""
+            )
+        elif pickle_path.exists():
+            results[service] = "legacy pickle present — migrates to JSON on next sync (keyring empty)"
+        else:
+            results[service] = "already clean"
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Sync repo config (Issue #39 — multi-device snapshot sharing)
 # ---------------------------------------------------------------------------
@@ -1328,7 +1397,7 @@ def _gemini_key_via_gcloud(project: str | None, secret_name: str) -> str | None:
 _SLEUTH_REQUIRED = ("SLEUTH_WEB_API_BASE_URL", "SLEUTH_WEB_API_TOKEN", "SLEUTH_WORKSPACE_NAME")
 
 
-SLEUTH_KEYRING_KEY = "sleuth_web_api"  # JSON blob in keyring + rbos.config
+SLEUTH_KEYRING_KEY = "sleuth_web_api"  # JSON blob in keyring + secret store (Phase 2: no longer rbos.config)
 
 
 def _sleuth_creds_complete(values: object) -> dict[str, str] | None:
@@ -1342,11 +1411,14 @@ def _sleuth_creds_complete(values: object) -> dict[str, str] | None:
 def set_sleuth_credentials(
     base_url: str, token: str, workspace: str, *, source: str = "manual"
 ) -> None:
-    """Store Sleuth Web API creds in the OS keyring AND rbos.config.
+    """Store Sleuth Web API creds in the keyring and the out-of-repo secret store.
 
-    Mirrors set_github_token: keyring is the interactive primary; rbos.config is
-    the launchd safety net (the Sleuth daily-sync runs unattended and cannot reach
-    the keychain). Logs a `token_set` auth-log event + sidecar first-added metadata.
+    Mirrors set_github_token: keyring is the interactive primary; the
+    permission-enforced secret store (``~/.config/rebalance-os/secrets``,
+    ``0600``) is the durable launchd-safe fallback (the Sleuth daily-sync runs
+    unattended and cannot reach the keychain). Phase 2: creds are **no longer
+    written to rbos.config**. Logs a `token_set` auth-log event + sidecar
+    first-added metadata.
     """
     import json as _json
 
@@ -1355,10 +1427,15 @@ def set_sleuth_credentials(
         "SLEUTH_WEB_API_TOKEN": token.strip(),
         "SLEUTH_WORKSPACE_NAME": workspace.strip(),
     }
-    _keyring_set(SLEUTH_KEYRING_KEY, _json.dumps(creds))
-    config = _read_config()
-    config[SLEUTH_KEYRING_KEY] = creds
-    _write_config(config)
+    keyring_ok = _keyring_set(SLEUTH_KEYRING_KEY, _json.dumps(creds))
+    try:
+        from . import secret_store  # noqa: PLC0415
+        secret_store.write_secret_json(SLEUTH_KEYRING_KEY, creds)
+        store_ok = True
+    except OSError:
+        store_ok = False
+    if not (keyring_ok or store_ok):
+        raise RuntimeError("could not persist Sleuth credentials to keyring or secret store")
     try:  # never let logging break a credential write
         from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
         auth_log.log_sleuth_credentials_set(source=source, workspace=creds["SLEUTH_WORKSPACE_NAME"])
@@ -1375,11 +1452,12 @@ def clear_sleuth_credentials() -> None:
 
 
 def get_sleuth_credentials(which: str = "production") -> dict[str, str]:
-    """Resolve Sleuth Web API creds: keyring → rbos.config → legacy env file.
+    """Resolve Sleuth creds: keyring → secret store → rbos.config → legacy env file.
 
-    Mirrors the github token resolution (keyring-primary + config fallback for
-    launchd) so secrets are stored consistently. The operator-owned
-    ``sleuth-web-api-{which}.env`` remains a backward-compatible fallback.
+    Mirrors the github token resolution (keyring-primary + out-of-repo secret
+    store + config fallback for launchd) so secrets are stored consistently. The
+    operator-owned ``sleuth-web-api-{which}.env`` remains a backward-compatible
+    fallback.
 
     Raises FileNotFoundError if nothing resolves; ValueError if a resolved source
     is missing required keys.
@@ -1394,6 +1472,11 @@ def get_sleuth_credentials(which: str = "production") -> dict[str, str]:
             creds = None
         if creds:
             return creds
+    # Out-of-repo secret store (preferred launchd-safe fallback).
+    from . import secret_store  # noqa: PLC0415
+    creds = _sleuth_creds_complete(secret_store.read_secret_json(SLEUTH_KEYRING_KEY))
+    if creds:
+        return creds
     creds = _sleuth_creds_complete(_read_config().get(SLEUTH_KEYRING_KEY))
     if creds:
         return creds
@@ -1434,6 +1517,65 @@ def _read_sleuth_env_file(which: str = "production") -> dict[str, str]:
             f"Sleuth env file missing required keys: {', '.join(missing)} (in {path})"
         )
     return values
+
+
+# ---------------------------------------------------------------------------
+# Phase 2 — lift repo-local secrets out of rbos.config into the secret store.
+# See PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md (Phase 2).
+# ---------------------------------------------------------------------------
+
+# Secret-bearing keys that must never persist in repo-local rbos.config.
+_REPO_LOCAL_SECRET_KEYS = ("github_token", "figma_token", SLEUTH_KEYRING_KEY)
+
+
+def repo_local_secret_keys_present() -> list[str]:
+    """Return any secret-bearing keys still sitting in rbos.config.
+
+    Drives the doctor check and the migration command. Empty list = clean.
+    """
+    config = _read_config()
+    return [k for k in _REPO_LOCAL_SECRET_KEYS if config.get(k)]
+
+
+def migrate_repo_local_secrets() -> dict[str, str]:
+    """Lift every secret-bearing key out of rbos.config into the secret store.
+
+    Per-machine and **idempotent**: for each key still in rbos.config, persist it
+    to the keyring + secret store, verify the secret store retained it, then
+    delete it from rbos.config. Keys already absent report ``already clean``.
+    Returns ``{key: status}``.
+    """
+    import json as _json  # noqa: PLC0415
+
+    from . import secret_store  # noqa: PLC0415
+
+    config = _read_config()
+    results: dict[str, str] = {}
+    changed = False
+    for key in _REPO_LOCAL_SECRET_KEYS:
+        value = config.get(key)
+        if not value:
+            results[key] = "already clean"
+            continue
+        try:
+            if isinstance(value, dict):
+                _keyring_set(key, _json.dumps(value))
+                secret_store.write_secret_json(key, value)
+            else:
+                _keyring_set(key, value)
+                secret_store.write_secret_file(key, value)
+        except OSError as exc:
+            results[key] = f"FAILED — could not write secret store ({exc}); left in rbos.config"
+            continue
+        if secret_store.read_secret_file(key) is None:
+            results[key] = "FAILED — secret store did not retain the value; left in rbos.config"
+            continue
+        del config[key]
+        changed = True
+        results[key] = "migrated → secret store"
+    if changed:
+        _write_config(config)
+    return results
 
 
 def get_sleuth_client_mapping_path() -> str:

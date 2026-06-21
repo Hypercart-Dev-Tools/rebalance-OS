@@ -14,28 +14,29 @@ Usage:
   python scripts/setup_calendar_oauth.py --write-access --test
 """
 
-import pickle
 import argparse
-from pathlib import Path
 
 from google_auth_oauthlib.flow import InstalledAppFlow
+from rebalance.ingest import config, secret_store
 from rebalance.ingest.auth_log import (
     log_flow_started,
     log_flow_succeeded,
     log_flow_failed,
 )
 from rebalance.ingest.google_oauth_client import build_google_oauth_client_config
-from rebalance.paths import resolve_oauth_token_path
 
 READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
 WRITE_SCOPE = "https://www.googleapis.com/auth/calendar"
-TOKEN_PATH = resolve_oauth_token_path("calendar")
+SECRET_STORE_KEY = "google-calendar-oauth"  # JSON fallback in the secret store
 
 
-def authorize_calendar(scopes: list[str]) -> None:
-    """Run OAuth2 browser consent flow and store the token locally."""
-    TOKEN_PATH.parent.mkdir(parents=True, exist_ok=True)
+def authorize_calendar(scopes: list[str]):
+    """Run OAuth2 browser consent and store the token in keyring + the JSON secret store.
 
+    Phase 3: both durable stores are written in one pass — keyring (interactive
+    primary) and the out-of-repo JSON fallback (`~/.config/rebalance-os/secrets/
+    google-calendar-oauth`, `0600`). No pickle; no follow-up migrate step.
+    """
     flow = InstalledAppFlow.from_client_config(
         build_google_oauth_client_config(),
         scopes=scopes,
@@ -49,17 +50,20 @@ def authorize_calendar(scopes: list[str]) -> None:
         log_flow_failed(str(exc))
         raise
 
-    with open(TOKEN_PATH, "wb") as f:
-        pickle.dump(creds, f)
+    token_json = creds.to_json()
+    config.set_calendar_oauth_token_json(token_json, source="manual", record=True)  # keyring
+    secret_store.write_secret_file(SECRET_STORE_KEY, token_json)                     # JSON fallback
 
     log_flow_succeeded(
         expiry=creds.expiry.isoformat() if creds.expiry else None,
         scopes=list(scopes),
-        token_path=str(TOKEN_PATH),
+        token_path="keyring + secret store",
     )
-    print(f"\n✅ Token saved to: {TOKEN_PATH}")
+    print("\n✅ Token saved to keyring + secret store")
+    print(f"   Fallback: {secret_store.secret_path(SECRET_STORE_KEY)}")
     print(f"   Expires: {creds.expiry}")
     print(f"   Scopes:  {', '.join(scopes)}")
+    return creds
 
 
 if __name__ == "__main__":
@@ -80,13 +84,12 @@ if __name__ == "__main__":
 
     try:
         scopes = [WRITE_SCOPE] if args.write_access else [READONLY_SCOPE]
-        authorize_calendar(scopes)
+        creds = authorize_calendar(scopes)
 
         if args.test:
             print("\n🧪 Listing your calendars...\n")
             from googleapiclient.discovery import build
             from google.auth.transport.requests import Request
-            creds = pickle.load(open(TOKEN_PATH, "rb"))
             if creds.expired and creds.refresh_token:
                 creds.refresh(Request())
             service = build("calendar", "v3", credentials=creds)
