@@ -58,6 +58,6 @@ _Note: agy hung past its 4-minute print-timeout with no output and was killed; C
 - [Pass] (no action — re-scope kept the right work active).
 **Did:** Applied all 3 Codex findings; reconciled each against the file via grep before handoff (all anchors present at the cited lines).
 **Verification:** N/A — non-executable artifact. No re-review round run: these are minor doc refinements of an already-affirmed plan ("safe + worth doing"), and a Codex rubber-stamp pass is low-ROI. Closing on operator direction.
-**Commit:** <pending>
+**Commit:** `aebf5f6` (plan doc + relay log)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
