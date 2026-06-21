@@ -103,27 +103,41 @@ def _migrate_to_keyring(config_key: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
-# Dual-store secret helpers — keyring (interactive primary) + rbos.config
-# (launchd safety net). Shared by the simple single-value secrets (GitHub,
-# Figma). Callers layer their own auth-log / token_meta side effects on top.
+# Dual-store secret helpers — keyring (interactive primary) + the out-of-repo
+# secret store (durable launchd-safe fallback, 0600) + rbos.config (legacy
+# launchd fallback, kept additively until Phase 2 removes it). Shared by the
+# simple single-value secrets (GitHub, Figma). Callers layer their own
+# auth-log / token_meta side effects on top.
+# See PROJECT/2-WORKING/AUTH-AND-API-KEY-STORAGE-HARDENING.md (Phase 1).
 # ---------------------------------------------------------------------------
 
 def _set_secret_dual_store(key: str, value: str) -> None:
-    """Write *value* to both the keyring and rbos.config under *key*.
+    """Write *value* to the keyring, the out-of-repo secret store, and rbos.config.
 
-    keyring is best-effort (ignored if unavailable); rbos.config is the
-    launchd-reachable fallback. Both stores are kept in lockstep so unattended
-    jobs (stripped env, no keychain) can always authenticate.
+    keyring is the interactive primary (best-effort). The permission-enforced
+    secret store (``~/.config/rebalance-os/secrets``, ``0600``) is the durable
+    launchd-reachable fallback. rbos.config is still written as the legacy
+    fallback so existing unattended jobs keep working; Phase 2 removes that
+    repo-local write once the secret store is proven per machine.
     """
+    from . import secret_store  # noqa: PLC0415
+
     _keyring_set(key, value)  # best-effort; ignored if unavailable
+    try:
+        secret_store.write_secret_file(key, value)
+    except OSError:
+        pass  # best-effort while rbos.config is still the authoritative fallback (Phase 2 flips this)
     config = _read_config()
     config[key] = value
     _write_config(config)
 
 
 def _clear_secret_dual_store(key: str) -> None:
-    """Remove *key* from both the keyring and rbos.config."""
+    """Remove *key* from the keyring, the secret store, and rbos.config."""
+    from . import secret_store  # noqa: PLC0415
+
     _keyring_delete(key)
+    secret_store.delete_secret_file(key)
     config = _read_config()
     if key in config:
         del config[key]
@@ -131,14 +145,20 @@ def _clear_secret_dual_store(key: str) -> None:
 
 
 def _get_secret_dual_store(key: str) -> tuple[str | None, str | None]:
-    """Resolve a secret: keyring → rbos.config (auto-migrated to keyring on read).
+    """Resolve a secret: keyring → secret store → rbos.config (auto-migrated).
 
-    Returns ``(value, source)`` where source is ``"keyring"``, ``"config"``, or
-    ``None`` when nothing resolves.
+    Returns ``(value, source)`` where source is ``"keyring"``, ``"secret-store"``,
+    ``"config"``, or ``None``. The out-of-repo secret store is preferred over
+    repo-local rbos.config as the launchd-safe fallback.
     """
+    from . import secret_store  # noqa: PLC0415
+
     value = _keyring_get(key)
     if value:
         return value, "keyring"
+    stored = secret_store.read_secret_file(key)
+    if stored and stored.strip():
+        return stored.strip(), "secret-store"
     # Legacy path — auto-migrate to keyring on first read.
     value = _migrate_to_keyring(key)
     if value:

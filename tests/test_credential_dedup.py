@@ -42,19 +42,20 @@ class DualStoreSecretTests(unittest.TestCase):
         self.assertEqual(kr.get("k"), "v")
         self.assertEqual(cfg.get("k"), "v")
 
-    def test_config_only_path_when_keyring_unavailable(self) -> None:
-        # keyring write fails → secret must still persist to rbos.config and
-        # resolve back (this is the launchd safety net).
+    def test_durable_fallback_when_keyring_unavailable(self) -> None:
+        # keyring write fails → secret persists to the out-of-repo secret store
+        # (the preferred launchd-safe fallback) AND still to rbos.config
+        # (additive, until Phase 2 removes it), and resolves from the store.
         cfg: dict = {}
         with patch.object(config, "_keyring_set", return_value=False), \
              patch.object(config, "_keyring_get", return_value=None), \
              patch.object(config, "_read_config", side_effect=lambda: dict(cfg)), \
              patch.object(config, "_write_config", side_effect=lambda c: (cfg.clear(), cfg.update(c))):
             config._set_secret_dual_store("github_token", "ghp_x")
-            self.assertEqual(cfg.get("github_token"), "ghp_x")
+            self.assertEqual(cfg.get("github_token"), "ghp_x")  # config still written (additive)
             value, source = config._get_secret_dual_store("github_token")
         self.assertEqual(value, "ghp_x")
-        self.assertEqual(source, "config")
+        self.assertEqual(source, "secret-store")
 
     def test_clear_removes_from_both(self) -> None:
         cfg: dict = {"k": "v"}

@@ -51,12 +51,15 @@ class GitHubTokenResolutionTests(unittest.TestCase):
     def tearDown(self) -> None:
         config_module.CONFIG_PATH = self._orig_path
 
-    def test_config_token_wins_when_present(self) -> None:
-        set_github_token("ghp_fromconfig0000")
+    def test_stored_token_wins_over_gh_cli(self) -> None:
+        # With keyring unavailable, a set token now resolves from the durable
+        # out-of-repo secret store (the preferred launchd-safe fallback), ahead
+        # of the gh CLI. Resolution order: keyring → secret-store → config → gh-cli.
+        set_github_token("ghp_stored0000")
         with patch.object(config_module, "_try_gh_cli_token", return_value="gho_fromcli0000"):
             token, source = get_github_token_with_source()
-        self.assertEqual(token, "ghp_fromconfig0000")
-        self.assertEqual(source, "config")
+        self.assertEqual(token, "ghp_stored0000")
+        self.assertEqual(source, "secret-store")
 
     def test_falls_back_to_gh_cli_when_config_missing(self) -> None:
         with patch.object(config_module, "_try_gh_cli_token", return_value="gho_fromcli0000"):
