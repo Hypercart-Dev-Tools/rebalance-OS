@@ -100,6 +100,78 @@ def _migrate_to_keyring(config_key: str) -> str | None:
         del config[config_key]
         _write_config(config)
     return value
+
+
+# ---------------------------------------------------------------------------
+# Dual-store secret helpers — keyring (interactive primary) + rbos.config
+# (launchd safety net). Shared by the simple single-value secrets (GitHub,
+# Figma). Callers layer their own auth-log / token_meta side effects on top.
+# ---------------------------------------------------------------------------
+
+def _set_secret_dual_store(key: str, value: str) -> None:
+    """Write *value* to both the keyring and rbos.config under *key*.
+
+    keyring is best-effort (ignored if unavailable); rbos.config is the
+    launchd-reachable fallback. Both stores are kept in lockstep so unattended
+    jobs (stripped env, no keychain) can always authenticate.
+    """
+    _keyring_set(key, value)  # best-effort; ignored if unavailable
+    config = _read_config()
+    config[key] = value
+    _write_config(config)
+
+
+def _clear_secret_dual_store(key: str) -> None:
+    """Remove *key* from both the keyring and rbos.config."""
+    _keyring_delete(key)
+    config = _read_config()
+    if key in config:
+        del config[key]
+        _write_config(config)
+
+
+def _get_secret_dual_store(key: str) -> tuple[str | None, str | None]:
+    """Resolve a secret: keyring → rbos.config (auto-migrated to keyring on read).
+
+    Returns ``(value, source)`` where source is ``"keyring"``, ``"config"``, or
+    ``None`` when nothing resolves.
+    """
+    value = _keyring_get(key)
+    if value:
+        return value, "keyring"
+    # Legacy path — auto-migrate to keyring on first read.
+    value = _migrate_to_keyring(key)
+    if value:
+        return value, "config"
+    return None, None
+
+
+def _set_google_oauth_token_json(
+    service: str, key: str, token_json: str, *, source: str, record: bool
+) -> bool:
+    """Store a Google OAuth token JSON blob in keyring for *service*.
+
+    Shared by the Calendar and Gmail setters: keyring-only persistence (the
+    pickle-file fallback lives in each collector's loader). When *record* is True
+    (an explicit (re)authorization, not an automatic access-token refresh), logs a
+    ``token_set`` event + sidecar metadata keyed on the stable ``refresh_token``
+    so the authorization's age is tracked and not reset on every refresh.
+    Returns True on a successful keyring write.
+    """
+    ok = _keyring_set(key, token_json)
+    if ok and record:
+        try:  # never let logging break a credential write
+            import json as _json
+            from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
+            refresh = str((_json.loads(token_json) or {}).get("refresh_token") or "")
+            getattr(auth_log, f"log_{service}_token_set")(source=source)
+            if refresh:
+                token_meta.record_token_set(service, refresh, kind="google oauth", source=source)
+        except Exception:  # noqa: BLE001
+            pass
+    return ok
+
+
 _GITHUB_REPO_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
 
@@ -199,13 +271,9 @@ def get_github_token_with_source() -> tuple[str | None, str | None]:
     Resolution order: keyring → rbos.config (with auto-migration) → gh-cli.
     Explicit PATs always win over the ambient gh login.
     """
-    token = _keyring_get("github_token")
+    token, source = _get_secret_dual_store("github_token")
     if token:
-        return token, "keyring"
-    # Legacy path — auto-migrate to keyring on first read
-    token = _migrate_to_keyring("github_token")
-    if token:
-        return token, "config"
+        return token, source
     if not _hermetic():  # gh login is machine-global — hermetic mode skips it
         token = _try_gh_cli_token()
         if token:
@@ -247,10 +315,7 @@ def set_github_token(token: str, *, source: str = "manual") -> None:
     between successive deauths — is visible.
     """
     cleaned = token.strip()
-    _keyring_set("github_token", cleaned)  # best-effort; ignored if unavailable
-    config = _read_config()
-    config["github_token"] = cleaned
-    _write_config(config)
+    _set_secret_dual_store("github_token", cleaned)
     try:  # never let logging break a credential write
         from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
         kind = classify_github_token(cleaned)
@@ -263,11 +328,7 @@ def set_github_token(token: str, *, source: str = "manual") -> None:
 
 def clear_github_token() -> None:
     """Remove the stored GitHub PAT from both keyring and rbos.config."""
-    _keyring_delete("github_token")
-    config = _read_config()
-    if "github_token" in config:
-        del config["github_token"]
-        _write_config(config)
+    _clear_secret_dual_store("github_token")
 
 
 def get_vault_path() -> str | None:
@@ -351,19 +412,8 @@ def get_figma_token() -> str | None:
     rbos.config as the launchd-safe fallback. Any cleartext token still in
     rbos.config is auto-migrated into keyring on first read.
     """
-    token = _keyring_get("figma_token")
-    if token:
-        return token
-    # Legacy / launchd path — auto-migrate to keyring on first read.
-    token = _migrate_to_keyring("figma_token")
-    if token:
-        return token
-    config = _read_config()
-    value = config.get("figma_token")
-    if not isinstance(value, str):
-        return None
-    stripped = value.strip()
-    return stripped or None
+    token, _source = _get_secret_dual_store("figma_token")
+    return (token.strip() or None) if isinstance(token, str) else None
 
 
 def set_figma_token(token: str) -> None:
@@ -374,20 +424,12 @@ def set_figma_token(token: str) -> None:
     reads. Mirrors :func:`set_github_token` minus the GitHub-specific auth-log
     and gh-cli machinery.
     """
-    cleaned = token.strip()
-    _keyring_set("figma_token", cleaned)  # best-effort; ignored if unavailable
-    config = _read_config()
-    config["figma_token"] = cleaned
-    _write_config(config)
+    _set_secret_dual_store("figma_token", token.strip())
 
 
 def clear_figma_token() -> None:
     """Remove the stored Figma PAT from both keyring and rbos.config."""
-    _keyring_delete("figma_token")
-    config = _read_config()
-    if "figma_token" in config:
-        del config["figma_token"]
-        _write_config(config)
+    _clear_secret_dual_store("figma_token")
 
 
 def get_figma_file_keys() -> list[str]:
@@ -607,18 +649,87 @@ def get_focus5_scan_roots() -> list[str]:
     return get_repo_scan_roots()
 
 
+def set_focus5_scan_roots(roots: list[str]) -> None:
+    """Store the directories the Focus 5 collector walks. Config key: ``focus5_scan_roots``.
+
+    Paths are expanded and de-duplicated. An empty list clears the override so
+    discovery falls back to the shared ``repo_scan_roots`` defaults (see
+    :func:`get_focus5_scan_roots`). This key is Focus-5-only — it never touches
+    the ask_self / repo discovery scope.
+    """
+    cleaned: list[str] = []
+    for p in roots:
+        s = str(p).strip()
+        if not s:
+            continue
+        expanded = str(Path(s).expanduser())
+        if expanded not in cleaned:
+            cleaned.append(expanded)
+    config = _read_config()
+    if cleaned:
+        config["focus5_scan_roots"] = cleaned
+    else:
+        config.pop("focus5_scan_roots", None)
+    _write_config(config)
+
+
+def add_focus5_scan_root(root: str) -> bool:
+    """Add one directory to the Focus 5 scan roots. Returns True if newly added.
+
+    Seeds the override from the current *effective* roots (which may be the shared
+    discovery default) before appending, so adding a root never silently drops the
+    existing scope. A root that is itself a git repo (``.git`` at its top level) is
+    fine — discovery yields it and stops at its boundary.
+    """
+    s = str(root).strip()
+    if not s:
+        raise ValueError("scan root must be a non-empty path")
+    expanded = str(Path(s).expanduser())
+    current = get_focus5_scan_roots()
+    if expanded in current:
+        return False
+    set_focus5_scan_roots([*current, expanded])
+    return True
+
+
+def remove_focus5_scan_root(root: str) -> bool:
+    """Remove one directory from the Focus 5 scan roots. Returns True if it was present.
+
+    Reifies the effective roots first (so removing from an unset/default scope is
+    well-defined), drops the path, and persists the remainder; removing the last
+    explicit root clears the override back to the discovery default.
+    """
+    s = str(root).strip()
+    if not s:
+        return False
+    expanded = str(Path(s).expanduser())
+    current = get_focus5_scan_roots()
+    if expanded not in current:
+        return False
+    set_focus5_scan_roots([r for r in current if r != expanded])
+    return True
+
+
 def get_focus5_ranking_mode() -> str:
     """Return the active Focus 5 ranking mode. Config key: ``focus5_ranking_mode``.
 
-    Defaults to ``dirty_first`` (surface uncommitted/unpushed work first). The
-    value is validated by the collector against the registered strategies; an
-    unknown mode is surfaced as a collector error rather than silently ignored.
+    Defaults to ``recent_activity`` — the headline "what am I working on right
+    now?" view, ranked by operator-authored commit recency (clean, freshly-pushed
+    repos included). The older ``dirty_first`` safety view ("what might I lose?")
+    is still selectable, and is reachable transiently as the **Dirty Five** web
+    view without changing this default. An explicit ``focus5_ranking_mode`` config
+    value still wins. The value is validated by the collector against the
+    registered strategies; an unknown mode is surfaced as a collector error rather
+    than silently ignored.
+
+    Keep this unset-default in lockstep with
+    ``focus5_scan.DEFAULT_RANKING_MODE``.
     """
     config = _read_config()
     mode = config.get("focus5_ranking_mode")
     if isinstance(mode, str) and mode.strip():
         return mode.strip()
-    return "dirty_first"
+    return "recent_activity"
 
 
 def set_focus5_ranking_mode(mode: str) -> None:
@@ -1072,18 +1183,9 @@ def set_calendar_oauth_token_json(token_json: str, *, source: str = "manual", re
     event + sidecar metadata keyed on the stable ``refresh_token`` so the
     authorization's age is tracked (and not reset on every access-token refresh).
     """
-    ok = _keyring_set("calendar_oauth_token", token_json)
-    if ok and record:
-        try:  # never let logging break a credential write
-            import json as _json
-            from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
-            refresh = str((_json.loads(token_json) or {}).get("refresh_token") or "")
-            auth_log.log_calendar_token_set(source=source)
-            if refresh:
-                token_meta.record_token_set("calendar", refresh, kind="google oauth", source=source)
-        except Exception:  # noqa: BLE001
-            pass
-    return ok
+    return _set_google_oauth_token_json(
+        "calendar", "calendar_oauth_token", token_json, source=source, record=record
+    )
 
 
 def clear_calendar_oauth_token() -> None:
@@ -1111,18 +1213,9 @@ def set_gmail_oauth_token_json(token_json: str, *, source: str = "manual", recor
     event + sidecar metadata keyed on the stable ``refresh_token`` so the
     authorization's age is tracked (and not reset on every access-token refresh).
     """
-    ok = _keyring_set("gmail_oauth_token", token_json)
-    if ok and record:
-        try:  # never let logging break a credential write
-            import json as _json
-            from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
-            refresh = str((_json.loads(token_json) or {}).get("refresh_token") or "")
-            auth_log.log_gmail_token_set(source=source)
-            if refresh:
-                token_meta.record_token_set("gmail", refresh, kind="google oauth", source=source)
-        except Exception:  # noqa: BLE001
-            pass
-    return ok
+    return _set_google_oauth_token_json(
+        "gmail", "gmail_oauth_token", token_json, source=source, record=record
+    )
 
 
 def clear_gmail_oauth_token() -> None:
@@ -1278,11 +1371,7 @@ def set_sleuth_credentials(
 
 def clear_sleuth_credentials() -> None:
     """Remove Sleuth creds from keyring + rbos.config (the env file is left alone)."""
-    _keyring_delete(SLEUTH_KEYRING_KEY)
-    config = _read_config()
-    if SLEUTH_KEYRING_KEY in config:
-        del config[SLEUTH_KEYRING_KEY]
-        _write_config(config)
+    _clear_secret_dual_store(SLEUTH_KEYRING_KEY)
 
 
 def get_sleuth_credentials(which: str = "production") -> dict[str, str]:

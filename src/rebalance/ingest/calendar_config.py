@@ -241,6 +241,146 @@ class CalendarConfig:
         print(f"✓ Config saved to {path}")
 
 
+# ── Signal weights (P2 v0.5 "what next" ranking levers) ──────────────────────
+#
+# Seeded from the Phase-0 spike. These are the knobs the "what should we work on
+# next" synthesis uses to weight signals per-person and per-source, discount
+# redundant/vague signals, and gate which teammates have enough calendar history
+# for their events to add anything (the per-person additivity check). They live
+# alongside the calendar config because the per-person weights and the team
+# additivity threshold are keyed off the same roster.
+
+
+@dataclass
+class SignalWeights:
+    """Per-person / per-source signal weights and the additivity gate.
+
+    Defaults are the Phase-0 seeds — documented inline so a later re-tune can
+    see what each number was reaching for, not just its value.
+    """
+
+    # Per-person trust. Matt's calendar is rich (~239 events) so he carries full
+    # weight; Jose/Jinhui are sparse (3 / 7 events) so their signal is halved
+    # until they accumulate history.
+    per_person: dict[str, float] = field(
+        default_factory=lambda: {
+            "matthew": 1.0,  # Phase-0 seed: rich history, full trust
+            "jose": 0.5,     # Phase-0 seed: sparse, halved
+            "jinhui": 0.5,   # Phase-0 seed: sparse, halved
+        }
+    )
+
+    # Per-source trust. Structured/authoritative sources (calendar, github,
+    # sleuth) carry full weight; the vault is noisier (~0.7) and email sits in
+    # between (~0.8).
+    per_source: dict[str, float] = field(
+        default_factory=lambda: {
+            "calendar": 1.0,  # Phase-0 seed
+            "github": 1.0,    # Phase-0 seed
+            "sleuth": 1.0,    # Phase-0 seed
+            "vault": 0.7,     # Phase-0 seed: noisier free-text
+            "email": 0.8,     # Phase-0 seed
+        }
+    )
+
+    # Multiplier applied to a signal that merely restates one already counted.
+    redundancy_penalty: float = 0.5  # Phase-0 seed
+
+    # Multiplier applied to a vague / low-specificity signal.
+    vagueness_discount: float = 0.5  # Phase-0 seed
+
+    # The one load-bearing lever — correct for the operator over-weighting their
+    # own (owner) signal. Default ON.
+    owner_bias_correction: bool = True
+
+    # How sharply a "drop" (a signal disappearing) moves the ranking.
+    drop_sensitivity: float = 0.5  # Phase-0 seed
+
+    # Per-person additivity threshold: a teammate needs at least this many
+    # calendar events before their events add anything to the synthesis. Matt
+    # (~239) passes; Jose (3) / Jinhui (7) fail until they accrue history.
+    min_team_events: int = 12  # Phase-0 seed
+
+
+def load_signal_weights(config_path: Path | None = None) -> SignalWeights:
+    """Return seeded :class:`SignalWeights`, overlaying a ``signal_weights``
+    block from ``temp/calendar_config.json`` if one is present.
+
+    Mirrors how ``team_calendars`` is loaded: absent file or absent/invalid
+    block → seeded defaults. Never raises — a malformed override falls back to
+    the seed for that field rather than failing the load.
+    """
+    weights = SignalWeights()
+
+    path = config_path or DEFAULT_CONFIG_PATH
+    if not path.exists():
+        return weights
+
+    try:
+        with open(path, "r") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return weights
+
+    block = data.get("signal_weights")
+    if not isinstance(block, dict):
+        return weights
+
+    def _floats(raw: Any, seed: dict[str, float]) -> dict[str, float]:
+        if not isinstance(raw, dict):
+            return seed
+        out = dict(seed)
+        for key, value in raw.items():
+            try:
+                out[str(key)] = float(value)
+            except (TypeError, ValueError):
+                continue
+        return out
+
+    weights.per_person = _floats(block.get("per_person"), weights.per_person)
+    weights.per_source = _floats(block.get("per_source"), weights.per_source)
+
+    for fld in (
+        "redundancy_penalty",
+        "vagueness_discount",
+        "drop_sensitivity",
+    ):
+        if fld in block:
+            try:
+                setattr(weights, fld, float(block[fld]))
+            except (TypeError, ValueError):
+                pass
+
+    if "owner_bias_correction" in block:
+        weights.owner_bias_correction = bool(block["owner_bias_correction"])
+
+    if "min_team_events" in block:
+        try:
+            weights.min_team_events = int(block["min_team_events"])
+        except (TypeError, ValueError):
+            pass
+
+    return weights
+
+
+def team_persons_passing_additivity(
+    event_counts: dict[str, int],
+    min_events: int,
+) -> list[str]:
+    """Return persons whose event count meets the additivity threshold.
+
+    The per-person mini additivity check: a teammate's events only add signal
+    once they have at least *min_events* of history. The caller computes the
+    counts; this is a pure filter that preserves the roster order of the input
+    mapping.
+    """
+    return [
+        person
+        for person, count in event_counts.items()
+        if count >= min_events
+    ]
+
+
 def should_exclude_event(event_summary: str, exclude_titles: list[str]) -> bool:
     """Check if event summary matches any exclude title (case-insensitive).
 

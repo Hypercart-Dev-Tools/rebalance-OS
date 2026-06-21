@@ -83,8 +83,10 @@ class Focus5HideRequestContractTests(unittest.TestCase):
             focus5_page,
             focus5_set_hidden,
             sleuth_graph_page,
+            whatsnext_page,
         )
-        for fn in (auth_log_page, auth_log_raw, focus5_page, focus5_set_hidden, sleuth_graph_page):
+        for fn in (auth_log_page, auth_log_raw, focus5_page, focus5_set_hidden,
+                   sleuth_graph_page, whatsnext_page):
             self.assertTrue(callable(fn))
 
 
@@ -125,6 +127,7 @@ class PulseWebHtmlContractTests(unittest.TestCase):
         self._skip_if_no_html()
         # NAV_LINKS from web_components must appear — structural contract
         self.assertIn("/focus-5", self._html)
+        self.assertIn("/whats-next", self._html)
         self.assertIn("/auth-log", self._html)
 
     def test_no_python_traceback_in_output(self) -> None:

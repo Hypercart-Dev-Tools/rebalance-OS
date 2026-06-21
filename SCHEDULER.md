@@ -13,7 +13,7 @@ job.
 |---|---|---|---|---|---|
 | `daily-sync` | daily 06:30 + RunAtLoad (boot/login catch-up) | `scripts/daily_sync.sh` | `refresh_index(db_path)` — default recipe: all raw sources + code/semantic/sync | vault path, GitHub token, calendar/sleuth auth as configured | SQLite knowledge base fully refreshed; dashboard note write-back |
 | `vault-sync` | hourly at :15, 06:15–23:15 | `scripts/vault_sync.sh` | `refresh_index(db_path, scope=["vault", "semantic"])` | `vault_path` in temp/rbos.config | vault raw tables + semantic index fresh within the hour |
-| `github-sync` | hourly at :45, 06:45–23:45 | `scripts/github_sync.sh` | `refresh_index(db_path, scope=["github"])` | GitHub token (keyring/config) | github raw tables fresh; semantic backfill deferred to daily-sync |
+| `github-sync` | hourly at :45, 06:45–23:45 | `scripts/github_sync.sh` | `refresh_index(db_path, scope=["github", "focus5"])` | GitHub token (keyring/config) for github; Focus 5 needs none | github raw tables fresh (semantic backfill deferred to daily-sync); Focus 5 roster recomputed hourly |
 | `pulse-sync` | hourly at :00, 06:00–23:00 | `scripts/pulse_sync.sh` | `publish_pulse(db_path, dry_run=False, push=True)` | pulse_* keys in temp/rbos.config; local clone at pulse_target_path | markdown status page pushed to private repo (only when changed) |
 | `pulse-web-sync` | every 30 min at :00/:30, 06:00–23:30 | `scripts/pulse_web_sync.sh` | `scripts/pulse_web.py` | `vault_path` in temp/rbos.config (locates "0. Goals.md") | `web/pulse.html` regenerated atomically (local only, no network) |
 | `pulse-server` | daemon: RunAtLoad + KeepAlive, ThrottleInterval 30s | `scripts/pulse_server.sh` | `scripts/pulse_server.py --port 8767` | port 8767 free | FastAPI server on 127.0.0.1:8767 (loopback only) |
@@ -45,6 +45,12 @@ The hourly stagger is deliberate — readers trail writers inside each hour:
   github docs is not worth the cost; the 06:30 daily-sync closes the gap. The
   lag is observable as the `github_documents_missing_from_semantic` drift
   metric (`index_status` MCP tool / `refresh_index` summary).
+- **github-sync also carries `focus5`** — the Focus 5 collector is opt-in
+  (`included_in_all=False`) and would otherwise never run unattended, leaving
+  the roster frozen until a manual ↻ Refresh. It piggybacks the hourly github
+  cadence rather than running its own launchd job: a device-local git scan
+  (~30s, no network, no GitHub token) that recomputes `focus5_roster`. The web
+  page stays non-blocking (PR #72) — this job is the background writer it reads.
 - **pulse-sync and pulse-web-sync are read-only derived stages** — they render
   whatever the ingest jobs last wrote and never refresh sources themselves.
 - **pulse-warning-watch depends on pulse-server** being up on 127.0.0.1:8767;

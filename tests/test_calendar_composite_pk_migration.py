@@ -63,7 +63,10 @@ class CalendarCompositePkMigrationTests(unittest.TestCase):
             db_path = Path(tmp) / "rebalance.db"
             with db_connection(db_path, ensure_schema) as conn:
                 self._v4_db_with_rows(conn, _SEED)
-                self.assertEqual(run_migrations(conn), 5)
+                # run_migrations returns the latest head version (0005 added the
+                # composite PK + person; later migrations advance the head). This
+                # test's invariant is 0005's effect, asserted below.
+                self.assertGreaterEqual(run_migrations(conn), 5)
 
                 # `person` column present and NULL on every migrated row.
                 cols = [r[1] for r in conn.execute("PRAGMA table_info(calendar_events)")]

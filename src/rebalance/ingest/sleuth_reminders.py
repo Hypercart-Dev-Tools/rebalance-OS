@@ -34,6 +34,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from rebalance.tz_utils import parse_utc_iso
+
 HTTP_TIMEOUT_SECONDS = 30
 USER_AGENT = "rebalance-os/0.1"
 
@@ -111,21 +113,8 @@ class SleuthSyncResult:
 
 
 def _parse_datetime(value: Any) -> datetime | None:
-    if not isinstance(value, str):
-        return None
-    text = value.strip()
-    if not text:
-        return None
-    # datetime.fromisoformat doesn't accept the trailing "Z" before Python 3.11.
-    if text.endswith("Z"):
-        text = text[:-1] + "+00:00"
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
+    # parse_utc_iso handles the trailing-Z dance + naive→UTC; guard non-str here.
+    return parse_utc_iso(value) if isinstance(value, str) else None
 
 
 def _optional_str(value: Any) -> str | None:

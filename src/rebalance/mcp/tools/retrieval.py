@@ -94,7 +94,12 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         return report.as_dict()
 
     @mcp.tool()
-    def ask(query: str, since_days: int = 7, skip_synthesis: bool = False) -> dict[str, Any]:
+    def ask(
+        query: str,
+        since_days: int = 7,
+        skip_synthesis: bool = False,
+        team: bool = False,
+    ) -> dict[str, Any]:
         """
         General-purpose natural language query across all data sources.
 
@@ -106,15 +111,20 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         review, adapt, and present a refined answer.
 
         Set skip_synthesis=True to get raw context only (faster, no model load).
+        Set team=True to ALSO get the ranked "what should we work on next" list
+        (blended with teammate calendar signal) under a top-level 'next_actions'
+        key — parity with the dashboard's ranked view. When team is not set the
+        response is byte-identical to the default operator flow.
         """
-        from rebalance.ingest.querier import ask as querier_ask
+        from rebalance.ingest.querier import ask as querier_ask, NEXT_ACTIONS_ATTR
         result = querier_ask(
             query=query,
             database_path=database_path,
             since_days=since_days,
             skip_synthesis=skip_synthesis,
+            team=team,
         )
-        return {
+        flat = {
             "query": result.query,
             "synthesis": result.synthesis,
             "vault_context": result.vault_context,
@@ -127,3 +137,9 @@ def register(mcp: FastMCP, database_path: Path) -> None:
             "model_used": result.model_used,
             "elapsed_seconds": result.elapsed_seconds,
         }
+        # team=True ONLY: surface the ranked next-actions sidecar as a NEW
+        # top-level key. The default ask() response stays unchanged.
+        if team:
+            ranked = getattr(result, NEXT_ACTIONS_ATTR, None)
+            flat["next_actions"] = ranked.as_dict() if ranked is not None else None
+        return flat

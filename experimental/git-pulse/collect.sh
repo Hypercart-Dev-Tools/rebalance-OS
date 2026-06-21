@@ -174,6 +174,45 @@ append_stage_path() {
     stage_paths+=("$path")
 }
 
+# Self-heal a wedged sync clone before we pull/stage. A detached HEAD or an
+# interrupted rebase silently halts ALL syncing (pulse files AND snapshot relay
+# files); recover by aborting the stale rebase and resetting the default branch
+# to origin so the sync becomes self-recovering instead of needing manual repair.
+self_heal_sync_repo() {
+    local repo_dir="$1"
+    local git_dir
+    local default_branch
+    local head_branch
+    local needs_heal=0
+
+    git_dir="$(git -C "$repo_dir" rev-parse --git-dir 2>/dev/null)" || return 0
+    case "$git_dir" in
+        /*) ;;
+        *) git_dir="$repo_dir/$git_dir" ;;
+    esac
+
+    if [ -d "$git_dir/rebase-merge" ] || [ -d "$git_dir/rebase-apply" ]; then
+        needs_heal=1
+        git -C "$repo_dir" rebase --abort >/dev/null 2>&1 || true
+    fi
+
+    head_branch="$(git -C "$repo_dir" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+    [ -n "$head_branch" ] || needs_heal=1
+
+    if [ "$needs_heal" -eq 0 ]; then
+        return 0
+    fi
+
+    default_branch="$(git -C "$repo_dir" symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#^origin/##')" || default_branch=""
+    [ -n "$default_branch" ] || default_branch="main"
+
+    echo "Sync repo wedged (detached HEAD or in-progress rebase); resetting to origin/$default_branch." >&2
+    git -C "$repo_dir" fetch --quiet origin || true
+    git -C "$repo_dir" checkout --quiet -B "$default_branch" "origin/$default_branch" 2>/dev/null \
+        || git -C "$repo_dir" checkout --quiet "$default_branch" 2>/dev/null || true
+    git -C "$repo_dir" reset --quiet --hard "origin/$default_branch" || true
+}
+
 migrate_legacy_device_identity() {
     local configured_device_id="$1"
     local desired_device_id="$2"
@@ -433,6 +472,9 @@ if [ "$DRY_RUN" -eq 1 ]; then
     exit 0
 fi
 
+# Recover a wedged clone (detached HEAD / interrupted rebase) before we pull or stage.
+self_heal_sync_repo "$sync_repo_dir"
+
 # Bring in any peer-machine updates before writing.
 if git -C "$sync_repo_dir" rev-parse --verify HEAD >/dev/null 2>&1; then
     git -C "$sync_repo_dir" pull --quiet --rebase
@@ -519,6 +561,10 @@ fi
 cd "$sync_repo_dir"
 append_stage_path "$(basename "$PULSE_FILE")"
 append_stage_path "devices/$device_id.yaml"
+# Snapshot relay files: the snapshot hook writes them here and does NO git of its
+# own (this tool is the single git writer). Guard the dir — it doesn't exist until
+# the first snapshot lands; "snapshots" stages everything under it via git add -A.
+[ -d "$sync_repo_dir/snapshots" ] && append_stage_path "snapshots"
 git add -A -- "${stage_paths[@]}"
 if git diff --cached --quiet; then
     # Nothing actually staged (e.g. a same-second rerun that produced

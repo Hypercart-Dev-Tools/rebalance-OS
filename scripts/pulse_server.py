@@ -63,6 +63,7 @@ from rebalance.web import (  # noqa: E402
     focus5_page as _focus5_page,
     focus5_set_hidden as _focus5_set_hidden,
     sleuth_graph_page as _sleuth_graph_page,
+    whatsnext_page as _whatsnext_page,
 )
 
 
@@ -77,8 +78,10 @@ def auth_log_raw():
 
 
 @app.get("/focus-5")
-def focus5(refresh: bool = False):
-    return _focus5_page(refresh=refresh)
+def focus5(refresh: bool = False, view: str = "focus5"):
+    # Forward ``view`` so the Focus 5 / Dirty Five toggle works on this surface too
+    # (shared renderer in rebalance.web — keeps both /focus-5 surfaces identical).
+    return _focus5_page(refresh=refresh, view=view)
 
 
 @app.post("/api/focus5/hide")
@@ -91,6 +94,11 @@ def focus5_hide(req: Focus5HideRequest):
 @app.post("/api/focus5/unhide")
 def focus5_unhide(req: Focus5HideRequest):
     return _focus5_set_hidden(req.repo, hidden=False)
+
+
+@app.get("/whats-next")
+def whats_next(refresh: bool = False):
+    return _whatsnext_page(refresh=refresh)
 
 
 @app.get("/sleuth-graph")

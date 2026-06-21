@@ -15,7 +15,6 @@ for vector search but high-signal for scheduling context.
 from __future__ import annotations
 
 import json
-import pickle
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
@@ -23,6 +22,7 @@ from pathlib import Path
 from typing import Any
 
 
+from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.paths import resolve_oauth_token_path
 TOKEN_PATH = resolve_oauth_token_path("calendar")
 CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
@@ -82,70 +82,39 @@ def _credentials_have_scopes(creds: Any, required_scopes: list[str]) -> bool:
 def _load_credentials(required_scopes: list[str] | None = None) -> Any:
     """Load OAuth2 credentials — keyring first, pickle file as the launchd fallback.
 
-    keyring (interactive primary) ↔ the pickle file (launchd reads this; the
-    keychain is unreachable from the daily-sync's stripped environment). On
-    refresh, the rotated access token is written back to BOTH so each stays
-    current.
+    Delegates the keyring→pickle→refresh→persist-both flow to
+    :func:`rebalance.ingest.oauth_common.load_credentials`; only the
+    Calendar-specific error messages and scope-superset rule live here.
     """
-    import json as _json
-
-    from rebalance.ingest.auth_log import (
-        log_token_missing,
-        log_token_refresh_failed,
-        log_token_refreshed,
-    )
+    from rebalance.ingest import oauth_common
     from rebalance.ingest.config import (
         get_calendar_oauth_token_json,
         set_calendar_oauth_token_json,
     )
 
-    creds = None
-    blob = get_calendar_oauth_token_json()
-    if blob:
-        try:
-            from google.oauth2.credentials import Credentials
-            creds = Credentials.from_authorized_user_info(_json.loads(blob))
-        except Exception:  # noqa: BLE001 — corrupt/legacy blob → fall back to pickle
-            creds = None
+    def _missing(token_path: str) -> Exception:
+        return FileNotFoundError(
+            f"Calendar OAuth token not found (keyring empty and no file at {token_path}). "
+            "Run the OAuth flow first (see PROJECT.md — P2 Google Calendar)."
+        )
 
-    if creds is None:
-        if not TOKEN_PATH.exists():
-            log_token_missing(str(TOKEN_PATH))
-            raise FileNotFoundError(
-                f"Calendar OAuth token not found (keyring empty and no file at {TOKEN_PATH}). "
-                "Run the OAuth flow first (see PROJECT.md — P2 Google Calendar)."
-            )
-        with open(TOKEN_PATH, "rb") as f:
-            creds = pickle.load(f)
-
-    # Refresh if expired — persist the rotated access token to both stores.
-    if creds.expired and creds.refresh_token:
-        from google.auth.transport.requests import Request
-        try:
-            creds.refresh(Request())
-            # record=False: an access-token refresh is not a re-authorization.
-            set_calendar_oauth_token_json(creds.to_json(), source="refresh", record=False)
-            try:
-                with open(TOKEN_PATH, "wb") as f:
-                    pickle.dump(creds, f)
-            except OSError:
-                pass
-            log_token_refreshed(
-                expiry=creds.expiry.isoformat() if creds.expiry else None,
-                token_path=str(TOKEN_PATH),
-            )
-        except Exception as exc:
-            log_token_refresh_failed(error=str(exc), token_path=str(TOKEN_PATH))
-            raise
-
-    if required_scopes and not _credentials_have_scopes(creds, required_scopes):
-        raise PermissionError(
+    def _scope_error(creds: Any, required: list[str]) -> Exception:
+        return PermissionError(
             "Calendar OAuth token does not include the required scopes. "
-            f"Required: {required_scopes}. Current: {getattr(creds, 'scopes', []) or []}. "
+            f"Required: {required}. Current: {getattr(creds, 'scopes', []) or []}. "
             "Re-run the OAuth flow with write access enabled."
         )
 
-    return creds
+    svc = oauth_common.OAuthService(
+        name="calendar",
+        token_path=TOKEN_PATH,
+        get_token_json=get_calendar_oauth_token_json,
+        set_token_json=set_calendar_oauth_token_json,
+        has_scopes=_credentials_have_scopes,
+        missing_error=_missing,
+        scope_error=_scope_error,
+    )
+    return oauth_common.load_credentials(svc, required_scopes)
 
 
 def _build_service(required_scopes: list[str] | None = None) -> Any:
@@ -204,6 +173,9 @@ def refresh_calendar_source(
 def sync_calendar(
     database_path: Path,
     *,
+    # 'primary' here is Google's Calendar API alias for the authenticated user's
+    # default calendar (the write/fetch target), NOT a DB read filter — left as a
+    # literal on purpose (do not swap for OPERATOR_CALENDAR_ID).
     calendar_id: str = "primary",
     person: str | None = None,
     days_back: int = 30,
@@ -318,6 +290,9 @@ def sync_calendar(
 
 def create_calendar_event(
     *,
+    # 'primary' here is Google's Calendar API alias for the authenticated user's
+    # default calendar (the create target), NOT a DB read filter — left as a
+    # literal on purpose (do not swap for OPERATOR_CALENDAR_ID).
     calendar_id: str = "primary",
     summary: str,
     start_time: str,
@@ -395,36 +370,56 @@ def _calendar_id_filter(calendar_id: str | None) -> tuple[str, tuple]:
     return "AND calendar_id = ?", (calendar_id,)
 
 
-def get_upcoming_events(
-    database_path: Path,
-    days_forward: int = 2,
-    calendar_id: str | None = "primary",
-) -> list[dict[str, Any]]:
-    """Return upcoming events from the calendar_events table.
+def _person_filter(persons: list[str] | None) -> tuple[str, tuple]:
+    """SQL fragment + params to optionally restrict a query to named teammates.
 
-    Defaults to the operator's own ``primary`` calendar; pass ``calendar_id=None``
-    to include all calendars (team views).
+    Privacy-sensitive sibling of :func:`_calendar_id_filter`: centralizes the
+    ``person`` predicate so the single team-scoped reader is the only place that
+    SELECTs by person. Returns ``("", ())`` when *persons* is ``None``/empty
+    (no restriction); otherwise an ``AND person IN (?,?...)`` clause matching the
+    given labels. Operator rows (``person IS NULL``) never match an ``IN`` list,
+    so they are excluded by construction.
+    """
+    if not persons:
+        return "", ()
+    placeholders = ",".join("?" for _ in persons)
+    return f"AND person IN ({placeholders})", tuple(persons)
+
+
+def _query_events(
+    database_path: Path,
+    *,
+    where: str,
+    params: tuple,
+    order: str = "ASC",
+    limit: int = 30,
+    include_person: bool = False,
+) -> list[dict[str, Any]]:
+    """Shared SELECT/window/row-map body for the upcoming-event readers.
+
+    ``where`` is a fully-formed predicate already containing any optional
+    calendar/person fragments; ``params`` carries its bound values. ``order`` is
+    the ``start_time`` sort direction. ``include_person`` adds the privacy-
+    sensitive ``person`` column to the SELECT and the mapped rows — set ONLY by
+    the in-process team reader, never by operator/export-facing callers.
     """
     from rebalance.ingest.calendar_helpers import calendar_connection
 
-    now = datetime.now(timezone.utc).isoformat()
-    cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
-
-    cal_clause, cal_params = _calendar_id_filter(calendar_id)
+    extra_cols = ", person, calendar_id, id" if include_person else ""
     with calendar_connection(database_path) as conn:
         rows = conn.execute(
-            f"""SELECT summary, start_time, end_time, location, attendees_json, description
+            f"""SELECT summary, start_time, end_time, location, attendees_json,
+                      description{extra_cols}
                FROM calendar_events
-               WHERE julianday(start_time) >= julianday(?)
-                 AND julianday(start_time) <= julianday(?)
-                 {cal_clause}
-               ORDER BY julianday(start_time) ASC
-               LIMIT 30""",
-            (now, cutoff, *cal_params),
+               WHERE {where}
+               ORDER BY julianday(start_time) {order}
+               LIMIT {limit}""",
+            params,
         ).fetchall()
 
-    return [
-        {
+    results: list[dict[str, Any]] = []
+    for row in rows:
+        mapped = {
             "summary": row["summary"],
             "start_time": row["start_time"],
             "end_time": row["end_time"],
@@ -432,19 +427,89 @@ def get_upcoming_events(
             "attendees": json.loads(row["attendees_json"]) if row["attendees_json"] else [],
             "description": (row["description"] or "")[:200],
         }
-        for row in rows
-    ]
+        if include_person:
+            mapped["person"] = row["person"]
+            mapped["calendar_id"] = row["calendar_id"]
+            mapped["id"] = row["id"]
+        results.append(mapped)
+    return results
+
+
+def get_upcoming_events(
+    database_path: Path,
+    days_forward: int = 2,
+    calendar_id: str | None = OPERATOR_CALENDAR_ID,
+) -> list[dict[str, Any]]:
+    """Return upcoming events from the calendar_events table.
+
+    Defaults to the operator's own ``OPERATOR_CALENDAR_ID`` calendar; pass
+    ``calendar_id=None`` to include all calendars (team views).
+    """
+    now = datetime.now(timezone.utc).isoformat()
+    cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
+
+    cal_clause, cal_params = _calendar_id_filter(calendar_id)
+    where = (
+        "julianday(start_time) >= julianday(?) "
+        "AND julianday(start_time) <= julianday(?) "
+        f"{cal_clause}"
+    )
+    return _query_events(
+        database_path,
+        where=where,
+        params=(now, cutoff, *cal_params),
+        order="ASC",
+        limit=30,
+    )
+
+
+def get_team_upcoming_by_person(
+    database_path: Path,
+    persons: list[str],
+    days_forward: int = 2,
+) -> list[dict[str, Any]]:
+    """Return upcoming teammate events for the named ``persons`` only.
+
+    The ONLY reader that SELECTs the privacy-sensitive ``person`` column. Operator
+    rows (``person IS NULL``) are excluded by construction — they never match the
+    ``person IN (...)`` predicate. This reader is in-process/local-only (the v0.5
+    "what next" team view); its output, which carries ``person``/``calendar_id``,
+    must NEVER reach the export/pushed-pulse path.
+
+    Returns ``[]`` for an empty ``persons`` list (no teammates → no rows), rather
+    than falling back to an unrestricted scan.
+    """
+    if not persons:
+        return []
+
+    now = datetime.now(timezone.utc).isoformat()
+    cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
+
+    person_clause, person_params = _person_filter(persons)
+    where = (
+        "julianday(start_time) >= julianday(?) "
+        "AND julianday(start_time) <= julianday(?) "
+        f"{person_clause}"
+    )
+    return _query_events(
+        database_path,
+        where=where,
+        params=(now, cutoff, *person_params),
+        order="ASC",
+        limit=30,
+        include_person=True,
+    )
 
 
 def get_recent_events(
     database_path: Path,
     days_back: int = 7,
-    calendar_id: str | None = "primary",
+    calendar_id: str | None = OPERATOR_CALENDAR_ID,
 ) -> list[dict[str, Any]]:
     """Return past events for activity/meeting-load context.
 
-    Defaults to the operator's own ``primary`` calendar; pass ``calendar_id=None``
-    to include all calendars (team views).
+    Defaults to the operator's own ``OPERATOR_CALENDAR_ID`` calendar; pass
+    ``calendar_id=None`` to include all calendars (team views).
     """
     from rebalance.ingest.calendar_helpers import calendar_connection
 
@@ -503,13 +568,13 @@ def get_daily_totals(
     database_path: Path,
     days_back: int = 30,
     days_forward: int = 0,
-    calendar_id: str | None = "primary",
+    calendar_id: str | None = OPERATOR_CALENDAR_ID,
 ) -> list[DailyEventTotal]:
     """Calculate event count and total duration per day.
 
-    Defaults to the operator's own ``primary`` calendar so totals aren't inflated
-    by teammate calendars; pass ``calendar_id=None`` to aggregate all calendars.
-    Returns days sorted chronologically (oldest first).
+    Defaults to the operator's own ``OPERATOR_CALENDAR_ID`` calendar so totals
+    aren't inflated by teammate calendars; pass ``calendar_id=None`` to aggregate
+    all calendars. Returns days sorted chronologically (oldest first).
     """
     from rebalance.ingest.calendar_helpers import (
         calendar_connection,

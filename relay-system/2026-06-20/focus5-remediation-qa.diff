@@ -1,0 +1,592 @@
+diff --git a/scripts/github_sync.sh b/scripts/github_sync.sh
+index 88df8e0..e685191 100755
+--- a/scripts/github_sync.sh
++++ b/scripts/github_sync.sh
+@@ -1,6 +1,8 @@
+ #!/bin/bash
+-# rebalance OS — hourly github sync
+-# Runs hourly via launchd to keep github context fresh.
++# rebalance OS — hourly github sync (+ Focus 5 roster refresh)
++# Runs hourly via launchd to keep github context fresh and, piggybacked on the
++# same cadence, recompute the device-local Focus 5 roster so it never freezes
++# until someone clicks ↻ Refresh.
+ #
+ # Policy: SCHEDULER.md (job com.rebalance-os.github-sync).
+ 
+@@ -15,6 +17,12 @@ log "=== rebalance hourly github sync starting ==="
+ # land in the raw tables hourly; the github -> semantic backfill+embed runs
+ # in the 06:30 daily sync. The gap is observable as the
+ # github_documents_missing_from_semantic drift metric (index_status).
++#
++# Focus 5 piggybacks on this cadence ("focus5" scope): a device-local git scan
++# (~30s, no network) that recomputes focus5_roster so the dashboard stays fresh
++# unattended. It does NOT need the GitHub token — a github error won't skip it
++# (refresh_index runs each scope independently), and the non-blocking page from
++# PR #72 is untouched (this is the background writer the page reads from).
+ if "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1
+ import json
+ import sys
+@@ -23,7 +31,7 @@ from rebalance.paths import resolve_database_path
+ 
+ db_path = resolve_database_path()
+ print(f"database={db_path}")
+-result = refresh_index(db_path, scope=["github"])
++result = refresh_index(db_path, scope=["github", "focus5"])
+ print(json.dumps(result, indent=2, default=str))
+ sys.exit(1 if result.get("errors") else 0)
+ PY
+diff --git a/scripts/pulse_server.py b/scripts/pulse_server.py
+index 213ad07..3056786 100644
+--- a/scripts/pulse_server.py
++++ b/scripts/pulse_server.py
+@@ -78,8 +78,10 @@ def auth_log_raw():
+ 
+ 
+ @app.get("/focus-5")
+-def focus5(refresh: bool = False):
+-    return _focus5_page(refresh=refresh)
++def focus5(refresh: bool = False, view: str = "focus5"):
++    # Forward ``view`` so the Focus 5 / Dirty Five toggle works on this surface too
++    # (shared renderer in rebalance.web — keeps both /focus-5 surfaces identical).
++    return _focus5_page(refresh=refresh, view=view)
+ 
+ 
+ @app.post("/api/focus5/hide")
+diff --git a/src/rebalance/cli/config_cmds.py b/src/rebalance/cli/config_cmds.py
+index bc6482c..6684cbe 100644
+--- a/src/rebalance/cli/config_cmds.py
++++ b/src/rebalance/cli/config_cmds.py
+@@ -14,6 +14,7 @@ from rebalance.cli._core import config_app
+ from rebalance.ingest.audit import append_audit_entry
+ from rebalance.ingest.config import (
+     add_focus5_hidden_repo,
++    add_focus5_scan_root,
+     add_github_ignored_repo,
+     add_github_related_repo,
+     add_health_notice_pattern,
+@@ -21,6 +22,7 @@ from rebalance.ingest.config import (
+     get_anthropic_api_key,
+     get_config_path,
+     get_focus5_hidden_repos,
++    get_focus5_scan_roots,
+     get_gemini_api_key,
+     get_github_ignored_repos,
+     get_github_related_repos,
+@@ -32,6 +34,7 @@ from rebalance.ingest.config import (
+     get_vault_path,
+     normalize_github_repo_name,
+     remove_focus5_hidden_repo,
++    remove_focus5_scan_root,
+     remove_github_ignored_repo,
+     remove_github_related_repo,
+     remove_health_notice_pattern,
+@@ -193,6 +196,42 @@ def config_list_focus5_hidden_repos() -> None:
+         typer.echo(repo)
+ 
+ 
++@config_app.command("add-focus5-scan-root")
++def config_add_focus5_scan_root(
++    path: str = typer.Argument(..., help="Directory the Focus 5 collector should walk for git repos"),
++) -> None:
++    """Add one directory to the Focus 5 scan roots (a root may itself be a repo)."""
++    expanded = str(Path(path.strip()).expanduser())
++    added = add_focus5_scan_root(path)
++    _focus5_rerank_after_change()
++    if added:
++        typer.echo(f"✓ Added Focus 5 scan root: {expanded}")
++        typer.echo("  Run `rebalance refresh-index --scope focus5` to discover repos under it.")
++    else:
++        typer.echo(f"✓ Already a Focus 5 scan root: {expanded}")
++
++
++@config_app.command("remove-focus5-scan-root")
++def config_remove_focus5_scan_root(
++    path: str = typer.Argument(..., help="Scan-root directory to stop walking"),
++) -> None:
++    """Remove one directory from the Focus 5 scan roots."""
++    expanded = str(Path(path.strip()).expanduser())
++    removed = remove_focus5_scan_root(path)
++    _focus5_rerank_after_change()
++    if removed:
++        typer.echo(f"✓ Removed Focus 5 scan root: {expanded}")
++    else:
++        typer.echo(f"✓ Not a Focus 5 scan root: {expanded}")
++
++
++@config_app.command("list-focus5-scan-roots")
++def config_list_focus5_scan_roots() -> None:
++    """List the directories the Focus 5 collector walks (effective, incl. defaults)."""
++    for root in get_focus5_scan_roots():
++        typer.echo(root)
++
++
+ @config_app.command("add-github-related-repo")
+ def config_add_github_related_repo(
+     repo: str = typer.Argument(..., help="Central tracker repo in owner/name form"),
+diff --git a/src/rebalance/ingest/config.py b/src/rebalance/ingest/config.py
+index 295657e..f5cf73a 100644
+--- a/src/rebalance/ingest/config.py
++++ b/src/rebalance/ingest/config.py
+@@ -649,18 +649,87 @@ def get_focus5_scan_roots() -> list[str]:
+     return get_repo_scan_roots()
+ 
+ 
++def set_focus5_scan_roots(roots: list[str]) -> None:
++    """Store the directories the Focus 5 collector walks. Config key: ``focus5_scan_roots``.
++
++    Paths are expanded and de-duplicated. An empty list clears the override so
++    discovery falls back to the shared ``repo_scan_roots`` defaults (see
++    :func:`get_focus5_scan_roots`). This key is Focus-5-only — it never touches
++    the ask_self / repo discovery scope.
++    """
++    cleaned: list[str] = []
++    for p in roots:
++        s = str(p).strip()
++        if not s:
++            continue
++        expanded = str(Path(s).expanduser())
++        if expanded not in cleaned:
++            cleaned.append(expanded)
++    config = _read_config()
++    if cleaned:
++        config["focus5_scan_roots"] = cleaned
++    else:
++        config.pop("focus5_scan_roots", None)
++    _write_config(config)
++
++
++def add_focus5_scan_root(root: str) -> bool:
++    """Add one directory to the Focus 5 scan roots. Returns True if newly added.
++
++    Seeds the override from the current *effective* roots (which may be the shared
++    discovery default) before appending, so adding a root never silently drops the
++    existing scope. A root that is itself a git repo (``.git`` at its top level) is
++    fine — discovery yields it and stops at its boundary.
++    """
++    s = str(root).strip()
++    if not s:
++        raise ValueError("scan root must be a non-empty path")
++    expanded = str(Path(s).expanduser())
++    current = get_focus5_scan_roots()
++    if expanded in current:
++        return False
++    set_focus5_scan_roots([*current, expanded])
++    return True
++
++
++def remove_focus5_scan_root(root: str) -> bool:
++    """Remove one directory from the Focus 5 scan roots. Returns True if it was present.
++
++    Reifies the effective roots first (so removing from an unset/default scope is
++    well-defined), drops the path, and persists the remainder; removing the last
++    explicit root clears the override back to the discovery default.
++    """
++    s = str(root).strip()
++    if not s:
++        return False
++    expanded = str(Path(s).expanduser())
++    current = get_focus5_scan_roots()
++    if expanded not in current:
++        return False
++    set_focus5_scan_roots([r for r in current if r != expanded])
++    return True
++
++
+ def get_focus5_ranking_mode() -> str:
+     """Return the active Focus 5 ranking mode. Config key: ``focus5_ranking_mode``.
+ 
+-    Defaults to ``dirty_first`` (surface uncommitted/unpushed work first). The
+-    value is validated by the collector against the registered strategies; an
+-    unknown mode is surfaced as a collector error rather than silently ignored.
++    Defaults to ``recent_activity`` — the headline "what am I working on right
++    now?" view, ranked by operator-authored commit recency (clean, freshly-pushed
++    repos included). The older ``dirty_first`` safety view ("what might I lose?")
++    is still selectable, and is reachable transiently as the **Dirty Five** web
++    view without changing this default. An explicit ``focus5_ranking_mode`` config
++    value still wins. The value is validated by the collector against the
++    registered strategies; an unknown mode is surfaced as a collector error rather
++    than silently ignored.
++
++    Keep this unset-default in lockstep with
++    ``focus5_scan.DEFAULT_RANKING_MODE``.
+     """
+     config = _read_config()
+     mode = config.get("focus5_ranking_mode")
+     if isinstance(mode, str) and mode.strip():
+         return mode.strip()
+-    return "dirty_first"
++    return "recent_activity"
+ 
+ 
+ def set_focus5_ranking_mode(mode: str) -> None:
+diff --git a/src/rebalance/ingest/focus5_scan.py b/src/rebalance/ingest/focus5_scan.py
+index 9665e84..f1a36d2 100644
+--- a/src/rebalance/ingest/focus5_scan.py
++++ b/src/rebalance/ingest/focus5_scan.py
+@@ -126,7 +126,9 @@ class RankVerdict:
+ # A ranking strategy maps (signals, now_epoch) -> verdict. Pure: no I/O, no clock.
+ RankingStrategy = Callable[[RepoSignals, int], RankVerdict]
+ 
+-DEFAULT_RANKING_MODE = "dirty_first"
++# The headline Focus 5 view: "what am I working on right now?" Kept in lockstep
++# with config.get_focus5_ranking_mode()'s unset default — change both together.
++DEFAULT_RANKING_MODE = "recent_activity"
+ 
+ 
+ def _humanize_ago(ts: int | None, now_ts: int) -> str:
+@@ -182,6 +184,29 @@ def rank_dirty_first(s: RepoSignals, now_ts: int) -> RankVerdict:
+     return RankVerdict(eligible, (1 if at_risk else 0, _recency(s)), reason)
+ 
+ 
++def rank_recent_activity(s: RepoSignals, now_ts: int) -> RankVerdict:
++    """My most recently *authored* active repos (DEFAULT — the headline Focus 5).
++
++    Answers "what am I working on right now?" Ranks purely on operator-authored
++    commit recency (``my_last_commit_ts``) with **no dirty pinning**, so a clean,
++    freshly-pushed repo I committed to an hour ago outranks a repo sitting on
++    someone else's stale WIP. That is the whole point: a commit-often/push-often
++    workflow keeps active repos clean, and every other mode buries them under any
++    repo with leftover uncommitted files.
++
++    Eligibility requires that I authored a commit here (``my_last_commit_ts is not
++    None``). A dirty-only / never-authored repo is therefore **excluded** from
++    Focus 5 — it is carried by ``dirty_first`` (the Dirty Five safety view) and
++    the off-roster "needs attention" strip instead. Ranking on ``my_last_commit_ts``
++    specifically (not :func:`_recency`, which falls back to head-reflog/any-author
++    commit time) keeps a foreign push or a clone/checkout from masquerading as my
++    activity.
++    """
++    eligible = s.my_last_commit_ts is not None
++    reason = f"your commit {_humanize_ago(s.my_last_commit_ts, now_ts)}"
++    return RankVerdict(eligible, (s.my_last_commit_ts or 0,), reason)
++
++
+ def rank_any_touch(s: RepoSignals, now_ts: int) -> RankVerdict:
+     """Anything I've touched — broadest, includes clone/fetch/checkout activity.
+ 
+@@ -196,6 +221,7 @@ def rank_any_touch(s: RepoSignals, now_ts: int) -> RankVerdict:
+ 
+ 
+ RANKING_STRATEGIES: dict[str, RankingStrategy] = {
++    "recent_activity": rank_recent_activity,
+     "my_work": rank_my_work,
+     "dirty_first": rank_dirty_first,
+     "any_touch": rank_any_touch,
+@@ -721,9 +747,83 @@ def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
+     }
+ 
+ 
++def _persisted_roster_bases(conn: Any, dev: str) -> list[dict[str, Any]]:
++    """Roster base dicts from the persisted ``focus5_roster`` snapshot (default view)."""
++    rows = conn.execute(
++        "SELECT r.position, r.rank_reason, r.ranking_mode, r.computed_at, s.* "
++        "FROM focus5_roster r JOIN focus5_repo_signals s "
++        "  ON s.device_id=r.device_id AND s.local_path=r.local_path "
++        "WHERE r.device_id=? ORDER BY r.position",
++        (dev,),
++    ).fetchall()
++    return [{k: row[k] for k in row.keys()} for row in rows]
++
++
++def _transient_roster_bases(conn: Any, dev: str, mode: str) -> list[dict[str, Any]]:
++    """Roster base dicts by re-ranking the cached signals under *mode* — NO write.
++
++    The Dirty Five seam: rank the off-roster signal cache in memory and hand back
++    the same base shape the persisted path produces, so ``focus5_roster`` (the
++    default ``recent_activity`` snapshot) is never disturbed. Membership freshness
++    is the signals' ``probed_at`` (all written together by the last sync).
++    """
++    from rebalance.ingest.config import get_focus5_hidden_repos
++    rows = conn.execute(
++        "SELECT * FROM focus5_repo_signals WHERE device_id=?", (dev,)
++    ).fetchall()
++    signals = [_row_to_signals(r) for r in rows]
++    now_ts = int(datetime.now(timezone.utc).timestamp())
++    ranked = rank_repos(signals, mode=mode, now_ts=now_ts,
++                        hidden=get_focus5_hidden_repos())
++    computed_at = signals[0].probed_at if signals else None
++    bases: list[dict[str, Any]] = []
++    for r in ranked:
++        base = asdict(r.signals)
++        base["position"] = r.position
++        base["rank_reason"] = r.reason
++        base["ranking_mode"] = mode
++        base["computed_at"] = computed_at
++        bases.append(base)
++    return bases
++
++
++def _build_roster_card(
++    conn: Any, base: dict[str, Any], *, with_activity: bool, with_live_health: bool,
++) -> dict[str, Any]:
++    """Finish one roster card: coerce flags, attach the open/PR/activity enrichments.
++
++    *base* must already carry every signal column plus ``position``,
++    ``rank_reason``, ``ranking_mode`` and ``computed_at`` — whether that came from
++    the persisted ``focus5_roster`` join or an in-memory rerank. Shared so both
++    the default (persisted) and transient (re-ranked) views render identically.
++    """
++    card = dict(base)
++    card["is_dirty"] = bool(card["is_dirty"])
++    card["has_upstream"] = bool(card["has_upstream"])
++    card["vscode_url"] = vscode_url(card["local_path"])
++    card["newest_pr"] = _newest_pr(conn, card.get("repo_full_name"))
++    card["recent_activity"] = (
++        recent_activity(card["local_path"]) if with_activity else []
++    )
++    # Overlay live working-tree health on top of the stored snapshot so "did I
++    # forget to commit/push?" is answered against now.
++    if with_live_health:
++        lh = live_health(card["local_path"])
++        if lh.get("health_available"):
++            for k in _LIVE_HEALTH_FIELDS:
++                card[k] = lh[k]
++        card["health_available"] = lh.get("health_available", True)
++        card["health_probed_at"] = lh["health_probed_at"]
++    else:
++        card["health_available"] = True
++        card["health_probed_at"] = card.get("probed_at")
++    return card
++
++
+ def summarize_focus5(
+     database_path: Path, *, device_id: str | None = None,
+     with_activity: bool = True, with_live_health: bool = True,
++    mode: str | None = None,
+ ) -> dict[str, Any]:
+     """Return the roster cards, off-roster warnings, and snapshot metadata.
+ 
+@@ -732,11 +832,20 @@ def summarize_focus5(
+     ``vscode_url`` open action, a ``newest_pr`` enrichment (None when the GitHub
+     corpus can't supply it), and the last 3 local commits as ``recent_activity``.
+ 
+-    Freshness split (Phase 3): roster *membership* comes from the persisted
+-    snapshot, but each card's working-tree **health is re-probed live** here
+-    (``with_live_health``) and stamped with ``health_probed_at`` — so commit/push
+-    reminders reflect the tree right now, not the last sync. Off-roster warnings
+-    stay cached (we never live-sweep the whole machine per request).
++    **Default view** (``mode=None``): roster *membership* comes from the persisted
++    ``focus5_roster`` snapshot (the headline ``recent_activity`` ranking).
++
++    **Transient view** (``mode`` given): the cached ``focus5_repo_signals`` are
++    re-ranked in memory under *mode* and rendered **without rewriting the
++    persisted roster** — this is how the **Dirty Five** view shows ``dirty_first``
++    over the same snapshot while ``/focus-5`` still defaults to ``recent_activity``.
++    Membership freshness then reflects the signals' ``probed_at`` (the last sync).
++
++    Freshness split: roster *membership* comes from the snapshot, but each card's
++    working-tree **health is re-probed live** here (``with_live_health``) and
++    stamped with ``health_probed_at`` — so commit/push reminders reflect the tree
++    right now, not the last sync. Off-roster warnings stay cached (we never
++    live-sweep the whole machine per request).
+ 
+     Both ``with_activity`` and ``with_live_health`` are bounded to the top-5 and
+     can be disabled for a pure DB read.
+@@ -749,37 +858,16 @@ def summarize_focus5(
+     }
+     try:
+         with db_connection(database_path) as conn:
+-            roster_rows = conn.execute(
+-                "SELECT r.position, r.rank_reason, r.ranking_mode, r.computed_at, s.* "
+-                "FROM focus5_roster r JOIN focus5_repo_signals s "
+-                "  ON s.device_id=r.device_id AND s.local_path=r.local_path "
+-                "WHERE r.device_id=? ORDER BY r.position",
+-                (dev,),
+-            ).fetchall()
+-
+-            roster = []
+-            for row in roster_rows:
+-                card = {k: row[k] for k in row.keys()}
+-                card["is_dirty"] = bool(card["is_dirty"])
+-                card["has_upstream"] = bool(card["has_upstream"])
+-                card["vscode_url"] = vscode_url(card["local_path"])
+-                card["newest_pr"] = _newest_pr(conn, card.get("repo_full_name"))
+-                card["recent_activity"] = (
+-                    recent_activity(card["local_path"]) if with_activity else []
+-                )
+-                # Overlay live working-tree health on top of the stored snapshot
+-                # so "did I forget to commit/push?" is answered against now.
+-                if with_live_health:
+-                    lh = live_health(card["local_path"])
+-                    if lh.get("health_available"):
+-                        for k in _LIVE_HEALTH_FIELDS:
+-                            card[k] = lh[k]
+-                    card["health_available"] = lh.get("health_available", True)
+-                    card["health_probed_at"] = lh["health_probed_at"]
+-                else:
+-                    card["health_available"] = True
+-                    card["health_probed_at"] = card.get("probed_at")
+-                roster.append(card)
++            bases = (
++                _transient_roster_bases(conn, dev, mode)
++                if mode is not None
++                else _persisted_roster_bases(conn, dev)
++            )
++            roster = [
++                _build_roster_card(conn, b, with_activity=with_activity,
++                                   with_live_health=with_live_health)
++                for b in bases
++            ]
+ 
+             roster_paths = {c["local_path"] for c in roster}
+             # Hidden repos are suppressed from the off-roster attention strip too —
+diff --git a/src/rebalance/web.py b/src/rebalance/web.py
+index 324c805..bfd4537 100644
+--- a/src/rebalance/web.py
++++ b/src/rebalance/web.py
+@@ -156,6 +156,13 @@ tr:hover td { background: rgba(0,0,0,.03); }
+            border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
+            line-height: 1.5; }
+ .f5-warn b { color: var(--warn); }
++/* Focus 5 / Dirty Five view toggle — a small segmented control. */
++.f5-views { display: inline-flex; gap: 4px; padding: 3px; margin-bottom: 16px;
++            background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
++.f5-view { font-size: 13px; font-weight: 600; color: var(--fg-muted); text-decoration: none;
++           padding: 4px 12px; border-radius: 6px; }
++.f5-view:hover { color: var(--fg); }
++.f5-view.active { background: rgba(31,111,235,.12); color: var(--accent); }
+ 
+ /* What's Next — the single ranked "work on next" list. Reuses the shared
+    .badge/.empty rules; only the list/row chrome is page-local. */
+@@ -290,8 +297,9 @@ def index() -> HTMLResponse:
+   <li><a href="/focus-5" style="color:var(--accent);font-size:15px;">
+       Focus 5</a>
+       <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
+-      — the 5 repos you're actively working on: working-tree health, newest PR,
+-      and recent local commits, ranked by uncommitted/unpushed work first</span>
++      — the 5 repos you're actively working on, ranked by your most recent
++      commits: working-tree health, newest PR, and recent local commits
++      (with a Dirty Five view for uncommitted/unpushed work)</span>
+   </li>
+   <li><a href="/auth-log" style="color:var(--accent);font-size:15px;">
+       System Log</a>
+@@ -437,17 +445,49 @@ def _f5_card(card: dict[str, Any]) -> str:
+     )
+ 
+ 
+-def _focus5_body(data: dict[str, Any]) -> str:
+-    """Render the Focus 5 page body from a summarize_focus5() dict (pure)."""
+-    refresh_btn = "<a class='f5-refresh' href='/focus-5?refresh=1' title='Re-rank now'>↻ Refresh</a>"
++# The two Focus 5 views: the headline "what am I working on?" board and the
++# "what might I lose?" safety board. Only the title, ranking mode, and active
++# toggle differ — the card renderer is shared.
++_F5_VIEWS = (
++    ("focus5", "/focus-5", "🎯 Focus 5"),
++    ("dirty", "/focus-5?view=dirty", "🧹 Dirty Five"),
++)
++
++
++def _f5_view_toggle(active_view: str) -> str:
++    """Segmented Focus 5 / Dirty Five switch; the active view is highlighted."""
++    links = "".join(
++        f"<a class='f5-view{' active' if key == active_view else ''}' href='{href}'>{label}</a>"
++        for key, href, label in _F5_VIEWS
++    )
++    return f"<div class='f5-views'>{links}</div>"
++
++
++def _focus5_body(data: dict[str, Any], *, view: str = "focus5") -> str:
++    """Render the Focus 5 page body from a summarize_focus5() dict (pure).
++
++    *view* selects the headline board (``"focus5"`` → recent_activity) or the
++    safety board (``"dirty"`` → dirty_first). Both reuse this renderer; only the
++    title, the refresh target, the active toggle, and the empty-state copy differ.
++    """
++    is_dirty_view = view == "dirty"
++    title = "🧹 Dirty Five" if is_dirty_view else "🎯 Focus 5"
++    # &amp; — this is an href in an HTML attribute, so the ampersand is entity-encoded.
++    refresh_href = "/focus-5?refresh=1&amp;view=dirty" if is_dirty_view else "/focus-5?refresh=1"
++    refresh_btn = f"<a class='f5-refresh' href='{refresh_href}' title='Re-rank now'>↻ Refresh</a>"
++    toggle = _f5_view_toggle(view)
++    head = f"<h2>{title} {refresh_btn}</h2>{toggle}"
+     roster = data.get("roster") or []
+     if not roster:
+-        return (
+-            f"<h2>🎯 Focus 5 {refresh_btn}</h2>"
+-            "<div class='empty'>No active repos found yet. The roster builds from "
+-            "your local git activity — make a commit or leave uncommitted work in a "
+-            "repo under your dev folders, then reload.</div>"
++        empty = (
++            "Nothing at risk — no uncommitted or unpushed work outside the top 5. "
++            "Clean desk."
++            if is_dirty_view else
++            "No active repos found yet. The roster builds from your local git "
++            "activity — make a commit or leave uncommitted work in a repo under "
++            "your dev folders, then reload."
+         )
++        return f"{head}<div class='empty'>{empty}</div>"
+     mode = html.escape(data.get("ranking_mode") or "")
+     computed = _rel_time(data.get("computed_at"))
+     # Roster membership is a snapshot (≤24h); tree health is re-probed live. Say
+@@ -460,10 +500,7 @@ def _focus5_body(data: dict[str, Any]) -> str:
+     )
+     strip = _f5_warning_strip(data)
+     cards = "".join(_f5_card(c) for c in roster)
+-    return (
+-        f"<h2>🎯 Focus 5 {refresh_btn}</h2>{meta}{strip}"
+-        f"<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}"
+-    )
++    return f"{head}{meta}{strip}<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}"
+ 
+ 
+ # Scoped CSS + JS for the per-card hide (✕) control. Kept in the Focus 5 body so
+@@ -517,24 +554,34 @@ def _roster_stale(computed_at: str | None) -> bool:
+ 
+ 
+ @app.get("/focus-5")
+-def focus5_page(refresh: bool = False):
++def focus5_page(refresh: bool = False, view: str = "focus5"):
+     from rebalance.ingest.focus5_scan import (
+         get_roster_meta, summarize_focus5, sync_focus5,
+     )
+     from rebalance.paths import DatabaseNotFoundError, resolve_database_path
+ 
++    # Two views over the SAME device-local snapshot: the default headline board
++    # (recent_activity, persisted in focus5_roster) and the transient "Dirty Five"
++    # safety board (dirty_first, re-ranked from the cached signals on the fly).
++    # Dirty Five never overwrites the persisted roster, so /focus-5 still defaults
++    # to recent_activity afterwards.
++    dirty_view = view == "dirty"
++    page_title = "Dirty Five" if dirty_view else "Focus 5"
++
+     try:
+         db = resolve_database_path()
+     except DatabaseNotFoundError:
+-        body = ("<h2>🎯 Focus 5</h2><div class='empty'>No rebalance database found. "
++        body = (f"<h2>🎯 {page_title}</h2><div class='empty'>No rebalance database found. "
+                 "Run <code>rebalance refresh-index</code> first.</div>")
+-        return _page("Focus 5", body, active="focus5", wide=True)
++        return _page(page_title, body, active="focus5", wide=True)
+ 
+     # Recompute the roster only when forced (↻ Refresh) or never built — NOT on a
+     # stale TTL. sync_focus5() is a ~30s synchronous device-local git scan; running
+     # it inline on a stale page load blocked the request and made the page look
+     # broken. A stale roster now renders instantly with the "⚠ stale" badge; the
+-    # operator re-ranks on demand via the Refresh button (?refresh=1).
++    # operator re-ranks on demand via the Refresh button (?refresh=1). The scan
++    # always rebuilds the default (recent_activity) snapshot; the Dirty Five view
++    # then re-ranks that same fresh signal cache.
+     meta = get_roster_meta(db)
+     if refresh or not meta["roster_size"]:
+         try:
+@@ -542,11 +589,15 @@ def focus5_page(refresh: bool = False):
+         except Exception:  # noqa: BLE001 — a scan failure must not 500 the page
+             pass
+         if refresh:
+-            # Post/redirect/get: drop ?refresh so a browser reload doesn't re-scan.
+-            return RedirectResponse("/focus-5", status_code=303)
+-
+-    data = summarize_focus5(db)  # roster from snapshot; health re-probed live
+-    return _page("Focus 5", _focus5_body(data), active="focus5", wide=True)
++            # Post/redirect/get: drop ?refresh so a browser reload doesn't re-scan,
++            # but keep the view the operator was on.
++            target = "/focus-5?view=dirty" if dirty_view else "/focus-5"
++            return RedirectResponse(target, status_code=303)
++
++    # mode=None → persisted recent_activity roster; mode="dirty_first" → transient
++    # re-rank from the cached signals (no write). Health is re-probed live in both.
++    data = summarize_focus5(db, mode="dirty_first" if dirty_view else None)
++    return _page(page_title, _focus5_body(data, view=view), active="focus5", wide=True)
+ 
+ 
+ class Focus5HideRequest(BaseModel):

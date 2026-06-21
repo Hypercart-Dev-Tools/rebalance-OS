@@ -6,6 +6,58 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.41.0] - 2026-06-18
+
+P2 **Phase 2 — v0.5 "What should we work on next"** (product milestone *v0.5*; the
+semver continues forward from 0.40.x). A ranked, person-attributed next-action view
+blended from the operator's signals + teammate calendars, synthesized by Gemini, on
+its own dashboard page. Built Ultra-Code; one 30-agent adversarial review applied.
+
+### Added
+- **Shared ranking core `next_actions.rank_next_actions`** ([next_actions.py](src/rebalance/ingest/next_actions.py)) —
+  the single ranked-output service both the dashboard route and `ask()` call (the DRY
+  parity gate). Productizes the Phase-0 A/B harness blend + content de-dup; reads
+  teammate rows via the new person-scoped `calendar.get_team_upcoming_by_person`;
+  applies the `SignalWeights` levers + a per-person additivity gate (Matt-first; sparse
+  teammates earn in by logging density); synthesizes through the existing Gemini→Qwen
+  `_synthesize_with_fallback` adapter with a deterministic ranked fallback so it never
+  returns blank. **Migration 0006** adds the local-only `ranked_next_actions` precompute
+  cache (never exported).
+- **`/whats-next` dashboard page** ([web.py](src/rebalance/web.py)) — its OWN page, live on
+  `rebalance serve` and the always-running `pulse_server`; reads the precompute and
+  recomputes live (+persists) on `?refresh`.
+- **`ask(team=True)` MCP parity** — returns the same ranked output via a sidecar attribute,
+  leaving the pinned `QueryResult` contract byte-identical for `team=False`.
+- **Precompute hook in `refresh_index`** — the network-allowed sync computes + persists the
+  ranked list (gated, fail-safe) so the offline launchd dashboard can read it.
+- **`automation` tag** — each ranked action is inferred as a candidate for a GitHub-issue →
+  coding-agent (Codex / Claude Code) hook (a code/repo task vs a meeting/email/vague hold),
+  via an `automation=` field in the synthesis grammar + a deterministic `_infer_automation`
+  heuristic. Surfaced as an "⚙ automation" tag in the UI. (No issue is created and no agent
+  is triggered yet — tag only.)
+
+### Changed
+- **Static pulse "what's next" is now a slim teaser**, not a full embedded panel — it shows
+  the top item, a ranked/automation-ready count, and a link to the dedicated `/whats-next`
+  page, so it no longer crowds the main dashboard.
+- Calendar reader defaults (`get_upcoming_events`/`get_recent_events`/`get_daily_totals`)
+  now bind `OPERATOR_CALENDAR_ID` instead of the literal `"primary"` (DRY).
+
+### Fixed (30-agent adversarial review, 14 verified findings)
+- **Synthesis fallback integrity (HIGH):** a degenerate Gemini/Qwen parse (any numbered prose
+  line) could overwrite the *good* deterministic candidate ordering with metadata-stripped
+  prose. The output now uses a uniform pipe `key=value` grammar with a robust parser and an
+  **acceptance gate** — the deterministic fallback survives unless ≥½ parsed items carry a
+  structured field. Validated live (Qwen prose rejected, candidates kept).
+- Multi-day teammate dedup, accurate `blended` badge, route persists every live compute
+  (no recompute-per-load), `ask(team=True)` prefers the cache (no second LLM call), additivity
+  over a trailing-30d window, and the dropped-ball class is now named/targeted in the prompt.
+
+### Privacy
+- Teammate `person` labels stay local-display-only; export paths (`sync_snapshot`,
+  `export_calendar_snapshot`, pushed pulse) untouched; the precompute cache is local-only.
+  `test_next_actions_privacy.py` regression-locks the invariant. (992 tests.)
+
 ## [0.40.2] - 2026-06-17
 
 P2 Phase 1 — privacy-seam test hardening (follows 0.40.1 F1). A re-run of the

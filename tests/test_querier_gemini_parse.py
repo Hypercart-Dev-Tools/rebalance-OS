@@ -13,7 +13,12 @@ import json
 import unittest
 from unittest.mock import patch
 
-from rebalance.ingest.querier import _synthesize_gemini
+from rebalance.ingest.querier import (
+    DEFAULT_CHAT_MODEL,
+    DEFAULT_GEMINI_MODEL,
+    _synthesize_gemini,
+    _synthesize_with_fallback,
+)
 
 
 class _FakeResp:
@@ -78,6 +83,89 @@ class TestSynthesizeGeminiParse(unittest.TestCase):
             with self.subTest(payload=payload):
                 with self.assertRaises(RuntimeError):
                     _call(payload)
+
+
+class TestSynthesizeWithFallback(unittest.TestCase):
+    """The Gemini -> Qwen ladder extracted from ask()."""
+
+    def test_gemini_success(self) -> None:
+        with patch("rebalance.ingest.config.get_gemini_api_key", return_value="k"), \
+                patch(
+                    "rebalance.ingest.querier._synthesize_gemini",
+                    return_value="gemini answer",
+                ) as g, \
+                patch("rebalance.ingest.querier._synthesize") as q:
+            text, model = _synthesize_with_fallback("prompt")
+        self.assertEqual(text, "gemini answer")
+        self.assertEqual(model, DEFAULT_GEMINI_MODEL)
+        g.assert_called_once()
+        q.assert_not_called()
+
+    def test_gemini_raises_falls_back_to_qwen(self) -> None:
+        with patch("rebalance.ingest.config.get_gemini_api_key", return_value="k"), \
+                patch(
+                    "rebalance.ingest.querier._synthesize_gemini",
+                    side_effect=RuntimeError("boom"),
+                ), \
+                patch(
+                    "rebalance.ingest.querier._synthesize",
+                    return_value="qwen answer",
+                ) as q, \
+                self.assertLogs("rebalance.ingest.querier", level="WARNING") as logs:
+            text, model = _synthesize_with_fallback("prompt")
+        self.assertEqual(text, "qwen answer")
+        self.assertEqual(model, f"{DEFAULT_CHAT_MODEL} (gemini-fallback)")
+        q.assert_called_once()
+        self.assertTrue(
+            any("Gemini synthesis failed" in m for m in logs.output),
+            logs.output,
+        )
+
+    def test_both_fail_returns_sentinel_and_dual_failure_log(self) -> None:
+        with patch("rebalance.ingest.config.get_gemini_api_key", return_value="k"), \
+                patch(
+                    "rebalance.ingest.querier._synthesize_gemini",
+                    side_effect=RuntimeError("gemini down"),
+                ), \
+                patch(
+                    "rebalance.ingest.querier._synthesize",
+                    side_effect=RuntimeError("qwen down"),
+                ), \
+                self.assertLogs("rebalance.ingest.querier", level="WARNING") as logs:
+            text, model = _synthesize_with_fallback("prompt")
+        self.assertEqual(text, "[LLM synthesis failed: qwen down]")
+        self.assertEqual(model, f"{DEFAULT_CHAT_MODEL} (failed)")
+        self.assertTrue(
+            any(
+                "Qwen fallback also failed after Gemini failure" in m
+                for m in logs.output
+            ),
+            logs.output,
+        )
+
+    def test_no_gemini_key_uses_qwen_directly(self) -> None:
+        with patch("rebalance.ingest.config.get_gemini_api_key", return_value=""), \
+                patch(
+                    "rebalance.ingest.querier._synthesize_gemini",
+                ) as g, \
+                patch(
+                    "rebalance.ingest.querier._synthesize",
+                    return_value="qwen answer",
+                ):
+            text, model = _synthesize_with_fallback("prompt")
+        self.assertEqual(text, "qwen answer")
+        self.assertEqual(model, DEFAULT_CHAT_MODEL)
+        g.assert_not_called()
+
+    def test_no_gemini_key_qwen_fails_returns_local_sentinel(self) -> None:
+        with patch("rebalance.ingest.config.get_gemini_api_key", return_value=""), \
+                patch(
+                    "rebalance.ingest.querier._synthesize",
+                    side_effect=RuntimeError("qwen down"),
+                ):
+            text, model = _synthesize_with_fallback("prompt")
+        self.assertEqual(text, "[Local LLM synthesis failed: qwen down]")
+        self.assertEqual(model, f"{DEFAULT_CHAT_MODEL} (failed)")
 
 
 if __name__ == "__main__":

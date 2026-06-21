@@ -148,6 +148,29 @@ class FocusBodyTests(unittest.TestCase):
         self.assertIn("unavailable", body)
 
 
+class ViewToggleTests(unittest.TestCase):
+    """The Focus 5 / Dirty Five segmented toggle, shared by both views."""
+
+    def test_default_view_is_focus5_and_shows_both_tabs(self) -> None:
+        body = _focus5_body(_data([_card()]))
+        self.assertIn("🎯 Focus 5", body)
+        self.assertIn("f5-views", body)             # toggle present
+        self.assertIn("🧹 Dirty Five", body)        # the other tab is linked
+        self.assertIn("?view=dirty", body)          # link to the dirty view
+
+    def test_dirty_view_is_titled_and_keeps_view_on_refresh(self) -> None:
+        body = _focus5_body(_data([_card()], ranking_mode="dirty_first"), view="dirty")
+        self.assertIn("🧹 Dirty Five", body)
+        self.assertIn("f5-view active", body)       # a tab is marked active
+        self.assertIn("refresh=1&amp;view=dirty", body)  # refresh stays on Dirty Five
+
+    def test_dirty_empty_state_differs_from_default(self) -> None:
+        body = _focus5_body(_data([]), view="dirty")
+        self.assertIn("Nothing at risk", body)
+        self.assertNotIn("No active repos found", body)
+        self.assertIn("f5-views", body)             # toggle still shown when empty
+
+
 class RosterStaleTests(unittest.TestCase):
     def test_missing_is_stale(self) -> None:
         self.assertTrue(_roster_stale(None))
@@ -201,6 +224,45 @@ class OpenButtonTests(unittest.TestCase):
         self.assertIn("f5-actions", body)              # top-right cluster
         self.assertIn("rb-btn", body)                  # Open ↗
         self.assertIn("f5-hide", body)                 # ✕ still present
+
+
+class RouteScanTriggerTests(unittest.TestCase):
+    """focus5_page must NOT run the ~30s synchronous sync_focus5 git scan on a
+    stale page load — only on an explicit Refresh or a never-built roster."""
+
+    def _load(self, *, refresh: bool, roster_size: int, computed_at):
+        from unittest.mock import patch
+        from rebalance import web
+
+        meta = {"roster_size": roster_size, "computed_at": computed_at}
+        with patch("rebalance.paths.resolve_database_path", return_value="db"), \
+             patch("rebalance.ingest.focus5_scan.get_roster_meta", return_value=meta), \
+             patch("rebalance.ingest.focus5_scan.summarize_focus5", return_value={"roster": []}), \
+             patch("rebalance.ingest.focus5_scan.sync_focus5") as scan, \
+             patch("rebalance.web._focus5_body", return_value=""), \
+             patch("rebalance.web._page", return_value="OK"):
+            web.focus5_page(refresh=refresh)
+        return scan
+
+    def test_stale_roster_does_not_trigger_blocking_scan(self) -> None:
+        scan = self._load(refresh=False, roster_size=5, computed_at=_now_iso(days=2))
+        scan.assert_not_called()
+
+    def test_never_built_roster_triggers_first_scan(self) -> None:
+        scan = self._load(refresh=False, roster_size=0, computed_at=None)
+        scan.assert_called_once()
+
+    def test_explicit_refresh_triggers_scan(self) -> None:
+        from unittest.mock import patch
+        from rebalance import web
+
+        meta = {"roster_size": 5, "computed_at": _now_iso(days=2)}
+        with patch("rebalance.paths.resolve_database_path", return_value="db"), \
+             patch("rebalance.ingest.focus5_scan.get_roster_meta", return_value=meta), \
+             patch("rebalance.ingest.focus5_scan.sync_focus5") as scan, \
+             patch("rebalance.ingest.focus5_scan.summarize_focus5", return_value={"roster": []}):
+            web.focus5_page(refresh=True)  # returns a redirect before render
+        scan.assert_called_once()
 
 
 if __name__ == "__main__":

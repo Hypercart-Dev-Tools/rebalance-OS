@@ -15,6 +15,7 @@ GET /auth-log/raw  — raw JSONL file download
 from __future__ import annotations
 
 import html
+import logging
 from datetime import datetime, timezone
 from typing import Any
 
@@ -28,6 +29,8 @@ from rebalance.ingest.auth_log import read_log, _log_path
 from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
 from rebalance.paths import resolve_db
 from rebalance.web_components import badge_html, button_link, render_shell
+
+logger = logging.getLogger(__name__)
 
 # How long a persisted Focus 5 roster stays authoritative before a visit lazily
 # recomputes it. Membership is snapshot-stable for this window; working-tree
@@ -153,6 +156,33 @@ tr:hover td { background: rgba(0,0,0,.03); }
            border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
            line-height: 1.5; }
 .f5-warn b { color: var(--warn); }
+/* Focus 5 / Dirty Five view toggle — a small segmented control. */
+.f5-views { display: inline-flex; gap: 4px; padding: 3px; margin-bottom: 16px;
+            background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
+.f5-view { font-size: 13px; font-weight: 600; color: var(--fg-muted); text-decoration: none;
+           padding: 4px 12px; border-radius: 6px; }
+.f5-view:hover { color: var(--fg); }
+.f5-view.active { background: rgba(31,111,235,.12); color: var(--accent); }
+
+/* What's Next — the single ranked "work on next" list. Reuses the shared
+   .badge/.empty rules; only the list/row chrome is page-local. */
+.wn-refresh { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none;
+              margin-left: 10px; }
+.wn-refresh:hover { text-decoration: underline; }
+.wn-meta { font-size: 12px; color: var(--fg-muted); margin-bottom: 16px; }
+.wn-blended { color: var(--ok); }
+.wn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.wn-item { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+           padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start; }
+.wn-rank { font-size: 13px; font-weight: 700; color: var(--fg-dim); min-width: 28px;
+           font-variant-numeric: tabular-nums; }
+.wn-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.wn-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.wn-title { font-size: 14px; font-weight: 600; color: var(--fg); word-break: break-word; }
+.wn-why { font-size: 12px; color: var(--fg-muted); line-height: 1.4; }
+.wn-ev { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
+.wn-ev li { font-size: 11px; color: var(--fg-dim); word-break: break-word; }
+.wn-src { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .04em; }
 """
 
 
@@ -267,8 +297,9 @@ def index() -> HTMLResponse:
   <li><a href="/focus-5" style="color:var(--accent);font-size:15px;">
       Focus 5</a>
       <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
-      — the 5 repos you're actively working on: working-tree health, newest PR,
-      and recent local commits, ranked by uncommitted/unpushed work first</span>
+      — the 5 repos you're actively working on, ranked by your most recent
+      commits: working-tree health, newest PR, and recent local commits
+      (with a Dirty Five view for uncommitted/unpushed work)</span>
   </li>
   <li><a href="/auth-log" style="color:var(--accent);font-size:15px;">
       System Log</a>
@@ -414,17 +445,36 @@ def _f5_card(card: dict[str, Any]) -> str:
     )
 
 
-def _focus5_body(data: dict[str, Any]) -> str:
-    """Render the Focus 5 page body from a summarize_focus5() dict (pure)."""
-    refresh_btn = "<a class='f5-refresh' href='/focus-5?refresh=1' title='Re-rank now'>↻ Refresh</a>"
+def _focus5_body(data: dict[str, Any], *, view: str = "focus5") -> str:
+    """Render the Focus 5 page body from a summarize_focus5() dict (pure).
+
+    *view* selects the headline board (``"focus5"`` → recent_activity) or the
+    safety board (``"dirty"`` → dirty_first). Both reuse this renderer; only the
+    title, the refresh target, the active toggle, and the empty-state copy differ.
+    """
+    is_dirty_view = view == "dirty"
+    title = "🧹 Dirty Five" if is_dirty_view else "🎯 Focus 5"
+    # &amp; — this is an href in an HTML attribute, so the ampersand is entity-encoded.
+    refresh_href = "/focus-5?refresh=1&amp;view=dirty" if is_dirty_view else "/focus-5?refresh=1"
+    refresh_btn = f"<a class='f5-refresh' href='{refresh_href}' title='Re-rank now'>↻ Refresh</a>"
+    # Segmented Focus 5 / Dirty Five toggle (active view highlighted).
+    tabs = (("focus5", "/focus-5", "🎯 Focus 5"), ("dirty", "/focus-5?view=dirty", "🧹 Dirty Five"))
+    toggle = "<div class='f5-views'>" + "".join(
+        f"<a class='f5-view{' active' if k == view else ''}' href='{href}'>{label}</a>"
+        for k, href, label in tabs
+    ) + "</div>"
+    head = f"<h2>{title} {refresh_btn}</h2>{toggle}"
     roster = data.get("roster") or []
     if not roster:
-        return (
-            f"<h2>🎯 Focus 5 {refresh_btn}</h2>"
-            "<div class='empty'>No active repos found yet. The roster builds from "
-            "your local git activity — make a commit or leave uncommitted work in a "
-            "repo under your dev folders, then reload.</div>"
+        empty = (
+            "Nothing at risk — no uncommitted or unpushed work outside the top 5. "
+            "Clean desk."
+            if is_dirty_view else
+            "No active repos found yet. The roster builds from your local git "
+            "activity — make a commit or leave uncommitted work in a repo under "
+            "your dev folders, then reload."
         )
+        return f"{head}<div class='empty'>{empty}</div>"
     mode = html.escape(data.get("ranking_mode") or "")
     computed = _rel_time(data.get("computed_at"))
     # Roster membership is a snapshot (≤24h); tree health is re-probed live. Say
@@ -437,10 +487,7 @@ def _focus5_body(data: dict[str, Any]) -> str:
     )
     strip = _f5_warning_strip(data)
     cards = "".join(_f5_card(c) for c in roster)
-    return (
-        f"<h2>🎯 Focus 5 {refresh_btn}</h2>{meta}{strip}"
-        f"<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}"
-    )
+    return f"{head}{meta}{strip}<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}"
 
 
 # Scoped CSS + JS for the per-card hide (✕) control. Kept in the Focus 5 body so
@@ -494,33 +541,50 @@ def _roster_stale(computed_at: str | None) -> bool:
 
 
 @app.get("/focus-5")
-def focus5_page(refresh: bool = False):
+def focus5_page(refresh: bool = False, view: str = "focus5"):
     from rebalance.ingest.focus5_scan import (
         get_roster_meta, summarize_focus5, sync_focus5,
     )
     from rebalance.paths import DatabaseNotFoundError, resolve_database_path
 
+    # Two views over the SAME device-local snapshot: the default headline board
+    # (recent_activity, persisted in focus5_roster) and the transient "Dirty Five"
+    # safety board (dirty_first, re-ranked from the cached signals on the fly).
+    # Dirty Five never overwrites the persisted roster, so /focus-5 still defaults
+    # to recent_activity afterwards.
+    dirty_view = view == "dirty"
+    page_title = "Dirty Five" if dirty_view else "Focus 5"
+
     try:
         db = resolve_database_path()
     except DatabaseNotFoundError:
-        body = ("<h2>🎯 Focus 5</h2><div class='empty'>No rebalance database found. "
+        body = (f"<h2>🎯 {page_title}</h2><div class='empty'>No rebalance database found. "
                 "Run <code>rebalance refresh-index</code> first.</div>")
-        return _page("Focus 5", body, active="focus5", wide=True)
+        return _page(page_title, body, active="focus5", wide=True)
 
-    # Recompute the roster when forced, never built, or past its 24h TTL. The
-    # meta check is a cheap DB read so we don't pay the live-probe render twice.
+    # Recompute the roster only when forced (↻ Refresh) or never built — NOT on a
+    # stale TTL. sync_focus5() is a ~30s synchronous device-local git scan; running
+    # it inline on a stale page load blocked the request and made the page look
+    # broken. A stale roster now renders instantly with the "⚠ stale" badge; the
+    # operator re-ranks on demand via the Refresh button (?refresh=1). The scan
+    # always rebuilds the default (recent_activity) snapshot; the Dirty Five view
+    # then re-ranks that same fresh signal cache.
     meta = get_roster_meta(db)
-    if refresh or not meta["roster_size"] or _roster_stale(meta["computed_at"]):
+    if refresh or not meta["roster_size"]:
         try:
             sync_focus5(db)
         except Exception:  # noqa: BLE001 — a scan failure must not 500 the page
             pass
         if refresh:
-            # Post/redirect/get: drop ?refresh so a browser reload doesn't re-scan.
-            return RedirectResponse("/focus-5", status_code=303)
+            # Post/redirect/get: drop ?refresh so a browser reload doesn't re-scan,
+            # but keep the view the operator was on.
+            target = "/focus-5?view=dirty" if dirty_view else "/focus-5"
+            return RedirectResponse(target, status_code=303)
 
-    data = summarize_focus5(db)  # roster from snapshot; health re-probed live
-    return _page("Focus 5", _focus5_body(data), active="focus5", wide=True)
+    # mode=None → persisted recent_activity roster; mode="dirty_first" → transient
+    # re-rank from the cached signals (no write). Health is re-probed live in both.
+    data = summarize_focus5(db, mode="dirty_first" if dirty_view else None)
+    return _page(page_title, _focus5_body(data, view=view), active="focus5", wide=True)
 
 
 class Focus5HideRequest(BaseModel):
@@ -567,6 +631,147 @@ def focus5_hide(req: Focus5HideRequest) -> JSONResponse:
 @app.post("/api/focus5/unhide")
 def focus5_unhide(req: Focus5HideRequest) -> JSONResponse:
     return JSONResponse(focus5_set_hidden(req.repo, hidden=False))
+
+
+# ---------------------------------------------------------------------------
+# What's Next — the single ranked "what should we work on next" view.
+#
+# Pure renderer over a RankedNextActions.as_dict() shape; the handler is
+# control-flow only. Person labels are LOCAL-DISPLAY-ONLY and html.escape'd here
+# (this is the local dashboard, never an export/pushed-pulse path).
+# ---------------------------------------------------------------------------
+
+
+def _wn_person_badge(person: str | None) -> str:
+    """Attribution badge: operator's own items vs a teammate-labelled one.
+
+    ``person`` is None for the operator's own signals (info badge "You") and a
+    teammate label otherwise (neutral badge). The label is html.escape'd by
+    badge_html — it is local-display-only and never exported.
+    """
+    if not person:
+        return badge_html("info", "You")
+    return badge_html("neutral", str(person))
+
+
+def _wn_item(action: dict[str, Any]) -> str:
+    """Render one ranked next-action row (pure). Escapes ALL untrusted text."""
+    rank = action.get("rank") or 0
+    title = html.escape(str(action.get("title") or "(untitled)"))
+    source = html.escape(str(action.get("source") or ""))
+    project = action.get("project")
+    why = str(action.get("why") or "").strip()
+
+    head_bits = [f"<span class='wn-title'>{title}</span>", _wn_person_badge(action.get("person"))]
+    if source:
+        head_bits.append(f"<span class='wn-src'>{source}</span>")
+    if project:
+        head_bits.append(badge_html("neutral", str(project)))
+    if action.get("automation"):
+        # Candidate for a GitHub issue → coding-agent (Codex / Claude Code) hook.
+        head_bits.append(badge_html("warn", "⚙ automation"))
+    head = "<div class='wn-head'>" + "".join(head_bits) + "</div>"
+
+    why_html = f"<div class='wn-why'>{html.escape(why)}</div>" if why else ""
+
+    ev_items = [str(e) for e in (action.get("evidence") or []) if e]
+    if ev_items:
+        ev_lis = "".join(f"<li>{html.escape(e)}</li>" for e in ev_items)
+        ev_html = f"<ul class='wn-ev'>{ev_lis}</ul>"
+    else:
+        ev_html = ""
+
+    return (
+        f"<li class='wn-item'>"
+        f"<div class='wn-rank'>#{int(rank)}</div>"
+        f"<div class='wn-body'>{head}{why_html}{ev_html}</div>"
+        f"</li>"
+    )
+
+
+def _wn_meta(data: dict[str, Any]) -> str:
+    """The 'last computed <relative>' freshness line + synthesis/blended indicator."""
+    computed = _rel_time(data.get("computed_at"))
+    model = html.escape(str(data.get("model_used") or ""))
+    if data.get("blended"):
+        blend = "<span class='wn-blended'>● team-blended</span>"
+    else:
+        blend = "<span class='wn-src'>operator-only</span>"
+    synth = f" · synthesized by <b>{model}</b>" if model else " · deterministic order"
+    when = f"last computed <b>{computed}</b>" if computed else "not computed yet"
+    return f"<div class='wn-meta'>{when} · {blend}{synth}</div>"
+
+
+def _whatsnext_body(data: dict[str, Any]) -> str:
+    """Render the What's Next page body from a RankedNextActions dict (pure)."""
+    refresh_btn = (
+        "<a class='wn-refresh' href='/whats-next?refresh=1' "
+        "title='Recompute now'>↻ Refresh</a>"
+    )
+    ranked = data.get("ranked") or []
+    if not ranked:
+        note = html.escape(str(data.get("note") or "")) if data.get("note") else ""
+        note_html = f"<div class='subtle'>{note}</div>" if note else ""
+        return (
+            f"<h2>🧭 What's Next {refresh_btn}</h2>"
+            "<div class='empty'>Nothing ranked yet. The list builds from your "
+            "calendar, GitHub, vault, reminders and email — blended with teammate "
+            "signal. Hit ↻ Refresh to compute it.</div>"
+            f"{note_html}"
+        )
+    meta = _wn_meta(data)
+    rows = "".join(_wn_item(a) for a in ranked)
+    return (
+        f"<h2>🧭 What's Next {refresh_btn}</h2>{meta}"
+        f"<ul class='wn-list'>{rows}</ul>"
+    )
+
+
+@app.get("/whats-next")
+def whatsnext_page(refresh: bool = False):
+    """Render the ranked 'what should we work on next' view.
+
+    Reads the PRECOMPUTED result via ``load_ranked_next_actions``. On ``?refresh``
+    (or when no precomputed result exists) it recomputes LIVE via
+    ``rank_next_actions`` — the only network-allowed synthesis path — persists it,
+    and Post/Redirect/Get's to drop ``?refresh``. Control-flow only; zero HTML
+    built here. A compute/IO failure degrades to whatever is renderable rather
+    than 500ing.
+    """
+    from rebalance.ingest.next_actions import (
+        get_ranked_meta, load_ranked_next_actions,
+        persist_ranked_next_actions, rank_next_actions,
+    )
+    from rebalance.paths import DatabaseNotFoundError, resolve_database_path
+
+    try:
+        db = resolve_database_path()
+    except DatabaseNotFoundError:
+        body = ("<h2>🧭 What's Next</h2><div class='empty'>No rebalance database found. "
+                "Run <code>rebalance refresh-index</code> first.</div>")
+        return _page("What's Next", body, active="whatsnext", wide=True)
+
+    # Recompute live only when forced or never precomputed — this is the
+    # network-allowed synthesis path. Otherwise read the precomputed cache.
+    meta = get_ranked_meta(db)
+    if refresh or not meta.get("row_count"):
+        try:
+            # rank_next_actions never raises (it degrades to an empty-but-noted
+            # result). ALWAYS persist whatever it returns — even an empty/degraded
+            # result — so a row exists (row_count>0) and subsequent NORMAL loads
+            # read the cache instead of recomputing live Gemini on every hit
+            # (the ?refresh path stays the explicit recompute path).
+            result = rank_next_actions(db, blend_team=True)
+            persist_ranked_next_actions(db, result)
+        except Exception:  # noqa: BLE001 — a compute/persist failure must not 500 the page
+            logger.warning("whatsnext_page: live compute/persist failed", exc_info=True)
+        if refresh:
+            # Post/redirect/get: drop ?refresh so a reload doesn't recompute.
+            return RedirectResponse("/whats-next", status_code=303)
+
+    result = load_ranked_next_actions(db)
+    data = result.as_dict() if result is not None else {"ranked": []}
+    return _page("What's Next", _whatsnext_body(data), active="whatsnext", wide=True)
 
 
 _SYSLOG_TOGGLE_CSS = (

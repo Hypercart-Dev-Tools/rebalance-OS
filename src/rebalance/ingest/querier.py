@@ -405,6 +405,45 @@ def _synthesize_gemini(
     return text
 
 
+def _synthesize_with_fallback(
+    prompt: str,
+    *,
+    chat_model: str = DEFAULT_CHAT_MODEL,
+    max_tokens: int = 1024,
+) -> tuple[str, str]:
+    """Synthesize via the Gemini -> local Qwen ladder.
+
+    Tries Gemini first (key from GSM/env via get_gemini_api_key); on failure
+    logs and falls back to the local Qwen model. On a second failure, emits a
+    dual-failure warning and returns a sentinel. When no Gemini key is present,
+    goes straight to Qwen.
+
+    Returns ``(synthesis_text, model_used)`` where model_used is the Gemini
+    model id, the Qwen model id (optionally annotated), or a "(failed)" marker.
+    """
+    from rebalance.ingest.config import get_gemini_api_key
+
+    gemini_key = get_gemini_api_key()
+    if gemini_key:
+        try:
+            synthesis = _synthesize_gemini(prompt, api_key=gemini_key, max_tokens=max_tokens)
+            return synthesis, DEFAULT_GEMINI_MODEL
+        except Exception as e:
+            logger.warning("Gemini synthesis failed, falling back to local LLM: %s", e)
+            try:
+                synthesis = _synthesize(prompt, model_name=chat_model)
+                return synthesis, f"{chat_model} (gemini-fallback)"
+            except Exception as e2:
+                logger.warning("Qwen fallback also failed after Gemini failure: %s", e2)
+                return f"[LLM synthesis failed: {e2}]", f"{chat_model} (failed)"
+    else:
+        try:
+            synthesis = _synthesize(prompt, model_name=chat_model)
+            return synthesis, chat_model
+        except Exception as e:
+            return f"[Local LLM synthesis failed: {e}]", f"{chat_model} (failed)"
+
+
 def _synthesize(prompt: str, model_name: str = DEFAULT_CHAT_MODEL, max_tokens: int = 512) -> str:
     """Generate a response using a local Qwen chat model via mlx-lm."""
     global _cached_chat_model, _cached_chat_tokenizer, _cached_chat_model_name
@@ -435,6 +474,15 @@ def _synthesize(prompt: str, model_name: str = DEFAULT_CHAT_MODEL, max_tokens: i
 # ---------------------------------------------------------------------------
 
 
+# Sidecar attribute name under which a team=True ask() stashes the ranked
+# "what should we work on next" output. It is a DYNAMIC attribute on the returned
+# QueryResult instance — deliberately NOT a dataclass field — so the pinned
+# QueryResult field/dict contract (test_querier EXPECTED_KEYS, retrieval.py's
+# flatten) stays byte-identical for the default operator flow. The MCP layer
+# reads it via getattr(result, NEXT_ACTIONS_ATTR, None).
+NEXT_ACTIONS_ATTR = "_next_actions"
+
+
 def ask(
     query: str,
     database_path: Path,
@@ -443,6 +491,7 @@ def ask(
     since_days: int = 7,
     top_k: int = 8,
     skip_synthesis: bool = False,
+    team: bool = False,
 ) -> QueryResult:
     """
     Answer a natural language question using all available data sources.
@@ -457,6 +506,13 @@ def ask(
         since_days:     Window for GitHub and vault activity context.
         top_k:          Number of semantic search results.
         skip_synthesis: If True, skip local LLM and return raw context only.
+        team:           If True, ALSO compute the ranked "what should we work on
+                        next" list (next_actions.rank_next_actions with
+                        blend_team=True) and stash it on the returned QueryResult
+                        under the NEXT_ACTIONS_ATTR sidecar attribute. Default OFF:
+                        the operator flow + the pinned QueryResult contract stay
+                        byte-identical. Never raises — a degraded rank attaches
+                        nothing extra and ask() returns its normal result.
     """
     start = time.monotonic()
 
@@ -490,32 +546,11 @@ def ask(
             calendar_context,
             temporal_context,
         )
-        from rebalance.ingest.config import get_gemini_api_key
-        gemini_key = get_gemini_api_key()
-        if gemini_key:
-            try:
-                synthesis = _synthesize_gemini(prompt, api_key=gemini_key)
-                model_used = DEFAULT_GEMINI_MODEL
-            except Exception as e:
-                logger.warning("Gemini synthesis failed, falling back to local LLM: %s", e)
-                try:
-                    synthesis = _synthesize(prompt, model_name=chat_model)
-                    model_used = f"{chat_model} (gemini-fallback)"
-                except Exception as e2:
-                    logger.warning("Qwen fallback also failed after Gemini failure: %s", e2)
-                    synthesis = f"[LLM synthesis failed: {e2}]"
-                    model_used = f"{chat_model} (failed)"
-        else:
-            try:
-                synthesis = _synthesize(prompt, model_name=chat_model)
-                model_used = chat_model
-            except Exception as e:
-                synthesis = f"[Local LLM synthesis failed: {e}]"
-                model_used = f"{chat_model} (failed)"
+        synthesis, model_used = _synthesize_with_fallback(prompt, chat_model=chat_model)
 
     elapsed = time.monotonic() - start
 
-    return QueryResult(
+    result = QueryResult(
         query=query,
         synthesis=synthesis,
         vault_context=vault_context,
@@ -528,3 +563,26 @@ def ask(
         model_used=model_used,
         elapsed_seconds=round(elapsed, 2),
     )
+
+    # team=True sidecar: attach the ranked next-actions WITHOUT mutating the
+    # pinned QueryResult fields. PREFER the persisted cache so the interactive
+    # ask() path never silently pays for a second Gemini round-trip; only when the
+    # cache is absent fall back to a LIVE but DETERMINISTIC rank (synthesize=False
+    # — the ranked floor, no LLM call). Never raises out of ask(): a degraded rank
+    # just stays unattached. Import is local so the default operator path never
+    # pays for it.
+    if team:
+        try:
+            from rebalance.ingest import next_actions as _next_actions
+
+            ranked = _next_actions.load_ranked_next_actions(database_path)
+            if ranked is None:
+                # No precompute yet — deterministic ranked floor (no LLM call).
+                ranked = _next_actions.rank_next_actions(
+                    database_path, blend_team=True, synthesize=False
+                )
+            setattr(result, NEXT_ACTIONS_ATTR, ranked)
+        except Exception as e:  # noqa: BLE001 — team blend must never break ask()
+            logger.warning("team next-actions rank unavailable: %s", e)
+
+    return result

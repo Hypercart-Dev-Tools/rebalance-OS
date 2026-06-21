@@ -57,3 +57,6 @@ snapshot-archive.md
 *.key
 *.p12
 /relay
+
+# xyz relay-automation coordination state (per-device, local)
+.tick/
