@@ -21,7 +21,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Trace + audit complete (2026-06-20).** The original keyring project shipped as a keyring-primary credential model with launchd-safe fallbacks, migration tooling, doctor coverage, hermetic test seams, and reset support. It did **not** finish the harder hardening work: repo-local plaintext fallbacks remain, Google OAuth still uses pickle fallbacks, permissions are not enforced, and API-key handling is still fragmented. | **Phase 0 - durability spike.** Prove a launchd-safe replacement for repo-local plaintext secret fallback, and prove JSON OAuth fallback can replace pickle without breaking refresh or unattended jobs. |
+| **Phase 1 started (2026-06-20).** The keystone `secret_store` module landed: atomic, permission-enforced (`0600`/`0700`) writes; safe reads that never raise; JSON helpers; a `permission_ok` posture check; and the six-field `ResolverStatus` contract — covered by 11 contract tests ([src/rebalance/ingest/secret_store.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/secret_store.py:1), [tests/test_secret_store.py](/Users/noelsaw/Documents/rebalance-OS/tests/test_secret_store.py:1)). The canonical secret root (a Phase 0 decision) was settled inline: `~/.config/rebalance-os/secrets`. | **Wire integrations to the module.** Route the GitHub/Figma/Sleuth/OAuth loaders through `secret_store` (they still hand-roll file behavior and dual-write to `temp/rbos.config`), add per-integration secret descriptors, and upgrade doctor to report `ResolverStatus` posture. Phase 0's remaining spike items (launchd-safe read proof, JSON-vs-pickle refresh proof) still gate Phase 2's destructive steps. |
 
 ## Table of Contents
 
@@ -29,16 +29,17 @@ related:
 2. [Trace of the Original Keyring Project](#trace-of-the-original-keyring-project)
 3. [What Actually Shipped](#what-actually-shipped)
 4. [What Was Deferred or Re-Scoped](#what-was-deferred-or-re-scoped)
-5. [Current Audit Findings](#current-audit-findings)
-6. [Target State](#target-state)
-7. [Phase 0 - Durability Spike](#phase-0---durability-spike)
-8. [Phase 1 - Secret Store Contract and Permission Enforcement](#phase-1---secret-store-contract-and-permission-enforcement)
-9. [Phase 2 - Remove Repo-Local Secret Persistence](#phase-2---remove-repo-local-secret-persistence)
-10. [Phase 3 - Replace Pickle OAuth Fallback and Stabilize Google OAuth](#phase-3---replace-pickle-oauth-fallback-and-stabilize-google-oauth)
-11. [Phase 4 - Unify API Key Resolution and Diagnostics](#phase-4---unify-api-key-resolution-and-diagnostics)
-12. [Phase 5 - Migration, Decommissioning, and Docs Cleanup](#phase-5---migration-decommissioning-and-docs-cleanup)
-13. [Cross-Phase Risks](#cross-phase-risks)
-14. [Definition of Done](#definition-of-done)
+5. [How It Currently Works](#how-it-currently-works)
+6. [Current Audit Findings](#current-audit-findings)
+7. [Target State](#target-state)
+8. [Phase 0 - Durability Spike](#phase-0---durability-spike)
+9. [Phase 1 - Secret Store Contract and Permission Enforcement](#phase-1---secret-store-contract-and-permission-enforcement)
+10. [Phase 2 - Remove Repo-Local Secret Persistence](#phase-2---remove-repo-local-secret-persistence)
+11. [Phase 3 - Replace Pickle OAuth Fallback and Stabilize Google OAuth](#phase-3---replace-pickle-oauth-fallback-and-stabilize-google-oauth)
+12. [Phase 4 - Unify API Key Resolution and Diagnostics](#phase-4---unify-api-key-resolution-and-diagnostics)
+13. [Phase 5 - Migration, Decommissioning, and Docs Cleanup](#phase-5---migration-decommissioning-and-docs-cleanup)
+14. [Cross-Phase Risks](#cross-phase-risks)
+15. [Definition of Done](#definition-of-done)
 
 ## Status and Supersession
 
@@ -113,6 +114,30 @@ The practical outcome is that the project was **re-scoped**, not abandoned: it b
   Current state: Anthropic is env-only; Gemini still has its own Secret Manager/env/`gcloud` chain.
 - [ ] The UPGRADE guide became the practical source of truth for the shipped model.
   Re-scope consequence: the "keyring project" became "how operators adopt the current model," not "finish hardening the storage contract."
+
+## How It Currently Works
+
+These are the current runtime flows the hardening work is talking about today, before any future cleanup.
+
+### GitHub
+
+GitHub auth resolves keyring first, then `temp/rbos.config`, then `gh auth token` as the last fallback. On a `refresh_index(scope=["github"])` run, rebalance first refreshes `github_pushed_repos`, then scans the authenticated user's GitHub Events feed for recent activity, currently capped by GitHub's own Events API shape: up to 3 pages and roughly 30 days of history. That activity rollup is written to `github_activity`, while a second per-repo artifact pass syncs issues, PRs, comments, commits, checks, and documents for the watched repo set. Those artifact documents are then embedded into the GitHub semantic corpus, so GitHub currently has both a lightweight activity layer and a deeper artifact layer.
+
+### Gmail
+
+Gmail runs in one of two modes: `oauth` or `mcp`. In `oauth` mode, rebalance loads a desktop OAuth token from keyring with a launchd-safe fallback token file, fetches the newest 100 messages matching `gmail_query_filter` (default `in:inbox`), and stores metadata plus Gmail's snippet into `email_messages`; the collector does not parse MIME bodies yet. In `mcp` mode, the scheduled job does nothing and an agent is expected to ingest messages through the Gmail MCP connector instead. Email also participates in the unified semantic index, but only through the stored metadata/snippet layer today.
+
+### Google Calendar
+
+Google Calendar uses desktop OAuth with keyring as the interactive primary and a fallback token file for launchd. A refresh syncs the operator's own calendar plus any configured teammate calendars, usually over a 30-day-back and 7-day-forward window, and upserts rows into `calendar_events`. The operator's own calendar is normalized under the canonical operator calendar id so downstream reads/export paths stay consistent. Events are kept as historical records; rebalance does not auto-delete old calendar rows during sync.
+
+### Figma
+
+Figma is opt-in and file-scoped rather than account-feed scoped. Rebalance reads a Figma PAT from keyring or `temp/rbos.config`, reads an explicit `figma_file_keys` allow-list from config, then fetches comments for each listed file via the Figma comments endpoint. Comments are upserted into `figma_comments` by `file_key:comment_id`, so history is preserved and changed or resolved comments become updates instead of duplicates. Figma comments also feed the unified semantic index through the registry-driven semantic-docs path.
+
+### Sleuth Tasks
+
+Sleuth sync resolves credentials from keyring, then `temp/rbos.config`, then the legacy env-file path; in practice the preferred production mode is now a local published-file source in the git-pulse repo rather than a live API call. A refresh reads the reminders payload, normalizes it into structured reminder rows, and upserts into `sleuth_reminders` by `reminder_id`. When the full sync path runs with `active_only=False`, reminders that disappear from the upstream active set are not deleted; they are retired to a stale/inactive state so the history remains auditable. That means Sleuth currently behaves more like a structured task mirror with preserved lifecycle history than a destructive replace-everything sync.
 
 ## Current Audit Findings
 
@@ -195,9 +220,12 @@ Goal: prove the replacement contract before broad refactoring.
 
 Goal: create the single runtime contract before moving data.
 
-- [ ] Introduce one secret-storage module that owns:
+**Status (2026-06-20):** keystone module landed and tested; integration wiring + doctor posture still pending. The file primitive (root resolution, atomic writes, `0600`/`0700` enforcement, safe reads, `ResolverStatus`) is done — what remains is making the existing loaders *call* it and surfacing posture in doctor.
+
+- [~] Introduce one secret-storage module that owns:
   secret root resolution, atomic writes, permission enforcement, safe reads, source labeling, and migration helpers.
   Observable result: GitHub/Figma/Sleuth/OAuth loaders call the same storage primitives instead of hand-rolling file behavior.
+  Progress: module + primitives shipped in [src/rebalance/ingest/secret_store.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/secret_store.py:1) (migration helpers + loader wiring still to come; loaders do not yet call it).
 - [ ] Route auth-activity and token-metadata writes through the storage module.
   Observable result: every secret write still appends to `temp/logs/auth_activity.jsonl` and updates `temp/logs/token_meta.json` (fingerprint-only, `first_added_at` preserved), so the observability shipped in [UPGRADE.md](/Users/noelsaw/Documents/rebalance-OS/UPGRADE.md:36) survives the storage migration.
 - [ ] Add explicit secret descriptors per integration.
