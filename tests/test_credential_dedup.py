@@ -140,12 +140,11 @@ class OAuthCommonLoaderTests(unittest.TestCase):
 
         creds = Creds()
         set_token = MagicMock(return_value=True)
-        svc = self._svc(set_token_json=set_token)
+        # keyring returns a blob → reconstructed via _creds_from_json (seamed).
+        svc = self._svc(get_token_json=lambda: '{"refresh_token": "rt"}', set_token_json=set_token)
 
-        with patch("pathlib.Path.exists", return_value=True), \
-             patch("builtins.open", MagicMock()), \
-             patch("rebalance.ingest.oauth_common.pickle.load", return_value=creds), \
-             patch("rebalance.ingest.oauth_common.pickle.dump") as pdump, \
+        with patch("rebalance.ingest.oauth_common._creds_from_json", return_value=creds), \
+             patch("rebalance.ingest.secret_store.write_secret_file") as wsf, \
              patch("google.auth.transport.requests.Request"), \
              patch("rebalance.ingest.auth_log.log_token_refreshed"):
             out = oauth_common.load_credentials(svc, required_scopes=["s"])
@@ -155,8 +154,9 @@ class OAuthCommonLoaderTests(unittest.TestCase):
         set_token.assert_called_once()
         self.assertEqual(set_token.call_args.kwargs.get("record"), False)
         self.assertEqual(set_token.call_args.kwargs.get("source"), "refresh")
-        # ...and the pickle fallback written too.
-        pdump.assert_called_once()
+        # ...and the JSON fallback written to the secret store (not pickle).
+        wsf.assert_called_once()
+        self.assertEqual(wsf.call_args.args[0], "google-calendar-oauth")
 
     def test_missing_token_raises_service_error(self) -> None:
         svc = self._svc(missing_error=lambda p: ValueError("missing"))

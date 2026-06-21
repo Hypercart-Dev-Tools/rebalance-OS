@@ -697,6 +697,9 @@ def config_migrate_secrets() -> None:
     results = cfg.migrate_repo_local_secrets()
     for key, status in results.items():
         typer.echo(f"{key}: {status}")
+    # Phase 3: also retire legacy Google OAuth pickle files (JSON fallback only).
+    for service, status in cfg.migrate_oauth_pickles().items():
+        typer.echo(f"google-{service}-oauth: {status}")
     leftover = cfg.repo_local_secret_keys_present()
     if leftover:
         typer.echo(f"\n⚠ still in temp/rbos.config: {', '.join(leftover)} — see FAILED lines above")

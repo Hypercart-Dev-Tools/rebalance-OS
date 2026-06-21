@@ -21,7 +21,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 1 started (2026-06-20).** The keystone `secret_store` module landed: atomic, permission-enforced (`0600`/`0700`) writes; safe reads that never raise; JSON helpers; a `permission_ok` posture check; and the six-field `ResolverStatus` contract — covered by 11 contract tests ([src/rebalance/ingest/secret_store.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/secret_store.py:1), [tests/test_secret_store.py](/Users/noelsaw/Documents/rebalance-OS/tests/test_secret_store.py:1)). The canonical secret root (a Phase 0 decision) was settled inline: `~/.config/rebalance-os/secrets`. | **Lazy re-scope (2026-06-20).** A ponytail pass cut the plan to its load-bearing core: keep Phases 0–3 (permission hardening — done — + move secrets out of the repo tree + pickle→JSON), and push the consistency/fleet machinery (per-integration resolver wiring, API-key unification, migration-report + decommission ceremony) into [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet). **GitHub + Figma + Sleuth now wired (2026-06-20):** all three PAT/credential integrations resolve/persist through `secret_store` — order is keyring → secret-store (`~/.config/rebalance-os/secrets`, `0600`) → `rbos.config`, **additive** (config still written until Phase 2). Per-test hermetic isolation added in conftest. **Phase 2 done (2026-06-20):** setters no longer write secrets to `rbos.config`; `rebalance config migrate-secrets` lifts existing ones into the secret store (run live on this machine — `rbos.config` now secret-free); a `repo-local secrets` doctor check guards regressions; the launchd-safe read is **proven** (keyring disabled → resolves from secret-store). **Next: Phase 3** — replace the pickle OAuth fallback with JSON (folds in the Google OAuth `secret_store` wiring). 1056 tests green. |
+| **Phase 1 started (2026-06-20).** The keystone `secret_store` module landed: atomic, permission-enforced (`0600`/`0700`) writes; safe reads that never raise; JSON helpers; a `permission_ok` posture check; and the six-field `ResolverStatus` contract — covered by 11 contract tests ([src/rebalance/ingest/secret_store.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/secret_store.py:1), [tests/test_secret_store.py](/Users/noelsaw/Documents/rebalance-OS/tests/test_secret_store.py:1)). The canonical secret root (a Phase 0 decision) was settled inline: `~/.config/rebalance-os/secrets`. | **Lazy re-scope (2026-06-20).** A ponytail pass cut the plan to its load-bearing core: keep Phases 0–3 (permission hardening — done — + move secrets out of the repo tree + pickle→JSON), and push the consistency/fleet machinery (per-integration resolver wiring, API-key unification, migration-report + decommission ceremony) into [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet). **GitHub + Figma + Sleuth now wired (2026-06-20):** all three PAT/credential integrations resolve/persist through `secret_store` — order is keyring → secret-store (`~/.config/rebalance-os/secrets`, `0600`) → `rbos.config`, **additive** (config still written until Phase 2). Per-test hermetic isolation added in conftest. **Phase 2 done (2026-06-20):** setters no longer write secrets to `rbos.config`; `rebalance config migrate-secrets` lifts existing ones into the secret store (run live on this machine — `rbos.config` now secret-free); a `repo-local secrets` doctor check guards regressions; the launchd-safe read is **proven** (keyring disabled → resolves from secret-store). **Phase 3 done (2026-06-21):** Google OAuth fallback is now a JSON blob in the secret store (no pickle); setup scripts write keyring + JSON in one pass; legacy pickles migrate-on-read and via `migrate-secrets` (run live — calendar + gmail pickles retired); doctor reports the OAuth source; the launchd-safe JSON read is **proven**. **All active Phases 0–3 are complete.** What's left is [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet) (multi-operator/fleet) and running `rebalance config migrate-secrets` on the other ~2 Macs. 1063 tests green. |
 
 ## Table of Contents
 
@@ -294,29 +294,30 @@ Goal: make `temp/rbos.config` truly non-secret.
 
 Goal: make Google OAuth durable without pickle or ambiguous ownership.
 
-- [ ] Replace pickle fallback files with JSON authorized-user token files.
-  Observable result: `setup_calendar_oauth.py`, `setup_gmail_oauth.py`, and `oauth_common.py` no longer use `pickle.dump` / `pickle.load`.
-- [ ] Make setup scripts write both durable stores in one pass.
-  Observable result: after a successful browser consent, keyring and JSON fallback are both current; no follow-up migrate step is required for the happy path.
-- [ ] Add versioned migration from legacy pickle files.
-  Observable result: old token files are read once, converted to JSON, validated, and retired. The conversion is idempotent — re-running finds JSON already present and does not re-import or duplicate.
-- [ ] Preserve auth-activity logging across OAuth conversion and refresh.
-  Observable result: pickle→JSON migration and every token refresh still record to `auth_activity.jsonl` / `token_meta.json`, so Google-token lifetime stays measurable.
+- [x] Replace pickle fallback files with JSON authorized-user token files.
+  Observable result: the launchd fallback is now a JSON blob in the secret store; `oauth_common.py` reads/writes it via `Credentials.from_authorized_user_info` / `creds.to_json()` ([oauth_common.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/ingest/oauth_common.py:1)). **`pickle.dump` is fully removed**; `pickle.load` survives only in the one-time legacy migration helper.
+- [x] Make setup scripts write both durable stores in one pass.
+  Observable result: `setup_calendar_oauth.py` / `setup_gmail_oauth.py` write keyring + JSON secret store after consent — no follow-up migrate step ([setup_calendar_oauth.py](/Users/noelsaw/Documents/rebalance-OS/scripts/setup_calendar_oauth.py:35)).
+- [x] Add versioned migration from legacy pickle files.
+  Observable result: **migrate-on-read** in `load_credentials` (keyring+JSON empty + pickle present → read once, write JSON to keyring + secret store, retire pickle) plus `rebalance config migrate-secrets`, which also retires a keyring-backed pickle. **Idempotent.** Run live 2026-06-21: calendar + gmail pickles retired, JSON fallbacks written.
+- [x] Preserve auth-activity logging across OAuth conversion and refresh.
+  Observable result: every token refresh still records to `auth_activity.jsonl` / `token_meta.json` via `log_token_refreshed`; the JSON conversion is not a re-auth so it emits no spurious event (record=False).
 - [→] Decide the future of the embedded shared Google client → **deferred** (see [Deferred Work](#deferred-work-yagni-until-multi-operator--fleet)) — an onboarding-policy question, orthogonal to storage durability.
-- [ ] Harden Google auth diagnostics.
-  Observable result: doctor tells the user whether the active Google token came from keyring, JSON fallback, migrated pickle, or an expired/invalid state.
-- [ ] Update Google OAuth docs in this same phase.
-  Observable result: GMAIL and GOOGLE_CALENDAR docs describe the JSON fallback (not pickle) when the behavior changes, not in Phase 5.
+- [x] Harden Google auth diagnostics.
+  Observable result: doctor reports the active source — `keyring`, `secret-store JSON`, or `legacy pickle (migrates to JSON on next sync)` — via `_google_oauth_source` ([doctor.py](/Users/noelsaw/Documents/rebalance-OS/src/rebalance/doctor.py:477)).
+- [x] Update Google OAuth docs in this same phase.
+  Observable result: GMAIL.md and GOOGLE_CALENDAR.md describe the JSON secret-store fallback instead of the pickle file.
 
 ### QA Checklist
 
-- [ ] Re-auth works without a second manual migration step.
-- [ ] Refreshed access tokens persist back to JSON and keyring.
-- [ ] Corrupt JSON fallback produces a clean remediation path.
-- [ ] Legacy pickle migration is covered by tests.
-- [ ] Legacy pickle migration is idempotent (re-run is a no-op).
-- [ ] A token refresh still appends to `auth_activity.jsonl` / `token_meta.json`.
-- [ ] No runtime path still imports `pickle` for OAuth token storage.
+- [x] Re-auth works without a second manual migration step (setup writes keyring + JSON in one pass).
+- [x] Refreshed access tokens persist back to JSON and keyring (refresh writes both).
+- [x] Corrupt JSON fallback produces a clean remediation path (falls through to pickle/missing → `missing_error` tells the user to re-auth).
+- [x] Legacy pickle migration is covered by tests ([tests/test_oauth_json_fallback.py](/Users/noelsaw/Documents/rebalance-OS/tests/test_oauth_json_fallback.py:1)).
+- [x] Legacy pickle migration is idempotent (migrate-on-read no-ops once converted; `migrate-secrets` reports `already clean`).
+- [x] A token refresh still appends to `auth_activity.jsonl` / `token_meta.json`.
+- [~] No runtime path still imports `pickle` for OAuth token storage — `pickle.dump` removed entirely; `pickle.load` remains only in the transitional legacy-migration helper (removed at decommission, once every device has migrated).
+- [x] OAuth launchd-safe read proven: `REBALANCE_NO_KEYRING=1` → calendar + gmail resolve from the secret-store JSON (valid after refresh).
 
 ## Deferred Work (YAGNI until multi-operator / fleet)
 

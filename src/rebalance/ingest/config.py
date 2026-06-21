@@ -1255,6 +1255,43 @@ def clear_gmail_oauth_token() -> None:
     _keyring_delete("gmail_oauth_token")
 
 
+def migrate_oauth_pickles() -> dict[str, str]:
+    """Phase 3: retire legacy Google OAuth pickle files, JSON-only going forward.
+
+    For calendar + gmail: if the token is in keyring, write the JSON fallback to
+    the secret store (keyring already stores the authorized-user JSON, so no
+    unpickling/google import is needed) and delete the legacy pickle. If keyring
+    is empty but a pickle exists, leave it — the collector's migrate-on-read
+    converts it on the next sync. Idempotent. Returns ``{service: status}``.
+    """
+    from . import secret_store  # noqa: PLC0415
+    from rebalance.paths import resolve_oauth_token_path  # noqa: PLC0415
+
+    getters = {"calendar": get_calendar_oauth_token_json, "gmail": get_gmail_oauth_token_json}
+    results: dict[str, str] = {}
+    for service, getter in getters.items():
+        store_key = f"google-{service}-oauth"
+        pickle_path = resolve_oauth_token_path(service)
+        blob = getter()
+        if blob:
+            secret_store.write_secret_file(store_key, blob)
+            retired = False
+            if pickle_path.exists():
+                try:
+                    pickle_path.unlink()
+                    retired = True
+                except OSError:
+                    pass
+            results[service] = "JSON fallback written from keyring" + (
+                " · legacy pickle retired" if retired else ""
+            )
+        elif pickle_path.exists():
+            results[service] = "legacy pickle present — migrates to JSON on next sync (keyring empty)"
+        else:
+            results[service] = "already clean"
+    return results
+
+
 # ---------------------------------------------------------------------------
 # Sync repo config (Issue #39 — multi-device snapshot sharing)
 # ---------------------------------------------------------------------------

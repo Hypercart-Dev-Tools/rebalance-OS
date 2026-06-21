@@ -474,6 +474,20 @@ def _check_sleuth(db_path: Path | None = None) -> Check:
     return Check("sleuth", OK, f"configured (via {where})")
 
 
+def _google_oauth_source(service: str, in_keyring: bool) -> str | None:
+    """Where a Google OAuth token resolves from: keyring → secret-store JSON →
+    legacy pickle. Returns None when nothing is present (unconfigured)."""
+    if in_keyring:
+        return "keyring"
+    from rebalance.ingest import secret_store
+    from rebalance.paths import resolve_oauth_token_path
+    if secret_store.read_secret_file(f"google-{service}-oauth"):
+        return "secret-store JSON"
+    if resolve_oauth_token_path(service).exists():
+        return "legacy pickle (migrates to JSON on next sync)"
+    return None
+
+
 def _check_gmail(db_path: Path | None) -> Check:
     """Gmail ingest — desktop OAuth (``oauth`` mode) or the Gmail MCP connector (``mcp`` mode)."""
     from rebalance.ingest.config import get_gmail_ingest_method
@@ -509,41 +523,36 @@ def _check_gmail(db_path: Path | None) -> Check:
     # oauth mode — desktop OAuth token, resolved keyring → pickle file
     # (mirrors _check_calendar).
     try:
-        from rebalance.ingest.gmail import TOKEN_PATH
         from rebalance.ingest.config import get_gmail_oauth_token_json
     except Exception as exc:  # noqa: BLE001 — doctor must never crash
         return Check("gmail", WARN, f"gmail module unavailable: {exc}")
 
-    in_keyring = bool(get_gmail_oauth_token_json())
-    if not in_keyring and not TOKEN_PATH.exists():
+    source = _google_oauth_source("gmail", bool(get_gmail_oauth_token_json()))
+    if source is None:
         return Check(
             "gmail", WARN,
-            "no Gmail OAuth credentials (keyring empty, no token file)",
-            "🔧 run the Gmail OAuth flow (scripts/setup_gmail_oauth.py), then "
-            "`rebalance config migrate-to-keyring` — or switch to MCP mode "
-            "(`rebalance config set-gmail-method mcp`)",
+            "no Gmail OAuth credentials (keyring + secret store empty, no token file)",
+            "🔧 run the Gmail OAuth flow (scripts/setup_gmail_oauth.py) — or switch "
+            "to MCP mode (`rebalance config set-gmail-method mcp`)",
         )
-    where = "keyring" if in_keyring else "token file"
-    return Check("gmail", OK, f"OAuth token present (via {where})")
+    return Check("gmail", OK, f"OAuth token present (via {source})")
 
 
 def _check_calendar() -> Check:
-    """Google Calendar OAuth — resolved keyring → pickle file."""
+    """Google Calendar OAuth — resolved keyring → secret-store JSON → legacy pickle."""
     try:
-        from rebalance.ingest.calendar import TOKEN_PATH
         from rebalance.ingest.config import get_calendar_oauth_token_json
     except Exception as exc:  # noqa: BLE001
         return Check("calendar", WARN, f"calendar module unavailable: {exc}")
 
-    in_keyring = bool(get_calendar_oauth_token_json())
-    if not in_keyring and not TOKEN_PATH.exists():
+    source = _google_oauth_source("calendar", bool(get_calendar_oauth_token_json()))
+    if source is None:
         return Check(
             "calendar", WARN,
-            "no Calendar OAuth credentials (keyring empty, no token file)",
+            "no Calendar OAuth credentials (keyring + secret store empty, no token file)",
             "🔧 run the Calendar OAuth flow (scripts/setup_calendar_oauth.py)",
         )
-    where = "keyring" if in_keyring else "token file"
-    detail = f"OAuth token present (via {where})"
+    detail = f"OAuth token present (via {source})"
     try:
         from rebalance.ingest import token_meta
         meta = token_meta.current_token_meta("calendar")

@@ -90,17 +90,17 @@ python scripts/setup_calendar_oauth.py --write-access --test
 
 After clicking Allow, the script prints a list of your Google Calendars and their IDs. **Copy the ID** of the calendar you want to use — you'll need it in the next step.
 
-> Your login token is saved locally at `~/.config/rebalance-os/google-calendar-oauth` and is never stored in the repo.
-> The OAuth token belongs to the authorizing user account on that machine. It is separate from the bundled Desktop app client configuration.
+> Your login token is saved to the OS **keyring** (primary) and a JSON fallback in
+> the out-of-repo secret store (`~/.config/rebalance-os/secrets/google-calendar-oauth`,
+> `0600`). It is never stored in the repo. The OAuth token belongs to the
+> authorizing user account on that machine, separate from the bundled Desktop app client.
 >
-> **Adopt the keyring credential model** (recommended) — rebalance stores
-> credentials in the OS keyring as the primary, with the file above as a
-> launchd-reachable fallback. After authorizing, run:
-> ```bash
-> rebalance config migrate-to-keyring
-> ```
-> This is idempotent and also picks up a freshly re-authed token if you run the
-> OAuth flow again later. See [UPGRADE.md](./UPGRADE.md) for the full credential model.
+> **Both stores are written in one pass** — `setup_calendar_oauth.py` populates
+> keyring **and** the JSON fallback after consent, so no follow-up
+> `migrate-to-keyring` step is needed (launchd's stripped environment reads the
+> JSON fallback). Verify with `rebalance doctor`. Upgrading a device that still has
+> a legacy pickle token? Run `rebalance config migrate-secrets` once to convert and
+> retire it. See [UPGRADE.md](./UPGRADE.md) for the full credential model.
 
 ---
 
@@ -185,7 +185,7 @@ rebalance calendar-daily-report
 
 You're done. The config already has the shared `calendar_id`, projects, and timezone — you only authorize once so the app can read your calendar on your behalf.
 
-> **Why does each person need to authorize?** The repo includes the shared OAuth Desktop app credentials, but each person must grant consent for their own Google account. Your token is saved locally at `~/.config/rebalance-os/google-calendar-oauth` and never stored in the repo.
+> **Why does each person need to authorize?** The repo includes the shared OAuth Desktop app credentials, but each person must grant consent for their own Google account. Your token is saved to the keyring + a JSON fallback in the secret store (`~/.config/rebalance-os/secrets/google-calendar-oauth`) and never stored in the repo.
 
 ---
 
@@ -407,7 +407,7 @@ The CLI still uses the same underlying `create_calendar_event(...)` implementati
 ### Write-scope validation
 
 Before any write, the command loads the OAuth token (resolved **keyring first,
-then the `~/.config/rebalance-os/google-calendar-oauth` pickle fallback**) and
+then the `~/.config/rebalance-os/secrets/google-calendar-oauth` JSON fallback**) and
 verifies it includes the Calendar write scope (`https://www.googleapis.com/auth/calendar`).
 
 If the scope is missing, the command exits non-zero and prints the reauth
