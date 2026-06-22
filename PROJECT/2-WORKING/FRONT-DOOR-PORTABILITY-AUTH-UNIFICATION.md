@@ -293,13 +293,13 @@ Mitigation rules:
 
 ## Definition of Done
 
-- [ ] Every raw incoming source has one clear source-owned write contract.
-- [ ] Semantic-maintenance CLI behavior matches the live `semantic` stage coverage.
-- [ ] Remaining runtime path assumptions are reduced behind shared resolvers where applicable.
-- [ ] Secret-storage, migration, permissions, and launchd-safe fallback are enforced by CI-backed contract tests.
-- [ ] Auth-activity and token-metadata behavior survive storage migration and OAuth refresh unchanged.
-- [ ] Doctor reports source, permissions, and posture for every active auth integration, and distinguishes `optional+unconfigured` (clean skip) from `configured+broken/insecure` (warn/fail).
-- [ ] README and operator docs agree exactly with the shipped credential/storage model.
-- [ ] Supported-platform limits, cross-platform subset, and first-run network egress are clear at the front door.
-- [ ] Gmail connector mode is first-class, and Calendar connector ingestion is clearly marked as planned-only.
-- [ ] ROADMAP and the newcomer-facing doc surface point to one canonical active plan for this work.
+- [x] Every raw incoming source has one clear source-owned write contract. *(Phase 1 — single `COLLECTORS` registry dispatched via `refresh_index`.)*
+- [x] Semantic-maintenance CLI behavior matches the live `semantic` stage coverage. *(Phase 1 — `normalize_sources` derives from `_all_semantic_sources()`; `tests/test_semantic_source_contract.py`.)*
+- [x] Remaining runtime path assumptions are reduced behind shared resolvers where applicable. *(Phase 1 — only the documented `_bootstrap.py` shim remains; sync scripts route through `scheduler_common.sh`.)*
+- [x] Secret-storage, migration, permissions, and launchd-safe fallback are enforced by CI-backed contract tests. *(Phase 2 — CI unblocked; secret-store/migration/leak/verify-then-cutover tests run in `pytest tests/`.)*
+- [x] Auth-activity and token-metadata behavior survive storage migration and OAuth refresh unchanged. *(Phase 1 routing + Phase 2 `tests/test_auth_sidecar_persistence.py`; fingerprint-only, `first_added_at` retained.)*
+- [x] Doctor reports source, permissions, and posture for every active auth integration, and distinguishes `optional+unconfigured` (clean skip) from `configured+broken/insecure` (warn/fail). *(Phase 1 — added `_check_figma`; github/sleuth/gmail/calendar already covered.)*
+- [x] README and operator docs agree exactly with the shipped credential/storage model. *(Phase 3 — README/UPGRADE/GMAIL/GOOGLE_CALENDAR/ARCHITECTURE + doctor unified on keyring + JSON secret store.)*
+- [x] Supported-platform limits, cross-platform subset, and first-run network egress are clear at the front door. *(Phase 4 — "Supported platform & first-run network" README block before Step 1.)*
+- [x] Gmail connector mode is first-class, and Calendar connector ingestion is clearly marked as planned-only. *(Phase 5 — `mcp` documented as a deliberate choice with privacy trade-off + precondition; Calendar marked planned-only. Per ponytail-lite, `oauth` stays the default rather than a co-equal restructure.)*
+- [x] ROADMAP and the newcomer-facing doc surface point to one canonical active plan for this work. *(Phase 6 — ROADMAP status table + ledger point only to this doc.)*
