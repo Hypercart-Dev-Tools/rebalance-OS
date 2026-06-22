@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
-STATUS: Open
-ROUND: 1 / 3
+NEXT: — (closed)
+STATUS: Closed (changes applied)
+ROUND: 2 / 3
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file**.
@@ -69,5 +69,18 @@ The operator just said "take your turn on this file." Everything you need is **i
 **Answers:** (the Producer's open question)
 - Is the Phase 3 Calendar `mcp`-consumption mode right to leave as a spec-or-build decision, or commit now? → Commit now. For this remediation plan, the safer choice is "spec-and-defer" unless you are explicitly pulling implementation into scope; do not leave it open, and do not document Calendar host-connector consumption as a current path until the mode/tool exist.
 **Commit:** none (comments only)
+
+### Round 2 · Producer · Claude · 2026-06-21 14:05 PDT
+**Pre-decision verification:** Re-read each finding against the artifact and confirmed accurate — the doc did present Calendar host-connector as a current/build deliverable (design note "build a Calendar mcp mode", QA "both Calendar and Gmail", DoD "each present... a host-connector path") while `calendar_ingest_method`/`ingest_calendar_events` don't exist. Operator approved "apply all."
+**Decisions on proposals:** (operator-approved — all Implemented)
+- [Blocker] Calendar host-connector treated as current/maybe-build — **Implemented** → committed to **spec-and-defer**: reframed the design note so Gmail `mcp` is "available today" and Calendar host-connector is "**planned, not yet supported**" until the mode/tool ship; the Calendar spec item now says "build explicitly deferred" with a revisit trigger; QA + DoD rewritten so no doc offers a Calendar connector path that doesn't exist @ FRONT-DOOR-ONBOARDING-REMEDIATION.md:95,108,112,155. · Proof: textual (4× "planned, not yet supported" present).
+- [Should] Connector precondition not stated — **Implemented** → added the precondition (host must ship Google connectors + user must have connected/consented their account there) to the design note, a dedicated checklist item, QA, and DoD @ :97,105,114,156. · Proof: textual (6× "precondition").
+- [Should] "links the trade-off" too weak — **Implemented** → trade-off must now be stated **inline** in each callout (not behind a link), in the design note, checklist, QA, and DoD @ :99,102,113,156. · Proof: textual (5× "inline").
+- [Should] QA restates the deliverable — **Implemented** → added a behavioral **doc-walk gate** ("a reader can tell, for Gmail and Calendar separately, whether the connector path is available now, what preconditions apply, and whether data stays local — without opening code") @ :115. · Proof: textual.
+- [Pass] ×3 (completeness, no auth-model contradiction, scope honesty) — acknowledged, no action.
+**Did:** Applied all 4 findings; reconciled each against the file via grep before closing.
+**Verification:** N/A — non-executable doc. No re-review round run (minor doc refinements of an already-affirmed plan; per operator direction to close).
+**Re-review this:** n/a — closing.
+**Commit:** `<pending>`
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->

@@ -92,28 +92,29 @@ Goal: a newcomer knows in one glance whether the tool runs on their machine, wha
 
 Goal: let Claude-Desktop (and other native-Google-connector) users consume Calendar/Gmail through the host's connectors instead of the local OAuth flow — **as an explicit, trade-off-aware option**, not a silent default swap.
 
-**Design note (recommendation).** rebalance already proves the pattern for Gmail: `set-gmail-method mcp` makes the scheduled job a no-op and expects an agent to pull messages via the host's Gmail connector and call the `ingest_gmail_messages` MCP tool — no local OAuth, no bundled-client trust, no keyring/secret-store token. Claude Desktop ships first-party **Google Calendar** and **Gmail** connectors, so the same pattern extends cleanly to Calendar. The recommendation is to (1) **promote** Gmail `mcp` mode for host-connector users (today it is under-advertised behind the `oauth` default), and (2) **build a Calendar `mcp` consumption mode** mirroring Gmail's, fed by the host's Calendar connector through a new ingest tool.
+**Design note (recommendation).** rebalance already proves the pattern for Gmail: `set-gmail-method mcp` makes the scheduled job a no-op and expects an agent to pull messages via the host's Gmail connector and call the `ingest_gmail_messages` MCP tool — no local OAuth, no bundled-client trust, no keyring/secret-store token. So **the Gmail host-connector path is available today.** Claude Desktop also ships a first-party **Google Calendar** connector, so the same pattern *could* extend to Calendar — but **no Calendar `mcp` consumption mode exists yet** (`calendar_ingest_method` and an `ingest_calendar_events` tool are unbuilt). This plan therefore: (1) **promotes** the existing Gmail `mcp` mode for host-connector users (today it is under-advertised behind the `oauth` default), and (2) **specs the Calendar `mcp` mode and explicitly defers the build** — Calendar host-connector consumption must be documented as **"planned, not yet supported," never as a current path**, until the mode and tool ship.
 
-The deliberate **trade-off** must be stated, not hidden: native connectors route Google data through the host's cloud (claude.ai), which conflicts with rebalance's local-first / no-cloud value proposition. So the **local OAuth + SQLite ingest path stays the default for privacy-first users**, and the **connector path is the recommended default only for users who already trust their host with Google data**. Steering everyone to the cloud path would betray the core promise; offering it as an informed choice removes a real wall for the users it fits.
+**Precondition — state it wherever the connector path is offered.** The host-connector route is not free of gates; it trades a different one: the user's MCP host must actually ship Google connectors, and the user must have **connected and consented** their Google account inside that host. So this path fits "I already use Claude Desktop with its Google connectors connected," not "any agent user skips OAuth for free."
 
-- [ ] Promote Gmail `mcp` mode for host-connector users.
-  Observable result: README Step 5 and GMAIL.md present `mcp` mode as the recommended path for Claude-Desktop / MCP-host users (it removes the local OAuth flow entirely), with a one-line "when to pick which" that names the privacy trade-off.
-- [ ] Add a consumption-path decision callout to README Steps 4 and 5.
-  Observable result: a callout before each OAuth flow tells the reader they can consume Calendar/Gmail via the host's Google connectors instead, and links the trade-off.
-- [ ] State the local-first trade-off explicitly wherever the connector path is offered.
-  Observable result: every place that suggests the host-connector path also states that it routes Google data through the host's cloud, and that local OAuth + SQLite remains the local-only path.
-- [ ] Spec a Calendar `mcp` consumption mode (design item; may spill into implementation).
-  Observable result: a written spec for a `calendar_ingest_method = oauth | mcp` setting and an `ingest_calendar_events` MCP tool fed by the host's Calendar connector — naming the tool surface, the row shape it writes into `calendar_events`, and the cloud-vs-local data-flow boundary. Reaches feature parity with Gmail's connector path.
-- [ ] Decide whether the Calendar `mcp` spec is in-scope to build now or deferred.
-  Observable result: one explicit call — build in this plan, or log as a follow-up with a revisit trigger — so the phase can close on docs alone if implementation is deferred.
+The deliberate **trade-off** must be stated **inline, not hidden behind a link**: native connectors route Google data through the host's cloud (claude.ai), which conflicts with rebalance's local-first / no-cloud value proposition. So the **local OAuth + SQLite ingest path stays the default for privacy-first users**, and the **connector path is the recommended default only for users who already trust their host with Google data**. Steering everyone to the cloud path would betray the core promise; offering it as an informed choice removes a real wall for the users it fits.
+
+- [ ] Promote Gmail `mcp` mode (available today) for host-connector users.
+  Observable result: README Step 5 and GMAIL.md present `mcp` mode as the recommended path for Claude-Desktop / MCP-host users (it removes the local OAuth flow entirely), with a one-line "when to pick which" that names **both** the connector precondition (host ships Google connectors + your Google account is connected there) **and** the privacy trade-off.
+- [ ] Add a consumption-path decision callout to README Steps 4 and 5 — with an **inline** trade-off sentence.
+  Observable result: before each OAuth flow, a callout states inline (not behind a link): "the host-connector path routes your Google data through the host's cloud; local OAuth + SQLite keeps it on this machine." For **Gmail** the callout offers `mcp` mode as **available now**; for **Calendar** it labels host-connector consumption **planned, not yet supported** and points to local OAuth as the current path.
+- [ ] Carry the connector precondition everywhere the connector path is recommended.
+  Observable result: each connector recommendation names the precondition (host must ship Google connectors; user must have connected/consented their Google account in the host) so no reader concludes any agent user skips OAuth for free.
+- [ ] Spec the Calendar `mcp` consumption mode — **build explicitly deferred**.
+  Observable result: a written spec for a `calendar_ingest_method = oauth | mcp` setting and an `ingest_calendar_events` MCP tool fed by the host's Calendar connector — naming the tool surface, the row shape it writes into `calendar_events`, and the cloud-vs-local data-flow boundary. The build is **deferred (not in this plan)**; **revisit trigger:** a user asks for Claude-Desktop Calendar consumption, or Gmail `mcp` mode proves the pattern in the field. Until it ships, no doc presents Calendar host-connector as available.
 
 ### QA Checklist
 
-- [ ] README presents two clearly-labeled consumption paths (local OAuth vs host connector) for both Calendar and Gmail.
-- [ ] The privacy trade-off (connector = data through host cloud) is stated everywhere the connector path is offered — no silent cloud routing.
+- [ ] Gmail presents both consumption paths clearly (local OAuth + host-connector `mcp` mode, **available now**); Calendar presents local OAuth now and labels host-connector consumption **planned, not yet supported**. No doc offers a Calendar connector path that does not exist.
+- [ ] The privacy trade-off (connector = data through host cloud) is stated **inline** everywhere the connector path is offered — never only behind a link, never silent.
+- [ ] The connector precondition (host ships Google connectors + account connected/consented there) appears wherever the connector path is recommended.
+- [ ] **Doc-walk gate:** a reader starting from the README can tell, for Gmail and Calendar **separately**, whether the host-connector path is available now, what host preconditions apply, and whether data stays local — without opening code.
 - [ ] Gmail `mcp` mode is discoverable as a first-class option, not a footnote.
-- [ ] The Calendar `mcp` spec names the new tool, the `calendar_events` write shape, and the data-flow boundary; if deferred, it carries a revisit trigger.
-- [ ] No doc implies the host-connector path keeps data local when it does not.
+- [ ] The Calendar `mcp` spec names the new tool, the `calendar_events` write shape, and the data-flow boundary, and carries a revisit trigger for its deferred build.
 
 ## Phase 4 - Repo-Root Tidiness
 
@@ -152,6 +153,7 @@ Mitigation rules:
 - [ ] The canonical README agrees with GOOGLE_CALENDAR/GMAIL/UPGRADE on where every credential lives — no stale pickle path, no required `migrate-to-keyring`.
 - [ ] The supported platform and the cross-platform minimal subset are stated before the first install command.
 - [ ] First-run network egress (HuggingFace model, GitHub, Google APIs) is documented for allowlisted/agent-sandbox users.
-- [ ] Calendar and Gmail each present a local-OAuth path and a host-connector path, with the privacy trade-off stated wherever the connector path appears.
-- [ ] Gmail `mcp` mode is first-class; the Calendar `mcp` mode is either built or specced-and-deferred with a revisit trigger.
+- [ ] Gmail presents both a local-OAuth path and an available host-connector (`mcp`) path; Calendar presents local OAuth now with host-connector consumption labeled "planned, not yet supported." No doc offers a Calendar connector path that is not built.
+- [ ] Wherever the connector path appears, the cloud-vs-local-first trade-off **and** the host-connector precondition are stated inline (not behind a link).
+- [ ] Gmail `mcp` mode is first-class; the Calendar `mcp` mode is specced-and-deferred with a revisit trigger.
 - [ ] The repo root is newcomer-clean with one README hub and no broken links or tool-loader breakage.
