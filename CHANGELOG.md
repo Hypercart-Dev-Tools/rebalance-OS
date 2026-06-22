@@ -6,6 +6,53 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.41.1] - 2026-06-21
+
+Front-door, portability, and auth-hardening cleanup — closing the remaining
+runtime-contract, test-coverage, and documentation gaps so a newcomer's
+clone-to-working path and the credential model are accurate and enforced.
+
+### Fixed
+- Semantic-maintenance commands no longer silently accept calendar/reminder
+  sources they cannot actually index. The accepted source set is now derived
+  from the live indexing stage, so the maintenance CLI and the runtime can no
+  longer drift apart, and an unsupported source is rejected with a clear error
+  instead of doing nothing.
+- Restored the test suite: a broken module import had been interrupting
+  collection and leaving continuous integration red, so the contract tests
+  were not actually running on every change.
+- The Gmail re-auth hint no longer tells operators to run a redundant migration
+  step that the setup flow already performs in one pass.
+
+### Added
+- The health check now reports posture for the Figma integration and
+  distinguishes "optional and not configured" (a clean skip) from "configured
+  but broken" — for example, files selected to sync with no token — so a
+  silently failing integration becomes visible. This immediately surfaced a
+  real, previously-silent misconfiguration.
+- CI-enforced contract tests for the credential model: secrets can no longer
+  leak back into repo-local config; migration refuses to remove a secret from
+  the legacy location until the new store has provably retained it, so an
+  unattended job can never be locked out; and auth-activity plus token-lifetime
+  metadata survive migration and token refresh (fingerprint-only, with the
+  original authorization date preserved). The dashboard re-ingest path and the
+  opt-in Figma path gained real (non-mocked) coverage.
+
+### Changed
+- Operator and newcomer documentation now matches the shipped credential model
+  everywhere: the OS keyring is primary, with a permission-locked data-only
+  fallback stored outside the repository. Retired token-format and redundant
+  migration wording were removed; the one legacy migration step that still does
+  real work is kept and scoped to that purpose.
+- The front door now states the supported platform, the cross-platform subset
+  that runs without the on-device embedding stack, and the one-time first-run
+  network access (the model download and the GitHub/Google APIs) before the
+  first install command — correcting the prior overstated platform requirement.
+- The Gmail local-account versus host-connector ingest choice now states the
+  privacy trade-off (whether data stays on the machine or routes through the
+  host cloud) and the connector precondition inline. Calendar host-connector
+  ingestion is clearly marked as planned, not shipped.
+
 ## [0.41.0] - 2026-06-18
 
 P2 **Phase 2 — v0.5 "What should we work on next"** (product milestone *v0.5*; the
