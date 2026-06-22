@@ -81,6 +81,6 @@ The operator just said "take your turn on this file." Everything you need is **i
 **Did:** Applied all 4 findings; reconciled each against the file via grep before closing.
 **Verification:** N/A — non-executable doc. No re-review round run (minor doc refinements of an already-affirmed plan; per operator direction to close).
 **Re-review this:** n/a — closing.
-**Commit:** `<pending>`
+**Commit:** `a47dceb` (plan doc + relay log)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
