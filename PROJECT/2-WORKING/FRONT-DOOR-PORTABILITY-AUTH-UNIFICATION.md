@@ -30,7 +30,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 5 complete (2026-06-21).** Gmail `oauth`/`mcp` consumption modes now carry the privacy trade-off + connector precondition inline (GMAIL.md methods-table "Data boundary" callout, Method B "Before you switch", README Option B "Trade-off"): `mcp` routes email through the host cloud (e.g. claude.ai) and needs a host shipping a Gmail connector with the account already connected; `oauth` keeps it local. GOOGLE_CALENDAR.md states it has no host-connector mode (planned, not shipped). `oauth` stays the default — no co-equal restructure (ponytail-lite). Deferred Calendar `mcp` spec kept embedded. | **Phase 6 - Documentation surface cleanup.** Per the ponytail-lite, keep only bullet 1: add a ROADMAP pointer to this unified plan as the single active ledger entry. Drop the doc-reorg (inventory/relocate/re-hub) — it risks breaking path-based loaders to tidy sprawl no newcomer hits; source plans already carry supersession breadcrumbs. |
+| **Phase 6 complete — all six phases shipped (2026-06-21).** ROADMAP now points only to this unified plan as the single active ledger entry, reflecting Phases 1–6 done; the three source plans are retained with verified supersession breadcrumbs. Per the ponytail-lite, the doc-reorg (inventory/relocate/re-hub) was cut — it risked breaking path-based loaders to tidy sprawl no newcomer hits. **The plan is code- and doc-complete.** | **Operator-only follow-up:** run `rebalance config migrate-secrets` on the ~2 remaining Macs (Phase 1 item 6), under the verify-then-cutover gate. Everything else is the deferred multi-operator / fleet scope, revived on its named triggers. |
 
 ## Table of Contents
 
@@ -258,23 +258,24 @@ Goal: leave one canonical active plan and a cleaner newcomer-facing documentatio
 
 > **ponytail (lite):** Keep only bullet 1 — one ROADMAP pointer line is the genuinely useful bit. Bullets 2–5 are a doc-reorg project for an audience of one: inventory / relocate / re-hub risks breaking path-based loaders (your own Cross-Phase Risk #4) to tidy sprawl that bothers no one but you, and the source plans already carry supersession breadcrumbs. Drop the relocation; revisit only if root clutter ever actually impedes a newcomer.
 
-- [ ] Add this unified plan to every canonical index that should point to active work.
+Per the ponytail-lite, only bullet 1 (the ROADMAP pointer) and bullet 5 (keep source plans + breadcrumbs) are kept; bullets 2–4 (the inventory/relocate/re-hub doc-reorg) are cut — they risk breaking path-based loaders (Cross-Phase Risk #4) to tidy sprawl no newcomer hits.
+
+- [x] Add this unified plan to every canonical index that should point to active work.
   Observable result: ROADMAP, README doc hubs where appropriate, and any active project index point to this unified doc instead of fragmenting the follow-up across three separate active plans.
-- [ ] Inventory root `.md` files into newcomer-facing vs internal docs.
-  Observable result: repo-root doc sprawl is classified before any move or hub cleanup.
-- [ ] Relocate internal docs that do not need to stay at root.
-  Observable result: internal docs move under an internal/docs home, while tool-loaded files such as `AGENTS.md` and `CLAUDE.md` stay where loaders expect them.
-- [ ] Keep one newcomer index.
-  Observable result: README remains the primary newcomer hub, and any kept root doc is either in that hub or linked from one that is.
-- [ ] Keep the three source plans in-tree as linked appendices and leave explicit supersession breadcrumbs on each.
-  Observable result: the three source docs are retained (not deleted) as the detailed record behind this plan — they hold the load-bearing detail this doc references but does not fully transcribe (audit tables, source manifest, line-level README references, the runtime credential-flow descriptions, the locked Decisions A/B). Each keeps its "active sequencing moved to this unified doc; kept as source context" breadcrumb (already in place as of 2026-06-21), so a future reader can tell sequencing moved here and does not need to reconcile three overlapping plans manually. If any source doc is ever removed, its load-bearing detail must first be folded into this doc.
+  Done (2026-06-21): ROADMAP status table + ledger now point only to this doc and reflect Phases 1–6 complete (operator-only `migrate-secrets` + deferred fleet scope remaining). The ROADMAP "In progress" ledger already listed only this unified plan, not the three source docs — no fragmentation to fix.
+- [ ] ~~Inventory root `.md` files into newcomer-facing vs internal docs.~~ **Cut (ponytail-lite).**
+- [ ] ~~Relocate internal docs that do not need to stay at root.~~ **Cut (ponytail-lite)** — relocation risks breaking path-based loaders / tool references for no newcomer benefit.
+- [ ] ~~Keep one newcomer index.~~ **Cut (ponytail-lite)** — README is already the newcomer hub; no reorg attempted.
+- [x] Keep the three source plans in-tree as linked appendices and leave explicit supersession breadcrumbs on each.
+  Observable result: the three source docs are retained (not deleted) as the detailed record behind this plan — they hold the load-bearing detail this doc references but does not fully transcribe (audit tables, source manifest, line-level README references, the runtime credential-flow descriptions, the locked Decisions A/B). Each keeps its "active sequencing moved to this unified doc; kept as source context" breadcrumb, so a future reader can tell sequencing moved here and does not need to reconcile three overlapping plans manually. If any source doc is ever removed, its load-bearing detail must first be folded into this doc.
+  Verified (2026-06-21): breadcrumbs confirmed present on all three — COLLECTOR-PATH-AND-PORTABILITY-AUDIT.md, AUTH-AND-API-KEY-STORAGE-HARDENING.md, and FRONT-DOOR-ONBOARDING-REMEDIATION.md.
 
 ### QA Checklist
 
-- [ ] ROADMAP points to this unified plan as the active ledger entry for this area.
-- [ ] The repo root shows only newcomer-relevant docs plus required agent/tool files.
-- [ ] No moved doc breaks README links, tool loaders, or skill references.
-- [ ] A reader can identify this file as the single active sequencing document for front-door/portability/auth follow-up work.
+- [x] ROADMAP points to this unified plan as the active ledger entry for this area.
+- [ ] ~~The repo root shows only newcomer-relevant docs plus required agent/tool files.~~ **Cut with the relocation bullets** — root sprawl left as-is (no newcomer is impeded; revisit only if that changes).
+- [x] No moved doc breaks README links, tool loaders, or skill references. (nothing moved — the relocation was cut)
+- [x] A reader can identify this file as the single active sequencing document for front-door/portability/auth follow-up work.
 
 ## Cross-Phase Risks
 

@@ -25,13 +25,13 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| **Unified planning pass complete (2026-06-21).** The overlapping front-door onboarding, collector portability, and auth-storage follow-up work was consolidated into one canonical active project doc. | **Phase 1 - Runtime contract closure.** Finish the remaining collector/auth contract edges before further doc and onboarding cleanup. |
+| **Front-door / portability / auth unification — Phases 1–6 shipped (2026-06-21).** Runtime contract closure, CI-enforced contract tests, canonical doc truthfulness, install-path clarity, and Google consumption-path trade-offs all landed against one canonical plan (1080 tests green; CI unblocked). | **Operator-only:** run `rebalance config migrate-secrets` on the ~2 remaining Macs (Phase 1 item 6); otherwise the deferred multi-operator / fleet scope, revived on trigger. |
 
 ## Ledger
 
 ### In progress
 
-- `Unified front-door, portability & auth hardening` — active; Phase 1 (runtime contract closure) next. → [PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md)
+- `Unified front-door, portability & auth hardening` — Phases 1–6 complete; only the operator-only per-machine `migrate-secrets` (~2 Macs) + deferred fleet/multi-operator scope remain. → [PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md)
 
 ### Completed
 
