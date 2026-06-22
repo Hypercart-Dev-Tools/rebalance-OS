@@ -30,7 +30,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 2 complete (2026-06-21).** CI was red (`pytest tests/` interrupted by a `scripts.*` import) — now green. The Phase 1 invariants are CI-enforced: secret-storage verify-then-cutover gate, repo-local secret-leak guard, auth-activity/token-meta persistence through the real setters, a non-mocked dashboard re-ingest test, and explicit figma opt-in gating. token_meta gained the shared logs-dir seam; two stale strings (set_github_token docstring, figma error) fixed. Suite: 1080 passing. The one remaining Phase 1 item stays operator-only: per-machine `migrate-secrets` on the ~2 outstanding Macs. | **Phase 3 - Canonical doc truthfulness.** Make README/UPGRADE/GMAIL/GOOGLE_CALENDAR match the shipped credential/storage model (kill stale pickle / `migrate-to-keyring` wording). Per the ponytail-lite callout: fix the actively-wrong lines first, defer the full terminology sweep. |
+| **Phase 3 complete (2026-06-21).** Canonical docs now match the shipped credential model: one language everywhere — keyring (primary) + JSON secret-store fallback. Fixed README (Calendar token location, redundant `migrate-to-keyring`, vague "file fallback"), GMAIL.md + GOOGLE_CALENDAR.md (stale `migrate-to-keyring` follow-ups), the ARCHITECTURE.md credential table (still claimed secrets live in `rbos.config` / pickle), and doctor's gmail hint. `migrate-to-keyring` kept only in UPGRADE.md, where it legitimately covers the sleuth-env/legacy→keyring path. Suite still 1080 passing; doctor green. | **Phase 4 - Install-path clarity.** Surface the macOS Apple-Silicon MLX requirement + first-run network egress before the install commands. Per the ponytail-lite: collapse into one "Supported platform & first-run network" README block; skip wiring warnings into onboarding code until a sandboxed user reports a blocker. |
 
 ## Table of Contents
 
@@ -163,23 +163,28 @@ Goal: make the canonical docs match the shipped auth/runtime model exactly.
 
 > **ponytail (lite):** Bullets 1–3 fix lines that are actively wrong — a newcomer following the stale pickle / `migrate-to-keyring` text fails, so that's correctness, keep them. The cut is bullets 4–5: `grep -ri 'pickle\|migrate-to-keyring' *.md` and fix the hits, then stop. Skip the full 5-doc terminology-unification pass until a reader actually reports drift — the audience is ~2 operators.
 
-- [ ] Fix the stale Calendar token-location line in `README.md`.
+- [x] Fix the stale Calendar token-location line in `README.md`.
   Observable result: README names the current keyring + JSON secret-store fallback, not the retired pickle path.
-- [ ] Remove the stale `migrate-to-keyring` follow-up from README/setup guidance.
+  Done (2026-06-21): README.md step 4b now says "saved in your OS keyring, with a launchd-reachable JSON fallback in the out-of-repo secret store at `~/.config/rebalance-os/secrets/google-calendar-oauth`".
+- [x] Remove the stale `migrate-to-keyring` follow-up from README/setup guidance.
   Observable result: newcomer-facing docs reflect the one-pass setup flow that writes keyring + JSON directly.
-- [ ] Tighten Gmail fallback wording to name the JSON secret store precisely.
+  Done (2026-06-21): dropped the redundant `migrate-to-keyring` step from the Gmail setup block (README), the Gmail "re-mint" + Claude-Code + troubleshooting flows (GMAIL.md), and the Calendar re-auth + Internal-remint flows (GOOGLE_CALENDAR.md). Verified against the setup scripts, which write keyring + JSON in one pass. UPGRADE.md keeps `migrate-to-keyring` because there it legitimately covers the **sleuth env-file / legacy → keyring** path that `migrate-secrets` does not.
+- [x] Tighten Gmail fallback wording to name the JSON secret store precisely.
   Observable result: docs no longer use vague "file fallback" language where the concrete store/path matters.
-- [ ] Sweep README and linked newcomer/operator docs for retired credential-model wording.
+  Done (2026-06-21): README's "file fallback" → "JSON fallback in the out-of-repo secret store (`~/.config/rebalance-os/secrets/`)"; GMAIL.md already named the JSON secret store.
+- [x] Sweep README and linked newcomer/operator docs for retired credential-model wording.
   Observable result: no active newcomer-facing doc still treats pickle fallback or repo-local secret persistence as the live model.
-- [ ] Run one operator-doc consistency pass across README, UPGRADE, GMAIL, GOOGLE_CALENDAR, and doctor terminology.
+  Done (2026-06-21): grep-driven pass over `*.md`. Also corrected the ARCHITECTURE.md credential table, which still claimed GitHub/Figma secrets live in `temp/rbos.config` and Calendar/Gmail use pickle paths — directly contradicting the Phase 2 model (and the new leak guard). Internal `PROJECT/` / `AUDIT-*` / `relay-system/` records left as historical context.
+- [x] Run one operator-doc consistency pass across README, UPGRADE, GMAIL, GOOGLE_CALENDAR, and doctor terminology.
   Observable result: the same storage/source language appears everywhere an operator or newcomer is told where credentials live.
+  Done (2026-06-21): one model everywhere — keyring (primary) + JSON secret-store fallback; `migrate-secrets` for upgrades; `migrate-to-keyring` scoped to UPGRADE.md's sleuth-env/legacy path. Fixed the stale `migrate-to-keyring` follow-up in doctor's gmail auth-fail hint too.
 
 ### QA Checklist
 
-- [ ] README, UPGRADE, GMAIL, and GOOGLE_CALENDAR agree on the current credential/storage model.
-- [ ] Doctor source labels match the language used in docs.
-- [ ] A reader who only follows the README gets a correct mental model of secret storage and OAuth fallback.
-- [ ] No active doc still instructs a migration step that the setup flow already performs automatically.
+- [x] README, UPGRADE, GMAIL, and GOOGLE_CALENDAR agree on the current credential/storage model.
+- [x] Doctor source labels match the language used in docs.
+- [x] A reader who only follows the README gets a correct mental model of secret storage and OAuth fallback.
+- [x] No active doc still instructs a migration step that the setup flow already performs automatically.
 
 ## Phase 4 - Install-Path Clarity and Front-Door Guidance
 

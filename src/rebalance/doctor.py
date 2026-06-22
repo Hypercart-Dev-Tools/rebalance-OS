@@ -608,8 +608,8 @@ _AUTH_FAIL_HINT = {
               "`rebalance config set-github-token` with a fresh token",
     "calendar": "re-run the Calendar OAuth flow "
                 "(scripts/setup_calendar_oauth.py)",
-    "gmail": "re-run the Gmail OAuth flow (scripts/setup_gmail_oauth.py) then "
-             "`rebalance config migrate-to-keyring`, or switch to MCP mode "
+    "gmail": "re-run the Gmail OAuth flow (scripts/setup_gmail_oauth.py) — it "
+             "writes keyring + JSON in one pass — or switch to MCP mode "
              "(`rebalance config set-gmail-method mcp`)",
 }
 

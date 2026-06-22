@@ -259,7 +259,7 @@ OAuth Desktop app credentials are already bundled in the repo. You do **not** ne
 .venv/bin/python scripts/setup_calendar_oauth.py --test
 ```
 
-A browser window opens — log in with your Google account and click **Allow**. The script prints your available calendars and their IDs. Your token is saved locally at `~/.config/rebalance-os/google-calendar-oauth` (never in the repo).
+A browser window opens — log in with your Google account and click **Allow**. The script prints your available calendars and their IDs. Your token is saved in your OS keyring, with a launchd-reachable JSON fallback in the out-of-repo secret store at `~/.config/rebalance-os/secrets/google-calendar-oauth` (never in the repo).
 
 If you want MCP agents to create events, re-run auth with write access:
 
@@ -313,12 +313,12 @@ pick one with `rebalance config set-gmail-method`:
 
 **Option A — `oauth` (self-contained, works under launchd)**
 
-A one-time browser consent stores a read-only Gmail token in your OS keyring
-(with a launchd-reachable file fallback) — the same model as Calendar:
+A one-time browser consent stores a read-only Gmail token in your OS keyring,
+with a launchd-reachable JSON fallback in the out-of-repo secret store
+(`~/.config/rebalance-os/secrets/`) — the same model as Calendar:
 
 ```bash
-python scripts/setup_gmail_oauth.py        # opens a browser, requests gmail.readonly
-rebalance config migrate-to-keyring        # move the token into keyring
+python scripts/setup_gmail_oauth.py        # browser consent; writes keyring + JSON fallback directly
 rebalance config set-gmail-method oauth
 ```
 
