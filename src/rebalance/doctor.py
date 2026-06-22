@@ -563,6 +563,46 @@ def _check_calendar() -> Check:
     return Check("calendar", OK, detail)
 
 
+def _check_figma() -> Check:
+    """Figma personal access token — an opt-in source. Resolves keyring →
+    secret-store → rbos.config (launchd-safe fallback), same dual store as the
+    GitHub PAT. Posture, not nagging: optional+unconfigured is a clean skip
+    (OK), while a half-configured state (token without file keys, or file keys
+    without a token) is a real misconfiguration and warns. Insecure repo-local
+    storage of ``figma_token`` is already covered by ``_check_repo_local_secrets``.
+    """
+    try:
+        from rebalance.ingest.config import _get_secret_dual_store, get_figma_file_keys
+    except Exception as exc:  # noqa: BLE001 — doctor must never crash
+        return Check("figma", WARN, f"figma module unavailable: {exc}")
+
+    token, source = _get_secret_dual_store("figma_token")
+    has_token = bool(token.strip()) if isinstance(token, str) else False
+    try:
+        file_keys = get_figma_file_keys()
+    except Exception:  # noqa: BLE001 — never let config reads crash doctor
+        file_keys = []
+
+    if not has_token and not file_keys:
+        return Check("figma", OK, "not configured (optional integration)")
+    if not has_token:
+        return Check(
+            "figma", WARN,
+            f"{len(file_keys)} Figma file key(s) configured but no token",
+            "store a Figma personal access token in the `figma_token` secret "
+            "(keyring) — the figma sync fails every run without it",
+        )
+    where = source or "config"
+    if not file_keys:
+        return Check(
+            "figma", WARN,
+            f"token present (via {where}) but no file keys to sync",
+            "add a Figma file via the pulse dashboard so the figma source has "
+            "something to ingest",
+        )
+    return Check("figma", OK, f"token present (via {where}) · {len(file_keys)} file(s)")
+
+
 _AUTH_FAIL_HINT = {
     "github": "PAT revoked, expired, or lost a scope — run "
               "`rebalance config set-github-token` with a fresh token",
@@ -813,10 +853,11 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
         for collector in _COLLECTOR_FRESHNESS:
             report.checks.append(_check_collector_freshness(db_path, **collector))
 
-    # Integration credentials — Sleuth/Slack, Gmail, Google Calendar.
+    # Integration credentials — Sleuth/Slack, Gmail, Google Calendar, Figma.
     report.checks.append(_check_sleuth(db_path))
     report.checks.append(_check_gmail(db_path))
     report.checks.append(_check_calendar())
+    report.checks.append(_check_figma())
     report.checks.append(_check_pulse())
 
     # Auth-event log — last deauth/auth failure per integration (calendar,

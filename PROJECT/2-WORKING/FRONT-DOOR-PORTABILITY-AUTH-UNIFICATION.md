@@ -30,7 +30,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Pre-unification groundwork complete (2026-06-21).** Collector taxonomy, default-refresh semantics, source-owned helper extraction, semantic-stage ownership, secret-store rollout, repo-local secret removal, and JSON OAuth fallback all shipped. The front-door audit then exposed the remaining gaps: doc drift, unresolved contract edges, incomplete contract coverage, install-path ambiguity, and an under-explained Gmail/Calendar connector split. | **Phase 1 - Close the remaining runtime contract gaps.** Finish the still-open collector/auth contract items first, then lock verification, then clean up docs and onboarding in dependency order. |
+| **Phase 1 runtime-contract code work complete (2026-06-21).** Semantic-maintenance CLI vocabulary now derives from the single runtime source-of-truth (`_all_semantic_sources()`), closing the calendar/sleuth drift; doctor gained a Figma posture check (optional+unconfigured vs configured+broken); resolver-cleanup, single-write-path, and auth-activity/token-meta routing were verified complete. All shipped with contract tests (1065 passing). The one remaining Phase 1 item is operator-only: per-machine `migrate-secrets` on the ~2 outstanding Macs. | **Phase 2 - Contract tests, CI, and observability.** Promote the Phase 1 invariants into CI-enforced contract tests (secret-storage, auth-activity/token-meta persistence, launchd-safe fallback), then close the remaining collector observability blind spots. |
 
 ## Table of Contents
 
@@ -99,27 +99,33 @@ On the `ponytail (lite)` callouts in Phases 3–6: each names a lazier scope the
 
 Goal: close the remaining collector/auth contract gaps before expanding doc cleanup or onboarding guidance.
 
-- [ ] Collapse each raw incoming source onto one clearly canonical source-owned write path.
+- [x] Collapse each raw incoming source onto one clearly canonical source-owned write path.
   Observable result: no raw source still has multiple competing user-facing write paths pretending to be equal; the one true source-owned path is explicit for vault, github, calendar, sleuth, email, and figma.
-- [ ] Align semantic-maintenance CLI semantics with the live `semantic` stage contract.
+  Done (2026-06-21, verify): each source is registered as one `Collector` via `register_collector` and dispatched through the single `refresh_index` entry point (`src/rebalance/ingest/index_ops.py:92-116,1428-1451`); no competing write path remains.
+- [x] Align semantic-maintenance CLI semantics with the live `semantic` stage contract.
   Observable result: maintenance commands such as `--source all` match the same semantic-capable source set the runtime stage actually processes; no stage/CLI drift remains.
-- [ ] Finish runtime resolver cleanup in setup scripts and script bootstraps.
+  Done (2026-06-21): `normalize_sources` now derives its legal set from `_all_semantic_sources()` (the single runtime source-of-truth) instead of a hand-maintained literal that wrongly accepted non-semantic `calendar`/`sleuth` (`src/rebalance/ingest/semantic_index.py:130-143`). Guarded by `tests/test_semantic_source_contract.py`.
+- [x] Finish runtime resolver cleanup in setup scripts and script bootstraps.
   Observable result: the remaining offenders are named and closed one by one — the OAuth setup scripts (`scripts/setup_calendar_oauth.py`, `scripts/setup_gmail_oauth.py`), the scheduler bootstraps (`scripts/*sync.sh`), and any residual `sys.path.insert` / repo-root shim. Each either routes through the shared resolver (`resolve_project_root` / `resolve_oauth_token_path`) or carries a one-line comment stating why it cannot, so "where applicable" is enumerated rather than left open.
-- [ ] Route auth-activity and token-metadata writes through the storage contract.
+  Done (2026-06-21, verify): the only `sys.path.insert` is the documented single exception in `scripts/_bootstrap.py:18`; no `parents[N]` repo-root walks remain; all five `*sync.sh` route through `scripts/lib/scheduler_common.sh`, which derives `REBALANCE_DIR` from its own file location (no hardcoded path); setup scripts import from `rebalance.ingest` and write via `secret_store` with no hardcoded `/Users/` or retired pickle/credentials paths.
+- [x] Route auth-activity and token-metadata writes through the storage contract.
   Observable result: secret-store writes, migrations, OAuth refreshes, and future storage changes all preserve `auth_activity.jsonl` and `token_meta.json` behavior through one contract.
-- [ ] Complete doctor posture coverage for active auth integrations.
+  Done (2026-06-21, verify): `auth_activity.jsonl` is written only by `src/rebalance/ingest/auth_log.py`; `token_meta.json` only by `src/rebalance/ingest/token_meta.py`. All callers (config OAuth/PAT writes, doctor reads) route through those module APIs — every other repo reference is a docstring or user-facing echo.
+- [x] Complete doctor posture coverage for active auth integrations.
   Observable result: doctor distinguishes `optional+unconfigured` from `configured+broken/insecure`, and reports the active source/posture for the shipped auth flows without requiring the deferred descriptor registry.
+  Done (2026-06-21): added `_check_figma` (`src/rebalance/doctor.py`) — the last uncovered active source. Unconfigured = clean skip (OK), half-configured (token without files, or files without token) = WARN, configured = OK with resolved source + file count. Already surfaced a real prior-silent failure on the primary Mac (file key set, no token). GitHub/Sleuth/Gmail/Calendar posture was already covered. Tested in `tests/test_doctor.py`.
 - [ ] Finish the per-machine secret-store migration on the remaining operator Macs (operator action, carried over from the auth-hardening plan), under the source plan's hard verify-then-cutover gate.
+  **Remaining (operator-only):** cannot be driven from a dev session — needs interactive runs on the ~2 outstanding Macs.
   Observable result: on each remaining Mac (~2 outstanding as of 2026-06-21) `rebalance config migrate-secrets` (a) writes GitHub/Sleuth/Figma and Google OAuth to keyring + secret store, (b) proves both interactive *and* unattended (launchd) reads resolve from the new store on that machine, and only then (c) stops reading the live secret from `temp/rbos.config`. A release-wide cutover before per-machine verification is rejected — legacy `rbos.config` reads stay available on every un-migrated Mac so launchd is never locked out. This is the single-operator equivalent of the deferred fleet-decommission ceremony, not part of it.
 
 ### QA Checklist
 
-- [ ] Each raw source has one documented and testable source-owned write path.
-- [ ] Semantic-maintenance commands and the live `semantic` stage produce the same source coverage.
-- [ ] No remaining setup/runtime path hardcodes the retired Google token locations or repo-root walk assumptions where a shared resolver exists.
-- [ ] Auth-activity and token-metadata logging still survive migration and refresh flows after the contract consolidation.
-- [ ] Doctor output is sufficient for an operator to tell whether an integration is absent, healthy, deprecated, or broken.
-- [ ] On every operator Mac, interactive *and* unattended (launchd) reads are proven to resolve from the new store before old-key cutover, and `temp/rbos.config` is confirmed secret-free — not just on the primary machine.
+- [x] Each raw source has one documented and testable source-owned write path.
+- [x] Semantic-maintenance commands and the live `semantic` stage produce the same source coverage. (`tests/test_semantic_source_contract.py`)
+- [x] No remaining setup/runtime path hardcodes the retired Google token locations or repo-root walk assumptions where a shared resolver exists.
+- [x] Auth-activity and token-metadata logging still survive migration and refresh flows after the contract consolidation. (existing `tests/test_auth_log.py` + verified single-writer routing)
+- [x] Doctor output is sufficient for an operator to tell whether an integration is absent, healthy, deprecated, or broken.
+- [ ] On every operator Mac, interactive *and* unattended (launchd) reads are proven to resolve from the new store before old-key cutover, and `temp/rbos.config` is confirmed secret-free — not just on the primary machine. (tied to the operator-only migration above)
 
 ## Phase 2 - Contract Tests, CI, and Observability
 

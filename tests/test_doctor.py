@@ -18,6 +18,7 @@ from rebalance.doctor import (
     DoctorReport,
     _check_auth_failures,
     _check_calendar,
+    _check_figma,
     _check_gmail,
     _check_pulse,
     _check_pulse_collectors,
@@ -196,6 +197,44 @@ class IntegrationCheckTests(unittest.TestCase):
             ok_check = _check_calendar()
             self.assertEqual(ok_check.status, OK)
             self.assertIn("secret-store JSON", ok_check.detail)
+
+    def test_figma_unconfigured_is_clean_skip(self) -> None:
+        # Opt-in source with neither token nor file keys → OK, not a nag.
+        from rebalance.ingest import config as config_mod
+
+        with patch.object(config_mod, "_get_secret_dual_store", return_value=(None, None)), \
+             patch.object(config_mod, "get_figma_file_keys", return_value=[]):
+            check = _check_figma()
+        self.assertEqual(check.status, OK)
+        self.assertIn("not configured", check.detail)
+
+    def test_figma_token_and_files_reports_source(self) -> None:
+        from rebalance.ingest import config as config_mod
+
+        with patch.object(config_mod, "_get_secret_dual_store", return_value=("tok", "keyring")), \
+             patch.object(config_mod, "get_figma_file_keys", return_value=["abc", "def"]):
+            check = _check_figma()
+        self.assertEqual(check.status, OK)
+        self.assertIn("keyring", check.detail)
+        self.assertIn("2 file", check.detail)
+
+    def test_figma_file_keys_without_token_warns(self) -> None:
+        from rebalance.ingest import config as config_mod
+
+        with patch.object(config_mod, "_get_secret_dual_store", return_value=(None, None)), \
+             patch.object(config_mod, "get_figma_file_keys", return_value=["abc"]):
+            check = _check_figma()
+        self.assertEqual(check.status, WARN)
+        self.assertIn("no token", check.detail)
+
+    def test_figma_token_without_file_keys_warns(self) -> None:
+        from rebalance.ingest import config as config_mod
+
+        with patch.object(config_mod, "_get_secret_dual_store", return_value=("tok", "config")), \
+             patch.object(config_mod, "get_figma_file_keys", return_value=[]):
+            check = _check_figma()
+        self.assertEqual(check.status, WARN)
+        self.assertIn("no file keys", check.detail)
 
     def test_pulse_missing_config_warns(self) -> None:
         import rebalance.ingest.config as config_mod
