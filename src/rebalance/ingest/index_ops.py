@@ -879,8 +879,8 @@ def _refresh_figma(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
             "scope": "figma",
             "dry_run": False,
             "error": (
-                "Figma token not configured. Set it with "
-                "`rebalance config set-figma-token` (stored in keyring)."
+                "Figma token not configured. Store a Figma personal access "
+                "token in the `figma_token` secret (keyring + secret store)."
             ),
         }
     if not file_keys:

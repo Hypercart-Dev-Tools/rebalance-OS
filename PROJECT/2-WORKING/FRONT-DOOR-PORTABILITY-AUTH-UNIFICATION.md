@@ -30,7 +30,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 1 runtime-contract code work complete (2026-06-21).** Semantic-maintenance CLI vocabulary now derives from the single runtime source-of-truth (`_all_semantic_sources()`), closing the calendar/sleuth drift; doctor gained a Figma posture check (optional+unconfigured vs configured+broken); resolver-cleanup, single-write-path, and auth-activity/token-meta routing were verified complete. All shipped with contract tests (1065 passing). The one remaining Phase 1 item is operator-only: per-machine `migrate-secrets` on the ~2 outstanding Macs. | **Phase 2 - Contract tests, CI, and observability.** Promote the Phase 1 invariants into CI-enforced contract tests (secret-storage, auth-activity/token-meta persistence, launchd-safe fallback), then close the remaining collector observability blind spots. |
+| **Phase 2 complete (2026-06-21).** CI was red (`pytest tests/` interrupted by a `scripts.*` import) — now green. The Phase 1 invariants are CI-enforced: secret-storage verify-then-cutover gate, repo-local secret-leak guard, auth-activity/token-meta persistence through the real setters, a non-mocked dashboard re-ingest test, and explicit figma opt-in gating. token_meta gained the shared logs-dir seam; two stale strings (set_github_token docstring, figma error) fixed. Suite: 1080 passing. The one remaining Phase 1 item stays operator-only: per-machine `migrate-secrets` on the ~2 outstanding Macs. | **Phase 3 - Canonical doc truthfulness.** Make README/UPGRADE/GMAIL/GOOGLE_CALENDAR match the shipped credential/storage model (kill stale pickle / `migrate-to-keyring` wording). Per the ponytail-lite callout: fix the actively-wrong lines first, defer the full terminology sweep. |
 
 ## Table of Contents
 
@@ -131,24 +131,31 @@ Goal: close the remaining collector/auth contract gaps before expanding doc clea
 
 Goal: make the unified runtime/storage contract fail fast in CI instead of drifting silently.
 
-- [ ] Add contract tests for secret-storage invariants.
+> **CI precondition (2026-06-21):** `pytest tests/` (what `.github/workflows/ci.yml` runs) was red — `test_pulse_warning_watch.py` imported `scripts.*` as a package, interrupting whole-suite collection. Fixed with the established sys.path pattern, so CI now collects and the contract tests below actually run.
+
+- [x] Add contract tests for secret-storage invariants.
   Observable result: tests cover insecure mode, missing file, corrupt file, idempotent migration, and launchd-safe fallback behavior with keyring disabled.
-- [ ] Add a CI regression test that forbids secret-looking keys in `temp/rbos.config`.
+  Done (2026-06-21): insecure mode / missing dir / corrupt file are covered by `tests/test_secret_store.py`; idempotency + launchd-safe read by `tests/test_phase2_migration.py`. Added the genuinely-uncovered **verify-then-cutover gate** there: migration never deletes a secret from rbos.config unless the store provably retained it (store-write-raises and store-doesn't-retain branches).
+- [x] Add a CI regression test that forbids secret-looking keys in `temp/rbos.config`.
   Observable result: a new write path that leaks a live secret back into repo-local config fails CI immediately.
-- [ ] Add tests that exercise auth-activity and token-metadata persistence through secret-store writes and token refresh.
+  Done (2026-06-21): `tests/test_repo_local_secret_leak.py` drives the real setters (github/figma/sleuth) with keyring off and asserts `repo_local_secret_keys_present() == []`, plus a detector test proving a planted leak is flagged.
+- [x] Add tests that exercise auth-activity and token-metadata persistence through secret-store writes and token refresh.
   Observable result: fingerprint-only metadata and `first_added_at` retention are asserted, not assumed.
-- [ ] Close the remaining collector blind spots in observability/integration coverage.
+  Done (2026-06-21): `tests/test_auth_sidecar_persistence.py` drives the real setter path — asserts a `token_set` auth event + fingerprint-only token_meta, `first_added_at` retained across re-set and reset for a new token, and that a google refresh (`record=False`) does not restamp it. Also gave `token_meta._meta_path()` the shared `REBALANCE_AUTH_LOG_DIR` seam so conftest isolation covers it (fixing latent pollution of the real token_meta.json).
+- [x] Close the remaining collector blind spots in observability/integration coverage.
   Observable result: mocked-only paths such as dashboard refresh/re-ingest are exercised by a real integration-style test path, so a stale call signature cannot pass unnoticed.
-- [ ] Verify opt-in source paths under the new contracts or gate them explicitly.
+  Done (2026-06-21): `tests/test_dashboard_refresh_integration.py` drives the real `_refresh_dashboard_note` chain (build note → write → re-ingest vault → embed_chunks) against an on-disk vault + SQLite DB, faking only the embedding *model* at the lowest seam so the real `embed_chunks` body still runs.
+- [x] Verify opt-in source paths under the new contracts or gate them explicitly.
   Observable result: figma and other opt-in flows either have hermetic coverage or an explicit guarded skip with a named reason, rather than silent coverage holes.
+  Done (2026-06-21): figma happy path is already hermetic (fake client). Added `tests/test_figma_gating.py` for the unconfigured gate — missing token → clean error envelope, token-without-files → skip-with-reason, dry-run → plan; no network, no DB. Fixed the figma "not configured" error string, which pointed at a non-existent `set-figma-token` CLI command.
 
 ### QA Checklist
 
-- [ ] CI fails on secret-location regressions, insecure file modes, and migration regressions.
-- [ ] Launchd-safe fallback is proven in tests for PAT-based auth and Google OAuth flows.
-- [ ] No runtime code outside the storage module writes secret-bearing files directly.
-- [ ] Dashboard/weekly-note re-ingest paths are covered by a non-mocked contract test.
-- [ ] Opt-in integrations have explicit coverage posture instead of informal manual confidence.
+- [x] CI fails on secret-location regressions, insecure file modes, and migration regressions.
+- [x] Launchd-safe fallback is proven in tests for PAT-based auth and Google OAuth flows.
+- [x] No runtime code outside the storage module writes secret-bearing files directly. (verified in Phase 1; re-asserted by the leak test)
+- [x] Dashboard/weekly-note re-ingest paths are covered by a non-mocked contract test.
+- [x] Opt-in integrations have explicit coverage posture instead of informal manual confidence.
 
 ## Phase 3 - Canonical Doc Truthfulness
 
