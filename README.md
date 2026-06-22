@@ -371,6 +371,11 @@ rebalance config set-gmail-method mcp
 MCP connector, which calls the `ingest_gmail_messages` tool. A scheduled job
 cannot trigger this — an agent has to. No local Gmail credential is needed.
 
+> **Trade-off:** `mcp` routes your email through the host's cloud (e.g.
+> claude.ai), while `oauth` (Option A) keeps it on this machine. It requires a
+> host that ships a Gmail connector with your Google account already connected
+> there — otherwise use `oauth`.
+
 **5c. Optional: narrow the inbox query**
 
 Add a `gmail_query_filter` key to `temp/rbos.config`. Example:

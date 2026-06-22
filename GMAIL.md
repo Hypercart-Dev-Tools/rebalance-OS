@@ -37,6 +37,14 @@ rebalance can feed `email_messages` two ways. Pick one with
 > grant it (tokens 403 with "insufficient authentication scopes"), but your own
 > Desktop OAuth client can. That's why `oauth` mode uses the browser flow below.
 
+> **Data boundary — pick deliberately.** `oauth` keeps your email **on this
+> machine**: the token reads Gmail straight into local SQLite; nothing transits a
+> third-party cloud. `mcp` routes your messages through the **host's cloud** (e.g.
+> claude.ai) via its Gmail connector — choose it only if that data path is
+> acceptable. `mcp` also **requires** that your MCP host actually ships a Gmail
+> connector and that you have already connected and consented your Google account
+> there; without that, use `oauth`.
+
 ---
 
 ## Quick Start
@@ -164,6 +172,11 @@ python scripts/setup_gmail_oauth.py --test   # re-mints under the new status; wr
 No local credential needed. `email_messages` is populated by an agent (e.g.
 Claude) using the Gmail MCP connector, which calls the `ingest_gmail_messages`
 tool.
+
+> **Before you switch:** this path sends your Gmail through the **host's cloud**
+> (e.g. claude.ai), unlike `oauth`, which keeps it local. It works only if your
+> MCP host ships a Gmail connector **and** you have already connected and
+> consented your Google account in that host. If either isn't true, stay on `oauth`.
 
 ```bash
 rebalance config set-gmail-method mcp

@@ -30,7 +30,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 4 complete (2026-06-21).** README now carries one "Supported platform & first-run network" block before Step 1: full experience needs macOS Apple Silicon (MLX), but an install matrix shows the pure-Python core (`pip install -e .`) runs cross-platform — only `[embeddings]` is platform-gated. First-run egress (huggingface.co model download, api.github.com, *.googleapis.com) is named for allowlist/sandbox readers. Corrected the overstated "Apple Silicon required" framing. Bullet 4 (wire into `/welcome`/`onboard`) deliberately cut per ponytail-lite. | **Phase 5 - Google consumption path clarity.** Document the local-OAuth vs host-connector (`mcp`) modes for Gmail/Calendar with the privacy trade-off stated inline. Per the ponytail-lite: keep `oauth` the default + add one pointer to `mcp`; don't restructure to co-equal. Keep the deferred Calendar `mcp` spec embedded. |
+| **Phase 5 complete (2026-06-21).** Gmail `oauth`/`mcp` consumption modes now carry the privacy trade-off + connector precondition inline (GMAIL.md methods-table "Data boundary" callout, Method B "Before you switch", README Option B "Trade-off"): `mcp` routes email through the host cloud (e.g. claude.ai) and needs a host shipping a Gmail connector with the account already connected; `oauth` keeps it local. GOOGLE_CALENDAR.md states it has no host-connector mode (planned, not shipped). `oauth` stays the default — no co-equal restructure (ponytail-lite). Deferred Calendar `mcp` spec kept embedded. | **Phase 6 - Documentation surface cleanup.** Per the ponytail-lite, keep only bullet 1: add a ROADMAP pointer to this unified plan as the single active ledger entry. Drop the doc-reorg (inventory/relocate/re-hub) — it risks breaking path-based loaders to tidy sprawl no newcomer hits; source plans already carry supersession breadcrumbs. |
 
 ## Table of Contents
 
@@ -220,16 +220,23 @@ Goal: explain the local-OAuth path and host-connector path clearly, with the pri
 
 > **ponytail (lite):** The privacy trade-off and connector precondition are correctness — keep them inline, don't simplify away. The cut is bullet 1 ("promote `mcp` to first-class co-equal"): you run `oauth`. Keep `oauth` the documented default and add one pointer line to `mcp` mode; don't restructure the docs to present both as equal choices until someone actually uses `mcp`.
 
-- [ ] Promote Gmail `mcp` mode as a first-class option for users already on a host with connected Google connectors.
+Per the ponytail-lite, bullet 1's full "co-equal restructure" is cut — `oauth` stays the documented default; `mcp` keeps its existing decision-table row + pointer. Bullets 2–5 (the correctness pieces) are done.
+
+- [x] Promote Gmail `mcp` mode as a first-class option for users already on a host with connected Google connectors. *(ponytail-lite scope: kept `oauth` default, did not restructure to co-equal.)*
   Observable result: Gmail docs and README present `oauth` and `mcp` as deliberate choices, not a default plus a buried alternate path.
-- [ ] Add inline trade-off language wherever the connector path is offered.
+  Done (2026-06-21): GMAIL.md's "Two ingest methods" table already frames both as a deliberate `set-gmail-method` choice (oauth default); README Step 5 keeps Option A/B. No restructure beyond the trade-off/precondition callouts below.
+- [x] Add inline trade-off language wherever the connector path is offered.
   Observable result: docs explicitly say that the connector path routes Google data through the host cloud, while local OAuth + SQLite keeps it on this machine.
-- [ ] Carry the connector precondition everywhere the connector path is recommended.
+  Done (2026-06-21): added a "Data boundary" callout after the GMAIL.md methods table, a "Before you switch" note in Method B, and a "Trade-off" note in README Option B — each says `mcp` routes email through the host cloud (e.g. claude.ai) while `oauth` keeps it on this machine.
+- [x] Carry the connector precondition everywhere the connector path is recommended.
   Observable result: docs state that the host must actually ship the Google connector and the user must already have connected/consented their account there.
-- [ ] Keep Calendar host-connector ingestion documented as planned, not shipped.
+  Done (2026-06-21): the same three callouts state `mcp` requires a host that ships a Gmail connector with your account already connected/consented there, else stay on `oauth`.
+- [x] Keep Calendar host-connector ingestion documented as planned, not shipped.
   Observable result: no doc implies Calendar connector ingestion exists today; local OAuth remains the current path.
-- [ ] Preserve and carry forward the deferred Calendar `mcp` consumption spec.
+  Done (2026-06-21): GOOGLE_CALENDAR.md gained an explicit "Calendar has no host-connector (`mcp`) ingest mode … planned, not shipped" note; it had no connector claims to begin with.
+- [x] Preserve and carry forward the deferred Calendar `mcp` consumption spec.
   Observable result: the spec below stays embedded in this doc (not just referenced), without promoting it into an active build.
+  Done (2026-06-21): verified the spec block below is intact and unpromoted.
 
   **Deferred Calendar `mcp` spec (build not in scope):**
   - **Setting:** `calendar_ingest_method = oauth | mcp` (mirrors Gmail's existing `oauth | mcp` switch).
@@ -240,10 +247,10 @@ Goal: explain the local-OAuth path and host-connector path clearly, with the pri
 
 ### QA Checklist
 
-- [ ] Gmail clearly presents both local OAuth and host-connector modes.
-- [ ] Calendar clearly presents local OAuth now and host-connector ingestion as planned only.
-- [ ] The privacy trade-off and connector precondition are stated inline everywhere the connector option appears.
-- [ ] A README-only reader can tell, separately for Gmail and Calendar, what is available now and where data flows.
+- [x] Gmail clearly presents both local OAuth and host-connector modes.
+- [x] Calendar clearly presents local OAuth now and host-connector ingestion as planned only.
+- [x] The privacy trade-off and connector precondition are stated inline everywhere the connector option appears.
+- [x] A README-only reader can tell, separately for Gmail and Calendar, what is available now and where data flows.
 
 ## Phase 6 - Documentation Surface Cleanup and Canonicalization
 

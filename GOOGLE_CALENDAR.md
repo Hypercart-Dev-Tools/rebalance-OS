@@ -102,6 +102,12 @@ After clicking Allow, the script prints a list of your Google Calendars and thei
 > a legacy pickle token? Run `rebalance config migrate-secrets` once to convert and
 > retire it. See [UPGRADE.md](./UPGRADE.md) for the full credential model.
 
+> **Calendar has no host-connector (`mcp`) ingest mode.** Unlike Gmail (which
+> offers an `oauth`/`mcp` choice), Google Calendar is ingested only via local
+> OAuth into local SQLite — the path on this page. Routing Calendar through a
+> host connector (e.g. claude.ai) is **planned, not shipped**; nothing sends your
+> Calendar data to a host cloud today.
+
 ---
 
 ### Step 2: Configure your calendar
