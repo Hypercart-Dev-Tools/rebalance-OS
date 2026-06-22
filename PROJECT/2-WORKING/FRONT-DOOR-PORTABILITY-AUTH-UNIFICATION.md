@@ -3,7 +3,12 @@ title: "Unified Front-Door, Portability, and Auth Hardening Plan"
 doc_type: audit-remediation-plan
 status: active
 owner: Noel Saw
-last_updated: 2026-06-21
+created: 2026-06-21
+updated: 2026-06-21
+goal: >
+  Close the remaining front-door, portability, and auth-hardening contract gaps in
+  dependency order — runtime contract first, then verification, then doc truthfulness
+  and onboarding — leaving one canonical active plan for this area.
 supersedes:
   - PROJECT/4-MISC/FRONT-DOOR-ONBOARDING-REMEDIATION.md
   - PROJECT/4-MISC/COLLECTOR-PATH-AND-PORTABILITY-AUDIT.md
@@ -88,6 +93,8 @@ Sequencing rule:
 - docs and onboarding only after the runtime story is stable
 - repo-surface cleanup last
 
+On the `ponytail (lite)` callouts in Phases 3–6: each names a lazier scope the implementer should weigh — **a recommended default, not a cut already applied**. The phase checklists deliberately still carry full scope; the decision to trim or keep each item is made at build time, in the phase where the work happens. The callout is therefore guidance sitting alongside the bullets, not a contradiction with them.
+
 ## Phase 1 - Runtime Contract Closure
 
 Goal: close the remaining collector/auth contract gaps before expanding doc cleanup or onboarding guidance.
@@ -102,8 +109,8 @@ Goal: close the remaining collector/auth contract gaps before expanding doc clea
   Observable result: secret-store writes, migrations, OAuth refreshes, and future storage changes all preserve `auth_activity.jsonl` and `token_meta.json` behavior through one contract.
 - [ ] Complete doctor posture coverage for active auth integrations.
   Observable result: doctor distinguishes `optional+unconfigured` from `configured+broken/insecure`, and reports the active source/posture for the shipped auth flows without requiring the deferred descriptor registry.
-- [ ] Finish the per-machine secret-store migration on the remaining operator Macs (operator action, carried over from the auth-hardening plan).
-  Observable result: `rebalance config migrate-secrets` has been run on each remaining Mac (~2 outstanding as of 2026-06-21) so every machine resolves GitHub/Sleuth/Figma and Google OAuth from keyring + secret store, and no machine still reads a live secret from `temp/rbos.config`. This is the single-operator equivalent of the deferred fleet-decommission ceremony, not part of it.
+- [ ] Finish the per-machine secret-store migration on the remaining operator Macs (operator action, carried over from the auth-hardening plan), under the source plan's hard verify-then-cutover gate.
+  Observable result: on each remaining Mac (~2 outstanding as of 2026-06-21) `rebalance config migrate-secrets` (a) writes GitHub/Sleuth/Figma and Google OAuth to keyring + secret store, (b) proves both interactive *and* unattended (launchd) reads resolve from the new store on that machine, and only then (c) stops reading the live secret from `temp/rbos.config`. A release-wide cutover before per-machine verification is rejected — legacy `rbos.config` reads stay available on every un-migrated Mac so launchd is never locked out. This is the single-operator equivalent of the deferred fleet-decommission ceremony, not part of it.
 
 ### QA Checklist
 
@@ -112,7 +119,7 @@ Goal: close the remaining collector/auth contract gaps before expanding doc clea
 - [ ] No remaining setup/runtime path hardcodes the retired Google token locations or repo-root walk assumptions where a shared resolver exists.
 - [ ] Auth-activity and token-metadata logging still survive migration and refresh flows after the contract consolidation.
 - [ ] Doctor output is sufficient for an operator to tell whether an integration is absent, healthy, deprecated, or broken.
-- [ ] `temp/rbos.config` is confirmed secret-free on every operator Mac, not just the primary machine.
+- [ ] On every operator Mac, interactive *and* unattended (launchd) reads are proven to resolve from the new store before old-key cutover, and `temp/rbos.config` is confirmed secret-free — not just on the primary machine.
 
 ## Phase 2 - Contract Tests, CI, and Observability
 

@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
-STATUS: Escalated
-ROUND: 1 / 1
+NEXT: —
+STATUS: Closed
+ROUND: 2 / 2
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -76,5 +76,17 @@ The operator just said "take your turn on this file." Everything you need is **i
 - Q1: Escalate. One round trip is not enough because the plan body currently disagrees with its own lite-scope notes in three phases; that is a structural planning defect, not a wording nit.
 - Q2: Keep Phase 1 as the blocking prerequisite. You can draft tests in parallel, but Phase 2 should not be executed/closed in parallel because it would lock CI around a scope surface that Phase 1 is still narrowing and clarifying.
 **Commit:** 0e539a8
+
+### Round 2 · Producer · Claude · 2026-06-21 19:02 PDT
+**Decisions on proposals:** (operator-approved; every finding independently verified against the files before disposing)
+- [Blocker]×3 (Phase 3 / 4 / 6 ponytail-note-vs-body scope contradiction) — **Modified.** Verified the tension is real, but it's one root cause (lite-ponytail names a deferred cut while the checklist keeps full scope, by design), not three independent blockers, and is `[Should]`-grade. Fixed once rather than rewriting three phases: added a framing paragraph to *Scope and Sequencing Rules* stating the `ponytail (lite)` callouts are a recommended default with the trim/keep decision deferred to build time — not a contradiction. → FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:96 · Proof: textual (non-executable artifact).
+- [Should] Auth per-machine cutover gate weakened — **Implemented.** Verified against the source plan (AUTH-AND-API-KEY-STORAGE-HARDENING.md:266, :268, :293): the hard "prove interactive *and* unattended (launchd) reads resolve before deleting the old key; release-wide cutover rejected" gate was genuinely dropped in the merge. Restored it into the Phase 1 bullet and folded the read-verification into the QA line. → FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:112 (bullet) and :122 (QA) · Proof: textual.
+- [Should] PDDA frontmatter incomplete — **Implemented.** Verified against PDDA.md:46 (requires `created`/`updated`/`goal`); the doc had only `last_updated`. Added `created`, renamed `last_updated`→`updated`, added `goal`. → FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:6–11 · Proof: textual.
+- [Pass]×2 (sequencing sound; source-plan traceability preserved) — Acknowledged, no action. Concur.
+**Answers acknowledged:** Q1 (escalate, don't approve) and Q2 (keep Phase 1 blocking; tests may be drafted but not closed in parallel) both accepted — Q2's nuance left as-is in the plan's Phase 1→2 ordering.
+**Did:** Applied the three edits above. Reconciled each `Implemented`/`Modified` against the artifact after editing: line 96 (framing), 112 (gate bullet), 122 (gate QA), 6–11 (frontmatter) all present as cited.
+**Verification:** N/A — non-executable artifact (plan doc). Findings cross-checked against AUTH-AND-API-KEY-STORAGE-HARDENING.md and PDDA.md; line citations confirmed via `rg -n`.
+**Re-review this:** None — operator extended the relay to a Producer-only Round 2 to log dispositions and accepted them; relay closes here (no Round 3).
+**Commit:** 136e68b
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
