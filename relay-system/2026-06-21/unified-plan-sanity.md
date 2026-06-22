@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: Producer
+STATUS: Escalated
 ROUND: 1 / 1
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
@@ -60,5 +60,21 @@ The operator just said "take your turn on this file." Everything you need is **i
   - Q1: Is one round trip enough, or does the plan have a structural gap that needs a real fix-and-re-review cycle (i.e. should you escalate rather than approve)?
   - Q2: Phase 1 is the next action — is its scope correctly the *blocking* prerequisite for everything else, or could verification (Phase 2) safely run in parallel?
 **Commit:** 2437ec9
+
+### Round 1 · Reviewer · Codex CLI · 2026-06-21 18:55 PDT
+**Verdict:** Changes requested
+**Basis:** N/A — non-executable artifact
+**Findings & proposals:**
+- [Blocker] [PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:144) says Phase 3's ponytail cut is "bullets 4-5," but the phase body still keeps both the broad doc sweep and the 5-doc terminology pass at [152](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:152) and [154](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:154). Proposed fix: either actually trim Phase 3 to the quick-win doc-drift work, or rewrite the ponytail note so the kept scope is honest.
+- [Blocker] [PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:168) says Phase 4 should collapse bullets 1-3 into one README/front-door doc task and cut the `/welcome` + `rebalance onboard` warning work, but the body still tracks four separate tasks including the cut item at [176](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:176). Proposed fix: pick one shape and make the phase, QA, and note agree; for the stated lite scope, drop the onboarding-code task and collapse the doc edits.
+- [Blocker] [PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:223) says Phase 6 should keep only the ROADMAP/index-pointer work, but the phase still includes inventory, relocation, hub cleanup, and move-validation tasks at [227](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:227), [229](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:229), and [239](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:239). Proposed fix: either cut Phase 6 down to the single pointer/breadcrumb task or drop the ponytail note; leaving both makes the scope impossible to read.
+- [Should] The auth-source plan's per-machine cutover gate was load-bearing and is now weakened. The unified Phase 1 only requires running `migrate-secrets` and confirming `temp/rbos.config` is secret-free on each Mac at [105](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:105) and [115](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:115), but the source plan required proving interactive and unattended reads on each machine before cutting over at [PROJECT/4-MISC/AUTH-AND-API-KEY-STORAGE-HARDENING.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/4-MISC/AUTH-AND-API-KEY-STORAGE-HARDENING.md:266) and [293](/Users/noelsaw/Documents/rebalance-OS/PROJECT/4-MISC/AUTH-AND-API-KEY-STORAGE-HARDENING.md:293). Proposed fix: restore that gate explicitly in Phase 1/QA so "secret-free" is not treated as sufficient proof for the remaining Macs.
+- [Should] PDDA compliance is still partial. The active-doc contract requires `created`, `updated`, and `goal` frontmatter keys at [PROJECT/PDDA.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/PDDA.md:46), but this doc only carries `title`, `doc_type`, `status`, `owner`, and `last_updated` at [PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:1). Proposed fix: add the missing PDDA keys now; the status-table alias is within the temporary tolerance window, but the metadata gap is still real.
+- [Pass] The high-level sequencing itself is sound: runtime-contract closure before verification, then doc truthfulness, then front-door presentation, then cleanup is consistently stated at [54](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:54), [84](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:84), and [252](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:252). I did not find a hidden dependency that forces docs ahead of runtime stabilization.
+- [Pass] The merge did preserve source-plan traceability rather than deleting context: the unified doc records all three source docs in `supersedes` at [7](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:7), and Phase 6 explicitly retains them as appendices/source context at [233](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:233).
+**Answers:**
+- Q1: Escalate. One round trip is not enough because the plan body currently disagrees with its own lite-scope notes in three phases; that is a structural planning defect, not a wording nit.
+- Q2: Keep Phase 1 as the blocking prerequisite. You can draft tests in parallel, but Phase 2 should not be executed/closed in parallel because it would lock CI around a scope surface that Phase 1 is still narrowing and clarifying.
+**Commit:** 0e539a8
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
