@@ -141,6 +141,8 @@ Goal: make the unified runtime/storage contract fail fast in CI instead of drift
 
 Goal: make the canonical docs match the shipped auth/runtime model exactly.
 
+> **ponytail (lite):** Bullets 1–3 fix lines that are actively wrong — a newcomer following the stale pickle / `migrate-to-keyring` text fails, so that's correctness, keep them. The cut is bullets 4–5: `grep -ri 'pickle\|migrate-to-keyring' *.md` and fix the hits, then stop. Skip the full 5-doc terminology-unification pass until a reader actually reports drift — the audience is ~2 operators.
+
 - [ ] Fix the stale Calendar token-location line in `README.md`.
   Observable result: README names the current keyring + JSON secret-store fallback, not the retired pickle path.
 - [ ] Remove the stale `migrate-to-keyring` follow-up from README/setup guidance.
@@ -163,6 +165,8 @@ Goal: make the canonical docs match the shipped auth/runtime model exactly.
 
 Goal: make the clone-to-working path readable in one pass for supported, unsupported, and sandboxed environments.
 
+> **ponytail (lite):** A user on the wrong platform genuinely fails, so bullets 1–3 earn their place — but collapse them into one "Supported platform & first-run network" block at the top of README, not four tracked tasks. Bullet 4 (wire warnings into `/welcome` + `rebalance onboard`) is the cut: that's touching onboarding code for a sandbox blocker no one has reported yet. Add it when a sandboxed user actually hits one.
+
 - [ ] Surface the supported platform before the first install command.
   Observable result: the macOS Apple-Silicon MLX requirement is visible before install, not buried later in prerequisites.
 - [ ] Document the cross-platform minimal install and feature subset.
@@ -184,6 +188,8 @@ Goal: make the clone-to-working path readable in one pass for supported, unsuppo
 Goal: explain the local-OAuth path and host-connector path clearly, with the privacy trade-off stated inline.
 
 > Note: Phase 3 and this phase both edit `GMAIL.md` and `GOOGLE_CALENDAR.md` — Phase 3 for credential-storage wording, Phase 5 for the `oauth`/`mcp` consumption modes and the privacy trade-off. Do them as one editing pass per file to avoid a second sweep over the same documents.
+
+> **ponytail (lite):** The privacy trade-off and connector precondition are correctness — keep them inline, don't simplify away. The cut is bullet 1 ("promote `mcp` to first-class co-equal"): you run `oauth`. Keep `oauth` the documented default and add one pointer line to `mcp` mode; don't restructure the docs to present both as equal choices until someone actually uses `mcp`.
 
 - [ ] Promote Gmail `mcp` mode as a first-class option for users already on a host with connected Google connectors.
   Observable result: Gmail docs and README present `oauth` and `mcp` as deliberate choices, not a default plus a buried alternate path.
@@ -213,6 +219,8 @@ Goal: explain the local-OAuth path and host-connector path clearly, with the pri
 ## Phase 6 - Documentation Surface Cleanup and Canonicalization
 
 Goal: leave one canonical active plan and a cleaner newcomer-facing documentation surface.
+
+> **ponytail (lite):** Keep only bullet 1 — one ROADMAP pointer line is the genuinely useful bit. Bullets 2–5 are a doc-reorg project for an audience of one: inventory / relocate / re-hub risks breaking path-based loaders (your own Cross-Phase Risk #4) to tidy sprawl that bothers no one but you, and the source plans already carry supersession breadcrumbs. Drop the relocation; revisit only if root clutter ever actually impedes a newcomer.
 
 - [ ] Add this unified plan to every canonical index that should point to active work.
   Observable result: ROADMAP, README doc hubs where appropriate, and any active project index point to this unified doc instead of fragmenting the follow-up across three separate active plans.
