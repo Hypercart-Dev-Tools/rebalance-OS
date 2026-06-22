@@ -80,3 +80,35 @@ def test_doctor_ok_when_config_clean(seams):
     config_module._write_config({"vault_path": "/x"})  # non-secret only
     check = doctor._check_repo_local_secrets()
     assert check.status == doctor.OK
+
+
+# --- verify-then-cutover gate ------------------------------------------------
+# The plan's headline availability risk: migration must NEVER delete a secret
+# from rbos.config unless the out-of-repo store provably retained it. Otherwise
+# a failed store write would lock launchd out of the only credential it can read.
+
+def test_migrate_keeps_config_when_store_write_raises(seams, monkeypatch):
+    config_module._write_config({"github_token": "ghp_legacy"})
+
+    def _boom(*_a, **_k):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(secret_store, "write_secret_file", _boom)
+    results = config_module.migrate_repo_local_secrets()
+
+    assert "FAILED" in results["github_token"]
+    # Secret NOT lifted out — the legacy launchd-safe read survives.
+    assert config_module._read_config().get("github_token") == "ghp_legacy"
+    assert "github_token" in config_module.repo_local_secret_keys_present()
+
+
+def test_migrate_verify_gate_keeps_config_when_store_does_not_retain(seams, monkeypatch):
+    # Write "succeeds" but a read-back can't confirm the value — the gate must
+    # treat that as a failed cutover and leave rbos.config intact.
+    config_module._write_config({"github_token": "ghp_legacy"})
+    monkeypatch.setattr(secret_store, "read_secret_file", lambda _k: None)
+    results = config_module.migrate_repo_local_secrets()
+
+    assert "FAILED" in results["github_token"]
+    assert config_module._read_config().get("github_token") == "ghp_legacy"
+    assert "github_token" in config_module.repo_local_secret_keys_present()
