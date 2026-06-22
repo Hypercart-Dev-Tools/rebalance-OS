@@ -31,7 +31,7 @@ goal: >
 
 ### In progress
 
-- `Unified front-door, portability, and auth hardening` — canonical follow-up plan for the remaining runtime-contract, verification, onboarding, and documentation-surface work that had been split across three overlapping docs. → [PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md)
+- `Unified front-door, portability & auth hardening` — active; Phase 1 (runtime contract closure) next. → [PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md)
 
 ### Completed
 
