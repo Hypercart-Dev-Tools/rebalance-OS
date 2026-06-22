@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -24,8 +25,19 @@ from rebalance.tz_utils import parse_utc_iso
 
 
 def _meta_path() -> Path:
-    from rebalance.paths import resolve_project_root
-    log_dir = resolve_project_root(Path(__file__)) / "temp" / "logs"
+    """Return the token-metadata sidecar path, creating its dir if needed.
+
+    Shares the auth log's ``temp/logs`` home (this is the keyed sidecar to that
+    event stream) and the same ``REBALANCE_AUTH_LOG_DIR`` seam, so tests and
+    sandboxed runs redirect both together — see tests/conftest.py, which keeps
+    the suite from polluting the repo's real token_meta.json.
+    """
+    override = os.environ.get("REBALANCE_AUTH_LOG_DIR")
+    if override:
+        log_dir = Path(override)
+    else:
+        from rebalance.paths import resolve_project_root
+        log_dir = resolve_project_root(Path(__file__)) / "temp" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return log_dir / "token_meta.json"
 

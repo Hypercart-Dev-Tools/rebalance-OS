@@ -129,16 +129,16 @@ def normalize_sources(source_types: Iterable[str] | None) -> tuple[str, ...]:
             continue
         if item == "all":
             return WORK_SOURCES
-        # The legal set = the current literal sources PLUS any source a
-        # registered collector exposes via a ``semantic_docs`` provider (e.g.
-        # ``figma``). Lazy/function-local import avoids an import cycle
-        # (index_ops imports SemanticDoc from this module). The default and the
-        # ``'all'`` return tuple above are intentionally left as the legacy
-        # triad — deriving them from the registry is a later PR.
-        from rebalance.ingest.index_ops import _semantic_source_names
-        legal = {"vault", "github", "calendar", "sleuth", "email", "code"} | set(
-            _semantic_source_names()
-        )
+        # The legal set is exactly what the runtime ``semantic`` stage
+        # processes: derive it from the single source of truth
+        # (``_all_semantic_sources()``) so CLI validation can never drift from
+        # the stage. That set is the if-ladder sources (vault/github/email/code)
+        # plus any collector exposing a ``semantic_docs`` provider (e.g.
+        # ``figma``); calendar/sleuth are intentionally absent because the stage
+        # does not project them into the semantic index. Lazy/function-local
+        # import avoids an import cycle (index_ops imports SemanticDoc here).
+        from rebalance.ingest.index_ops import _all_semantic_sources
+        legal = set(_all_semantic_sources())
         if item not in legal:
             raise ValueError(f"Unsupported source type: {value!r}")
         if item not in normalized:

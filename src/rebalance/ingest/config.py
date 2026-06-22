@@ -334,12 +334,14 @@ def classify_github_token(token: str) -> str:
 
 
 def set_github_token(token: str, *, source: str = "manual") -> None:
-    """Store GitHub PAT in the OS keyring AND rbos.config.
+    """Store the GitHub PAT in the keyring and the out-of-repo secret store.
 
-    Both stores are written so launchd jobs (which run with a stripped
-    environment and may not reach the user keychain) can always fall back
-    to rbos.config. keyring is preferred for interactive reads; config is
-    the launchd safety net.
+    keyring is the interactive primary; the permission-enforced secret store
+    (``0600``) is the durable launchd-safe fallback (unattended jobs run with a
+    stripped environment and may not reach the keychain). Phase 2: the PAT is
+    **no longer written to rbos.config** — the read path still falls back to
+    rbos.config for not-yet-migrated machines. Mirrors :func:`set_figma_token`
+    plus the GitHub-specific auth-log and gh-cli machinery.
 
     *source* records how this (re-)authorization happened (``manual`` via the
     CLI, ``gh-fallback`` via the 401 auto-heal); it is logged to the unified
