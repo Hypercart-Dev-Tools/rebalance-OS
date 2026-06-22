@@ -185,13 +185,41 @@ The manual steps below remain for reference and for environments without an MCP 
 
 ### Prerequisites
 
-- macOS with Apple Silicon (M1+)
-- Python 3.13 recommended for the local MLX embeddings stack
+- macOS with Apple Silicon (M1+) for the **full** local stack (embeddings + on-device LLM) — the core runs cross-platform; see [Supported platform & first-run network](#supported-platform--first-run-network) just below
+- Python 3.12+ (3.13 recommended for the local MLX embeddings stack)
 - An Obsidian vault (local folder with `.md` files)
 - A GitHub Personal Access Token ([create one here](https://github.com/settings/tokens)) — either:
   - **classic token** with the `repo` scope (GitHub offers no read-only private scope on classic tokens; `public_repo` alone makes your private work invisible to discovery), or
   - **fine-grained token** — change *Repository access* from the default **"Public repositories"** to *All repositories* (or the ones you work in), with read-only **Contents** and **Metadata** permissions.
 - Claude Code (CLI or VS Code extension)
+
+### Supported platform & first-run network
+
+**Full experience: macOS with Apple Silicon (M1+).** On-device embeddings
+(`mlx-embeddings`) and LLM synthesis run on Apple's MLX, which is Apple-Silicon-only.
+
+**Cross-platform subset.** The core is pure-Python and runs on Linux, Windows,
+and Intel Macs — only the `embeddings` extra is platform-gated:
+
+| Install | What it adds | Platform |
+|---|---|---|
+| `pip install -e .` | CLI, MCP server, SQLite + `sqlite-vec`, vault ingest (parse/chunk/keywords/links), GitHub scan/sync, `doctor` | any (Python 3.12+) |
+| `+ [calendar]` | Google Calendar + Gmail OAuth ingest | any |
+| `+ [server]` | local web/activity dashboard | any |
+| `+ [embeddings]` | semantic search + embeddings (`semantic-*`, and the retrieval behind `ask`) | **Apple Silicon only** |
+
+So semantic search needs Apple Silicon; everything else — ingest, GitHub,
+calendar, the full MCP tool surface — works anywhere Python 3.12+ runs.
+
+**First-run network egress** (matters behind an egress allowlist / agent sandbox):
+
+- First `semantic-embed` / `ingest embed` downloads **Qwen3-Embedding-0.6B** from
+  **huggingface.co** — one-time, several hundred MB, then cached under `~/.cache/huggingface`.
+- `github-*` commands call **api.github.com** with your PAT.
+- Calendar / Gmail call **accounts.google.com** and **\*.googleapis.com** for OAuth and sync.
+
+Allow those hosts before first run if you operate behind an allowlist; the model
+download is the only large transfer and happens once.
 
 ### Step 1 — Clone and install
 
@@ -201,6 +229,9 @@ cd rebalance-OS
 /opt/homebrew/bin/python3.13 -m venv .venv
 .venv/bin/pip install -e ".[embeddings,calendar]"
 ```
+
+> On Linux / Windows / Intel Mac, drop the `embeddings` extra:
+> `pip install -e ".[calendar]"` (semantic search will be unavailable; everything else works).
 
 ### Step 2 — Ingest your vault
 

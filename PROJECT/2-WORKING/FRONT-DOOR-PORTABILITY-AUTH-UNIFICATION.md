@@ -30,7 +30,7 @@ related:
 
 | Most recently completed phase | What's next |
 |---|---|
-| **Phase 3 complete (2026-06-21).** Canonical docs now match the shipped credential model: one language everywhere — keyring (primary) + JSON secret-store fallback. Fixed README (Calendar token location, redundant `migrate-to-keyring`, vague "file fallback"), GMAIL.md + GOOGLE_CALENDAR.md (stale `migrate-to-keyring` follow-ups), the ARCHITECTURE.md credential table (still claimed secrets live in `rbos.config` / pickle), and doctor's gmail hint. `migrate-to-keyring` kept only in UPGRADE.md, where it legitimately covers the sleuth-env/legacy→keyring path. Suite still 1080 passing; doctor green. | **Phase 4 - Install-path clarity.** Surface the macOS Apple-Silicon MLX requirement + first-run network egress before the install commands. Per the ponytail-lite: collapse into one "Supported platform & first-run network" README block; skip wiring warnings into onboarding code until a sandboxed user reports a blocker. |
+| **Phase 4 complete (2026-06-21).** README now carries one "Supported platform & first-run network" block before Step 1: full experience needs macOS Apple Silicon (MLX), but an install matrix shows the pure-Python core (`pip install -e .`) runs cross-platform — only `[embeddings]` is platform-gated. First-run egress (huggingface.co model download, api.github.com, *.googleapis.com) is named for allowlist/sandbox readers. Corrected the overstated "Apple Silicon required" framing. Bullet 4 (wire into `/welcome`/`onboard`) deliberately cut per ponytail-lite. | **Phase 5 - Google consumption path clarity.** Document the local-OAuth vs host-connector (`mcp`) modes for Gmail/Calendar with the privacy trade-off stated inline. Per the ponytail-lite: keep `oauth` the default + add one pointer to `mcp`; don't restructure to co-equal. Keep the deferred Calendar `mcp` spec embedded. |
 
 ## Table of Contents
 
@@ -192,21 +192,25 @@ Goal: make the clone-to-working path readable in one pass for supported, unsuppo
 
 > **ponytail (lite):** A user on the wrong platform genuinely fails, so bullets 1–3 earn their place — but collapse them into one "Supported platform & first-run network" block at the top of README, not four tracked tasks. Bullet 4 (wire warnings into `/welcome` + `rebalance onboard`) is the cut: that's touching onboarding code for a sandbox blocker no one has reported yet. Add it when a sandboxed user actually hits one.
 
-- [ ] Surface the supported platform before the first install command.
+Per the ponytail-lite, bullets 1–3 shipped as **one** consolidated "Supported platform & first-run network" block in README, placed immediately before Step 1; bullet 4 is deliberately cut (see below).
+
+- [x] Surface the supported platform before the first install command.
   Observable result: the macOS Apple-Silicon MLX requirement is visible before install, not buried later in prerequisites.
-- [ ] Document the cross-platform minimal install and feature subset.
+  Done (2026-06-21): new README block before Step 1 leads with "Full experience: macOS with Apple Silicon (M1+)"; the Prerequisites bullet now points to it and clarifies the core is cross-platform.
+- [x] Document the cross-platform minimal install and feature subset.
   Observable result: readers can tell what works with `pip install -e .` or a narrower extra, and what still requires the embeddings stack.
-- [ ] Document first-run network egress where it actually happens.
+  Done (2026-06-21): an install matrix shows `pip install -e .` (CLI/MCP/SQLite/vault-ingest/GitHub — any platform), `+[calendar]`, `+[server]` (any), and `+[embeddings]` (**Apple Silicon only**). Step 1 gained a one-line "drop the embeddings extra on Linux/Windows/Intel" note. Corrected the overstated "macOS Apple Silicon required" framing — only embeddings are platform-gated.
+- [x] Document first-run network egress where it actually happens.
   Observable result: the HuggingFace model download plus GitHub/Google API calls are named inline with host expectations and approximate impact.
-- [ ] Tie egress/platform notes into the agent-facing onboarding path.
-  Observable result: `/welcome` and `rebalance onboard` warn sandboxed users about likely allowlist/download blockers and the one-time remedy.
+  Done (2026-06-21): the block names huggingface.co (one-time Qwen3-Embedding-0.6B download, several hundred MB, cached), api.github.com (PAT), and accounts.google.com / *.googleapis.com (OAuth+sync), framed for egress-allowlist / agent-sandbox readers.
+- [ ] Tie egress/platform notes into the agent-facing onboarding path. **Cut (ponytail-lite):** touching `/welcome` + `rebalance onboard` code for a sandbox blocker no one has reported yet. The README block already lets a sandboxed user self-serve the allowlist; revive when a sandboxed user actually hits a blocker.
 
 ### QA Checklist
 
-- [ ] The supported platform statement appears above the first install command.
-- [ ] An unsupported-platform reader can still identify the working subset quickly.
-- [ ] The model-download host and other first-run network touches are discoverable before failure.
-- [ ] An agent-sandbox user can self-serve the allowlist/remedy path from docs alone.
+- [x] The supported platform statement appears above the first install command.
+- [x] An unsupported-platform reader can still identify the working subset quickly. (install matrix)
+- [x] The model-download host and other first-run network touches are discoverable before failure.
+- [x] An agent-sandbox user can self-serve the allowlist/remedy path from docs alone. (the README block lists the hosts; the onboarding-code wiring is the cut bullet above)
 
 ## Phase 5 - Google Consumption Path Clarity
 
