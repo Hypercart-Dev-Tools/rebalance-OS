@@ -18,6 +18,8 @@ related:
 
 # Front-Door Onboarding Remediation
 
+> Active sequencing for the remaining work moved to [FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:1). Keep this doc as source context for the original front-door audit and remediation detail.
+
 | Most recently completed phase | What's next |
 |---|---|
 | **Front-door audit complete (2026-06-21).** A cold-newcomer walk of the clone→working path. Verdict: ⚠️ Bumpy — on macOS Apple Silicon with an agent a newcomer reaches a verified state in ~20–30 min; secrets scan clean (tree + history). Bumps found: README drift from the recent auth-storage hardening, an Apple-Silicon/MLX platform gate that's disclosed but buried, undocumented first-run network egress, and a Calendar/Gmail local-OAuth wall that Claude-Desktop users could skip via host MCP connectors. | **Phase 1 — doc-drift quick wins.** Reconcile the canonical README with the shipped keyring + secret-store + JSON-OAuth model (two stale lines at README:262 and :321). |

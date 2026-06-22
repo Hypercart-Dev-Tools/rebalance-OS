@@ -12,6 +12,8 @@ surfaces:
   - obsidian
 ---
 
+> Active sequencing for the remaining follow-up moved to [FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:1). Keep this doc as source context for the completed audit, decisions, and shipped collector refactor work.
+
 | Most recently completed phase | What's next |
 |---|---|
 | **Phase 5 complete (2026-06-10):** Smoke, auth-failure, and idempotency tests added for all 5 raw sources (`tests/test_phase5_collector_smoke.py`, 13 tests GREEN). ARCHITECTURE.md updated: Calendar credential row corrected to reference `resolve_oauth_token_path`; `paths.py` entry documents `resolve_project_root` and `resolve_oauth_token_path`. 700 tests pass. | **All phases complete.** Portability contract audit done. |
