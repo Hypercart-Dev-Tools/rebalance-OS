@@ -25,13 +25,13 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| **Front-door / portability / auth unification — Phases 1–6 complete, merged to `development` (PR #78, v0.41.1).** Runtime contract closure, CI-enforced contract tests, canonical doc truthfulness, install-path clarity, and Google consumption-path trade-offs all landed against one canonical plan; independently validated (Agy relay review: all 10 DoD items Approved). 1080 tests green. | **Operator-only:** run `rebalance config migrate-secrets` on the ~2 remaining Macs (Phase 1 item 6), then a `development` → `main` PR when ready; otherwise the deferred multi-operator / fleet scope. |
+| **Focus 5 Float — Phase 0 (spike & data contract) complete.** Read-only `GET /focus-5.json` shipped (no scan, no roster write — verified), data contract + field classification frozen in `CONTRACT.md`, and the non-activating floating-panel interaction spike written and typechecking. 90 focus5 tests green. | **Operator:** run [`FloatPanelSpike.swift`](PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md) over a fullscreen app to confirm interaction, then Phase 1 (scaffold & reuse harvest). _Prior track:_ front-door v0.41.1 — run `rebalance config migrate-secrets` on the ~2 remaining Macs, then a `development` → `main` PR. |
 
 ## Ledger
 
 ### In progress
 
-_None yet._
+- `Focus 5 Float (floating macOS card stack)` — native menu-bar app that renders the web Focus 5 roster as a vertical, collapsible card stack; reuses the `macOS/TextReplacementStudio` SwiftUI scaffolding. **Phase 0 complete:** read-only `GET /focus-5.json` shipped, data contract frozen, interaction spike written (operator run pending); Phases 1–5 (scaffold → floating shell → card UI → live data → packaging) ahead. → [PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md](PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md)
 
 ### Completed
 

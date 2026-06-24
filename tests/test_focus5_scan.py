@@ -642,6 +642,81 @@ class WebRouteTests(unittest.TestCase):
             self.assertFalse(m.called)                       # stale → no inline scan
             self.assertIn("⚠ stale", resp.text)             # but the staleness is surfaced
 
+    # --- /focus-5.json — the read-only JSON contract the macOS app consumes ---
+
+    def _roster_rows(self, db: Path):
+        conn = sqlite3.connect(str(db))
+        try:
+            return conn.execute(
+                "SELECT device_id, local_path, position, rank_reason, "
+                "ranking_mode, computed_at FROM focus5_roster ORDER BY position"
+            ).fetchall()
+        finally:
+            conn.close()
+
+    def test_focus5_json_returns_contract_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            resp = self._get(db, "/focus-5.json")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.headers["content-type"], "application/json")
+            data = resp.json()
+            self.assertEqual(
+                set(data),
+                {"roster", "off_roster_warnings", "computed_at", "ranking_mode", "summary"},
+            )
+            self.assertLessEqual(len(data["roster"]), 5)
+            self.assertEqual(
+                set(data["summary"]),
+                {"discovered", "roster_size", "off_roster_attention"},
+            )
+            card = data["roster"][0]
+            for key in ("position", "repo_name", "local_path", "vscode_url",
+                        "branch", "is_dirty", "newest_pr", "recent_activity",
+                        "health_available"):
+                self.assertIn(key, card)
+            self.assertTrue(card["vscode_url"].startswith("vscode://file"))
+
+    def test_focus5_json_is_read_only_no_scan_no_write(self) -> None:
+        # The macOS client polls this on a timer; it must never trigger the ~30s
+        # device git scan and must never rewrite the persisted roster.
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            before = self._roster_rows(db)
+            with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
+                resp = self._get(db, "/focus-5.json")
+            self.assertEqual(resp.status_code, 200)
+            self.assertFalse(m.called)                       # GET never scans
+            self.assertEqual(self._roster_rows(db), before)  # GET never writes
+
+    def test_focus5_json_dirty_view_reranks_without_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            before = self._roster_rows(db)
+            with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
+                resp = self._get(db, "/focus-5.json?view=dirty")
+            self.assertEqual(resp.status_code, 200)
+            self.assertFalse(m.called)
+            self.assertEqual(resp.json()["ranking_mode"], "dirty_first")
+            self.assertEqual(self._roster_rows(db), before)  # transient re-rank only
+
+    def test_focus5_json_missing_db_returns_empty_contract(self) -> None:
+        # Brand-new machine (no DB): same shape, empty roster — not a 404/500.
+        from fastapi.testclient import TestClient
+        from rebalance.paths import DatabaseNotFoundError
+        from rebalance.web import app
+        with mock.patch("rebalance.paths.resolve_database_path",
+                        side_effect=DatabaseNotFoundError([])):
+            resp = TestClient(app).get("/focus-5.json")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(
+            set(data),
+            {"roster", "off_roster_warnings", "computed_at", "ranking_mode", "summary"},
+        )
+        self.assertEqual(data["roster"], [])
+        self.assertEqual(data["summary"]["roster_size"], 0)
+
 
 # ---------------------------------------------------------------------------
 # Hide → ignore → re-rank

@@ -1,0 +1,256 @@
+---
+title: Focus 5 Float — Floating macOS Card Stack
+status: in-progress
+doc_type: project-plan
+owner: Noel Saw
+last_updated: 2026-06-23
+priority: P2
+source_app: macOS/ (TextReplacementStudio — SwiftPM, Swift 5.10, macOS 14+)
+data_source: src/rebalance/ingest/focus5_scan.py → summarize_focus5(db)
+data_contract: GET /focus-5.json (read-only, local-only); rebuild via separate POST /focus-5/sync
+canonical_boundary: local SQLite + git re-probe stays source of truth; the app is a read-only projection
+branch: feat/macos-focus5-float
+rollout_rule: each phase must leave a buildable, launchable app (or a green `swift build`)
+---
+
+## Status At A Glance
+
+| Most Recently Completed Phase | What's Next |
+|---|---|
+| **Phase 0 — Spike & Data Contract** — backend + contract DONE: `/focus-5.json` shipped (read-only), 90 focus5 tests green, [CONTRACT.md](../../macOS/Apps/Focus5Float/CONTRACT.md) frozen with field classification; interaction spike written & typechecks | **Run [FloatPanelSpike.swift](../../macOS/Apps/Focus5Float/spike/FloatPanelSpike.swift)** over a fullscreen app to confirm interaction (the one item needing your eyes), then **Phase 1 — Scaffold & Reuse Harvest** |
+
+## Table of Contents
+
+- [Goal](#goal)
+- [Context & Findings](#context--findings)
+- [Architecture Decision](#architecture-decision)
+- [Reuse Map (from `macOS/TextReplacementStudio`)](#reuse-map-from-macostextreplacementstudio)
+- [Non-Goals](#non-goals)
+- [Phase 0 — Spike & Data Contract](#phase-0--spike--data-contract)
+- [Phase 1 — Scaffold & Reuse Harvest](#phase-1--scaffold--reuse-harvest)
+- [Phase 2 — Floating Window + Menu-Bar Shell](#phase-2--floating-window--menu-bar-shell)
+- [Phase 3 — Vertical Card-Stack UI](#phase-3--vertical-card-stack-ui)
+- [Phase 4 — Live Data Integration](#phase-4--live-data-integration)
+- [Phase 5 — Packaging, Launch-at-Login & Docs](#phase-5--packaging-launch-at-login--docs)
+- [Open Questions](#open-questions)
+
+## Goal
+
+Build a small, always-on-top macOS app — **Focus 5 Float** — that renders the web app's "Focus 5" cards as a **vertical, collapsible stack** (per the SoloTerm-style screenshot: each repo is a row with a status dot + right-aligned metrics, expandable into sub-sections). It floats above other windows, toggles from the menu bar, and is a thin read-only projection of the existing Focus 5 data — the local SQLite store + live git re-probe stays canonical.
+
+Maximize reuse of the existing SwiftUI scaffolding in `macOS/` (`TextReplacementStudio`): design tokens, component kit, observable-model pattern, and the `make-app.sh` bundling/signing pipeline.
+
+## Context & Findings
+
+**Existing macOS app — `macOS/TextReplacementStudio`** (reusable scaffolding):
+- SwiftPM only (no Xcode project). Swift tools 5.10, **macOS 14.0+**. Deps: GRDB 6.29+, SwiftyJSON 5.0.2+, swift-argument-parser 1.3+.
+- Targets: `TextReplacementCore` (library), `TextReplacementStudio` (SwiftUI app), `TextReplacementCLI`, tests.
+- [Theme.swift](../../macOS/Apps/TextReplacementStudio/Theme.swift) — full design-token system (light/dark colors, 8pt `Space`, `Radius`, SF Pro/Mono type ramp, `spring` animation). **Copy verbatim.**
+- [StudioComponents.swift](../../macOS/Apps/TextReplacementStudio/Views/StudioComponents.swift) — `KeyCap`, `GroupTag` (dot + label chip), `StudioToggle`. **Directly reusable for badges/status dots.**
+- [ToastView.swift](../../macOS/Apps/TextReplacementStudio/Views/ToastView.swift) — bottom capsule overlay w/ auto-dismiss. Reusable for "refreshed" / "server offline" feedback.
+- [StudioModel.swift](../../macOS/Apps/TextReplacementStudio/StudioModel.swift) — `@Observable` + `@MainActor` model; heavy I/O via `Task.detached`; derived computed props. **Pattern to clone.**
+- [TextReplacementStudioApp.swift](../../macOS/Apps/TextReplacementStudio/TextReplacementStudioApp.swift) — standard `WindowGroup` (NOT floating / not menu-bar). The floating-panel + `NSStatusItem` layer is **net-new** work.
+- [make-app.sh](../../macOS/make-app.sh) — `swift build -c release` → assembles `.app`, writes `Info.plist`, ad-hoc `codesign --force --deep`, installs to `/Applications`. **Adapt (new bundle id, exec name, `LSUIElement` for menu-bar agent).**
+
+**Web "Focus 5" feature** (data source to project):
+- Server-rendered **FastAPI**, route `GET /focus-5` in [src/rebalance/web.py](../../src/rebalance/web.py) (HTML only — **no JSON endpoint today**).
+- Data fn: `summarize_focus5(db)` in [src/rebalance/ingest/focus5_scan.py](../../src/rebalance/ingest/focus5_scan.py). Returns:
+  `{ roster: [≤5 cards], off_roster_warnings: [...], computed_at, ranking_mode, summary:{discovered, roster_size, off_roster_attention} }`.
+- **Card fields:** `position`, `rank_reason`, `repo_name`, `repo_full_name`, `local_path`, `branch`, `upstream`, `ahead`, `behind`, `modified_count`, `untracked_count`, `is_dirty`, `last_commit_at`, `my_last_commit_ts`, `vscode_url`, `newest_pr:{number,title,state,html_url,is_draft,is_merged}`, `recent_activity:[{sha,subject,committed_at}]`, `health_available`.
+- Persistence: SQLite tables `focus5_roster` + `focus5_repo_signals` ([migration 0003](../../src/rebalance/ingest/db/migrations/0003_focus5_roster.sql)). Tree health (dirty/branch/ahead/behind) is **re-probed live** on each page load — not cached.
+- Ranking modes (pure fns): `recent_activity` (default), `dirty_first` ("Dirty Five"), `my_work`, `any_touch`. Manual re-scan via `sync_focus5(db)`.
+- Served by `rebalance serve` (default `http://localhost:8787`). Design tokens single-sourced in `web_components.RB_TOKENS_CSS`.
+
+## Architecture Decision
+
+**Transport: a strictly read-only (GET) JSON endpoint, served local-only; the app is a pull-only client.**
+
+Add `GET /focus-5.json` to [src/rebalance/web.py](../../src/rebalance/web.py) returning `summarize_focus5(db, mode=...)` verbatim (`?view=dirty` is a read-only re-rank param — it re-sorts already-collected signals, it does not rebuild them). The Swift app fetches it with `URLSession` + `Codable` on a poll interval and on a manual refresh, then maps it to view state. The app **only ever issues GET** against this route.
+
+Why this over the alternatives:
+- **vs. HTML scraping `/focus-5`** — brittle, re-breaks on every CSS/markup change. Rejected.
+- **vs. Swift reading SQLite directly via GRDB** — couples the app to the DB schema *and* loses the live git re-probe (the page recomputes dirty/ahead/behind on load; the roster table is a stale snapshot). Kept only as an **offline read-only fallback** (Phase 4, optional) for "server not running."
+- **JSON endpoint** — reuses the exact ranking + live-probe logic already behind `/focus-5`, keeps the app a dumb projection, honors the canonical boundary (mirror, not migration) consistent with [P2-LOVABLE-APP.md](../1-INBOX/P2-LOVABLE-APP.md) and the HiQS "signal quality" framing. **Chosen.**
+
+**Read/write boundary (per Codex review).** Re-ranking (`?view=dirty`) is read-only and stays a GET param. Forcing a fresh device walk (`sync_focus5()`, which rewrites `focus5_roster`/`focus5_repo_signals`) is a **mutation** and must NOT be smuggled into a `GET ?refresh=1`. If the app needs to trigger a rebuild, it calls a **separate, explicit `POST /focus-5/sync`** action endpoint — never the read route. Default app behavior is pull-only (re-fetch the current roster); the rebuild is an opt-in action (see Open Question 1).
+
+**Scope of `/focus-5.json` = local-only (per Codex review).** The roster carries operator-local fields (`local_path`, `vscode_url`, absolute `remote_url`) that are fine for a localhost desktop client but **wrong/sensitive for any remote surface**. This endpoint binds to localhost and exists for the desktop app only. It is **not** drop-in reusable by the Lovable cloud mirror: a remote mirror needs a **separate sanitized projection** (e.g. `summarize_focus5_public()` or a strict field allowlist) that strips `local_path`/`vscode_url`/absolute paths before anything leaves the machine. Do not claim cross-surface reuse without that projection.
+
+## Reuse Map (from `macOS/TextReplacementStudio`)
+
+| Asset | Action | Notes |
+|---|---|---|
+| `Package.swift` structure | **Adapt** | New product/target `Focus5Float`; same Swift 5.10 / macOS 14; drop GRDB unless offline-fallback is built. |
+| `Theme.swift` | **Copy verbatim** | Tokens are neutral; all card styling derives from these. |
+| `StudioComponents.swift` (`KeyCap`, `GroupTag`, `StudioToggle`) | **Copy & adapt** | `GroupTag`'s dot+chip → status dot + drift badge; `KeyCap` → position badge. |
+| `ToastView.swift` + toast logic | **Copy** | Reuse for refresh / offline feedback. |
+| `StudioModel.swift` pattern | **Clone (not copy)** | New `Focus5Model` with `roster`, `offRoster`, `loadState`, `rankingMode`. |
+| `make-app.sh` | **Adapt** | New bundle id, exec name, add `LSUIElement=true` for menu-bar agent. |
+| `TextReplacementStudioApp.swift` | **Replace** | Net-new `NSPanel` + `NSStatusItem` shell. |
+| Sidebar / DetailEditor / PreviewPlanSheet / Core storage / CLI | **Discard** | Not needed for a read-only card stack. |
+| Shared-UI extraction (`RebalanceUIKit` lib target) | **Decide in Phase 1** | Copy-first for MVP (ponytail); extract a shared target only if drift becomes real. |
+
+## Non-Goals
+
+- No editing/writing back to repos or the DB — **read-only projection only**.
+- No re-implementing ranking logic in Swift — the server owns it.
+- No bundling a Python runtime inside the app — it talks to the already-running `rebalance serve`.
+- No cloud sync (that's [P2-LOVABLE-APP.md](../1-INBOX/P2-LOVABLE-APP.md)).
+- No iOS / Catalyst target. macOS 14+ desktop only.
+
+---
+
+## Phase 0 — Spike & Data Contract
+
+> De-risk the three unknowns (JSON contract shape + an *interactive* non-activating floating panel + the read/write boundary) before writing any real UI. The hardest risk is interaction, not appearance.
+
+- [x] Add `GET /focus-5.json` to [src/rebalance/web.py](../../src/rebalance/web.py) → `focus5_json()`: read-only, honors `?view=dirty`, returns the empty contract (200, not 404) on missing DB.
+- [x] Confirmed roster ≤ 5 with fields populated — live DB dump shows a real card with all 28 fields, plus the route tests.
+- [x] **Field classification done** → [CONTRACT.md](../../macOS/Apps/Focus5Float/CONTRACT.md). Local-only: `local_path`, `vscode_url`, `device_id`. Sensitive/PII: `remote_url`, `recent_activity[].author_email`. A remote/Lovable mirror needs a separate sanitized projection — explicitly not this route.
+- [x] **Rebuild path decided → DEFERRED.** `/focus-5.json` is GET-only/read-only; no `POST /focus-5/sync` in v1; refresh = re-pull. Recorded in CONTRACT.md + Open Question 1.
+- [x] Tests added to [tests/test_focus5_scan.py](../../tests/test_focus5_scan.py) `WebRouteTests` (full-stack, where route tests live): contract keys, ≤ 5, card keys, dirty re-rank, missing-DB empty shape, **and GET triggers no scan + no roster write** (rows compared before/after). → **90 passed**.
+- [x] Froze the **Swift `Codable` contract** (`Focus5Response` / `RepoCard` / `NewestPR` / `Commit` / `OffRosterWarning`) in [CONTRACT.md](../../macOS/Apps/Focus5Float/CONTRACT.md), nullable fields noted, snake_case decoding documented.
+- [x] Spike written: non-activating `.floating` `NSPanel`, draggable, all-Spaces + fullScreenAuxiliary → [FloatPanelSpike.swift](../../macOS/Apps/Focus5Float/spike/FloatPanelSpike.swift) (`swiftc -typecheck` clean). **⏳ Operator must run it to confirm always-on-top without focus theft.**
+- [ ] **Interaction spike (the real risk) — ⏳ operator run required:** spike wires `acceptsFirstMouse` + `becomesKeyOnlyIfNeeded` and includes a first-click counter, disclosure row, segmented control, right-click menu, and link open. Run it over a fullscreen app and capture a clip to tick this box.
+- [x] `NSStatusItem` menu-bar toggle implemented in the spike (left-click = toggle, right-click = Quit). **⏳ confirm on run.**
+- [x] **Decision recorded:** transport = read-only local JSON endpoint; rebuild = deferred POST; GRDB fallback deferred. JSON also carries `device_id` / `head_reflog_ts` / `index_mtime_ts`, which the Swift model intentionally omits (unused; `Codable` ignores unknown keys).
+
+### QA Checklist — Phase 0
+
+- [ ] **Contract truth:** Every key the app will decode exists in real `/focus-5.json` output (not just the docstring). Nullable vs required confirmed against a repo with no PR and a clean repo.
+- [ ] **Read/write boundary:** `GET /focus-5.json` performs zero DB writes (asserted by test); any rebuild path is a separate POST. `?view=dirty` only re-ranks, never re-collects.
+- [ ] **Field hygiene:** Local-only fields are labeled in `CONTRACT.md`; the plan no longer claims the raw endpoint is reusable by a remote mirror.
+- [ ] **DRY:** `/focus-5.json` calls the *same* `summarize_focus5()` the HTML route uses — no parallel data path.
+- [ ] **Observability:** JSON route logs request + roster size + ranking mode like other routes; errors return a JSON error body, not an HTML 500.
+- [ ] **Litmus (de-risk):** The *interactive* non-activating panel ran on the real machine — first-click-through, row expand, segmented control, context menu, and link-open all worked over a fullscreen app. Clip captured. (Appearance-only is not a pass.)
+- [ ] **Reversibility:** New endpoint(s) are additive; removing them breaks nothing in the existing dashboard.
+- [ ] **Deploy note:** Endpoints ship in the local `rebalance serve` only, bound local-only — no remote deploy needed this phase.
+
+---
+
+## Phase 1 — Scaffold & Reuse Harvest
+
+> Stand up a buildable SwiftUI app that renders the card stack from hardcoded sample data using the harvested theme/components.
+
+- [ ] Create app target `Focus5Float` (decision: new dir `macOS/Apps/Focus5Float/` in the existing `Package.swift`, or sibling package — record choice).
+- [ ] Copy `Theme.swift` into the new target; `swift build` green.
+- [ ] Copy `StudioComponents.swift` + `ToastView.swift`; trim to used components.
+- [ ] Define the `Codable` models from Phase 0's `CONTRACT.md` (`Focus5Response`, `RepoCard`, `NewestPR`, `Commit`).
+- [ ] Add a `SampleData` fixture (a real captured `/focus-5.json` saved as a bundled resource) so the UI builds with zero network.
+- [ ] Create `Focus5Model` (`@Observable @MainActor`) holding `roster`, `offRoster`, `rankingMode`, `loadState` — fed from `SampleData` for now.
+- [ ] App launches in a normal window showing 5 placeholder rows from the fixture.
+
+### QA Checklist — Phase 1
+
+- [ ] **DRY:** No duplicated token/spacing/color literals in views — everything routes through `Theme`.
+- [ ] **SOLID:** Models (`Codable` data) are separate from view state (`Focus5Model`); views take data in, emit intent out (no networking in views).
+- [ ] **Reuse honesty:** List which TextReplacementStudio files were copied vs cloned vs written fresh — confirm we didn't drag in unused Sidebar/DetailEditor code.
+- [ ] **Observability:** `loadState` enum (`.idle/.loading/.loaded/.failed`) exists now so later phases have a single place to surface status.
+- [ ] **Litmus (build):** `swift build` and `swift run Focus5Float` both succeed on a clean checkout; fixture renders with no network.
+- [ ] **Anti-goal guard:** No write/persistence code, no GRDB dependency added unless the offline fallback was explicitly pulled forward.
+
+---
+
+## Phase 2 — Floating Window + Menu-Bar Shell
+
+> Turn the normal window into the floating, menu-bar-driven panel from the spike.
+
+- [ ] Replace `WindowGroup` with an `NSApplicationDelegateAdaptor` that builds an `NSPanel`: borderless / `.titled + .fullSizeContentView`, `level = .floating`, `isFloatingPanel`, `collectionBehavior` = canJoinAllSpaces + fullScreenAuxiliary, non-activating.
+- [ ] `NSStatusItem` in the menu bar (icon) → left-click toggles panel show/hide; right-click menu = Refresh / Ranking mode / Quit.
+- [ ] Set `LSUIElement` (agent app, no Dock icon) — decide whether to keep a Dock icon as a setting.
+- [ ] Panel is draggable by its background; **remembers position & size** across launches (`UserDefaults` / frame autosave).
+- [ ] **Preserve the Phase 0 interaction guarantees:** the non-activating panel still routes first clicks, disclosure taps, segmented-control changes, context menus, and link opens (`becomesKeyOnlyIfNeeded` / accepts-first-mouse handled) — not just renders.
+- [ ] Rounded corners + subtle shadow + `Theme` window background; compact default size (~360×640, matching the narrow stacked look).
+- [ ] Esc / click-away behavior decided (stays open by default; pin/unpin optional).
+
+### QA Checklist — Phase 2
+
+- [ ] **Focus discipline:** Showing the panel does NOT steal keyboard focus from the active app (non-activating verified by typing in another app while it's up).
+- [ ] **All-spaces / fullscreen:** Panel stays visible over a fullscreen app; toggling from menu bar works in every Space.
+- [ ] **Interaction over fullscreen:** with a fullscreen app frontmost, every interactive control works on the *first* click (no "click to focus, click again to act") — the Phase 0 interaction guarantees still hold in the real app.
+- [ ] **SOLID:** Window/menu-bar lifecycle lives in the app-delegate layer; the SwiftUI card view knows nothing about `NSPanel`.
+- [ ] **State persistence:** Quit + relaunch restores last position/size; corrupt/missing defaults fall back to a sane center position.
+- [ ] **Observability:** Show/hide and menu actions are logged (os_log) for debugging "panel won't appear" reports.
+- [ ] **Litmus (manual):** Recorded clip/screenshot of toggle-from-menu-bar + always-on-top over another app.
+- [ ] **Reversibility:** Window mode is isolated enough that reverting to a plain `WindowGroup` is a one-file change.
+
+---
+
+## Phase 3 — Vertical Card-Stack UI
+
+> Build the screenshot: a vertical `ScrollView` of collapsible repo rows with status dots and right-aligned metrics. Still driven by the fixture.
+
+- [ ] `CardStackView`: vertical `ScrollView` → `LazyVStack` of `RepoCardRow`, `Theme.Space` rhythm, `Theme.spring` for expand/collapse.
+- [ ] `RepoCardRow` collapsed state: position badge (`KeyCap`-style `#1`), repo name, status dot (green = clean, red = dirty/unpushed, grey = idle/no-signal), right-aligned drift `↑{ahead} ↓{behind}` + `{modified}M {untracked}U`.
+- [ ] Disclosure / tap expands a row into sub-sections mirroring the web card: **Tree health** (dot + branch + drift), **Newest PR** (#num title + state), **Recent activity** (≤3 commits w/ relative time).
+- [ ] Relative-time helper (`_ago` equivalent) in Swift for commit/`computed_at` timestamps.
+- [ ] Header strip: ranking-mode segmented control (🎯 Focus 5 / 🧹 Dirty Five), refresh button (↻), staleness badge (⚠ stale if `computed_at` > 24h).
+- [ ] Off-roster warnings shown as a compact collapsible footer ("N repos outside top 5 need attention").
+- [ ] Empty/zero-roster and loading states render gracefully (skeleton or message, not blank).
+
+### QA Checklist — Phase 3
+
+- [ ] **DRY:** Status-dot color logic and relative-time formatting each exist once (shared helpers), reused by collapsed row + expanded Tree-health.
+- [ ] **Parity:** Side-by-side the web `/focus-5` card vs the native row — same fields, same color semantics (accent/ok/danger). Note any intentional omissions.
+- [ ] **SOLID:** `RepoCardRow` is a pure function of one `RepoCard` + expanded bool; no global lookups.
+- [ ] **Accessibility/legibility:** Dynamic-type / dark-mode both render; min hit target for disclosure and buttons ≥ 28pt; color is not the *only* signal (dot has adjacent text).
+- [ ] **Observability:** Expand/collapse and mode-toggle update model state (testable) rather than mutating views directly.
+- [ ] **Litmus (visual):** Screenshot of the stacked view next to the reference screenshot — vertical stacking + dots + right-aligned metrics match the intended look.
+- [ ] **Anti-goal guard:** Still no live network — confirms the UI layer is decoupled from data fetching.
+
+---
+
+## Phase 4 — Live Data Integration
+
+> Wire `Focus5Model` to the real `GET /focus-5.json`; replace the fixture.
+
+- [ ] `Focus5Client` (URLSession + `Codable`) fetching `/focus-5.json`; base URL configurable (default `http://localhost:8787`).
+- [ ] `Focus5Model.refresh()` runs off-main (`Task.detached`), maps response → `roster`/`offRoster`, updates `loadState`, surfaces errors via `ToastView`.
+- [ ] Auto-poll on a configurable interval (default 60–120s) + manual ↻ button. ↻ **re-pulls** `GET /focus-5.json` (read-only). A full server-side re-scan, if built, is a distinct user action that issues `POST /focus-5/sync` then re-pulls — never a GET side effect.
+- [ ] Ranking-mode toggle re-fetches with `?view=dirty` (or `mode=`); selection persists.
+- [ ] **Server-unreachable handling:** keep last-known roster visible, show ⚠ offline + last-updated time; never crash or blank out.
+- [ ] Open actions: repo name → `vscode_url`; PR → `html_url` (`NSWorkspace.open`).
+- [ ] (Optional, deferred) GRDB read-only fallback querying `focus5_roster`/`focus5_repo_signals` when the server is down — flagged clearly as snapshot (no live re-probe).
+
+### QA Checklist — Phase 4
+
+- [ ] **Contract integrity:** Decoding tolerates real-world nulls (no PR, no upstream, empty `recent_activity`) without throwing — tested against captured fixtures of each shape.
+- [ ] **Resilience:** Kill `rebalance serve` mid-session → app shows offline badge + stale data, recovers automatically when server returns. No spinner-forever, no crash.
+- [ ] **DRY:** One decode path shared by live fetch and the (optional) fallback; one mapping from `RepoCard` → view state.
+- [ ] **SOLID:** `Focus5Client` is injectable (protocol) so the model can be unit-tested with a stub returning fixtures.
+- [ ] **Observability:** Each fetch logs URL, status, latency, roster size; failures log the reason. Last-updated timestamp visible in the UI.
+- [ ] **Security/boundary:** The poll/refresh path issues GET only (no DB/repo writes). The optional rebuild is the *only* POST — explicit, user-initiated, and clearly labeled as a mutation. Base URL defaults to localhost; a non-local URL requires an explicit user setting and warns that local-only fields (`local_path`, `vscode_url`) would be exposed.
+- [ ] **Litmus (E2E):** With a live `rebalance serve`, the panel shows the same 5 repos as the browser `/focus-5`, and a real `git commit` in one repo is reflected after refresh.
+
+---
+
+## Phase 5 — Packaging, Launch-at-Login & Docs
+
+> Make it a real installable app the operator runs daily.
+
+- [ ] Adapt `make-app.sh`: new bundle id (e.g. `me.neochro.Focus5Float`), exec name, `Info.plist` with `LSUIElement=true`, app icon, ad-hoc `codesign --force --deep`, install to `/Applications`.
+- [ ] App icon (reuse/adapt the icon pipeline from `Resources/AppIcon.*`).
+- [ ] Launch-at-login toggle (`SMAppService` / login item).
+- [ ] Settings surface: server base URL, poll interval, default ranking mode, launch-at-login, show/hide Dock icon.
+- [ ] `macOS/Apps/Focus5Float/README.md`: build (`./make-app.sh`), run (`swift run Focus5Float`), prerequisites (`rebalance serve` must be running), and the `/focus-5.json` contract.
+- [ ] Update `macOS/README.md` to list the second app; note shared vs copied UI assets.
+- [ ] `rebalance doctor` run + recorded before committing (per repo convention); reboot affected services if env/code changed.
+
+### QA Checklist — Phase 5
+
+- [ ] **Install truth:** Fresh `./make-app.sh` on a clean checkout produces an `.app` that launches from `/Applications` (Gatekeeper ad-hoc path verified), not just `swift run`.
+- [ ] **Front door:** README lets a new user go from clone → running app without tribal knowledge; the "`rebalance serve` must be running" prerequisite is stated up front.
+- [ ] **DRY (docs):** No conflicting/duplicate getting-started instructions across `macOS/README.md` and the app README; one source of truth for the contract.
+- [ ] **Launch-at-login:** Toggling it actually registers/unregisters the login item (verified in System Settings), survives reboot.
+- [ ] **Observability:** A log file or `os_log` category is documented so "it didn't refresh" is diagnosable post-install.
+- [ ] **Loose ends:** No debug prints, no hardcoded localhost-only assumptions left where a setting was promised, no `SampleData` fixture shipping as the live source.
+- [ ] **Litmus (ship):** Operator runs it for a day; panel stays alive, refreshes, survives `rebalance serve` restarts and a logout/login.
+
+---
+
+## Open Questions
+
+1. **Re-scan trigger:** Default ↻ = re-pull the current roster (GET). A fresh device walk (`sync_focus5()`) is a mutation, so if exposed it is a separate `POST /focus-5/sync` behind an explicit action (shift-click or a menu item), never folded into the GET refresh. _Open: build the POST in v1, or defer until the desktop client proves it needs to force rebuilds?_
+2. **Shared UI target:** Copy `Theme.swift`/components now (MVP) vs. extract a `RebalanceUIKit` library shared with `TextReplacementStudio`? _Lean: copy now, extract only if a second consumer edits them._
+3. **Offline fallback:** Build the GRDB read-only snapshot path in Phase 4, or ship online-only and add later? _Lean: defer — the server is local and usually up._
+4. **Card depth:** Mirror all three web sub-sections (Tree health / PR / Recent activity) on expand, or collapsed-row metrics only for v1? _Lean: collapsed metrics + expand-for-detail (Phase 3 as written)._

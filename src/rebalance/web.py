@@ -587,6 +587,41 @@ def focus5_page(refresh: bool = False, view: str = "focus5"):
     return _page(page_title, _focus5_body(data, view=view), active="focus5", wide=True)
 
 
+@app.get("/focus-5.json")
+def focus5_json(view: str = "focus5") -> JSONResponse:
+    """Read-only JSON projection of the Focus 5 roster for native/desktop clients.
+
+    Same data as ``GET /focus-5``, as JSON instead of HTML — the single contract a
+    macOS/desktop client decodes. **Strictly read-only:** it never runs the device
+    git scan (``sync_focus5``) and never rewrites the persisted roster. ``?view=dirty``
+    only re-ranks the cached signals in memory (the Dirty Five board), exactly like
+    the HTML view. Forcing a fresh device walk is a *mutation* and is deliberately
+    NOT reachable here — a client that must rebuild calls a separate explicit POST
+    action, never this GET.
+
+    LOCAL-ONLY: cards carry operator-local fields (``local_path``, ``vscode_url``,
+    absolute ``remote_url``). This serves the localhost desktop client; a remote
+    mirror must use a separate sanitized projection, not this route.
+    """
+    from rebalance.ingest.focus5_scan import summarize_focus5
+    from rebalance.paths import DatabaseNotFoundError, resolve_database_path
+
+    try:
+        db = resolve_database_path()
+    except DatabaseNotFoundError:
+        # Brand-new machine: return the empty contract shape (not a 404) so the
+        # polling client always decodes the same structure.
+        return JSONResponse({
+            "roster": [], "off_roster_warnings": [],
+            "computed_at": None, "ranking_mode": None,
+            "summary": {"discovered": 0, "roster_size": 0, "off_roster_attention": 0},
+        })
+
+    data = summarize_focus5(db, mode="dirty_first" if view == "dirty" else None)
+    logger.info("focus5.json: view=%s roster=%d", view, data["summary"]["roster_size"])
+    return JSONResponse(data)
+
+
 class Focus5HideRequest(BaseModel):
     repo: str
 
