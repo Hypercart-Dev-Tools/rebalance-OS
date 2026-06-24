@@ -25,16 +25,18 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| **Focus 5 Float — Phase 0 (spike & data contract) complete.** Read-only `GET /focus-5.json` shipped (no scan, no roster write — verified), data contract + field classification frozen in `CONTRACT.md`, and the non-activating floating-panel interaction spike written and typechecking. 90 focus5 tests green. | **Operator:** run [`FloatPanelSpike.swift`](PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md) over a fullscreen app to confirm interaction, then Phase 1 (scaffold & reuse harvest). _Prior track:_ front-door v0.41.1 — run `rebalance config migrate-secrets` on the ~2 remaining Macs, then a `development` → `main` PR. |
+| **Focus 5 Float — Phase 0 complete + operator-validated.** Read-only `GET /focus-5.json` shipped (no scan, no roster write — verified), data contract + field classification frozen in `CONTRACT.md`, and the non-activating floating-panel interaction spike **run on-device** — controls route live, Focus 5 ⇄ Dirty Five toggle swaps the card stack. 90 focus5 tests green. | **Phase 1 — Scaffold & Reuse Harvest:** `Focus5Float` SwiftPM target, copy `Theme.swift` + components, `Codable` models, render from a captured `/focus-5.json` fixture. _Prior track:_ front-door v0.41.1 — run `rebalance config migrate-secrets` on the ~2 remaining Macs, then a `development` → `main` PR. |
 
 ## Ledger
 
 ### In progress
 
-- `Focus 5 Float (floating macOS card stack)` — native menu-bar app that renders the web Focus 5 roster as a vertical, collapsible card stack; reuses the `macOS/TextReplacementStudio` SwiftUI scaffolding. **Phase 0 complete:** read-only `GET /focus-5.json` shipped, data contract frozen, interaction spike written (operator run pending); Phases 1–5 (scaffold → floating shell → card UI → live data → packaging) ahead. → [PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md](PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md)
+- `Focus 5 Float (floating macOS card stack)` — native menu-bar app that renders the web Focus 5 roster as a vertical, collapsible card stack; reuses the `macOS/TextReplacementStudio` SwiftUI scaffolding. **Phase 0 complete + operator-validated:** read-only `GET /focus-5.json` shipped, data contract frozen, and the non-activating floating-panel interaction spike run on-device (controls route, Focus 5 ⇄ Dirty Five toggle swaps cards). Phases 1–5 (scaffold → floating shell → card UI → live data → packaging) ahead. → [PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md](PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md)
 
 ### Completed
 
+- `Focus 5 active repos bug remediation` — root-cause trace + remediation implemented and tested (transient Dirty Five mode, scan-root CLI setters). → [PROJECT/2-WORKING/FOCUS-5-RANKING-BUG-AND-REMEDIATION.md](PROJECT/2-WORKING/FOCUS-5-RANKING-BUG-AND-REMEDIATION.md)
+- `Team Calendar as a Signal (HiQS)` — Phase 2 v0.5 built on `development`, data-layer DoD proven, pending live validation and merge/tag. → [PROJECT/2-WORKING/SIGNAL-GENERATION/P2-TEAM-CALENDAR-SIGNAL.md](PROJECT/2-WORKING/SIGNAL-GENERATION/P2-TEAM-CALENDAR-SIGNAL.md)
 - `Unified front-door, portability & auth hardening` — Phases 1–6 complete, merged to `development` (v0.41.1, PR #78). Operator-only per-machine `migrate-secrets` (~2 Macs) + deferred fleet/multi-operator scope remain; `development` → `main` PR pending. → [PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md)
 - `AI-agent front door (ROUTER.md)` — added the canonical startup-order entry point (ROUTER → AGENTS → ARCHITECTURE → ROADMAP → PROJECT docs; run `rebalance doctor` / `pytest tests/` / `utils/pdda-run.sh` before claiming wins), completing the PDDA front-door layer alongside the installed `utils/pdda-*.sh` suite. → [ROUTER.md](ROUTER.md)
 

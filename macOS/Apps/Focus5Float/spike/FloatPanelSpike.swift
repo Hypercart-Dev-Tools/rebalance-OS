@@ -43,6 +43,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var clickButton: NSButton!
     private var detailRow: NSView!
     private var statusLabel: NSTextField!
+    private var cardsStack: NSStackView!
+
+    // Two static rosters so the view toggle visibly swaps the cards. Real data
+    // (a live GET /focus-5.json?view=dirty) is Phase 4 — this just proves the
+    // non-activating panel re-renders its card stack on a state change.
+    private let focus5Cards = [
+        ("#1 rebalance-OS", "your commit 18m ago · 5M 7U"),
+        ("#2 WP-DB-Toolkit", "your commit 1h ago · clean"),
+    ]
+    private let dirtyCards = [
+        ("#1 WP-DB-Toolkit", "↑2 ↓0 · 3 modified · UNPUSHED"),
+        ("#2 rebalance-OS", "5 modified, 7 untracked · dirty"),
+    ]
 
     func applicationDidFinishLaunching(_ note: Notification) {
         // Menu-bar agent: no Dock icon, no main menu activation.
@@ -91,12 +104,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let link = NSButton(title: "Open github.com ↗", target: self, action: #selector(openLink))
         link.bezelStyle = .rounded
 
-        // A couple of stacked "cards" so the vertical-stack feel is visible.
-        let card1 = makeCard(title: "#1 rebalance-OS", subtitle: "5 modified, 7 untracked")
-        let card2 = makeCard(title: "#2 WP-DB-Toolkit", subtitle: "your commit 1h ago · clean")
+        // Stacked "cards" — rebuilt when the view toggle flips.
+        cardsStack = NSStackView()
+        cardsStack.orientation = .vertical
+        cardsStack.alignment = .leading
+        cardsStack.spacing = 8
+        renderCards(dirty: false)
 
         let stack = NSStackView(views: [
-            statusLabel, seg, card1, card2, clickButton, disclosure, detailRow, link,
+            statusLabel, seg, cardsStack, clickButton, disclosure, detailRow, link,
         ])
         stack.orientation = .vertical
         stack.alignment = .leading
@@ -131,6 +147,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.contentView = content
         panel.setFrameAutosaveName("Focus5FloatSpikePanel")
         if panel.frame.origin == .zero { panel.center() }
+    }
+
+    private func renderCards(dirty: Bool) {
+        cardsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        for (title, subtitle) in (dirty ? dirtyCards : focus5Cards) {
+            cardsStack.addArrangedSubview(makeCard(title: title, subtitle: subtitle))
+        }
     }
 
     private func makeCard(title: String, subtitle: String) -> NSView {
@@ -184,7 +207,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func toggleDetail() { detailRow.isHidden.toggle() }
 
     @objc private func segChanged(_ s: NSSegmentedControl) {
-        statusLabel.stringValue = s.selectedSegment == 0 ? "View: Focus 5" : "View: Dirty Five"
+        let dirty = s.selectedSegment == 1
+        statusLabel.stringValue = dirty ? "View: Dirty Five" : "View: Focus 5"
+        renderCards(dirty: dirty)   // the cards now actually swap on toggle
     }
 
     @objc private func openLink() {

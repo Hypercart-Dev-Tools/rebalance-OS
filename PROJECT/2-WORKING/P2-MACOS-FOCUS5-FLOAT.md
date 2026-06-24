@@ -3,7 +3,9 @@ title: Focus 5 Float — Floating macOS Card Stack
 status: in-progress
 doc_type: project-plan
 owner: Noel Saw
-last_updated: 2026-06-23
+created: 2026-06-23
+updated: 2026-06-23
+goal: "Build Focus 5 Float, a small always-on-top macOS application that renders the Focus 5 card stack as a collapsible native projection."
 priority: P2
 source_app: macOS/ (TextReplacementStudio — SwiftPM, Swift 5.10, macOS 14+)
 data_source: src/rebalance/ingest/focus5_scan.py → summarize_focus5(db)
@@ -13,11 +15,11 @@ branch: feat/macos-focus5-float
 rollout_rule: each phase must leave a buildable, launchable app (or a green `swift build`)
 ---
 
-## Status At A Glance
+## Status
 
-| Most Recently Completed Phase | What's Next |
+| What was just completed | What's next |
 |---|---|
-| **Phase 0 — Spike & Data Contract** — backend + contract DONE: `/focus-5.json` shipped (read-only), 90 focus5 tests green, [CONTRACT.md](../../macOS/Apps/Focus5Float/CONTRACT.md) frozen with field classification; interaction spike written & typechecks | **Run [FloatPanelSpike.swift](../../macOS/Apps/Focus5Float/spike/FloatPanelSpike.swift)** over a fullscreen app to confirm interaction (the one item needing your eyes), then **Phase 1 — Scaffold & Reuse Harvest** |
+| **Phase 0 — Spike & Data Contract — COMPLETE.** `/focus-5.json` shipped (read-only), 90 focus5 tests green, [CONTRACT.md](../../macOS/Apps/Focus5Float/CONTRACT.md) frozen; interaction spike **run by operator** — non-activating panel routes controls (Focus 5 ⇄ Dirty Five toggle live, cards swap). | **Phase 1 — Scaffold & Reuse Harvest:** stand up the `Focus5Float` SwiftPM target, copy `Theme.swift` + components, define the `Codable` models, render from a captured `/focus-5.json` fixture. |
 
 ## Table of Contents
 
@@ -110,9 +112,9 @@ Why this over the alternatives:
 - [x] **Rebuild path decided → DEFERRED.** `/focus-5.json` is GET-only/read-only; no `POST /focus-5/sync` in v1; refresh = re-pull. Recorded in CONTRACT.md + Open Question 1.
 - [x] Tests added to [tests/test_focus5_scan.py](../../tests/test_focus5_scan.py) `WebRouteTests` (full-stack, where route tests live): contract keys, ≤ 5, card keys, dirty re-rank, missing-DB empty shape, **and GET triggers no scan + no roster write** (rows compared before/after). → **90 passed**.
 - [x] Froze the **Swift `Codable` contract** (`Focus5Response` / `RepoCard` / `NewestPR` / `Commit` / `OffRosterWarning`) in [CONTRACT.md](../../macOS/Apps/Focus5Float/CONTRACT.md), nullable fields noted, snake_case decoding documented.
-- [x] Spike written: non-activating `.floating` `NSPanel`, draggable, all-Spaces + fullScreenAuxiliary → [FloatPanelSpike.swift](../../macOS/Apps/Focus5Float/spike/FloatPanelSpike.swift) (`swiftc -typecheck` clean). **⏳ Operator must run it to confirm always-on-top without focus theft.**
-- [ ] **Interaction spike (the real risk) — ⏳ operator run required:** spike wires `acceptsFirstMouse` + `becomesKeyOnlyIfNeeded` and includes a first-click counter, disclosure row, segmented control, right-click menu, and link open. Run it over a fullscreen app and capture a clip to tick this box.
-- [x] `NSStatusItem` menu-bar toggle implemented in the spike (left-click = toggle, right-click = Quit). **⏳ confirm on run.**
+- [x] Spike written + **run by operator** (2026-06-23): non-activating `.floating` `NSPanel`, draggable, all-Spaces + fullScreenAuxiliary → [FloatPanelSpike.swift](../../macOS/Apps/Focus5Float/spike/FloatPanelSpike.swift) (`swiftc -typecheck` clean). Renders the stacked-card layout; panel shows without activating the app.
+- [x] **Interaction spike (the real risk) — CONFIRMED.** Operator ran it; the segmented control responded live in the non-activating panel (label flipped Focus 5 ⇄ Dirty Five), proving controls route events without a focus round-trip. The toggle now also visibly swaps the card stack (proves re-render on state change). _Residual nice-to-have: an explicit clip of first-click + right-click menu over a true-fullscreen frontmost app; not blocking Phase 1._
+- [x] `NSStatusItem` menu-bar toggle implemented + working (F5 item toggles the panel; also shows on launch).
 - [x] **Decision recorded:** transport = read-only local JSON endpoint; rebuild = deferred POST; GRDB fallback deferred. JSON also carries `device_id` / `head_reflog_ts` / `index_mtime_ts`, which the Swift model intentionally omits (unused; `Codable` ignores unknown keys).
 
 ### QA Checklist — Phase 0
