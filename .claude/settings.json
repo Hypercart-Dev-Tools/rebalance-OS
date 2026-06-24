@@ -100,7 +100,10 @@
       "Bash(python3 -c 'from pathlib import Path; p=Path\\(\"/Users/noelsaw/Documents/GitHub-Repos\"\\); print\\(\"exists:\",p.exists\\(\\),\"is_dir:\",p.is_dir\\(\\),\"is_symlink:\",p.is_symlink\\(\\)\\)')",
       "Bash(awk '/^l/ {print}')",
       "Bash(python3 -c 'from pathlib import Path; p=Path\\(\"/Users/noelsaw/Documents/GH\"\\); print\\(\"exists:\",p.exists\\(\\),\"is_dir:\",p.is_dir\\(\\),\"is_symlink:\",p.is_symlink\\(\\)\\)')",
-      "Bash(rtk du *)"
+      "Bash(rtk du *)",
+      "Bash(rtk ls *)",
+      "Bash(sed -n '1,80p' relay-system/2026-06-24/gh81-rank-vector.md)",
+      "Bash(awk '/NEXT TURN APPENDS BELOW/{f=1;next} f' relay-system/2026-06-24/gh81-code-qa.md)"
     ]
   }
 }
