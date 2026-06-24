@@ -20,6 +20,10 @@ enum ServerLauncher {
     }
 
     /// Resolve the `rebalance` executable path, or nil.
+    ///
+    /// A Finder-launched GUI app inherits NO shell `PATH`, so we can't rely on it.
+    /// Order: explicit override → fast known-path probe (no subprocess) → an
+    /// *interactive* login-shell lookup as the general catch-all.
     static func resolveBinary() -> String? {
         let fm = FileManager.default
 
@@ -28,14 +32,17 @@ enum ServerLauncher {
            fm.isExecutableFile(atPath: p) {
             return p
         }
-        // 2. Login-shell lookup — picks up pipx / venv / homebrew PATH a GUI app lacks.
-        if let p = loginShellWhich("rebalance") { return p }
-        // 3. Known fallback locations.
-        for c in ["/opt/homebrew/bin/rebalance",
+        // 2. Known locations — instant, and covers the common installs (~/bin is
+        //    where this operator's launcher lives).
+        for c in [NSHomeDirectory() + "/bin/rebalance",
+                  "/opt/homebrew/bin/rebalance",
                   "/usr/local/bin/rebalance",
                   NSHomeDirectory() + "/.local/bin/rebalance"] {
             if fm.isExecutableFile(atPath: c) { return c }
         }
+        // 3. Interactive login-shell lookup — picks up a PATH set in .zshrc
+        //    (pipx / venv / asdf / mise / custom dirs) that a GUI app lacks.
+        if let p = loginShellWhich("rebalance") { return p }
         return nil
     }
 
@@ -57,23 +64,29 @@ enum ServerLauncher {
         return proc.processIdentifier
     }
 
-    /// `<login-shell> -lc 'command -v rebalance'` — the name is a fixed literal.
+    /// `<login-shell> -ilc 'command -v rebalance'` — the name is a fixed literal.
+    /// `-i` (interactive) is required so `.zshrc` is sourced: a plain `-lc` login
+    /// shell is NON-interactive and skips `.zshrc`, where most users' PATH lives.
     private static func loginShellWhich(_ name: String) -> String? {
         let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
         let proc = Process()
         proc.executableURL = URL(fileURLWithPath: shell)
-        proc.arguments = ["-lc", "command -v \(name)"]
+        proc.arguments = ["-ilc", "command -v \(name)"]
         let out = Pipe()
         proc.standardOutput = out
-        proc.standardError = Pipe()
+        proc.standardError = Pipe()              // swallow job-control / banner noise
         do {
             try proc.run()
             proc.waitUntilExit()
             let data = out.fileHandleForReading.readDataToEndOfFile()
-            let path = String(decoding: data, as: UTF8.self)
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !path.isEmpty, FileManager.default.isExecutableFile(atPath: path) else { return nil }
-            return path
+            let text = String(decoding: data, as: UTF8.self)
+            // A noisy .zshrc may print banners to stdout, so take the LAST line
+            // that is an absolute, executable path.
+            for line in text.split(separator: "\n").reversed() {
+                let p = line.trimmingCharacters(in: .whitespaces)
+                if p.hasPrefix("/"), FileManager.default.isExecutableFile(atPath: p) { return p }
+            }
+            return nil
         } catch {
             return nil
         }

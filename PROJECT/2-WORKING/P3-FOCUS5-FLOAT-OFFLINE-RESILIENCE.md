@@ -82,7 +82,7 @@ This is a **non-competing follow-on** to the parent plan (which owns the core bu
 > A one-click control that starts the local server and refreshes once it's healthy — no terminal needed.
 
 - [x] **Start mechanism decided → detached `Process`.** Recon found **no `serve` launchd label** (operator runs `rebalance serve` manually), so `ServerLauncher.start()` spawns a detached `rebalance serve` (its own lifetime, IO → `/dev/null`). (Open Question 1 resolved.)
-- [x] **Binary resolved robustly** ([ServerLauncher.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ServerLauncher.swift)): `REBALANCE_BIN` override → login-shell `<$SHELL> -lc 'command -v rebalance'` → known `/opt/homebrew`, `/usr/local`, `~/.local/bin` paths. Verified headlessly (`FOCUS5_RESOLVETEST` → `/Users/noelsaw/bin/rebalance`).
+- [x] **Binary resolved robustly** ([ServerLauncher.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ServerLauncher.swift)): `REBALANCE_BIN` override → fast known-path probe (`~/bin`, `/opt/homebrew`, `/usr/local`, `~/.local/bin`) → **interactive** login-shell `<$SHELL> -ilc 'command -v rebalance'`. **Finder-launch fix:** the first install failed from Finder because `-lc` is a *non-interactive* login shell that skips `.zshrc` (where PATH lives), and `~/bin` wasn't in the fallback. Now verified under a clean `env -i` (no PATH, Finder-equivalent) → `/Users/noelsaw/bin/rebalance`.
 - [x] **"Start server" control** in the offline/failed state **and** the header (when offline) **and** the right-click menu (⌘S): `model.startServer()` spawns, shows a spinner, polls via `refresh()` until reachable (20s bound), applies the roster.
 - [x] **Lifecycle = detached:** spawned with `Process` and not awaited → survives app quit, like the operator's normal `serve`. (Open Question 3 resolved.)
 - [x] **Failure handling:** binary-not-found → actionable message; never-healthy-within-20s → "try Refresh"; bounded poll, no hang/crash. `isStartingServer` guards re-entry.
@@ -94,7 +94,7 @@ This is a **non-competing follow-on** to the parent plan (which owns the core bu
 - [x] **SOLID:** `ServerLauncher` (resolve + start) is a standalone enum; the model orchestrates start → poll; the UI just calls `startServer()` and renders `isStartingServer`/`startError`.
 - [x] **Resilience:** missing binary, slow/no start (20s timeout), and re-entry (`isStartingServer` guard) all yield clear bounded states — no infinite poll, no crash.
 - [x] **Observability:** `os_log` (category `launcher`) on resolve failure, chosen binary + spawned PID; `panel` log on the manual start action.
-- [~] **Deploy/packaging note:** bundled `.app` must resolve the binary at runtime without a shell `PATH` — the login-shell lookup handles this; **re-verify from the installed `.app`** in Phase 5 packaging (the riskiest cross-cut).
+- [x] **Deploy/packaging note:** bundled `.app` resolves the binary without a shell `PATH` — **verified from the installed `/Applications/Focus 5 Float.app` under `env -i HOME=…`** (Finder-equivalent, zero PATH) → `~/bin/rebalance`. (Initial Finder launch failed; fixed via `-ilc` + `~/bin` probe.)
 - [~] **Litmus:** binary-resolution verified headlessly; build green. _Operator: from a cold, offline app, click **Start server** → server comes up → roster appears, no terminal._
 - [x] **Anti-goal guard:** a single manual start action only — no auto-restart loop, no supervision.
 
