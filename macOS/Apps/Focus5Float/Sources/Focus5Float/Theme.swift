@@ -25,10 +25,12 @@ enum Theme {
     })
     /// Primary text — `#1D1D1F` light, `#F5F5F7` dark.
     static let text        = dynamic(light: 0x1D1D1F, dark: 0xF5F5F7)
-    /// Secondary text — `#86868B` light, `#98989E` dark.
-    static let text2       = dynamic(light: 0x86868B, dark: 0x98989E)
-    /// Tertiary text — `#B2B2B7` light, `#69696E` dark.
-    static let text3       = dynamic(light: 0xB2B2B7, dark: 0x69696E)
+    /// Secondary text — darkened for readability on the (zebra) card fills.
+    /// `#55555A` light, `#C2C2C8` dark.
+    static let text2       = dynamic(light: 0x55555A, dark: 0xC2C2C8)
+    /// Tertiary text (labels, sha·time, drift) — was washed out; bumped up.
+    /// `#70707A` light, `#9C9CA4` dark.
+    static let text3       = dynamic(light: 0x70707A, dark: 0x9C9CA4)
     /// Accent — `#2F6BED` light, `#4D86FF` dark.
     static let accent      = dynamic(light: 0x2F6BED, dark: 0x4D86FF)
     /// 10% / 16% accent tint used for the selected row & active filter fill.
