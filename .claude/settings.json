@@ -92,7 +92,15 @@
       "Bash(git check-ignore *)",
       "Bash(git rev-parse *)",
       "Bash(utils/pdda-check-roadmap.sh)",
-      "Bash(echo \"rc=$?\")"
+      "Bash(echo \"rc=$?\")",
+      "Bash(time agy -p 'Reply with exactly this line and nothing else: {\"severity\":\"info\",\"line\":0,\"message\":\"agy ok\"}')",
+      "Bash(bash -c '. utils/pdda-lib.sh; pdda_list_working_docs')",
+      "Bash(sqlite3 rebalance.db \"SELECT device_id, local_path, my_last_commit_ts FROM focus5_repo_signals;\")",
+      "Bash(sqlite3 rebalance.db \"SELECT COUNT\\(*\\) AS discovered FROM focus5_repo_signals;\")",
+      "Bash(python3 -c 'from pathlib import Path; p=Path\\(\"/Users/noelsaw/Documents/GitHub-Repos\"\\); print\\(\"exists:\",p.exists\\(\\),\"is_dir:\",p.is_dir\\(\\),\"is_symlink:\",p.is_symlink\\(\\)\\)')",
+      "Bash(awk '/^l/ {print}')",
+      "Bash(python3 -c 'from pathlib import Path; p=Path\\(\"/Users/noelsaw/Documents/GH\"\\); print\\(\"exists:\",p.exists\\(\\),\"is_dir:\",p.is_dir\\(\\),\"is_symlink:\",p.is_symlink\\(\\)\\)')",
+      "Bash(rtk du *)"
     ]
   }
 }

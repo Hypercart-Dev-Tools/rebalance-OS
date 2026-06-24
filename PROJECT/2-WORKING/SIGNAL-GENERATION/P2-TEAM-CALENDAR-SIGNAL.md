@@ -1,10 +1,12 @@
 ---
+title: "P2 — Team Calendar as a Signal"
 project: "P2 — Team Calendar as a Signal"
 codename: HiQS
 owner: Noel
 created: 2026-06-09
 updated: 2026-06-18
 status: "Phase 2 v0.5 BUILT on `development` (shared rank_next_actions core + /whats-next route + static pulse panel + ask() parity + precompute hook; 3 commits f6a7131→795933c; 989 tests green; 30-agent adversarial review applied) — data-layer DoD proven; pending live-Gemini visual check in Noel's keyed env + merge-to-main + v0.5 tag"
+goal: "Blend a teammate's shared work calendar into the operator's own signal set to detect dropped-ball work and prioritize team next-actions."
 current_phase: "Phase 2 — v0.5 build complete; final live-Gemini verification + merge/tag remain"
 endgame: "v0.5 — 'What should we work on next?' view in the web dashboard (Gemini-powered, tunable levers)"
 kill_switch: "Willing to kill if Matt's calendar is mostly redundant with GitHub + Slack"
@@ -40,9 +42,9 @@ Things P2 will not do:
 
 ---
 
-## Status at a glance
+## Status
 
-| ✅ Most recently completed phase | ⏭️ What's next |
+| What was just completed | What's next |
 |---|---|
 | **Phase 2 v0.5 BUILT on `development` (Ultra Code, 2026-06-18)** — the "What should we work on next?" feature shipped across all four surfaces, all calling ONE shared `rank_next_actions` core (the DRY parity gate): the keystone [next_actions.py](src/rebalance/ingest/next_actions.py) (productizes the Phase-0 harness blend + dedup; Gemini via the existing `_synthesize_with_fallback` adapter; never raises; deterministic ranked fallback) + migration 0006 (`ranked_next_actions` local-only precompute cache, head v6); the `/whats-next` FastAPI route (live on `rebalance serve` **and** the always-running `pulse_server`); the static `pulse.html` "what's next" panel (reads the precompute, offline launchd-safe); `ask(team=True)` MCP parity (sidecar attr, `QueryResult` untouched); and the network-allowed precompute hook in `refresh_index`. **Scope decisions (Noel):** static panel = precompute→SQLite; teammates = Matt-first with a per-person additivity gate (sparse Jose/Jinhui earn in by logging density). **One Ultra adversarial review** (30 agents → 14 verified findings + a synthesis-prompt judge panel) applied — incl. the HIGH fix where a degenerate Gemini parse could overwrite the good deterministic fallback. **989 tests green** (+71 over Phase 1), `rebalance doctor` clean. **Data-layer DoD proven**: blended rank surfaces 7 net-new person-attributed teammate items the operator-only list lacks. 3 commits `f6a7131`→`34e60da`→`795933c` on `development`. | **Final v0.5 close-out:** (1) Noel opens `/whats-next?refresh` (or runs a full `refresh_index`) in his **keyed** env to render the live Gemini-synthesized list — the visual DoD that can't run in the sandbox (no GSM key there); (2) merge `development` → `main` via self-mergeable PR + tag **v0.5**. The `rebalance-git-pulse` refactor ([GIT-PULSE-REFACTOR.md](PROJECT/2-WORKING/GIT-PULSE-REFACTOR.md)) remains unblocked. |
 

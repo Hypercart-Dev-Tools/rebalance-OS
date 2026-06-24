@@ -33,8 +33,8 @@ if [ ! -f "$PDDA_CHANGELOG" ]; then
   exit "$(pdda_gated_exit "$EXIT_CODE")"
 fi
 
-# Newest dated section heading (file is newest-first): first "## YYYY-MM-DD".
-cl_line="$(grep -Em1 '^##[[:space:]]+[0-9]{4}-[0-9]{2}-[0-9]{2}' "$PDDA_CHANGELOG" 2>/dev/null || true)"
+# Newest dated section heading (file is newest-first): first "## YYYY-MM-DD" or "## [x.y.z] - YYYY-MM-DD".
+cl_line="$(grep -Em1 '^##[[:space:]]+(\[[0-9]+\.[0-9]+\.[0-9]+\][[:space:]]*-[[:space:]]*)?[0-9]{4}-[0-9]{2}-[0-9]{2}' "$PDDA_CHANGELOG" 2>/dev/null || true)"
 cl_date="$(printf '%s' "$cl_line" | grep -Eo '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)"
 
 if [ -z "$cl_date" ] || ! pdda_is_real_date "$cl_date"; then

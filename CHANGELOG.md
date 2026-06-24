@@ -6,6 +6,24 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.42.0] - 2026-06-23
+
+Focus 5 Float Phase 0 spike and PDDA doc compliance corrections — shipping the local FastAPI JSON endpoint and macOS floating panel spike, alongside repo-wide doc hygiene and test collection fixes.
+
+### Added
+- FastAPI `GET /focus-5.json` read-only local endpoint (macOS Focus 5 Float Phase 0) serving the Focus 5 card stack roster and off-roster warnings.
+- macOS `Focus 5 Float` SwiftUI application target scaffolding and the interactive, non-activating always-on-top spike (`FloatPanelSpike.swift`).
+
+### Changed
+- Consolidated the `utilities/` folder into `utils/` at the repository root to simplify project directories.
+
+### Fixed
+- A bug in `pdda-check-changelog.sh` regex parser that missed SemVer formatted headings and falsely reported the changelog as stale.
+- Cleaned up absolute hardcoded paths in project documents to comply with the portable, machine-neutral contract.
+- Added required frontmatter (`title` and `goal`) and `## Status` headers to active plans to satisfy the PDDA active-doc contract.
+- Linked active plans (`FOCUS-5-RANKING-BUG-AND-REMEDIATION.md` and `P2-TEAM-CALENDAR-SIGNAL.md`) in `ROADMAP.md` to satisfy roadmap coverage checks.
+- Renamed the onboarding manual test script to `smoke_onboarding.py` to prevent it from breaking standard pytest collection.
+
 ## [0.41.1] - 2026-06-21
 
 Front-door, portability, and auth-hardening cleanup — closing the remaining

@@ -28,7 +28,9 @@ related:
 
 # Unified Front-Door, Portability, and Auth Hardening
 
-| Most recently completed phase | What's next |
+## Status
+
+| What was just completed | What's next |
 |---|---|
 | **Phase 6 complete — all six phases shipped (2026-06-21).** ROADMAP now points only to this unified plan as the single active ledger entry, reflecting Phases 1–6 done; the three source plans are retained with verified supersession breadcrumbs. Per the ponytail-lite, the doc-reorg (inventory/relocate/re-hub) was cut — it risked breaking path-based loaders to tidy sprawl no newcomer hits. **The plan is code- and doc-complete.** | **Operator-only follow-up:** run `rebalance config migrate-secrets` on the ~2 remaining Macs (Phase 1 item 6), under the verify-then-cutover gate. Everything else is the deferred multi-operator / fleet scope, revived on its named triggers. |
 
@@ -107,7 +109,7 @@ Goal: close the remaining collector/auth contract gaps before expanding doc clea
   Done (2026-06-21): `normalize_sources` now derives its legal set from `_all_semantic_sources()` (the single runtime source-of-truth) instead of a hand-maintained literal that wrongly accepted non-semantic `calendar`/`sleuth` (`src/rebalance/ingest/semantic_index.py:130-143`). Guarded by `tests/test_semantic_source_contract.py`.
 - [x] Finish runtime resolver cleanup in setup scripts and script bootstraps.
   Observable result: the remaining offenders are named and closed one by one — the OAuth setup scripts (`scripts/setup_calendar_oauth.py`, `scripts/setup_gmail_oauth.py`), the scheduler bootstraps (`scripts/*sync.sh`), and any residual `sys.path.insert` / repo-root shim. Each either routes through the shared resolver (`resolve_project_root` / `resolve_oauth_token_path`) or carries a one-line comment stating why it cannot, so "where applicable" is enumerated rather than left open.
-  Done (2026-06-21, verify): the only `sys.path.insert` is the documented single exception in `scripts/_bootstrap.py:18`; no `parents[N]` repo-root walks remain; all five `*sync.sh` route through `scripts/lib/scheduler_common.sh`, which derives `REBALANCE_DIR` from its own file location (no hardcoded path); setup scripts import from `rebalance.ingest` and write via `secret_store` with no hardcoded `/Users/` or retired pickle/credentials paths.
+  Done (2026-06-21, verify): the only `sys.path.insert` is the documented single exception in `scripts/_bootstrap.py:18`; no `parents[N]` repo-root walks remain; all five `*sync.sh` route through `scripts/lib/scheduler_common.sh`, which derives `REBALANCE_DIR` from its own file location (no hardcoded path); setup scripts import from `rebalance.ingest` and write via `secret_store` with no hardcoded user home or retired pickle/credentials paths.
 - [x] Route auth-activity and token-metadata writes through the storage contract.
   Observable result: secret-store writes, migrations, OAuth refreshes, and future storage changes all preserve `auth_activity.jsonl` and `token_meta.json` behavior through one contract.
   Done (2026-06-21, verify): `auth_activity.jsonl` is written only by `src/rebalance/ingest/auth_log.py`; `token_meta.json` only by `src/rebalance/ingest/token_meta.py`. All callers (config OAuth/PAT writes, doctor reads) route through those module APIs — every other repo reference is a docstring or user-facing echo.

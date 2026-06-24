@@ -4,6 +4,9 @@ doc_type: bug-trace + remediation-plan
 status: IMPLEMENTED (2026-06-19) — Phases 1/2/4 done + tested + verified live; Phase 3 wired (piggyback github-sync), activates once that job is installed
 method: /debug-mantra (reproduce → fail path → falsify → cross-reference)
 owner: noel@neochro.me
+created: 2026-06-19
+updated: 2026-06-19
+goal: "Identify and resolve why the Focus 5 dashboard page surfaces incorrect or stale repositories rather than the most recently active ones."
 related:
   - PROJECT/2-WORKING/FOCUS-5.md  (original spike/design)
   - src/rebalance/ingest/focus5_scan.py  (ranking + scan)
@@ -12,7 +15,9 @@ related:
 
 # Focus 5 surfaces the wrong repos
 
-| Most recently completed | What's next |
+## Status
+
+| What was just completed | What's next |
 |---|---|
 | **Phases 1/2/4 implemented + tested + verified on the live device** (2026-06-19) — Focus 5 now surfaces rebalance-OS / xyz-3-agents-swarm / giant-brains / hypercart-plugin-mkiii / wp-code-check; the old wrong repos (sleuth-app, eve) moved to the Dirty Five safety view | **Activate Phase 3**: install `github-sync` (`bash scripts/install_github_scheduler.sh`) so the hourly piggyback recompute actually fires — no rebalance launchd jobs are loaded on this box right now |
 
@@ -49,14 +54,14 @@ signals (no re-probe) via `rerank`-equivalent logic.
 
 | # | Experiment | Result | Rules in / out |
 |---|---|---|---|
-| 1 | Read scan-root config | `repo_scan_roots = focus5_scan_roots = ['/Users/noelsaw/Documents/GitHub-Repos']`; mode `dirty_first` | scope = one root |
+| 1 | Read scan-root config | `repo_scan_roots = focus5_scan_roots = ['~/Documents/GitHub-Repos']`; mode `dirty_first` | scope = one root |
 | 2 | `ls -ld` the root | `GitHub-Repos` is a **symlink → `GH Repos`** | path mismatch **ruled out** |
 | 3 | Roster table | 5 dirty repos, `computed_at = 2026-06-19T06:12:45Z` (≈11h before the screenshot) | roster is a **stale snapshot** |
 | 4 | Are the active repos discovered? | `giant-brains-claude-skills`, `hypercart-plugin-mkiii`, `xyz-3-agents-swarm` **all present**, all `is_dirty=0`, and the **most-recently-committed** rows in the set | discovery **ruled out** as the cause |
 | 5 | `rank_dirty_first` sort_key | `(1 if at_risk else 0, _recency)` → **every dirty/unpushed repo sorts above every clean repo** | primary mechanism |
 | 6 | Re-rank stored signals under `my_work` | Also surfaces dirty repos — `rank_my_work` sets `recency = max(my_last_commit_ts, now if is_dirty)`, so **dirty repos pin to "now"** | `my_work` is **not** the fix |
 | 7 | Re-rank by pure `_recency` (no dirty pin) | TOP 5 = **hypercart-plugin-mkiii, wp-code-check, xyz-3-agents-swarm, giant-brains-claude-skills**, facebook-for-woocommerce | the desired view needs a **new mode** |
-| 8 | Look for `rebalance-OS` in signals | Only `rebalanceos-webapp` present; `/Users/noelsaw/Documents/rebalance-OS` is **outside** the scan root | secondary discovery gap |
+| 8 | Look for `rebalance-OS` in signals | Only `rebalanceos-webapp` present; `~/Documents/rebalance-OS` is **outside** the scan root | secondary discovery gap |
 
 ## Root cause — three distinct issues
 
@@ -99,8 +104,8 @@ mode would display stale repos. The two issues compound: **stale + wrong-mode**.
 
 ### Issue C (SECONDARY) — `rebalance-OS` is outside the scan root
 
-`rebalance-OS` lives at `/Users/noelsaw/Documents/rebalance-OS`, not under the
-single scan root `/Users/noelsaw/Documents/GH Repos`. It is never discovered, so
+`rebalance-OS` lives at `~/Documents/rebalance-OS`, not under the
+single scan root `~/Documents/GH Repos`. It is never discovered, so
 it cannot appear in Focus 5 under any mode. (One of the four named active repos.)
 
 ## What Focus 5 is *supposed* to surface (product decision)
@@ -208,7 +213,7 @@ was rejected to avoid thread/race complexity in the web process.
 
 ### Phase 4 — Discovery scope (`rebalance-OS`)
 
-- [x] Add `/Users/noelsaw/Documents/rebalance-OS` to `focus5_scan_roots`. Added
+- [x] Add `~/Documents/rebalance-OS` to `focus5_scan_roots`. Added
       `set/add/remove_focus5_scan_root` setters + `rebalance config
       {add,remove,list}-focus5-scan-root` CLI, then registered the root in the live
       (gitignored) `temp/rbos.config`. The `add` seeds from the effective roots so
