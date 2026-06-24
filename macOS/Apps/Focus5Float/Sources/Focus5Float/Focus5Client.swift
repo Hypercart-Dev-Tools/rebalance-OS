@@ -15,13 +15,24 @@ struct Focus5Client {
         self.session = session
     }
 
-    /// Defaults to the local `rebalance serve`; override with FOCUS5_BASE_URL.
+    /// Defaults to the local `rebalance serve`. The payload carries local-only /
+    /// PII fields (`local_path`, `vscode_url`, `remote_url`, `author_email`), so a
+    /// non-loopback `FOCUS5_BASE_URL` is honored ONLY under an explicit debug
+    /// opt-in (`FOCUS5_LIVETEST` / `FOCUS5_ALLOW_REMOTE`); otherwise it falls back
+    /// to localhost. (CONTRACT.md: this endpoint is local-only.)
     static var defaultBaseURL: URL {
-        if let raw = ProcessInfo.processInfo.environment["FOCUS5_BASE_URL"],
-           let url = URL(string: raw) {
-            return url
+        let fallback = URL(string: "http://localhost:8787")!
+        let env = ProcessInfo.processInfo.environment
+        guard let raw = env["FOCUS5_BASE_URL"], let url = URL(string: raw) else {
+            return fallback
         }
-        return URL(string: "http://localhost:8787")!
+        let remoteAllowed = env["FOCUS5_LIVETEST"] != nil || env["FOCUS5_ALLOW_REMOTE"] != nil
+        return (isLoopback(url) || remoteAllowed) ? url : fallback
+    }
+
+    private static func isLoopback(_ url: URL) -> Bool {
+        guard let host = url.host?.lowercased() else { return false }
+        return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
     }
 
     func fetch(dirty: Bool) async throws -> Focus5Response {

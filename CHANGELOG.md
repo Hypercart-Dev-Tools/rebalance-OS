@@ -6,6 +6,22 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.43.0] - 2026-06-23
+
+Focus 5 Float reaches feature-complete (Phases 1–4) and passes an automated Codex QA pass — the macOS menu-bar app now renders the real, live Focus 5 roster as a floating, collapsible card stack over the same `summarize_focus5()` the web `/focus-5` uses.
+
+### Added
+- macOS `Focus 5 Float` is now a runnable menu-bar app: a non-activating, always-on-top floating `NSPanel` (F5 status-item toggle, right-click menu, Esc-to-hide, first-mouse interaction, frame autosave, hidden window chrome) hosting a SwiftUI card stack.
+- Live data: a read-only `Focus5Client` pulls `GET /focus-5.json` (90s poll, manual Refresh, ranking-mode re-fetch, offline handling, tap-a-card-to-open-in-VS-Code) — no ranking/git/DB logic in Swift; the server stays the source of truth.
+- Collapsible repo cards mirroring the web card: tap to expand into Tree health / Newest PR / Recent activity, plus an in-panel Focus 5 ⇄ Dirty Five toggle, a ⚠ stale badge, and a collapsible off-roster footer.
+- `Focus5Float` SwiftPM package harvesting the TextReplacementStudio design system (`Theme`, `KeyCap`/`GroupTag`/`StatusDot`), `Codable` wire models, a bundled fixture, and headless `FOCUS5_SELFTEST` / `FOCUS5_LIVETEST` decode smoke tests.
+
+### Fixed
+- Focus 5 Float mode/refresh race: concurrent poll, manual refresh, and ranking-mode switches could apply out of order; a generation guard now lets only the latest fetch apply, and an optimistic mode flip reverts on a real fetch failure. (Codex QA)
+- Focus 5 Float empty-state copy no longer implies that in-app Refresh rebuilds the roster — it correctly directs the operator to build the roster server-side, then re-pull. (Codex QA)
+- Focus 5 Float now keeps its local-only data posture: a non-loopback `FOCUS5_BASE_URL` is honored only under an explicit debug opt-in, otherwise it falls back to localhost (the payload carries `local_path` / `vscode_url` / `author_email`). (Codex QA)
+- Focus 5 Float menu-bar checkmarks no longer drift from the active ranking mode: the context menu recomputes its checkmarks from the model on open, so the in-panel toggle and the menu stay in sync. (Codex QA)
+
 ## [0.42.0] - 2026-06-23
 
 Focus 5 Float Phase 0 spike and PDDA doc compliance corrections — shipping the local FastAPI JSON endpoint and macOS floating panel spike, alongside repo-wide doc hygiene and test collection fixes.

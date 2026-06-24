@@ -78,7 +78,7 @@ struct ContentView: View {
         case .loaded where model.roster.isEmpty:
             emptyState(icon: "tray",
                        title: model.isDirtyView ? "Nothing at risk" : "No active repos found",
-                       detail: "Open /focus-5 in the browser or hit Refresh to build the roster.")
+                       detail: "The server roster is empty. Build it server-side (open /focus-5 in the browser or run a Focus 5 sync), then Refresh here to re-pull.")
         case .loaded:
             ScrollView {
                 LazyVStack(spacing: Theme.Space.s) {

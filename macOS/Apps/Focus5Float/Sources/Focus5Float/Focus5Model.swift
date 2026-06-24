@@ -24,6 +24,7 @@ final class Focus5Model {
     var isOffline = false             // last fetch couldn't reach the server
 
     private let client = Focus5Client()
+    private var fetchGeneration = 0    // guards against out-of-order fetch results
 
     var isDirtyView: Bool { rankingMode == "dirty_first" }
 
@@ -31,26 +32,47 @@ final class Focus5Model {
     var isStale: Bool { RelTime.isOlderThan(lastUpdated, hours: 24) }
     var lastUpdatedAgo: String { RelTime.ago(lastUpdated) }
 
+    private enum FetchOutcome { case applied, failed, superseded }
+
     /// Live fetch of GET /focus-5.json — the same roster the web /focus-5 shows.
     /// On failure the last-known roster stays on screen with an offline flag; an
     /// empty roster degrades to a `.failed` state with an actionable message.
     func refresh() async {
-        if roster.isEmpty { loadState = .loading }
-        do {
-            apply(try await client.fetch(dirty: isDirtyView))
-            isOffline = false
-            loadState = .loaded
-        } catch {
-            isOffline = true
-            loadState = roster.isEmpty ? .failed(Self.offlineMessage) : .loaded
+        _ = await fetchAndApply(dirty: isDirtyView)
+    }
+
+    /// Switch board + re-fetch so the SERVER does the re-rank (?view=dirty), never
+    /// the client. The mode is flipped optimistically and reverted if the fetch
+    /// actually fails (a superseded fetch leaves it alone — a newer call owns it).
+    func setMode(dirty: Bool) async {
+        let previous = rankingMode
+        rankingMode = dirty ? "dirty_first" : "recent_activity"
+        if await fetchAndApply(dirty: dirty) == .failed {
+            rankingMode = previous
         }
     }
 
-    /// Switch board + re-fetch so the server does the re-rank (?view=dirty),
-    /// never the client.
-    func setMode(dirty: Bool) async {
-        rankingMode = dirty ? "dirty_first" : "recent_activity"
-        await refresh()
+    /// Generation-guarded fetch: only the latest in-flight request may apply its
+    /// result, so an older response can't clobber a newer selection (poll vs
+    /// refresh vs mode-switch race).
+    @discardableResult
+    private func fetchAndApply(dirty: Bool) async -> FetchOutcome {
+        fetchGeneration += 1
+        let gen = fetchGeneration
+        if roster.isEmpty { loadState = .loading }
+        do {
+            let resp = try await client.fetch(dirty: dirty)
+            guard gen == fetchGeneration else { return .superseded }
+            apply(resp)
+            isOffline = false
+            loadState = .loaded
+            return .applied
+        } catch {
+            guard gen == fetchGeneration else { return .superseded }
+            isOffline = true
+            loadState = roster.isEmpty ? .failed(Self.offlineMessage) : .loaded
+            return .failed
+        }
     }
 
     /// Fixture loader — previews / FOCUS5_SELFTEST only, NOT the app data path.

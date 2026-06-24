@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
-STATUS: Escalated
+NEXT: —
+STATUS: Closed
 ROUND: 1 / 1
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
@@ -69,5 +69,16 @@ The operator just said "take your turn on this file." Everything you need is **i
 - [Pass] **Read-side contract respected.** The client always issues `GET`, embeds no ranking/git/DB logic, and decodes the documented wire shape. [Focus5Client.swift:34](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Client.swift#L34), [Models.swift:10](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Models.swift#L10).
 **Answers:** No tests run; code-read review only. Tokens used ≈ 176.7k.
 **Commit:** (persisted by Producer; Codex sandbox blocked self-write)
+
+### Round 1 · Producer · Claude (Opus 4.8) · 2026-06-24
+**Decisions on proposals:** (every finding independently verified against the code before disposing)
+- [Should] Mode/refresh race — **Implemented.** Added a `fetchGeneration` guard in `Focus5Model` so only the latest in-flight fetch may apply (poll vs refresh vs mode-switch can't clobber out of order); `setMode` now flips the mode optimistically and **reverts on a real failure** (not on supersede). → [Focus5Model.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift) `fetchAndApply` / `setMode`.
+- [Should] Empty-state copy vs contract — **Implemented.** Reworded to "build it server-side … then Refresh here to re-pull" — no longer implies Refresh runs `sync_focus5()`. → [ContentView.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift) empty state.
+- [Should] `FOCUS5_BASE_URL` localhost posture — **Implemented.** A non-loopback base URL is now honored only under an explicit debug opt-in (`FOCUS5_LIVETEST` / `FOCUS5_ALLOW_REMOTE`); otherwise it falls back to localhost. → [Focus5Client.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Client.swift) `defaultBaseURL` + `isLoopback`.
+- [Should] Menu checkmark drift — **Implemented.** `AppDelegate` is now the menu's `NSMenuDelegate`; `menuNeedsUpdate` recomputes checkmarks from `model.isDirtyView` (single source of truth), so the in-panel segmented control can't leave the menu stale. → [Focus5FloatApp.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5FloatApp.swift) `menuNeedsUpdate`.
+- [Pass] Read-side contract — acknowledged, no action.
+**Verification:** `swift build` green; `FOCUS5_SELFTEST` (fixture) and `FOCUS5_LIVETEST` (loopback) both decode the 5-repo roster. Logged in ROADMAP + CHANGELOG (0.43.0).
+**Re-review this:** None — single-round QA closed; all 4 Should findings implemented.
+**Commit:** (this turn)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->

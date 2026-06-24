@@ -39,7 +39,7 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var panel: FloatingPanel!
     private var statusItem: NSStatusItem!
     private var contextMenu: NSMenu!
@@ -106,13 +106,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Focus 5 Float", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q")
 
+        menu.delegate = self          // recompute checkmarks from model state on open
         self.contextMenu = menu
     }
 
-    /// Reflect the active ranking mode with a checkmark. Pass `dirty` to update
-    /// optimistically before an async re-fetch resolves; omit to read the model.
-    private func updateModeMenuState(dirty: Bool? = nil) {
-        let isDirty = dirty ?? model.isDirtyView
+    // NSMenuDelegate: refresh the checkmarks right before the menu shows, so a mode
+    // change from the in-panel segmented control can't leave the menu stale.
+    func menuNeedsUpdate(_ menu: NSMenu) {
+        updateModeMenuState()
+    }
+
+    /// Reflect the active ranking mode with a checkmark — single source of truth is
+    /// the model's `isDirtyView`.
+    private func updateModeMenuState() {
+        let isDirty = model.isDirtyView
         focus5Item.state = isDirty ? .off : .on
         dirtyFiveItem.state = isDirty ? .on : .off
     }
@@ -192,13 +199,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func setFocus5Mode() {
         log.info("ranking mode → recent_activity")
-        updateModeMenuState(dirty: false)
-        Task { await model.setMode(dirty: false) }   // server re-ranks (default view)
+        Task { await model.setMode(dirty: false) }   // server re-ranks; menu re-reads on open
     }
 
     @objc private func setDirtyFiveMode() {
         log.info("ranking mode → dirty_first")
-        updateModeMenuState(dirty: true)
-        Task { await model.setMode(dirty: true) }     // server re-ranks (?view=dirty)
+        Task { await model.setMode(dirty: true) }     // server re-ranks; menu re-reads on open
     }
 }
