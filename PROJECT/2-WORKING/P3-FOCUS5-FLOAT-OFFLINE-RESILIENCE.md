@@ -1,6 +1,6 @@
 ---
 title: Focus 5 Float — Offline Cache & Manual Server Start
-status: draft
+status: in-progress
 doc_type: project-plan
 owner: Noel Saw
 created: 2026-06-24
@@ -16,7 +16,7 @@ rollout_rule: each phase leaves the app buildable (`swift build` green) and degr
 
 | What was just completed | What's next |
 |---|---|
-| _None — plan drafted 2026-06-24, captured in `1-INBOX`._ | **Phase 1 — Offline roster cache:** persist the last successful `/focus-5.json` to disk, load it on launch, and show a "cached · {age} ago" indicator. |
+| **Phase 1 — Offline roster cache — DONE.** `RosterCache` (atomic save/load to App Support), `loadCache()` on launch for instant cold-start, "cached · {age}" header indicator, schema-versioned + corruption-safe; cache round-trip verified headlessly (`FOCUS5_CACHETEST` → 5 repos). `swift build` green. | **Phase 2 — Manual "Start rebalance serve" control:** resolve the `rebalance` binary, start the local server, poll until healthy, then refresh. |
 
 ## Table of Contents
 
@@ -58,22 +58,22 @@ This is a **non-competing follow-on** to the parent plan (which owns the core bu
 
 > Persist the last successful `/focus-5.json` and render it instantly on launch; keep showing it (clearly marked) while the server is unreachable.
 
-- [ ] `RosterCache` type: atomic save/load of the last successful response to `~/Library/Application Support/Focus5Float/roster-cache.json`, stamped with `fetchedAt` + a `schemaVersion`.
-- [ ] On launch, load the cache **synchronously and render immediately** (instant cold start), then kick off the live fetch in the background.
-- [ ] On fetch **success**, write the cache (overwrite).
-- [ ] On fetch **failure with a cache present**, keep the cached roster, set `isOffline`, and show **"cached · {age} ago"** in the header — visually distinct from the server-fresh "updated · {age} ago".
-- [ ] Cache invalidation: a parse error or `schemaVersion` mismatch is ignored (and replaced), degrading to the empty/offline state — never a crash.
-- [ ] Reuse the single `Focus5JSON.decoder()` + the model's existing `apply(_:)` mapping — no second decode/mapping path.
+- [x] `RosterCache` type ([RosterCache.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/RosterCache.swift)): atomic save/load of the last successful response to `~/Library/Application Support/Focus5Float/roster-cache.json`, stamped with `fetchedAt` + `schemaVersion`.
+- [x] On launch, `model.loadCache()` runs synchronously and renders immediately (instant cold start); the live `refresh()` then fires in the background.
+- [x] On fetch **success**, `cache.save(resp)` overwrites; `showingCache=false`, server-fresh.
+- [x] On fetch **failure with data present**, the cached/last-known roster stays on screen; header shows **"cached · {age}"** (when from disk) — distinct from the server-fresh "updated · {age}".
+- [x] Cache invalidation: parse error / `schemaVersion` mismatch → `load()` returns nil (ignored), degrading to empty/offline — never a crash.
+- [x] **Codec correction (vs original plan):** the cache uses its **own** round-trip codec (camelCase + ISO-8601), NOT `Focus5JSON.decoder()`. Re-encoding the models to disk produces camelCase keys, so decoding them back with the snake_case wire decoder would mismatch. The **live wire decode is still a single path** (`Focus5JSON.decoder()`); the cache is a separate Swift↔disk format. `apply(_:)` mapping is reused unchanged.
 
 ### QA Checklist — Phase 1
 
-- [ ] **DRY:** cache encode/decode uses the same `Focus5JSON` config and the same `apply(_:)` → view-state mapping; no parallel decode path.
-- [ ] **SOLID:** `RosterCache` (load/save) is a small injectable collaborator; `Focus5Model` keeps its current shape (cache is wired at refresh boundaries only).
-- [ ] **Resilience:** missing / corrupt / old-schema cache never crashes — it degrades to offline-empty; atomic write survives an interrupted save.
-- [ ] **Observability:** `os_log` cache hit/miss + age on launch, and cache writes, under the existing subsystem.
-- [ ] **Security/boundary:** cache file lives only in the user's app-support dir (same machine); no PII/local-only field leaves the device; note added to `CONTRACT.md`.
-- [ ] **Litmus:** with the server stopped, a cold launch shows the last roster + "cached · {age} ago" + `offline`; starting the server + Refresh clears `offline` and flips to "updated · {age} ago".
-- [ ] **Anti-goal guard:** only the roster JSON is cached — no DB mirror, no extra files.
+- [x] **DRY:** one `apply(_:)` → view-state mapping for live + cache; the live wire decode is still single (`Focus5JSON.decoder()`). The cache's own codec is intentional and documented (see codec correction above).
+- [x] **SOLID:** `RosterCache` is a small injectable collaborator (`init(url:)`); `Focus5Model` keeps its shape — cache wired only at the `loadCache()` / success / failure boundaries.
+- [x] **Resilience:** missing / corrupt / old-schema cache → `nil`, never a crash; `save` is best-effort `.atomic` and never throws into the caller.
+- [x] **Observability:** `os_log` (category `cache`) on save (with repo count) and on miss/unreadable/stale-schema.
+- [x] **Security/boundary:** cache lives only in the user's App Support dir (same machine); no field leaves the device — documented in [CONTRACT.md](../../macOS/Apps/Focus5Float/CONTRACT.md) ("Offline cache (local-only)").
+- [~] **Litmus:** cache round-trip verified headlessly (`FOCUS5_CACHETEST` → 5 repos saved+loaded). _Operator: cold-launch with the server stopped shows "cached · {age}"; starting it + Refresh flips to "updated · {age}"._
+- [x] **Anti-goal guard:** only the roster JSON envelope is cached — no DB mirror, no extra files.
 
 ---
 

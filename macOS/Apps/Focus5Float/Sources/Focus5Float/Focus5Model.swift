@@ -22,8 +22,11 @@ final class Focus5Model {
     var lastUpdated: String?          // computed_at from the payload
     var loadState: LoadState = .idle
     var isOffline = false             // last fetch couldn't reach the server
+    var showingCache = false          // currently displaying the on-disk cache
+    var cachedFetchedAt: Date?        // when the displayed cache was last fetched
 
     private let client = Focus5Client()
+    private let cache = RosterCache()
     private var fetchGeneration = 0    // guards against out-of-order fetch results
 
     var isDirtyView: Bool { rankingMode == "dirty_first" }
@@ -31,6 +34,18 @@ final class Focus5Model {
     /// Roster snapshot older than 24h (matches the web "⚠ stale" threshold).
     var isStale: Bool { RelTime.isOlderThan(lastUpdated, hours: 24) }
     var lastUpdatedAgo: String { RelTime.ago(lastUpdated) }
+    var cachedAgo: String { RelTime.ago(cachedFetchedAt) }
+
+    /// Synchronously load the on-disk cache so a cold launch renders instantly,
+    /// before the first network fetch resolves. Only fills an empty roster; a
+    /// successful fetch then overwrites it and clears `showingCache`.
+    func loadCache() {
+        guard roster.isEmpty, let cached = cache.load() else { return }
+        apply(cached.response)
+        cachedFetchedAt = cached.fetchedAt
+        showingCache = true
+        loadState = .loaded
+    }
 
     private enum FetchOutcome { case applied, failed, superseded }
 
@@ -64,12 +79,15 @@ final class Focus5Model {
             let resp = try await client.fetch(dirty: dirty)
             guard gen == fetchGeneration else { return .superseded }
             apply(resp)
+            cache.save(resp)              // persist for the next cold/offline start
             isOffline = false
+            showingCache = false          // now showing server-fresh data
+            cachedFetchedAt = nil
             loadState = .loaded
             return .applied
         } catch {
             guard gen == fetchGeneration else { return .superseded }
-            isOffline = true
+            isOffline = true              // keep the last-known/cached roster on screen
             loadState = roster.isEmpty ? .failed(Self.offlineMessage) : .loaded
             return .failed
         }

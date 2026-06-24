@@ -73,8 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Show panel on launch
         showPanel()
 
-        // Live data: pull GET /focus-5.json (the same roster the web /focus-5
-        // shows), then poll on a timer.
+        // Show the cached roster instantly (if any), then pull live and poll.
+        model.loadCache()
         Task { await model.refresh(); updateModeMenuState() }
         startPolling()
     }

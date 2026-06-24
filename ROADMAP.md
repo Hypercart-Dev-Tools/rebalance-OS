@@ -32,6 +32,7 @@ goal: >
 ### In progress
 
 - `Focus 5 Float (floating macOS card stack)` — native menu-bar app that renders the web Focus 5 roster as a vertical, collapsible card stack; reuses the `macOS/TextReplacementStudio` SwiftUI scaffolding. **Phases 0–4 complete (feature-complete):** read-only `GET /focus-5.json` + frozen contract (90 tests), `Focus5Float` SwiftPM package (harvested design system + `Codable` models), menu-bar agent + non-activating floating `NSPanel`, live data via `Focus5Client` (same `summarize_focus5()` as the web; poll/refresh/mode/offline/tap-to-open, E2E-verified), and collapsible card UI (Tree health / PR / activity, in-panel ranking toggle, ⚠ stale badge, off-roster footer). **Codex QA (2026-06-24) — 4 Should findings, fixed:** mode/refresh race (generation guard + optimistic-revert); empty-state copy corrected; `FOCUS5_BASE_URL` gated to loopback unless debug; menu checkmark drift fixed via `menuNeedsUpdate`. Phase 5 (packaging/install) ahead. → [PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md](PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md)
+- `Focus 5 Float — offline cache & manual server start` — resilience follow-on for when `rebalance serve` is down. **Phase 1 (offline roster cache) done:** `RosterCache` persists the last `/focus-5.json` to App Support, loads on launch for an instant cold-start, shows "cached · {age}"; round-trip verified. **Phase 2 (one-click "Start server") next.** → [PROJECT/2-WORKING/P3-FOCUS5-FLOAT-OFFLINE-RESILIENCE.md](PROJECT/2-WORKING/P3-FOCUS5-FLOAT-OFFLINE-RESILIENCE.md)
 
 ### Completed
 
@@ -46,7 +47,7 @@ _None yet._
 
 ### Deferred
 
-- `Focus 5 Float — offline cache & manual server start` — follow-on resilience for when `rebalance serve` is down: persist the last roster to disk for an instant cold-start, plus a one-click "Start server" control. Planned (captured in `1-INBOX`). → [PROJECT/1-INBOX/P3-FOCUS5-FLOAT-OFFLINE-RESILIENCE.md](PROJECT/1-INBOX/P3-FOCUS5-FLOAT-OFFLINE-RESILIENCE.md)
+_None yet._
 
 ---
 

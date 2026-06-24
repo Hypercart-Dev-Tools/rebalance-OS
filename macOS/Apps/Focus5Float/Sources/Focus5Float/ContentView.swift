@@ -57,7 +57,10 @@ struct ContentView: View {
                 if model.isStale {
                     Text("⚠ stale").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
                 }
-                if model.isOffline {
+                if model.showingCache {
+                    Text("cached \(model.cachedAgo)")
+                        .font(Theme.caption).foregroundStyle(Theme.diffUpdate)
+                } else if model.isOffline {
                     Text("offline").font(Theme.caption).foregroundStyle(Theme.diffRemove)
                 }
             }

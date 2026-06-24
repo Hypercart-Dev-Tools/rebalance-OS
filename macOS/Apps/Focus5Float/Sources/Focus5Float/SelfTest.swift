@@ -28,6 +28,31 @@ enum Focus5SelfTest {
             sem.wait()
         }
 
+        // Offline-cache round-trip test: FOCUS5_CACHETEST=1 swift run Focus5Float —
+        // saves the fixture through RosterCache and loads it back (no server needed).
+        if ProcessInfo.processInfo.environment["FOCUS5_CACHETEST"] != nil {
+            do {
+                let sample = try SampleData.load()
+                let tmp = FileManager.default.temporaryDirectory
+                    .appendingPathComponent("f5-cache-roundtrip.json")
+                let cache = RosterCache(url: tmp)
+                cache.save(sample, fetchedAt: Date())
+                guard let loaded = cache.load() else {
+                    print("CACHETEST FAIL — load returned nil"); exit(1)
+                }
+                try? FileManager.default.removeItem(at: tmp)
+                let ok = loaded.response.roster.count == sample.roster.count
+                    && loaded.response.roster.first?.repoName == sample.roster.first?.repoName
+                    && loaded.response.summary.rosterSize == sample.summary.rosterSize
+                print("CACHETEST \(ok ? "OK" : "FAIL") — round-tripped \(loaded.response.roster.count) "
+                      + "repos (first=\(loaded.response.roster.first?.repoName ?? "—")), "
+                      + "fetchedAt \(RelTime.ago(loaded.fetchedAt))")
+                exit(ok ? 0 : 1)
+            } catch {
+                print("CACHETEST FAIL — \(error)"); exit(1)
+            }
+        }
+
         guard ProcessInfo.processInfo.environment["FOCUS5_SELFTEST"] != nil else { return }
         do {
             let resp = try SampleData.load()

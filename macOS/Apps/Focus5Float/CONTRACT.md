@@ -163,3 +163,14 @@ struct OffRosterWarning: Codable, Identifiable {
 > Note: `device_id`, `head_reflog_ts`, `index_mtime_ts` exist on the wire but are
 > intentionally omitted from the Swift model — the app doesn't render them. `Codable`
 > ignores unknown keys, so this is safe.
+
+## Offline cache (local-only)
+
+The last successful response is cached to `~/Library/Application Support/Focus5Float/roster-cache.json`
+so a cold launch renders instantly and the panel stays useful while `rebalance serve`
+is down (`RosterCache.swift`). **It is LOCAL-ONLY** — it holds the same local-only /
+PII fields as the wire payload (`local_path`, `vscode_url`, `remote_url`,
+`author_email`), so it must never be synced, exported, or copied off the machine.
+Format is the app's own round-trip codec (camelCase + ISO-8601 envelope:
+`{schemaVersion, fetchedAt, response}`), distinct from the snake_case server wire
+format; a schema-version mismatch or parse error is ignored (not fatal).
