@@ -82,7 +82,9 @@ struct ContentView: View {
         case .loaded:
             ScrollView {
                 LazyVStack(spacing: Theme.Space.s) {
-                    ForEach(model.roster) { RepoCardView(card: $0) }
+                    ForEach(Array(model.roster.enumerated()), id: \.element.id) { index, card in
+                        RepoCardView(card: card, darker: !index.isMultiple(of: 2))
+                    }
                     if !model.offRoster.isEmpty {
                         OffRosterFooter(warnings: model.offRoster)
                     }
@@ -110,6 +112,7 @@ struct ContentView: View {
 
 struct RepoCardView: View {
     let card: RepoCard
+    var darker: Bool = false        // zebra stripe — alternate rows use elevatedAlt
     @State private var expanded = false
 
     var body: some View {
@@ -147,7 +150,7 @@ struct RepoCardView: View {
         }
         .padding(Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .background(darker ? Theme.elevatedAlt : Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                 .strokeBorder(Theme.separator, lineWidth: 1)

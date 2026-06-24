@@ -18,6 +18,11 @@ enum Theme {
     static let sidebar     = dynamic(light: 0xECEBE7, dark: 0x252528)
     /// Elevated controls / search field / phrase well — `#F4F3EF` light, `#2B2B2E` dark.
     static let elevated    = dynamic(light: 0xF4F3EF, dark: 0x2B2B2E)
+    /// `elevated` darkened ~12% — the alternate (zebra-stripe) repo-card fill.
+    static let elevatedAlt = Color(nsColor: NSColor(name: nil) { appearance in
+        let base = appearance.isDark ? NSColor(hex: 0x2B2B2E) : NSColor(hex: 0xF4F3EF)
+        return base.blended(withFraction: 0.12, of: .black) ?? base
+    })
     /// Primary text — `#1D1D1F` light, `#F5F5F7` dark.
     static let text        = dynamic(light: 0x1D1D1F, dark: 0xF5F5F7)
     /// Secondary text — `#86868B` light, `#98989E` dark.

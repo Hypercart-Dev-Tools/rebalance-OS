@@ -17,6 +17,9 @@ Focus 5 Float reaches feature-complete (Phases 1–4) and passes an automated Co
 - `Focus5Float` SwiftPM package harvesting the TextReplacementStudio design system (`Theme`, `KeyCap`/`GroupTag`/`StatusDot`), `Codable` wire models, a bundled fixture, and headless `FOCUS5_SELFTEST` / `FOCUS5_LIVETEST` decode smoke tests.
 - `make-app.sh` packaging for Focus 5 Float: release build → ad-hoc-signed `.app` bundle (menu-bar agent via `LSUIElement`) installed to `/Applications` (Phase 5 install path).
 
+### Changed
+- Focus 5 Float repo cards are now zebra-striped — alternate rows use an `elevatedAlt` fill (the elevated color darkened ~12%) for easier row scanning.
+
 ### Fixed
 - Focus 5 Float mode/refresh race: concurrent poll, manual refresh, and ranking-mode switches could apply out of order; a generation guard now lets only the latest fetch apply, and an optimistic mode flip reverts on a real fetch failure. (Codex QA)
 - Focus 5 Float empty-state copy no longer implies that in-app Refresh rebuilds the roster — it correctly directs the operator to build the roster server-side, then re-pull. (Codex QA)
