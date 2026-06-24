@@ -272,7 +272,7 @@ Newest notes always appear at the top. Obsidian renders the `---` dividers clean
 
 ## Implementation Status
 
-- Implemented as a standalone utility project under `utilities/stickies-to-obsidian/`.
+- Implemented as a standalone utility project under `utils/stickies-to-obsidian/`.
 - Current deliverables: `stickies2obsidian.sh`, a launchd plist template, and `install_launch_agent.sh`.
 - The installer accepts `--obsidian-file`, `--state-file`, and `--stickies-dir` so launchd can target a real vault path instead of the baked-in demo default.
 - Integration coverage lives in `tests/test_stickies2obsidian_cli.py`.

@@ -20,11 +20,11 @@ job.
 | `pulse-warning-watch` | every 15 min at :00/:15/:30/:45, around the clock + RunAtLoad | — (python direct) | `scripts/pulse_warning_watch.py --url http://127.0.0.1:8767/` | pulse-server running on 8767 | `temp/pulse-warning-watch.jsonl` (one record per check) |
 | `health-check` | hourly at :00, around the clock | — (python direct) | `scripts/health_issue_reporter.py --close` (FAIL-only, no LLM) | GitHub token for issue filing | GitHub issues opened/closed on failing doctor checks |
 | `health-check-triage` | 3×/day at 08:00, 14:00, 20:00 | — (python direct) | `scripts/health_issue_reporter.py --warn --close --llm-triage --llm-daily-limit 8 --llm-max-per-run 5` | ANTHROPIC_API_KEY in rendered plist or keyring | LLM-triaged GitHub issues; quota circuit breakers CB-1/2/3 |
-| `obsidian-rollover` | daily 00:00 (or next wake); RunAtLoad must stay **false** | `utilities/obsidian_rollover.sh` | `utilities/obsidian_daily_rollover.py` | Full Disk Access via bash wrapper (TCC) | daily note rolled over; log in `~/Library/Logs/rebalance-os/` |
+| `obsidian-rollover` | daily 00:00 (or next wake); RunAtLoad must stay **false** | `utils/obsidian_rollover.sh` | `utils/obsidian_daily_rollover.py` | Full Disk Access via bash wrapper (TCC) | daily note rolled over; log in `~/Library/Logs/rebalance-os/` |
 
 All labels are prefixed `com.rebalance-os.`. Experimental/utility agents
 (`com.user.git-pulse`, `com.user.stickies2obsidian`) live in `experimental/`
-and `utilities/stickies-to-obsidian/` with their own installers and are out of
+and `utils/stickies-to-obsidian/` with their own installers and are out of
 scope for this table.
 
 ## Freshness model (intentional, not accidental)

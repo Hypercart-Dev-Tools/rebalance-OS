@@ -4,7 +4,7 @@
 # What this does:
 #   1. Renders com.rebalance-os.obsidian-rollover.plist.template into
 #      ~/Library/LaunchAgents/.
-#   2. Loads it so macOS runs utilities/obsidian_rollover.sh at 00:00 daily
+#   2. Loads it so macOS runs utils/obsidian_rollover.sh at 00:00 daily
 #      (or on next wake if the Mac was asleep at midnight).
 #
 # RunAtLoad is intentionally false in the template — loading must never fire
@@ -25,7 +25,7 @@ echo "  REBALANCE_DIR=$REBALANCE_DIR"
 # Job log lives outside the TCC-protected ~/Documents tree.
 mkdir -p "$HOME/Library/Logs/rebalance-os"
 
-rb_install_launchd_job "com.rebalance-os.obsidian-rollover" "utilities/obsidian_rollover.sh"
+rb_install_launchd_job "com.rebalance-os.obsidian-rollover" "utils/obsidian_rollover.sh"
 
 echo
 echo "Done! Daily notes roll over at midnight (or on next wake)."

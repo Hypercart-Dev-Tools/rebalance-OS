@@ -10,7 +10,7 @@
 set -euo pipefail
 
 REBALANCE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
-SCRIPT="$REBALANCE_DIR/utilities/obsidian_daily_rollover.py"
+SCRIPT="$REBALANCE_DIR/utils/obsidian_daily_rollover.py"
 
 # Prefer the project venv; fall back to system python3 (script is stdlib-only).
 if [ -x "$REBALANCE_DIR/.venv/bin/python" ]; then

@@ -158,7 +158,7 @@ POLICY = {
         # Loading must never fire the rollover — it would wipe Today's Notes.
         "run_at_load": False,
         "keep_alive": False,
-        "wrapper": "utilities/obsidian_rollover.sh",
+        "wrapper": "utils/obsidian_rollover.sh",
         "wrapper_must_contain": ["obsidian_daily_rollover.py"],
         "doc_tokens": ["daily 00:00", "obsidian_rollover.sh"],
     },
@@ -289,7 +289,7 @@ class TestWrapperScripts(unittest.TestCase):
 
     def test_scheduled_wrappers_use_shared_runtime(self):
         # scripts/-resident wrappers must source the shared lib; the
-        # utilities/ rollover wrapper predates it and is exec-only by design.
+        # utils/ rollover wrapper predates it and is exec-only by design.
         for job, spec in self._wrapper_jobs().items():
             if not spec["wrapper"].startswith("scripts/"):
                 continue

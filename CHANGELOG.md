@@ -484,7 +484,7 @@ P2 Phase 1 — team-calendar signal — plus a max-effort code-review hardening 
   already-rendered rows (each tagged with `data-severity`); no backend change.
 
 - **Obsidian daily-notes rollover utility.** A nightly launchd job
-  (`utilities/obsidian_daily_rollover.py` + the `utilities/obsidian_rollover.sh`
+  (`utils/obsidian_daily_rollover.py` + the `utils/obsidian_rollover.sh`
   wrapper) that, at midnight, prepends `0. Today's Notes.md` to the top of
   `0. Yesterday.md` under a dated header (a rolling, newest-first log) and blanks
   Today's Notes so each morning starts clean. Auto-creates Today's Notes if it

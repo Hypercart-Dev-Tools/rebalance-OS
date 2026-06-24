@@ -11,7 +11,7 @@
          jobs — so no new Full Disk Access entry is needed. -->
     <key>ProgramArguments</key>
     <array>
-        <string>{{REBALANCE_DIR}}/utilities/obsidian_rollover.sh</string>
+        <string>{{REBALANCE_DIR}}/utils/obsidian_rollover.sh</string>
     </array>
 
     <!-- Fire at 00:00 every day. If the Mac is asleep at midnight, launchd
