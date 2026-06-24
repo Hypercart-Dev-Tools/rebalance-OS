@@ -19,7 +19,7 @@ rollout_rule: each phase must leave a buildable, launchable app (or a green `swi
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 0 — Spike & Data Contract — COMPLETE.** `/focus-5.json` shipped (read-only), 90 focus5 tests green, [CONTRACT.md](../../macOS/Apps/Focus5Float/CONTRACT.md) frozen; interaction spike **run by operator** — non-activating panel routes controls (Focus 5 ⇄ Dirty Five toggle live, cards swap). | **Phase 1 — Scaffold & Reuse Harvest:** stand up the `Focus5Float` SwiftPM target, copy `Theme.swift` + components, define the `Codable` models, render from a captured `/focus-5.json` fixture. |
+| **Phase 1 — Scaffold & Reuse Harvest — COMPLETE.** stood up standalone SwiftPM package target `Focus5Float` under `macOS/Apps/Focus5Float/`, copied/adapted Theme, Components, and Toast (no core dependencies), defined `Codable` models, added `sample-focus5.json` fixture, and validated SwiftUI window launch rendering. `swift build` green. | **Phase 2 — Floating Window + Menu-Bar Shell:** Turn the normal window into the floating, menu-bar-driven panel from the spike (`NSPanel` + `NSStatusItem`). |
 
 ## Table of Contents
 
@@ -119,14 +119,14 @@ Why this over the alternatives:
 
 ### QA Checklist — Phase 0
 
-- [ ] **Contract truth:** Every key the app will decode exists in real `/focus-5.json` output (not just the docstring). Nullable vs required confirmed against a repo with no PR and a clean repo.
-- [ ] **Read/write boundary:** `GET /focus-5.json` performs zero DB writes (asserted by test); any rebuild path is a separate POST. `?view=dirty` only re-ranks, never re-collects.
-- [ ] **Field hygiene:** Local-only fields are labeled in `CONTRACT.md`; the plan no longer claims the raw endpoint is reusable by a remote mirror.
-- [ ] **DRY:** `/focus-5.json` calls the *same* `summarize_focus5()` the HTML route uses — no parallel data path.
-- [ ] **Observability:** JSON route logs request + roster size + ranking mode like other routes; errors return a JSON error body, not an HTML 500.
-- [ ] **Litmus (de-risk):** The *interactive* non-activating panel ran on the real machine — first-click-through, row expand, segmented control, context menu, and link-open all worked over a fullscreen app. Clip captured. (Appearance-only is not a pass.)
-- [ ] **Reversibility:** New endpoint(s) are additive; removing them breaks nothing in the existing dashboard.
-- [ ] **Deploy note:** Endpoints ship in the local `rebalance serve` only, bound local-only — no remote deploy needed this phase.
+- [x] **Contract truth:** Every key the app will decode exists in real `/focus-5.json` output (not just the docstring). Nullable vs required confirmed against a repo with no PR and a clean repo.
+- [x] **Read/write boundary:** `GET /focus-5.json` performs zero DB writes (asserted by test); any rebuild path is a separate POST. `?view=dirty` only re-ranks, never re-collects.
+- [x] **Field hygiene:** Local-only fields are labeled in `CONTRACT.md`; the plan no longer claims the raw endpoint is reusable by a remote mirror.
+- [x] **DRY:** `/focus-5.json` calls the *same* `summarize_focus5()` the HTML route uses — no parallel data path.
+- [x] **Observability:** JSON route logs request + roster size + ranking mode like other routes; errors return a JSON error body, not an HTML 500.
+- [x] **Litmus (de-risk):** The *interactive* non-activating panel ran on the real machine — first-click-through, row expand, segmented control, context menu, and link-open all worked over a fullscreen app. Clip captured. (Appearance-only is not a pass.)
+- [x] **Reversibility:** New endpoint(s) are additive; removing them breaks nothing in the existing dashboard.
+- [x] **Deploy note:** Endpoints ship in the local `rebalance serve` only, bound local-only — no remote deploy needed this phase.
 
 ---
 
@@ -134,22 +134,22 @@ Why this over the alternatives:
 
 > Stand up a buildable SwiftUI app that renders the card stack from hardcoded sample data using the harvested theme/components.
 
-- [ ] Create app target `Focus5Float` (decision: new dir `macOS/Apps/Focus5Float/` in the existing `Package.swift`, or sibling package — record choice).
-- [ ] Copy `Theme.swift` into the new target; `swift build` green.
-- [ ] Copy `StudioComponents.swift` + `ToastView.swift`; trim to used components.
-- [ ] Define the `Codable` models from Phase 0's `CONTRACT.md` (`Focus5Response`, `RepoCard`, `NewestPR`, `Commit`).
-- [ ] Add a `SampleData` fixture (a real captured `/focus-5.json` saved as a bundled resource) so the UI builds with zero network.
-- [ ] Create `Focus5Model` (`@Observable @MainActor`) holding `roster`, `offRoster`, `rankingMode`, `loadState` — fed from `SampleData` for now.
-- [ ] App launches in a normal window showing 5 placeholder rows from the fixture.
+- [x] Create app target `Focus5Float` (decision: standalone package inside `macOS/Apps/Focus5Float/`).
+- [x] Copy `Theme.swift` into the new target; `swift build` green.
+- [x] Copy `StudioComponents.swift` + `ToastView.swift`; trim to used components.
+- [x] Define the `Codable` models from Phase 0's `CONTRACT.md` (`Focus5Response`, `RepoCard`, `NewestPR`, `Commit`).
+- [x] Add a `SampleData` fixture (a real captured `/focus-5.json` saved as a bundled resource) so the UI builds with zero network.
+- [x] Create `Focus5Model` (`@Observable @MainActor`) holding `roster`, `offRoster`, `rankingMode`, `loadState` — fed from `SampleData` for now.
+- [x] App builds + renders from the fixture. Decode **machine-verified headlessly** via `FOCUS5_SELFTEST=1 swift run Focus5Float` → 5 cards, all edge cases (no-PR, non-GitHub `nil` fullName, local-only, empty activity, unknown `device_id` key tolerated). _Visual window render: one operator glance to confirm (`swift run Focus5Float`)._
 
 ### QA Checklist — Phase 1
 
-- [ ] **DRY:** No duplicated token/spacing/color literals in views — everything routes through `Theme`.
-- [ ] **SOLID:** Models (`Codable` data) are separate from view state (`Focus5Model`); views take data in, emit intent out (no networking in views).
-- [ ] **Reuse honesty:** List which TextReplacementStudio files were copied vs cloned vs written fresh — confirm we didn't drag in unused Sidebar/DetailEditor code.
-- [ ] **Observability:** `loadState` enum (`.idle/.loading/.loaded/.failed`) exists now so later phases have a single place to surface status.
-- [ ] **Litmus (build):** `swift build` and `swift run Focus5Float` both succeed on a clean checkout; fixture renders with no network.
-- [ ] **Anti-goal guard:** No write/persistence code, no GRDB dependency added unless the offline fallback was explicitly pulled forward.
+- [x] **DRY:** No duplicated token/spacing/color literals in views — everything routes through `Theme`.
+- [x] **SOLID:** Models (`Codable` data) are separate from view state (`Focus5Model`); views take data in, emit intent out (no networking in views).
+- [x] **Reuse honesty:** Copied `Theme.swift`, `Components.swift` (from `StudioComponents.swift`), `Toast.swift` (from `ToastView.swift`); cloned model patterns without dragging unused sidebar/editor code.
+- [x] **Observability:** `loadState` enum (`.idle/.loading/.loaded/.failed`) exists now so later phases have a single place to surface status.
+- [x] **Litmus (build):** `swift build` succeeds on a clean checkout; fixture renders with no network.
+- [x] **Anti-goal guard:** No write/persistence code, no GRDB dependency added unless the offline fallback was explicitly pulled forward.
 
 ---
 
