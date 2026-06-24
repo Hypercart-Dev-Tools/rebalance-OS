@@ -19,7 +19,7 @@ rollout_rule: each phase must leave a buildable, launchable app (or a green `swi
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 4 — Live Data Integration — COMPLETE.** Panel now shows the **real** roster (not the fixture): `Focus5Client` GETs `/focus-5.json` — the *same* `summarize_focus5()` behind the web `/focus-5` — with 90s poll, Refresh + ranking-mode re-fetch, offline handling, and tap-to-open in VS Code. Verified end-to-end against a live `rebalance serve`: identical 5 repos as the browser. `swift build` green. | **Phase 3 — Vertical Card-Stack UI:** collapsible rows (tree-health / PR / activity sub-sections), in-panel ranking toggle, staleness badge, off-roster footer. Then Phase 5 (packaging). |
+| **Phase 3 — Vertical Card-Stack UI — COMPLETE.** Collapsible repo cards over live data: tap expands into Tree health / Newest PR / Recent activity (web-card parity); in-panel ranking segmented control + refresh + ⚠ stale + offline badges; collapsible off-roster footer; graceful empty/loading/failed states; `RelTime` helper. `swift build` green, live decode verified. **Phases 0–4 all done — feature-complete on the fixture-free live path.** | **Phase 5 — Packaging, Launch-at-Login & Docs:** `make-app.sh` adaptation (bundle id, `LSUIElement`, icon, ad-hoc sign, install to /Applications), launch-at-login, settings, README. |
 
 ## Table of Contents
 
@@ -180,25 +180,25 @@ Why this over the alternatives:
 
 ## Phase 3 — Vertical Card-Stack UI
 
-> Build the screenshot: a vertical `ScrollView` of collapsible repo rows with status dots and right-aligned metrics. Still driven by the fixture.
+> A vertical `ScrollView` of collapsible repo rows with status dots and right-aligned metrics. _(Built on the live `/focus-5.json` — Phase 4 landed first.)_
 
-- [ ] `CardStackView`: vertical `ScrollView` → `LazyVStack` of `RepoCardRow`, `Theme.Space` rhythm, `Theme.spring` for expand/collapse.
-- [ ] `RepoCardRow` collapsed state: position badge (`KeyCap`-style `#1`), repo name, status dot (green = clean, red = dirty/unpushed, grey = idle/no-signal), right-aligned drift `↑{ahead} ↓{behind}` + `{modified}M {untracked}U`.
-- [ ] Disclosure / tap expands a row into sub-sections mirroring the web card: **Tree health** (dot + branch + drift), **Newest PR** (#num title + state), **Recent activity** (≤3 commits w/ relative time).
-- [ ] Relative-time helper (`_ago` equivalent) in Swift for commit/`computed_at` timestamps.
-- [ ] Header strip: ranking-mode segmented control (🎯 Focus 5 / 🧹 Dirty Five), refresh button (↻), staleness badge (⚠ stale if `computed_at` > 24h).
-- [ ] Off-roster warnings shown as a compact collapsible footer ("N repos outside top 5 need attention").
-- [ ] Empty/zero-roster and loading states render gracefully (skeleton or message, not blank).
+- [x] `ContentView` content: vertical `ScrollView` → `LazyVStack` of `RepoCardView`, `Theme.Space` rhythm, `Theme.spring` for expand/collapse.
+- [x] `RepoCardView` collapsed: `KeyCap` `#1` position badge, repo name, `StatusDot` (green=clean / red=dirty / grey=no-signal), drift `↑{ahead} ↓{behind}` + `{modified}M {untracked}U`, rank reason, **Open ↗** button + chevron.
+- [x] Tap expands into the web card's sub-sections: **Tree health** (dot + clean/modified+untracked + branch + drift), **Newest PR** (#num title + state, opens `html_url`; explicit fallback for no-PR / non-GitHub / no-remote), **Recent activity** (commits w/ `sha · Nago`, email omitted).
+- [x] Relative-time helper `RelTime.ago()` + `isOlderThan()` ([Time.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Time.swift)) for commit/`computed_at` timestamps.
+- [x] In-panel header: ranking-mode **segmented control** (🎯 Focus 5 / 🧹 Dirty Five → `model.setMode`), **refresh** button (↻), **⚠ stale** badge (`computed_at` > 24h), `offline` badge, "N repos · updated Nago".
+- [x] Off-roster warnings as a **collapsible footer** ("N outside top 5 need attention").
+- [x] Empty/zero-roster, loading, and failed states all render gracefully (distinct Focus 5 vs Dirty Five empty copy; actionable offline message).
 
 ### QA Checklist — Phase 3
 
-- [ ] **DRY:** Status-dot color logic and relative-time formatting each exist once (shared helpers), reused by collapsed row + expanded Tree-health.
-- [ ] **Parity:** Side-by-side the web `/focus-5` card vs the native row — same fields, same color semantics (accent/ok/danger). Note any intentional omissions.
-- [ ] **SOLID:** `RepoCardRow` is a pure function of one `RepoCard` + expanded bool; no global lookups.
-- [ ] **Accessibility/legibility:** Dynamic-type / dark-mode both render; min hit target for disclosure and buttons ≥ 28pt; color is not the *only* signal (dot has adjacent text).
-- [ ] **Observability:** Expand/collapse and mode-toggle update model state (testable) rather than mutating views directly.
-- [ ] **Litmus (visual):** Screenshot of the stacked view next to the reference screenshot — vertical stacking + dots + right-aligned metrics match the intended look.
-- [ ] **Anti-goal guard:** Still no live network — confirms the UI layer is decoupled from data fetching.
+- [x] **DRY:** `StatusDot` color logic (Components.swift) and `RelTime` formatting (Time.swift) each exist once; reused by collapsed row + expanded Tree-health + off-roster footer.
+- [~] **Parity:** Same fields + color semantics (accent / diffAdd=ok / diffRemove=danger / diffUpdate=stale) as the web card; PR fallbacks mirror the web's three states. _Operator: side-by-side glance vs browser `/focus-5`._
+- [x] **SOLID:** `RepoCardView` is a pure function of one `RepoCard` + local `@State expanded`; no global lookups. `CardSection` is a reusable labeled block.
+- [~] **Accessibility/legibility:** dark-mode via Theme dynamic colors; `StatusDot` has an `accessibilityLabel` and adjacent text (color not the only cue). _Operator: confirm hit targets / dynamic-type._
+- [x] **Observability:** expand/collapse + off-roster toggle drive local view state; mode/refresh route through the model (`os_log` in the app layer).
+- [~] **Litmus (visual):** `swift build` green + live decode confirmed. _Operator: screenshot the stacked + expanded card next to the web reference._
+- [x] **Data decoupling:** UI reads only `Focus5Model` observable state; all fetching lives in `Focus5Client`/model (the Phase-3 anti-goal "UI decoupled from data" holds, now over live data).
 
 ---
 

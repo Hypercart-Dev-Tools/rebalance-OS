@@ -27,6 +27,10 @@ final class Focus5Model {
 
     var isDirtyView: Bool { rankingMode == "dirty_first" }
 
+    /// Roster snapshot older than 24h (matches the web "⚠ stale" threshold).
+    var isStale: Bool { RelTime.isOlderThan(lastUpdated, hours: 24) }
+    var lastUpdatedAgo: String { RelTime.ago(lastUpdated) }
+
     /// Live fetch of GET /focus-5.json — the same roster the web /focus-5 shows.
     /// On failure the last-known roster stays on screen with an offline flag; an
     /// empty roster degrades to a `.failed` state with an actionable message.
