@@ -86,7 +86,13 @@
       "Bash(sed -n '216,230p' src/rebalance/ingest/daily_report.py)",
       "Bash(sed -n '183,196p' src/rebalance/ingest/note_builder.py)",
       "Bash(sed -n '228,240p' src/rebalance/ingest/project_inference.py)",
-      "Bash(sed -n '104,115p' src/rebalance/ingest/calendar_config.py)"
+      "Bash(sed -n '104,115p' src/rebalance/ingest/calendar_config.py)",
+      "Bash(utils/pdda-run.sh)",
+      "Bash(rtk find *)",
+      "Bash(git check-ignore *)",
+      "Bash(git rev-parse *)",
+      "Bash(utils/pdda-check-roadmap.sh)",
+      "Bash(echo \"rc=$?\")"
     ]
   }
 }
