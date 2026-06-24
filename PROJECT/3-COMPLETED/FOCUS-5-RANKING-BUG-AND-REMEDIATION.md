@@ -1,11 +1,11 @@
 ---
 title: "Focus 5 surfaces the wrong repos — root-cause trace + remediation"
 doc_type: bug-trace + remediation-plan
-status: IMPLEMENTED (2026-06-19) — Phases 1/2/4 done + tested + verified live; Phase 3 wired (piggyback github-sync), activates once that job is installed
+status: COMPLETE (2026-06-24) — Phases 1/2/4 verified live; Phase 3 activated (com.rebalance-os.github-sync installed + loaded + fired on the :45 schedule, focus5 recompute OK, 0 failed repos)
 method: /debug-mantra (reproduce → fail path → falsify → cross-reference)
 owner: noel@neochro.me
 created: 2026-06-19
-updated: 2026-06-19
+updated: 2026-06-24
 goal: "Identify and resolve why the Focus 5 dashboard page surfaces incorrect or stale repositories rather than the most recently active ones."
 related:
   - PROJECT/2-WORKING/FOCUS-5.md  (original spike/design)
@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 1/2/4 implemented + tested + verified on the live device** (2026-06-19) — Focus 5 now surfaces rebalance-OS / xyz-3-agents-swarm / giant-brains / hypercart-plugin-mkiii / wp-code-check; the old wrong repos (sleuth-app, eve) moved to the Dirty Five safety view | **Activate Phase 3**: install `github-sync` (`bash scripts/install_github_scheduler.sh`) so the hourly piggyback recompute actually fires — no rebalance launchd jobs are loaded on this box right now |
+| **Phase 3 activated (2026-06-24)** — `com.rebalance-os.github-sync` installed + loaded (`launchctl list` shows it) and fired on the `:45` schedule; the focus5 recompute completed (`failed_repos: 0`), so the roster now refreshes hourly without manual intervention. Phases 1/2/4 were already verified live (2026-06-19). | **Complete — moved to `3-COMPLETED`.** No remaining project work; the hourly recompute runs autonomously. |
 
 **Implementation log (2026-06-19).** Landed on `fix/focus5-no-blocking-scan`,
 one commit per phase, 139 tests green:
@@ -32,8 +32,11 @@ one commit per phase, 139 tests green:
   + `rebalance config {add,remove,list}-focus5-scan-root`; `rebalance-OS` added to
   the live (gitignored) `temp/rbos.config`; self-repo-root discovery pinned by test.
 - **Phase 3** — folded `focus5` into the hourly `github-sync` scope (operator's
-  choice over a standalone job); SCHEDULER.md + policy test updated. **Caveat:** it
-  only runs once `github-sync` is installed in launchd (it isn't currently).
+  choice over a standalone job); SCHEDULER.md + policy test updated. **Activated
+  2026-06-24:** `bash scripts/install_github_scheduler.sh` installed + loaded
+  `com.rebalance-os.github-sync`; it fired on the `:45` schedule and the focus5
+  recompute completed (0 failed repos), so `refresh_index(scope=["github","focus5"])`
+  now runs hourly.
 - **Live verification** — `sync_focus5()` on the real DB: discovered 86 repos,
   roster = rebalance-OS (2m), xyz-3-agents-swarm (8h), giant-brains (9h),
   hypercart-plugin-mkiii (12h), wp-code-check (1d). `eve` (dirty-only, no authored

@@ -696,3 +696,15 @@
 {"timestamp":"2026-06-24T04:18:48Z","severity":"info","check":"pdda-check-roadmap","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
 {"timestamp":"2026-06-24T05:01:56Z","severity":"info","check":"pdda-check-roadmap","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
 {"timestamp":"2026-06-24T05:14:17Z","severity":"info","check":"pdda-check-roadmap","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T06:36:22Z","severity":"info","check":"pdda-check-roadmap","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T06:41:13Z","severity":"info","check":"pdda-check-changelog","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T06:41:13Z","severity":"info","check":"pdda-check-roadmap","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T06:52:26Z","severity":"info","check":"pdda-check-changelog","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T15:12:42Z","severity":"info","check":"pdda-check-roadmap","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T15:12:42Z","severity":"info","check":"pdda-check-frontmatter","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T15:12:42Z","severity":"info","check":"pdda-check-status-table","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T15:12:43Z","severity":"info","check":"pdda-check-roadmap-coverage","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T16:16:44Z","severity":"info","check":"pdda-check-roadmap","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T16:16:44Z","severity":"info","check":"pdda-check-roadmap-coverage","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T16:16:44Z","severity":"info","check":"pdda-check-frontmatter","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-24T16:16:45Z","severity":"info","check":"pdda-check-status-table","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
