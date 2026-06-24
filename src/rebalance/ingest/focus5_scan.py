@@ -177,6 +177,54 @@ def resolve_recency(
     return None, "none"
 
 
+# Human "why" for each fallback basis (GH-81 Phase 2). Only the degraded rungs get
+# a note — a fallback must be SHOWN, never silent; `local_reflog` needs none (it's
+# the expected basis). `none` is handled separately (ineligibility, not a fallback).
+_BASIS_NOTE = {
+    "author_email": "ranked by author email — this clone's HEAD reflog is disabled",
+    "any_commit": "ranked by latest commit — reflog disabled, no commit under your email",
+}
+
+# Short form of the same vocabulary for a compact on-card badge.
+_BASIS_BADGE = {
+    "author_email": "via author email",
+    "any_commit": "via latest commit",
+}
+
+
+def basis_badge(recency_basis: str | None) -> str:
+    """Short fallback-basis label for a rostered card (GH-81 Phase 2).
+
+    Returns ``""`` for the expected ``local_reflog`` basis (and ``none``); a
+    non-empty badge means "this repo ranked by a FALLBACK" — surfaced so a
+    degraded basis is visible on the board, never silent.
+    """
+    return _BASIS_BADGE.get(recency_basis or "", "")
+
+
+def explain_recency(
+    recency_basis: str | None, my_local_commit_ts: int | None,
+    rank_cutoff_ts: int | None, now_ts: int,
+) -> str:
+    """One-line operator-facing "why does this repo rank where it does?" string.
+
+    A pure render over the Phase-1 explain payload (basis + resolved recency + the
+    #5 cutoff) — no git, no recompute — so the question that needed ``git log``
+    forensics in GH-81 has a one-line answer, including when a fallback basis was
+    used. Eligible: "your local commit 3d ago · below the #5 cutoff (16h ago) ·
+    <fallback note>"; ineligible: the no-local-commit reason.
+    """
+    if recency_basis in (None, "none") or my_local_commit_ts is None:
+        return "no local commit here — not eligible for Focus 5"
+    parts = [f"your local commit {_humanize_ago(my_local_commit_ts, now_ts)}"]
+    if rank_cutoff_ts is not None and my_local_commit_ts < rank_cutoff_ts:
+        parts.append(f"below the #5 cutoff ({_humanize_ago(rank_cutoff_ts, now_ts)})")
+    note = _BASIS_NOTE.get(recency_basis)
+    if note:
+        parts.append(note)
+    return " · ".join(parts)
+
+
 # ---------------------------------------------------------------------------
 # Ranking strategies — a pure function per mode, selected by config
 # ---------------------------------------------------------------------------

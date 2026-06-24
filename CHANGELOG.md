@@ -13,6 +13,7 @@ The headline activity board now ranks on whether *your local checkout* committed
 ### Added
 - Local-commit recency vector: a reflog operation classifier (accept a commit / amend / cherry-pick / revert / rebase / real merge; reject a fast-forward pull, fetch, checkout, clone, reset; an unrecognized op is rejected and logged) feeding a recorded fallback ladder — local reflog → author email → any commit (only when the reflog is genuinely unavailable) → none.
 - A recorded ranking basis on every repo signal plus a minimal explain payload (per-repo basis and the board's #5 cutoff) so it is always visible *why* a repo ranks, with no silent bias.
+- Operator-facing explain UX on the activity board: each off-roster repo now shows, inline, why it isn't in the top 5 (its last local commit vs the #5 cutoff), and any repo ranked by a fallback basis (e.g. a clone whose reflog is disabled) carries a visible badge — answering "why is repo X here / not here?" without `git log` forensics.
 
 ### Changed
 - The default headline ranking now uses the identity-agnostic local-commit recency; the author-email signal is retained as a displayed diagnostic and a fallback input. Other ranking modes are unchanged.

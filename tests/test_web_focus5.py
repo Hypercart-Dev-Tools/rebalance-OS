@@ -28,17 +28,19 @@ def _card(**over) -> dict:
         repo_full_name="Org/rebalance-OS",
         newest_pr=None, recent_activity=[],
         health_available=True, health_probed_at=_now_iso(minutes=0),
+        recency_basis="local_reflog", my_local_commit_ts=None,
     )
     base.update(over)
     return base
 
 
-def _data(roster, **over) -> dict:
+def _data(roster, *, cutoff=None, **over) -> dict:
     d = dict(
         roster=roster, off_roster_warnings=[],
         computed_at=_now_iso(hours=1), ranking_mode="dirty_first",
         summary={"discovered": 21, "roster_size": len(roster),
-                 "off_roster_attention": len(over.get("off_roster_warnings", []))},
+                 "off_roster_attention": len(over.get("off_roster_warnings", [])),
+                 "rank_cutoff_ts": cutoff},
     )
     d.update(over)
     return d
@@ -141,6 +143,47 @@ class FocusBodyTests(unittest.TestCase):
     def test_no_warning_strip_when_all_clear(self) -> None:
         body = _focus5_body(_data([_card()]))  # no off-roster warnings
         self.assertNotIn("f5-warn", body)
+
+    # --- GH-81 Phase 2: explain UX on the off-roster strip + card basis badge ---
+
+    def test_off_roster_strip_explains_recency_vs_cutoff(self) -> None:
+        # The original GH-81 forensics question, answered inline: a dirty repo whose
+        # last LOCAL commit is below the #5 cutoff shows exactly why it's off-roster.
+        now = int(datetime.now(timezone.utc).timestamp())
+        warns = [{
+            "repo_name": "sleuth-app", "local_path": "/x/sleuth-app",
+            "repo_full_name": None, "branch": "main", "ahead": 0,
+            "modified_count": 1, "untracked_count": 0, "is_dirty": True,
+            "probed_at": _now_iso(hours=1),
+            "recency_basis": "local_reflog", "my_local_commit_ts": now - 3 * 86400,
+        }]
+        body = _focus5_body(_data([_card()], off_roster_warnings=warns,
+                                  cutoff=now - 16 * 3600))  # #5 cutoff = 16h ago
+        self.assertIn("sleuth-app", body)
+        self.assertIn("your local commit 3d ago", body)
+        self.assertIn("below the #5 cutoff", body)
+
+    def test_off_roster_strip_shows_fallback_basis(self) -> None:
+        now = int(datetime.now(timezone.utc).timestamp())
+        warns = [{
+            "repo_name": "no-reflog-clone", "local_path": "/x/no-reflog-clone",
+            "repo_full_name": None, "branch": "main", "ahead": 1,
+            "modified_count": 0, "untracked_count": 0, "is_dirty": False,
+            "probed_at": _now_iso(hours=1),
+            "recency_basis": "author_email", "my_local_commit_ts": now - 2 * 3600,
+        }]
+        body = _focus5_body(_data([_card()], off_roster_warnings=warns, cutoff=now))
+        self.assertIn("ranked by author email", body)  # the fallback is shown, not silent
+
+    def test_roster_card_shows_fallback_basis_badge(self) -> None:
+        # A rostered repo that ranked by a fallback basis must surface it on-card.
+        body = _focus5_body(_data([_card(recency_basis="author_email")]))
+        self.assertIn("f5-basis", body)
+        self.assertIn("via author email", body)
+
+    def test_roster_card_no_badge_on_normal_reflog_basis(self) -> None:
+        body = _focus5_body(_data([_card(recency_basis="local_reflog")]))
+        self.assertNotIn("f5-basis", body)
 
     def test_unavailable_health_renders_safely(self) -> None:
         card = _card(health_available=False)

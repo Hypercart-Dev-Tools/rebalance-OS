@@ -156,6 +156,8 @@ tr:hover td { background: rgba(0,0,0,.03); }
            border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
            line-height: 1.5; }
 .f5-warn b { color: var(--warn); }
+/* GH-81 Phase 2: a fallback-basis badge on a rostered card (reflog disabled). */
+.f5-basis { color: var(--fg-muted); font-weight: 400; font-size: 12px; }
 /* Focus 5 / Dirty Five view toggle — a small segmented control. */
 .f5-views { display: inline-flex; gap: 4px; padding: 3px; margin-bottom: 16px;
             background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
@@ -365,6 +367,11 @@ def _f5_warning_strip(data: dict[str, Any]) -> str:
     warns = data.get("off_roster_warnings") or []
     if not warns:
         return ""
+    # GH-81 Phase 2: each repo carries its rank explanation (recency + basis vs the
+    # #5 cutoff) so "why isn't this in Focus 5?" is answered inline, not via git log.
+    from rebalance.ingest.focus5_scan import explain_recency
+    cutoff = (data.get("summary") or {}).get("rank_cutoff_ts")
+    now_ts = int(datetime.now(timezone.utc).timestamp())
     shown, items = warns[:8], []
     for w in shown:
         bits = []
@@ -374,7 +381,14 @@ def _f5_warning_strip(data: dict[str, Any]) -> str:
             bits.append(f"{w['untracked_count']} untracked")
         if w.get("ahead"):
             bits.append(f"{w['ahead']} unpushed")
-        items.append(f"<b>{html.escape(w['repo_name'])}</b> ({', '.join(bits) or 'attention'})")
+        why = html.escape(
+            explain_recency(w.get("recency_basis"), w.get("my_local_commit_ts"),
+                            cutoff, now_ts)
+        )
+        items.append(
+            f"<b>{html.escape(w['repo_name'])}</b> ({', '.join(bits) or 'attention'}) "
+            f"<span class='f5-muted'>— {why}</span>"
+        )
     more = f" · +{len(warns) - len(shown)} more" if len(warns) > len(shown) else ""
     age = _rel_time(data.get("computed_at"))
     return (
@@ -421,6 +435,11 @@ def _f5_card(card: dict[str, Any]) -> str:
     vs_href = card.get("vscode_url") or "#"
     vsurl = html.escape(vs_href)
     reason = html.escape(card.get("rank_reason") or "")
+    # GH-81 Phase 2: when a card ranked by a FALLBACK basis (reflog disabled), show
+    # it — a degraded basis must never be silent, even for a rostered repo.
+    from rebalance.ingest.focus5_scan import basis_badge
+    badge = basis_badge(card.get("recency_basis"))
+    reason_badge = f" <span class='f5-basis'>({html.escape(badge)})</span>" if badge else ""
     # Hide identity: owner/repo when there's a remote, else the device-local path
     # (matches focus5_repo_identity / the focus5_hidden_repos config list).
     identity = html.escape(
@@ -439,7 +458,7 @@ def _f5_card(card: dict[str, Any]) -> str:
         f"{actions}"
         f"<div><div class='f5-pos'>#{card['position']}</div>"
         f"<a class='f5-name' href='{vsurl}' title='Open in VS Code'>{name}</a>"
-        f"<div class='f5-reason'>{reason}</div></div>"
+        f"<div class='f5-reason'>{reason}{reason_badge}</div></div>"
         f"{_f5_health(card)}{_f5_pr(card)}{_f5_activity(card)}"
         f"</div>"
     )

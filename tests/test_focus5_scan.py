@@ -26,6 +26,8 @@ from rebalance.ingest.focus5_scan import (
     _parse_status,
     _probe_head_reflog_commit,
     _signal_row,
+    basis_badge,
+    explain_recency,
     focus5_repo_identity,
     get_roster_meta,
     iter_git_repos,
@@ -301,6 +303,48 @@ class ResolveRecencyTests(unittest.TestCase):
             author_email_ts=None, any_commit_ts=NOW,  # foreign commit present
         )
         self.assertEqual((ts, basis), (None, "none"))
+
+
+# ---------------------------------------------------------------------------
+# GH-81 Phase 2: operator-facing explain UX (pure)
+# ---------------------------------------------------------------------------
+
+class ExplainRecencyTests(unittest.TestCase):
+    def test_on_roster_local_reflog_just_shows_recency(self) -> None:
+        # Above the cutoff (on the board), normal basis → no cutoff/fallback noise.
+        s = explain_recency("local_reflog", NOW - HOUR, rank_cutoff_ts=NOW - 2 * HOUR, now_ts=NOW)
+        self.assertEqual(s, "your local commit 1h ago")
+
+    def test_off_roster_eligible_shows_below_cutoff(self) -> None:
+        # The original GH-81 forensics question answered in one line.
+        s = explain_recency("local_reflog", NOW - 3 * DAY, rank_cutoff_ts=NOW - 16 * HOUR, now_ts=NOW)
+        self.assertIn("your local commit 3d ago", s)
+        self.assertIn("below the #5 cutoff (16h ago)", s)
+
+    def test_ineligible_none_basis(self) -> None:
+        s = explain_recency("none", None, rank_cutoff_ts=NOW - HOUR, now_ts=NOW)
+        self.assertEqual(s, "no local commit here — not eligible for Focus 5")
+
+    def test_fallback_basis_is_explained(self) -> None:
+        ae = explain_recency("author_email", NOW - HOUR, rank_cutoff_ts=None, now_ts=NOW)
+        self.assertIn("ranked by author email", ae)
+        ac = explain_recency("any_commit", NOW - HOUR, rank_cutoff_ts=None, now_ts=NOW)
+        self.assertIn("ranked by latest commit", ac)
+
+    def test_no_cutoff_note_when_cutoff_unknown(self) -> None:
+        s = explain_recency("local_reflog", NOW - 3 * DAY, rank_cutoff_ts=None, now_ts=NOW)
+        self.assertNotIn("cutoff", s)
+
+
+class BasisBadgeTests(unittest.TestCase):
+    def test_fallback_bases_get_a_badge(self) -> None:
+        self.assertEqual(basis_badge("author_email"), "via author email")
+        self.assertEqual(basis_badge("any_commit"), "via latest commit")
+
+    def test_normal_and_ineligible_bases_have_no_badge(self) -> None:
+        self.assertEqual(basis_badge("local_reflog"), "")
+        self.assertEqual(basis_badge("none"), "")
+        self.assertEqual(basis_badge(None), "")
 
 
 # ---------------------------------------------------------------------------

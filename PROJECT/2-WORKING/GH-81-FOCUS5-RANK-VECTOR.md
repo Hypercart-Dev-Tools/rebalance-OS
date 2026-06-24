@@ -2,7 +2,7 @@
 gh_issue: 81
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/81
 title: "Focus 5 — identity-agnostic ranking vector (local-commit recency)"
-status: in-progress
+status: complete
 doc_type: bug-fix + plan
 owner: noel@neochro.me
 created: 2026-06-24
@@ -17,7 +17,7 @@ rollout_rule: each phase leaves the system runnable (`pytest tests/` green, `reb
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 1 SHIPPED (2026-06-24)** — reflog op-classifier (`_classify_reflog_op`) + `resolve_recency` ladder + `my_local_commit_ts`/`recency_basis` on `RepoSignals`; `rank_recent_activity` now ranks on the reflog vector; minimal explain (`recency_basis` per card/off-roster + `rank_cutoff_ts`); migration **`0007`** (the plan said `0004` — already taken, next free is `0007`). Full suite green (**1098 passed**), `doctor` clean. **Proof on the real 88-repo device DB: 24 repos the old email gate would silently drop are now eligible via reflog; 51 repos' ranking input changed.** | **Phase 2** — operator-facing explain UX: surface `recency_basis` on the off-roster strip (the Phase-1 payload already carries it). |
+| **Phases 1 & 2 SHIPPED (2026-06-24) — GH-81 complete.** P1: reflog vector + `resolve_recency` ladder + `rank_recent_activity` ranks on `my_local_commit_ts`; migration `0007`; real-device proof (24 repos no longer silently dropped). P2: operator explain UX — `explain_recency` on the off-roster strip ("your local commit 3d ago · below the #5 cutoff (16h ago)") + `basis_badge` fallback badge on roster cards (a degraded basis is never silent). Full suite green (**1109 passed**), `doctor` clean. | **Done.** Optional: Codex r2 confirm of the `any_commit`-gating refinement; move doc to `3-COMPLETED`. |
 
 ## Table of Contents
 
@@ -145,24 +145,33 @@ off-roster strip remain as safety nets).
 > surface** that makes "why is repo X (not) in Focus 5?" a one-line answer instead
 > of `git log` forensics — including when a fallback basis was used.
 
-- [ ] Surface the Phase-1 explain payload on **one** channel: extend the web
-      off-roster strip reason (each repo's recency + `recency_basis` vs the #5
-      cutoff), or CLI `rebalance focus5 explain <repo>`, or an MCP field. Default
-      lean: off-roster strip (cheapest, already rendered).
-- [ ] Make the **`recency_basis` visible** — a fallback (e.g. "ranked by author
-      email because this clone's reflog is disabled") is shown, not silent.
-- [ ] Tests: explain UX for on-roster, off-roster-eligible (below cutoff),
-      ineligible (no local commit), and a **fallback-basis** repo.
+- [x] Surfaced on the **off-roster strip** (the default lean — cheapest, already
+      rendered): `_f5_warning_strip` now appends `explain_recency(...)` per repo —
+      "your local commit Nd ago · below the #5 cutoff (Xh ago)" — reusing the
+      Phase-1 `summary.rank_cutoff_ts`. (CLI/MCP surfaces deferred; one channel ships.)
+- [x] **`recency_basis` made visible** — a fallback rung is shown, not silent:
+      `explain_recency` appends "ranked by author email — this clone's HEAD reflog
+      is disabled" / "ranked by latest commit — …" on the strip, and `basis_badge`
+      puts a compact "(via author email)" / "(via latest commit)" badge on a
+      **rostered** card so a degraded basis is visible on the board too.
+- [x] Tests: `ExplainRecencyTests` (on-roster local_reflog, off-roster-below-cutoff,
+      ineligible `none`, both fallback bases, no-cutoff case) + `BasisBadgeTests`,
+      plus web-render tests (`test_off_roster_strip_explains_recency_vs_cutoff`,
+      `…_shows_fallback_basis`, `…_card_shows_fallback_basis_badge`, `…_no_badge_on_normal`).
 
 ### QA Checklist — Phase 2
 
-- [ ] **DRY:** the UX reuses the Phase-1 payload (recency + basis + cutoff) — no
-      parallel recomputation of "what's the cutoff."
-- [ ] **SOLID:** read-only pure render over the cached signals; no new probe, no write.
-- [ ] **Proof:** reproduces the original GH-81 finding in a test (sleuth off-roster:
-      "last local commit 3d ago < #5 cutoff 16h") **and** shows a fallback basis.
-- [ ] **Diagnosable (meta):** confirm it answers the exact question that required
-      manual forensics in GH-81 — including the reflog-unavailable fallback case.
+- [x] **DRY:** the UX reads `summary.rank_cutoff_ts` + the per-repo basis/recency
+      from the Phase-1 payload; the basis→phrase vocabulary lives in **one** place
+      (`_BASIS_NOTE`/`_BASIS_BADGE` in `focus5_scan.py`). No cutoff recomputation.
+- [x] **SOLID:** `explain_recency`/`basis_badge` are pure functions over the cached
+      payload; the web layer only renders. No new probe, no write.
+- [x] **Proof:** `test_off_roster_strip_explains_recency_vs_cutoff` reproduces the
+      GH-81 finding verbatim ("your local commit 3d ago · below the #5 cutoff
+      (16h ago)") **and** `…_shows_fallback_basis` shows a fallback basis.
+- [x] **Diagnosable (meta):** the strip answers "why isn't this repo in Focus 5?"
+      inline (recency vs cutoff) and names the fallback basis when one was used —
+      the exact question that needed `git log` forensics in GH-81.
 
 ---
 
@@ -177,8 +186,9 @@ off-roster strip remain as safety nets).
    message allowlist — too fragile / incomplete.)
 3. ~~**Phase split**~~ — **RESOLVED (Codex r1):** minimal explain payload moves to
    Phase 1 (observability for the new vector); operator-facing UX stays Phase 2.
-4. **Explain surface (Phase 2):** off-roster strip reason vs CLI vs MCP — still pick
-   one for v1. Lean: off-roster strip.
+4. ~~**Explain surface (Phase 2)**~~ — **RESOLVED (Phase 2 impl):** shipped on the
+   **off-roster strip** (`explain_recency`) + a rostered-card fallback badge
+   (`basis_badge`). CLI/MCP surfaces deferred — one channel was enough for v1.
 5. **Hybrid escape hatch:** keep an *optional* email-match union for operators who
    want web-merge-only repos to rank? Default OFF; only if requested. _(Note: the
    `author_email` fallback rung already covers the reflog-disabled case.)_
@@ -203,3 +213,10 @@ off-roster strip remain as safety nets).
      `any_commit` when the reflog is genuinely unavailable. All four basis values
      remain reachable; the core "foreign work can't masquerade as mine" invariant
      holds. (Worth a Codex r2 confirmation of this refinement.)
+- **Phase 2 implementation (2026-06-24)** — operator explain UX shipped in
+  `web.py` (off-roster strip + card badge) over two pure helpers in
+  `focus5_scan.py` (`explain_recency`, `basis_badge`); no new probe/write. Tests:
+  `ExplainRecencyTests` + `BasisBadgeTests` (pure) and 4 web-render assertions.
+  Full suite **1109 passed**, `doctor` clean. GH-81 is feature-complete; remaining
+  is the optional Codex r2 on the `any_commit`-gating refinement + filing the doc
+  to `3-COMPLETED`.
