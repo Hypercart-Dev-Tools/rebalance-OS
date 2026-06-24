@@ -614,7 +614,8 @@ def focus5_json(view: str = "focus5") -> JSONResponse:
         return JSONResponse({
             "roster": [], "off_roster_warnings": [],
             "computed_at": None, "ranking_mode": None,
-            "summary": {"discovered": 0, "roster_size": 0, "off_roster_attention": 0},
+            "summary": {"discovered": 0, "roster_size": 0,
+                        "off_roster_attention": 0, "rank_cutoff_ts": None},
         })
 
     data = summarize_focus5(db, mode="dirty_first" if view == "dirty" else None)

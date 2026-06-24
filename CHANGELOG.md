@@ -6,6 +6,21 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.44.0] - 2026-06-24
+
+The headline activity board now ranks on whether *your local checkout* committed recently — read from the HEAD reflog — instead of matching a single configured author email. Working under more than one identity (CLI vs web-merge noreply) no longer silently drops recent local work off the board.
+
+### Added
+- Local-commit recency vector: a reflog operation classifier (accept a commit / amend / cherry-pick / revert / rebase / real merge; reject a fast-forward pull, fetch, checkout, clone, reset; an unrecognized op is rejected and logged) feeding a recorded fallback ladder — local reflog → author email → any commit (only when the reflog is genuinely unavailable) → none.
+- A recorded ranking basis on every repo signal plus a minimal explain payload (per-repo basis and the board's #5 cutoff) so it is always visible *why* a repo ranks, with no silent bias.
+
+### Changed
+- The default headline ranking now uses the identity-agnostic local-commit recency; the author-email signal is retained as a displayed diagnostic and a fallback input. Other ranking modes are unchanged.
+- A migration-test fixture now builds its prior-version database by applying the real intermediate migrations rather than stamping them, so additive column migrations that touch earlier tables are exercised faithfully.
+
+### Fixed
+- Repos whose recent local commits were authored under a non-matching email (forks, web-merge noreply, multi-identity work) no longer silently disappear from the board. On a real 88-repo device, 24 such repos became eligible again.
+
 ## [0.43.0] - 2026-06-23
 
 Focus 5 Float reaches feature-complete (Phases 1–4) and passes an automated Codex QA pass — the macOS menu-bar app now renders the real, live Focus 5 roster as a floating, collapsible card stack over the same `summarize_focus5()` the web `/focus-5` uses.

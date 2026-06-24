@@ -22,7 +22,9 @@ from unittest import mock
 from rebalance.ingest.focus5_scan import (
     RepoSignals,
     _SIGNAL_COLUMNS,
+    _classify_reflog_op,
     _parse_status,
+    _probe_head_reflog_commit,
     _signal_row,
     focus5_repo_identity,
     get_roster_meta,
@@ -33,6 +35,7 @@ from rebalance.ingest.focus5_scan import (
     recent_activity,
     rerank_focus5_from_cache,
     resolve_ranking_strategy,
+    resolve_recency,
     summarize_focus5,
     sync_focus5,
     vscode_url,
@@ -44,16 +47,30 @@ DAY = 86400
 
 
 def _sig(name: str, **over) -> RepoSignals:
-    """Build a RepoSignals with sensible clean-repo defaults; override per test."""
+    """Build a RepoSignals with sensible clean-repo defaults; override per test.
+
+    When ``my_local_commit_ts``/``recency_basis`` aren't given explicitly, they
+    are resolved from the raw inputs exactly as :func:`probe_repo_signals` does
+    (with no reflog, so ``reflog_available=True`` — a foreign-only clone resolves
+    to ``none``, not ``any_commit``). A test wanting the ``local_reflog`` basis
+    sets both fields explicitly (e.g. the sleuth/EOS oracle).
+    """
     base = dict(
         device_id="dev", local_path=f"/repos/{name}", repo_name=name,
         repo_full_name=None, branch="main", upstream=None, has_upstream=False,
         ahead=0, behind=0, modified_count=0, untracked_count=0, is_dirty=False,
         last_commit_at=None, last_commit_ts=None, my_last_commit_ts=None,
+        my_local_commit_ts=None, recency_basis="none",
         head_reflog_ts=None, index_mtime_ts=None, remote_url=None,
         probed_at="2026-06-05T00:00:00Z",
     )
     base.update(over)
+    if "my_local_commit_ts" not in over and "recency_basis" not in over:
+        ts, basis = resolve_recency(
+            reflog_commit_ts=None, reflog_available=True,
+            author_email_ts=base["my_last_commit_ts"], any_commit_ts=base["last_commit_ts"],
+        )
+        base["my_local_commit_ts"], base["recency_basis"] = ts, basis
     return RepoSignals(**base)
 
 
@@ -209,6 +226,84 @@ class RankingTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# GH-81: reflog op classification (the semantic accept/reject op set)
+# ---------------------------------------------------------------------------
+
+class ReflogOpClassificationTests(unittest.TestCase):
+    """The one place that decides 'is this reflog op a local commit?' — proven
+    against the accept/reject op families + unrecognized-op handling."""
+
+    def test_accept_ops_create_or_rewrite_a_local_commit(self) -> None:
+        for subject in (
+            "commit: add feature",
+            "commit (amend): reword",
+            "commit (initial): first",
+            "cherry-pick: port fix",
+            "revert: undo bad change",
+            "rebase (pick): replay",
+            "rebase (finish): returning to refs/heads/main",
+            "rebase -i (pick): squash",
+            "merge feature: Merge made by the 'ort' strategy.",
+        ):
+            self.assertIs(_classify_reflog_op(subject), True, subject)
+
+    def test_reject_ops_move_head_to_foreign_or_navigation(self) -> None:
+        for subject in (
+            "pull: Fast-forward",
+            "pull origin main: Fast-forward",
+            "merge origin/main: Fast-forward",
+            "fetch origin: storing head",
+            "clone: from https://github.com/x/y.git",
+            "checkout: moving from main to feature",
+            "reset: moving to HEAD~1",
+            "branch: Created from HEAD",
+        ):
+            self.assertIs(_classify_reflog_op(subject), False, subject)
+
+    def test_unrecognized_op_is_none_so_caller_rejects_and_logs(self) -> None:
+        # A future/unknown git phrasing must NOT be silently counted as my commit.
+        self.assertIsNone(_classify_reflog_op("teleport: beam HEAD aboard"))
+
+
+# ---------------------------------------------------------------------------
+# GH-81: the recency fallback ladder (local_reflog → author_email → any_commit)
+# ---------------------------------------------------------------------------
+
+class ResolveRecencyTests(unittest.TestCase):
+    def test_local_reflog_wins_when_present(self) -> None:
+        ts, basis = resolve_recency(
+            reflog_commit_ts=NOW, reflog_available=True,
+            author_email_ts=NOW - DAY, any_commit_ts=NOW - 2 * DAY,
+        )
+        self.assertEqual((ts, basis), (NOW, "local_reflog"))
+
+    def test_falls_to_author_email_when_no_reflog_commit(self) -> None:
+        ts, basis = resolve_recency(
+            reflog_commit_ts=None, reflog_available=True,
+            author_email_ts=NOW - DAY, any_commit_ts=NOW,
+        )
+        self.assertEqual((ts, basis), (NOW - DAY, "author_email"))
+
+    def test_any_commit_only_when_reflog_unavailable(self) -> None:
+        # Reflog disabled + no author-email match → the last-resort rung fires.
+        ts, basis = resolve_recency(
+            reflog_commit_ts=None, reflog_available=False,
+            author_email_ts=None, any_commit_ts=NOW - 3 * DAY,
+        )
+        self.assertEqual((ts, basis), (NOW - 3 * DAY, "any_commit"))
+
+    def test_available_reflog_without_commit_does_NOT_surface_foreign_clone(self) -> None:
+        # The GH-81 refinement: a readable reflog with no local-commit op is a
+        # DEFINITIVE 'I never committed here' — a foreign-only clone stays
+        # ineligible (none), it must NOT fall through to any_commit.
+        ts, basis = resolve_recency(
+            reflog_commit_ts=None, reflog_available=True,
+            author_email_ts=None, any_commit_ts=NOW,  # foreign commit present
+        )
+        self.assertEqual((ts, basis), (None, "none"))
+
+
+# ---------------------------------------------------------------------------
 # Real git helpers
 # ---------------------------------------------------------------------------
 
@@ -219,14 +314,20 @@ def _run(cwd: Path, *args: str, env: dict | None = None) -> None:
 def _make_git_repo(
     root: Path, name: str, *, user_email: str = "me@example.com",
     author_email: str | None = None, commit: bool = True,
-    dirty: bool = False, untracked: bool = False,
+    dirty: bool = False, untracked: bool = False, disable_reflog: bool = False,
 ) -> Path:
-    """Create a real git repo under *root*. author_email defaults to user_email."""
+    """Create a real git repo under *root*. author_email defaults to user_email.
+
+    ``disable_reflog`` sets ``core.logAllRefUpdates=false`` BEFORE any commit, so
+    no HEAD reflog is ever written (the GH-81 reflog-unavailable fixture).
+    """
     repo = root / name
     repo.mkdir(parents=True)
     _run(repo, "git", "init", "-q", "-b", "main")
     _run(repo, "git", "config", "user.email", user_email)
     _run(repo, "git", "config", "user.name", "Test User")
+    if disable_reflog:
+        _run(repo, "git", "config", "core.logAllRefUpdates", "false")
     if commit:
         (repo / "file.txt").write_text("hello", encoding="utf-8")
         _run(repo, "git", "add", ".")
@@ -322,6 +423,122 @@ class ProbeTests(unittest.TestCase):
             self.assertFalse(s.is_dirty)
             self.assertIsNone(s.branch)
             self.assertIsNone(s.my_last_commit_ts)
+            self.assertIsNone(s.my_local_commit_ts)
+            self.assertEqual(s.recency_basis, "none")
+
+
+# ---------------------------------------------------------------------------
+# GH-81: real-git reflog vector + the fallback ladder rungs
+# ---------------------------------------------------------------------------
+
+class ReflogVectorProbeTests(unittest.TestCase):
+    def test_local_commit_basis_is_reflog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(Path(tmp), "mine")
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertEqual(s.recency_basis, "local_reflog")
+            self.assertIsNotNone(s.my_local_commit_ts)
+            ts, available = _probe_head_reflog_commit(repo)
+            self.assertTrue(available)
+            self.assertEqual(ts, s.my_local_commit_ts)
+
+    def test_foreign_authored_local_commit_is_eligible_via_reflog(self) -> None:
+        # THE GH-81 FIX: I committed locally, but under an author email that does
+        # NOT match this repo's user.email (CLI identity vs web-merge noreply). The
+        # old author-email gate (my_last_commit_ts) misses it → silent drop. The
+        # reflog catches the local `commit` op, so the repo is still eligible.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(
+                Path(tmp), "sleuth", user_email="bot@noreply.github",
+                author_email="noel@neochro.me",
+            )
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertIsNone(s.my_last_commit_ts)        # old gate would drop it
+            self.assertEqual(s.recency_basis, "local_reflog")
+            self.assertIsNotNone(s.my_local_commit_ts)    # new vector keeps it
+
+    def test_reflog_disabled_falls_back_to_author_email(self) -> None:
+        # core.logAllRefUpdates=false → no HEAD reflog. We must NOT regress below
+        # today: fall back to the author-email match.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(Path(tmp), "noreflog", disable_reflog=True)
+            ts, available = _probe_head_reflog_commit(repo)
+            self.assertFalse(available)                   # reflog unavailable
+            self.assertIsNone(ts)
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertEqual(s.recency_basis, "author_email")
+            self.assertEqual(s.my_local_commit_ts, s.my_last_commit_ts)
+
+    def test_reflog_disabled_foreign_author_falls_back_to_any_commit(self) -> None:
+        # Reflog off AND no author-email match → the last-resort any_commit rung.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(
+                Path(tmp), "vendor", user_email="bot@noreply.github",
+                author_email="upstream@x.com", disable_reflog=True,
+            )
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertIsNone(s.my_last_commit_ts)
+            self.assertEqual(s.recency_basis, "any_commit")
+            self.assertEqual(s.my_local_commit_ts, s.last_commit_ts)
+
+    def test_empty_repo_basis_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(Path(tmp), "empty", commit=False)
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertIsNone(s.my_local_commit_ts)
+            self.assertEqual(s.recency_basis, "none")
+
+
+class Focus5RankOracleTests(unittest.TestCase):
+    """Regression oracle for GH-81: local hands-on work outranks web-merge-only."""
+
+    def test_oracle_pure_local_reflog_outranks_email_fallback(self) -> None:
+        # sleuth: recent LOCAL commit (reflog), but its author-email match is an
+        # OLD merge (3d). eos: no local commit — only a stale author-email match.
+        # OLD ranking (my_last_commit_ts) → eos wins (the bug). NEW ranking
+        # (my_local_commit_ts) → sleuth wins (fixed).
+        sleuth = _sig("sleuth", my_last_commit_ts=NOW - 3 * DAY,
+                      my_local_commit_ts=NOW - 15 * HOUR, recency_basis="local_reflog")
+        eos = _sig("eos", my_last_commit_ts=NOW - 2 * DAY,
+                   my_local_commit_ts=NOW - 2 * DAY, recency_basis="author_email")
+        new = [r.signals.repo_name for r in
+               rank_repos([eos, sleuth], mode="recent_activity", now_ts=NOW)]
+        self.assertEqual(new, ["sleuth", "eos"])
+        # Document the bug the fix inverts: ranking on the old email vector alone.
+        old = sorted([sleuth, eos], key=lambda s: s.my_last_commit_ts, reverse=True)
+        self.assertEqual([s.repo_name for s in old], ["eos", "sleuth"])
+
+    def test_oracle_real_git_webmerge_only_repo_drops_off_roster(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            # sleuth: a local commit authored under a non-user.email identity.
+            _make_git_repo(root, "sleuth", user_email="bot@noreply.github",
+                           author_email="noel@neochro.me")
+            # eos: receives its commit from a foreign repo via fetch+checkout — NO
+            # local-commit op in its reflog (the web-merge-only analog). The
+            # upstream lives OUTSIDE the scan root so it isn't itself rostered.
+            upstream = _make_git_repo(Path(tmp) / "_up", "upstream",
+                                      user_email="other@up.com")
+            eos = root / "eos"
+            eos.mkdir()
+            _run(eos, "git", "init", "-q", "-b", "main")
+            _run(eos, "git", "config", "user.email", "bot@noreply.github")
+            _run(eos, "git", "config", "user.name", "Bot")
+            _run(eos, "git", "remote", "add", "origin", str(upstream))
+            _run(eos, "git", "fetch", "-q", "origin")
+            _run(eos, "git", "checkout", "-q", "-B", "main", "origin/main")
+
+            db = _db(Path(tmp))
+            sync_focus5(db, roots=[root], device_id="dev", mode="recent_activity")
+            out = summarize_focus5(db, device_id="dev",
+                                   with_activity=False, with_live_health=False)
+            cards = {c["repo_name"]: c for c in out["roster"]}
+            self.assertIn("sleuth", cards)            # local work surfaces
+            self.assertNotIn("eos", cards)            # web-merge-only does not
+            # And the fix is via the reflog, not the email gate (which is blind here).
+            self.assertEqual(cards["sleuth"]["recency_basis"], "local_reflog")
+            self.assertIsNone(cards["sleuth"]["my_last_commit_ts"])
 
 
 # ---------------------------------------------------------------------------
@@ -668,12 +885,12 @@ class WebRouteTests(unittest.TestCase):
             self.assertLessEqual(len(data["roster"]), 5)
             self.assertEqual(
                 set(data["summary"]),
-                {"discovered", "roster_size", "off_roster_attention"},
+                {"discovered", "roster_size", "off_roster_attention", "rank_cutoff_ts"},
             )
             card = data["roster"][0]
             for key in ("position", "repo_name", "local_path", "vscode_url",
                         "branch", "is_dirty", "newest_pr", "recent_activity",
-                        "health_available"):
+                        "health_available", "my_local_commit_ts", "recency_basis"):
                 self.assertIn(key, card)
             self.assertTrue(card["vscode_url"].startswith("vscode://file"))
 

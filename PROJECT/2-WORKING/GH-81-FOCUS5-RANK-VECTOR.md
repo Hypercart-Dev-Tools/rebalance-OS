@@ -2,7 +2,7 @@
 gh_issue: 81
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/81
 title: "Focus 5 — identity-agnostic ranking vector (local-commit recency)"
-status: draft
+status: in-progress
 doc_type: bug-fix + plan
 owner: noel@neochro.me
 created: 2026-06-24
@@ -17,7 +17,7 @@ rollout_rule: each phase leaves the system runnable (`pytest tests/` green, `reb
 
 | What was just completed | What's next |
 |---|---|
-| **Codex relay review integrated (2026-06-24)** — plan hardened per 4 findings: no-reflog **fallback ladder** + `recency_basis`, **semantic op-set** + test matrix, **minimal explain pulled into Phase 1**, DB-persist rationale, sleuth/EOS **regression oracle** + reflog-unavailable fixtures. | **Implement Phase 1** — probe `my_local_commit_ts` + `recency_basis` (reflog → author-email → any-commit fallback), rank on it, minimal explain payload, migration `0004`, op-matrix + oracle tests. |
+| **Phase 1 SHIPPED (2026-06-24)** — reflog op-classifier (`_classify_reflog_op`) + `resolve_recency` ladder + `my_local_commit_ts`/`recency_basis` on `RepoSignals`; `rank_recent_activity` now ranks on the reflog vector; minimal explain (`recency_basis` per card/off-roster + `rank_cutoff_ts`); migration **`0007`** (the plan said `0004` — already taken, next free is `0007`). Full suite green (**1098 passed**), `doctor` clean. **Proof on the real 88-repo device DB: 24 repos the old email gate would silently drop are now eligible via reflog; 51 repos' ranking input changed.** | **Phase 2** — operator-facing explain UX: surface `recency_basis` on the off-roster strip (the Phase-1 payload already carries it). |
 
 ## Table of Contents
 
@@ -76,60 +76,67 @@ off-roster strip remain as safety nets).
 > ranking-basis payload** so QA can see *why* each repo ranks (no silent bias).
 > _(Codex relay r1: §[Should]×3 + §[Nit] integrated — see relay thread.)_
 
-- [ ] **Define the signal semantically** (not a brittle message allowlist):
-      `my_local_commit_ts` = the most recent HEAD-reflog entry for an **operation
-      that creates or rewrites a locally-checked-out commit reachable at HEAD**.
-      *Accept:* `commit`, `commit (amend)`, `commit (initial)`, a `merge` that
-      **creates** a local merge commit, `cherry-pick`, `revert`, `rebase` (incl.
-      interactive). *Reject:* fast-forward `pull`/`merge` (foreign), `fetch`,
-      `checkout`, `clone`, `reset`. Tolerate reflog-message variance across git
-      versions — enumerate accept/reject op families in **one** place; an
-      unrecognized op is treated **conservatively as reject** and logged.
-- [ ] **Fallback contract when the reflog is unavailable:** if HEAD reflog is
-      missing / disabled (`core.logAllRefUpdates=false`) / GC-expired / absent in
-      an atypical clone or worktree, degrade in a **defined order** — `local_reflog`
-      → `author_email` (`my_last_commit_ts`, the *old* behavior, so we never
-      regress below today) → `any_commit` (`last_commit_ts`) → `none` (ineligible).
-      The chosen basis is **recorded, never silent**.
-- [ ] `probe_repo_signals` captures `my_local_commit_ts` + a `recency_basis` enum
-      (`local_reflog` | `author_email` | `any_commit` | `none`). Never raises.
-- [ ] `RepoSignals` gains `my_local_commit_ts: int | None` + `recency_basis`; the
+- [x] **Define the signal semantically** (not a brittle message allowlist):
+      `_classify_reflog_op` keys on the **leading op keyword** of each HEAD-reflog
+      subject. *Accept:* `commit`/`commit (amend)`/`commit (initial)`, `cherry-pick`,
+      `revert`, any `rebase` sub-op, and a **non-ff `merge`** (a real local merge
+      commit). *Reject:* `pull`, `fetch`, `clone`, `checkout`, `reset`, `branch`,
+      and a `merge … : Fast-forward`. Enumerated in **one** place
+      (`_REFLOG_ACCEPT_OPS`/`_REFLOG_REJECT_OPS`); an unrecognized op → `None` →
+      caller treats as reject **and logs** (`unknown_reflog_ops` stat).
+- [x] **Fallback contract when the reflog is unavailable:** `resolve_recency`
+      degrades `local_reflog` → `author_email` (old behavior, never regress below
+      today) → `any_commit` → `none`. **Refinement (GH-81 impl):** the `any_commit`
+      rung is gated behind `reflog_available=False`. A *readable* reflog with no
+      local-commit op is a **definitive** "I never committed here" → `none`, so a
+      foreign-only clone with a normal (enabled) reflog can never fall through to a
+      foreign author's commit time and resurface the very bug this fixes. `any_commit`
+      only fires when the reflog is genuinely off/missing. Basis is **recorded**.
+- [x] `probe_repo_signals` captures `my_local_commit_ts` + `recency_basis`
+      (`local_reflog`|`author_email`|`any_commit`|`none`) via `_probe_head_reflog_commit`
+      + `resolve_recency`. Never raises (degrades through the ladder).
+- [x] `RepoSignals` gains `my_local_commit_ts: int | None` + `recency_basis: str`;
       author-email `my_last_commit_ts` stays (display/diagnostic **and** fallback input).
-- [ ] `rank_recent_activity` ranks on the resolved recency (eligible iff
-      `recency_basis != none`); `rank_reason` reads from it. Other strategies untouched.
-- [ ] **Minimal explain in Phase 1:** `summarize_focus5()` carries, per roster +
-      off-roster repo, its resolved recency + `recency_basis` + the current #5
-      cutoff — enough for QA to distinguish "fixed ranking" from "new silent bias."
-      (Operator-facing UX is Phase 2.)
-- [ ] DB: persist `my_local_commit_ts` + `recency_basis` in `focus5_repo_signals`
-      via additive migration `0004_*` (NULL-tolerant). **Reason:** the other signals
-      are already persisted by the probe (one write path); adding these alongside
-      keeps a single writer and lets explain/debug read the basis without
-      re-probing. (Compute-on-read is simpler but splits the write path — rejected.)
-- [ ] **Tests — op matrix:** accept (`commit`, `amend`, `merge`-commit,
-      `cherry-pick`, `revert`, interactive `rebase`) vs reject (ff-only `pull`,
-      `fetch`, `checkout`, `clone`, `reset`); the **reflog-unavailable** fixture
-      (`core.logAllRefUpdates=false`) exercising each fallback rung; and the
-      **regression oracle**: `sleuth-app` (local commits under a non-`user.email`
-      identity) ranks **above** `EOS-daily-skill` (web-merge-only).
-- [ ] **Proof artifact:** before/after `summarize_focus5()` roster diff on the real
-      device DB, saved to the issue.
+- [x] `rank_recent_activity` ranks on `my_local_commit_ts` (eligible iff it's not
+      `None` ⇔ `recency_basis != "none"`); `rank_reason` reads from it. Other
+      strategies (`dirty_first`/`my_work`/`any_touch`) untouched.
+- [x] **Minimal explain in Phase 1:** cards carry `recency_basis` + `my_local_commit_ts`
+      (via `s.*`); off-roster rows now SELECT them too; `summary.rank_cutoff_ts` =
+      the #5 repo's resolved recency (the board's threshold). Operator UX = Phase 2.
+- [x] DB: persisted `my_local_commit_ts` + `recency_basis` via additive migration
+      **`0007_focus5_local_commit_recency.sql`** (NULL-tolerant `ADD COLUMN` ×2).
+      **Plan said `0004` — already taken (figma); `0005`/`0006` too — next free is
+      `0007`.** Single writer (the focus5 probe), same as the other signals.
+- [x] **Tests — op matrix:** `ReflogOpClassificationTests` (accept/reject/unknown),
+      `ResolveRecencyTests` (all 4 rungs + the foreign-clone guard),
+      `ReflogVectorProbeTests` (real-git: reflog basis, foreign-authored local
+      commit eligible, `core.logAllRefUpdates=false` → author_email & any_commit
+      rungs, empty repo → none), and `Focus5RankOracleTests` (pure + **real-git**
+      sleuth-vs-EOS: local work outranks a fetch/checkout-only web-merge analog).
+- [x] **Proof artifact:** captured on the real device DB (88 repos) — **24 repos the
+      old email gate would silently drop are now eligible via reflog; 51 repos'
+      ranking input changed** (largest local-vs-email gap +2145h). Basis spread:
+      53 `local_reflog` / 27 `none` / 6 `author_email` / 2 `any_commit`. _The raw
+      per-repo dump includes client repo names — only the name-free aggregate above
+      goes to [GH-81](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/81)
+      (pending operator OK to post)._
 
 ### QA Checklist — Phase 1
 
-- [ ] **DRY:** one op-classification + recency-resolution helper; no second reflog
-      parse, and one `recency_basis` ladder shared by ranking + explain.
-- [ ] **SOLID:** the vector is isolated in `probe_repo_signals` + the strategy
-      pure-function; route/collector/render layers untouched.
-- [ ] **Diagnosable:** reflog-absent degrades through the fallback ladder with the
-      basis **recorded** (not a silent `None`); each rung + unrecognized ops logged.
-- [ ] **Blast:** additive columns + pure-function swap = reversible; no destructive
+- [x] **DRY:** one classifier (`_classify_reflog_op`) + one ladder (`resolve_recency`),
+      both consumed by probe; ranking + explain read the stored result, no second parse.
+- [x] **SOLID:** vector isolated in `_probe_head_reflog_commit`/`resolve_recency` +
+      the `rank_recent_activity` pure function; route/collector/render layers untouched.
+- [x] **Diagnosable:** reflog-absent degrades through the ladder with the basis
+      **recorded** (never a silent `None`); unrecognized ops logged + counted.
+- [x] **Blast:** additive columns + pure-function swap = reversible; no destructive
       migration. Roster recomputes hourly; revert is a one-function change.
-- [ ] **Proof:** op-matrix + reflog-unavailable + sleuth/EOS-oracle tests all run
-      green; before/after roster diff captured; `pytest tests/` green; `doctor` clean.
-- [ ] **Single write path:** the new columns are written only by the focus5 sync
-      probe (same writer as the other signals) — no second writer.
-- [ ] **UTC:** `my_local_commit_ts` is a Unix epoch (UTC); display formats at the edge.
+- [x] **Proof:** op-matrix + reflog-unavailable + sleuth/EOS-oracle tests green;
+      before/after roster captured; `pytest tests/` **1098 passed**; `doctor` clean.
+- [x] **Single write path:** the new columns are written only by the focus5 probe
+      (`_SIGNAL_COLUMNS`), same writer as the other signals — no second writer.
+- [x] **UTC:** `my_local_commit_ts` is a Unix epoch (committer `%ct`, UTC); display
+      formats at the edge.
 
 ---
 
@@ -184,3 +191,16 @@ off-roster strip remain as safety nets).
   minimal explain pulled into Phase 1; DB-persist rationale stated; regression
   oracle + reflog-unavailable fixtures added to QA). Thread:
   [relay-system/2026-06-24/gh81-rank-vector.md](../../relay-system/2026-06-24/gh81-rank-vector.md).
+- **Phase 1 implementation (2026-06-24)** — shipped in `focus5_scan.py` +
+  migration `0007` + `test_focus5_scan.py`. Two deviations from the plan, both
+  recorded above:
+  1. **Migration number `0007`, not `0004`** — `0004`–`0006` already exist; the
+     runner takes the next free integer.
+  2. **`any_commit` rung gated behind `reflog_available=False`** — a literal
+     `local_reflog → author_email → any_commit → none` ladder reintroduced the
+     vendor-clone bug: a repo whose *enabled* reflog simply shows no local commit
+     would fall through to a foreign author's commit time and become eligible. The
+     impl resolves `none` for a readable-but-no-local-commit reflog, and only uses
+     `any_commit` when the reflog is genuinely unavailable. All four basis values
+     remain reachable; the core "foreign work can't masquerade as mine" invariant
+     holds. (Worth a Codex r2 confirmation of this refinement.)

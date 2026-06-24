@@ -2,7 +2,7 @@
 title: Project Roadmap Ledger
 status: Active
 created: 2026-06-21
-updated: 2026-06-22
+updated: 2026-06-24
 branch: main
 supersedes: []
 synthesizes: []
@@ -33,6 +33,7 @@ goal: >
 
 - `Focus 5 Float (floating macOS card stack)` — native menu-bar app that renders the web Focus 5 roster as a vertical, collapsible card stack; reuses the `macOS/TextReplacementStudio` SwiftUI scaffolding. **Phases 0–4 complete (feature-complete):** read-only `GET /focus-5.json` + frozen contract (90 tests), `Focus5Float` SwiftPM package (harvested design system + `Codable` models), menu-bar agent + non-activating floating `NSPanel`, live data via `Focus5Client` (same `summarize_focus5()` as the web; poll/refresh/mode/offline/tap-to-open, E2E-verified), and collapsible card UI (Tree health / PR / activity, in-panel ranking toggle, ⚠ stale badge, off-roster footer). **Codex QA (2026-06-24) — 4 Should findings, fixed:** mode/refresh race (generation guard + optimistic-revert); empty-state copy corrected; `FOCUS5_BASE_URL` gated to loopback unless debug; menu checkmark drift fixed via `menuNeedsUpdate`. Phase 5 (packaging/install) ahead. → [PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md](PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md)
 - `Focus 5 Float — offline cache & manual server start` — resilience follow-on for when `rebalance serve` is down. **Both phases built:** (1) offline roster cache — `RosterCache` persists the last `/focus-5.json`, instant cold-start, "cached · {age}"; (2) one-click **Start server** — `ServerLauncher` resolves the binary via login-shell + spawns a detached `rebalance serve`, polls until healthy, refreshes (button in offline state/header/⌘S). Headless-verified (cache round-trip + binary resolution); `swift build` green. Operator litmus + bundled-`.app` re-verify pending. → [PROJECT/2-WORKING/P3-FOCUS5-FLOAT-OFFLINE-RESILIENCE.md](PROJECT/2-WORKING/P3-FOCUS5-FLOAT-OFFLINE-RESILIENCE.md)
+- `Focus 5 — identity-agnostic ranking vector` ([GH-81](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/81)) — the headline board silently dropped repos whose recent local commits use a different author email. **Phase 1 shipped (2026-06-24):** `rank_recent_activity` now ranks on local-commit reflog recency (`my_local_commit_ts` + recorded `recency_basis` fallback ladder) instead of a single `user.email` match; migration `0007`; suite green (1098); real-device proof = 24 repos no longer silently dropped. **Phase 2 (operator explain UX) pending.** → [PROJECT/2-WORKING/GH-81-FOCUS5-RANK-VECTOR.md](PROJECT/2-WORKING/GH-81-FOCUS5-RANK-VECTOR.md)
 
 ### Completed
 
@@ -47,7 +48,7 @@ _None yet._
 
 ### Deferred
 
-- `Focus 5 — identity-agnostic ranking vector` ([GH-81](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/81)) — the headline board silently drops repos whose recent local commits use a different author email; switch the vector to local-commit reflog recency (identity-agnostic) + an explain-rank diagnostic. 2 phases; drafted, pending Codex relay review. → [PROJECT/1-INBOX/GH-81-FOCUS5-RANK-VECTOR.md](PROJECT/1-INBOX/GH-81-FOCUS5-RANK-VECTOR.md)
+_None yet._
 
 ---
 

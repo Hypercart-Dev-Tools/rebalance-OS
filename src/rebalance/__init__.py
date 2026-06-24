@@ -28,7 +28,7 @@ import logging
 import os
 
 __all__ = ["__version__"]
-__version__ = "0.41.0"
+__version__ = "0.44.0"
 
 
 def _configure_logging() -> None:
