@@ -1,15 +1,18 @@
 import SwiftUI
 import AppKit
+import os
 
 // Phase 2 entry point: An AppKit-driven lifecycle that runs the app as a
 // menu-bar agent (no Dock icon) and hosts the SwiftUI card stack in an
 // interactive, non-activating floating panel (NSPanel + NSStatusItem).
 
+private let log = Logger(subsystem: "me.neochro.Focus5Float", category: "panel")
+
 @main
 struct Focus5FloatApp {
     static func main() {
-        Focus5SelfTest.runIfRequested()
-        
+        Focus5SelfTest.runIfRequested()   // FOCUS5_SELFTEST=1 → headless decode + exit
+
         let app = NSApplication.shared
         let delegate = AppDelegate()
         app.delegate = delegate
@@ -18,10 +21,15 @@ struct Focus5FloatApp {
 }
 
 // A non-activating floating panel that can still take key focus when a control
-// needs it, but does not activate the app on show.
+// needs it, but does not activate the app on show. Esc hides it.
 final class FloatingPanel: NSPanel {
     override var canBecomeKey: Bool { true }
     override var canBecomeMain: Bool { false }
+    /// Esc hides the panel; click-away intentionally leaves it open.
+    override func cancelOperation(_ sender: Any?) {
+        orderOut(nil)
+        log.info("panel hidden (esc)")
+    }
 }
 
 // Container that accepts the first mouse click even while the window is inactive,
@@ -35,10 +43,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var panel: FloatingPanel!
     private var statusItem: NSStatusItem!
     private var contextMenu: NSMenu!
+    private var focus5Item: NSMenuItem!
+    private var dirtyFiveItem: NSMenuItem!
     private let model = Focus5Model()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Set accessory policy so it doesn't show in the Dock.
+        // Accessory policy → menu-bar agent, no Dock icon. (The bundled .app
+        // also sets LSUIElement in Info.plist; that's Phase 5 packaging.)
         NSApp.setActivationPolicy(.accessory)
 
         // Setup status item in system menu bar
@@ -58,36 +69,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         // Build the floating panel
         buildPanel()
+        updateModeMenuState()
 
         // Show panel on launch
         showPanel()
     }
 
+    // MARK: - Menu
+
     private func buildContextMenu() {
         let menu = NSMenu()
-        
+
         let refreshItem = NSMenuItem(title: "Refresh (re-pull)", action: #selector(refreshData), keyEquivalent: "r")
         menu.addItem(refreshItem)
-        
+
         let modeMenu = NSMenu()
-        let focus5Item = NSMenuItem(title: "🎯 Focus 5", action: #selector(setFocus5Mode), keyEquivalent: "")
-        let dirtyFiveItem = NSMenuItem(title: "🧹 Dirty Five", action: #selector(setDirtyFiveMode), keyEquivalent: "")
+        focus5Item = NSMenuItem(title: "🎯 Focus 5", action: #selector(setFocus5Mode), keyEquivalent: "")
+        dirtyFiveItem = NSMenuItem(title: "🧹 Dirty Five", action: #selector(setDirtyFiveMode), keyEquivalent: "")
         modeMenu.addItem(focus5Item)
         modeMenu.addItem(dirtyFiveItem)
-        
+
         let modeParentItem = NSMenuItem(title: "Ranking Mode", action: nil, keyEquivalent: "")
         modeParentItem.submenu = modeMenu
         menu.addItem(modeParentItem)
-        
+
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Quit", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q")
-        
+        menu.addItem(withTitle: "Quit Focus 5 Float", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q")
+
         self.contextMenu = menu
     }
 
+    /// Reflect the active ranking mode with a checkmark.
+    private func updateModeMenuState() {
+        focus5Item.state = model.isDirtyView ? .off : .on
+        dirtyFiveItem.state = model.isDirtyView ? .on : .off
+    }
+
+    // MARK: - Panel
+
     private func buildPanel() {
-        let defaultRect = NSRect(x: 0, y: 0, width: 360, height: 600)
-        
+        let defaultRect = NSRect(x: 0, y: 0, width: 360, height: 640)
+
         let hostingView = FirstMouseHostingView(rootView: ContentView(model: model))
         hostingView.frame = defaultRect
 
@@ -97,7 +119,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             backing: .buffered,
             defer: false
         )
-        
+
         panel.titleVisibility = .hidden
         panel.titlebarAppearsTransparent = true
         panel.isMovableByWindowBackground = true
@@ -105,10 +127,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         panel.isFloatingPanel = true
         panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
+        panel.animationBehavior = .utilityWindow
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+
+        // Clean chrome: this is a menu-bar-toggled panel, not a document window —
+        // hide the traffic-light buttons (the grey dots seen in the spike).
+        panel.standardWindowButton(.closeButton)?.isHidden = true
+        panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
+        panel.standardWindowButton(.zoomButton)?.isHidden = true
+
         panel.contentView = hostingView
-        
-        // Frame autosave
+
+        // Frame autosave — remembers position & size across launches.
         panel.setFrameAutosaveName("Focus5FloatPanel")
         if panel.frame.origin == .zero {
             panel.center()
@@ -123,7 +153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             statusItem.menu = nil
             return
         }
-        
+
         if panel.isVisible {
             hidePanel()
         } else {
@@ -132,23 +162,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func showPanel() {
-        panel.orderFrontRegardless()
+        panel.orderFrontRegardless()   // show WITHOUT activating the app
+        log.info("panel shown")
     }
 
     private func hidePanel() {
         panel.orderOut(nil)
+        log.info("panel hidden")
     }
 
+    // MARK: - Actions
+
     @objc private func refreshData() {
-        model.loadSample()
+        log.info("refresh (re-pull)")
+        model.loadSample()   // Phase 4: live GET /focus-5.json
     }
 
     @objc private func setFocus5Mode() {
+        log.info("ranking mode → recent_activity")
         model.rankingMode = "recent_activity"
+        updateModeMenuState()
+        // Phase 4: re-fetch /focus-5.json (default view) for a true server re-rank.
     }
 
     @objc private func setDirtyFiveMode() {
+        log.info("ranking mode → dirty_first")
         model.rankingMode = "dirty_first"
+        updateModeMenuState()
+        // Phase 4: re-fetch /focus-5.json?view=dirty for a true server re-rank.
     }
 }
-

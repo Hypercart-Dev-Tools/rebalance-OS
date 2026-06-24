@@ -19,7 +19,7 @@ rollout_rule: each phase must leave a buildable, launchable app (or a green `swi
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 1 — Scaffold & Reuse Harvest — COMPLETE.** stood up standalone SwiftPM package target `Focus5Float` under `macOS/Apps/Focus5Float/`, copied/adapted Theme, Components, and Toast (no core dependencies), defined `Codable` models, added `sample-focus5.json` fixture, and validated SwiftUI window launch rendering. `swift build` green. | **Phase 2 — Floating Window + Menu-Bar Shell:** Turn the normal window into the floating, menu-bar-driven panel from the spike (`NSPanel` + `NSStatusItem`). |
+| **Phase 2 — Floating Window + Menu-Bar Shell — COMPLETE (impl).** `@main` AppKit lifecycle hosts the SwiftUI cards in a non-activating floating `NSPanel`: F5 menu-bar toggle, right-click menu (Refresh / Ranking Mode ✓ / Quit), first-mouse interaction, Esc-to-hide, frame autosave, hidden traffic-lights, `os_log` throughout. `swift build` green. _Operator validation of focus-discipline / fullscreen-overlay pending._ | **Phase 3 — Vertical Card-Stack UI:** collapsible rows (tree-health / PR / activity sub-sections), in-panel ranking toggle, staleness badge, off-roster footer. |
 
 ## Table of Contents
 
@@ -157,24 +157,24 @@ Why this over the alternatives:
 
 > Turn the normal window into the floating, menu-bar-driven panel from the spike.
 
-- [ ] Replace `WindowGroup` with an `NSApplicationDelegateAdaptor` that builds an `NSPanel`: borderless / `.titled + .fullSizeContentView`, `level = .floating`, `isFloatingPanel`, `collectionBehavior` = canJoinAllSpaces + fullScreenAuxiliary, non-activating.
-- [ ] `NSStatusItem` in the menu bar (icon) → left-click toggles panel show/hide; right-click menu = Refresh / Ranking mode / Quit.
-- [ ] Set `LSUIElement` (agent app, no Dock icon) — decide whether to keep a Dock icon as a setting.
-- [ ] Panel is draggable by its background; **remembers position & size** across launches (`UserDefaults` / frame autosave).
-- [ ] **Preserve the Phase 0 interaction guarantees:** the non-activating panel still routes first clicks, disclosure taps, segmented-control changes, context menus, and link opens (`becomesKeyOnlyIfNeeded` / accepts-first-mouse handled) — not just renders.
-- [ ] Rounded corners + subtle shadow + `Theme` window background; compact default size (~360×640, matching the narrow stacked look).
-- [ ] Esc / click-away behavior decided (stays open by default; pin/unpin optional).
+- [x] `@main` AppKit lifecycle (`NSApplication` + `AppDelegate`) builds a `FloatingPanel` (`NSPanel`): `.titled + .fullSizeContentView + .nonactivatingPanel`, `level = .floating`, `isFloatingPanel`, `collectionBehavior` = canJoinAllSpaces + fullScreenAuxiliary. Hosts the SwiftUI `ContentView` via `NSHostingView`.
+- [x] `NSStatusItem` "F5" → left-click toggles show/hide; right-click menu = Refresh (⌘R) / Ranking Mode (submenu w/ active-state ✓) / Quit (⌘Q).
+- [x] **Decision: no Dock icon** — runtime `setActivationPolicy(.accessory)`. `LSUIElement` in `Info.plist` is the bundled-app equivalent, deferred to Phase 5 packaging.
+- [x] Draggable by background (`isMovableByWindowBackground`); **remembers position & size** via `setFrameAutosaveName("Focus5FloatPanel")`, centers on first launch.
+- [x] **Phase 0 interaction guarantees preserved:** `FirstMouseHostingView` (accepts-first-mouse) + `becomesKeyOnlyIfNeeded` + `canBecomeKey`. _Confirm on the real binary (operator)._
+- [x] `Theme` background + clean chrome — **traffic-light buttons hidden** (the grey dots from the spike), `.utilityWindow` show/hide animation, default size **360×640**.
+- [x] **Esc/click-away decided:** Esc hides the panel (`cancelOperation`); click-away intentionally leaves it open (it's an always-on-top reference).
 
 ### QA Checklist — Phase 2
 
-- [ ] **Focus discipline:** Showing the panel does NOT steal keyboard focus from the active app (non-activating verified by typing in another app while it's up).
-- [ ] **All-spaces / fullscreen:** Panel stays visible over a fullscreen app; toggling from menu bar works in every Space.
-- [ ] **Interaction over fullscreen:** with a fullscreen app frontmost, every interactive control works on the *first* click (no "click to focus, click again to act") — the Phase 0 interaction guarantees still hold in the real app.
-- [ ] **SOLID:** Window/menu-bar lifecycle lives in the app-delegate layer; the SwiftUI card view knows nothing about `NSPanel`.
-- [ ] **State persistence:** Quit + relaunch restores last position/size; corrupt/missing defaults fall back to a sane center position.
-- [ ] **Observability:** Show/hide and menu actions are logged (os_log) for debugging "panel won't appear" reports.
-- [ ] **Litmus (manual):** Recorded clip/screenshot of toggle-from-menu-bar + always-on-top over another app.
-- [ ] **Reversibility:** Window mode is isolated enough that reverting to a plain `WindowGroup` is a one-file change.
+- [~] **Focus discipline:** `nonactivatingPanel` + `orderFrontRegardless()` (never activates the app). _Operator: confirm by typing in another app while the panel is up._
+- [~] **All-spaces / fullscreen:** `collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]` set. _Operator: confirm over a true-fullscreen app. (Known deferred: panel hides in Exposé — accepted for now.)_
+- [~] **Interaction over fullscreen:** same `FirstMouseHostingView`/`becomesKeyOnlyIfNeeded` proven in the Phase 0 spike, now on the SwiftUI binary. _Operator: one first-click confirm over fullscreen._
+- [x] **SOLID:** Panel/menu-bar lifecycle lives entirely in `AppDelegate`; `ContentView`/`Focus5Model` know nothing about `NSPanel` (model is injected, reads observable state).
+- [x] **State persistence:** `setFrameAutosaveName` restores last position/size; missing defaults fall back to `panel.center()`.
+- [x] **Observability:** show/hide, Esc-hide, refresh, and ranking-mode actions all `os_log` under subsystem `me.neochro.Focus5Float` / category `panel`.
+- [~] **Litmus (manual):** `swift run Focus5Float` launches the panel with the 5 fixture cards + working menu. _Operator: capture a clip of menu-bar toggle + always-on-top._
+- [x] **Reversibility:** window mode is isolated to `Focus5FloatApp.swift`; reverting to a plain `WindowGroup` is a one-file change.
 
 ---
 

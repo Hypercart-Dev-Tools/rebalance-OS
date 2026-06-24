@@ -25,13 +25,13 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| **Focus 5 Float — Phase 0 complete + operator-validated.** Read-only `GET /focus-5.json` shipped (no scan, no roster write — verified), data contract + field classification frozen in `CONTRACT.md`, and the non-activating floating-panel interaction spike **run on-device** — controls route live, Focus 5 ⇄ Dirty Five toggle swaps the card stack. 90 focus5 tests green. | **Phase 1 — Scaffold & Reuse Harvest:** `Focus5Float` SwiftPM target, copy `Theme.swift` + components, `Codable` models, render from a captured `/focus-5.json` fixture. _Prior track:_ front-door v0.41.1 — run `rebalance config migrate-secrets` on the ~2 remaining Macs, then a `development` → `main` PR. |
+| **Focus 5 Float — Phases 0–2 complete.** Read-only `GET /focus-5.json` + frozen contract (90 tests green); `Focus5Float` SwiftPM package harvesting the TextReplacementStudio design system, `Codable` models + fixture (headless decode verified); and the menu-bar agent + non-activating floating `NSPanel` shell (F5 toggle, right-click menu, first-mouse, Esc-hide, frame autosave, hidden chrome, `os_log`). `swift build` green. | **Phase 3 — Vertical Card-Stack UI:** collapsible rows (tree-health / PR / activity), in-panel ranking toggle, staleness badge. Then Phase 4 (live data) + 5 (packaging). _Prior track:_ front-door v0.41.1 — run `rebalance config migrate-secrets` on the ~2 remaining Macs, then a `development` → `main` PR. |
 
 ## Ledger
 
 ### In progress
 
-- `Focus 5 Float (floating macOS card stack)` — native menu-bar app that renders the web Focus 5 roster as a vertical, collapsible card stack; reuses the `macOS/TextReplacementStudio` SwiftUI scaffolding. **Phase 0 complete + operator-validated:** read-only `GET /focus-5.json` shipped, data contract frozen, and the non-activating floating-panel interaction spike run on-device (controls route, Focus 5 ⇄ Dirty Five toggle swaps cards). Phases 1–5 (scaffold → floating shell → card UI → live data → packaging) ahead. → [PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md](PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md)
+- `Focus 5 Float (floating macOS card stack)` — native menu-bar app that renders the web Focus 5 roster as a vertical, collapsible card stack; reuses the `macOS/TextReplacementStudio` SwiftUI scaffolding. **Phases 0–2 complete:** read-only `GET /focus-5.json` + frozen contract (90 tests), `Focus5Float` SwiftPM package with harvested design system + `Codable` models + fixture, and the menu-bar agent + non-activating floating `NSPanel` shell (F5 toggle, right-click menu, first-mouse, Esc-hide, frame autosave, hidden chrome, `os_log`). Phases 3–5 (card UI → live data → packaging) ahead. → [PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md](PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md)
 
 ### Completed
 
