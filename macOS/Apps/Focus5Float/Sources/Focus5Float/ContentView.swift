@@ -42,6 +42,18 @@ struct ContentView: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(Theme.text2)
                 .help("Re-pull /focus-5.json")
+
+                if model.isOffline {
+                    Button {
+                        Task { await model.startServer() }
+                    } label: {
+                        Image(systemName: model.isStartingServer ? "hourglass" : "play.circle")
+                    }
+                    .buttonStyle(.borderless)
+                    .foregroundStyle(Theme.accent)
+                    .disabled(model.isStartingServer)
+                    .help("Start rebalance serve")
+                }
             }
 
             HStack(spacing: Theme.Space.s) {
@@ -75,9 +87,15 @@ struct ContentView: View {
         case .idle, .loading:
             ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let message):
-            emptyState(icon: "bolt.horizontal.circle",
-                       title: "Can't reach the Focus 5 server",
-                       detail: message)
+            VStack(spacing: Theme.Space.m) {
+                emptyState(icon: "bolt.horizontal.circle",
+                           title: "Can't reach the Focus 5 server",
+                           detail: message)
+                    .frame(maxHeight: .infinity)
+                startServerButton
+                    .padding(.bottom, Theme.Space.xl)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .loaded where model.roster.isEmpty:
             emptyState(icon: "tray",
                        title: model.isDirtyView ? "Nothing at risk" : "No active repos found",
@@ -108,6 +126,35 @@ struct ContentView: View {
         }
         .padding()
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    /// Starts the local `rebalance serve`, with an in-flight spinner + error.
+    @ViewBuilder var startServerButton: some View {
+        VStack(spacing: Theme.Space.xs) {
+            Button {
+                Task { await model.startServer() }
+            } label: {
+                HStack(spacing: 6) {
+                    if model.isStartingServer {
+                        ProgressView().controlSize(.small)
+                        Text("Starting server…")
+                    } else {
+                        Image(systemName: "play.circle.fill")
+                        Text("Start rebalance serve")
+                    }
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(Theme.accent)
+            .disabled(model.isStartingServer)
+
+            if let err = model.startError {
+                Text(err)
+                    .font(Theme.monoSmall)
+                    .foregroundStyle(Theme.diffRemove)
+                    .multilineTextAlignment(.center)
+            }
+        }
     }
 }
 

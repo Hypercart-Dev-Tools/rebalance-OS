@@ -53,6 +53,14 @@ enum Focus5SelfTest {
             }
         }
 
+        // Binary-resolution test: FOCUS5_RESOLVETEST=1 swift run Focus5Float —
+        // prints where ServerLauncher would find `rebalance` (does NOT start it).
+        if ProcessInfo.processInfo.environment["FOCUS5_RESOLVETEST"] != nil {
+            let bin = ServerLauncher.resolveBinary()
+            print("RESOLVETEST — rebalance = \(bin ?? "NOT FOUND")")
+            exit(bin == nil ? 1 : 0)
+        }
+
         guard ProcessInfo.processInfo.environment["FOCUS5_SELFTEST"] != nil else { return }
         do {
             let resp = try SampleData.load()

@@ -92,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let refreshItem = NSMenuItem(title: "Refresh (re-pull)", action: #selector(refreshData), keyEquivalent: "r")
         menu.addItem(refreshItem)
+        menu.addItem(withTitle: "Start rebalance serve", action: #selector(startServer), keyEquivalent: "s")
 
         let modeMenu = NSMenu()
         focus5Item = NSMenuItem(title: "🎯 Focus 5", action: #selector(setFocus5Mode), keyEquivalent: "")
@@ -195,6 +196,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func refreshData() {
         log.info("refresh (re-pull /focus-5.json)")
         Task { await model.refresh() }
+    }
+
+    @objc private func startServer() {
+        log.info("manual start: rebalance serve")
+        Task { await model.startServer() }
     }
 
     @objc private func setFocus5Mode() {

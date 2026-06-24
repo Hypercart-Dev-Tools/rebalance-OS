@@ -16,7 +16,7 @@ rollout_rule: each phase leaves the app buildable (`swift build` green) and degr
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 1 — Offline roster cache — DONE.** `RosterCache` (atomic save/load to App Support), `loadCache()` on launch for instant cold-start, "cached · {age}" header indicator, schema-versioned + corruption-safe; cache round-trip verified headlessly (`FOCUS5_CACHETEST` → 5 repos). `swift build` green. | **Phase 2 — Manual "Start rebalance serve" control:** resolve the `rebalance` binary, start the local server, poll until healthy, then refresh. |
+| **Phases 1 + 2 — DONE (both features built).** Offline cache (instant cold-start, "cached · {age}", corruption-safe) **and** one-click "Start rebalance serve" (detached `Process`, login-shell binary resolution, poll-until-healthy, button in offline state + header + ⌘S menu). Headless verified: cache round-trip + binary resolution (`/Users/noelsaw/bin/rebalance`). `swift build` green. | **Operator litmus:** cold-launch offline → "Start server" brings the roster up. Then bundled-`.app` re-verify of binary resolution lands with parent Phase 5 packaging. |
 
 ## Table of Contents
 
@@ -81,28 +81,28 @@ This is a **non-competing follow-on** to the parent plan (which owns the core bu
 
 > A one-click control that starts the local server and refreshes once it's healthy — no terminal needed.
 
-- [ ] **Decide + record the start mechanism:** `launchctl kickstart -k <com.rebalance-os.* serve label>` if such a label exists, otherwise spawn a **detached** `rebalance serve`. (Open Question 1.)
-- [ ] **Resolve the `rebalance` binary robustly** (GUI apps lack shell `PATH`): try a configured path setting → login-shell `zsh -lc 'command -v rebalance'` → known venv/bin locations; clear error if unresolved.
-- [ ] Add a **"Start server"** button to the offline/failed state (and optionally the right-click menu): launches the server, shows a spinner, **polls `/focus-5.json` until healthy** (bounded timeout), then calls `model.refresh()`.
-- [ ] **Lifecycle:** the started server should behave like the operator's normal `serve` (survives app quit) — confirm detached vs app-owned and record it. (Open Question 3.)
-- [ ] **Failure handling:** binary-not-found, port-in-use, or never-healthy-within-timeout each surface an actionable message — never a hang or crash.
-- [ ] **Security:** the control runs only the local `rebalance serve` with a fixed argument list — no user-supplied args, no string-interpolated shell, localhost only.
+- [x] **Start mechanism decided → detached `Process`.** Recon found **no `serve` launchd label** (operator runs `rebalance serve` manually), so `ServerLauncher.start()` spawns a detached `rebalance serve` (its own lifetime, IO → `/dev/null`). (Open Question 1 resolved.)
+- [x] **Binary resolved robustly** ([ServerLauncher.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ServerLauncher.swift)): `REBALANCE_BIN` override → login-shell `<$SHELL> -lc 'command -v rebalance'` → known `/opt/homebrew`, `/usr/local`, `~/.local/bin` paths. Verified headlessly (`FOCUS5_RESOLVETEST` → `/Users/noelsaw/bin/rebalance`).
+- [x] **"Start server" control** in the offline/failed state **and** the header (when offline) **and** the right-click menu (⌘S): `model.startServer()` spawns, shows a spinner, polls via `refresh()` until reachable (20s bound), applies the roster.
+- [x] **Lifecycle = detached:** spawned with `Process` and not awaited → survives app quit, like the operator's normal `serve`. (Open Question 3 resolved.)
+- [x] **Failure handling:** binary-not-found → actionable message; never-healthy-within-20s → "try Refresh"; bounded poll, no hang/crash. `isStartingServer` guards re-entry.
+- [x] **Security:** fixed executable + `["serve"]` args; the only shell string is the hardcoded literal `command -v rebalance` (no user input); localhost only.
 
 ### QA Checklist — Phase 2
 
-- [ ] **Security:** fixed command + args (no shell string interpolation, no user input in the command line); localhost only; reviewed for command-injection.
-- [ ] **SOLID:** a `ServerLauncher` encapsulates resolve → start → await-healthy; the UI just calls it and renders states.
-- [ ] **Resilience:** missing binary / port-in-use / slow start all yield clear, bounded states — no hang, no crash, no infinite poll.
-- [ ] **Observability:** `os_log` the resolve attempts, the chosen mechanism, the start result, and the poll outcome.
-- [ ] **Deploy/packaging note:** the **bundled `.app` must resolve the binary at runtime without a shell `PATH`** — coordinate with Phase 5 packaging in the parent plan (this is the riskiest cross-cut).
-- [ ] **Litmus:** from a cold, offline app, clicking **Start server** brings the server up and the roster appears — with no manual terminal step.
-- [ ] **Anti-goal guard:** a single manual start action only — no auto-restart loop, no supervision.
+- [x] **Security:** fixed command + args, no user input on the command line, no interpolated shell beyond the hardcoded `command -v rebalance`; localhost only — reviewed for injection.
+- [x] **SOLID:** `ServerLauncher` (resolve + start) is a standalone enum; the model orchestrates start → poll; the UI just calls `startServer()` and renders `isStartingServer`/`startError`.
+- [x] **Resilience:** missing binary, slow/no start (20s timeout), and re-entry (`isStartingServer` guard) all yield clear bounded states — no infinite poll, no crash.
+- [x] **Observability:** `os_log` (category `launcher`) on resolve failure, chosen binary + spawned PID; `panel` log on the manual start action.
+- [~] **Deploy/packaging note:** bundled `.app` must resolve the binary at runtime without a shell `PATH` — the login-shell lookup handles this; **re-verify from the installed `.app`** in Phase 5 packaging (the riskiest cross-cut).
+- [~] **Litmus:** binary-resolution verified headlessly; build green. _Operator: from a cold, offline app, click **Start server** → server comes up → roster appears, no terminal._
+- [x] **Anti-goal guard:** a single manual start action only — no auto-restart loop, no supervision.
 
 ---
 
 ## Open Questions
 
-1. **Start mechanism:** `launchctl kickstart` an existing `com.rebalance-os.*` serve label, or spawn a detached `rebalance serve`? _Depends on whether a serve launchd job exists; confirm during Phase 2._
-2. **Binary resolution:** ship an explicit "rebalance path" setting, auto-resolve via a login shell, or both (setting overrides auto)? _Lean: auto-resolve with a setting override._
-3. **Started-server ownership:** app-owned (quits with the app) or detached (persists like the operator's normal serve)? _Lean: detached._
-4. **Auto-start option:** a setting to auto-start the server on launch when it's down? _Defer — ship the manual button first, add auto-start only if wanted._
+1. ~~**Start mechanism**~~ — **RESOLVED: detached `Process`.** No `serve` launchd label exists, so spawn `rebalance serve` directly.
+2. ~~**Binary resolution**~~ — **RESOLVED: auto-resolve with override.** `REBALANCE_BIN` → login-shell lookup → known paths.
+3. ~~**Started-server ownership**~~ — **RESOLVED: detached** (survives app quit, like the operator's normal serve).
+4. **Auto-start option:** a setting to auto-start the server on launch when it's down? _Still deferred — manual button shipped; add auto-start only if wanted._

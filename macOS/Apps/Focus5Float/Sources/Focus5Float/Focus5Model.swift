@@ -24,6 +24,8 @@ final class Focus5Model {
     var isOffline = false             // last fetch couldn't reach the server
     var showingCache = false          // currently displaying the on-disk cache
     var cachedFetchedAt: Date?        // when the displayed cache was last fetched
+    var isStartingServer = false      // a manual "Start server" is in flight
+    var startError: String?           // last start failure (nil when none)
 
     private let client = Focus5Client()
     private let cache = RosterCache()
@@ -91,6 +93,30 @@ final class Focus5Model {
             loadState = roster.isEmpty ? .failed(Self.offlineMessage) : .loaded
             return .failed
         }
+    }
+
+    /// Start the local `rebalance serve`, then poll (via `refresh()`) until it
+    /// answers and the roster is applied. Bounded so it never hangs.
+    func startServer() async {
+        guard !isStartingServer else { return }
+        isStartingServer = true
+        startError = nil
+        defer { isStartingServer = false }
+
+        do {
+            try ServerLauncher.start()
+        } catch {
+            startError = String(describing: error)
+            return
+        }
+
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            await refresh()
+            if !isOffline { return }                 // server answered; roster applied
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+        }
+        startError = "Server didn't respond within 20s — try Refresh."
     }
 
     /// Fixture loader — previews / FOCUS5_SELFTEST only, NOT the app data path.
