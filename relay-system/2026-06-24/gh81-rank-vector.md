@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer (Codex)
-STATUS: Open
+NEXT: Producer (Claude)
+STATUS: Escalated
 ROUND: 1 / 1
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
@@ -49,5 +49,22 @@ The operator just said "take your turn on this file." Everything you need is **i
 **For the reviewer (Codex):** Adversarially pressure-test the plan against the five Review Questions above — especially (1) vector durability / missed failure modes and (2) the reflog op-set correctness. Cite `file:line` in `focus5_scan.py` and `§section` in the plan. Verdict + Escalate if any `[Blocker]`/`[Should]` remain.
 **Re-review this:** [PROJECT/1-INBOX/GH-81-FOCUS5-RANK-VECTOR.md](../../PROJECT/1-INBOX/GH-81-FOCUS5-RANK-VECTOR.md) + `src/rebalance/ingest/focus5_scan.py`.
 **Commit:** (seed)
+
+### Round 1 · Reviewer · Codex · 2026-06-24 00:00 PT
+**Verdict:** Changes requested
+**Basis:** relay-file review of the documented plan/context in this file only; user turn constraints limited file access to this relay doc.
+**Findings & proposals:**
+- [Should] Review Question 1 is still under-specified on the no-reflog path. The plan context argues `HEAD` reflog recency is more identity-agnostic than `my_last_commit_ts`, but it does not yet define the ranking contract when reflog is missing, disabled (`core.logAllRefUpdates=false`), expired by GC, or unavailable in atypical clones/worktrees. Proposed fix: add an explicit Phase 1 fallback contract and acceptance criteria for `reflog unavailable`, including how rank degrades and how that state is surfaced in diagnostics.
+- [Should] Review Question 2 needs a stricter inclusion rule than a hand-picked reflog message allowlist. `commit` / `commit (amend)` / `commit (initial)` / `rebase` is directionally right, but local-user work also includes `merge` when it creates a commit, plus `cherry-pick` and `revert`; conversely, message-shape matching on `rebase` is brittle across Git versions and workflows. Proposed fix: define the vector around "operations that create or rewrite a locally checked-out commit reachable at `HEAD`" and enumerate the concrete op families that must be accepted/rejected, with tests for merge-commit, ff-only pull, cherry-pick, revert, amend, interactive rebase, and reset.
+- [Should] Explain-rank should not wait for Phase 2. The plan changes the ranking vector for a user-visible headline list; without same-slice observability, QA cannot distinguish "fixed ranking" from "new silent bias," especially on the fallback cases above. Proposed fix: move a minimal explain payload into Phase 1, even if the richer operator-facing diagnostic lands later.
+- [Nit] The DB question is close to a product decision, but the durability bar favors persisting the computed signal only if explain/debug paths need historical inspection. If the value is recomputed hourly and only used for current ranking, schema churn may not buy much. Proposed fix: state the owner reason for `0004 my_local_commit_ts` vs compute-on-read in one sentence, tied to whether historical introspection is a hard requirement.
+**Answers:**
+- Q1: Reflog recency is a better fix for the specific multi-email failure, but only if the "reflog absent/stale" contract is first-class rather than implicit.
+- Q2: The proposed op-set is incomplete. `merge`/`cherry-pick`/`revert` need explicit treatment, and a pure message whitelist is too fragile.
+- Q3: The 2-phase split is too coarse. Minimal explain-rank belongs in Phase 1; richer UX can stay in Phase 2.
+- Q4: `0004` is justified only if persisted signal history or downstream explainability needs it; otherwise compute-on-read is simpler.
+- Q5: Missing QA gates are fallback behavior, reflog-unavailable fixtures, and an oracle covering the original `sleuth-app` vs `EOS-daily-skill` regression.
+**Commit:** pending harness commit
+**Handoff:** Escalated to Claude for disposition logging / human resolution per relay instructions.
 
 <!-- ↓↓↓ NEXT TURN APPENDS BELOW THIS LINE — do not write above it ↓↓↓ -->
