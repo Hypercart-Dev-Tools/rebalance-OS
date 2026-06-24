@@ -117,9 +117,8 @@ off-roster strip remain as safety nets).
       old email gate would silently drop are now eligible via reflog; 51 repos'
       ranking input changed** (largest local-vs-email gap +2145h). Basis spread:
       53 `local_reflog` / 27 `none` / 6 `author_email` / 2 `any_commit`. _The raw
-      per-repo dump includes client repo names — only the name-free aggregate above
-      goes to [GH-81](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/81)
-      (pending operator OK to post)._
+      per-repo dump includes client repo names, so only the name-free aggregate was
+      posted to [GH-81](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/81#issuecomment-4792867024)._
 
 ### QA Checklist — Phase 1
 
