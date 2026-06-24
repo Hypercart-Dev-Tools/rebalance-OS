@@ -230,8 +230,8 @@ Why this over the alternatives:
 
 > Make it a real installable app the operator runs daily.
 
-- [ ] Adapt `make-app.sh`: new bundle id (e.g. `me.neochro.Focus5Float`), exec name, `Info.plist` with `LSUIElement=true`, app icon, ad-hoc `codesign --force --deep`, install to `/Applications`.
-- [ ] App icon (reuse/adapt the icon pipeline from `Resources/AppIcon.*`).
+- [x] Adapt `make-app.sh`: bundle id `me.neochro.Focus5Float`, exec `Focus5Float`, `Info.plist` with `LSUIElement=true`, ad-hoc `codesign --force --deep`, install to `/Applications`. → [make-app.sh](../../macOS/Apps/Focus5Float/make-app.sh); installed + launched + verified running against the live server.
+- [ ] App icon (none yet — `make-app.sh` already wires an optional `Resources/AppIcon.icns`; menu-bar agent has no Dock icon so low priority).
 - [ ] Launch-at-login toggle (`SMAppService` / login item).
 - [ ] Settings surface: server base URL, poll interval, default ranking mode, launch-at-login, show/hide Dock icon.
 - [ ] `macOS/Apps/Focus5Float/README.md`: build (`./make-app.sh`), run (`swift run Focus5Float`), prerequisites (`rebalance serve` must be running), and the `/focus-5.json` contract.
