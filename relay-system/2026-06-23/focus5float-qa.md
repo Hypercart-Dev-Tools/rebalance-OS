@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: Producer
+STATUS: Escalated
 ROUND: 1 / 1
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
@@ -56,5 +56,18 @@ The operator just said "take your turn on this file." Everything you need is **i
 **For the reviewer (Codex):** Please QA the sources against the Definition of Done above — especially (2) `@MainActor`/Task/Timer concurrency + retain cycles, (3) the read-only/no-Swift-ranking contract, and (4) the AppKit panel/timer lifecycle. Cite `file:line` and propose concrete fixes. Verdict + Escalate if any `[Blocker]`/`[Should]` remain.
 **Re-review this:** all of `macOS/Apps/Focus5Float/Sources/Focus5Float/*.swift` + `CONTRACT.md`.
 **Commit:** (seed)
+
+### Round 1 · Reviewer · Codex CLI · 2026-06-24
+**Verdict:** Escalated
+**Basis:** code read (worktree of rebalance-OS@HEAD; line numbers map to the committed sources)
+**Harness note:** Codex's `workspace-write` sandbox (scoped to the rebalance-OS worktree) blocked `tick claim` from writing the harness `.tick/locks/claim.lock` (cross-repo), so Codex could not self-write this block — its full review is captured verbatim from the turn transcript and persisted here by the Producer. (Fix for future driven cross-repo runs: `CODEX_FLAGS='--dangerously-bypass-approvals-and-sandbox'`.)
+**Findings & proposals:**
+- [Should] **Mode/refresh race.** Mode changes and refreshes race — an older response can overwrite a newer selection, and an offline failure can leave the UI/menu claiming a mode that never loaded. [Focus5Model.swift:37](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift#L37), [Focus5Model.swift:51](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift#L51), [ContentView.swift:27](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift#L27). Fix: track a generation/cancellable in-flight fetch, pass the requested mode explicitly into `fetch`, apply only the latest completion, and revert the optimistic mode flip on failure.
+- [Should] **Empty-state copy contradicts the contract.** Copy says "hit Refresh to build the roster," but `GET /focus-5.json` only re-pulls and never runs `sync_focus5()`. [ContentView.swift:79](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift#L79), [CONTRACT.md:69](../../macOS/Apps/Focus5Float/CONTRACT.md). Fix: change the message to direct the user to the server-side Focus 5 refresh, then re-pull in the app.
+- [Should] **`FOCUS5_BASE_URL` breaks the localhost-only posture.** The client accepts any base URL, but payloads carry `local_path`/`vscode_url`/`remote_url`/`author_email`. [Focus5Client.swift:19](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Client.swift#L19), [CONTRACT.md:12](../../macOS/Apps/Focus5Float/CONTRACT.md). Fix: reject non-loopback hosts in normal runs, or gate the remote override behind explicit debug/livetest mode only.
+- [Should] **Menu checkmarks drift from model state.** `updateModeMenuState()` only runs on launch and on menu actions, so toggling the in-panel segmented control leaves the context menu's checkmark stale. [ContentView.swift:27](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift#L27), [Focus5FloatApp.swift:71](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5FloatApp.swift#L71). Fix: recompute checkmarks in `menuNeedsUpdate(_:)`, or observe `rankingMode` from one source of truth.
+- [Pass] **Read-side contract respected.** The client always issues `GET`, embeds no ranking/git/DB logic, and decodes the documented wire shape. [Focus5Client.swift:34](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Client.swift#L34), [Models.swift:10](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Models.swift#L10).
+**Answers:** No tests run; code-read review only. Tokens used ≈ 176.7k.
+**Commit:** (persisted by Producer; Codex sandbox blocked self-write)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
