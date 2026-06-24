@@ -47,7 +47,7 @@ _None yet._
 
 ### Deferred
 
-_None yet._
+- `Focus 5 — identity-agnostic ranking vector` ([GH-81](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/81)) — the headline board silently drops repos whose recent local commits use a different author email; switch the vector to local-commit reflog recency (identity-agnostic) + an explain-rank diagnostic. 2 phases; drafted, pending Codex relay review. → [PROJECT/1-INBOX/GH-81-FOCUS5-RANK-VECTOR.md](PROJECT/1-INBOX/GH-81-FOCUS5-RANK-VECTOR.md)
 
 ---
 
