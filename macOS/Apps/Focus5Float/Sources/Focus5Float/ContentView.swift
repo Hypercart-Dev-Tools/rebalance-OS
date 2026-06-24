@@ -1,9 +1,9 @@
 import SwiftUI
+import AppKit
 
-// Phase 1 UI: a vertical stack of repo cards rendered from the fixture, using the
-// harvested Theme + components. The full collapsible/expandable card (tree-health
-// / PR / activity sub-sections, ranking toggle) is Phase 3; this proves the data
-// → view path and the design-system reuse.
+// Vertical stack of repo cards, using the harvested Theme + components. Data is
+// the live GET /focus-5.json (Phase 4) via Focus5Model. The full collapsible
+// card (tree-health / PR / activity sub-sections) is Phase 3.
 
 struct ContentView: View {
     let model: Focus5Model
@@ -18,11 +18,16 @@ struct ContentView: View {
     }
 
     private var header: some View {
-        HStack {
+        HStack(spacing: Theme.Space.s) {
             Text(model.isDirtyView ? "🧹 Dirty Five" : "🎯 Focus 5")
                 .font(Theme.display)
                 .foregroundStyle(Theme.text)
-            Spacer()
+            Spacer(minLength: Theme.Space.s)
+            if model.isOffline {
+                Text("offline")
+                    .font(Theme.caption)
+                    .foregroundStyle(Theme.diffRemove)
+            }
             Text("\(model.roster.count) repos")
                 .font(Theme.caption)
                 .foregroundStyle(Theme.text2)
@@ -37,10 +42,10 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .failed(let message):
             VStack(spacing: Theme.Space.s) {
-                Image(systemName: "exclamationmark.triangle")
+                Image(systemName: "bolt.horizontal.circle")
                     .font(.system(size: 22))
                     .foregroundStyle(Theme.diffRemove)
-                Text("Couldn't load the fixture")
+                Text("Can't reach the Focus 5 server")
                     .font(Theme.bodyMed)
                     .foregroundStyle(Theme.text)
                 Text(message)
@@ -103,6 +108,13 @@ struct RepoCardView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                 .strokeBorder(Theme.separator, lineWidth: 1)
         )
+        .contentShape(Rectangle())
+        .onTapGesture { open(card.vscodeUrl) }   // click → open repo in VS Code
+        .help("Open \(card.repoName) in VS Code")
+    }
+
+    private func open(_ urlString: String) {
+        if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
     }
 }
 

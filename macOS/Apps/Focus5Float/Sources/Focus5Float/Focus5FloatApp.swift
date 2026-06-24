@@ -46,6 +46,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var focus5Item: NSMenuItem!
     private var dirtyFiveItem: NSMenuItem!
     private let model = Focus5Model()
+    private var pollTimer: Timer?
+    private let pollInterval: TimeInterval = 90   // re-pull cadence
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Accessory policy → menu-bar agent, no Dock icon. (The bundled .app
@@ -64,15 +66,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Construct right-click context menu
         buildContextMenu()
 
-        // Load the sample data fixture for Phase 2
-        model.loadSample()
-
         // Build the floating panel
         buildPanel()
         updateModeMenuState()
 
         // Show panel on launch
         showPanel()
+
+        // Live data: pull GET /focus-5.json (the same roster the web /focus-5
+        // shows), then poll on a timer.
+        Task { await model.refresh(); updateModeMenuState() }
+        startPolling()
+    }
+
+    private func startPolling() {
+        pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
+            Task { @MainActor in await self?.model.refresh() }
+        }
     }
 
     // MARK: - Menu
@@ -99,10 +109,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         self.contextMenu = menu
     }
 
-    /// Reflect the active ranking mode with a checkmark.
-    private func updateModeMenuState() {
-        focus5Item.state = model.isDirtyView ? .off : .on
-        dirtyFiveItem.state = model.isDirtyView ? .on : .off
+    /// Reflect the active ranking mode with a checkmark. Pass `dirty` to update
+    /// optimistically before an async re-fetch resolves; omit to read the model.
+    private func updateModeMenuState(dirty: Bool? = nil) {
+        let isDirty = dirty ?? model.isDirtyView
+        focus5Item.state = isDirty ? .off : .on
+        dirtyFiveItem.state = isDirty ? .on : .off
     }
 
     // MARK: - Panel
@@ -174,21 +186,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Actions
 
     @objc private func refreshData() {
-        log.info("refresh (re-pull)")
-        model.loadSample()   // Phase 4: live GET /focus-5.json
+        log.info("refresh (re-pull /focus-5.json)")
+        Task { await model.refresh() }
     }
 
     @objc private func setFocus5Mode() {
         log.info("ranking mode → recent_activity")
-        model.rankingMode = "recent_activity"
-        updateModeMenuState()
-        // Phase 4: re-fetch /focus-5.json (default view) for a true server re-rank.
+        updateModeMenuState(dirty: false)
+        Task { await model.setMode(dirty: false) }   // server re-ranks (default view)
     }
 
     @objc private func setDirtyFiveMode() {
         log.info("ranking mode → dirty_first")
-        model.rankingMode = "dirty_first"
-        updateModeMenuState()
-        // Phase 4: re-fetch /focus-5.json?view=dirty for a true server re-rank.
+        updateModeMenuState(dirty: true)
+        Task { await model.setMode(dirty: true) }     // server re-ranks (?view=dirty)
     }
 }

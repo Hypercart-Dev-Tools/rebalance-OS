@@ -19,7 +19,7 @@ rollout_rule: each phase must leave a buildable, launchable app (or a green `swi
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 2 — Floating Window + Menu-Bar Shell — COMPLETE (impl).** `@main` AppKit lifecycle hosts the SwiftUI cards in a non-activating floating `NSPanel`: F5 menu-bar toggle, right-click menu (Refresh / Ranking Mode ✓ / Quit), first-mouse interaction, Esc-to-hide, frame autosave, hidden traffic-lights, `os_log` throughout. `swift build` green. _Operator validation of focus-discipline / fullscreen-overlay pending._ | **Phase 3 — Vertical Card-Stack UI:** collapsible rows (tree-health / PR / activity sub-sections), in-panel ranking toggle, staleness badge, off-roster footer. |
+| **Phase 4 — Live Data Integration — COMPLETE.** Panel now shows the **real** roster (not the fixture): `Focus5Client` GETs `/focus-5.json` — the *same* `summarize_focus5()` behind the web `/focus-5` — with 90s poll, Refresh + ranking-mode re-fetch, offline handling, and tap-to-open in VS Code. Verified end-to-end against a live `rebalance serve`: identical 5 repos as the browser. `swift build` green. | **Phase 3 — Vertical Card-Stack UI:** collapsible rows (tree-health / PR / activity sub-sections), in-panel ranking toggle, staleness badge, off-roster footer. Then Phase 5 (packaging). |
 
 ## Table of Contents
 
@@ -206,23 +206,23 @@ Why this over the alternatives:
 
 > Wire `Focus5Model` to the real `GET /focus-5.json`; replace the fixture.
 
-- [ ] `Focus5Client` (URLSession + `Codable`) fetching `/focus-5.json`; base URL configurable (default `http://localhost:8787`).
-- [ ] `Focus5Model.refresh()` runs off-main (`Task.detached`), maps response → `roster`/`offRoster`, updates `loadState`, surfaces errors via `ToastView`.
-- [ ] Auto-poll on a configurable interval (default 60–120s) + manual ↻ button. ↻ **re-pulls** `GET /focus-5.json` (read-only). A full server-side re-scan, if built, is a distinct user action that issues `POST /focus-5/sync` then re-pulls — never a GET side effect.
-- [ ] Ranking-mode toggle re-fetches with `?view=dirty` (or `mode=`); selection persists.
-- [ ] **Server-unreachable handling:** keep last-known roster visible, show ⚠ offline + last-updated time; never crash or blank out.
-- [ ] Open actions: repo name → `vscode_url`; PR → `html_url` (`NSWorkspace.open`).
-- [ ] (Optional, deferred) GRDB read-only fallback querying `focus5_roster`/`focus5_repo_signals` when the server is down — flagged clearly as snapshot (no live re-probe).
+- [x] `Focus5Client` (URLSession + `Codable`) fetching `/focus-5.json`; base URL configurable via `FOCUS5_BASE_URL` (default `http://localhost:8787`). **Same `summarize_focus5()` the web `/focus-5` uses — no reinvented data path.**
+- [x] `Focus5Model.refresh()` is `async` (URLSession off-main), maps response → `roster`/`offRoster`/`rankingMode`/`lastUpdated`, updates `loadState`/`isOffline`. (Toast wiring deferred; offline state shown inline.)
+- [x] Auto-poll every 90s (`pollTimer`) + manual Refresh menu item. Refresh **re-pulls** `GET /focus-5.json` (read-only). Full re-scan stays a deferred separate `POST /focus-5/sync` — never a GET side effect.
+- [x] Ranking-mode menu re-fetches with `?view=dirty` via `model.setMode(dirty:)`; server does the re-rank, checkmark reflects selection.
+- [x] **Server-unreachable handling:** last-known roster stays visible with an `offline` badge; empty roster degrades to an actionable "start `rebalance serve`" state. No crash/blank.
+- [x] Open action: tap a card → `vscode_url` (`NSWorkspace.open`). PR `html_url` open lands with the Phase 3 expanded card.
+- [ ] (Optional, deferred) GRDB read-only fallback querying `focus5_roster`/`focus5_repo_signals` when the server is down — flagged clearly as snapshot (no live re-probe). **Deferred** (server is local + usually up).
 
 ### QA Checklist — Phase 4
 
-- [ ] **Contract integrity:** Decoding tolerates real-world nulls (no PR, no upstream, empty `recent_activity`) without throwing — tested against captured fixtures of each shape.
-- [ ] **Resilience:** Kill `rebalance serve` mid-session → app shows offline badge + stale data, recovers automatically when server returns. No spinner-forever, no crash.
-- [ ] **DRY:** One decode path shared by live fetch and the (optional) fallback; one mapping from `RepoCard` → view state.
-- [ ] **SOLID:** `Focus5Client` is injectable (protocol) so the model can be unit-tested with a stub returning fixtures.
-- [ ] **Observability:** Each fetch logs URL, status, latency, roster size; failures log the reason. Last-updated timestamp visible in the UI.
-- [ ] **Security/boundary:** The poll/refresh path issues GET only (no DB/repo writes). The optional rebuild is the *only* POST — explicit, user-initiated, and clearly labeled as a mutation. Base URL defaults to localhost; a non-local URL requires an explicit user setting and warns that local-only fields (`local_path`, `vscode_url`) would be exposed.
-- [ ] **Litmus (E2E):** With a live `rebalance serve`, the panel shows the same 5 repos as the browser `/focus-5`, and a real `git commit` in one repo is reflected after refresh.
+- [x] **Contract integrity:** Real-payload decode verified headlessly (`FOCUS5_LIVETEST=1`) against the live server — 5 real repos incl. dirty/clean + null cases, no throws. Fixture self-test still covers no-PR/non-GitHub/local-only/empty-activity.
+- [~] **Resilience:** Empty→`.failed` with actionable message; last-known roster retained + `offline` badge on later failures; 90s poll auto-recovers. _Operator: confirm the kill-mid-session recovery on the real binary._
+- [x] **DRY:** One decode path — `Focus5JSON.decoder()` shared by `Focus5Client` (live) and `SampleData` (fixture); one `apply(_:)` mapping → view state.
+- [~] **SOLID:** `Focus5Client` is a value type with injectable `baseURL`/`session` (env-overridable). _Protocol extraction for stubbed unit tests deferred until a test target exists._
+- [x] **Observability:** fetch path + roster size logged via `os_log`; `LIVETEST` prints URL/roster. `lastUpdated` (`computed_at`) held on the model; surfaced in UI with Phase 3 staleness badge.
+- [x] **Security/boundary:** client issues **GET only**; no POST/rebuild. `baseURL` defaults to localhost; `FOCUS5_BASE_URL` override is the explicit opt-in. (Local-only field exposure note stands in CONTRACT.md.)
+- [x] **Litmus (E2E):** Live `rebalance serve` → `/focus-5.json` and the Swift client both return the **same 5 repos as the browser `/focus-5`** (rebalance-OS, sleuth-app, EOS-daily-skill, fast-key-replacement-macos, xyz-3-agents-swarm). git-commit-reflected-after-refresh: operator glance.
 
 ---
 
