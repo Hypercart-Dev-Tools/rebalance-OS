@@ -17,7 +17,7 @@ rollout_rule: each phase leaves the system runnable (`pytest tests/` green, `reb
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 1 & 2 SHIPPED (2026-06-24) — GH-81 complete.** P1: reflog vector + `resolve_recency` ladder + `rank_recent_activity` ranks on `my_local_commit_ts`; migration `0007`; real-device proof (24 repos no longer silently dropped). P2: operator explain UX — `explain_recency` on the off-roster strip ("your local commit 3d ago · below the #5 cutoff (16h ago)") + `basis_badge` fallback badge on roster cards (a degraded basis is never silent). Full suite green (**1109 passed**), `doctor` clean. | **Done.** Optional: Codex r2 confirm of the `any_commit`-gating refinement; move doc to `3-COMPLETED`. |
+| **Phases 1 & 2 SHIPPED + Codex r2 QA passed (2026-06-24) — GH-81 complete.** P1: reflog vector + `resolve_recency` ladder; migration `0007`; 24 repos no longer silently dropped. P2: explain UX (`explain_recency` strip + `basis_badge`). **Codex r2 (code review): `any_commit` gate confirmed `[Pass]`; 2 `[Should]` + 1 `[Nit]` fixed** — migration `0008` backfills legacy NULL recency (hide/rerank can't blank the board), `rank_cutoff_ts`/explain gated to the Focus 5 view (no Dirty-Five mislabel), + a linked-worktree fixture. Full suite green (**1112 passed**), `doctor` clean. | **Done** — ready to move to `3-COMPLETED`. |
 
 ## Table of Contents
 
@@ -220,3 +220,16 @@ off-roster strip remain as safety nets).
   Full suite **1109 passed**, `doctor` clean. GH-81 is feature-complete; remaining
   is the optional Codex r2 on the `any_commit`-gating refinement + filing the doc
   to `3-COMPLETED`.
+- **Codex relay r2 (2026-06-24) — CODE QA, Verdict: Changes requested → all resolved.**
+  Thread: [relay-system/2026-06-24/gh81-code-qa.md](../../relay-system/2026-06-24/gh81-code-qa.md).
+  The `any_commit`-gating refinement was confirmed correct (`[Pass]`). Three findings,
+  all Implemented:
+  1. **[Should]** post-`0007` hide/rerank could blank the board (legacy NULL recency
+     rows). → migration **`0008`** backfills NULL rows to the old author-email basis;
+     `rerank_focus5_from_cache` runs migrations before reading, so the backfill always
+     precedes a rerank. Regression test added.
+  2. **[Should]** `rank_cutoff_ts` was mislabelled under Dirty Five (Focus-5 copy on a
+     `dirty_first` cutoff). → cutoff + explain caption gated to the `recent_activity`
+     view only. Test added.
+  3. **[Nit]** no linked-worktree (`.git`-file) reflog fixture. → added.
+  Result: `pytest tests/` **1112 passed**, `doctor` clean.

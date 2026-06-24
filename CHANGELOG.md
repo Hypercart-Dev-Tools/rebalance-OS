@@ -21,6 +21,8 @@ The headline activity board now ranks on whether *your local checkout* committed
 
 ### Fixed
 - Repos whose recent local commits were authored under a non-matching email (forks, web-merge noreply, multi-identity work) no longer silently disappear from the board. On a real 88-repo device, 24 such repos became eligible again.
+- Hiding a repo right after the upgrade can no longer blank the board: a backfill step populates the new recency columns for pre-existing rows, so a re-rank before the first fresh scan reproduces the prior roster instead of dropping everything as ineligible.
+- The "below the #5 cutoff" explanation is shown only on the headline board; the at-risk (Dirty Five) view no longer labels its own cutoff with headline-board wording.
 
 ## [0.43.0] - 2026-06-23
 

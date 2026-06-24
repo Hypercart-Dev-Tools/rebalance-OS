@@ -369,7 +369,11 @@ def _f5_warning_strip(data: dict[str, Any]) -> str:
         return ""
     # GH-81 Phase 2: each repo carries its rank explanation (recency + basis vs the
     # #5 cutoff) so "why isn't this in Focus 5?" is answered inline, not via git log.
+    # The explain copy is recent_activity-specific ("below the #5 cutoff", "Focus
+    # 5"), so it's only rendered on the headline board — the Dirty Five view ranks
+    # under dirty_first and would be mislabelled by it. (Codex relay r2.)
     from rebalance.ingest.focus5_scan import explain_recency
+    explain_on = data.get("ranking_mode") == "recent_activity"
     cutoff = (data.get("summary") or {}).get("rank_cutoff_ts")
     now_ts = int(datetime.now(timezone.utc).timestamp())
     shown, items = warns[:8], []
@@ -381,14 +385,14 @@ def _f5_warning_strip(data: dict[str, Any]) -> str:
             bits.append(f"{w['untracked_count']} untracked")
         if w.get("ahead"):
             bits.append(f"{w['ahead']} unpushed")
-        why = html.escape(
-            explain_recency(w.get("recency_basis"), w.get("my_local_commit_ts"),
-                            cutoff, now_ts)
-        )
-        items.append(
-            f"<b>{html.escape(w['repo_name'])}</b> ({', '.join(bits) or 'attention'}) "
-            f"<span class='f5-muted'>— {why}</span>"
-        )
+        item = f"<b>{html.escape(w['repo_name'])}</b> ({', '.join(bits) or 'attention'})"
+        if explain_on:
+            why = html.escape(
+                explain_recency(w.get("recency_basis"), w.get("my_local_commit_ts"),
+                                cutoff, now_ts)
+            )
+            item += f" <span class='f5-muted'>— {why}</span>"
+        items.append(item)
     more = f" · +{len(warns) - len(shown)} more" if len(warns) > len(shown) else ""
     age = _rel_time(data.get("computed_at"))
     return (

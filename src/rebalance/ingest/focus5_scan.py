@@ -1049,7 +1049,11 @@ def summarize_focus5(
     # the lowest-ranked rostered repo — the threshold an off-roster repo must beat
     # to make the board. Lets QA distinguish "fixed ranking" from a new silent bias
     # (read each off-roster repo's my_local_commit_ts + recency_basis against this).
-    rank_cutoff_ts = roster[-1].get("my_local_commit_ts") if roster else None
+    # Only meaningful for the headline recent_activity board: the explain copy
+    # ("below the #5 cutoff", "Focus 5") is recent_activity-specific, so a transient
+    # view (Dirty Five reranks under dirty_first) must NOT publish a cutoff that the
+    # renderer would then mislabel with Focus 5 semantics. (Codex relay r2.)
+    rank_cutoff_ts = roster[-1].get("my_local_commit_ts") if (roster and mode is None) else None
 
     return {
         "roster": roster,

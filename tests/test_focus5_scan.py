@@ -585,6 +585,82 @@ class Focus5RankOracleTests(unittest.TestCase):
             self.assertIsNone(cards["sleuth"]["my_last_commit_ts"])
 
 
+class Focus5LegacyRowBackfillTests(unittest.TestCase):
+    """Codex r2 [Should]: a pre-0007 row has NULL GH-81 recency; rerank-from-cache
+    (fired on every hide click) must NOT blank the board before the first resync.
+    Migration 0008 backfills NULL rows to the old author-email behavior."""
+
+    def test_migration_0008_backfills_and_rerank_keeps_roster(self) -> None:
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.db.migrate import discover_migrations
+        from rebalance.ingest.db.schema import (
+            ensure_baseline_schema, ensure_schema_version_table,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "rebalance.db"
+            with db_connection(db) as conn:
+                ensure_baseline_schema(conn)
+                ensure_schema_version_table(conn)
+                conn.execute("INSERT OR IGNORE INTO schema_version (version, applied_at) "
+                             "VALUES (1, 't')")
+                # Apply real migrations THROUGH 0007 (adds the NULL columns) but not 0008.
+                for ver, path in discover_migrations():
+                    if ver > 7:
+                        break
+                    conn.executescript(path.read_text(encoding="utf-8"))
+                    conn.execute("INSERT OR IGNORE INTO schema_version (version, applied_at) "
+                                 "VALUES (?, 't')", (ver,))
+                # Seed a legacy row: authored commit, but NULL GH-81 recency — exactly
+                # a pre-0007 row after 0007 adds the columns.
+                conn.execute(
+                    "INSERT INTO focus5_repo_signals "
+                    "(device_id, local_path, repo_name, has_upstream, ahead, behind, "
+                    " modified_count, untracked_count, is_dirty, my_last_commit_ts, "
+                    " my_local_commit_ts, recency_basis, probed_at) "
+                    "VALUES ('dev','/r/legacy','legacy',0,0,0,0,0,0,?,NULL,NULL,'t')",
+                    (NOW - HOUR,),
+                )
+                conn.commit()
+                # run_migrations now applies 0008 → backfills the NULL row.
+                run_migrations(conn)
+                row = conn.execute(
+                    "SELECT my_local_commit_ts, recency_basis FROM focus5_repo_signals "
+                    "WHERE local_path='/r/legacy'"
+                ).fetchone()
+                self.assertEqual(row["my_local_commit_ts"], NOW - HOUR)
+                self.assertEqual(row["recency_basis"], "author_email")
+            # The hide/rerank path (recent_activity) keeps the repo — board not blanked.
+            self.assertEqual(
+                rerank_focus5_from_cache(db, device_id="dev", mode="recent_activity"), 1
+            )
+
+
+class Focus5WorktreeTopologyTests(unittest.TestCase):
+    """Codex r2 [Nit]: discovery handles `.git` as a file (linked worktree), but no
+    reflog fixture exercised it. Pin that the vector resolves for a worktree."""
+
+    def test_linked_worktree_git_file_resolves_reflog_basis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            main = _make_git_repo(Path(tmp), "main_repo")  # one commit on main
+            wt = Path(tmp) / "wt"
+            _run(main, "git", "worktree", "add", "-q", str(wt), "-b", "feature")
+            (wt / "w.txt").write_text("x", encoding="utf-8")
+            _run(wt, "git", "add", ".")
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_EMAIL": "me@example.com", "GIT_AUTHOR_NAME": "A",
+                "GIT_COMMITTER_EMAIL": "me@example.com", "GIT_COMMITTER_NAME": "A",
+            }
+            _run(wt, "git", "commit", "-q", "-m", "wt commit", env=env)
+            self.assertTrue((wt / ".git").is_file())  # linked worktree → .git is a FILE
+            ts, available = _probe_head_reflog_commit(wt)
+            self.assertTrue(available)
+            self.assertIsNotNone(ts)
+            s = probe_repo_signals(wt, device_id="dev", probed_at="t")
+            self.assertEqual(s.recency_basis, "local_reflog")
+            self.assertIsNotNone(s.my_local_commit_ts)
+
+
 # ---------------------------------------------------------------------------
 # Real git: sync + summarize (the read contract)
 # ---------------------------------------------------------------------------

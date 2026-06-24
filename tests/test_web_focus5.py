@@ -158,6 +158,7 @@ class FocusBodyTests(unittest.TestCase):
             "recency_basis": "local_reflog", "my_local_commit_ts": now - 3 * 86400,
         }]
         body = _focus5_body(_data([_card()], off_roster_warnings=warns,
+                                  ranking_mode="recent_activity",
                                   cutoff=now - 16 * 3600))  # #5 cutoff = 16h ago
         self.assertIn("sleuth-app", body)
         self.assertIn("your local commit 3d ago", body)
@@ -172,8 +173,27 @@ class FocusBodyTests(unittest.TestCase):
             "probed_at": _now_iso(hours=1),
             "recency_basis": "author_email", "my_local_commit_ts": now - 2 * 3600,
         }]
-        body = _focus5_body(_data([_card()], off_roster_warnings=warns, cutoff=now))
+        body = _focus5_body(_data([_card()], off_roster_warnings=warns,
+                                  ranking_mode="recent_activity", cutoff=now))
         self.assertIn("ranked by author email", body)  # the fallback is shown, not silent
+
+    def test_dirty_view_suppresses_focus5_explain_copy(self) -> None:
+        # Codex r2: the explain copy ("below the #5 cutoff", "Focus 5") is
+        # recent_activity-specific — the Dirty Five board must NOT render it.
+        now = int(datetime.now(timezone.utc).timestamp())
+        warns = [{
+            "repo_name": "side-proj", "local_path": "/x/side-proj",
+            "repo_full_name": None, "branch": "main", "ahead": 0,
+            "modified_count": 1, "untracked_count": 0, "is_dirty": True,
+            "probed_at": _now_iso(hours=1),
+            "recency_basis": "local_reflog", "my_local_commit_ts": now - 3 * 86400,
+        }]
+        body = _focus5_body(_data([_card()], off_roster_warnings=warns,
+                                  ranking_mode="dirty_first", cutoff=None),
+                            view="dirty")
+        self.assertIn("side-proj", body)            # repo still listed…
+        self.assertNotIn("below the #5 cutoff", body)  # …but no Focus-5 cutoff copy
+        self.assertNotIn("not eligible for Focus 5", body)
 
     def test_roster_card_shows_fallback_basis_badge(self) -> None:
         # A rostered repo that ranked by a fallback basis must surface it on-card.
