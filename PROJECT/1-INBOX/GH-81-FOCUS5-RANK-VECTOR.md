@@ -17,7 +17,7 @@ rollout_rule: each phase leaves the system runnable (`pytest tests/` green, `reb
 
 | What was just completed | What's next |
 |---|---|
-| _None — plan drafted 2026-06-24 from [GH-81](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/81); pending Codex relay review._ | **Phase 1 — Identity-agnostic ranking vector:** probe `my_local_commit_ts` from the HEAD reflog (local commit ops only) and rank `rank_recent_activity` on it. |
+| **Codex relay review integrated (2026-06-24)** — plan hardened per 4 findings: no-reflog **fallback ladder** + `recency_basis`, **semantic op-set** + test matrix, **minimal explain pulled into Phase 1**, DB-persist rationale, sleuth/EOS **regression oracle** + reflog-unavailable fixtures. | **Implement Phase 1** — probe `my_local_commit_ts` + `recency_basis` (reflog → author-email → any-commit fallback), rank on it, minimal explain payload, migration `0004`, op-matrix + oracle tests. |
 
 ## Table of Contents
 
@@ -69,85 +69,118 @@ off-roster strip remain as safety nets).
 
 ---
 
-## Phase 1 — Identity-Agnostic Ranking Vector
+## Phase 1 — Identity-Agnostic Ranking Vector (+ minimal explain)
 
-> Rank the headline board on local-commit reflog recency instead of a single
-> `--author` email match.
+> Rank the headline board on local-commit recency from the HEAD reflog, with an
+> explicit **fallback** when the reflog is unavailable, plus a **minimal
+> ranking-basis payload** so QA can see *why* each repo ranks (no silent bias).
+> _(Codex relay r1: §[Should]×3 + §[Nit] integrated — see relay thread.)_
 
-- [ ] `probe_repo_signals` captures `my_local_commit_ts`: parse `.git/logs/HEAD`
-      (or `git reflog show --date=unix HEAD`), take the latest entry whose op is a
-      **local commit** — message starts with `commit`, `commit (amend)`,
-      `commit (initial)`, or `rebase` — **excluding** `pull` / `fetch` /
-      `checkout` / `clone` / `reset`. Never raises (no reflog → `None`).
-- [ ] `RepoSignals` gains `my_local_commit_ts: int | None`; the author-email
-      `my_last_commit_ts` stays (now display/diagnostic only).
-- [ ] DB: additive migration (`0004_*`) adding the `my_local_commit_ts` column to
-      `focus5_repo_signals` (or recompute-on-read if the column is avoidable —
-      decide in review). Old rows tolerate `NULL`.
-- [ ] `rank_recent_activity` ranks on `my_local_commit_ts` (eligible iff not
-      `None`); `rank_reason` reads from it. Other strategies unchanged.
-- [ ] Tests: reflog parse table (commit / amend / rebase count; pull / fetch /
-      checkout / clone / reset do **not**); eligibility (no local commit →
-      excluded); the sleuth-style case (local commit under a non-`user.email`
-      identity ranks above a web-merge-only repo).
-- [ ] **Proof artifact:** before/after `summarize_focus5()` roster diff on the
-      real device DB, saved to the issue.
+- [ ] **Define the signal semantically** (not a brittle message allowlist):
+      `my_local_commit_ts` = the most recent HEAD-reflog entry for an **operation
+      that creates or rewrites a locally-checked-out commit reachable at HEAD**.
+      *Accept:* `commit`, `commit (amend)`, `commit (initial)`, a `merge` that
+      **creates** a local merge commit, `cherry-pick`, `revert`, `rebase` (incl.
+      interactive). *Reject:* fast-forward `pull`/`merge` (foreign), `fetch`,
+      `checkout`, `clone`, `reset`. Tolerate reflog-message variance across git
+      versions — enumerate accept/reject op families in **one** place; an
+      unrecognized op is treated **conservatively as reject** and logged.
+- [ ] **Fallback contract when the reflog is unavailable:** if HEAD reflog is
+      missing / disabled (`core.logAllRefUpdates=false`) / GC-expired / absent in
+      an atypical clone or worktree, degrade in a **defined order** — `local_reflog`
+      → `author_email` (`my_last_commit_ts`, the *old* behavior, so we never
+      regress below today) → `any_commit` (`last_commit_ts`) → `none` (ineligible).
+      The chosen basis is **recorded, never silent**.
+- [ ] `probe_repo_signals` captures `my_local_commit_ts` + a `recency_basis` enum
+      (`local_reflog` | `author_email` | `any_commit` | `none`). Never raises.
+- [ ] `RepoSignals` gains `my_local_commit_ts: int | None` + `recency_basis`; the
+      author-email `my_last_commit_ts` stays (display/diagnostic **and** fallback input).
+- [ ] `rank_recent_activity` ranks on the resolved recency (eligible iff
+      `recency_basis != none`); `rank_reason` reads from it. Other strategies untouched.
+- [ ] **Minimal explain in Phase 1:** `summarize_focus5()` carries, per roster +
+      off-roster repo, its resolved recency + `recency_basis` + the current #5
+      cutoff — enough for QA to distinguish "fixed ranking" from "new silent bias."
+      (Operator-facing UX is Phase 2.)
+- [ ] DB: persist `my_local_commit_ts` + `recency_basis` in `focus5_repo_signals`
+      via additive migration `0004_*` (NULL-tolerant). **Reason:** the other signals
+      are already persisted by the probe (one write path); adding these alongside
+      keeps a single writer and lets explain/debug read the basis without
+      re-probing. (Compute-on-read is simpler but splits the write path — rejected.)
+- [ ] **Tests — op matrix:** accept (`commit`, `amend`, `merge`-commit,
+      `cherry-pick`, `revert`, interactive `rebase`) vs reject (ff-only `pull`,
+      `fetch`, `checkout`, `clone`, `reset`); the **reflog-unavailable** fixture
+      (`core.logAllRefUpdates=false`) exercising each fallback rung; and the
+      **regression oracle**: `sleuth-app` (local commits under a non-`user.email`
+      identity) ranks **above** `EOS-daily-skill` (web-merge-only).
+- [ ] **Proof artifact:** before/after `summarize_focus5()` roster diff on the real
+      device DB, saved to the issue.
 
 ### QA Checklist — Phase 1
 
-- [ ] **DRY:** one reflog-recency helper; no second reflog parse elsewhere.
+- [ ] **DRY:** one op-classification + recency-resolution helper; no second reflog
+      parse, and one `recency_basis` ladder shared by ranking + explain.
 - [ ] **SOLID:** the vector is isolated in `probe_repo_signals` + the strategy
-      pure-function; the route/collector/render layers are untouched.
-- [ ] **Diagnosable:** an unreadable/absent reflog degrades to `None` (repo simply
-      not eligible), logged — never an exception or a silent crash.
-- [ ] **Blast:** additive column + pure-function swap = reversible; no destructive
+      pure-function; route/collector/render layers untouched.
+- [ ] **Diagnosable:** reflog-absent degrades through the fallback ladder with the
+      basis **recorded** (not a silent `None`); each rung + unrecognized ops logged.
+- [ ] **Blast:** additive columns + pure-function swap = reversible; no destructive
       migration. Roster recomputes hourly; revert is a one-function change.
-- [ ] **Proof:** every acceptance check has a test or the captured roster diff;
-      `pytest tests/` green; `rebalance doctor` clean.
-- [ ] **Single write path:** the new column is written only by the focus5 sync
-      path (same writer as the other signals) — no second writer.
-- [ ] **UTC:** `my_local_commit_ts` is a Unix epoch (UTC); display formats at the
-      edge only.
+- [ ] **Proof:** op-matrix + reflog-unavailable + sleuth/EOS-oracle tests all run
+      green; before/after roster diff captured; `pytest tests/` green; `doctor` clean.
+- [ ] **Single write path:** the new columns are written only by the focus5 sync
+      probe (same writer as the other signals) — no second writer.
+- [ ] **UTC:** `my_local_commit_ts` is a Unix epoch (UTC); display formats at the edge.
 
 ---
 
-## Phase 2 — Explain-Rank Diagnostic
+## Phase 2 — Operator-Facing Explain UX
 
-> Make "why is repo X (not) in Focus 5?" self-service, so the next surprise is a
-> one-line answer instead of `git log` forensics.
+> The machine-readable explain payload ships in Phase 1; Phase 2 is the **human
+> surface** that makes "why is repo X (not) in Focus 5?" a one-line answer instead
+> of `git log` forensics — including when a fallback basis was used.
 
-- [ ] A pure `explain_focus5_rank(db, repo)` (or an extension of `summarize_focus5`)
-      that returns, for a repo: its `my_local_commit_ts` (relative), the current
-      #5 cutoff, eligibility, and the reason it is on / off the roster.
-- [ ] Surface it on one channel (decide in review): CLI `rebalance focus5 explain`,
-      an MCP field, or the web off-roster strip showing each repo's recency vs the
-      cutoff. Default lean: extend the off-roster strip reason (cheapest, already
-      rendered).
-- [ ] Tests: explain output for an on-roster repo, an off-roster eligible repo
-      (below cutoff), and an ineligible repo (no local commit).
+- [ ] Surface the Phase-1 explain payload on **one** channel: extend the web
+      off-roster strip reason (each repo's recency + `recency_basis` vs the #5
+      cutoff), or CLI `rebalance focus5 explain <repo>`, or an MCP field. Default
+      lean: off-roster strip (cheapest, already rendered).
+- [ ] Make the **`recency_basis` visible** — a fallback (e.g. "ranked by author
+      email because this clone's reflog is disabled") is shown, not silent.
+- [ ] Tests: explain UX for on-roster, off-roster-eligible (below cutoff),
+      ineligible (no local commit), and a **fallback-basis** repo.
 
 ### QA Checklist — Phase 2
 
-- [ ] **DRY:** explain reuses the Phase 1 recency + the same cutoff the ranker
-      uses — no parallel "what's the cutoff" calculation.
-- [ ] **SOLID:** explain is a read-only pure function over the cached signals; no
-      new probe, no write.
-- [ ] **Proof:** the diagnostic reproduces the original GH-81 finding (sleuth
-      off-roster: "last local commit 3d ago < #5 cutoff 16h") in a test.
-- [ ] **Diagnosable (meta):** this *is* the Diagnosable win — confirm it answers
-      the exact question that required manual forensics in GH-81.
+- [ ] **DRY:** the UX reuses the Phase-1 payload (recency + basis + cutoff) — no
+      parallel recomputation of "what's the cutoff."
+- [ ] **SOLID:** read-only pure render over the cached signals; no new probe, no write.
+- [ ] **Proof:** reproduces the original GH-81 finding in a test (sleuth off-roster:
+      "last local commit 3d ago < #5 cutoff 16h") **and** shows a fallback basis.
+- [ ] **Diagnosable (meta):** confirm it answers the exact question that required
+      manual forensics in GH-81 — including the reflog-unavailable fallback case.
 
 ---
 
 ## Open Questions
 
-1. **Storage:** add a `my_local_commit_ts` column (migration `0004`) vs. compute
-   reflog recency on read each render? Lean: column (consistent with the other
-   cached signals; one write path), but confirm the probe cost is acceptable.
-2. **Reflog op set:** include `rebase` / `merge`-that-creates-a-commit, or
-   restrict to `commit*` only? Lean: `commit*` + `rebase`; exclude fast-forward
-   merges (foreign).
-3. **Explain surface (Phase 2):** off-roster strip reason vs CLI vs MCP — pick one
-   for v1.
-4. **Hybrid escape hatch:** keep an *optional* email-match union for operators who
-   want web-merge-only repos to rank? Default OFF; only if requested.
+1. ~~**Storage**~~ — **RESOLVED (Codex r1):** persist `my_local_commit_ts` +
+   `recency_basis` in `focus5_repo_signals` (one write path, basis inspectable
+   without re-probe). Compute-on-read rejected (splits the writer).
+2. ~~**Reflog op set**~~ — **RESOLVED (Codex r1):** semantic definition
+   ("creates/rewrites a local commit reachable at HEAD") + enumerated accept/reject
+   families + a test matrix; unrecognized ops reject-and-log. (Was: a `commit*`
+   message allowlist — too fragile / incomplete.)
+3. ~~**Phase split**~~ — **RESOLVED (Codex r1):** minimal explain payload moves to
+   Phase 1 (observability for the new vector); operator-facing UX stays Phase 2.
+4. **Explain surface (Phase 2):** off-roster strip reason vs CLI vs MCP — still pick
+   one for v1. Lean: off-roster strip.
+5. **Hybrid escape hatch:** keep an *optional* email-match union for operators who
+   want web-merge-only repos to rank? Default OFF; only if requested. _(Note: the
+   `author_email` fallback rung already covers the reflog-disabled case.)_
+
+## Review history
+
+- **Codex relay r1 (2026-06-24)** — Verdict: Changes requested → all findings
+  integrated above (no-reflog fallback contract; semantic op-set + test matrix;
+  minimal explain pulled into Phase 1; DB-persist rationale stated; regression
+  oracle + reflog-unavailable fixtures added to QA). Thread:
+  [relay-system/2026-06-24/gh81-rank-vector.md](../../relay-system/2026-06-24/gh81-rank-vector.md).

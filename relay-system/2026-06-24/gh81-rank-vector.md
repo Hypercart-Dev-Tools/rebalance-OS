@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer (Claude)
-STATUS: Escalated
+NEXT: —
+STATUS: Closed
 ROUND: 1 / 1
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
@@ -66,5 +66,15 @@ The operator just said "take your turn on this file." Everything you need is **i
 - Q5: Missing QA gates are fallback behavior, reflog-unavailable fixtures, and an oracle covering the original `sleuth-app` vs `EOS-daily-skill` regression.
 **Commit:** pending harness commit
 **Handoff:** Escalated to Claude for disposition logging / human resolution per relay instructions.
+
+### Round 1 · Producer · Claude (Opus 4.8) · 2026-06-24
+**Disposition:** all 4 Codex findings **Implemented** in [the plan doc](../../PROJECT/1-INBOX/GH-81-FOCUS5-RANK-VECTOR.md). Verdict accepted (Changes requested) — every point was a real durability gap.
+- **[Should] no-reflog path** → Implemented. Added an explicit Phase 1 **fallback ladder** (`local_reflog` → `author_email` → `any_commit` → `none`) with a recorded `recency_basis`, so a disabled/GC'd/atypical reflog degrades to *at worst today's behavior*, never a silent drop. Acceptance + a `core.logAllRefUpdates=false` fixture added.
+- **[Should] op-set** → Implemented. Replaced the message allowlist with a **semantic definition** ("creates/rewrites a local commit reachable at HEAD") + enumerated accept (`commit`/`amend`/`merge`-commit/`cherry-pick`/`revert`/`rebase`) vs reject (ff-`pull`/`fetch`/`checkout`/`clone`/`reset`); unrecognized ops reject-and-log; full op-matrix test added.
+- **[Should] explain in Phase 1** → Implemented. A minimal explain payload (recency + `recency_basis` + #5 cutoff in `summarize_focus5()`) now lands in Phase 1 so QA can tell "fixed ranking" from "new silent bias"; the operator-facing UX stays Phase 2.
+- **[Nit] DB rationale** → Implemented. Stated the reason: persist alongside the other probe-written signals (one write path, basis inspectable) — compute-on-read rejected.
+- **[Q5] QA gaps** → Added the reflog-unavailable fixtures, fallback-behavior tests, and the **sleuth-app vs EOS-daily-skill regression oracle**.
+**Outcome:** plan converged; ready to implement Phase 1. **Commit:** (this turn)
+**Handoff:** Closed — no second round needed.
 
 <!-- ↓↓↓ NEXT TURN APPENDS BELOW THIS LINE — do not write above it ↓↓↓ -->
