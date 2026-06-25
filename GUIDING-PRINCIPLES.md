@@ -24,10 +24,11 @@ Fail a pillar, and the feature, source, or output isn't done.
 3. **Signal-agnostic, extend by addition.** Add a source by registering a collector, not by editing a dispatch chain; the query and LLM layers stay source-agnostic. A new source must clear all four pillars before it ships.
 4. **Incremental where possible, non-destructive always.** Refreshes prefer delta syncs and upserts by ID. When a source only supports bounded or full refetch, rebalance re-reads that scope and column-diffs/upserts — never auto-deleting history. The store accretes truth; it does not overwrite it.
 5. **Build durable, not band-aid.** Durable means it removes the root cause and the next planned change builds on it — not a patch torn out when the obvious next feature lands. A band-aid is wasted work unless a demo strictly needs one, and a demo band-aid is tagged for removal so it isn't silently inherited.
-6. **Honest; the operator decides.** Surface what's ready and where attention went — inform the call, never bury it under a label or act alone. A failing job self-repairs within a bounded menu, then files an issue and stops; it never masks failure as "all fine." Destructive actions require explicit authorization.
-7. **Docs are resumable runtime state (PDDA).** Agent work is stoppable, resumable, and handed off from `PROJECT/**` alone — ROUTER points, project docs hold detail, CHANGELOG logs dated outcomes. If reality and the docs disagree, the docs are the bug.
-8. **Done means verified.** "Done" is the gates actually run (`rebalance doctor`, `pytest`, PDDA checks), not work that looks finished. An unverified success claim is itself a low-quality signal.
-9. **Low-friction and portable.** Setup and the contract stay cheap to obey, or operators and agents route around them.
+6. **Least code that clears the bar.** Prefer reusing or extending what exists over adding new; the smallest change that stays secure, performant, maintainable, and durable wins. Net-new code is a cost to justify, not a default — deleting code counts as progress.
+7. **Honest; the operator decides.** Surface what's ready and where attention went — inform the call, never bury it under a label or act alone. A failing job self-repairs within a bounded menu, then files an issue and stops; it never masks failure as "all fine." Destructive actions require explicit authorization.
+8. **Docs are resumable runtime state (PDDA).** Agent work is stoppable, resumable, and handed off from `PROJECT/**` alone — ROUTER points, project docs hold detail, CHANGELOG logs dated outcomes. If reality and the docs disagree, the docs are the bug.
+9. **Done means verified.** "Done" is the gates actually run (`rebalance doctor`, `pytest`, PDDA checks), not work that looks finished. An unverified success claim is itself a low-quality signal.
+10. **Low-friction and portable.** Setup and the contract stay cheap to obey, or operators and agents route around them.
 
 ## Applying this
 

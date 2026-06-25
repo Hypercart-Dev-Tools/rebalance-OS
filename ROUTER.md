@@ -7,6 +7,7 @@ This file is the first entry point for an AI agent working in this repo: it tell
 - `ROUTER.md` = startup order and canonical entry points (this file)
 - `AGENTS.md` = behavioral rules, the MCP tool surface, the onboarding flow, and decision quality
 - `ARCHITECTURE.md` = system orientation (Signal Sources, Source→Table fanout, "Adding a New Source") — read at session start
+- `GUIDING-PRINCIPLES.md` = the *why* behind architecture and design decisions; includes the AI doc-review heuristics appendix
 - `README.md` = human-facing repo/product overview and install path
 - `ROADMAP.md` = pointer ledger of in-progress, completed, attempted, and deferred work
 - `CHANGELOG.md` = the end-of-iteration running log

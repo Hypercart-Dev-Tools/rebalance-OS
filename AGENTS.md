@@ -89,6 +89,8 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 
 ## Code & Architecture
 
+> For the *why* behind these rules, see [GUIDING-PRINCIPLES.md](./GUIDING-PRINCIPLES.md).
+
 - Code: DRY, SOLID; balance maintainability, performance, secure. Comply with framework security best practices.
 - **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document state diagram in code comments or `/docs/state-machine.md`.
 - **Contracts**: Designate single writer per contract/schema (API response shape, DB record structure, queue message format). Changes require review from contract owner; broadcast breaking changes immediately.
