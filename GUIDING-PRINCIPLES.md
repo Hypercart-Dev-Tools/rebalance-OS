@@ -1,57 +1,34 @@
 # Guiding Principles
 
-The north star **rebalance OS**'s goals and implementation decisions answer to. When a design choice
-is unclear, the option that better serves these principles wins.
+North star for **rebalance**, the engine behind HiQs (High Quality Signals). When a choice is unclear, the option that yields higher-quality signals, kept local, wins. ARCHITECTURE.md is the *how*; this is the *why*.
 
 ## Purpose
 
-rebalance OS is a **local-first work operating system**: it ingests your work artifacts — Obsidian
-vault, GitHub activity and artifacts, recent git history, calendar, email — into one queryable local
-store, so any MCP-capable agent can answer questions about *your own* work, surface where your
-attention is actually going across projects, and infer what's ready to ship — **without sending
-private data to a cloud service**. A second brain over your work first; a sprint and
-deploy-readiness planner as the payoff.
+rebalance ingests scattered work artifacts — Obsidian vault, GitHub, calendar, email, and Sleuth/Slack reminders — into one local store any MCP agent can query, so it can answer questions about *your* work, show where attention actually goes, and infer what's ready to ship — **without private data leaving the machine**. A second brain over your work first; a sprint and deploy-readiness planner as the payoff.
 
-## Principles
+## The signal bar
 
-1. **Local-first, private by default.** Private work — notes, commits, calendar, client repos —
-   never leaves the machine. A cloud LLM sees only what the operator explicitly sends. This is the
-   non-negotiable that makes the tool usable for client work; any feature that erodes it loses.
-2. **One unified local store is the evidence layer.** Every source funnels through the same
-   `collect → normalize → store → query` path into local SQLite (+ sqlite-vec). Retrieval and
-   recommendations are driven from that indexed store — never from an agent skimming hundreds of live
-   issues/PRs.
-3. **The local store + live re-probe is the source of truth; every surface is a projection.** The
-   web view, the Mac app, a cloud mirror — all are read-only mirrors of canonical local state, not
-   parallel copies that can drift. Mirror, not migration.
-4. **Signal-agnostic and extensible.** A new source is added by registering a collector
-   (`register_collector` in `index_ops.py`), not by editing the dispatch chain. The query and LLM
-   layers stay source-agnostic, so the system grows by addition rather than surgery.
-5. **Transparent over opaque.** Prioritization and deploy-readiness expose their reasoning —
-   computed status, confidence, evidence, blockers — and narrate with an AI summary instead of a
-   hard-coded verdict label. The operator can always see *why*.
-6. **Incremental and non-destructive.** Every refresh is incremental and upserts by ID; nothing is
-   silently re-downloaded from scratch or auto-deleted, and history is kept. The store accretes
-   truth, it doesn't overwrite it.
-7. **Honest about failure; self-repairing within bounds.** A failing job repairs itself through a
-   bounded action menu, then escalates to a filed issue and stops — it never masks a failure as an
-   "all fine" state. Destructive actions require explicit operator authorization and are never
-   selected autonomously.
-8. **Surface attention, don't dictate it.** The point is to show where attention actually went and
-   what's ready to ship, so the operator rebalances deliberately. The system informs the decision; it
-   doesn't bury it under a label.
-9. **Docs are resumable runtime state (PDDA).** Long-running agent work must be stoppable, resumable,
-   and handed off from the `PROJECT/**` docs alone — `ROUTER.md` is the front door, `ROADMAP.md`
-   points, project docs hold detail, `CHANGELOG.md` logs dated outcomes, and nothing canonical lives
-   in two places where it can drift. If reality and the docs disagree, the docs are the bug to fix.
-10. **A win counts only once it's verified.** "Done" means the gates were actually run —
-    `rebalance doctor`, `pytest tests/`, the PDDA checks — not that the work looks finished. An
-    unverified claim of success is itself drift between the system and its record.
-11. **Low-friction and portable.** Setup must be cheap (`install.sh`, a single front door, guided
-    onboarding) and the contract cheap to obey — or operators and agents will route around it.
+Every output is a signal. A signal is high-quality only when it is all four:
 
-## How to apply
+- **Attested** — carries its receipts: source, evidence, confidence. Never a bare verdict.
+- **Relevant** — ranked, not dumped. Volume is not value.
+- **Fresh** — current, not stale. Refreshes are incremental or safely bounded so nothing rots silently.
+- **Structured** — one shape, clean for people to read and for agents to feed on.
 
-When adding a feature or making a tradeoff, ask: *does this keep work local and private, drive from
-the one local evidence layer, stay transparent and honest about its own state — and can the claim
-that it's done be verified?* If not, reconsider.
+Fail a pillar, and the feature, source, or output isn't done.
+
+## How it's built
+
+1. **Local-first, private by default.** Private work never leaves the machine; a cloud LLM sees only what the operator sends. Non-negotiable — it is what makes rebalance usable for client work. Any feature that erodes it loses.
+2. **One local store is canonical.** Every source runs `collect → normalize → store → query` into local SQLite (+ sqlite-vec); retrieval drives from that index, never from skimming live issues/PRs. Every surface — web view, Mac app, cloud mirror — is a read-only projection. Mirror, not migration; nothing canonical lives in two places where it can drift.
+3. **Signal-agnostic, extend by addition.** Add a source by registering a collector, not by editing a dispatch chain; the query and LLM layers stay source-agnostic. A new source must clear all four pillars before it ships.
+4. **Incremental where possible, non-destructive always.** Refreshes prefer delta syncs and upserts by ID. When a source only supports a bounded or full refetch, rebalance re-reads that scope and column-diffs/upserts without auto-deleting history. The store accretes truth; it does not overwrite it.
+5. **Build durable, not band-aid.** Features, solutions, and fixes are built for long-term maintainability and durability. A band-aid is wasted work unless a demo strictly needs one.
+6. **Honest; the operator decides.** Surface what's ready and where attention went — inform the call, never bury it under a label or act alone. A failing job self-repairs within a bounded menu, then files an issue and stops; it never masks failure as "all fine." Destructive actions require explicit authorization.
+7. **Docs are resumable runtime state (PDDA).** Agent work is stoppable, resumable, and handed off from `PROJECT/**` alone — ROUTER points, project docs hold detail, CHANGELOG logs dated outcomes. If reality and the docs disagree, the docs are the bug.
+8. **Done means verified.** "Done" is the gates actually run (`rebalance doctor`, `pytest`, PDDA checks), not work that looks finished. An unverified success claim is itself a low-quality signal.
+9. **Low-friction and portable.** Setup and the contract stay cheap to obey, or operators and agents route around them.
+
+## Applying this
+
+Adding a feature or weighing a tradeoff, ask: *higher-quality signal — Attested, Relevant, Fresh, Structured — still local, and "done" verifiable?* If any answer is no, reconsider.
