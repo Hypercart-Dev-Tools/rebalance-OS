@@ -10,6 +10,11 @@ Contents:
 
 The architecture is protocol-first: storage and import/export engines sit behind the interfaces in `TextReplacementCore`.
 
+## Apps in this directory
+
+- **Text Replacement Studio** (this package) — see below.
+- **[Focus 5 Float](Apps/Focus5Float/README.md)** — a standalone SwiftPM package: an always-on-top menu-bar app that renders the rebalance-OS Focus 5 roster as a card stack. It harvests this app's design tokens/components (copied, not shared) and ships its own `make-app.sh`. Build/install from `Apps/Focus5Float/`.
+
 ## Install the app
 
 Build, bundle, and install Text Replacement Studio to `/Applications` (release build, real icon, ad-hoc signed):

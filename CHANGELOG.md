@@ -6,6 +6,18 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.45.0] - 2026-06-25
+
+Focus 5 Float reaches a real installable app: it now ships to `/Applications`, can launch at login, and surfaces overall roster health at a glance.
+
+### Added
+- Focus 5 Float roster-health traffic light in the panel header (top-right, so it never reads as a close button): green = all roster repos clean, orange = some dirty, red = all dirty, labeled "Status: N" where N is the dirty count. Backed by a pure `RosterHealth.tint` rollup with a `FOCUS5_HEALTHTEST` headless self-check.
+- Focus 5 Float launch-at-login: a "Launch at Login" toggle in the F5 menu-bar menu (via `SMAppService.mainApp`) with a live checkmark and graceful failure logging.
+- Focus 5 Float docs: an app `README.md` (build/run, `rebalance serve` prerequisite, launch-at-login, icon, self-checks, contract) and a pointer to it from `macOS/README.md`.
+
+### Changed
+- Focus 5 Float Phase 5 (packaging) completed and the project doc marked `status: complete`; the settings-window and per-setting controls were deliberately descoped (YAGNI for a single-operator menu-bar tool — `FOCUS5_BASE_URL` covers server config). Icon wiring is in place (`make-app.sh` auto-picks `Resources/AppIcon.icns`); artwork is pending.
+
 ## [0.44.0] - 2026-06-24
 
 The headline activity board now ranks on whether *your local checkout* committed recently — read from the HEAD reflog — instead of matching a single configured author email. Working under more than one identity (CLI vs web-merge noreply) no longer silently drops recent local work off the board.

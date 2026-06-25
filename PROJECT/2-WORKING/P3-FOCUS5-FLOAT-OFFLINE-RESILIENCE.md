@@ -4,7 +4,7 @@ status: in-progress
 doc_type: project-plan
 owner: Noel Saw
 created: 2026-06-24
-updated: 2026-06-24
+updated: 2026-06-25
 goal: "Make Focus 5 Float useful when rebalance serve is down: persist the last-known roster to disk for an instant cold-start, and add a one-click control to start the local server."
 priority: P3
 parent: PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md
@@ -16,7 +16,7 @@ rollout_rule: each phase leaves the app buildable (`swift build` green) and degr
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 1 + 2 — DONE (both features built).** Offline cache (instant cold-start, "cached · {age}", corruption-safe) **and** one-click "Start rebalance serve" (detached `Process`, login-shell binary resolution, poll-until-healthy, button in offline state + header + ⌘S menu). Headless verified: cache round-trip + binary resolution (`/Users/noelsaw/bin/rebalance`). `swift build` green. | **Operator litmus:** cold-launch offline → "Start server" brings the roster up. Then bundled-`.app` re-verify of binary resolution lands with parent Phase 5 packaging. |
+| **Phases 1 + 2 — DONE (both features built).** Offline cache (instant cold-start, "cached · {age}", corruption-safe) **and** one-click "Start rebalance serve" (detached `Process`, login-shell binary resolution, poll-until-healthy, button in offline state + header + ⌘S menu). Headless verified: cache round-trip + binary resolution (`~/bin/rebalance`). `swift build` green. | **Operator litmus:** cold-launch offline → "Start server" brings the roster up. Then bundled-`.app` re-verify of binary resolution lands with parent Phase 5 packaging. |
 
 ## Table of Contents
 
@@ -82,7 +82,7 @@ This is a **non-competing follow-on** to the parent plan (which owns the core bu
 > A one-click control that starts the local server and refreshes once it's healthy — no terminal needed.
 
 - [x] **Start mechanism decided → detached `Process`.** Recon found **no `serve` launchd label** (operator runs `rebalance serve` manually), so `ServerLauncher.start()` spawns a detached `rebalance serve` (its own lifetime, IO → `/dev/null`). (Open Question 1 resolved.)
-- [x] **Binary resolved robustly** ([ServerLauncher.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ServerLauncher.swift)): `REBALANCE_BIN` override → fast known-path probe (`~/bin`, `/opt/homebrew`, `/usr/local`, `~/.local/bin`) → **interactive** login-shell `<$SHELL> -ilc 'command -v rebalance'`. **Finder-launch fix:** the first install failed from Finder because `-lc` is a *non-interactive* login shell that skips `.zshrc` (where PATH lives), and `~/bin` wasn't in the fallback. Now verified under a clean `env -i` (no PATH, Finder-equivalent) → `/Users/noelsaw/bin/rebalance`.
+- [x] **Binary resolved robustly** ([ServerLauncher.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ServerLauncher.swift)): `REBALANCE_BIN` override → fast known-path probe (`~/bin`, `/opt/homebrew`, `/usr/local`, `~/.local/bin`) → **interactive** login-shell `<$SHELL> -ilc 'command -v rebalance'`. **Finder-launch fix:** the first install failed from Finder because `-lc` is a *non-interactive* login shell that skips `.zshrc` (where PATH lives), and `~/bin` wasn't in the fallback. Now verified under a clean `env -i` (no PATH, Finder-equivalent) → `~/bin/rebalance`.
 - [x] **"Start server" control** in the offline/failed state **and** the header (when offline) **and** the right-click menu (⌘S): `model.startServer()` spawns, shows a spinner, polls via `refresh()` until reachable (20s bound), applies the roster.
 - [x] **Lifecycle = detached:** spawned with `Process` and not awaited → survives app quit, like the operator's normal `serve`. (Open Question 3 resolved.)
 - [x] **Failure handling:** binary-not-found → actionable message; never-healthy-within-20s → "try Refresh"; bounded poll, no hang/crash. `isStartingServer` guards re-entry.

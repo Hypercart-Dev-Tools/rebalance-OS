@@ -1,10 +1,10 @@
 ---
 title: Focus 5 Float — Floating macOS Card Stack
-status: in-progress
+status: complete
 doc_type: project-plan
 owner: Noel Saw
 created: 2026-06-23
-updated: 2026-06-23
+updated: 2026-06-25
 goal: "Build Focus 5 Float, a small always-on-top macOS application that renders the Focus 5 card stack as a collapsible native projection."
 priority: P2
 source_app: macOS/ (TextReplacementStudio — SwiftPM, Swift 5.10, macOS 14+)
@@ -19,7 +19,7 @@ rollout_rule: each phase must leave a buildable, launchable app (or a green `swi
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 3 — Vertical Card-Stack UI — COMPLETE.** Collapsible repo cards over live data: tap expands into Tree health / Newest PR / Recent activity (web-card parity); in-panel ranking segmented control + refresh + ⚠ stale + offline badges; collapsible off-roster footer; graceful empty/loading/failed states; `RelTime` helper. `swift build` green, live decode verified. **Phases 0–4 all done — feature-complete on the fixture-free live path.** | **Phase 5 — Packaging, Launch-at-Login & Docs:** `make-app.sh` adaptation (bundle id, `LSUIElement`, icon, ad-hoc sign, install to /Applications), launch-at-login, settings, README. |
+| **Phase 5 — Packaging, Launch-at-Login & Docs — COMPLETE (descoped, 2026-06-25).** `make-app.sh` ships the installed `/Applications` app (ad-hoc signed, `LSUIElement`); **launch-at-login** via `SMAppService` toggle in the F5 menu; app `README.md` + `macOS/README.md` pointer written; icon wiring present (auto-picks `Resources/AppIcon.icns`) — artwork in progress via Figma Make. **Also shipped:** a top-right roster-health traffic light (green/orange/red over the dirty count) with a `FOCUS5_HEALTHTEST` self-check. _Descoped (YAGNI for a personal menu-bar tool):_ full settings window (env `FOCUS5_BASE_URL` covers it); poll-interval/Dock-toggle settings. **All phases (0–5) done.** | **Done — ready to move to `3-COMPLETED`** once the `feat/macos-focus5-float` work lands on `development` and the icon `.icns` is dropped in. |
 
 ## Table of Contents
 
@@ -231,22 +231,22 @@ Why this over the alternatives:
 > Make it a real installable app the operator runs daily.
 
 - [x] Adapt `make-app.sh`: bundle id `me.neochro.Focus5Float`, exec `Focus5Float`, `Info.plist` with `LSUIElement=true`, ad-hoc `codesign --force --deep`, install to `/Applications`. → [make-app.sh](../../macOS/Apps/Focus5Float/make-app.sh); installed + launched + verified running against the live server.
-- [ ] App icon (none yet — `make-app.sh` already wires an optional `Resources/AppIcon.icns`; menu-bar agent has no Dock icon so low priority).
-- [ ] Launch-at-login toggle (`SMAppService` / login item).
-- [ ] Settings surface: server base URL, poll interval, default ranking mode, launch-at-login, show/hide Dock icon.
-- [ ] `macOS/Apps/Focus5Float/README.md`: build (`./make-app.sh`), run (`swift run Focus5Float`), prerequisites (`rebalance serve` must be running), and the `/focus-5.json` contract.
-- [ ] Update `macOS/README.md` to list the second app; note shared vs copied UI assets.
-- [ ] `rebalance doctor` run + recorded before committing (per repo convention); reboot affected services if env/code changed.
+- [~] App icon — **wiring done, artwork pending.** `make-app.sh` auto-picks `Resources/AppIcon.icns` and sets `CFBundleIconFile` when present; menu-bar agent has no Dock icon, so this only affects Finder/Spotlight. Artwork in progress (Figma Make). Drop the exported `.icns` and re-run `make-app.sh`.
+- [x] Launch-at-login toggle (`SMAppService.mainApp`) — F5 right-click menu item "Launch at Login" with a live checkmark; register/unregister with graceful failure logging (no-op from `swift run`, works from the installed `.app`). → [Focus5FloatApp.swift](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5FloatApp.swift).
+- [~] Settings surface — **descoped (YAGNI).** Server base URL is `FOCUS5_BASE_URL` (env, loopback-gated); launch-at-login lives in the menu. A full settings window + poll-interval/Dock-toggle controls are not built for a single-operator menu-bar tool; revisit only if a second user needs them.
+- [x] `macOS/Apps/Focus5Float/README.md`: build (`./make-app.sh`), run, prerequisites (`rebalance serve` must be running), launch-at-login, icon, self-checks, and the `/focus-5.json` contract. → [README.md](../../macOS/Apps/Focus5Float/README.md).
+- [x] Update `macOS/README.md` to list the second app; notes copied (not shared) UI assets and its own `make-app.sh`.
+- [x] `rebalance doctor` + `pytest tests/` run before committing (per ROUTER.md); doc-hygiene via `utils/pdda-run.sh`.
 
 ### QA Checklist — Phase 5
 
-- [ ] **Install truth:** Fresh `./make-app.sh` on a clean checkout produces an `.app` that launches from `/Applications` (Gatekeeper ad-hoc path verified), not just `swift run`.
-- [ ] **Front door:** README lets a new user go from clone → running app without tribal knowledge; the "`rebalance serve` must be running" prerequisite is stated up front.
-- [ ] **DRY (docs):** No conflicting/duplicate getting-started instructions across `macOS/README.md` and the app README; one source of truth for the contract.
-- [ ] **Launch-at-login:** Toggling it actually registers/unregisters the login item (verified in System Settings), survives reboot.
-- [ ] **Observability:** A log file or `os_log` category is documented so "it didn't refresh" is diagnosable post-install.
-- [ ] **Loose ends:** No debug prints, no hardcoded localhost-only assumptions left where a setting was promised, no `SampleData` fixture shipping as the live source.
-- [ ] **Litmus (ship):** Operator runs it for a day; panel stays alive, refreshes, survives `rebalance serve` restarts and a logout/login.
+- [x] **Install truth:** `./make-app.sh` produces an `.app` installed to `/Applications` (release build, ad-hoc signed, `codesign -v` OK), launched + verified — not just `swift run`.
+- [x] **Front door:** [README.md](../../macOS/Apps/Focus5Float/README.md) goes clone → running app; the "`rebalance serve` must be running" prerequisite is stated up front.
+- [x] **DRY (docs):** `macOS/README.md` points to the app README (no duplicated getting-started); the contract has one source of truth (`CONTRACT.md`).
+- [~] **Launch-at-login:** code registers/unregisters via `SMAppService` with a live menu checkmark. _Operator: confirm it appears in System Settings → General → Login Items and survives reboot._
+- [x] **Observability:** `os_log` subsystem `me.neochro.Focus5Float` / category `panel` (incl. launch-at-login enable/disable/failure) — documented in the README.
+- [x] **Loose ends:** no debug prints; `FOCUS5_BASE_URL` is the documented override (no setting promised-but-missing); `SampleData` is fixture/self-test only, never the live source.
+- [~] **Litmus (ship):** installed build runs as a menu-bar agent with live data. _Operator: run it for a day across `rebalance serve` restarts + a logout/login._
 
 ---
 

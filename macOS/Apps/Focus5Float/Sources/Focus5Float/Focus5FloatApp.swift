@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import ServiceManagement
 import os
 
 // Phase 2 entry point: An AppKit-driven lifecycle that runs the app as a
@@ -45,6 +46,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var contextMenu: NSMenu!
     private var focus5Item: NSMenuItem!
     private var dirtyFiveItem: NSMenuItem!
+    private var launchAtLoginItem: NSMenuItem!
     private let model = Focus5Model()
     private var pollTimer: Timer?
     private let pollInterval: TimeInterval = 90   // re-pull cadence
@@ -104,6 +106,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         modeParentItem.submenu = modeMenu
         menu.addItem(modeParentItem)
 
+        launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        menu.addItem(launchAtLoginItem)
+
         menu.addItem(.separator())
         menu.addItem(withTitle: "Quit Focus 5 Float", action: #selector(NSApp.terminate(_:)), keyEquivalent: "q")
 
@@ -115,6 +120,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // change from the in-panel segmented control can't leave the menu stale.
     func menuNeedsUpdate(_ menu: NSMenu) {
         updateModeMenuState()
+        updateLaunchAtLoginState()
     }
 
     /// Reflect the active ranking mode with a checkmark — single source of truth is
@@ -211,5 +217,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func setDirtyFiveMode() {
         log.info("ranking mode → dirty_first")
         Task { await model.setMode(dirty: true) }     // server re-ranks; menu re-reads on open
+    }
+
+    // MARK: - Launch at login
+
+    // ponytail: SMAppService.mainApp is the whole login-item API — no helper bundle,
+    // no plist. Only works from the installed .app; from `swift run` status is
+    // .notFound and register() throws (caught + logged, never crashes).
+    @objc private func toggleLaunchAtLogin() {
+        let svc = SMAppService.mainApp
+        do {
+            if svc.status == .enabled {
+                try svc.unregister()
+                log.info("launch-at-login disabled")
+            } else {
+                try svc.register()
+                log.info("launch-at-login enabled")
+            }
+        } catch {
+            log.error("launch-at-login toggle failed: \(error.localizedDescription)")
+        }
+        updateLaunchAtLoginState()
+    }
+
+    private func updateLaunchAtLoginState() {
+        launchAtLoginItem.state = SMAppService.mainApp.status == .enabled ? .on : .off
     }
 }
