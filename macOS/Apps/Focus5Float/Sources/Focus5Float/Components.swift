@@ -51,6 +51,17 @@ struct GroupTag: View {
     }
 }
 
+/// Overall roster-health rollup colour. `dirty` is the count of dirty roster
+/// repos (shown as "Status: N", so all-clean reads "Status: 0").
+/// green = none dirty · red = all dirty · orange = some dirty.
+enum RosterHealth {
+    static func tint(dirty: Int, total: Int) -> Color {
+        if dirty == 0 { return Theme.diffAdd }       // green — all clean
+        if dirty >= total { return Theme.diffRemove } // red — all dirty
+        return .orange                                // some dirty
+    }
+}
+
 /// Tree-health dot: green = clean, red = dirty/needs attention, grey = no signal.
 /// Color is never the only cue — callers pair it with adjacent text.
 struct StatusDot: View {
@@ -63,7 +74,7 @@ struct StatusDot: View {
     }
 
     var body: some View {
-        Circle().fill(color).frame(width: 8, height: 8)
+        Circle().fill(color).frame(width: 10, height: 10)
             .accessibilityLabel(healthAvailable ? (isDirty ? "dirty" : "clean") : "unavailable")
     }
 }

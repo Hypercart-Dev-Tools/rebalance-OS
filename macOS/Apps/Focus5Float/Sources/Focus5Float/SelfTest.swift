@@ -1,4 +1,5 @@
 import Foundation
+import SwiftUI
 
 // Headless decode smoke test so the Codable contract can be verified without a
 // GUI:  FOCUS5_SELFTEST=1 swift run Focus5Float
@@ -59,6 +60,15 @@ enum Focus5SelfTest {
             let bin = ServerLauncher.resolveBinary()
             print("RESOLVETEST — rebalance = \(bin ?? "NOT FOUND")")
             exit(bin == nil ? 1 : 0)
+        }
+
+        // Roster-health rollup test: FOCUS5_HEALTHTEST=1 swift run Focus5Float
+        if ProcessInfo.processInfo.environment["FOCUS5_HEALTHTEST"] != nil {
+            let ok = RosterHealth.tint(dirty: 0, total: 5) == Theme.diffAdd      // green
+                && RosterHealth.tint(dirty: 5, total: 5) == Theme.diffRemove     // red
+                && RosterHealth.tint(dirty: 2, total: 5) == Color.orange         // orange
+            print("HEALTHTEST \(ok ? "OK" : "FAIL") — clean=green, all-dirty=red, some=orange")
+            exit(ok ? 0 : 1)
         }
 
         guard ProcessInfo.processInfo.environment["FOCUS5_SELFTEST"] != nil else { return }

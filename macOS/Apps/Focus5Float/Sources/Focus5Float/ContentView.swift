@@ -54,6 +54,23 @@ struct ContentView: View {
                     .disabled(model.isStartingServer)
                     .help("Start rebalance serve")
                 }
+
+                Spacer(minLength: Theme.Space.s)
+
+                // Top-right roster-health light (right side so it never reads as a
+                // close button). green = all clean · red = all dirty · orange = some.
+                if !model.roster.isEmpty {
+                    let dirty = model.roster.filter(\.isDirty).count
+                    HStack(spacing: 5) {
+                        Text("Status: \(dirty)")
+                            .font(Theme.caption).foregroundStyle(Theme.text2)
+                        Circle()
+                            .fill(RosterHealth.tint(dirty: dirty, total: model.roster.count))
+                            .frame(width: 11, height: 11)
+                    }
+                    .help("\(dirty) of \(model.roster.count) roster repos dirty")
+                    .accessibilityLabel("Status: \(dirty) of \(model.roster.count) roster repos dirty")
+                }
             }
 
             HStack(spacing: Theme.Space.s) {
