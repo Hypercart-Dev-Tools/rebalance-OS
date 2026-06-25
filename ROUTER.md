@@ -23,13 +23,14 @@ This file is the first entry point for an AI agent working in this repo: it tell
 5. Read the linked `PROJECT/**` document that owns the work you are touching. -> expect a near-top `## Status` table telling you what was just completed and what is next.
 6. If the task touches project docs, read `PROJECT/PDDA.md` and follow the PDDA contract. -> expect `PROJECT/2-WORKING` docs to have frontmatter, the exact status table, and QA gates when phased.
 7. Before reporting success on code or runtime work, run `rebalance doctor` and `pytest tests/`. -> expect doctor clean and the suite green; do not claim completion if either fails or was skipped.
-8. Before reporting success on doc-hygiene or roadmap work, run `utils/pdda-run.sh` (or the relevant `utils/pdda-*.sh` check). -> expect deterministic findings first, then any LLM review.
+8. Before reporting success on doc-hygiene or roadmap work, run `utils/pdda.sh run` (or the relevant `utils/pdda.sh <check>` command). -> expect deterministic findings first, then any LLM review.
 
 ## Canonical rules
 
 - This repo **is** an MCP server. Use the MCP tools (`index_status`, `refresh_index`, `semantic_query`, …) for data refresh and retrieval, and `rebalance doctor` for setup/health. Do not write ad-hoc `rebalance ...` shell pipelines or grep for setup scripts.
 - Do not put phase checklists, build steps, or deep execution notes in `ROADMAP.md`.
-- Every active doc in `PROJECT/2-WORKING/` must be reflected by a one-line pointer in `ROADMAP.md` — or opt out with `roadmap_exempt: true` in its frontmatter. Enforced by `utils/pdda-check-roadmap-coverage.sh`; governance lives in `PROJECT/PDDA.md`.
+- Every active doc in `PROJECT/2-WORKING/` must be reflected by a one-line pointer in `ROADMAP.md` — or opt out with `roadmap_exempt: true` in its frontmatter. Enforced by `utils/pdda.sh roadmap-coverage`; governance lives in `PROJECT/PDDA.md`.
+- Every captured GitHub issue doc in `PROJECT/1-INBOX/GH-*.md` is first-class intake and must also be parked in `ROADMAP.md` as a one-line queue entry immediately at capture, then promoted or removed later. Enforced by `utils/pdda.sh roadmap-coverage`; governance lives in `PROJECT/PDDA.md`.
 - Do not create a second competing plan when a canonical `PROJECT/**` doc already exists.
 - Do not override deterministic PDDA findings with prose.
 - Do not report a win you did not verify with `rebalance doctor`, `pytest tests/`, or the relevant PDDA check.
@@ -51,20 +52,21 @@ pytest tests/
 For document hygiene:
 
 ```bash
-utils/pdda-run.sh
+utils/pdda.sh run
 ```
 
 For targeted PDDA debugging:
 
 ```bash
-utils/pdda-check-frontmatter.sh
-utils/pdda-check-status-table.sh
-utils/pdda-check-hardcoded-paths.sh
-utils/pdda-check-roadmap.sh
-utils/pdda-check-roadmap-coverage.sh
-utils/pdda-check-changelog.sh
-utils/pdda-stale-working-docs.sh
-utils/pdda-doc-ready.sh   # LLM readiness review — set PDDA_LLM_BIN (codex/claude/agy) for recommendations, else it self-skips
+utils/pdda.sh frontmatter
+utils/pdda.sh status-table
+utils/pdda.sh hardcoded-paths
+utils/pdda.sh roadmap
+utils/pdda.sh roadmap-coverage
+utils/pdda.sh changelog
+utils/pdda.sh stale
+utils/pdda.sh doc-ready   # LLM readiness review — set PDDA_LLM_BIN (codex/claude/agy) for recommendations, else it self-skips
+utils/pdda.sh help
 ```
 
 ## Routing hints

@@ -130,7 +130,9 @@ PDDA should have two classes of automation:
 Implementation note:
 
 - the deterministic shell scripts currently live under `utils/`
-- the aggregate runner is `utils/pdda-run.sh`
+- the canonical deterministic entry point is `utils/pdda.sh` (`run` + every single check as a subcommand)
+- `utils/pdda-doc-ready.sh` stays separate as the opt-in LLM layer
+- do not ship parallel wrapper commands unless a real external integration forces them; the durable surface is the smallest one that fully expresses the system
 
 ### 1. Deterministic hygiene scripts
 
@@ -214,7 +216,7 @@ Purpose:
 - nudge that `CHANGELOG.md` (the first-class end-of-iteration record) was updated this iteration
 
 Minimum behavior:
-- read `CHANGELOG.md` (override via `PDDA_CHANGELOG`); find the newest `## YYYY-MM-DD` entry
+- read `CHANGELOG.md` (override via `PDDA_CHANGELOG`); find the newest `## [x.y.z] - YYYY-MM-DD` entry, or the legacy `## YYYY-MM-DD` form
 - `warn` (never `error` — does not block, even in `full`) when that entry predates the latest git
   commit by more than `PDDA_CHANGELOG_STALE_DAYS` days (default `0`)
 - `warn` if `CHANGELOG.md` is missing or has no dated entry; emit `info` (skip the compare) when there
@@ -237,6 +239,9 @@ Minimum behavior:
 - `error` on any working doc whose repo-relative path (`PROJECT/2-WORKING/<name>.md`) does not appear in
   `ROADMAP.md` (override the roadmap location via `PDDA_ROADMAP`) — the action is "add a one-line ledger
   entry linking it"
+- list captured GitHub issue docs (`PROJECT/1-INBOX/GH-*.md`, `blank.md` excluded)
+- `error` on any captured GitHub issue doc whose repo-relative path (`PROJECT/1-INBOX/GH-*.md`) does not
+  appear in `ROADMAP.md` — the action is "add a one-line queue entry linking it"
 - `error` if `ROADMAP.md` is missing entirely
 
 Expected exceptions:
@@ -327,12 +332,15 @@ Coverage rule:
   that links it), so the ledger never falls behind the working set. A working doc that legitimately
   should not appear opts out with `roadmap_exempt: true` in its frontmatter. This is the inverse of the
   "no detail leaks in" rule above: nothing active goes *missing from* the roadmap either.
+- every captured GitHub issue doc in `PROJECT/1-INBOX/GH-*.md` is also first-class intake and must be
+  parked here as a one-line queue entry immediately at capture, then promoted or removed later.
 
 How this is enforced (so it cannot quietly rot in either direction):
-- **deterministic (no leak in)** — `utils/pdda-check-roadmap.sh` errors on task checklists / `### Checklist` /
+- **deterministic (no leak in)** — `utils/pdda.sh roadmap` errors on task checklists / `### Checklist` /
   `### QA checklist` headings and warns on size sprawl (runs hourly, free, no model needed)
-- **deterministic (no gap missing)** — `utils/pdda-check-roadmap-coverage.sh` errors when an active
-  `PROJECT/2-WORKING` doc has no pointer here (honors `roadmap_exempt: true`)
+- **deterministic (no gap missing)** — `utils/pdda.sh roadmap-coverage` errors when an active
+  `PROJECT/2-WORKING` doc has no pointer here and when a captured `PROJECT/1-INBOX/GH-*.md` issue doc is
+  not parked here as a queue entry (honors `roadmap_exempt: true`)
 - **LLM** — `utils/pdda-doc-ready.sh` reviews `ROADMAP.md` against the full pointer contract for the
   fuzzier "this paragraph is really execution detail" cases (honors the carve-out)
 - the file itself carries a top banner restating the contract, so a human editing it sees the rule
@@ -346,7 +354,7 @@ findings, and durable Costly / one-way-door bets still earn a `decisions/` recor
 
 It should contain:
 
-- newest-first, dated `## YYYY-MM-DD` sections
+- newest-first, dated `## [x.y.z] - YYYY-MM-DD` sections (legacy plain `## YYYY-MM-DD` sections remain readable by the check)
 - one entry per substantive iteration: what changed, why, and the verification (test / suite result)
 - the bet behind a consequential change when one applies (the call, the expected signal, reversibility)
 
@@ -371,7 +379,7 @@ Recording a bet (when a change is consequential):
   bet*; this contract owns the *where and how*, so governance is not fragmented across the two files.)
 
 How this is enforced (a nudge, not a gate):
-- **deterministic** — `utils/pdda-check-changelog.sh` **warns** (never `error`, so it never blocks —
+- **deterministic** — `utils/pdda.sh changelog` **warns** (never `error`, so it never blocks —
   even in `full`) when the newest dated entry predates the latest git commit by more than
   `PDDA_CHANGELOG_STALE_DAYS` days (default `0`), i.e. an iteration shipped without a changelog entry
 - whether an entry is actually *substantive* stays a human / LLM judgment, not a regex
@@ -392,19 +400,19 @@ Each script run should append:
 
 Run the deterministic checks every hour in this order:
 
-1. `pdda-check-frontmatter.sh`
-2. `pdda-check-status-table.sh`
-3. `pdda-check-hardcoded-paths.sh`
-4. `pdda-check-roadmap.sh`
-5. `pdda-check-roadmap-coverage.sh`
-6. `pdda-check-changelog.sh`
-7. `pdda-stale-working-docs.sh`
+1. `utils/pdda.sh frontmatter`
+2. `utils/pdda.sh status-table`
+3. `utils/pdda.sh hardcoded-paths`
+4. `utils/pdda.sh roadmap`
+5. `utils/pdda.sh roadmap-coverage`
+6. `utils/pdda.sh changelog`
+7. `utils/pdda.sh stale`
 
 Then run:
 
-8. `pdda-doc-ready.sh`
+8. `utils/pdda.sh doc-ready`
 
-(`utils/pdda-run.sh` runs exactly this sequence and applies the active `PDDA_MODE` gate.)
+(`utils/pdda.sh run` runs exactly this sequence and applies the active `PDDA_MODE` gate.)
 
 Reason for the order:
 

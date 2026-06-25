@@ -2,8 +2,7 @@
 set -u
 
 PDDA_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PDDA_REPO_ROOT="${PDDA_REPO_ROOT:-$(cd "$PDDA_LIB_DIR/.." && pwd)}"
-PDDA_INBOX_DIR="${PDDA_INBOX_DIR:-$PDDA_REPO_ROOT/PROJECT/1-INBOX}"
+PDDA_REPO_ROOT="$(cd "$PDDA_LIB_DIR/.." && pwd)"
 PDDA_WORKING_DIR="${PDDA_WORKING_DIR:-$PDDA_REPO_ROOT/PROJECT/2-WORKING}"
 PDDA_MISC_DIR="${PDDA_MISC_DIR:-$PDDA_REPO_ROOT/PROJECT/4-MISC}"
 PDDA_ACTIVITY_LOG="${PDDA_ACTIVITY_LOG:-$PDDA_REPO_ROOT/PROJECT/PDDA-ACTIVITY.jsonl}"
@@ -34,7 +33,7 @@ pdda_resolve_mode() {
   esac
 }
 PDDA_MODE="$(pdda_resolve_mode)"
-# Stale docs are flag-only in every mode (see `pdda.sh stale`), so no mode mutates the tree.
+# Stale docs are flag-only in every mode (see pdda-stale-working-docs.sh), so no mode mutates the tree.
 # PDDA_DRY_RUN stays a reserved knob for any future opt-in move re-added behind pdda_hold + full.
 
 # Gate a check's raw exit code by mode: only "full" lets an error block (non-zero exit). observe and
@@ -167,10 +166,6 @@ pdda_emit_summary() {
 
 pdda_list_working_docs() {
   find "$PDDA_WORKING_DIR" -type f -name '*.md' ! -name 'blank.md' | LC_ALL=C sort
-}
-
-pdda_list_inbox_issue_docs() {
-  find "$PDDA_INBOX_DIR" -type f -name 'GH-*.md' ! -name 'blank.md' | LC_ALL=C sort
 }
 
 pdda_frontmatter_lines() {
