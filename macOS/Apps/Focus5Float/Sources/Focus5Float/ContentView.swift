@@ -198,7 +198,7 @@ struct ContentView: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: Theme.Space.s) {
-                    ForEach(Array(model.telemetryEntries.enumerated()), id: \.element.id) { index, entry in
+                    ForEach(Array(model.telemetryEntries.enumerated()), id: \.offset) { index, entry in
                         TelemetryRowView(entry: entry, darker: !index.isMultiple(of: 2))
                     }
                 }

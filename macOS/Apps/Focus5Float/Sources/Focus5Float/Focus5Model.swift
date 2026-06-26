@@ -116,14 +116,20 @@ final class Focus5Model {
             return
         }
         telemetryLoadError = nil
-        telemetryEntries = entries.sorted { a, b in
+        let sorted = entries.sorted { a, b in
             switch (a.updatedAt, b.updatedAt) {
             case (let la?, let lb?): return la > lb
             case (nil, _):           return false
             case (_, nil):           return true
             }
         }
+        // Cap at the newest 10k rows so decode/render stay bounded even if the
+        // source file grows unbounded. Sort is newest-first, so prefix == newest.
+        telemetryEntries = Array(sorted.prefix(Self.telemetryRowCap))
     }
+
+    /// Max telemetry rows held in memory / rendered (newest-first after sort).
+    static let telemetryRowCap = 10_000
 
     /// Switch board + re-fetch so the SERVER does the re-rank (?view=dirty), never
     /// the client. The mode is flipped optimistically and reverted if the fetch

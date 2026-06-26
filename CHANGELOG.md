@@ -6,6 +6,14 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.47.1] - 2026-06-25
+
+Focus 5 Float Telemetry tab is hardened against large files: the loader is bounded and the row list keys are made collision-proof.
+
+### Fixed
+- Telemetry `ForEach` now keys on the enumeration offset instead of `health_title`, eliminating SwiftUI duplicate-ID glitches (dropped rows, broken scroll) when two rows share the same health + title — likely once a file holds thousands of entries.
+- Telemetry loader caps retained/rendered rows at the newest 10k (`Focus5Model.telemetryRowCap`) via `prefix` after the newest-first sort, so decode and render stay bounded even if the source file grows unbounded.
+
 ## [0.47.0] - 2026-06-25
 
 Focus 5 Float Telemetry tab gains explicit file selection from the F5 menu bar and surfaces decode errors in the UI.
