@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| Consolidated the three Apple Reminders reference documents into one execution-ready plan with a single architecture path and explicit phase gates. | Phase 0: rerun the local access spike in an FDA-granted runtime, then capture schema + field-mapping evidence needed for collector implementation. |
+| **Phases 0 + 1 complete (2026-06-25).** FDA granted to VS Code; access gate passed. Active store discovered deterministically (`Data-1FB0F4BF`, 9010 reminders). WAL-safe snapshot pipeline + dynamic REMCD schema mapper shipped in `src/rebalance/ingest/apple_reminders.py` with 9 unit tests (epoch, parent-child linking, graceful degradation). Read-only extraction verified live: 9010 reminders, 0 skipped, 8 lists, ~0.18s. Evidence: `temp/apple-reminders/PHASE0-SPIKE-REPORT.md`. Tags best-effort; notes + sections explicitly deferred. | **Paused before Phase 2 (deliberate).** Resume = collector registration in `index_ops.py` + `apple_reminders` table/upsert. Before that, optionally: eyeball 5 records vs the Reminders UI, and decide whether to invest in full-fidelity notes/section decode. |
 
 ## Table of Contents
 
@@ -27,6 +27,7 @@ related:
 - [Source Synthesis](#source-synthesis)
 - [Target Architecture](#target-architecture)
 - [Data Contract (Normalized)](#data-contract-normalized)
+- [Verified Discovery (Phase 0 and 1 findings)](#verified-discovery-phase-0-and-1-findings)
 - [Phase 0 - Access + Schema Spike](#phase-0---access--schema-spike)
 - [Phase 1 - Read-only Extractor + Snapshot Pipeline](#phase-1---read-only-extractor--snapshot-pipeline)
 - [Phase 2 - Collector Registration + Storage](#phase-2---collector-registration--storage)
@@ -89,26 +90,103 @@ Minimum required fields:
 - `updated_at`
 - `raw_payload_json` (small stability escape hatch for schema drift)
 
+## Verified Discovery (Phase 0 and 1 findings)
+
+> Captured from the live spike on **2026-06-25** (macOS 15.7.5, build 24G624, Darwin 24.6.0 arm64;
+> sqlite 3.43.2; Python 3.13). This is the durable record — the run-time evidence in
+> `temp/apple-reminders/` (schema dump, redacted sample, spike report) is **gitignored and ephemeral**.
+> Implementation lives in `src/rebalance/ingest/apple_reminders.py`; tests in `tests/test_apple_reminders.py`.
+
+### Access (TCC / Full Disk Access)
+
+- Store directory: `~/Library/Group Containers/group.com.apple.reminders/Container_v1/Stores`.
+- FDA must be granted to the **host application that owns the process tree**, not the CLI. In this
+  environment that was **Visual Studio Code** (`Code.app` → `Code Helper (Plugin)` → `claude` → `zsh`).
+  A different runtime (Terminal, a packaged `.app`, a launchd daemon) needs its **own** grant.
+- TCC changes require the host app to be **fully quit and relaunched** — a window reload is not enough.
+- Symptom when denied: `Operation not permitted` (not "file not found"). Confirm it's TCC and not the
+  command sandbox by retrying unsandboxed before concluding.
+
+### Active store discovery
+
+- There are **multiple `Data-*.sqlite` account stores** (one per Reminders account). At capture time:
+  4 stores, only `Data-1FB0F4BF-274D-45EE-B37E-16474CF58CA7.sqlite` had data (9010 reminders); the
+  other three (incl. `Data-local` = "On My Mac") had **0 reminders**.
+- Select the active store **deterministically by max `ZREMCDREMINDER` row count** — NOT by file size or
+  mtime (mtimes get touched on app launch; sizes mislead). `pick_active_store()` does this.
+
+### Snapshot / WAL safety
+
+- Never open the live store. File-copy the triplet (`.sqlite` + `-wal` + `-shm`) into
+  `temp/apple-reminders/`, then open the **copy** with `mode=ro`. `PRAGMA quick_check` = `ok` on every
+  copy. Whole-snapshot wall-clock ~0.29s; full discover→snapshot→extract ~0.18–0.29s.
+- **Perf note for Phase 2:** the active store is ~209 MB and is copied in full each run. Fine for a spike;
+  consider snapshot reuse / `VACUUM INTO` / incremental strategy if sync frequency rises.
+
+### Schema generation
+
+- This is the **REMCD / CloudKit schema** (`ZREMCD*` tables), **not** the legacy `ZREMINDER` schema.
+  Code resolves the table dynamically (`ZREMCDREMINDER` → fallback `ZREMINDER`) so it survives either.
+- Key tables: `ZREMCDREMINDER` (reminders), `ZREMCDBASELIST` (lists), `ZREMCDBASESECTION` (sections),
+  `ZREMCDHASHTAGLABEL` (tag labels). Core Data bookkeeping cols are `Z_PK` / `Z_ENT` / `Z_OPT`.
+
+### Verified field mapping
+
+| Contract field | Source column(s) | Notes |
+|---|---|---|
+| `reminder_id` | `ZREMCDREMINDER.ZCKIDENTIFIER` | Stable UUID **string**, present on all rows — no need to decode the raw `ZIDENTIFIER` UUID **blob**. |
+| `title` | `ZTITLE` | Plaintext; also mirrored in `ZTITLEDOCUMENT` blob (all rows). |
+| `is_completed` | `ZCOMPLETED` | 8935 completed / 75 active at capture. |
+| `due_at` / `completed_at` / `created_at` / `updated_at` | `ZDUEDATE` / `ZCOMPLETIONDATE` / `ZCREATIONDATE` / `ZLASTMODIFIEDDATE` | **Core Data epoch**: seconds since 2001-01-01 UTC. Convert: `unix = z + 978307200`. |
+| `list_name` | `ZLIST` → `ZREMCDBASELIST.ZNAME` | 8 lists referenced at capture. |
+| `parent_reminder_id` | `ZPARENTREMINDER` (local `Z_PK`) → parent's `ZCKIDENTIFIER`; fallback `ZCKPARENTREMINDERIDENTIFIER` | 16 subtasks linked & operator-verified. `ZPARENTREMINDER` is a **local PK**, so build a `Z_PK → ZCKIDENTIFIER` map first. |
+| `sort_hint` | `ZICSDISPLAYORDER` | Per-list ordering also encoded in list blob `ZREMINDERIDSMERGEABLEORDERING(_V2_JSON)` if exact order ever matters. |
+| `tags_json` | best-effort `#hashtag` regex over `ZTITLE` | **Low fidelity.** Plaintext regex over-matches (suite #s, invoice #s, URL fragments). Tightened to leading-letter + space-anchored → 1 real tag found. Canonical labels live in `ZREMCDHASHTAGLABEL` (2 rows); high-fidelity per-reminder tags require `ZRESOLUTIONTOKENMAP` / `_V2_JSON` / `_V3_JSONDATA` or `ZTITLEDOCUMENT`. **Deferred.** |
+| `notes` | `ZNOTESDOCUMENT` (blob) | `ZNOTES` plaintext is **empty on modern stores**. Notes moved to `ZNOTESDOCUMENT` = **zlib-compressed** (`789C` magic) archived attributed string, text likely UTF-16. Extractor inflates + best-effort ASCII recovery, and returns `None` rather than mojibake (13 rows have notes). **Full-fidelity decode deferred.** |
+| `section_name` | `ZREMCDBASESECTION.ZDISPLAYNAME` via `ZLIST`; membership = list blob `ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA` | Section **names are queryable**; only the reminder→section **membership** is in the per-list blob (no FK on the reminder). 0 sections in this store, so untested. **Deferred.** |
+
+### Counts at capture (sanity baseline)
+
+9010 total reminders · 8935 completed · 75 active · 6554 with due date · 16 subtasks · 8 lists ·
+2 hashtag labels · 0 sections · 13 with notes (blob). Marked-for-deletion rows filtered via
+`ZMARKEDFORDELETION`.
+
+### Failure modes (typed, surfaced — never silent)
+
+- Store dir unreadable → `AppleRemindersAccessError` with FDA remediation text.
+- Missing required table/column → `AppleRemindersSchemaError` naming the exact missing symbol.
+- Missing **optional** columns → recorded in `mapping_fallbacks`, extraction continues (graceful drift).
+- Empty / unrecognized store → `AppleRemindersSchemaError`.
+
+### Deferred decode work (with exact starting points)
+
+1. **Notes:** parse the archived attributed string inside zlib `ZNOTESDOCUMENT` (handle UTF-16).
+2. **Sections:** decode list-level `ZMEMBERSHIPSOFREMINDERSINSECTIONSASDATA` to map reminders → section,
+   join section names from `ZREMCDBASESECTION.ZDISPLAYNAME`.
+3. **High-fidelity tags:** parse `ZRESOLUTIONTOKENMAP_V3_JSONDATA` / `ZTITLEDOCUMENT` instead of the
+   plaintext regex.
+4. **Phase 2:** collector registration + storage (intentionally not started).
+
 ## Phase 0 - Access + Schema Spike
 
 Objective: prove access and field recoverability in the real runtime context before collector work.
 
 ### Observable checklist
 
-- [ ] Confirm runtime can read the Reminders store directory with Full Disk Access applied to the actual host app/runtime.
-- [ ] Discover active `Data-*.sqlite` file(s) deterministically across known roots.
-- [ ] Produce a safe snapshot (`.sqlite`, `-wal`, `-shm`) in `temp/apple-reminders/` without modifying live store.
-- [ ] Dump schema metadata (`sqlite_master`, candidate `ZREMCD*` tables) to `temp/apple-reminders/schema.txt`.
-- [ ] Extract 20+ reminders into normalized contract.
-- [ ] Manually verify at least 5 records against Reminders UI: plain, notes, tagged, sectioned, parent-child.
-- [ ] Record timing baseline for discovery, snapshot, extract, and total wall-clock.
+- [x] Confirm runtime can read the Reminders store directory with Full Disk Access applied to the actual host app/runtime. _(FDA granted to VS Code; pre-grant denial confirmed via unsandboxed retry.)_
+- [x] Discover active `Data-*.sqlite` file(s) deterministically across known roots. _(By max reminder-row count: `Data-1FB0F4BF`, 9010 rows; 3 other stores empty.)_
+- [x] Produce a safe snapshot (`.sqlite`, `-wal`, `-shm`) in `temp/apple-reminders/` without modifying live store. _(File copy, `quick_check`=ok on all copies, ~0.29s.)_
+- [x] Dump schema metadata (`sqlite_master`, candidate `ZREMCD*` tables) to `temp/apple-reminders/schema.txt`.
+- [x] Extract 20+ reminders into normalized contract. _(All 9010 extracted into `AppleReminder`.)_
+- [x] Manually verify at least 5 records against Reminders UI: plain, notes, tagged, sectioned, parent-child. _(Operator vouched 2026-06-25 — lists/active/subtasks/tag confirmed against the app. NOTE: this store has 0 sections + notes deferred, so those two categories were not UI-verifiable here.)_
+- [x] Record timing baseline for discovery, snapshot, extract, and total wall-clock. _(Full pipeline ~0.18–0.29s; see report.)_
 
 ### QA checklist
 
-- [ ] No write operations executed against live Reminders store.
-- [ ] Spike output includes machine/runtime context and exact timestamp.
-- [ ] Failure modes (permission denied, missing WAL files, schema mismatch) are explicitly logged.
-- [ ] Evidence files are redacted for sensitive personal content before committing.
+- [x] No write operations executed against live Reminders store. _(File copy only; copies opened `mode=ro`.)_
+- [x] Spike output includes machine/runtime context and exact timestamp. _(`PHASE0-SPIKE-REPORT.md`.)_
+- [x] Failure modes (permission denied, missing WAL files, schema mismatch) are explicitly logged. _(Typed errors: `AppleRemindersAccessError` / `AppleRemindersSchemaError` + `mapping_fallbacks`.)_
+- [x] Evidence files are redacted for sensitive personal content before committing. _(`temp/` is gitignored; redacted sample has no titles/notes — nothing committed.)_
 
 ## Phase 1 - Read-only Extractor + Snapshot Pipeline
 
@@ -116,19 +194,19 @@ Objective: ship a deterministic local extractor that remains robust across schem
 
 ### Observable checklist
 
-- [ ] Implement extractor module under `src/rebalance/ingest/` with clear entrypoint and no live-store writes.
-- [ ] Add path resolver that tries known roots plus controlled glob fallback.
-- [ ] Add snapshot helper that copies `.sqlite`, `-wal`, and `-shm` atomically into temp working folder.
-- [ ] Implement dynamic schema mapper (no hardcoded `Z_ENT` assumptions).
-- [ ] Emit normalized reminders rows with explicit field-level null/default behavior.
-- [ ] Add structured logs for rows extracted, rows skipped, and mapping fallbacks used.
+- [x] Implement extractor module under `src/rebalance/ingest/` with clear entrypoint and no live-store writes. _(`apple_reminders.py`, entrypoint `extract_apple_reminders()`.)_
+- [x] Add path resolver that tries known roots plus controlled glob fallback. _(`discover_stores_dir()` + `Data-*.sqlite` glob.)_
+- [x] Add snapshot helper that copies `.sqlite`, `-wal`, and `-shm` atomically into temp working folder. _(`snapshot_stores()`.)_
+- [x] Implement dynamic schema mapper (no hardcoded `Z_ENT` assumptions). _(Resolves tables/columns via `sqlite_master`/`PRAGMA table_info`; selects only present columns.)_
+- [x] Emit normalized reminders rows with explicit field-level null/default behavior. _(`AppleReminder` dataclass; deferred fields explicit `None`.)_
+- [x] Add structured logs for rows extracted, rows skipped, and mapping fallbacks used. _(Counts only — no titles/notes logged.)_
 
 ### QA checklist
 
-- [ ] Extraction succeeds on snapshot-only input (no dependency on live handle).
-- [ ] Mapper degrades gracefully when optional columns are absent.
-- [ ] Unit tests cover UUID conversion, Core Data epoch conversion, and parent-child linking.
-- [ ] Sensitive fields are masked in logs and fixtures.
+- [x] Extraction succeeds on snapshot-only input (no dependency on live handle). _(Reads the snapshot copy `mode=ro`; never the live store.)_
+- [x] Mapper degrades gracefully when optional columns are absent. _(Tested: `test_graceful_degradation_when_optional_columns_absent`.)_
+- [x] Unit tests cover UUID conversion, Core Data epoch conversion, and parent-child linking. _(Epoch + parent-child covered; stable id is `ZCKIDENTIFIER` string so no UUID-blob decode needed — finding noted.)_
+- [x] Sensitive fields are masked in logs and fixtures. _(Logs counts only; redacted sample omits titles/notes; test fixtures use synthetic data.)_
 
 ## Phase 2 - Collector Registration + Storage
 
