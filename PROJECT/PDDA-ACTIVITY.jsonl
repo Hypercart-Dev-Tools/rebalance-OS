@@ -837,3 +837,5 @@
 {"timestamp":"2026-06-25T16:47:56Z","severity":"info","check":"pdda-doc-ready","file":".","line":0,"message":"LLM readiness review skipped (set PDDA_LLM_BIN to a model CLI such as agy/codex/claude to enable)","action":"skip"}
 {"timestamp":"2026-06-25T16:47:56Z","severity":"info","check":"pdda-doc-ready","file":".","line":0,"message":"errors=0 warns=0 info=1","action":"summary"}
 {"timestamp":"2026-06-25T16:47:56Z","severity":"info","check":"pdda-run","file":".","line":0,"message":"PDDA run completed successfully","action":"finish"}
+{"timestamp":"2026-06-25T23:25:57Z","severity":"info","check":"pdda-check-roadmap-coverage","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}
+{"timestamp":"2026-06-25T23:26:01Z","severity":"info","check":"pdda-check-frontmatter","file":".","line":0,"message":"errors=0 warns=0 info=0","action":"summary"}

@@ -170,6 +170,7 @@ The result is an AI assistant that actually knows your work — because it's rea
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture and data flow |
 | [PROJECT.md](./PROJECT.md) · [PROJECT/](./PROJECT/README.md) | Execution source-of-truth and the plan-doc index |
 | [AGENTS.md](./AGENTS.md) | Conventions for AI agents working in this repo |
+| [macOS/Apps/Focus5Float/README.md](./macOS/Apps/Focus5Float/README.md) | Focus 5 Float macOS app — build, install, binary path setup (`pipx`), self-checks |
 
 ---
 
@@ -458,6 +459,34 @@ The server works with any MCP-compatible client. Config files are provided for:
 - **VS Code (Copilot/Continue)** — `.vscode/mcp.json` (auto-loaded on workspace open)
 - **Claude Desktop** — manual config (see above) or extension (`.mcpb`, coming soon)
 - **Cursor** — see [MCP.md](./MCP.md) for config snippet
+
+### Focus 5 Float (optional macOS menu-bar app)
+
+Focus 5 Float renders your live Focus 5 roster as an always-on-top floating
+card stack, with offline cache and a one-click "Start server" button.
+
+**Build and install:**
+
+```bash
+cd macOS/Apps/Focus5Float
+./make-app.sh          # release build → ad-hoc signed → /Applications/Focus 5 Float.app
+```
+
+**Binary path requirement.** The app starts `rebalance serve` on demand, but
+macOS GUI apps don't inherit your shell `PATH`. Install `rebalance` at a
+system-accessible path once per device so the app can find it:
+
+```bash
+brew install pipx
+pipx install -e /path/to/rebalance-OS   # → ~/.local/bin/rebalance
+```
+
+The app checks `~/.local/bin/rebalance` directly — no shell needed. Without
+this step the app shows _"Couldn't find the `rebalance` binary"_ when trying
+to start the server. See [macOS/Apps/Focus5Float/README.md](./macOS/Apps/Focus5Float/README.md)
+for the full resolution order and troubleshooting.
+
+---
 
 ## Code Intelligence
 

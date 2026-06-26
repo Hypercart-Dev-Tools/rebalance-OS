@@ -17,6 +17,34 @@ renders JSON.
 polls `GET /focus-5.json` from it. With the server down, the app shows the last
 cached roster and an offline badge; it can start the server for you.
 
+### Making `rebalance` findable (required for "Start server")
+
+macOS GUI apps — launched from Finder or as a login item — do not inherit your
+shell `PATH`. The app resolves the binary in this order:
+
+1. `REBALANCE_BIN` env var (explicit per-process override)
+2. Known paths probed directly (no shell): `~/bin/rebalance`,
+   `/opt/homebrew/bin/rebalance`, `/usr/local/bin/rebalance`,
+   `~/.local/bin/rebalance`
+3. Interactive login-shell lookup: `$SHELL -ilc 'command -v rebalance'`
+
+If the app shows **"Couldn't find the `rebalance` binary"**, the binary exists
+only inside the project `.venv` — invisible to all three paths above. The
+durable fix is to install `rebalance` as a system-accessible CLI tool via
+`pipx`, which places it at `~/.local/bin/rebalance` (path 2 above):
+
+```bash
+brew install pipx                         # once per machine; skip if already installed
+pipx install -e /path/to/rebalance-OS     # run from anywhere; path is absolute
+```
+
+Run this once per device after cloning. `pipx` manages its own isolated
+environment separate from the project `.venv`, so it survives venv recreations
+and continues to reflect live source edits (editable install).
+
+> A symlink at `~/bin/rebalance` pointing into `.venv` also satisfies path 2
+> but is fragile — it breaks when the venv is recreated. `pipx` is preferred.
+
 ## Install
 
 ```bash
@@ -52,15 +80,27 @@ installed `/Applications` copy, not `swift run`.
 
 ## App icon
 
-A menu-bar agent has no Dock icon, so an icon is optional (it only shows in
-Finder / Spotlight). To add one: export a 1024×1024 PNG, convert to
-`Resources/AppIcon.icns`, and re-run `./make-app.sh` — it auto-wires
-`CFBundleIconFile` when that file exists.
+An icon is included at `Resources/AppIcon.icns` (wired automatically by
+`make-app.sh`). A menu-bar agent has no Dock icon, so it only appears in
+Finder / Spotlight.
+
+To replace the icon: export a new 1024×1024 PNG, convert it to
+`Resources/AppIcon.icns`, and re-run `./make-app.sh`:
 
 ```bash
-# PNG → .icns (one-liner via sips/iconutil)
-mkdir -p AppIcon.iconset && sips -z 1024 1024 icon.png --out AppIcon.iconset/icon_512x512@2x.png
-iconutil -c icns AppIcon.iconset -o Resources/AppIcon.icns
+# PNG → .icns via sips/iconutil (all required sizes)
+ICONSET=AppIcon.iconset
+mkdir -p "$ICONSET"
+for size in 16 32 128 256 512; do
+  sips -z $size $size icon.png --out "$ICONSET/icon_${size}x${size}.png"
+done
+sips -z 32   32   icon.png --out "$ICONSET/icon_16x16@2x.png"
+sips -z 64   64   icon.png --out "$ICONSET/icon_32x32@2x.png"
+sips -z 256  256  icon.png --out "$ICONSET/icon_128x128@2x.png"
+sips -z 512  512  icon.png --out "$ICONSET/icon_256x256@2x.png"
+sips -z 1024 1024 icon.png --out "$ICONSET/icon_512x512@2x.png"
+iconutil -c icns "$ICONSET" -o Resources/AppIcon.icns
+./make-app.sh
 ```
 
 ## Contract

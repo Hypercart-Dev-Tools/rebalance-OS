@@ -16,7 +16,7 @@ rollout_rule: each phase leaves the app buildable (`swift build` green) and degr
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 1 + 2 — DONE (both features built).** Offline cache (instant cold-start, "cached · {age}", corruption-safe) **and** one-click "Start rebalance serve" (detached `Process`, login-shell binary resolution, poll-until-healthy, button in offline state + header + ⌘S menu). Headless verified: cache round-trip + binary resolution (`~/bin/rebalance`). `swift build` green. | **Operator litmus:** cold-launch offline → "Start server" brings the roster up. Then bundled-`.app` re-verify of binary resolution lands with parent Phase 5 packaging. |
+| **Phases 1 + 2 — DONE (both features built).** Offline cache (instant cold-start, "cached · {age}", corruption-safe) **and** one-click "Start rebalance serve" (detached `Process`, login-shell binary resolution, poll-until-healthy, button in offline state + header + ⌘S menu). Headless verified: cache round-trip + binary resolution (`~/bin/rebalance`). `swift build` green. **Binary resolution root-caused on real device (2026-06-25):** binary only existed in `.venv`; the durable fix (`pipx install -e .` → `~/.local/bin/rebalance`) is now documented in the Focus5Float README and main README. App icon shipped (`Resources/AppIcon.icns`). | **Operator litmus pending:** cold-launch offline with `pipx`-installed binary → click "Start server" → roster appears, no terminal. |
 
 ## Table of Contents
 
@@ -95,7 +95,7 @@ This is a **non-competing follow-on** to the parent plan (which owns the core bu
 - [x] **Resilience:** missing binary, slow/no start (20s timeout), and re-entry (`isStartingServer` guard) all yield clear bounded states — no infinite poll, no crash.
 - [x] **Observability:** `os_log` (category `launcher`) on resolve failure, chosen binary + spawned PID; `panel` log on the manual start action.
 - [x] **Deploy/packaging note:** bundled `.app` resolves the binary without a shell `PATH` — **verified from the installed `/Applications/Focus 5 Float.app` under `env -i HOME=…`** (Finder-equivalent, zero PATH) → `~/bin/rebalance`. (Initial Finder launch failed; fixed via `-ilc` + `~/bin` probe.)
-- [~] **Litmus:** binary-resolution verified headlessly; build green. _Operator: from a cold, offline app, click **Start server** → server comes up → roster appears, no terminal._
+- [~] **Litmus:** binary-resolution verified headlessly; build green. Real-device Finder-launch surfaced root cause: binary was only in `.venv`, not at any of the known paths. Durable fix (`pipx install -e .` → `~/.local/bin/rebalance`) documented in Focus5Float README and main README. _Operator: with `pipx`-installed binary, from a cold offline app, click **Start server** → server comes up → roster appears, no terminal._
 - [x] **Anti-goal guard:** a single manual start action only — no auto-restart loop, no supervision.
 
 ---
