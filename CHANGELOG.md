@@ -6,6 +6,16 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.47.2] - 2026-06-25
+
+Registered a new Apple Reminders project and consolidated prior reference docs into one execution-ready working plan.
+
+### Added
+- New active project plan at `PROJECT/2-WORKING/APPLE-REMINDERS-UNIFIED-PLAN.md` with frontmatter, near-top status table, TOC, phased execution checklists, and QA gates per phase.
+
+### Changed
+- Added roadmap ledger registration for the Apple Reminders unified integration plan under in-progress work.
+
 ## [0.47.1] - 2026-06-25
 
 Focus 5 Float Telemetry tab is hardened against large files: the loader is bounded and the row list keys are made collision-proof.
