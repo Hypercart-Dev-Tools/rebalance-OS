@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var focus5Item: NSMenuItem!
     private var dirtyFiveItem: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
+    private var selectTelemetryItem: NSMenuItem!
     private let model = Focus5Model()
     private var pollTimer: Timer?
     private let pollInterval: TimeInterval = 90   // re-pull cadence
@@ -77,6 +78,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Show the cached roster instantly (if any), then pull live and poll.
         model.loadCache()
+        model.refreshTelemetry()   // restore previously-selected telemetry file on cold-start
         Task { await model.refresh(); updateModeMenuState() }
         startPolling()
     }
@@ -106,6 +108,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         modeParentItem.submenu = modeMenu
         menu.addItem(modeParentItem)
 
+        menu.addItem(.separator())
+        selectTelemetryItem = NSMenuItem(title: "Select Telemetry File…", action: #selector(selectTelemetryFile), keyEquivalent: "t")
+        menu.addItem(selectTelemetryItem)
+
         launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         menu.addItem(launchAtLoginItem)
 
@@ -121,6 +127,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         updateModeMenuState()
         updateLaunchAtLoginState()
+        updateTelemetryMenuItem()
+    }
+
+    private func updateTelemetryMenuItem() {
+        if let url = model.telemetryFileURL {
+            selectTelemetryItem.title = "Telemetry: \(url.lastPathComponent)"
+        } else {
+            selectTelemetryItem.title = "Select Telemetry File…"
+        }
     }
 
     /// Reflect the active ranking mode with a checkmark — single source of truth is
@@ -207,6 +222,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func startServer() {
         log.info("manual start: rebalance serve")
         Task { await model.startServer() }
+    }
+
+    @objc private func selectTelemetryFile() {
+        model.openFilePicker()
     }
 
     @objc private func setFocus5Mode() {

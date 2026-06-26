@@ -6,6 +6,37 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.47.0] - 2026-06-25
+
+Focus 5 Float Telemetry tab gains explicit file selection from the F5 menu bar and surfaces decode errors in the UI.
+
+### Added
+- "Select Telemetry File…" (⌘T) menu item in the F5 right-click menu; opens `NSOpenPanel` for `.json` files, saves the selection to `UserDefaults`, and switches the panel to the Telemetry tab automatically.
+- Menu item label updates dynamically to "Telemetry: \<filename\>" after a file is selected; reverts to "Select Telemetry File…" when cleared.
+- Visible decode error state in the Telemetry tab: if the selected file exists but has invalid structure, the tab shows an actionable error message instead of a blank screen.
+- "No file selected" empty state in the Telemetry tab (default before any file is chosen); replaces the Phase 1 auto-folder scan as the primary entry point.
+- Cold-start restore: previously-selected telemetry file reloads automatically on relaunch (path persisted in `UserDefaults`).
+
+### Changed
+- Telemetry tab header info row now shows the selected filename + entry count instead of a generic "N signals" label.
+
+## [0.46.0] - 2026-06-25
+
+Focus 5 Float gains a third Telemetry tab: reads health-annotated JSON rows from `~/Documents/telemetry/` and renders them with green/orange/red dots, title, description, and relative timestamp — all via existing design tokens and components.
+
+### Added
+- Focus 5 Float Telemetry tab: a third panel option (`📊 Telemetry`) in the header segmented control that reads `*.json` files from `~/Documents/telemetry/`, decodes them as flat arrays of `{ health, title, description, updatedAt }` rows, and renders them newest-first with `HealthDot` (green/orange/red), title, description, and a relative timestamp.
+- `TelemetryModels.swift`: `HealthStatus` enum and `TelemetryEntry: Codable, Identifiable` wire model.
+- `TelemetryReader.swift`: pure file-reader that merges all `*.json` files in the telemetry folder, skips malformed files with a logged warning, and sorts by `updatedAt` descending.
+- `HealthDot` component in `Components.swift`: orange-capable status dot for telemetry rows (parallel to `StatusDot`, which remains unchanged for repo cards).
+- `ViewMode` enum (`Focus5Model.swift`): decouples panel selection (`focus5` / `dirtyFive` / `telemetry`) from server-side `rankingMode` so switching to Telemetry and back preserves the last ranking.
+- Telemetry header health rollup: the existing `RosterHealth.tint` logic now drives a "Status: N" dot over non-green telemetry signals when the Telemetry tab is active.
+- Demo seed at `~/Documents/telemetry/focus5float-demo.json` with three sample rows (green/orange/red).
+
+### Changed
+- Focus 5 Float header Picker binding migrated from `isDirtyView: Bool` to `ViewMode`; `isDirtyView` is retained as a computed shim so all existing server-fetch and caching paths are unchanged.
+- Refresh button (`↻`) now re-reads telemetry files when the Telemetry tab is active; Start Server button is hidden in Telemetry mode (irrelevant).
+
 ## [0.45.0] - 2026-06-25
 
 Focus 5 Float reaches a real installable app: it now ships to `/Applications`, can launch at login, and surfaces overall roster health at a glance.

@@ -1,10 +1,18 @@
 import Foundation
+import AppKit
+import UniformTypeIdentifiers
 import Observation
 
 // Clones the StudioModel pattern: @Observable + @MainActor. Phase 4: the live
 // source is GET /focus-5.json (the same summarize_focus5() behind the web
 // /focus-5 page). The bundled fixture is retained ONLY for previews / the
 // headless self-test — never as the app's data path.
+
+/// Which panel the user has selected. Separate from `rankingMode` (server-side
+/// sort order) so switching to Telemetry and back preserves the last ranking.
+enum ViewMode: String {
+    case focus5, dirtyFive, telemetry
+}
 
 enum LoadState: Equatable {
     case idle
@@ -26,10 +34,25 @@ final class Focus5Model {
     var cachedFetchedAt: Date?        // when the displayed cache was last fetched
     var isStartingServer = false      // a manual "Start server" is in flight
     var startError: String?           // last start failure (nil when none)
+    var viewMode: ViewMode = .focus5
+    var telemetryEntries: [TelemetryEntry] = []
+    var telemetryFileURL: URL? {
+        didSet {
+            UserDefaults.standard.set(telemetryFileURL?.path, forKey: "telemetryFilePath")
+            refreshTelemetry()
+        }
+    }
+    var telemetryLoadError: String?
 
     private let client = Focus5Client()
     private let cache = RosterCache()
     private var fetchGeneration = 0    // guards against out-of-order fetch results
+
+    init() {
+        if let path = UserDefaults.standard.string(forKey: "telemetryFilePath") {
+            telemetryFileURL = URL(fileURLWithPath: path)
+        }
+    }
 
     var isDirtyView: Bool { rankingMode == "dirty_first" }
 
@@ -54,8 +77,52 @@ final class Focus5Model {
     /// Live fetch of GET /focus-5.json — the same roster the web /focus-5 shows.
     /// On failure the last-known roster stays on screen with an offline flag; an
     /// empty roster degrades to a `.failed` state with an actionable message.
+    /// When telemetry is selected, re-reads ~/Documents/telemetry/ instead.
     func refresh() async {
-        _ = await fetchAndApply(dirty: isDirtyView)
+        if viewMode == .telemetry {
+            refreshTelemetry()
+        } else {
+            _ = await fetchAndApply(dirty: isDirtyView)
+        }
+    }
+
+    /// Open an NSOpenPanel to pick a telemetry .json file, persist it, and refresh.
+    /// Called from both the in-panel button and the F5 menu bar action.
+    func openFilePicker() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Telemetry JSON File"
+        panel.allowedContentTypes = [UTType.json]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        telemetryFileURL = url   // didSet persists + refreshes
+        viewMode = .telemetry
+    }
+
+    /// Re-read the selected telemetry file into telemetryEntries.
+    /// No-op (clears entries) when no file is selected.
+    func refreshTelemetry() {
+        guard let url = telemetryFileURL else {
+            telemetryEntries = []
+            telemetryLoadError = nil
+            return
+        }
+        guard let data = try? Data(contentsOf: url) else {
+            telemetryLoadError = "Could not read \"\(url.lastPathComponent)\"."
+            return
+        }
+        guard let entries = try? JSONDecoder().decode([TelemetryEntry].self, from: data) else {
+            telemetryLoadError = "\"\(url.lastPathComponent)\" is not valid telemetry JSON.\nExpected an array: [{\"health\":\"green|orange|red\",\"title\":\"...\",\"description\":\"...\"}]"
+            return
+        }
+        telemetryLoadError = nil
+        telemetryEntries = entries.sorted { a, b in
+            switch (a.updatedAt, b.updatedAt) {
+            case (let la?, let lb?): return la > lb
+            case (nil, _):           return false
+            case (_, nil):           return true
+            }
+        }
     }
 
     /// Switch board + re-fetch so the SERVER does the re-rank (?view=dirty), never

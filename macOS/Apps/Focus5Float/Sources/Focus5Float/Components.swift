@@ -78,3 +78,22 @@ struct StatusDot: View {
             .accessibilityLabel(healthAvailable ? (isDirty ? "dirty" : "clean") : "unavailable")
     }
 }
+
+/// Telemetry health dot: maps HealthStatus directly to green / orange / red.
+/// Color is never the only cue — callers pair it with adjacent text.
+struct HealthDot: View {
+    let health: HealthStatus
+
+    private var color: Color {
+        switch health {
+        case .green:  return Theme.diffAdd
+        case .orange: return .orange
+        case .red:    return Theme.diffRemove
+        }
+    }
+
+    var body: some View {
+        Circle().fill(color).frame(width: 10, height: 10)
+            .accessibilityLabel(health.rawValue)
+    }
+}

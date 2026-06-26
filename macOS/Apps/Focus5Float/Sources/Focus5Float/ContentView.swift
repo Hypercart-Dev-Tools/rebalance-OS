@@ -25,11 +25,19 @@ struct ContentView: View {
         VStack(spacing: Theme.Space.s) {
             HStack(spacing: Theme.Space.s) {
                 Picker("", selection: Binding(
-                    get: { model.isDirtyView },
-                    set: { dirty in Task { await model.setMode(dirty: dirty) } }
+                    get: { model.viewMode },
+                    set: { mode in
+                        model.viewMode = mode
+                        switch mode {
+                        case .focus5:    Task { await model.setMode(dirty: false) }
+                        case .dirtyFive: Task { await model.setMode(dirty: true) }
+                        case .telemetry: model.refreshTelemetry()
+                        }
+                    }
                 )) {
-                    Text("🎯 Focus 5").tag(false)
-                    Text("🧹 Dirty Five").tag(true)
+                    Text("🎯 Focus 5").tag(ViewMode.focus5)
+                    Text("🧹 Dirty Five").tag(ViewMode.dirtyFive)
+                    Text("📊 Telemetry").tag(ViewMode.telemetry)
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
@@ -41,9 +49,9 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderless)
                 .foregroundStyle(Theme.text2)
-                .help("Re-pull /focus-5.json")
+                .help(model.viewMode == .telemetry ? "Re-read telemetry files" : "Re-pull /focus-5.json")
 
-                if model.isOffline {
+                if model.viewMode != .telemetry && model.isOffline {
                     Button {
                         Task { await model.startServer() }
                     } label: {
@@ -57,9 +65,20 @@ struct ContentView: View {
 
                 Spacer(minLength: Theme.Space.s)
 
-                // Top-right roster-health light (right side so it never reads as a
-                // close button). green = all clean · red = all dirty · orange = some.
-                if !model.roster.isEmpty {
+                // Top-right health light — adapts to the active tab.
+                if model.viewMode == .telemetry {
+                    if !model.telemetryEntries.isEmpty {
+                        let nonGreen = model.telemetryEntries.filter { $0.health != .green }.count
+                        HStack(spacing: 5) {
+                            Text("Status: \(nonGreen)")
+                                .font(Theme.caption).foregroundStyle(Theme.text2)
+                            Circle()
+                                .fill(RosterHealth.tint(dirty: nonGreen, total: model.telemetryEntries.count))
+                                .frame(width: 11, height: 11)
+                        }
+                        .help("\(nonGreen) of \(model.telemetryEntries.count) signals need attention")
+                    }
+                } else if !model.roster.isEmpty {
                     let dirty = model.roster.filter(\.isDirty).count
                     HStack(spacing: 5) {
                         Text("Status: \(dirty)")
@@ -74,23 +93,39 @@ struct ContentView: View {
             }
 
             HStack(spacing: Theme.Space.s) {
-                Text("\(model.roster.count) repos")
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.text2)
-                if !model.lastUpdatedAgo.isEmpty {
-                    Text("· updated \(model.lastUpdatedAgo)")
+                if model.viewMode == .telemetry {
+                    if let url = model.telemetryFileURL {
+                        Text(url.lastPathComponent)
+                            .font(Theme.caption).foregroundStyle(Theme.text2).lineLimit(1)
+                        if !model.telemetryEntries.isEmpty {
+                            Text("· \(model.telemetryEntries.count)")
+                                .font(Theme.caption).foregroundStyle(Theme.text3)
+                        }
+                    } else {
+                        Text("No file selected")
+                            .font(Theme.caption).foregroundStyle(Theme.text3)
+                    }
+                } else {
+                    Text("\(model.roster.count) repos")
                         .font(Theme.caption)
-                        .foregroundStyle(Theme.text3)
+                        .foregroundStyle(Theme.text2)
+                    if !model.lastUpdatedAgo.isEmpty {
+                        Text("· updated \(model.lastUpdatedAgo)")
+                            .font(Theme.caption)
+                            .foregroundStyle(Theme.text3)
+                    }
                 }
                 Spacer(minLength: 0)
-                if model.isStale {
-                    Text("⚠ stale").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
-                }
-                if model.showingCache {
-                    Text("cached \(model.cachedAgo)")
-                        .font(Theme.caption).foregroundStyle(Theme.diffUpdate)
-                } else if model.isOffline {
-                    Text("offline").font(Theme.caption).foregroundStyle(Theme.diffRemove)
+                if model.viewMode != .telemetry {
+                    if model.isStale {
+                        Text("⚠ stale").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
+                    }
+                    if model.showingCache {
+                        Text("cached \(model.cachedAgo)")
+                            .font(Theme.caption).foregroundStyle(Theme.diffUpdate)
+                    } else if model.isOffline {
+                        Text("offline").font(Theme.caption).foregroundStyle(Theme.diffRemove)
+                    }
                 }
             }
         }
@@ -100,31 +135,71 @@ struct ContentView: View {
     // MARK: Content
 
     @ViewBuilder private var content: some View {
-        switch model.loadState {
-        case .idle, .loading:
-            ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .failed(let message):
-            VStack(spacing: Theme.Space.m) {
-                emptyState(icon: "bolt.horizontal.circle",
-                           title: "Can't reach the Focus 5 server",
-                           detail: message)
-                    .frame(maxHeight: .infinity)
-                startServerButton
-                    .padding(.bottom, Theme.Space.xl)
+        if model.viewMode == .telemetry {
+            telemetryContent
+        } else {
+            switch model.loadState {
+            case .idle, .loading:
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .failed(let message):
+                VStack(spacing: Theme.Space.m) {
+                    emptyState(icon: "bolt.horizontal.circle",
+                               title: "Can't reach the Focus 5 server",
+                               detail: message)
+                        .frame(maxHeight: .infinity)
+                    startServerButton
+                        .padding(.bottom, Theme.Space.xl)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            case .loaded where model.roster.isEmpty:
+                emptyState(icon: "tray",
+                           title: model.isDirtyView ? "Nothing at risk" : "No active repos found",
+                           detail: "The server roster is empty. Build it server-side (open /focus-5 in the browser or run a Focus 5 sync), then Refresh here to re-pull.")
+            case .loaded:
+                ScrollView {
+                    LazyVStack(spacing: Theme.Space.s) {
+                        ForEach(Array(model.roster.enumerated()), id: \.element.id) { index, card in
+                            RepoCardView(card: card, darker: !index.isMultiple(of: 2))
+                        }
+                        if !model.offRoster.isEmpty {
+                            OffRosterFooter(warnings: model.offRoster)
+                        }
+                    }
+                    .padding(Theme.Space.m)
+                }
             }
+        }
+    }
+
+    @ViewBuilder private var telemetryContent: some View {
+        if model.telemetryFileURL == nil {
+            VStack(spacing: Theme.Space.m) {
+                Image(systemName: "doc.badge.plus")
+                    .font(.system(size: 22)).foregroundStyle(Theme.text3)
+                Text("No file selected")
+                    .font(Theme.bodyMed).foregroundStyle(Theme.text)
+                Text("Choose a .json file to display health signals.")
+                    .font(Theme.monoSmall).foregroundStyle(Theme.text3)
+                    .multilineTextAlignment(.center)
+                Button("Select Telemetry File…") { model.openFilePicker() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+            }
+            .padding()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .loaded where model.roster.isEmpty:
-            emptyState(icon: "tray",
-                       title: model.isDirtyView ? "Nothing at risk" : "No active repos found",
-                       detail: "The server roster is empty. Build it server-side (open /focus-5 in the browser or run a Focus 5 sync), then Refresh here to re-pull.")
-        case .loaded:
+        } else if let err = model.telemetryLoadError {
+            emptyState(icon: "exclamationmark.triangle",
+                       title: "Can't read telemetry file",
+                       detail: err)
+        } else if model.telemetryEntries.isEmpty {
+            emptyState(icon: "waveform.path.ecg",
+                       title: "No signals",
+                       detail: "The selected file has no entries.")
+        } else {
             ScrollView {
                 LazyVStack(spacing: Theme.Space.s) {
-                    ForEach(Array(model.roster.enumerated()), id: \.element.id) { index, card in
-                        RepoCardView(card: card, darker: !index.isMultiple(of: 2))
-                    }
-                    if !model.offRoster.isEmpty {
-                        OffRosterFooter(warnings: model.offRoster)
+                    ForEach(Array(model.telemetryEntries.enumerated()), id: \.element.id) { index, entry in
+                        TelemetryRowView(entry: entry, darker: !index.isMultiple(of: 2))
                     }
                 }
                 .padding(Theme.Space.m)
@@ -299,6 +374,39 @@ struct CardSection<Content: View>: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.top, 4)
+    }
+}
+
+// MARK: - Telemetry row
+
+struct TelemetryRowView: View {
+    let entry: TelemetryEntry
+    var darker: Bool = false
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Theme.Space.s) {
+            HealthDot(health: entry.health)
+                .padding(.top, 3)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(entry.title)
+                    .font(Theme.bodyMed).foregroundStyle(Theme.text)
+                Text(entry.description)
+                    .font(Theme.body).foregroundStyle(Theme.text2)
+                    .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                if let ts = entry.updatedAt {
+                    Text(RelTime.ago(ts))
+                        .font(Theme.monoSmall).foregroundStyle(Theme.text3)
+                }
+            }
+        }
+        .padding(Theme.Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(darker ? Theme.elevatedAlt : Theme.elevated,
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 1)
+        )
     }
 }
 
