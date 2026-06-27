@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 5.0 write spike CONVERGENCE PROVEN (2026-06-27).** Full EventKit create→read→update→converge→delete→absence loop passes from a signed LaunchServices app bundle with Reminders + Full Disk Access grants; identifier mapping is 1:1. Build harness `scripts/build_apple_reminders_write_spike_app.sh` + self-locating bundle landed. → **Now: Phase 5.1 write-surface design.** _Earlier:_ **Phases 0–4 complete (2026-06-27), incl. the P3 product surface.** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
+| **Phase 5.1 write surface BUILT (2026-06-27).** Python orchestrator (`apple_reminders_write.py`) + generalized signed helper (`apple_reminders_helper_app.swift`) + 18 headless tests (apple suite 49/49). Design cross-model-consulted; all hardening landed (request_id idempotency, write serialization, helper-identity verify, three-state audit, atomic IPC). _Earlier:_ **Phase 5.0 convergence PROVEN** (full EventKit CRUD loop from a signed bundle; 1:1 id mapping). **Phases 0–4 complete** incl. P3 product surface. → **Now: one operator-gated live e2e run through the new helper, then a CLI/MCP verb to expose writes.** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
 
 ## Table of Contents
 
@@ -610,18 +610,28 @@ harness). One-time operator setup: build + sign the helper, grant it Reminders o
 
 #### Observable checklist
 
-- [ ] Define a dedicated write orchestrator (`create_reminder`, `update_reminder`, `complete_reminder`, `delete_reminder`, later `move_to_section`) rather than overloading ingest commands.
-- [ ] Define the write contract fields and the single writer for each mutation type.
-- [ ] Add structured audit logging for every mutation attempt, including timestamp, operation, target ids, dry-run/apply, and outcome.
-- [ ] Add explicit confirmation / dry-run support for destructive mutations and bulk operations.
-- [ ] Add integration tests with mock harness coverage for auth denial, validation failure, sync lag, and partial failure.
+- [x] Define a dedicated write orchestrator (`create_reminder`, `update_reminder`, `complete_reminder`, `delete_reminder`, later `move_to_section`) rather than overloading ingest commands. _(`src/rebalance/ingest/apple_reminders_write.py` — `apply_reminder_writes()` + `build_request()` + typed `WriteOp`; `move_to_section` intentionally deferred. Separate from `index_ops.py`/`refresh_index()`.)_
+- [x] Define the write contract fields and the single writer for each mutation type. _(schema_version-1 JSON request/response; the signed `AppleRemindersHelper.app` bundle is the one writer — `scripts/apple_reminders_helper_app.swift`.)_
+- [x] Add structured audit logging for every mutation attempt, including timestamp, operation, target ids, dry-run/apply, and outcome. _(`apple_reminders_write_audit` table: per-op row with `reminder_id` (joins `apple_reminders`), `state`, `op_status`, immutable `request_json`/`response_json`, `helper_identity`, timestamps.)_
+- [x] Add explicit confirmation / dry-run support for destructive mutations and bulk operations. _(`mode=plan` dry-run; `mode=apply` + `confirm_destructive` gate on `delete`; enforced in Python AND the helper.)_
+- [x] Add integration tests with mock harness coverage for auth denial, validation failure, sync lag, and partial failure. _(`tests/test_apple_reminders_write.py` — 18 tests via an injected fake invoker: scope, confirmation, plan/apply, reconcile, reconcile-failure, idempotent replay, retryable-failure, partial failure, helper-launch failure, request_id/schema mismatch, audit rows. Headless — no macOS needed.)_
+- [~] **Live end-to-end through the real helper** (operator-gated). _The orchestrator + helper compile, sign, and unit-test green; the full `open`-launched create/update/delete round-trip through the new bundle is the remaining operator-gated run — same one-time Reminders grant as Phase 5.0. Build: `scripts/build_apple_reminders_helper_app.sh`._
 
 #### QA checklist
 
-- [ ] The write path stays logically separate from the read-only collector and does not weaken Phases 0-4 safety guarantees.
-- [ ] EventKit remains the primary write layer for ordinary reminder CRUD.
-- [ ] Private-framework and direct-SQLite code paths are optional, feature-gated, and only used for capabilities unavailable in public APIs.
-- [ ] A failed write cannot silently leave rebalance's local table claiming success when the live store disagrees.
+- [x] The write path stays logically separate from the read-only collector and does not weaken Phases 0-4 safety guarantees. _(New module + table; read collector untouched; read suite still 31/31, write suite 18/18.)_
+- [x] EventKit remains the primary write layer for ordinary reminder CRUD. _(Helper dispatches all CRUD via EventKit; no SQLite/private-framework writes.)_
+- [x] Private-framework and direct-SQLite code paths are optional, feature-gated, and only used for capabilities unavailable in public APIs. _(None used; sections (the only such need) remain deferred.)_
+- [x] A failed write cannot silently leave rebalance's local table claiming success when the live store disagrees. _(Local table is written ONLY by post-apply `sync_apple_reminders` reconcile from Apple; per-op `readback_ok` + the three-state machine + `applied_any→FAILED` semantics prevent a false success.)_
+
+#### Phase 5.1 implementation status (2026-06-27)
+
+Built on `feat/apple-reminders-write`: Python orchestrator (`apple_reminders_write.py`), generalized
+signed helper (`apple_reminders_helper_app.swift` + plist + `build_apple_reminders_helper_app.sh`), and
+18 headless tests (all green; full apple suite 49/49). All consult-hardening landed: `request_id`
+idempotency (Python audit guard + helper-side processed store), helper-side `flock` write serialization,
+codesign identity verification before trusting a response, three-state audit lifecycle, atomic file IPC.
+**Remaining:** the one operator-gated live e2e run through the helper, then a CLI/MCP verb to expose it.
 
 ## Explicit Non-Goals
 
