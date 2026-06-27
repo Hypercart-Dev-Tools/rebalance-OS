@@ -63,16 +63,8 @@ from rebalance.web import (  # noqa: E402
     focus5_page as _focus5_page,
     focus5_set_hidden as _focus5_set_hidden,
     sleuth_graph_page as _sleuth_graph_page,
-    unhandled_exception_handler as _unhandled_exception_handler,
     whatsnext_page as _whatsnext_page,
 )
-
-# Show the real traceback in-browser on an unhandled error instead of a bare
-# "Internal Server Error". Same shared handler the :8787 web app uses. This
-# server enforces a loopback bind (see main()), so tracebacks never leave the
-# box and gating is unnecessary.
-app.state.show_tracebacks = True
-app.add_exception_handler(Exception, _unhandled_exception_handler)
 
 
 @app.get("/auth-log")

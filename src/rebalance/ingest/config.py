@@ -855,24 +855,6 @@ def get_gmail_ingest_method() -> str:
     return "oauth"
 
 
-# Apple Reminders has no in-DB "default list" flag (the preference lives in an
-# app pref outside the SQLite store), so the ingest scope is selected by list
-# NAME. Default "Reminders" — the conventional default list — overridable here.
-APPLE_REMINDERS_DEFAULT_LIST = "Reminders"
-
-
-def get_apple_reminders_list_name() -> str:
-    """Return the Apple Reminders list to ingest (default ``"Reminders"``).
-
-    Config key: ``apple_reminders_list_name``. Only this one list is synced into
-    the ``apple_reminders`` table (see APPLE-REMINDERS-UNIFIED-PLAN Phase 2)."""
-    config = _read_config()
-    value = config.get("apple_reminders_list_name")
-    if isinstance(value, str) and value.strip():
-        return value.strip()
-    return APPLE_REMINDERS_DEFAULT_LIST
-
-
 def set_gmail_ingest_method(method: str) -> None:
     """Store the Gmail ingest method (``oauth`` or ``mcp``)."""
     normalized = method.strip().lower()
