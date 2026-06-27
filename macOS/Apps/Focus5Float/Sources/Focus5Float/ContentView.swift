@@ -15,6 +15,13 @@ struct ContentView: View {
             header
             Divider().overlay(Theme.separator)
             content
+            // Bottom note from the operator's vault focus5.md. Roster/Dirty views
+            // only — Telemetry owns the whole pane. Hidden until the first fetch so
+            // an offline cold-start doesn't flash the "add a note" hint.
+            if model.viewMode != .telemetry && model.noteLoaded {
+                Divider().overlay(Theme.separator)
+                Focus5NoteView(exists: model.noteExists, content: model.noteContent)
+            }
         }
         .background(Theme.window)
     }
@@ -407,6 +414,102 @@ struct TelemetryRowView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                 .strokeBorder(Theme.separator, lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Bottom note (vault focus5.md)
+
+/// Free-form note pulled from the operator's Obsidian vault (`focus5.md`), shown
+/// pinned at the bottom of the Focus 5 / Dirty Five card. Renders light markdown
+/// (headings, bullets, inline emphasis/links); falls back to a one-line hint when
+/// the vault has no such note. Bounded height with its own scroll so a long note
+/// never crowds out the roster above it.
+struct Focus5NoteView: View {
+    let exists: Bool
+    let content: String
+
+    private var hasText: Bool {
+        !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                if exists && hasText {
+                    let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                        MarkdownLine(raw: line)
+                    }
+                } else {
+                    Text("To show a text file here, add a doc called focus5.md into your Obsidian vault.")
+                        .font(Theme.body)
+                        .foregroundStyle(Theme.text3)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, Theme.Space.m)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.m)
+        }
+        .frame(maxHeight: 280)
+    }
+}
+
+/// One source line of the note. Recognizes `#`/`##` headings and `-`/`*`/`+`
+/// bullets; everything else is body text. Inline emphasis/links route through
+/// AttributedString's markdown parser (block syntax stays literal, by design).
+private struct MarkdownLine: View {
+    let raw: String
+    init(raw: Substring) { self.raw = String(raw) }
+
+    var body: some View {
+        if raw.trimmingCharacters(in: .whitespaces).isEmpty {
+            Spacer().frame(height: Theme.Space.xs)
+        } else if let heading = heading(raw) {
+            Text(inline(heading.text))
+                .font(.system(size: heading.level == 1 ? 16 : 14, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if let bullet = bullet(raw) {
+            HStack(alignment: .top, spacing: 6) {
+                Text("•").foregroundStyle(Theme.text3)
+                Text(inline(bullet)).foregroundStyle(Theme.text2)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .font(Theme.body)
+        } else {
+            Text(inline(raw))
+                .font(Theme.body)
+                .foregroundStyle(Theme.text2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    /// Inline-only markdown → AttributedString (bold/italic/code/links). Falls back
+    /// to plain text if the line isn't valid markdown.
+    private func inline(_ s: String) -> AttributedString {
+        (try? AttributedString(
+            markdown: s,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        )) ?? AttributedString(s)
+    }
+
+    private func heading(_ s: String) -> (level: Int, text: String)? {
+        let t = s.drop(while: { $0 == " " })
+        guard t.first == "#" else { return nil }
+        let hashes = t.prefix(while: { $0 == "#" })
+        let rest = t.dropFirst(hashes.count)
+        guard rest.first == " " else { return nil }   // "# foo", not "#foo"/"#tag"
+        return (min(hashes.count, 2), String(rest).trimmingCharacters(in: .whitespaces))
+    }
+
+    private func bullet(_ s: String) -> String? {
+        let t = s.drop(while: { $0 == " " })
+        for marker in ["- ", "* ", "+ "] where t.hasPrefix(marker) {
+            return String(t.dropFirst(2))
+        }
+        return nil
     }
 }
 

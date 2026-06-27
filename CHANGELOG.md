@@ -6,6 +6,15 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.48.0] - 2026-06-26
+
+Added a bottom note to the Focus 5 Float macOS card: it reads a hand-written `focus5.md` from the operator's Obsidian vault and renders it under the roster, with a hint when no note exists.
+
+### Added
+- New read-only route `GET /focus-5/note` in `src/rebalance/web.py` (`focus5_note()`) — projects `focus5.md` at the configured vault root as `{exists, content, path}`, capped at 64 KiB, always HTTP 200. Strictly read-only (never creates/writes the file). Covered by `tests/test_web_focus5.py::Focus5NoteRouteTests`.
+- Focus 5 Float now fetches the note on every refresh/poll and renders it pinned at the bottom of the Focus 5 / Dirty Five card (`Focus5NoteView` in `ContentView.swift`), with light markdown (headings, bullets, inline emphasis/links). When the vault has no `focus5.md`, it shows: *"To show a text file here, add a doc called focus5.md into your Obsidian vault."*
+- Wire contract documented in `macOS/Apps/Focus5Float/CONTRACT.md` (new "Bottom note" section) with the Swift `Focus5Note` codec.
+
 ## [0.47.2] - 2026-06-25
 
 Registered a new Apple Reminders project and consolidated prior reference docs into one execution-ready working plan.
