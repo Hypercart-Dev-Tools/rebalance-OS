@@ -16,9 +16,12 @@ from rebalance.ingest.apple_reminders import (
     CORE_DATA_EPOCH_OFFSET,
     AppleReminder,
     AppleRemindersSchemaError,
+    apple_reminders_health,
+    compute_schema_fingerprint,
     core_data_timestamp,
     ensure_apple_reminders_schema,
     extract_reminders,
+    get_apple_reminders_meta,
     list_apple_reminders,
     parse_hashtags,
     pick_active_store,
@@ -371,6 +374,71 @@ class ReadSurfaceTests(unittest.TestCase):
     def test_invalid_order_by_raises(self):
         with self.assertRaises(ValueError):
             list_apple_reminders(self.db, order_by="bogus")
+
+
+class HardeningTests(unittest.TestCase):
+    """Phase 4: schema fingerprint, drift signal, and health verdict."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.dir = Path(self._tmp.name)
+        self.db = self.dir / "rebalance.sqlite"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def test_fingerprint_captures_schema_and_changes_on_drift(self):
+        full = self.dir / "full.sqlite"
+        _make_store(full, with_optional=True)
+        minimal = self.dir / "minimal.sqlite"
+        _make_store(minimal, with_optional=False)
+
+        fp_full = compute_schema_fingerprint(full)
+        fp_min = compute_schema_fingerprint(minimal)
+        self.assertEqual(fp_full["reminder_table"], "ZREMCDREMINDER")
+        self.assertIn("columns_sha", fp_full)
+        # A different column set yields a different hash — the drift signal.
+        self.assertNotEqual(fp_full["columns_sha"], fp_min["columns_sha"])
+
+    def test_health_never_synced(self):
+        self.assertEqual(apple_reminders_health(self.db)["status"], "never_synced")
+
+    def test_health_ok_after_clean_sync(self):
+        upsert_apple_reminders(
+            self.db, [_reminder("A", "x")], list_name="Reminders",
+            meta={
+                "last_sync_at": "2026-06-27T00:00:00+00:00",
+                "schema_fingerprint": '{"macos": "15.7.5"}',
+                "drift_fallbacks": "[]",
+            },
+        )
+        health = apple_reminders_health(self.db)
+        self.assertEqual(health["status"], "ok")
+        self.assertEqual(get_apple_reminders_meta(self.db)["schema_fingerprint"],
+                         {"macos": "15.7.5"})
+
+    def test_health_drift_reports_missing_symbols(self):
+        upsert_apple_reminders(
+            self.db, [_reminder("A", "x")], list_name="Reminders",
+            meta={
+                "last_sync_at": "2026-06-27T00:00:00+00:00",
+                "drift_fallbacks": '["missing_optional_column:ZDUEDATE"]',
+            },
+        )
+        health = apple_reminders_health(self.db)
+        self.assertEqual(health["status"], "drift")
+        self.assertIn("ZDUEDATE", health["message"])
+        self.assertIn("remediation", health)
+
+    def test_drift_extraction_degrades_and_flags(self):
+        # A store missing an optional column extracts fine AND records the drift
+        # fallback — the upgrade-safety contract (graceful + visible).
+        db = self.dir / "drifted.sqlite"
+        _make_store(db, with_optional=False)
+        reminders, skipped, fallbacks = extract_reminders(db)
+        self.assertEqual(len(reminders), 2)  # still works
+        drift = [f for f in fallbacks if f.startswith("missing_")]
+        self.assertTrue(drift)  # and the drift is surfaced, not swallowed
 
 
 if __name__ == "__main__":

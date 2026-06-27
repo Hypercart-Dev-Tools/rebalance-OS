@@ -38,8 +38,10 @@ raises :class:`AppleRemindersSchemaError` with the specific missing symbol.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
+import platform
 import re
 import shutil
 import sqlite3
@@ -136,6 +138,7 @@ class AppleRemindersExtractResult:
     list_count: int
     duration_seconds: float
     mapping_fallbacks: tuple[str, ...] = ()
+    schema_fingerprint: dict[str, Any] = field(default_factory=dict)
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -146,6 +149,7 @@ class AppleRemindersExtractResult:
             "list_count": self.list_count,
             "duration_seconds": round(self.duration_seconds, 3),
             "mapping_fallbacks": list(self.mapping_fallbacks),
+            "schema_fingerprint": self.schema_fingerprint,
         }
 
 
@@ -212,6 +216,39 @@ def _decode_notes_document(blob: bytes) -> str | None:
 
 def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
     return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def compute_schema_fingerprint(db_path: Path) -> dict[str, Any]:
+    """Lightweight fingerprint of the store schema, for upgrade-drift triage.
+
+    Captures the macOS/sqlite versions, the resolved table names, and a short
+    hash of the reminder table's column set. A change in ``columns_sha`` across
+    runs is the cheapest signal that a macOS update reshaped the Core Data
+    schema. Best-effort — never raises; returns ``{}`` on any failure."""
+    fp: dict[str, Any] = {
+        "macos": platform.mac_ver()[0] or "",
+        "sqlite": sqlite3.sqlite_version,
+    }
+    try:
+        conn = _open_ro(db_path)
+    except sqlite3.Error:
+        return fp
+    try:
+        reminder_table = _resolve_table(conn, _REMINDER_TABLE_CANDIDATES)
+        list_table = _resolve_table(conn, _LIST_TABLE_CANDIDATES)
+        fp["reminder_table"] = reminder_table
+        fp["list_table"] = list_table
+        if reminder_table:
+            cols = sorted(_table_columns(conn, reminder_table))
+            fp["reminder_column_count"] = len(cols)
+            fp["columns_sha"] = hashlib.sha256(
+                ",".join(cols).encode("utf-8")
+            ).hexdigest()[:12]
+    except sqlite3.Error:
+        pass
+    finally:
+        conn.close()
+    return fp
 
 
 def _resolve_table(conn: sqlite3.Connection, candidates: tuple[str, ...]) -> str | None:
@@ -494,6 +531,7 @@ def extract_apple_reminders(
     snapshots = snapshot_stores(stores_dir, dest)
     active = pick_active_store(snapshots)
     reminders, skipped, fallbacks = extract_reminders(active)
+    fingerprint = compute_schema_fingerprint(active)
 
     # Count distinct non-null list names actually referenced.
     list_count = len({r.list_name for r in reminders if r.list_name})
@@ -507,6 +545,7 @@ def extract_apple_reminders(
         list_count=list_count,
         duration_seconds=duration,
         mapping_fallbacks=tuple(fallbacks),
+        schema_fingerprint=fingerprint,
     )
     # Log counts only — never reminder titles/notes (privacy).
     logger.info(
@@ -586,6 +625,17 @@ def ensure_apple_reminders_schema(conn: sqlite3.Connection) -> None:
         )
         """
     )
+    # Source-level metadata (key/value): schema fingerprint + last-sync drift
+    # signal, read cheaply by `doctor` / `get_index_status` to surface schema
+    # drift after a macOS upgrade without re-reading the live store.
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS apple_reminders_sync_meta (
+            key   TEXT PRIMARY KEY,
+            value TEXT
+        )
+        """
+    )
     # is_completed index: the in-scope (default) list is mostly completed history,
     # so Phase 3 must filter to active fast.
     conn.execute(
@@ -660,13 +710,15 @@ def upsert_apple_reminders(
     *,
     list_name: str,
     now_iso: str | None = None,
+    meta: dict[str, str] | None = None,
 ) -> dict[str, int]:
     """Upsert ``reminders`` (already scoped to ``list_name``) and reconcile.
 
     Rows present in the DB but absent from this batch are **retired** (is_active
     flips to 0) rather than deleted, preserving the audit trail — same discipline
     as the Sleuth source. Idempotent: re-running an unchanged batch only bumps
-    last_seen/last_synced. Returns insert/update/unchanged/retired counts."""
+    last_seen/last_synced. ``meta`` key/value pairs (schema fingerprint, drift
+    signal) are persisted in the same transaction. Returns counts."""
     now = now_iso or datetime.now(timezone.utc).isoformat()
     inserted = updated = unchanged = 0
 
@@ -725,6 +777,13 @@ def upsert_apple_reminders(
                 (now,),
             )
         retired = cur.rowcount or 0
+
+        if meta:
+            conn.executemany(
+                "INSERT INTO apple_reminders_sync_meta (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                list(meta.items()),
+            )
         conn.commit()
 
     return {
@@ -732,6 +791,74 @@ def upsert_apple_reminders(
         "updated": updated,
         "unchanged": unchanged,
         "retired": retired,
+    }
+
+
+# Mapping fallbacks that signal genuine schema DRIFT (columns/tables that
+# vanished) — distinct from expected deferrals like notes-in-blob.
+_DRIFT_FALLBACK_PREFIX = "missing_"
+
+
+def _drift_fallbacks(fallbacks: tuple[str, ...] | list[str]) -> list[str]:
+    return [f for f in fallbacks if f.startswith(_DRIFT_FALLBACK_PREFIX)]
+
+
+def get_apple_reminders_meta(database_path: Path) -> dict[str, Any]:
+    """Read the source meta (fingerprint, drift signal, last sync). ``{}`` if the
+    source has never synced. JSON values are decoded; scalars pass through."""
+    if not Path(database_path).exists():
+        return {}
+    conn = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+    try:
+        try:
+            rows = conn.execute(
+                "SELECT key, value FROM apple_reminders_sync_meta"
+            ).fetchall()
+        except sqlite3.OperationalError:
+            return {}
+    finally:
+        conn.close()
+    out: dict[str, Any] = {}
+    for key, value in rows:
+        try:
+            out[key] = json.loads(value)
+        except (json.JSONDecodeError, TypeError):
+            out[key] = value
+    return out
+
+
+def apple_reminders_health(database_path: Path) -> dict[str, Any]:
+    """Cheap, DB-only health verdict for the apple_reminders source.
+
+    Reads the persisted meta (no live-store access, so it works on any host).
+    ``status`` is one of: ``never_synced`` (opt-in source not enabled),
+    ``drift`` (schema columns/tables went missing on the last sync — names the
+    symbols + remediation), or ``ok``."""
+    meta = get_apple_reminders_meta(database_path)
+    last_sync_at = meta.get("last_sync_at")
+    if not last_sync_at:
+        return {"status": "never_synced", "message": "apple_reminders never synced"}
+
+    drift = meta.get("drift_fallbacks") or []
+    fingerprint = meta.get("schema_fingerprint") or {}
+    if drift:
+        return {
+            "status": "drift",
+            "last_sync_at": last_sync_at,
+            "drift_fallbacks": drift,
+            "schema_fingerprint": fingerprint,
+            "message": "Reminders schema drift — missing: " + ", ".join(drift),
+            "remediation": (
+                "A macOS update likely reshaped the Core Data schema. Review the "
+                "field mapping in apple_reminders.py against the live store; the "
+                "extractor degrades gracefully but affected fields are now null."
+            ),
+        }
+    return {
+        "status": "ok",
+        "last_sync_at": last_sync_at,
+        "schema_fingerprint": fingerprint,
+        "message": "ok",
     }
 
 
@@ -756,8 +883,23 @@ def sync_apple_reminders(
     started = time.monotonic()
     extract_result, reminders = extract_apple_reminders(snapshot_dir=snapshot_dir)
     scoped = [r for r in reminders if r.list_name == list_name]
-    counts = upsert_apple_reminders(database_path, scoped, list_name=list_name)
+
+    # Persist hardening signals (fingerprint + drift) in the sync transaction so
+    # doctor / status can warn on schema drift without touching the live store.
+    drift = _drift_fallbacks(extract_result.mapping_fallbacks)
+    now_iso = datetime.now(timezone.utc).isoformat()
+    meta = {
+        "last_sync_at": now_iso,
+        "schema_fingerprint": json.dumps(extract_result.schema_fingerprint),
+        "drift_fallbacks": json.dumps(drift),
+        "all_fallbacks": json.dumps(list(extract_result.mapping_fallbacks)),
+    }
+    counts = upsert_apple_reminders(
+        database_path, scoped, list_name=list_name, now_iso=now_iso, meta=meta
+    )
     active_count = sum(1 for r in scoped if not r.is_completed)
+    if drift:
+        logger.warning("apple_reminders SCHEMA DRIFT — missing: %s", ", ".join(drift))
 
     result = AppleRemindersSyncResult(
         list_name=list_name,
@@ -772,12 +914,16 @@ def sync_apple_reminders(
         duration_seconds=time.monotonic() - started,
         mapping_fallbacks=extract_result.mapping_fallbacks,
     )
+    fp = extract_result.schema_fingerprint
     logger.info(
         "apple_reminders sync: list=%r scoped=%d active=%d "
-        "(ins=%d upd=%d unch=%d retired=%d) %.3fs",
+        "(ins=%d upd=%d unch=%d retired=%d) %.3fs "
+        "[fingerprint macos=%s sqlite=%s cols=%s/%s]",
         result.list_name, result.scoped_count, result.active_count,
         result.inserted_count, result.updated_count, result.unchanged_count,
         result.retired_count, result.duration_seconds,
+        fp.get("macos"), fp.get("sqlite"),
+        fp.get("reminder_column_count"), fp.get("columns_sha"),
     )
     return result
 

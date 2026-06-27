@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 0–3 core complete (2026-06-27).** P0/P1 (`e81cb5e`): FDA access, deterministic store discovery, WAL-safe snapshot, dynamic REMCD mapper, read-only extraction (9010) operator-verified vs the UI. P2 (`891e210`): `apple_reminders` collector (opt-in, macOS+FDA) + table/storage (`ensure/upsert/sync`, reconcile-don't-delete, indexes) + status wiring; verified live via `refresh_index` (8147 scoped to `Reminders`, idempotent, 0 errors). **P3:** `list_apple_reminders` read accessor — safe-by-default (active-only; live read = 14, not 8147), pure-`sqlite3` (no private framework), filters for due/completed/list/retired; 26 tests pass. | **Decision: product surface.** Phase 3 *core* (query accessor) done; the optional product-surface wiring (daily context / pulse panel) + its UX copy are deferred pending where you want reminders to show. Also still open: Phase 4 hardening; deferred perf wins (active-store snapshot, mtime-skip); notes/sections decode. |
+| **Phases 0–4 complete (2026-06-27)** (P3 product-surface wiring is the only deferred-by-choice item). P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default active-only, pure-`sqlite3`). **P4:** schema-drift health (`apple_reminders_health` → `doctor` WARN + `get_index_status`), schema fingerprint (macOS/sqlite/`columns_sha`) logged + persisted, FDA/drift runbook, graceful-degradation proxy tests. **31 tests pass; doctor + status live-verified.** | **Decision: product surface.** The optional P3 product-surface wiring (daily context / pulse panel) + its UX copy remain deferred pending where you want reminders to appear. Other deferred: cross-version validation (needs 2nd macOS), perf wins (active-store snapshot, mtime-skip), notes/sections decode. |
 
 ## Table of Contents
 
@@ -292,18 +292,36 @@ Objective: ensure ongoing reliability through macOS updates and schema drift.
 
 ### Observable checklist
 
-- [ ] Add schema drift guardrails and health warning if required columns/tables cannot be mapped.
-- [ ] Add a lightweight version/profile fingerprint in logs to aid future breakage triage.
-- [ ] Add fallback handling for unreadable store paths at runtime with actionable remediation.
-- [ ] Run cross-version validation on at least two macOS versions or snapshots.
-- [ ] Add maintenance runbook entry for TCC/FDA troubleshooting.
+- [x] Add schema drift guardrails and health warning if required columns/tables cannot be mapped. _(`apple_reminders_health()` → `drift` status names the missing symbols; surfaced via `doctor` (`_check_apple_reminders`) as WARN and via `get_index_status` `sources.apple_reminders.health`. Required-symbol loss still raises `AppleRemindersSchemaError`.)_
+- [x] Add a lightweight version/profile fingerprint in logs to aid future breakage triage. _(`compute_schema_fingerprint` = macOS + sqlite versions + reminder table + column count + `columns_sha`; logged each sync, persisted to `apple_reminders_sync_meta`.)_
+- [x] Add fallback handling for unreadable store paths at runtime with actionable remediation. _(`AppleRemindersAccessError` carries the FDA remediation; the collector catches `AppleRemindersError` and returns a structured `{error}` result instead of crashing the refresh.)_
+- [~] Run cross-version validation on at least two macOS versions or snapshots. _(**Partial — needs a 2nd machine.** Proxy in place: `test_drift_extraction_degrades_and_flags` + `test_fingerprint_captures_schema_and_changes_on_drift` prove graceful degradation and that the fingerprint shifts when the schema changes. True multi-macOS validation is deferred to whenever a second OS version is available.)_
+- [x] Add maintenance runbook entry for TCC/FDA troubleshooting. _(See "TCC/FDA + drift runbook" below.)_
 
 ### QA checklist
 
-- [ ] Upgrade failure path is explicit and non-destructive.
-- [ ] Drift detection reports exact missing symbols and suggested operator action.
-- [ ] Hardening changes do not widen data collection scope.
-- [ ] Docs remain aligned with actual runtime behavior after final implementation.
+- [x] Upgrade failure path is explicit and non-destructive. _(Drift → fields go null + WARN, never a crash or data loss; required-symbol loss raises a named error before any write.)_
+- [x] Drift detection reports exact missing symbols and suggested operator action. _(`drift_fallbacks` lists `missing_*` symbols; `remediation` text included.)_
+- [x] Hardening changes do not widen data collection scope. _(Read-only still; only adds a meta table + fingerprint of schema shape — no new reminder fields collected.)_
+- [x] Docs remain aligned with actual runtime behavior after final implementation. _(Plan reflects shipped behavior; live-verified via doctor/status.)_
+
+### TCC/FDA + drift runbook
+
+**Symptom: sync returns `{"error": "...Operation not permitted..."}` or `AppleRemindersAccessError`.**
+1. The host process lacks Full Disk Access. Grant FDA to the *actual* host app (e.g. Visual Studio Code,
+   Terminal, or — for the scheduled job — the launchd-spawned runtime), then **fully quit and relaunch** it
+   (a window reload is not enough). See [Verified Discovery → Access](#verified-discovery-phase-0-and-1-findings).
+2. Confirm it's TCC and not a command sandbox: retry the read unsandboxed before concluding.
+
+**Symptom: `rebalance doctor` shows `apple reminders: WARN — schema drift … missing: …`.**
+1. A macOS update likely reshaped the Core Data schema. The extractor degrades gracefully (affected fields
+   go null), so no crash — but mapping needs review.
+2. Compare the live store's columns against the [Verified field mapping](#verified-discovery-phase-0-and-1-findings)
+   table; the `columns_sha` in `apple_reminders_sync_meta` / sync logs confirms the schema changed.
+3. Update `_OPTIONAL_REMINDER_COLUMNS` / table candidates in `apple_reminders.py` as needed; re-sync.
+
+**Symptom: `doctor` shows `apple reminders: OK — not enabled (opt-in)`.** Expected on machines that never
+synced — `apple_reminders` is `included_in_all=False`. Enable by running `refresh_index(scope=["apple_reminders"])`.
 
 ## Explicit Non-Goals
 

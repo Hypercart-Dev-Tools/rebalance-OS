@@ -179,6 +179,16 @@ def _safe_count_where(conn: Any, table: str, where: str) -> int | None:
         return None
 
 
+def _apple_reminders_health_status(database_path: Path) -> str | None:
+    """Cheap apple_reminders health status (ok | drift | never_synced) for the
+    status payload. None if the probe itself fails — never crashes status."""
+    try:
+        from rebalance.ingest.apple_reminders import apple_reminders_health
+        return apple_reminders_health(database_path).get("status")
+    except Exception:
+        return None
+
+
 def _safe_meta(conn: Any, table: str) -> dict[str, str]:
     try:
         rows = conn.execute(f"SELECT key, value FROM {table}").fetchall()
@@ -264,6 +274,7 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
                 conn, "apple_reminders", "is_active=1 AND is_completed=0"
             ),
             "last_synced_at": _safe_max(conn, "apple_reminders", "last_synced_at"),
+            "health": _apple_reminders_health_status(database_path),
         }
 
         payload["sources"]["email"] = {
