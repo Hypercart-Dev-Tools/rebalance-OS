@@ -361,15 +361,17 @@ Objective: prove the smallest write path that survives real sync behavior before
 
 #### Observable checklist
 
-- [ ] Implement a tiny **native helper spike** (Swift preferred) outside the collector path that can:
+- [x] Implement a tiny **native helper spike** (Swift preferred) outside the collector path that can:
       request Reminders permission, create one reminder via EventKit, update it, then delete it.
-- [ ] Verify the helper works from the **actual intended runtimes**: interactive shell first, then the agent-hosted process tree, then a launchd-like context if relevant.
+      _Implemented as `scripts/apple_reminders_write_spike.swift` plus app-bundle helper `scripts/apple_reminders_write_spike_app.swift` and plist companions._
+- [x] Verify the helper works from the **actual intended runtimes**: interactive shell first, then the agent-hosted process tree, then a launchd-like context if relevant.
+      _Verified the opposite is also important: launch mode changes TCC behavior materially. Direct CLI / agent-hosted launches fail; LaunchServices app-bundle launch can prompt + grant._
 - [ ] Record the **stable identifier mapping** across layers: EventKit reminder id, `ZCKIDENTIFIER`, and any local PKs needed for follow-on section membership work.
 - [ ] Confirm write-after-read convergence: create/update/delete through EventKit, then re-read through the existing read-only snapshot extractor and verify the normalized row shape reflects the mutation.
 - [ ] If section support is required, add a **second micro-spike** limited to section CRUD via ReminderKit or equivalent private API surface.
 - [ ] If section membership is required, prove the exact SQLite sync sequence on a scratch list only:
       membership blob write, checksum write, token-map bump, connection close, wait, sync trigger.
-- [ ] Capture timings, required permissions, failure modes, and rollback steps in this doc before any Phase 5.1 work starts.
+- [x] Capture timings, required permissions, failure modes, and rollback steps in this doc before any Phase 5.1 work starts.
 
 #### QA checklist
 
@@ -377,6 +379,54 @@ Objective: prove the smallest write path that survives real sync behavior before
 - [ ] Every destructive action has preview/logging and an obvious recovery step.
 - [ ] The spike is scoped to one disposable test list or clearly tagged test reminders, not the operator's general task corpus.
 - [ ] Live verification includes both **Reminders UI visibility** and **read-side extractor visibility**.
+
+#### Phase 5.0 findings (2026-06-26 to 2026-06-27)
+
+- Implemented two repo-local write spikes:
+  `scripts/apple_reminders_write_spike.swift` / `scripts/apple_reminders_write_spike_Info.plist`
+  for CLI-style launch, and `scripts/apple_reminders_write_spike_app.swift` /
+  `scripts/apple_reminders_write_spike_app_Info.plist` for a real AppKit bundle launch.
+- First finding: the original app-bundle helper had a lifecycle bug. The bundle launched, but the
+  AppKit delegate path never ran, so no permission request occurred. Fix was to bootstrap the app
+  explicitly through `NSApplication.shared` rather than relying on the earlier implicit delegate setup.
+- Second finding: **launch mode changes TCC behavior**.
+  Direct execution from the shell / VS Code / Codex-owned process tree still fails before mutation:
+  `requestFullAccessToReminders` returns not granted, status stays `not_determined`, and no operator
+  prompt appears.
+- The decisive TCC breadcrumb from `log show`:
+  `Prompting policy for hardened runtime; service: kTCCServiceCalendar requires entitlement com.apple.security.personal-information.calendars but it is missing for responsible=... com.microsoft.VSCode ...`
+  Translation: when the helper is launched under the VS Code-owned responsible process tree, macOS
+  suppresses the Reminders/Calendar permission flow before the app can get a user-facing prompt.
+- Launching the same helper as a normal app bundle through **LaunchServices** changed the outcome:
+  the helper reached the EventKit permission request and TCC logged
+  `AUTHREQ_PROMPTING ... service=kTCCServiceReminders`.
+- The working app-bundle path also required **broader privacy keys**, not just the modern reminders
+  one. The final plist now carries:
+  `NSRemindersFullAccessUsageDescription`, `NSRemindersUsageDescription`,
+  `NSCalendarsFullAccessUsageDescription`, and `NSCalendarsUsageDescription`.
+- After resetting this bundle's TCC entries and relaunching the signed app bundle normally,
+  the permission flow succeeded and TCC recorded a durable grant:
+  `kTCCServiceReminders|com.rebalanceos.apple-reminders-write-spike-app|2|...`
+- With that grant in place, the app-bundle spike progressed past the gate and successfully reached:
+  EventKit authorization granted, default Reminders list resolution, and **creation of a disposable
+  test reminder**.
+- What is still **not** proven end-to-end:
+  full create → extractor visibility → update → extractor convergence → delete → extractor absence.
+  The successful LaunchServices run used cwd `/`, so the helper's repo-root fallback resolved
+  incorrectly and the read-side verification artifact path was wrong. Re-running the app-bundle helper
+  directly from the terminal with `RBOS_REPO_ROOT=...` is **not a substitute** because that puts the
+  process back under the VS Code/Codex responsible tree and reintroduces the TCC suppression path.
+- Durable artifacts:
+  `temp/apple-reminders/PHASE5-WRITE-SPIKE.json` for the failing CLI/runtime path and
+  `temp/apple-reminders/PHASE5-WRITE-SPIKE-APP.json` plus the status log for the app-bundle path.
+- Updated conclusion:
+  the current **agent-hosted VS Code process tree is not a viable EventKit write runtime** for Apple
+  Reminders, but a **signed, LaunchServices-launched app bundle is viable** for at least permission
+  grant and create-path mutation.
+- Best next spike, if write-back becomes important:
+  keep the app-bundle runtime, fix repo-root discovery independent of terminal env vars, then rerun the
+  full create/update/delete + extractor convergence loop there before designing any product-facing write
+  surface.
 
 ### Phase 5.1 - Write Surface Design
 
