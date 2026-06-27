@@ -19,6 +19,7 @@ from rebalance.ingest.apple_reminders import (
     core_data_timestamp,
     ensure_apple_reminders_schema,
     extract_reminders,
+    list_apple_reminders,
     parse_hashtags,
     pick_active_store,
     upsert_apple_reminders,
@@ -284,6 +285,92 @@ class SyncStorageTests(unittest.TestCase):
             self.assertIn("idx_apple_reminders_active", idx)
         finally:
             conn.close()
+
+
+class ReadSurfaceTests(unittest.TestCase):
+    """Phase 3 read accessor: filters, safe defaults, empty-source."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self._tmp.name) / "rebalance.sqlite"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _seed(self):
+        d1 = datetime(2026, 6, 20, 9, 0, tzinfo=timezone.utc)
+        d2 = datetime(2026, 7, 1, 9, 0, tzinfo=timezone.utc)
+        upsert_apple_reminders(
+            self.db,
+            [
+                _reminder("A", "active dated soon", due=d1, tags=["work"]),
+                _reminder("B", "active dated later", due=d2),
+                _reminder("C", "active no due"),
+                _reminder("D", "done item", completed=True, due=d1),
+                _reminder("X", "other list", list_name="Cars"),
+            ],
+            list_name="Reminders",
+        )
+
+    def test_empty_source_returns_empty(self):
+        self.assertEqual(list_apple_reminders(self.db), [])
+
+    def test_default_is_active_incomplete_only(self):
+        self._seed()
+        ids = [r["reminder_id"] for r in list_apple_reminders(self.db)]
+        # D (completed) excluded by default; A/B/C/X active+incomplete
+        self.assertNotIn("D", ids)
+        self.assertEqual(set(ids), {"A", "B", "C", "X"})
+
+    def test_include_completed(self):
+        self._seed()
+        ids = {r["reminder_id"] for r in list_apple_reminders(self.db, include_completed=True)}
+        self.assertIn("D", ids)
+
+    def test_list_name_filter(self):
+        self._seed()
+        ids = {r["reminder_id"] for r in list_apple_reminders(self.db, list_name="Reminders")}
+        self.assertEqual(ids, {"A", "B", "C"})  # X is in 'Cars'
+
+    def test_has_due_filter_and_due_ordering(self):
+        self._seed()
+        dated = list_apple_reminders(self.db, has_due=True)
+        ids = [r["reminder_id"] for r in dated]
+        self.assertEqual(ids, ["A", "B"])  # soonest-due first, undated excluded
+
+    def test_due_before(self):
+        self._seed()
+        cutoff = datetime(2026, 6, 25, tzinfo=timezone.utc)
+        ids = {r["reminder_id"] for r in list_apple_reminders(self.db, due_before=cutoff)}
+        self.assertEqual(ids, {"A"})  # only the 2026-06-20 one
+
+    def test_undated_sort_last_and_tags_parsed(self):
+        self._seed()
+        # Scope to one list so the single undated item (C) is unambiguously last.
+        rows = list_apple_reminders(self.db, list_name="Reminders", order_by="due")
+        self.assertEqual([r["reminder_id"] for r in rows], ["A", "B", "C"])
+        a = next(r for r in rows if r["reminder_id"] == "A")
+        self.assertEqual(a["tags"], ["work"])
+
+    def test_retired_excluded_by_default(self):
+        self._seed()
+        upsert_apple_reminders(  # B disappears -> retired
+            self.db,
+            [_reminder("A", "active dated soon"), _reminder("C", "active no due")],
+            list_name="Reminders",
+        )
+        ids = {r["reminder_id"] for r in list_apple_reminders(self.db)}
+        self.assertNotIn("B", ids)
+        ids_all = {r["reminder_id"] for r in list_apple_reminders(self.db, include_retired=True)}
+        self.assertIn("B", ids_all)
+
+    def test_limit(self):
+        self._seed()
+        self.assertEqual(len(list_apple_reminders(self.db, limit=2)), 2)
+
+    def test_invalid_order_by_raises(self):
+        with self.assertRaises(ValueError):
+            list_apple_reminders(self.db, order_by="bogus")
 
 
 if __name__ == "__main__":

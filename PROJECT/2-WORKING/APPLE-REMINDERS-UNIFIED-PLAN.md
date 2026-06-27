@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 0 + 1 + 2 complete.** P0/P1 (2026-06-25, `e81cb5e`): FDA access, deterministic store discovery, WAL-safe snapshot, dynamic REMCD mapper, read-only extraction (9010 reminders) operator-verified vs the UI. **P2 (2026-06-27):** `apple_reminders` collector registered (opt-in, macOS+FDA) in `index_ops.py`; `apple_reminders` table + `ensure/upsert/sync` storage layer with `is_completed`/active/list/parent indexes; configurable list filter (default `Reminders`); status wiring; reconcile-don't-delete retirement. Verified live through the `refresh_index` dispatcher: **8147 rows scoped to `Reminders`, 14 active, idempotent re-run, 0 errors**. 16 tests pass; 129 related tests green. | **Pause / review.** Phase 2 done. Optional next: Phase 3 (read-side query accessor + product surfaces) and/or the two deferred perf wins (active-store-only snapshot; mtime-skip). Notes/sections decode still deferred. |
+| **Phases 0–3 core complete (2026-06-27).** P0/P1 (`e81cb5e`): FDA access, deterministic store discovery, WAL-safe snapshot, dynamic REMCD mapper, read-only extraction (9010) operator-verified vs the UI. P2 (`891e210`): `apple_reminders` collector (opt-in, macOS+FDA) + table/storage (`ensure/upsert/sync`, reconcile-don't-delete, indexes) + status wiring; verified live via `refresh_index` (8147 scoped to `Reminders`, idempotent, 0 errors). **P3:** `list_apple_reminders` read accessor — safe-by-default (active-only; live read = 14, not 8147), pure-`sqlite3` (no private framework), filters for due/completed/list/retired; 26 tests pass. | **Decision: product surface.** Phase 3 *core* (query accessor) done; the optional product-surface wiring (daily context / pulse panel) + its UX copy are deferred pending where you want reminders to show. Also still open: Phase 4 hardening; deferred perf wins (active-store snapshot, mtime-skip); notes/sections decode. |
 
 ## Table of Contents
 
@@ -258,19 +258,33 @@ Objective: integrate Apple Reminders as a first-class source via orchestrator wo
 
 Objective: make reminders queryable/useful without collapsing source boundaries.
 
+### Read-surface semantics (for operators/consumers)
+
+- Accessor: `list_apple_reminders(db, *, include_completed=False, include_retired=False,
+  list_name=None, has_due=None, due_before=None, due_after=None, order_by="due", limit=None)`
+  in `src/rebalance/ingest/apple_reminders.py`.
+- **Safe by default:** returns only **active, non-completed, non-retired** reminders. The synced
+  (default) list is mostly completed history, so callers must opt in (`include_completed=True`) to see it.
+- **Freshness caveat:** the table reflects the **last `sync_apple_reminders` run** — a point-in-time
+  snapshot of the local store, not live. `is_active=0` means the reminder was deleted in Apple (or left
+  the configured list) since a prior sync; it's retained for audit, hidden from reads by default.
+- **Read path is pure `sqlite3`** — no macOS/EventKit/private-framework dependency, so any host with the
+  rebalance DB can read, not just the capture machine. A not-yet-synced source returns `[]` (never raises).
+- **Source identity** stays explicit: `apple_reminders` table + accessor, distinct from `sleuth_reminders`.
+
 ### Observable checklist
 
-- [ ] Add read-side accessor (`list_apple_reminders` or equivalent gather hook) with filters for due/completed/list/section.
-- [ ] Add optional product surfaces where reminders are useful (e.g., daily context, pulse side panel) without conflating with Sleuth.
-- [ ] Document source semantics and freshness caveats in user/operator docs.
-- [ ] Add regression tests for query filters and empty-source behavior.
+- [x] Add read-side accessor (`list_apple_reminders` or equivalent gather hook) with filters for due/completed/list/section. _(due/completed/list/retired/limit/order_by filters; **section filter omitted** — sections deferred from Phase 1/2.)_
+- [ ] Add optional product surfaces where reminders are useful (e.g., daily context, pulse side panel) without conflating with Sleuth. _(Deferred — explicitly optional; accessor is ready to wire. Surface choice is the next decision.)_
+- [x] Document source semantics and freshness caveats in user/operator docs. _(Read-surface semantics section above + accessor docstring.)_
+- [x] Add regression tests for query filters and empty-source behavior. _(10 read-surface tests: defaults, completed/retired, list, has_due, due_before, ordering/NULLs-last, limit, empty-source, bad order_by; 26 total in file.)_
 
 ### QA checklist
 
-- [ ] Source identity remains explicit (`apple_reminders` vs `sleuth_reminders`).
-- [ ] Query defaults are safe and predictable (no accidental completed-history flood).
-- [ ] No private-framework dependency introduced as a hard requirement for read path.
-- [ ] UX copy states local-only read behavior clearly.
+- [x] Source identity remains explicit (`apple_reminders` vs `sleuth_reminders`). _(Separate table + separate accessor.)_
+- [x] Query defaults are safe and predictable (no accidental completed-history flood). _(Default read = 14 active live, not the 8147 total; verified.)_
+- [x] No private-framework dependency introduced as a hard requirement for read path. _(Read path is pure `sqlite3`.)_
+- [ ] UX copy states local-only read behavior clearly. _(Deferred with the product surface — no user-facing surface added yet.)_
 
 ## Phase 4 - Hardening + Upgrade Safety
 

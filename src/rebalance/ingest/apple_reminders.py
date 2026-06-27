@@ -780,3 +780,108 @@ def sync_apple_reminders(
         result.retired_count, result.duration_seconds,
     )
     return result
+
+
+# ---------------------------------------------------------------------------
+# Read surface (Phase 3) — query the synced apple_reminders table.
+# Read path is pure sqlite3 (no macOS / private-framework dependency), so it
+# works on any host that has the rebalance DB, not just the capture machine.
+# ---------------------------------------------------------------------------
+
+_ORDER_BY_COLUMNS = {
+    "due": ("due_at", "ASC"),
+    "created": ("created_at", "DESC"),
+    "updated": ("updated_at", "DESC"),
+    "title": ("title", "ASC"),
+}
+
+
+def _as_iso(value: datetime | str | None) -> str | None:
+    if value is None:
+        return None
+    return value.isoformat() if isinstance(value, datetime) else str(value)
+
+
+def list_apple_reminders(
+    database_path: Path,
+    *,
+    include_completed: bool = False,
+    include_retired: bool = False,
+    list_name: str | None = None,
+    has_due: bool | None = None,
+    due_before: datetime | str | None = None,
+    due_after: datetime | str | None = None,
+    order_by: str = "due",
+    limit: int | None = None,
+) -> list[dict[str, Any]]:
+    """Read reminders from the synced ``apple_reminders`` table.
+
+    Safe-by-default: returns only **active, non-completed** reminders unless asked
+    otherwise — the configured (default) list is mostly completed history, so a
+    naive read would flood callers. Pass ``include_completed=True`` /
+    ``include_retired=True`` to widen.
+
+    Filters: ``list_name``; ``has_due`` (True=only dated, False=only undated);
+    ``due_before`` / ``due_after`` (datetime or ISO string, compared as UTC ISO).
+    ``order_by`` ∈ {due, created, updated, title}. Returns plain dicts with
+    ``tags`` already parsed from JSON. Empty/absent table → ``[]`` (never raises
+    on a not-yet-synced source)."""
+    if order_by not in _ORDER_BY_COLUMNS:
+        raise ValueError(
+            f"order_by must be one of {sorted(_ORDER_BY_COLUMNS)}, got {order_by!r}"
+        )
+    if not Path(database_path).exists():
+        return []  # DB never created (source never synced) — mode=ro would error
+
+    where: list[str] = []
+    params: list[Any] = []
+    if not include_retired:
+        where.append("is_active = 1")
+    if not include_completed:
+        where.append("is_completed = 0")
+    if list_name is not None:
+        where.append("list_name = ?")
+        params.append(list_name)
+    if has_due is True:
+        where.append("due_at IS NOT NULL")
+    elif has_due is False:
+        where.append("due_at IS NULL")
+    if due_before is not None:
+        where.append("due_at IS NOT NULL AND due_at < ?")
+        params.append(_as_iso(due_before))
+    if due_after is not None:
+        where.append("due_at IS NOT NULL AND due_at > ?")
+        params.append(_as_iso(due_after))
+
+    col, direction = _ORDER_BY_COLUMNS[order_by]
+    # NULLs last regardless of direction, so undated items don't crowd the top.
+    order_sql = f"({col} IS NULL), {col} {direction}"
+    sql = "SELECT * FROM apple_reminders"
+    if where:
+        sql += " WHERE " + " AND ".join(where)
+    sql += f" ORDER BY {order_sql}"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(int(limit))
+
+    conn = sqlite3.connect(f"file:{database_path}?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    try:
+        try:
+            rows = conn.execute(sql, params).fetchall()
+        except sqlite3.OperationalError:
+            return []  # table not created yet (source never synced)
+    finally:
+        conn.close()
+
+    out: list[dict[str, Any]] = []
+    for r in rows:
+        d = dict(r)
+        try:
+            d["tags"] = json.loads(d.pop("tags_json") or "[]")
+        except (json.JSONDecodeError, KeyError):
+            d["tags"] = []
+        d["is_completed"] = bool(d["is_completed"])
+        d["is_active"] = bool(d["is_active"])
+        out.append(d)
+    return out
