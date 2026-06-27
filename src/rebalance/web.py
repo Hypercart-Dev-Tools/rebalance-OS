@@ -17,10 +17,9 @@ from __future__ import annotations
 import html
 import logging
 from datetime import datetime, timezone
-from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import (
     HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
 )
@@ -38,13 +37,24 @@ logger = logging.getLogger(__name__)
 # health is always re-probed live on load regardless.
 FOCUS5_ROSTER_TTL_SECONDS = 24 * 3600
 
-# The free-form note shown at the bottom of the Focus 5 Float card lives in the
-# operator's Obsidian vault as ``focus5.md``. Cap the read so an oversized note
-# can't balloon the JSON response (the file is hand-written, normally tiny).
-FOCUS5_NOTE_FILENAME = "focus5.md"
-FOCUS5_NOTE_MAX_CHARS = 64 * 1024
-
 app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
+
+
+async def unhandled_exception_handler(request: Request, exc: Exception) -> PlainTextResponse:
+    """Local dashboard: show the real traceback in-browser instead of a bare
+    'Internal Server Error'. Gated by ``app.state.show_tracebacks`` (default
+    True; serve.py turns it off when bound to a non-loopback host so tracebacks
+    never leak off-box). The traceback is always logged regardless."""
+    import traceback
+
+    logger.exception("unhandled error on %s %s", request.method, request.url.path)
+    if getattr(request.app.state, "show_tracebacks", True):
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        return PlainTextResponse(tb, status_code=500)
+    return PlainTextResponse("Internal Server Error", status_code=500)
+
+
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # Auth-log badges keyed to a semantic variant (ok|warn|danger|info|neutral),
 # resolved to a design token by web_components.badge_html — no inline hex.
@@ -651,42 +661,6 @@ def focus5_json(view: str = "focus5") -> JSONResponse:
     data = summarize_focus5(db, mode="dirty_first" if view == "dirty" else None)
     logger.info("focus5.json: view=%s roster=%d", view, data["summary"]["roster_size"])
     return JSONResponse(data)
-
-
-@app.get("/focus-5/note")
-def focus5_note() -> JSONResponse:
-    """Read-only projection of the operator's Obsidian ``focus5.md`` note.
-
-    Surfaces a free-form markdown note — kept at the root of the configured
-    Obsidian vault — at the bottom of the Focus 5 Float card. **Strictly
-    read-only:** it never creates or writes the file; it only reads it.
-
-    LOCAL-ONLY: the note lives on the operator's machine and may hold private
-    context, so this serves the localhost desktop client only — never a remote
-    mirror.
-
-    Always returns ``{exists, content, path}`` with HTTP 200 (never a 404), so
-    the client decodes one shape. ``exists`` is False with empty ``content`` when
-    no vault is configured, the vault has no ``focus5.md``, or the file can't be
-    read — the client then shows its "add a focus5.md to your vault" hint.
-    """
-    from rebalance.ingest.config import get_vault_path
-
-    vault = get_vault_path()
-    if not vault:
-        return JSONResponse({"exists": False, "content": "", "path": None})
-
-    note = Path(vault).expanduser() / FOCUS5_NOTE_FILENAME
-    try:
-        if not note.is_file():
-            return JSONResponse({"exists": False, "content": "", "path": None})
-        content = note.read_text(encoding="utf-8", errors="replace")[:FOCUS5_NOTE_MAX_CHARS]
-    except OSError as exc:
-        logger.warning("focus5.note: could not read %s: %s", note, exc)
-        return JSONResponse({"exists": False, "content": "", "path": None})
-
-    logger.info("focus5.note: served %d chars from %s", len(content), note)
-    return JSONResponse({"exists": True, "content": content, "path": str(note)})
 
 
 class Focus5HideRequest(BaseModel):

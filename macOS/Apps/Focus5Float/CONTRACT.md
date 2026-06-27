@@ -164,40 +164,6 @@ struct OffRosterWarning: Codable, Identifiable {
 > intentionally omitted from the Swift model — the app doesn't render them. `Codable`
 > ignores unknown keys, so this is safe.
 
-## Bottom note — `GET /focus-5/note` (vault `focus5.md`)
-
-A second read-only route backs the free-form note pinned at the bottom of the
-Focus 5 / Dirty Five card. It projects a single hand-written markdown file —
-`focus5.md` at the **root of the configured Obsidian vault** (`config.vault_path`).
-
-- **Endpoint:** `GET http://localhost:8787/focus-5/note`
-- **Method:** GET only. **Strictly read-only** — reads the file, never creates or writes it.
-- **Scope:** **LOCAL-ONLY.** The note lives on the operator's machine and may hold
-  private context; localhost desktop client only.
-- **Implementation:** `focus5_note()` in `src/rebalance/web.py`; reads up to
-  `FOCUS5_NOTE_MAX_CHARS` (64 KiB). Tests: `tests/test_web_focus5.py::Focus5NoteRouteTests`.
-- **Shape (always HTTP 200, never 404):**
-
-```jsonc
-{
-  "exists": true,                       // false → no vault / no focus5.md / unreadable
-  "content": "# Today\n- ship it\n",    // "" when exists is false; capped at 64 KiB
-  "path": "/Users/me/Vault/focus5.md"   // null when exists is false
-}
-```
-
-When `exists` is false the client renders the hint *"To show a text file here, add
-a doc called focus5.md into your Obsidian vault."* The Swift side (`Focus5NoteView`)
-renders light markdown (headings, bullets, inline emphasis/links). Swift decode:
-
-```swift
-struct Focus5Note: Codable {
-    let exists: Bool
-    let content: String
-    let path: String?
-}
-```
-
 ## Offline cache (local-only)
 
 The last successful response is cached to `~/Library/Application Support/Focus5Float/roster-cache.json`

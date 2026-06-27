@@ -6,11 +6,8 @@ dict and assert the rendered HTML, with no DB or git. The full stack (collector
 """
 from __future__ import annotations
 
-import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
-from unittest import mock
 
 from rebalance.web import _focus5_body, _rel_time, _roster_stale
 
@@ -329,66 +326,6 @@ class RouteScanTriggerTests(unittest.TestCase):
              patch("rebalance.ingest.focus5_scan.summarize_focus5", return_value={"roster": []}):
             web.focus5_page(refresh=True)  # returns a redirect before render
         scan.assert_called_once()
-
-
-class Focus5NoteRouteTests(unittest.TestCase):
-    """GET /focus-5/note — the read-only vault `focus5.md` projection.
-
-    Always returns the same {exists, content, path} shape at HTTP 200; the vault
-    path is resolved via config.get_vault_path (patched here so no real vault is
-    touched). The route reads only — these never write a file.
-    """
-
-    def _get(self):
-        from fastapi.testclient import TestClient
-        from rebalance.web import app
-        return TestClient(app).get("/focus-5/note")
-
-    def test_serves_note_content_when_present(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "focus5.md").write_text("# Today\n- ship the note\n", encoding="utf-8")
-            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp):
-                resp = self._get()
-            self.assertEqual(resp.status_code, 200)
-            body = resp.json()
-            self.assertTrue(body["exists"])
-            self.assertIn("ship the note", body["content"])
-            self.assertTrue(body["path"].endswith("focus5.md"))
-
-    def test_missing_note_returns_exists_false(self) -> None:
-        with tempfile.TemporaryDirectory() as tmp:  # vault dir exists, no focus5.md
-            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp):
-                resp = self._get()
-            self.assertEqual(resp.status_code, 200)
-            body = resp.json()
-            self.assertFalse(body["exists"])
-            self.assertEqual(body["content"], "")
-            self.assertIsNone(body["path"])
-
-    def test_no_vault_configured_returns_exists_false(self) -> None:
-        with mock.patch("rebalance.ingest.config.get_vault_path", return_value=None):
-            resp = self._get()
-        self.assertEqual(resp.status_code, 200)
-        body = resp.json()
-        self.assertFalse(body["exists"])
-        self.assertEqual(body["content"], "")
-
-    def test_oversized_note_is_capped(self) -> None:
-        from rebalance.web import FOCUS5_NOTE_MAX_CHARS
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "focus5.md").write_text("x" * (FOCUS5_NOTE_MAX_CHARS + 5000), encoding="utf-8")
-            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp):
-                resp = self._get()
-            self.assertEqual(len(resp.json()["content"]), FOCUS5_NOTE_MAX_CHARS)
-
-    def test_directory_named_focus5_md_is_not_a_note(self) -> None:
-        # A focus5.md *directory* must degrade to exists:false, not crash on read.
-        with tempfile.TemporaryDirectory() as tmp:
-            (Path(tmp) / "focus5.md").mkdir()
-            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp):
-                resp = self._get()
-            self.assertEqual(resp.status_code, 200)
-            self.assertFalse(resp.json()["exists"])
 
 
 if __name__ == "__main__":

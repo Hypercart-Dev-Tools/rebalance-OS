@@ -149,11 +149,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Panel
 
     private func buildPanel() {
-        // 380 wide gives the 3-tab header + status light room to breathe (the
-        // 360 default clipped "Focus 5" and the status counter once the Telemetry
-        // tab landed); 560 tall is a calmer default now the note hugs its content
-        // instead of reserving a slab.
-        let defaultRect = NSRect(x: 0, y: 0, width: 380, height: 560)
+        let defaultRect = NSRect(x: 0, y: 0, width: 360, height: 640)
 
         let hostingView = FirstMouseHostingView(rootView: ContentView(model: model))
         hostingView.frame = defaultRect
@@ -183,13 +179,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         panel.contentView = hostingView
 
-        // Floor so the header (tabs + status) can never be squeezed into a clip.
-        panel.minSize = NSSize(width: 360, height: 320)
-
-        // Frame autosave — remembers position & size across launches. Bumped to
-        // ".v2" to retire any stale pre-note frame that was saved oversized/clipped;
-        // the window resets once to the new default, then persists again.
-        panel.setFrameAutosaveName("Focus5FloatPanel.v2")
+        // Frame autosave — remembers position & size across launches.
+        panel.setFrameAutosaveName("Focus5FloatPanel")
         if panel.frame.origin == .zero {
             panel.center()
         }
