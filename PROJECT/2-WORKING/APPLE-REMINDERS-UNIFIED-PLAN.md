@@ -584,12 +584,29 @@ helper evolves from `apple_reminders_write_spike_app.swift` into `apple_reminder
 (generalize the proven create/update/delete primitives behind the op dispatcher; reuse the same build
 harness). One-time operator setup: build + sign the helper, grant it Reminders once.
 
-**Open questions for review (good `/consult` targets):**
-1. On-demand `open`-per-request (simple, ~launch latency) vs. a persistent signed **LaunchAgent** helper
-   on a watched dir/socket (no per-call launch, more infra). Recommend starting on-demand.
-2. Audit sink: dedicated SQLite table vs. append-only JSON files. (Leaning table, for queryability.)
-3. Whether `create`/`update` should be allowed into **non-default lists** at all in v1, or restricted to
-   the configured ingest list to keep the write scope aligned with the read scope.
+**Resolved by cross-model consult (2026-06-27, Codex; agy lane unavailable — interactive auth):**
+1. **IPC = on-demand `open`** for v1 (B/LaunchAgent only once *measured* cold-launch latency dominates,
+   or an action needs burst/background-retry writes).
+2. **Audit = dedicated SQLite table** `apple_reminders_write_audit` storing the immutable request/response
+   JSON blobs + `request_id` + `reminder_id` + helper identity/version + timestamps + status.
+3. **Write scope = restricted to the configured ingest list** in v1 (consult graded this a **Blocker**):
+   writing to a list the read path never ingests breaks the post-apply reconcile invariant. Widen only
+   when the read model becomes multi-list.
+
+**Hardening folded in from the consult (all v1 requirements):**
+- **Idempotency keyed by `request_id`** — a Python-side timeout *after* a successful EventKit create must
+  not create a duplicate on retry. The helper records applied `request_id`s and no-ops a replay (the
+  `client_token` is for correlation, not retry-safety).
+- **Serialize writes** through a single helper-side lock/queue — "one writer" is insufficient if multiple
+  Python callers race request order vs. the post-write sync.
+- **Verify helper identity on every launch** — Python checks the bundle id + code-signing identity before
+  trusting a response (confused-deputy guard).
+- **Three explicit states** per mutation: `accepted` → `applied_in_eventkit` → `reconciled_locally`
+  (EventKit mutation and local-table reconcile are separate failure domains; the audit row carries all
+  three).
+- **Atomic file IPC** (write tmp → `fsync` → `rename`) + explicit per-request timeouts; `open` proves the
+  helper *launched*, never that the write *succeeded* — only the response file (or EventKit read-back)
+  proves that.
 
 #### Observable checklist
 
