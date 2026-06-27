@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import (
     HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
 )
@@ -45,6 +45,23 @@ FOCUS5_NOTE_FILENAME = "focus5.md"
 FOCUS5_NOTE_MAX_CHARS = 64 * 1024
 
 app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
+
+
+async def unhandled_exception_handler(request: Request, exc: Exception) -> PlainTextResponse:
+    """Local dashboard: show the real traceback in-browser instead of a bare
+    'Internal Server Error'. Gated by ``app.state.show_tracebacks`` (default
+    True; serve.py turns it off when bound to a non-loopback host so tracebacks
+    never leak off-box). The traceback is always logged regardless."""
+    import traceback
+
+    logger.exception("unhandled error on %s %s", request.method, request.url.path)
+    if getattr(request.app.state, "show_tracebacks", True):
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        return PlainTextResponse(tb, status_code=500)
+    return PlainTextResponse("Internal Server Error", status_code=500)
+
+
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # Auth-log badges keyed to a semantic variant (ok|warn|danger|info|neutral),
 # resolved to a design token by web_components.badge_html — no inline hex.

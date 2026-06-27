@@ -4,7 +4,7 @@ doc_type: project-plan
 status: active
 owner: Noel Saw
 created: 2026-06-25
-updated: 2026-06-26
+updated: 2026-06-27
 goal: "Deliver a safe, read-only Apple Reminders source for rebalance with deterministic extraction of reminders, tags, sections, and parent-child structure, then expose it through existing index/query surfaces."
 priority: P2
 related:
@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 0 + 1 complete (2026-06-25).** FDA granted to VS Code; access gate passed. Active store discovered deterministically (`Data-1FB0F4BF`, 9010 reminders). WAL-safe snapshot pipeline + dynamic REMCD schema mapper shipped in `src/rebalance/ingest/apple_reminders.py` with 9 unit tests (epoch, parent-child linking, graceful degradation). Read-only extraction verified live: 9010 reminders, 0 skipped, 8 lists, ~0.18s. Evidence: `temp/apple-reminders/PHASE0-SPIKE-REPORT.md`. Tags best-effort; notes + sections explicitly deferred. | **Paused before Phase 2 (deliberate).** Resume = collector registration in `index_ops.py` + `apple_reminders` table/upsert. Before that, optionally: eyeball 5 records vs the Reminders UI, and decide whether to invest in full-fidelity notes/section decode. |
+| **Phases 0–4 complete (2026-06-27), incl. the P3 product surface.** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
 
 ## Table of Contents
 
@@ -122,8 +122,18 @@ Minimum required fields:
 - Never open the live store. File-copy the triplet (`.sqlite` + `-wal` + `-shm`) into
   `temp/apple-reminders/`, then open the **copy** with `mode=ro`. `PRAGMA quick_check` = `ok` on every
   copy. Whole-snapshot wall-clock ~0.29s; full discover→snapshot→extract ~0.18–0.29s.
-- **Perf note for Phase 2:** the active store is ~209 MB and is copied in full each run. Fine for a spike;
-  consider snapshot reuse / `VACUUM INTO` / incremental strategy if sync frequency rises.
+- **Perf note for Phase 2 (measured 2026-06-26):** one sync currently copies **~219 MB** — the code globs
+  *all four* account stores' triplets (3 are empty, ~9 MB) plus the 209 MB active store. The 209 MB is
+  **not reminder content and not fragmentation** (free space is only 287 KB, so `VACUUM` won't help). By
+  on-disk size (`dbstat`): `ACHANGE` + its txn index = **111 MB / 53%** (Core Data persistent-history
+  change tracking), `ZREMCDOBJECT` = **52 MB / 25%** (CloudKit object state), `ZREMCDREMINDER` = **37 MB /
+  18%** — and even that is mostly sync metadata (`ZCKSERVERRECORDDATA` 18.9 MB + `ZRESOLUTIONTOKENMAP_V3`
+  10 MB); the real title rich-text (`ZTITLEDOCUMENT`) is ~1.2 MB. **So ~85% of the copy is CloudKit/Core-Data
+  sync bookkeeping the extractor never reads.** The copy is fast (~0.2s sequential SSD read); the cost is
+  disk churn (~5 GB/day at hourly sync). Cheap optimizations: (1) snapshot only the **active** store, not
+  all four; (2) **skip snapshot+extract when the active store's mtime is unchanged** since last sync.
+  Copying only the read columns would need a live read-handle, which breaks the no-live-handle invariant —
+  so full file-copy stays, and ~209 MB is the price of doing it safely.
 
 ### Schema generation
 
@@ -214,38 +224,69 @@ Objective: ship a deterministic local extractor that remains robust across schem
 
 Objective: integrate Apple Reminders as a first-class source via orchestrator workflow.
 
+### Ingest scope (decided 2026-06-26)
+
+- **Scope = the default list only**, targeted **by name** (`"Reminders"`), exposed as config —
+  the default-list preference is NOT stored in this SQLite, so it can't be auto-detected; only the
+  conventional name is available. Default name `"Reminders"`, overridable.
+- **Known tradeoff (accepted):** the default list is 8,147 rows but only **14 active**; the other 61
+  of 75 active reminders live in non-default lists (Cars, Crystal & Noel, Billing, …) and are
+  intentionally **not** ingested under this scope. Revisit by widening the list allowlist if those are
+  wanted later. (Per-list counts captured in [Verified Discovery](#verified-discovery-phase-0-and-1-findings).)
+- **Completed history:** store all rows from the in-scope list (history is cheap) but index
+  `is_completed` so Phase 3 can default to active-only and avoid a completed-history flood.
+- The `extract_*` functions stay pure readers; the storage layer (`ensure_apple_reminders_schema`,
+  `upsert_apple_reminders`, `sync_apple_reminders`) lives in the same module (mirroring
+  `sleuth_reminders.py`) and is the **only writer** — the list filter is applied there at the storage
+  boundary, in `sync_apple_reminders`.
+
 ### Observable checklist
 
-- [ ] Register `apple_reminders` collector in `src/rebalance/ingest/index_ops.py`.
-- [ ] Create/ensure source table schema and upsert path for normalized contract.
-- [ ] Wire source into index/status freshness reporting.
-- [ ] Add integration tests for first sync, unchanged sync, updated row, completed row, and deleted/hidden handling.
-- [ ] Validate `refresh_index` route behavior with scope-specific dry-run and real run.
+- [x] Register `apple_reminders` collector in `src/rebalance/ingest/index_ops.py`. _(Opt-in `included_in_all=False` — macOS+FDA-only; never in a default/launchd `all` run.)_
+- [x] Create/ensure source table schema (incl. `is_completed` index) and upsert path for normalized contract. _(`ensure_apple_reminders_schema` + `upsert_apple_reminders`; indexes on completed/active/list/parent.)_
+- [x] Apply the configurable list filter (default `"Reminders"`) at the storage boundary. _(`sync_apple_reminders` filters to `get_apple_reminders_list_name()`; live run = 8147 scoped rows, only `Reminders`.)_
+- [x] Wire source into index/status freshness reporting. _(`get_index_status` → `sources.apple_reminders` = reminders/active/last_synced_at.)_
+- [x] Add integration tests for first sync, unchanged sync, updated row, completed row, and deleted/hidden handling. _(7 storage tests; 16 total in file.)_
+- [x] Validate `refresh_index` route behavior with scope-specific dry-run and real run. _(Both verified live via the registry dispatcher: 0 errors, 8147 ingested, idempotent re-run.)_
 
 ### QA checklist
 
-- [ ] Collector follows one-writer-per-table discipline.
-- [ ] Collector is reachable through orchestrator; no direct leaf-write surfaces for users.
-- [ ] Source sync is idempotent across repeated runs.
-- [ ] Test suite includes at least one fixture with tags + sections + parent-child reminders.
+- [x] Collector follows one-writer-per-table discipline. _(Only `upsert_apple_reminders` writes `apple_reminders`; `extract_*` are read-only.)_
+- [x] Collector is reachable through orchestrator; no direct leaf-write surfaces for users. _(Collector → `sync_apple_reminders`; same single path CLI/MCP would call.)_
+- [x] Source sync is idempotent across repeated runs. _(Verified live: 2nd sync = 8147 unchanged, 0 ins/upd/retired.)_
+- [x] Test suite includes at least one fixture with tags + parent-child reminders. _(Tags + parent-child covered; **sections deferred** — 0 in source, so a sections fixture is N/A this phase.)_
 
 ## Phase 3 - Query Surface + Product Integration
 
 Objective: make reminders queryable/useful without collapsing source boundaries.
 
+### Read-surface semantics (for operators/consumers)
+
+- Accessor: `list_apple_reminders(db, *, include_completed=False, include_retired=False,
+  list_name=None, has_due=None, due_before=None, due_after=None, order_by="due", limit=None)`
+  in `src/rebalance/ingest/apple_reminders.py`.
+- **Safe by default:** returns only **active, non-completed, non-retired** reminders. The synced
+  (default) list is mostly completed history, so callers must opt in (`include_completed=True`) to see it.
+- **Freshness caveat:** the table reflects the **last `sync_apple_reminders` run** — a point-in-time
+  snapshot of the local store, not live. `is_active=0` means the reminder was deleted in Apple (or left
+  the configured list) since a prior sync; it's retained for audit, hidden from reads by default.
+- **Read path is pure `sqlite3`** — no macOS/EventKit/private-framework dependency, so any host with the
+  rebalance DB can read, not just the capture machine. A not-yet-synced source returns `[]` (never raises).
+- **Source identity** stays explicit: `apple_reminders` table + accessor, distinct from `sleuth_reminders`.
+
 ### Observable checklist
 
-- [ ] Add read-side accessor (`list_apple_reminders` or equivalent gather hook) with filters for due/completed/list/section.
-- [ ] Add optional product surfaces where reminders are useful (e.g., daily context, pulse side panel) without conflating with Sleuth.
-- [ ] Document source semantics and freshness caveats in user/operator docs.
-- [ ] Add regression tests for query filters and empty-source behavior.
+- [x] Add read-side accessor (`list_apple_reminders` or equivalent gather hook) with filters for due/completed/list/section. _(due/completed/list/retired/limit/order_by filters; **section filter omitted** — sections deferred from Phase 1/2.)_
+- [x] Add optional product surfaces where reminders are useful (e.g., daily context, pulse side panel) without conflating with Sleuth. _(Read-only **Apple Reminders** column added to the pulse "Today" dashboard — `scripts/pulse_web.py` `render_hero`, third column beside the two Obsidian columns; soonest-due active items via `list_apple_reminders`. Distinct from Sleuth reminders, which stay in their own surfaces.)_
+- [x] Document source semantics and freshness caveats in user/operator docs. _(Read-surface semantics section above + accessor docstring.)_
+- [x] Add regression tests for query filters and empty-source behavior. _(10 read-surface tests: defaults, completed/retired, list, has_due, due_before, ordering/NULLs-last, limit, empty-source, bad order_by; 26 total in file.)_
 
 ### QA checklist
 
-- [ ] Source identity remains explicit (`apple_reminders` vs `sleuth_reminders`).
-- [ ] Query defaults are safe and predictable (no accidental completed-history flood).
-- [ ] No private-framework dependency introduced as a hard requirement for read path.
-- [ ] UX copy states local-only read behavior clearly.
+- [x] Source identity remains explicit (`apple_reminders` vs `sleuth_reminders`). _(Separate table + separate accessor.)_
+- [x] Query defaults are safe and predictable (no accidental completed-history flood). _(Default read = 14 active live, not the 8147 total; verified.)_
+- [x] No private-framework dependency introduced as a hard requirement for read path. _(Read path is pure `sqlite3`.)_
+- [x] UX copy states local-only read behavior clearly. _(Column is read-only — no checkboxes; empty state reads "Apple Reminders, read-only.")_
 
 ## Phase 4 - Hardening + Upgrade Safety
 
@@ -253,18 +294,36 @@ Objective: ensure ongoing reliability through macOS updates and schema drift.
 
 ### Observable checklist
 
-- [ ] Add schema drift guardrails and health warning if required columns/tables cannot be mapped.
-- [ ] Add a lightweight version/profile fingerprint in logs to aid future breakage triage.
-- [ ] Add fallback handling for unreadable store paths at runtime with actionable remediation.
-- [ ] Run cross-version validation on at least two macOS versions or snapshots.
-- [ ] Add maintenance runbook entry for TCC/FDA troubleshooting.
+- [x] Add schema drift guardrails and health warning if required columns/tables cannot be mapped. _(`apple_reminders_health()` → `drift` status names the missing symbols; surfaced via `doctor` (`_check_apple_reminders`) as WARN and via `get_index_status` `sources.apple_reminders.health`. Required-symbol loss still raises `AppleRemindersSchemaError`.)_
+- [x] Add a lightweight version/profile fingerprint in logs to aid future breakage triage. _(`compute_schema_fingerprint` = macOS + sqlite versions + reminder table + column count + `columns_sha`; logged each sync, persisted to `apple_reminders_sync_meta`.)_
+- [x] Add fallback handling for unreadable store paths at runtime with actionable remediation. _(`AppleRemindersAccessError` carries the FDA remediation; the collector catches `AppleRemindersError` and returns a structured `{error}` result instead of crashing the refresh.)_
+- [~] Run cross-version validation on at least two macOS versions or snapshots. _(**Partial — needs a 2nd machine.** Proxy in place: `test_drift_extraction_degrades_and_flags` + `test_fingerprint_captures_schema_and_changes_on_drift` prove graceful degradation and that the fingerprint shifts when the schema changes. True multi-macOS validation is deferred to whenever a second OS version is available.)_
+- [x] Add maintenance runbook entry for TCC/FDA troubleshooting. _(See "TCC/FDA + drift runbook" below.)_
 
 ### QA checklist
 
-- [ ] Upgrade failure path is explicit and non-destructive.
-- [ ] Drift detection reports exact missing symbols and suggested operator action.
-- [ ] Hardening changes do not widen data collection scope.
-- [ ] Docs remain aligned with actual runtime behavior after final implementation.
+- [x] Upgrade failure path is explicit and non-destructive. _(Drift → fields go null + WARN, never a crash or data loss; required-symbol loss raises a named error before any write.)_
+- [x] Drift detection reports exact missing symbols and suggested operator action. _(`drift_fallbacks` lists `missing_*` symbols; `remediation` text included.)_
+- [x] Hardening changes do not widen data collection scope. _(Read-only still; only adds a meta table + fingerprint of schema shape — no new reminder fields collected.)_
+- [x] Docs remain aligned with actual runtime behavior after final implementation. _(Plan reflects shipped behavior; live-verified via doctor/status.)_
+
+### TCC/FDA + drift runbook
+
+**Symptom: sync returns `{"error": "...Operation not permitted..."}` or `AppleRemindersAccessError`.**
+1. The host process lacks Full Disk Access. Grant FDA to the *actual* host app (e.g. Visual Studio Code,
+   Terminal, or — for the scheduled job — the launchd-spawned runtime), then **fully quit and relaunch** it
+   (a window reload is not enough). See [Verified Discovery → Access](#verified-discovery-phase-0-and-1-findings).
+2. Confirm it's TCC and not a command sandbox: retry the read unsandboxed before concluding.
+
+**Symptom: `rebalance doctor` shows `apple reminders: WARN — schema drift … missing: …`.**
+1. A macOS update likely reshaped the Core Data schema. The extractor degrades gracefully (affected fields
+   go null), so no crash — but mapping needs review.
+2. Compare the live store's columns against the [Verified field mapping](#verified-discovery-phase-0-and-1-findings)
+   table; the `columns_sha` in `apple_reminders_sync_meta` / sync logs confirms the schema changed.
+3. Update `_OPTIONAL_REMINDER_COLUMNS` / table candidates in `apple_reminders.py` as needed; re-sync.
+
+**Symptom: `doctor` shows `apple reminders: OK — not enabled (opt-in)`.** Expected on machines that never
+synced — `apple_reminders` is `included_in_all=False`. Enable by running `refresh_index(scope=["apple_reminders"])`.
 
 ## Phase 5 - Optional Write-Back Track
 

@@ -474,6 +474,34 @@ def _check_sleuth(db_path: Path | None = None) -> Check:
     return Check("sleuth", OK, f"configured (via {where})")
 
 
+def _check_apple_reminders(db_path: Path | None = None) -> Check:
+    """Apple Reminders — opt-in local macOS source. Surfaces schema drift from the
+    last sync (cheap, DB-only; no live-store read, so it's safe on any host)."""
+    name = "apple reminders"
+    if db_path is None:
+        return Check(name, OK, "no database")
+    try:
+        from rebalance.ingest.apple_reminders import apple_reminders_health
+
+        health = apple_reminders_health(db_path)
+    except Exception as exc:  # noqa: BLE001 — doctor must never crash
+        return Check(name, WARN, f"health probe failed: {exc}")
+
+    status = health.get("status")
+    if status == "never_synced":
+        # Opt-in source — a machine that never enabled it is fine, not a warning.
+        return Check(name, OK, "not enabled (opt-in; never synced)")
+    if status == "drift":
+        return Check(
+            name, WARN,
+            health.get("message", "schema drift"),
+            health.get("remediation"),
+        )
+    fp = health.get("schema_fingerprint") or {}
+    macos = fp.get("macos") or "?"
+    return Check(name, OK, f"synced · macOS {macos} · {health.get('last_sync_at', '')}")
+
+
 def _google_oauth_source(service: str, in_keyring: bool) -> str | None:
     """Where a Google OAuth token resolves from: keyring → secret-store JSON →
     legacy pickle. Returns None when nothing is present (unconfigured)."""
@@ -855,6 +883,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
 
     # Integration credentials — Sleuth/Slack, Gmail, Google Calendar, Figma.
     report.checks.append(_check_sleuth(db_path))
+    report.checks.append(_check_apple_reminders(db_path))
     report.checks.append(_check_gmail(db_path))
     report.checks.append(_check_calendar())
     report.checks.append(_check_figma())
