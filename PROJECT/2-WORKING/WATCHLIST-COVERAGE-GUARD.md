@@ -181,9 +181,10 @@ to the computed watch set.
       `"watched_repos_reduced": ("warn", "⚠ watched repos reduced")`, upgrading the fallback
       neutral chip to a red warn chip. The event is only emitted on a *concerning* drop, so a
       single warn variant is correct (no per-row info/warn split needed).
-- [x] **No dedicated render test** — the existing `/auth-log` table tests already cover row
-      rendering; a per-event assertion would re-test FastAPI. (ponytail: trivial one-liner,
-      no test.)
+- [x] **Render test** — `test_watched_repos_reduced_renders_warn_badge`
+      ([tests/test_web_auth_log.py](../../tests/test_web_auth_log.py)) seeds the event and
+      asserts the `⚠ watched repos reduced` warn badge **and** the dropped repo
+      (`BinoidCBD/LTVera-Pandas`) render on `GET /auth-log`.
 
 ---
 
