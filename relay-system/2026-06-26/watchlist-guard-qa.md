@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer (agy)
-STATUS: Open
+NEXT: Producer (Claude)
+STATUS: Escalated
 ROUND: 1 / 1
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini, agy)
@@ -52,5 +52,30 @@ The operator just said "take your turn on this file." Everything you need is **i
 **For the reviewer (agy):** Adversarially pressure-test the plan against the five Review Questions — especially (2) single-writer placement under a partial-sync failure and (3) the severity-classification default vs. a window-only-held repo silently aging out. Cite `file:line` in the plan or the cited source. Verdict + Escalate if any `[Blocker]`/`[Should]` remain.
 **Re-review this:** `PROJECT/2-WORKING/WATCHLIST-COVERAGE-GUARD.md` (+ the cited anchors in `src/rebalance/ingest/index_ops.py`, `auth_log.py`, `web.py`, `focus5_scan.py`).
 **Commit:** (seed)
+
+### Round 1 · Reviewer · agy · 2026-06-26T19:00:00-07:00
+VERDICT: FAIL
+Basis: plan + code-anchor read
+
+**Findings & proposals:**
+- [Should] **Ignore-List Interaction** in [WATCHLIST-COVERAGE-GUARD.md:117-120](file:///var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.asH0dK/PROJECT/2-WORKING/WATCHLIST-COVERAGE-GUARD.md#L117-L120): If a repository is explicitly added to the ignore list (e.g. via `rebalance config add-ignored-repo`), it will be filtered out of the watched set and look like a reduction.
+  - *Proposal:* The differ or classification logic must check if the removed repo is in the ignore list (via `get_github_ignored_repos()`) and silently skip alerting on it.
+- [Should] **Caller-Variable `since_days`** in [WATCHLIST-COVERAGE-GUARD.md:113-116](file:///var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.asH0dK/PROJECT/2-WORKING/WATCHLIST-COVERAGE-GUARD.md#L113-L116): `refresh_index()` default `since_days` is 30, but `get_watched_repos()` default is 14. If sync operations or manual calls use varying `since_days` values, the rolling window size changes, leading to false warning/info alerts.
+  - *Proposal:* The snapshot writer must always query `get_watched_repos(database_path)` using a fixed, canonical window (default `since_days=14` or omitting the parameter) to ensure a stable snapshot baseline.
+- [Should] **Snapshot Retention / Pruning** in [WATCHLIST-COVERAGE-GUARD.md:181-183](file:///var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.asH0dK/PROJECT/2-WORKING/WATCHLIST-COVERAGE-GUARD.md#L181-L183): To prevent the `watched_repos_snapshot` table from growing indefinitely over long-term usage, a pruning strategy is needed.
+  - *Proposal:* Resolve Open Question 2 by recommending an automatic pruning query at the end of the snapshot writer execution: `DELETE FROM watched_repos_snapshot WHERE snapshot_ts < ?` with a 30-day cutoff.
+- [Should] **Partial-Sync / Failure Guard** in [WATCHLIST-COVERAGE-GUARD.md:113-116](file:///var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.asH0dK/PROJECT/2-WORKING/WATCHLIST-COVERAGE-GUARD.md#L113-L116): If a sync job fails partway, taking a snapshot could record a false reduction.
+  - *Proposal:* The snapshot-and-diff step must be run at the very end of `_refresh_github` (just before the return statement on [index_ops.py:664](file:///var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.asH0dK/src/rebalance/ingest/index_ops.py#L664)) and only if the sync did not raise an exception.
+- [Pass] **Severity Classification** in [WATCHLIST-COVERAGE-GUARD.md:117-120](file:///var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.asH0dK/PROJECT/2-WORKING/WATCHLIST-COVERAGE-GUARD.md#L117-L120): The logic of mapping `project`/`external` drops to `warn` and `activity`/`pushed` drops to `info` is sound and prevents alarm fatigue.
+- [Pass] **Reuse Correctness** in [WATCHLIST-COVERAGE-GUARD.md:121-126](file:///var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.asH0dK/PROJECT/2-WORKING/WATCHLIST-COVERAGE-GUARD.md#L121-L126): Emitting onto the auth-activity log is appropriate and the web rendering requires no additional code as verified in [web.py:870-904](file:///var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.asH0dK/src/rebalance/web.py#L870-L904).
+
+**Answers:**
+1. **Root-cause soundness:** Yes, the diagnosis of a lack of persisted history is sound. Storing history is necessary to diagnose drops. However, the plan under-claims potential transient parse failures of the registry, which are mitigated by storing all resolving buckets.
+2. **Single-writer placement:** Yes, placing it in `_refresh_github` is correct. However, it must be guarded against partial failures (written only on full success at the end of the adapter) to avoid false reductions.
+3. **Severity classification:** Yes, the default is correct. Window-held repos should age out silently at `info` level. Multi-bucket membership is resolved by alerting if `project` or `external` is in the set of last-known buckets.
+4. **Reuse correctness:** Yes, the event fits `/auth-log`'s purpose as a system health/job execution dashboard, and the JS filter works perfectly.
+5. **Blast / reversibility & gaps:** Yes, it is reversible. Gaps identified are the ignore list interaction, caller-variable `since_days`, and table pruning.
+
+**Commit:** pending
 
 <!-- ▲ APPEND NEW TURNS DIRECTLY ABOVE THIS LINE — never edit earlier turns ▲ -->
