@@ -1,0 +1,194 @@
+---
+title: "Watch-list coverage guard — canonical snapshot + silent-reduction alarm"
+status: "Proposed (2-WORKING — Phase 1 not yet started)"
+doc_type: bugfix
+owner: noel@neochro.me
+created: 2026-06-26
+updated: 2026-06-26
+branch: development
+goal: >
+  Persist the canonical watched-repos set on every GitHub sync, diff it against the
+  prior snapshot, and surface any *reduction* in monitored repos to the web app's
+  auth-log screen — so a repo can never silently fall off the roster the way
+  BinoidCBD/LTVera-Pandas appeared to.
+priority: P2
+related:
+  - PROJECT/3-COMPLETED/FOCUS-5-RANKING-BUG-AND-REMEDIATION.md
+  - PROJECT/2-WORKING/GH-81-FOCUS5-RANK-VECTOR.md
+non_goals:
+  - "Does not change how the watched set is *computed* (the union in get_watched_repos)."
+  - "Does not add a new web screen or a new launchd job — reuses /auth-log and github-sync."
+rollout_rule: >
+  Each phase leaves the system runnable (`pytest tests/` green, `rebalance doctor` clean);
+  the change is an additive snapshot table + a pure diff function + one new log event —
+  reversible, no destructive migration, no change to the computed watch set.
+---
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| **Diagnosis done (2026-06-26).** `diagnose_repo` + `list_watched_repos` confirm `BinoidCBD/LTVera-Pandas` is currently `watched_and_fresh` — held by the active registry **and** both rolling windows (`activity` 14d, `pushed`), not ignored. Root cause of the *perceived* drop: the watched set is a **recomputed union with no persisted history**, so a repo held only by a rolling window vanishes with no trace when the window slides. Plan scaffolded against existing house patterns (focus5 snapshot table, `auth_log` event surface, `github-sync` piggyback). | **Phase 1** — additive snapshot table (migration `0009`) + pure `diff_watched_set` + single writer in the github sync path that emits a `watched_repos_reduced` event on a concerning reduction. |
+
+## Table of Contents
+
+- [Problem](#problem)
+- [Decision (why snapshot-and-diff, not a watch-set rewrite)](#decision-why-snapshot-and-diff-not-a-watch-set-rewrite)
+- [Non-Goals](#non-goals)
+- [Phase 1 — Canonical snapshot + silent-reduction detection](#phase-1--canonical-snapshot--silent-reduction-detection)
+- [Phase 2 — Operator surface on the web log screen](#phase-2--operator-surface-on-the-web-log-screen)
+- [Open Questions](#open-questions)
+
+## Problem
+
+The watched-repos set — `get_watched_repos()`
+([src/rebalance/ingest/index_ops.py:511](../../src/rebalance/ingest/index_ops.py#L511)) — is a
+**dynamically recomputed union** of four sources minus an ignore list:
+
+```
+watched = (project_repos ∪ activity_repos ∪ pushed_repos ∪ external_repos) − github_ignored_repos
+```
+
+Two of those sources are **rolling time windows**: `_activity_repos()` keys on
+`scan_date >= date('now','-{since_days} days')` (default 14d,
+[index_ops.py:424](../../src/rebalance/ingest/index_ops.py#L424)) and `_pushed_repos()` keys on
+`pushed_at >= cutoff` ([index_ops.py:460](../../src/rebalance/ingest/index_ops.py#L460)). A repo
+held *only* by a window drops off the roster the instant the window slides past its last
+push/activity — and because the set is **never persisted**, the drop leaves **no trace**: no
+log line, no diff, nothing to diagnose after the fact.
+
+Verified 2026-06-26: `BinoidCBD/LTVera-Pandas` was reported "fell out", but `diagnose_repo`
+returns `watched_and_fresh` (in the active registry **and** both windows, not ignored). It is
+monitored *now* — the perceived drop already self-healed. The exact trigger is **unrecoverable**
+precisely because nothing recorded the prior set. That unrecoverability is the bug: a coverage
+reduction must never be silent.
+
+## Decision (why snapshot-and-diff, not a watch-set rewrite)
+
+The union logic is correct and intentional (windows keep auto-discovered repos from
+accumulating forever). The gap is **observability**, not computation. So the fix is the
+minimal additive layer that already has three precedents in this repo:
+
+1. **Persist a canonical snapshot** of the resolved watched set on every github sync — the
+   same snapshot-to-DB pattern as `focus5_repo_signals`
+   ([src/rebalance/ingest/focus5_scan.py](../../src/rebalance/ingest/focus5_scan.py)), written by a
+   **single writer** in the path that already calls `get_watched_repos()`.
+2. **Diff against the prior snapshot** with a pure function — same isolate-the-logic stance
+   as the focus5 `resolve_recency` / `rank_recent_activity` pure functions.
+3. **Emit reductions to the existing log surface** — `auth_log.log_event(...)`
+   ([src/rebalance/ingest/auth_log.py:129](../../src/rebalance/ingest/auth_log.py#L129)), already
+   rendered by the `/auth-log` web screen
+   ([src/rebalance/web.py:909](../../src/rebalance/web.py#L909)) and already used by the launchd
+   `log_job_*` helpers — so no new screen and no new event plumbing.
+4. **Run unattended for free** by piggybacking the hourly `com.rebalance-os.github-sync`
+   job (the same lever focus5's roster refresh used — commit `53286a3`), so **no new launchd
+   job**.
+
+Reversible (additive table + pure function + one event), no destructive migration, no change
+to the computed watch set.
+
+## Non-Goals
+
+- The watch-set **computation** (`get_watched_repos` union + ignore list) is untouched.
+- **No new web screen** — reuse `/auth-log`. **No new launchd job** — piggyback `github-sync`.
+- Not a generic "alert on any change" — *additions* are expected churn; only *reductions* of
+  durable-intent monitoring are surfaced (see [Open Questions](#open-questions)).
+- Not retroactive — the first snapshot is a baseline; diffing starts on the second sync.
+
+---
+
+## Phase 1 — Canonical snapshot + silent-reduction detection
+
+> Persist the resolved watched set each github sync, diff it against the previous snapshot,
+> and record any concerning reduction — data layer only.
+
+- [ ] **Additive migration `0009_watched_repos_snapshot.sql`** (next free number — `0008` is
+      the latest, [src/rebalance/ingest/db/migrations/](../../src/rebalance/ingest/db/migrations/)).
+      A `watched_repos_snapshot` table keyed by `(snapshot_ts, repo)` with the resolving
+      `bucket`(s) (`project`/`activity`/`pushed`/`external`) recorded per repo, so a later
+      reduction can name *what kind* of coverage was lost. `CREATE TABLE IF NOT EXISTS`,
+      NULL-tolerant — idempotent per the migrations README.
+- [ ] **Pure `diff_watched_set(prev: set, curr: set) -> {added, removed}`** in
+      `index_ops.py` (or a small `watchlist_guard.py` sibling) — no I/O, fully unit-testable.
+- [ ] **Single writer** hooked into the github sync path where `get_watched_repos()` already
+      runs (the `_github_adapter` / `refresh_index(scope=["github"])` flow,
+      [index_ops.py:1035](../../src/rebalance/ingest/index_ops.py#L1035)). It: (a) reads the
+      latest prior snapshot, (b) writes the new snapshot, (c) diffs, (d) classifies removals.
+- [ ] **Classify removals** so the alarm is signal, not noise: a removed repo that was last
+      held by `project`/`external` (durable monitoring *intent*) → **concerning**; one held
+      only by `activity`/`pushed` (rolling window) → **expected churn** (info, not warn). See
+      Open Question 1 for the default.
+- [ ] **Emit via the existing surface** — on a concerning reduction call
+      `auth_log.log_event("github", "watched_repos_reduced", {...})` with per-repo
+      `{repo, last_bucket, ...}`; add a typed helper
+      `log_watched_repos_reduced(...)` next to the `log_job_*` helpers
+      ([auth_log.py:282](../../src/rebalance/ingest/auth_log.py#L282)) so the vocabulary lives
+      in one place (DRY).
+- [ ] **Baseline-safe:** first-ever run (no prior snapshot) writes the baseline and emits
+      **no** reduction event — diffing begins on the second sync.
+
+### QA Checklist — Phase 1
+
+- [ ] **DRY:** one snapshot writer (single source of the persisted set), one pure differ; the
+      bucket→severity vocabulary defined once.
+- [ ] **SOLID:** snapshot + diff isolated from the union computation; `get_watched_repos`
+      unchanged; route/render layers untouched.
+- [ ] **Diagnosable:** every snapshot records the resolving bucket per repo, so a reduction
+      answers "*what kind* of coverage was lost" — the exact fact missing for LTVera-Pandas.
+- [ ] **Blast:** additive table + pure function + one event = reversible; no destructive
+      migration; the computed watch set is byte-for-byte unchanged.
+- [ ] **Proof:** unit tests for `diff_watched_set` (add-only, remove-only, no-op, first-run
+      baseline) + an integration test (snapshot→slide→removal emits exactly one event;
+      re-add emits none); `pytest tests/` green; `rebalance doctor` clean.
+- [ ] **Single write path:** the snapshot table is written only by the github-sync writer —
+      no second writer.
+- [ ] **UTC:** `snapshot_ts` is a UTC epoch; display formats at the edge (matches focus5).
+
+---
+
+## Phase 2 — Operator surface on the web log screen
+
+> Make the reduction visible on the screen the operator already reads — no new screen.
+
+- [ ] **Badge the event** — add a `watched_repos_reduced` entry to `_EVENT_BADGE`
+      ([src/rebalance/web.py:44](../../src/rebalance/web.py#L44)) with a `warn` (concerning) /
+      `info` (churn) variant, so the existing `/auth-log` table renders it with no new render
+      code.
+- [ ] **Verify the round-trip** — a `watched_repos_reduced` event written by Phase 1 appears
+      on `GET /auth-log` with the right badge and a readable detail line
+      ("`BinoidCBD/LTVera-Pandas` dropped — last held by *project registry*").
+- [ ] **Tests:** a web-render assertion that the event surfaces on `/auth-log` with the
+      correct badge variant (mirrors the existing auth-log render tests).
+
+### QA Checklist — Phase 2
+
+- [ ] **DRY:** reuses `_EVENT_BADGE` + the existing `/auth-log` table; no new template.
+- [ ] **SOLID:** web layer only renders; no probe, no write added in Phase 2.
+- [ ] **Proof:** render test green; manual `open /auth-log` shows the seeded event.
+- [ ] **Diagnosable (meta):** the operator learns a repo dropped *and which coverage kind it
+      lost* without running `diagnose_repo` — the question that needed a manual probe here.
+
+---
+
+## Open Questions
+
+1. **Reduction severity threshold (the key decision).** Rolling-window repos legitimately age
+   out (an `auto_discovered` repo with no push in 14d *should* drop). Warning on *every*
+   removal = alarm fatigue. **Recommended default:** warn (`warn` badge) only when the
+   removed repo's last-known bucket was `project` or `external` (durable monitoring intent);
+   record `activity`/`pushed`-only churn at `info`. Alternative: warn on all, let the operator
+   filter. _Recommend the default; revisit if the info line proves noisy._
+2. **Snapshot retention.** Keep every snapshot (full history, cheap — tens of repos/hour) or
+   prune to the latest N? **Recommended:** keep latest + a rolling window (e.g. 30 days) so a
+   drop is diagnosable for a few weeks without unbounded growth. Decide in Phase 1.
+3. **Should a re-add also surface?** A repo that drops then returns is arguably worth an
+   `info` "recovered" line. Default OFF for v1 (reductions are the ask); trivial to add later.
+
+## Review history
+
+- **Diagnosis (2026-06-26)** — `diagnose_repo BinoidCBD/LTVera-Pandas` → `watched_and_fresh`
+  (in active registry + both windows, not ignored); `list_watched_repos` confirms membership
+  across `project_repos`, `activity_repos`, `pushed_repos`. Root cause = no persisted history
+  of the watched set ⇒ reductions are silent and unrecoverable. Plan scaffolded against the
+  focus5 snapshot table, the `auth_log`/`auth-log` event surface, and the `github-sync`
+  piggyback — no new patterns invented.
