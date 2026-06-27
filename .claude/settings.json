@@ -103,7 +103,21 @@
       "Bash(rtk du *)",
       "Bash(rtk ls *)",
       "Bash(sed -n '1,80p' relay-system/2026-06-24/gh81-rank-vector.md)",
-      "Bash(awk '/NEXT TURN APPENDS BELOW/{f=1;next} f' relay-system/2026-06-24/gh81-code-qa.md)"
+      "Bash(awk '/NEXT TURN APPENDS BELOW/{f=1;next} f' relay-system/2026-06-24/gh81-code-qa.md)",
+      "Bash(lsof -nP -iTCP:8787 -sTCP:LISTEN)",
+      "Bash(/bin/ps -axww -o pid,command)",
+      "Bash(/usr/bin/grep -i rebalance)",
+      "Bash(/usr/bin/grep -iv grep)",
+      "Bash(/usr/bin/cut -c1-300)",
+      "Bash(kill 32327)",
+      "Bash(nohup /Users/noelsaw/bin/rebalance serve)",
+      "Bash(echo \"restarted serve pid $!\")",
+      "Bash(/usr/bin/grep \"[r]ebalance serve\")",
+      "Bash(/usr/bin/cut -c1-120)",
+      "Bash(osascript -e 'quit app \"Focus 5 Float\"')",
+      "Bash(pkill -x Focus5Float)",
+      "Bash(/usr/bin/grep \"[F]ocus5Float\")",
+      "Bash(/usr/bin/cut -c1-90)"
     ]
   }
 }
