@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 5.1 write surface BUILT (2026-06-27).** Python orchestrator (`apple_reminders_write.py`) + generalized signed helper (`apple_reminders_helper_app.swift`) + 18 headless tests (apple suite 49/49). Design cross-model-consulted; all hardening landed (request_id idempotency, write serialization, helper-identity verify, three-state audit, atomic IPC). _Earlier:_ **Phase 5.0 convergence PROVEN** (full EventKit CRUD loop from a signed bundle; 1:1 id mapping). **Phases 0–4 complete** incl. P3 product surface. → **Now: one operator-gated live e2e run through the new helper, then a CLI/MCP verb to expose writes.** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
+| **Phase 5.1 write surface SHIPPED + live-verified (2026-06-27).** Python orchestrator (`apple_reminders_write.py`) + signed helper (`apple_reminders_helper_app.swift`) + `rebalance apple-reminders` CLI (create/update/complete/delete/audit, dry-run by default) + 57 tests green. Full create→complete→delete cycle proven LIVE through the helper (readback ok). All consult-hardening landed (request_id idempotency, write serialization, helper-identity verify, three-state audit, atomic IPC). _Earlier:_ **Phase 5.0 convergence PROVEN**; **Phases 0–4 complete** incl. P3 surface. → **Optional next: enable post-apply reconcile on an FDA host; MCP write tool deferred by design (agent-mutation risk).** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
 
 ## Table of Contents
 
@@ -615,7 +615,7 @@ harness). One-time operator setup: build + sign the helper, grant it Reminders o
 - [x] Add structured audit logging for every mutation attempt, including timestamp, operation, target ids, dry-run/apply, and outcome. _(`apple_reminders_write_audit` table: per-op row with `reminder_id` (joins `apple_reminders`), `state`, `op_status`, immutable `request_json`/`response_json`, `helper_identity`, timestamps.)_
 - [x] Add explicit confirmation / dry-run support for destructive mutations and bulk operations. _(`mode=plan` dry-run; `mode=apply` + `confirm_destructive` gate on `delete`; enforced in Python AND the helper.)_
 - [x] Add integration tests with mock harness coverage for auth denial, validation failure, sync lag, and partial failure. _(`tests/test_apple_reminders_write.py` — 18 tests via an injected fake invoker: scope, confirmation, plan/apply, reconcile, reconcile-failure, idempotent replay, retryable-failure, partial failure, helper-launch failure, request_id/schema mismatch, audit rows. Headless — no macOS needed.)_
-- [~] **Live end-to-end through the real helper** (operator-gated). _The orchestrator + helper compile, sign, and unit-test green; the full `open`-launched create/update/delete round-trip through the new bundle is the remaining operator-gated run — same one-time Reminders grant as Phase 5.0. Build: `scripts/build_apple_reminders_helper_app.sh`._
+- [x] **Live end-to-end through the real helper.** _Proven 2026-06-27: built the helper (`scripts/build_apple_reminders_helper_app.sh`), granted Reminders once (durable; **no FDA needed** for the helper, as designed), then ran the full cycle through the orchestrator + the live `rebalance apple-reminders` CLI: plan-create (no mutation) → apply create → complete → delete of a disposable reminder, every op `status=ok` with EventKit `readback_ok=true`, ~0.3s each; the `audit` table recorded the full trail. (reconcile ran disabled on the agent tree — it needs FDA there — so states show `applied_in_eventkit`; EventKit read-back is the convergence proof.)_
 
 #### QA checklist
 
@@ -628,10 +628,19 @@ harness). One-time operator setup: build + sign the helper, grant it Reminders o
 
 Built on `feat/apple-reminders-write`: Python orchestrator (`apple_reminders_write.py`), generalized
 signed helper (`apple_reminders_helper_app.swift` + plist + `build_apple_reminders_helper_app.sh`), and
-18 headless tests (all green; full apple suite 49/49). All consult-hardening landed: `request_id`
-idempotency (Python audit guard + helper-side processed store), helper-side `flock` write serialization,
-codesign identity verification before trusting a response, three-state audit lifecycle, atomic file IPC.
-**Remaining:** the one operator-gated live e2e run through the helper, then a CLI/MCP verb to expose it.
+tests across orchestrator + CLI (all green; full apple suite 57/57). All consult-hardening landed:
+`request_id` idempotency (Python audit guard + helper-side processed store), helper-side `flock` write
+serialization, codesign identity verification before trusting a response, three-state audit lifecycle,
+atomic file IPC.
+
+**CLI:** `rebalance apple-reminders {create,update,complete,delete,audit}` (Typer subgroup). Safe by
+default — dry-run (`plan`) unless `--apply`; `delete` needs `--apply` AND `--yes`. MCP write tool
+deliberately NOT shipped in v1 (write-through-MCP would let an agent delete reminders; the CLI keeps a
+human in the loop). **LIVE-VERIFIED 2026-06-27** end-to-end: plan-create → apply create → complete →
+delete of a disposable reminder, all `ok` with EventKit `readback_ok=true`, via both the orchestrator and
+the live CLI; helper needed only the Reminders grant (no FDA). **Remaining (optional):** run the
+post-apply reconcile on an FDA-holding host so the local table refreshes automatically after a write
+(currently best-effort; skipped on the agent tree which lacks FDA).
 
 ## Explicit Non-Goals
 
