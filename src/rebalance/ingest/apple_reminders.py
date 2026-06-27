@@ -38,6 +38,7 @@ raises :class:`AppleRemindersSchemaError` with the specific missing symbol.
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import shutil
@@ -518,3 +519,264 @@ def extract_apple_reminders(
         list(result.mapping_fallbacks),
     )
     return result, reminders
+
+
+# ---------------------------------------------------------------------------
+# Storage + sync (Phase 2) — list-scoped upsert into the apple_reminders table.
+# The extract_* functions above stay pure readers; this section is the only
+# writer, and the list filter is applied here at the storage boundary.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class AppleRemindersSyncResult:
+    """Summary of one list-scoped sync into the apple_reminders table."""
+
+    list_name: str
+    store_path: str
+    snapshot_dir: str
+    scoped_count: int
+    active_count: int
+    inserted_count: int
+    updated_count: int
+    unchanged_count: int
+    retired_count: int
+    duration_seconds: float
+    mapping_fallbacks: tuple[str, ...] = ()
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "list_name": self.list_name,
+            "store_path": self.store_path,
+            "snapshot_dir": self.snapshot_dir,
+            "scoped_count": self.scoped_count,
+            "active_count": self.active_count,
+            "inserted_count": self.inserted_count,
+            "updated_count": self.updated_count,
+            "unchanged_count": self.unchanged_count,
+            "retired_count": self.retired_count,
+            "duration_seconds": round(self.duration_seconds, 3),
+            "mapping_fallbacks": list(self.mapping_fallbacks),
+        }
+
+
+def ensure_apple_reminders_schema(conn: sqlite3.Connection) -> None:
+    """Create the apple_reminders table and indexes if absent."""
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS apple_reminders (
+            reminder_id        TEXT PRIMARY KEY,
+            list_name          TEXT,
+            title              TEXT NOT NULL,
+            notes              TEXT,
+            is_completed       INTEGER NOT NULL,
+            due_at             TEXT,
+            completed_at       TEXT,
+            section_name       TEXT,
+            tags_json          TEXT NOT NULL,
+            parent_reminder_id TEXT,
+            sort_hint          REAL,
+            created_at         TEXT,
+            updated_at         TEXT,
+            raw_payload_json   TEXT NOT NULL,
+            is_active          INTEGER NOT NULL,
+            first_seen_at      TEXT NOT NULL,
+            last_seen_at       TEXT NOT NULL,
+            last_synced_at     TEXT NOT NULL
+        )
+        """
+    )
+    # is_completed index: the in-scope (default) list is mostly completed history,
+    # so Phase 3 must filter to active fast.
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_apple_reminders_completed "
+        "ON apple_reminders(is_completed)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_apple_reminders_active "
+        "ON apple_reminders(is_active)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_apple_reminders_list "
+        "ON apple_reminders(list_name)"
+    )
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_apple_reminders_parent "
+        "ON apple_reminders(parent_reminder_id)"
+    )
+    conn.commit()
+
+
+def _iso(dt: datetime | None) -> str | None:
+    return dt.isoformat() if dt is not None else None
+
+
+# Fields compared to decide insert vs update vs unchanged (everything content-
+# bearing; excludes the *_seen_at / *_synced_at bookkeeping timestamps).
+_SYNC_UPDATE_FIELDS = (
+    "list_name",
+    "title",
+    "notes",
+    "is_completed",
+    "due_at",
+    "completed_at",
+    "section_name",
+    "tags_json",
+    "parent_reminder_id",
+    "sort_hint",
+    "created_at",
+    "updated_at",
+    "raw_payload_json",
+    "is_active",
+)
+
+
+def _sync_row_values(r: AppleReminder) -> dict[str, Any]:
+    return {
+        "list_name": r.list_name,
+        "title": r.title,
+        "notes": r.notes,
+        "is_completed": 1 if r.is_completed else 0,
+        "due_at": _iso(r.due_at),
+        "completed_at": _iso(r.completed_at),
+        "section_name": r.section_name,
+        "tags_json": json.dumps(list(r.tags), ensure_ascii=False),
+        "parent_reminder_id": r.parent_reminder_id,
+        "sort_hint": r.sort_hint,
+        "created_at": _iso(r.created_at),
+        "updated_at": _iso(r.updated_at),
+        "raw_payload_json": json.dumps(r.raw_payload, ensure_ascii=False, default=str),
+        "is_active": 1,
+    }
+
+
+def _sync_row_differs(existing: sqlite3.Row, desired: dict[str, Any]) -> bool:
+    return any(existing[f] != desired[f] for f in _SYNC_UPDATE_FIELDS)
+
+
+def upsert_apple_reminders(
+    database_path: Path,
+    reminders: list[AppleReminder],
+    *,
+    list_name: str,
+    now_iso: str | None = None,
+) -> dict[str, int]:
+    """Upsert ``reminders`` (already scoped to ``list_name``) and reconcile.
+
+    Rows present in the DB but absent from this batch are **retired** (is_active
+    flips to 0) rather than deleted, preserving the audit trail — same discipline
+    as the Sleuth source. Idempotent: re-running an unchanged batch only bumps
+    last_seen/last_synced. Returns insert/update/unchanged/retired counts."""
+    now = now_iso or datetime.now(timezone.utc).isoformat()
+    inserted = updated = unchanged = 0
+
+    from rebalance.ingest.db import db_connection
+
+    with db_connection(database_path, ensure_apple_reminders_schema) as conn:
+        for r in reminders:
+            desired = _sync_row_values(r)
+            row = conn.execute(
+                f"SELECT {', '.join(_SYNC_UPDATE_FIELDS)} "
+                f"FROM apple_reminders WHERE reminder_id = ?",
+                (r.reminder_id,),
+            ).fetchone()
+
+            if row is None:
+                cols = ["reminder_id", *_SYNC_UPDATE_FIELDS,
+                        "first_seen_at", "last_seen_at", "last_synced_at"]
+                placeholders = ", ".join("?" * len(cols))
+                conn.execute(
+                    f"INSERT INTO apple_reminders ({', '.join(cols)}) "
+                    f"VALUES ({placeholders})",
+                    (r.reminder_id, *[desired[f] for f in _SYNC_UPDATE_FIELDS],
+                     now, now, now),
+                )
+                inserted += 1
+            elif _sync_row_differs(row, desired):
+                set_clause = ", ".join(f"{f} = ?" for f in _SYNC_UPDATE_FIELDS)
+                conn.execute(
+                    f"UPDATE apple_reminders SET {set_clause}, "
+                    f"last_seen_at = ?, last_synced_at = ? WHERE reminder_id = ?",
+                    (*[desired[f] for f in _SYNC_UPDATE_FIELDS], now, now, r.reminder_id),
+                )
+                updated += 1
+            else:
+                conn.execute(
+                    "UPDATE apple_reminders SET last_seen_at = ?, last_synced_at = ? "
+                    "WHERE reminder_id = ?",
+                    (now, now, r.reminder_id),
+                )
+                unchanged += 1
+
+        # Reconcile disappearances: a reminder that was deleted in Apple (or fell
+        # out of the configured list) is retired locally, never hard-deleted.
+        seen_ids = [r.reminder_id for r in reminders]
+        if seen_ids:
+            placeholders = ",".join("?" * len(seen_ids))
+            cur = conn.execute(
+                f"UPDATE apple_reminders SET is_active = 0, last_synced_at = ? "
+                f"WHERE is_active = 1 AND reminder_id NOT IN ({placeholders})",
+                (now, *seen_ids),
+            )
+        else:
+            cur = conn.execute(
+                "UPDATE apple_reminders SET is_active = 0, last_synced_at = ? "
+                "WHERE is_active = 1",
+                (now,),
+            )
+        retired = cur.rowcount or 0
+        conn.commit()
+
+    return {
+        "inserted": inserted,
+        "updated": updated,
+        "unchanged": unchanged,
+        "retired": retired,
+    }
+
+
+def sync_apple_reminders(
+    database_path: Path,
+    *,
+    list_name: str | None = None,
+    snapshot_dir: Path | None = None,
+) -> AppleRemindersSyncResult:
+    """Source-owned entry point: read the local store (read-only), filter to the
+    configured list, and upsert into apple_reminders.
+
+    This is the single path the collector / CLI / MCP call — no user surface
+    touches the leaf extractor or upsert directly. ``list_name`` defaults to the
+    configured list (``"Reminders"``)."""
+    import time
+
+    if list_name is None:
+        from rebalance.ingest.config import get_apple_reminders_list_name
+        list_name = get_apple_reminders_list_name()
+
+    started = time.monotonic()
+    extract_result, reminders = extract_apple_reminders(snapshot_dir=snapshot_dir)
+    scoped = [r for r in reminders if r.list_name == list_name]
+    counts = upsert_apple_reminders(database_path, scoped, list_name=list_name)
+    active_count = sum(1 for r in scoped if not r.is_completed)
+
+    result = AppleRemindersSyncResult(
+        list_name=list_name,
+        store_path=extract_result.store_path,
+        snapshot_dir=extract_result.snapshot_dir,
+        scoped_count=len(scoped),
+        active_count=active_count,
+        inserted_count=counts["inserted"],
+        updated_count=counts["updated"],
+        unchanged_count=counts["unchanged"],
+        retired_count=counts["retired"],
+        duration_seconds=time.monotonic() - started,
+        mapping_fallbacks=extract_result.mapping_fallbacks,
+    )
+    logger.info(
+        "apple_reminders sync: list=%r scoped=%d active=%d "
+        "(ins=%d upd=%d unch=%d retired=%d) %.3fs",
+        result.list_name, result.scoped_count, result.active_count,
+        result.inserted_count, result.updated_count, result.unchanged_count,
+        result.retired_count, result.duration_seconds,
+    )
+    return result

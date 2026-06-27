@@ -14,11 +14,14 @@ from pathlib import Path
 
 from rebalance.ingest.apple_reminders import (
     CORE_DATA_EPOCH_OFFSET,
+    AppleReminder,
     AppleRemindersSchemaError,
     core_data_timestamp,
+    ensure_apple_reminders_schema,
     extract_reminders,
     parse_hashtags,
     pick_active_store,
+    upsert_apple_reminders,
 )
 
 # 2026-06-22 12:00:00 UTC expressed in Core Data (seconds since 2001-01-01).
@@ -185,6 +188,102 @@ class ExtractRemindersTests(unittest.TestCase):
         _make_store(active, with_optional=True)
 
         self.assertEqual(pick_active_store([empty, active]), active)
+
+
+def _reminder(rid, title, *, list_name="Reminders", completed=False, parent=None,
+              tags=(), due=None):
+    return AppleReminder(
+        reminder_id=rid, title=title, notes=None, is_completed=completed,
+        due_at=due, completed_at=None, list_name=list_name, section_name=None,
+        tags=tuple(tags), parent_reminder_id=parent, sort_hint=None,
+        created_at=None, updated_at=None, raw_payload={"z_pk": 1},
+    )
+
+
+class SyncStorageTests(unittest.TestCase):
+    """Integration tests for the upsert/reconcile storage boundary."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.db = Path(self._tmp.name) / "rebalance.sqlite"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def _rows(self):
+        conn = sqlite3.connect(self.db)
+        conn.row_factory = sqlite3.Row
+        try:
+            return {r["reminder_id"]: r for r in
+                    conn.execute("SELECT * FROM apple_reminders")}
+        finally:
+            conn.close()
+
+    def test_first_sync_inserts(self):
+        counts = upsert_apple_reminders(
+            self.db,
+            [_reminder("A", "Buy milk"), _reminder("B", "Call bank")],
+            list_name="Reminders",
+        )
+        self.assertEqual(counts, {"inserted": 2, "updated": 0, "unchanged": 0, "retired": 0})
+        rows = self._rows()
+        self.assertEqual(set(rows), {"A", "B"})
+        self.assertEqual(rows["A"]["is_active"], 1)
+        self.assertEqual(rows["A"]["tags_json"], "[]")
+
+    def test_unchanged_sync_is_idempotent(self):
+        batch = [_reminder("A", "Buy milk")]
+        upsert_apple_reminders(self.db, batch, list_name="Reminders")
+        counts = upsert_apple_reminders(self.db, batch, list_name="Reminders")
+        self.assertEqual(counts["unchanged"], 1)
+        self.assertEqual(counts["inserted"], 0)
+        self.assertEqual(counts["updated"], 0)
+
+    def test_updated_row_is_detected(self):
+        upsert_apple_reminders(self.db, [_reminder("A", "Buy milk")], list_name="Reminders")
+        counts = upsert_apple_reminders(
+            self.db, [_reminder("A", "Buy oat milk")], list_name="Reminders"
+        )
+        self.assertEqual(counts["updated"], 1)
+        self.assertEqual(self._rows()["A"]["title"], "Buy oat milk")
+
+    def test_completed_row_updates_flag(self):
+        upsert_apple_reminders(self.db, [_reminder("A", "Buy milk")], list_name="Reminders")
+        counts = upsert_apple_reminders(
+            self.db, [_reminder("A", "Buy milk", completed=True)], list_name="Reminders"
+        )
+        self.assertEqual(counts["updated"], 1)
+        row = self._rows()["A"]
+        self.assertEqual(row["is_completed"], 1)
+        self.assertEqual(row["is_active"], 1)  # completed != retired
+
+    def test_disappeared_row_is_retired_not_deleted(self):
+        upsert_apple_reminders(
+            self.db, [_reminder("A", "Buy milk"), _reminder("B", "Call bank")],
+            list_name="Reminders",
+        )
+        counts = upsert_apple_reminders(self.db, [_reminder("A", "Buy milk")], list_name="Reminders")
+        self.assertEqual(counts["retired"], 1)
+        rows = self._rows()
+        self.assertIn("B", rows)  # not deleted — audit trail preserved
+        self.assertEqual(rows["B"]["is_active"], 0)
+        self.assertEqual(rows["A"]["is_active"], 1)
+
+    def test_empty_batch_retires_all_active(self):
+        upsert_apple_reminders(self.db, [_reminder("A", "x")], list_name="Reminders")
+        counts = upsert_apple_reminders(self.db, [], list_name="Reminders")
+        self.assertEqual(counts["retired"], 1)
+        self.assertEqual(self._rows()["A"]["is_active"], 0)
+
+    def test_schema_has_completion_index(self):
+        conn = sqlite3.connect(self.db)
+        try:
+            ensure_apple_reminders_schema(conn)
+            idx = {r[1] for r in conn.execute("PRAGMA index_list(apple_reminders)")}
+            self.assertIn("idx_apple_reminders_completed", idx)
+            self.assertIn("idx_apple_reminders_active", idx)
+        finally:
+            conn.close()
 
 
 if __name__ == "__main__":

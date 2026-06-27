@@ -4,7 +4,7 @@ doc_type: project-plan
 status: active
 owner: Noel Saw
 created: 2026-06-25
-updated: 2026-06-26
+updated: 2026-06-27
 goal: "Deliver a safe, read-only Apple Reminders source for rebalance with deterministic extraction of reminders, tags, sections, and parent-child structure, then expose it through existing index/query surfaces."
 priority: P2
 related:
@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 0 + 1 complete (2026-06-25), committed (`e81cb5e`).** FDA granted to VS Code; access gate passed. Active store discovered deterministically (`Data-1FB0F4BF`, 9010 reminders). WAL-safe snapshot pipeline + dynamic REMCD schema mapper in `src/rebalance/ingest/apple_reminders.py` with 9 unit tests (epoch, parent-child linking, graceful degradation). Read-only extraction verified live (9010 reminders, 0 skipped, 8 lists, ~0.18s) and **operator-verified against the Reminders UI**. Tags best-effort; notes + sections deferred. **2026-06-26:** measured the ~209 MB snapshot breakdown (~85% CloudKit/Core-Data sync bookkeeping — see perf note) and **decided Phase 2 ingest scope = default `Reminders` list only** (configurable). | **Build Phase 2 (scope decided).** Register the `apple_reminders` collector in `index_ops.py` + storage (table keyed on `reminder_id`, `is_completed` index), apply the configurable default-list filter, reconcile disappearances, integration tests. Fold in the two perf wins (active-store-only snapshot; mtime-skip). |
+| **Phases 0 + 1 + 2 complete.** P0/P1 (2026-06-25, `e81cb5e`): FDA access, deterministic store discovery, WAL-safe snapshot, dynamic REMCD mapper, read-only extraction (9010 reminders) operator-verified vs the UI. **P2 (2026-06-27):** `apple_reminders` collector registered (opt-in, macOS+FDA) in `index_ops.py`; `apple_reminders` table + `ensure/upsert/sync` storage layer with `is_completed`/active/list/parent indexes; configurable list filter (default `Reminders`); status wiring; reconcile-don't-delete retirement. Verified live through the `refresh_index` dispatcher: **8147 rows scoped to `Reminders`, 14 active, idempotent re-run, 0 errors**. 16 tests pass; 129 related tests green. | **Pause / review.** Phase 2 done. Optional next: Phase 3 (read-side query accessor + product surfaces) and/or the two deferred perf wins (active-store-only snapshot; mtime-skip). Notes/sections decode still deferred. |
 
 ## Table of Contents
 
@@ -233,24 +233,26 @@ Objective: integrate Apple Reminders as a first-class source via orchestrator wo
   wanted later. (Per-list counts captured in [Verified Discovery](#verified-discovery-phase-0-and-1-findings).)
 - **Completed history:** store all rows from the in-scope list (history is cheap) but index
   `is_completed` so Phase 3 can default to active-only and avoid a completed-history flood.
-- The extractor already returns all lists; list filtering is applied at the collector/storage boundary,
-  keeping `apple_reminders.py` a pure reader.
+- The `extract_*` functions stay pure readers; the storage layer (`ensure_apple_reminders_schema`,
+  `upsert_apple_reminders`, `sync_apple_reminders`) lives in the same module (mirroring
+  `sleuth_reminders.py`) and is the **only writer** — the list filter is applied there at the storage
+  boundary, in `sync_apple_reminders`.
 
 ### Observable checklist
 
-- [ ] Register `apple_reminders` collector in `src/rebalance/ingest/index_ops.py`.
-- [ ] Create/ensure source table schema (incl. `is_completed` index) and upsert path for normalized contract.
-- [ ] Apply the configurable list filter (default `"Reminders"`) at the storage boundary.
-- [ ] Wire source into index/status freshness reporting.
-- [ ] Add integration tests for first sync, unchanged sync, updated row, completed row, and deleted/hidden handling.
-- [ ] Validate `refresh_index` route behavior with scope-specific dry-run and real run.
+- [x] Register `apple_reminders` collector in `src/rebalance/ingest/index_ops.py`. _(Opt-in `included_in_all=False` — macOS+FDA-only; never in a default/launchd `all` run.)_
+- [x] Create/ensure source table schema (incl. `is_completed` index) and upsert path for normalized contract. _(`ensure_apple_reminders_schema` + `upsert_apple_reminders`; indexes on completed/active/list/parent.)_
+- [x] Apply the configurable list filter (default `"Reminders"`) at the storage boundary. _(`sync_apple_reminders` filters to `get_apple_reminders_list_name()`; live run = 8147 scoped rows, only `Reminders`.)_
+- [x] Wire source into index/status freshness reporting. _(`get_index_status` → `sources.apple_reminders` = reminders/active/last_synced_at.)_
+- [x] Add integration tests for first sync, unchanged sync, updated row, completed row, and deleted/hidden handling. _(7 storage tests; 16 total in file.)_
+- [x] Validate `refresh_index` route behavior with scope-specific dry-run and real run. _(Both verified live via the registry dispatcher: 0 errors, 8147 ingested, idempotent re-run.)_
 
 ### QA checklist
 
-- [ ] Collector follows one-writer-per-table discipline.
-- [ ] Collector is reachable through orchestrator; no direct leaf-write surfaces for users.
-- [ ] Source sync is idempotent across repeated runs.
-- [ ] Test suite includes at least one fixture with tags + sections + parent-child reminders.
+- [x] Collector follows one-writer-per-table discipline. _(Only `upsert_apple_reminders` writes `apple_reminders`; `extract_*` are read-only.)_
+- [x] Collector is reachable through orchestrator; no direct leaf-write surfaces for users. _(Collector → `sync_apple_reminders`; same single path CLI/MCP would call.)_
+- [x] Source sync is idempotent across repeated runs. _(Verified live: 2nd sync = 8147 unchanged, 0 ins/upd/retired.)_
+- [x] Test suite includes at least one fixture with tags + parent-child reminders. _(Tags + parent-child covered; **sections deferred** — 0 in source, so a sections fixture is N/A this phase.)_
 
 ## Phase 3 - Query Surface + Product Integration
 
