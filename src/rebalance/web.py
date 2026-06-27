@@ -296,30 +296,18 @@ def _render_sleuth_groups() -> str:
     )
 
 
-@app.get("/", response_class=HTMLResponse)
-def index() -> HTMLResponse:
-    sleuth_section = _render_sleuth_groups()
-    body = (
-        """
-<h2>Local dashboards</h2>
-<ul style="margin-top:16px;line-height:2;list-style:none;">
-  <li><a href="/focus-5" style="color:var(--accent);font-size:15px;">
-      Focus 5</a>
-      <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
-      — the 5 repos you're actively working on, ranked by your most recent
-      commits: working-tree health, newest PR, and recent local commits
-      (with a Dirty Five view for uncommitted/unpushed work)</span>
-  </li>
-  <li><a href="/auth-log" style="color:var(--accent);font-size:15px;">
-      System Log</a>
-      <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
-      — unified event stream: auth events (calendar, github, gmail) and background
-      job starts, completions, and failures — filterable by type</span>
-  </li>
-</ul>"""
-        + sleuth_section
-    )
-    return _page("Home", body, active="today")
+# The rich "Today" dashboard is rendered by the pulse server (web/pulse.html on
+# :8767). This web app exists mainly to serve JSON (e.g. /focus-5.json) and the
+# sub-pages; its bare "/" used to render a sparse near-duplicate landing, which
+# read as a "reverted" home. Redirect to the canonical pulse dashboard so both
+# servers present one coherent home. (:8767 is the documented pulse-server port;
+# the pulse server is the always-running launchd job.)
+PULSE_DASHBOARD_URL = "http://127.0.0.1:8767/"
+
+
+@app.get("/")
+def index() -> RedirectResponse:
+    return RedirectResponse(PULSE_DASHBOARD_URL, status_code=307)
 
 
 def _rel_time(iso: str | None) -> str:
