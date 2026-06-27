@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 0–4 complete (2026-06-27)** (P3 product-surface wiring is the only deferred-by-choice item). P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default active-only, pure-`sqlite3`). **P4:** schema-drift health (`apple_reminders_health` → `doctor` WARN + `get_index_status`), schema fingerprint (macOS/sqlite/`columns_sha`) logged + persisted, FDA/drift runbook, graceful-degradation proxy tests. **31 tests pass; doctor + status live-verified.** | **Decision: product surface.** The optional P3 product-surface wiring (daily context / pulse panel) + its UX copy remain deferred pending where you want reminders to appear. Other deferred: cross-version validation (needs 2nd macOS), perf wins (active-store snapshot, mtime-skip), notes/sections decode. |
+| **Phases 0–4 complete (2026-06-27), incl. the P3 product surface.** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
 
 ## Table of Contents
 
@@ -275,7 +275,7 @@ Objective: make reminders queryable/useful without collapsing source boundaries.
 ### Observable checklist
 
 - [x] Add read-side accessor (`list_apple_reminders` or equivalent gather hook) with filters for due/completed/list/section. _(due/completed/list/retired/limit/order_by filters; **section filter omitted** — sections deferred from Phase 1/2.)_
-- [ ] Add optional product surfaces where reminders are useful (e.g., daily context, pulse side panel) without conflating with Sleuth. _(Deferred — explicitly optional; accessor is ready to wire. Surface choice is the next decision.)_
+- [x] Add optional product surfaces where reminders are useful (e.g., daily context, pulse side panel) without conflating with Sleuth. _(Read-only **Apple Reminders** column added to the pulse "Today" dashboard — `scripts/pulse_web.py` `render_hero`, third column beside the two Obsidian columns; soonest-due active items via `list_apple_reminders`. Distinct from Sleuth reminders, which stay in their own surfaces.)_
 - [x] Document source semantics and freshness caveats in user/operator docs. _(Read-surface semantics section above + accessor docstring.)_
 - [x] Add regression tests for query filters and empty-source behavior. _(10 read-surface tests: defaults, completed/retired, list, has_due, due_before, ordering/NULLs-last, limit, empty-source, bad order_by; 26 total in file.)_
 
@@ -284,7 +284,7 @@ Objective: make reminders queryable/useful without collapsing source boundaries.
 - [x] Source identity remains explicit (`apple_reminders` vs `sleuth_reminders`). _(Separate table + separate accessor.)_
 - [x] Query defaults are safe and predictable (no accidental completed-history flood). _(Default read = 14 active live, not the 8147 total; verified.)_
 - [x] No private-framework dependency introduced as a hard requirement for read path. _(Read path is pure `sqlite3`.)_
-- [ ] UX copy states local-only read behavior clearly. _(Deferred with the product surface — no user-facing surface added yet.)_
+- [x] UX copy states local-only read behavior clearly. _(Column is read-only — no checkboxes; empty state reads "Apple Reminders, read-only.")_
 
 ## Phase 4 - Hardening + Upgrade Safety
 
