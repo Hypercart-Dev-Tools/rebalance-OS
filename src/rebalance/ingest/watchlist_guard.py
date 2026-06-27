@@ -10,8 +10,8 @@ drops off the roster with no trace. This module gives the set a memory:
     the resolving buckets), diffs against the previous snapshot, and emits a
     ``watched_repos_reduced`` event on a *concerning* drop. It prunes snapshots
     older than :data:`RETENTION_DAYS`.
-  * :func:`diff_watched_set` and :func:`classify_removal` are pure helpers
-    (no I/O) so the alarm logic is unit-testable in isolation.
+  * :func:`classify_removal` is a pure helper (no I/O) so the warn-vs-churn
+    signal logic is unit-testable in isolation.
 
 Design rationale + QA history: ``PROJECT/2-WORKING/WATCHLIST-COVERAGE-GUARD.md``.
 """
@@ -49,14 +49,6 @@ _BUCKET_SOURCES = (
     ("activity_repos", "activity"),
     ("pushed_repos", "pushed"),
 )
-
-
-def diff_watched_set(prev: set[str], curr: set[str]) -> dict[str, list[str]]:
-    """Pure set diff. Returns sorted ``added`` / ``removed`` repo lists."""
-    return {
-        "added": sorted(curr - prev),
-        "removed": sorted(prev - curr),
-    }
 
 
 def classify_removal(buckets: set[str]) -> str:
@@ -127,10 +119,10 @@ def snapshot_and_detect(
         run_migrations(conn)  # ensure the table exists even on a direct call
         prev_ts, prev_buckets = _read_latest_snapshot(conn)
 
-        # Monotonic, collision-free snapshot id even on sub-second repeat runs.
+        # ponytail: INSERT OR REPLACE handles a same-second double-run (PK is
+        # (snapshot_ts, repo)); a real github sync takes minutes, so two in one
+        # second can't happen in prod — no monotonic-id machinery needed.
         ts = int(now_ts if now_ts is not None else time.time())
-        if prev_ts is not None and ts <= prev_ts:
-            ts = prev_ts + 1
 
         conn.executemany(
             f"INSERT OR REPLACE INTO {_SNAPSHOT_TABLE} "
@@ -150,12 +142,14 @@ def snapshot_and_detect(
     if prev_ts is None:
         return {"baseline": True, "snapshot_ts": ts, "watched": len(curr)}
 
-    diff = diff_watched_set(set(prev_buckets), curr)
+    prev_set = set(prev_buckets)
+    removed = sorted(prev_set - curr)
+    added = sorted(curr - prev_set)
     ignored_lower = {r.lower() for r in get_github_ignored_repos()}
 
     warn_removed: list[dict[str, Any]] = []
     info_churn: list[str] = []
-    for repo in diff["removed"]:
+    for repo in removed:
         # An intentional opt-out (just-ignored) is not a coverage loss (agy r1).
         if repo.lower() in ignored_lower:
             continue
@@ -175,8 +169,8 @@ def snapshot_and_detect(
         "baseline": False,
         "snapshot_ts": ts,
         "watched": len(curr),
-        "added": diff["added"],
-        "removed": diff["removed"],
+        "added": added,
+        "removed": removed,
         "warn_removed": warn_removed,
         "info_churn": info_churn,
     }

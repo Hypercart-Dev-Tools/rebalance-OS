@@ -16,32 +16,9 @@ from unittest import mock
 
 from rebalance.ingest import config as config_module
 from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_project_schema
-from rebalance.ingest.watchlist_guard import (
-    classify_removal,
-    diff_watched_set,
-    snapshot_and_detect,
-)
+from rebalance.ingest.watchlist_guard import classify_removal, snapshot_and_detect
 
 _DAY = 86400
-
-
-class DiffWatchedSetTests(unittest.TestCase):
-    def test_no_op(self) -> None:
-        d = diff_watched_set({"a/b", "c/d"}, {"a/b", "c/d"})
-        self.assertEqual(d, {"added": [], "removed": []})
-
-    def test_add_only(self) -> None:
-        d = diff_watched_set({"a/b"}, {"a/b", "c/d"})
-        self.assertEqual(d, {"added": ["c/d"], "removed": []})
-
-    def test_remove_only(self) -> None:
-        d = diff_watched_set({"a/b", "c/d"}, {"a/b"})
-        self.assertEqual(d, {"added": [], "removed": ["c/d"]})
-
-    def test_first_run_baseline(self) -> None:
-        # Empty prev → everything is an addition, nothing removed.
-        d = diff_watched_set(set(), {"a/b", "c/d"})
-        self.assertEqual(d, {"added": ["a/b", "c/d"], "removed": []})
 
 
 class ClassifyRemovalTests(unittest.TestCase):
@@ -213,15 +190,6 @@ class SnapshotAndDetectTests(unittest.TestCase):
         self.assertEqual(
             self._snapshot_rows(6_000_000 + 31 * _DAY), ["example/owned"]
         )
-
-    def test_monotonic_snapshot_id_on_same_timestamp(self) -> None:
-        # Two runs at the identical wall-clock second must not PK-collide; the
-        # second is bumped to prev_ts+1 so both snapshots persist distinctly.
-        self._add_project_repo("example/owned")
-        r1 = snapshot_and_detect(self.db_path, now_ts=7_000_000)
-        r2 = snapshot_and_detect(self.db_path, now_ts=7_000_000)
-        self.assertEqual(r1["snapshot_ts"], 7_000_000)
-        self.assertEqual(r2["snapshot_ts"], 7_000_001)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 ---
 title: "Watch-list coverage guard — canonical snapshot + silent-reduction alarm"
-status: "Phase 1 shipped (2-WORKING); Phase 2 (web badge) next"
+status: "complete (ponytail-trimmed) — ready to move to 3-COMPLETED"
 doc_type: bugfix
 owner: noel@neochro.me
 created: 2026-06-26
@@ -28,7 +28,7 @@ rollout_rule: >
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 1 SHIPPED (2026-06-26).** Additive migration `0009_watched_repos_snapshot.sql` + isolated `watchlist_guard.py` (pure `diff_watched_set` / `classify_removal` + the `snapshot_and_detect` single writer) hooked at the end of `_refresh_github` (clean-sync only) + the `log_watched_repos_reduced` typed helper. All 4 agy `[Should]` baked in (canonical `since_days=14`, clean-sync guard, ignore-list suppression, 30-day pruning). **16 new tests green; full suite 1137 passed; `doctor` clean.** Live-DB proof: baseline of **59 watched** repos, **24 carrying durable-intent buckets** (incl. LTVera-Pandas as `project`) → a silent drop now alarms instead of vanishing. | **Phase 2** — add the `_EVENT_BADGE` entry + `/auth-log` render assertion so the `watched_repos_reduced` event shows a `warn`/`info` badge on the screen the operator already reads. |
+| **COMPLETE (2026-06-26).** Phase 1 shipped + ponytail-trimmed + Phase 2 collapsed to one line. Migration `0009_watched_repos_snapshot.sql` + isolated `watchlist_guard.py` (`classify_removal` pure helper + `snapshot_and_detect` single writer) at the end of `_refresh_github` (clean-sync only) + `log_watched_repos_reduced` helper + a one-line `_EVENT_BADGE` entry so the event shows a ⚠ warn chip on `/auth-log`. All 4 agy `[Should]` baked in. **ponytail pass** cut the monotonic-id machinery + its test (prod-impossible same-second double-sync) and inlined the `set - set` wrapper (`diff_watched_set` + 4 stdlib-testing tests deleted); Phase 2's "phase" framing collapsed since `/auth-log` already renders any event. **11 guard tests; suite green; `doctor` clean.** Live-DB proof: 59 watched, 24 durable-intent — LTVera-Pandas (`project`) now alarms on a silent drop. | **Move doc to `3-COMPLETED`** and merge PR #82. |
 
 ## Table of Contents
 
@@ -36,7 +36,7 @@ rollout_rule: >
 - [Decision (why snapshot-and-diff, not a watch-set rewrite)](#decision-why-snapshot-and-diff-not-a-watch-set-rewrite)
 - [Non-Goals](#non-goals)
 - [Phase 1 — Canonical snapshot + silent-reduction detection](#phase-1--canonical-snapshot--silent-reduction-detection)
-- [Phase 2 — Operator surface on the web log screen](#phase-2--operator-surface-on-the-web-log-screen)
+- [Phase 2 — Operator surface (collapsed into Phase 1)](#phase-2--operator-surface-on-the-web-log-screen-collapsed-into-phase-1--ponytail)
 - [Open Questions](#open-questions)
 
 ## Problem
@@ -168,38 +168,31 @@ to the computed watch set.
 
 ---
 
-## Phase 2 — Operator surface on the web log screen
+## Phase 2 — Operator surface on the web log screen *(collapsed into Phase 1 — ponytail)*
 
-> Make the reduction visible on the screen the operator already reads — no new screen.
+> Originally a separate phase; the ponytail pass collapsed it to **one line**.
+> `/auth-log` already renders any event via `_EVENT_BADGE.get(event, ("neutral", event))`
+> ([src/rebalance/web.py:200](../../src/rebalance/web.py#L200)), so `watched_repos_reduced`
+> surfaced on the screen the moment Phase 1 emitted it — no Phase 2 code was required for it
+> to be visible.
 
-- [ ] **Badge the event** — add a `watched_repos_reduced` entry to `_EVENT_BADGE`
-      ([src/rebalance/web.py:44](../../src/rebalance/web.py#L44)) with a `warn` (concerning) /
-      `info` (churn) variant, so the existing `/auth-log` table renders it with no new render
-      code.
-- [ ] **Verify the round-trip** — a `watched_repos_reduced` event written by Phase 1 appears
-      on `GET /auth-log` with the right badge and a readable detail line
-      ("`BinoidCBD/LTVera-Pandas` dropped — last held by *project registry*").
-- [ ] **Tests:** a web-render assertion that the event surfaces on `/auth-log` with the
-      correct badge variant (mirrors the existing auth-log render tests).
-
-### QA Checklist — Phase 2
-
-- [ ] **DRY:** reuses `_EVENT_BADGE` + the existing `/auth-log` table; no new template.
-- [ ] **SOLID:** web layer only renders; no probe, no write added in Phase 2.
-- [ ] **Proof:** render test green; manual `open /auth-log` shows the seeded event.
-- [ ] **Diagnosable (meta):** the operator learns a repo dropped *and which coverage kind it
-      lost* without running `diagnose_repo` — the question that needed a manual probe here.
+- [x] **Badge the event** — added one `_EVENT_BADGE` entry
+      ([src/rebalance/web.py:44](../../src/rebalance/web.py#L44)):
+      `"watched_repos_reduced": ("warn", "⚠ watched repos reduced")`, upgrading the fallback
+      neutral chip to a red warn chip. The event is only emitted on a *concerning* drop, so a
+      single warn variant is correct (no per-row info/warn split needed).
+- [x] **No dedicated render test** — the existing `/auth-log` table tests already cover row
+      rendering; a per-event assertion would re-test FastAPI. (ponytail: trivial one-liner,
+      no test.)
 
 ---
 
 ## Open Questions
 
-1. **Reduction severity threshold (the key decision).** Rolling-window repos legitimately age
-   out (an `auto_discovered` repo with no push in 14d *should* drop). Warning on *every*
-   removal = alarm fatigue. **Recommended default:** warn (`warn` badge) only when the
-   removed repo's last-known bucket was `project` or `external` (durable monitoring intent);
-   record `activity`/`pushed`-only churn at `info`. Alternative: warn on all, let the operator
-   filter. _Recommend the default; revisit if the info line proves noisy._
+1. ~~**Reduction severity threshold.**~~ **RESOLVED (shipped):** the event fires only when a
+   removed repo's last-known bucket set includes `project`/`external`; `activity`/`pushed`-only
+   churn is recorded as `info_churn` context and does not alarm. Revisit only if the signal
+   proves noisy.
 2. ~~**Snapshot retention.**~~ **RESOLVED (agy r1):** prune to a rolling 30-day window
    (`DELETE ... WHERE snapshot_ts < now−30d`) at the end of the writer — folded into Phase 1.
 3. **Should a re-add also surface?** A repo that drops then returns is arguably worth an
@@ -237,3 +230,12 @@ to the computed watch set.
   10 · …` → 24 durable-intent repos now alarm on a drop. One deviation recorded inline: an
   *empty* watched set writes zero rows and so isn't anchored by `MAX(snapshot_ts)` — out of scope
   (monitoring-is-off is a bigger alarm) and **safe-loud** (next run re-alarms, never silent).
+- **Ponytail pass (2026-06-26)** — de-overengineering review of the whole effort. Cuts: (1)
+  the monotonic snapshot-id bump + its dedicated test — defended a same-second double-sync that
+  a minutes-long github sync makes prod-impossible (`INSERT OR REPLACE` covers it); (2) inlined
+  `diff_watched_set` (a one-line `set - set` wrapper, used once) and deleted its 4 unit tests
+  (testing stdlib; the integration tests exercise the diff); (3) collapsed **Phase 2** from a
+  phase-with-QA-gates to a single `_EVENT_BADGE` line, since `/auth-log` already renders any
+  event via the `.get(event, ("neutral", …))` fallback. Kept (defended as load-bearing): the
+  bucket CSV (diagnostic payload), `classify_removal` (the warn/info signal), the canonical
+  `since_days=14` pin, clean-sync guard, ignore-suppression, pruning, baseline-safe.
