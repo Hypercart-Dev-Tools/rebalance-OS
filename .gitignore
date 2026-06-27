@@ -64,3 +64,4 @@ snapshot-archive.md
 # Local beta-test working notes (kept locally, not part of the product)
 test-notes/
 mrt-temp/
+/.claude
