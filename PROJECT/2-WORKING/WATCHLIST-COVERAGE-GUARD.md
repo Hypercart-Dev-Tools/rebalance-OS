@@ -1,6 +1,6 @@
 ---
 title: "Watch-list coverage guard — canonical snapshot + silent-reduction alarm"
-status: "Proposed (2-WORKING — Phase 1 not yet started)"
+status: "Phase 1 shipped (2-WORKING); Phase 2 (web badge) next"
 doc_type: bugfix
 owner: noel@neochro.me
 created: 2026-06-26
@@ -28,7 +28,7 @@ rollout_rule: >
 
 | What was just completed | What's next |
 |---|---|
-| **Plan QA-passed (agy relay r1, 2026-06-26).** Diagnosis: `BinoidCBD/LTVera-Pandas` is currently `watched_and_fresh` — held by the active registry **and** both rolling windows, not ignored. Root cause of the *perceived* drop: the watched set is a **recomputed union with no persisted history**, so a window-only-held repo vanishes with no trace. agy review = 2 `[Pass]` + 4 `[Should]`, **all four folded into Phase 1** (canonical `since_days=14` window, clean-sync guard, ignore-list suppression, 30-day pruning). Plan reuses focus5 snapshot table / `auth_log` surface / `github-sync` piggyback — no new patterns. | **Implement Phase 1** — additive snapshot table (migration `0009`) + pure `diff_watched_set` + the single `_refresh_github` writer emitting `watched_repos_reduced` to `/auth-log` on a concerning reduction. |
+| **Phase 1 SHIPPED (2026-06-26).** Additive migration `0009_watched_repos_snapshot.sql` + isolated `watchlist_guard.py` (pure `diff_watched_set` / `classify_removal` + the `snapshot_and_detect` single writer) hooked at the end of `_refresh_github` (clean-sync only) + the `log_watched_repos_reduced` typed helper. All 4 agy `[Should]` baked in (canonical `since_days=14`, clean-sync guard, ignore-list suppression, 30-day pruning). **16 new tests green; full suite 1137 passed; `doctor` clean.** Live-DB proof: baseline of **59 watched** repos, **24 carrying durable-intent buckets** (incl. LTVera-Pandas as `project`) → a silent drop now alarms instead of vanishing. | **Phase 2** — add the `_EVENT_BADGE` entry + `/auth-log` render assertion so the `watched_repos_reduced` event shows a `warn`/`info` badge on the screen the operator already reads. |
 
 ## Table of Contents
 
@@ -102,19 +102,19 @@ to the computed watch set.
 > Persist the resolved watched set each github sync, diff it against the previous snapshot,
 > and record any concerning reduction — data layer only.
 
-- [ ] **Additive migration `0009_watched_repos_snapshot.sql`** (next free number — `0008` is
+- [x] **Additive migration `0009_watched_repos_snapshot.sql`** (next free number — `0008` is
       the latest, [src/rebalance/ingest/db/migrations/](../../src/rebalance/ingest/db/migrations/)).
       A `watched_repos_snapshot` table keyed by `(snapshot_ts, repo)` with the resolving
       `bucket`(s) (`project`/`activity`/`pushed`/`external`) recorded per repo, so a later
       reduction can name *what kind* of coverage was lost. `CREATE TABLE IF NOT EXISTS`,
       NULL-tolerant — idempotent per the migrations README.
-- [ ] **Pure `diff_watched_set(prev: set, curr: set) -> {added, removed}`** in
+- [x] **Pure `diff_watched_set(prev: set, curr: set) -> {added, removed}`** in
       `index_ops.py` (or a small `watchlist_guard.py` sibling) — no I/O, fully unit-testable.
-- [ ] **Single writer** hooked into the github sync path where `get_watched_repos()` already
+- [x] **Single writer** hooked into the github sync path where `get_watched_repos()` already
       runs (`_refresh_github`, [index_ops.py:571](../../src/rebalance/ingest/index_ops.py#L571),
       reached via `_github_adapter` / `refresh_index(scope=["github"])`). It: (a) reads the
       latest prior snapshot, (b) writes the new snapshot, (c) diffs, (d) classifies removals.
-- [ ] **Pin a canonical window (agy r1 [Should]).** `refresh_index` defaults `since_days=30`
+- [x] **Pin a canonical window (agy r1 [Should]).** `refresh_index` defaults `since_days=30`
       ([index_ops.py:1040](../../src/rebalance/ingest/index_ops.py#L1040)) but the watched-set
       windows default to `14` ([index_ops.py:424](../../src/rebalance/ingest/index_ops.py#L424),
       [:460](../../src/rebalance/ingest/index_ops.py#L460)). If the snapshot reflected the
@@ -122,49 +122,49 @@ to the computed watch set.
       manufacture **phantom** reductions/additions. The writer therefore calls
       `get_watched_repos(db, since_days=14)` with a **fixed canonical window**, independent of
       the triggering sync's window.
-- [ ] **Run only on a clean sync (agy r1 [Should]).** A github sync that raises partway could
+- [x] **Run only on a clean sync (agy r1 [Should]).** A github sync that raises partway could
       leave a *truncated* set and record a **false** reduction. The snapshot+diff runs at the
       **end of `_refresh_github`** ([index_ops.py:571](../../src/rebalance/ingest/index_ops.py#L571)),
       only when the adapter completed without raising — never in a `finally`/error path.
-- [ ] **Classify removals** so the alarm is signal, not noise: a removed repo whose last-known
+- [x] **Classify removals** so the alarm is signal, not noise: a removed repo whose last-known
       bucket set includes `project`/`external` (durable monitoring *intent*) → **concerning**
       (`warn`); one held only by `activity`/`pushed` (rolling window) → **expected churn**
       (`info`). Multi-bucket membership resolves by "warn if `project` **or** `external` is in
       the last-known bucket set" (agy r1 confirmed this resolves the ambiguity). See Open
       Question 1.
-- [ ] **Exclude intentional ignores (agy r1 [Should]).** A repo the operator just added to
+- [x] **Exclude intentional ignores (agy r1 [Should]).** A repo the operator just added to
       `github_ignored_repos` ([config.py:870](../../src/rebalance/ingest/config.py#L870)) leaves
       the watched set and would look like a reduction. The differ filters removed repos through
       `get_github_ignored_repos()` and **suppresses** the alert for any now-ignored repo (an
       intentional opt-out is not a coverage loss).
-- [ ] **Prune the snapshot table (agy r1 [Should] — resolves Open Q2).** At the end of the
+- [x] **Prune the snapshot table (agy r1 [Should] — resolves Open Q2).** At the end of the
       writer, `DELETE FROM watched_repos_snapshot WHERE snapshot_ts < <now − 30d>` so the table
       keeps ~30 days of diffable history without unbounded growth.
-- [ ] **Emit via the existing surface** — on a concerning reduction call
+- [x] **Emit via the existing surface** — on a concerning reduction call
       `auth_log.log_event("github", "watched_repos_reduced", {...})` with per-repo
       `{repo, last_bucket, ...}`; add a typed helper
       `log_watched_repos_reduced(...)` next to the `log_job_*` helpers
       ([auth_log.py:282](../../src/rebalance/ingest/auth_log.py#L282)) so the vocabulary lives
       in one place (DRY).
-- [ ] **Baseline-safe:** first-ever run (no prior snapshot) writes the baseline and emits
+- [x] **Baseline-safe:** first-ever run (no prior snapshot) writes the baseline and emits
       **no** reduction event — diffing begins on the second sync.
 
 ### QA Checklist — Phase 1
 
-- [ ] **DRY:** one snapshot writer (single source of the persisted set), one pure differ; the
+- [x] **DRY:** one snapshot writer (single source of the persisted set), one pure differ; the
       bucket→severity vocabulary defined once.
-- [ ] **SOLID:** snapshot + diff isolated from the union computation; `get_watched_repos`
+- [x] **SOLID:** snapshot + diff isolated from the union computation; `get_watched_repos`
       unchanged; route/render layers untouched.
-- [ ] **Diagnosable:** every snapshot records the resolving bucket per repo, so a reduction
+- [x] **Diagnosable:** every snapshot records the resolving bucket per repo, so a reduction
       answers "*what kind* of coverage was lost" — the exact fact missing for LTVera-Pandas.
-- [ ] **Blast:** additive table + pure function + one event = reversible; no destructive
+- [x] **Blast:** additive table + pure function + one event = reversible; no destructive
       migration; the computed watch set is byte-for-byte unchanged.
-- [ ] **Proof:** unit tests for `diff_watched_set` (add-only, remove-only, no-op, first-run
+- [x] **Proof:** unit tests for `diff_watched_set` (add-only, remove-only, no-op, first-run
       baseline) + an integration test (snapshot→slide→removal emits exactly one event;
       re-add emits none); `pytest tests/` green; `rebalance doctor` clean.
-- [ ] **Single write path:** the snapshot table is written only by the github-sync writer —
+- [x] **Single write path:** the snapshot table is written only by the github-sync writer —
       no second writer.
-- [ ] **UTC:** `snapshot_ts` is a UTC epoch; display formats at the edge (matches focus5).
+- [x] **UTC:** `snapshot_ts` is a UTC epoch; display formats at the edge (matches focus5).
 
 ---
 
@@ -225,3 +225,15 @@ to the computed watch set.
   guard** — run snapshot+diff only on a clean `_refresh_github` completion; (3) **ignore-list
   interaction** — suppress alerts for repos just added to `github_ignored_repos`; (4) **table
   pruning** — 30-day retention `DELETE` (resolved Open Q2).
+- **Phase 1 implementation (2026-06-26)** — shipped: migration
+  `0009_watched_repos_snapshot.sql`; new isolated module
+  [src/rebalance/ingest/watchlist_guard.py](../../src/rebalance/ingest/watchlist_guard.py)
+  (`diff_watched_set` + `classify_removal` pure helpers; `snapshot_and_detect` single writer);
+  `log_watched_repos_reduced` typed helper in `auth_log.py`; and the clean-sync-only hook at the
+  end of `_refresh_github`. Tests: `tests/test_watchlist_guard.py` (16 — pure diff/classify
+  matrices + baseline / project-removal-warns / window-churn-quiet / ignore-suppressed / re-add /
+  pruning / monotonic-ts). **`pytest tests/` 1137 passed; `doctor` clean.** Live-DB baseline:
+  59 watched, bucket spread `pushed 18 · activity,pushed 15 · project 11 · activity,project,pushed
+  10 · …` → 24 durable-intent repos now alarm on a drop. One deviation recorded inline: an
+  *empty* watched set writes zero rows and so isn't anchored by `MAX(snapshot_ts)` — out of scope
+  (monitoring-is-off is a bigger alarm) and **safe-loud** (next run re-alarms, never silent).
