@@ -428,6 +428,37 @@ Objective: prove the smallest write path that survives real sync behavior before
   full create/update/delete + extractor convergence loop there before designing any product-facing write
   surface.
 
+#### Phase 5.0 follow-up — build harness + self-location (2026-06-27)
+
+Picking the spike back up on `feat/apple-reminders-write`:
+
+- **Repo-root discovery fixed (cwd/env-independent).** The app-bundle spike now resolves the repo root
+  from a value **baked into `Info.plist` at build time** (key `RBOSRepoRoot`), read via
+  `Bundle.main.object(forInfoDictionaryKey:)`. Resolution order in `appRepoRoot()` is now:
+  `RBOS_REPO_ROOT` env (shell testing only) → baked `RBOSRepoRoot` → cwd heuristic → walk-up from the
+  bundle. Under a LaunchServices launch (cwd=`/`, no inherited env), the baked key is the canonical path —
+  this removes the failure that made the earlier successful run write its artifact to the wrong place.
+- **Build/sign/launch harness added:** `scripts/build_apple_reminders_write_spike_app.sh`. It compiles the
+  Swift (`swiftc -parse-as-library`, required because the file uses `@main`), assembles the `.app` under
+  `temp/apple-reminders/build/` (gitignored), injects the absolute repo root into `Info.plist`, ad-hoc
+  codesigns with the stable bundle id (keeps the TCC grant durable across rebuilds), and `--launch`
+  `open`s it via LaunchServices. **Note:** `swiftc` fails under Claude Code's Bash sandbox (module-cache
+  writes to `/var/folders` are blocked) — build with the sandbox disabled.
+- **Second TCC gate identified — the app bundle also needs Full Disk Access.** The convergence check
+  re-reads the Reminders **SQLite group container** directly (`extract_apple_reminders`), which is FDA
+  territory (`kTCCServiceSystemPolicyAllFiles`), *separate* from the EventKit Reminders prompt
+  (`kTCCServiceReminders`). The app bundle is a brand-new host identity with neither grant. So the
+  operator must grant the bundle **both**: approve the Reminders prompt on launch **and** add the bundle
+  under System Settings → Privacy & Security → Full Disk Access. Confirmed empirically: even from the
+  FDA-granted VS Code tree, an out-of-tree read of the store returns `AppleRemindersAccessError` until the
+  responsible host has FDA. Without #2 the `*_extractor_visibility` probes fail even after a clean
+  Reminders grant. The harness prints both requirements on build.
+- **Operator-gated step (cannot be automated headless):** the actual convergence run requires a human to
+  launch the signed bundle via LaunchServices and click "Allow" on the TCC prompt(s). No CLI agent
+  (Claude/Codex/agy) can satisfy this — they all run under the suppressed VS Code/terminal responsible
+  tree. Run: `scripts/build_apple_reminders_write_spike_app.sh --launch`, grant both, then inspect
+  `temp/apple-reminders/PHASE5-WRITE-SPIKE-APP.json` (live progress in the sibling `.status.txt`).
+
 ### Phase 5.1 - Write Surface Design
 
 Objective: design a safe product-facing mutation path only after the spike proves the underlying primitives.
