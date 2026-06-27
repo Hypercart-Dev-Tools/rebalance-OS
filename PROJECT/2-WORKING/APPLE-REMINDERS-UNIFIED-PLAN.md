@@ -4,7 +4,7 @@ doc_type: project-plan
 status: active
 owner: Noel Saw
 created: 2026-06-25
-updated: 2026-06-25
+updated: 2026-06-26
 goal: "Deliver a safe, read-only Apple Reminders source for rebalance with deterministic extraction of reminders, tags, sections, and parent-child structure, then expose it through existing index/query surfaces."
 priority: P2
 related:
@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 0 + 1 complete (2026-06-25).** FDA granted to VS Code; access gate passed. Active store discovered deterministically (`Data-1FB0F4BF`, 9010 reminders). WAL-safe snapshot pipeline + dynamic REMCD schema mapper shipped in `src/rebalance/ingest/apple_reminders.py` with 9 unit tests (epoch, parent-child linking, graceful degradation). Read-only extraction verified live: 9010 reminders, 0 skipped, 8 lists, ~0.18s. Evidence: `temp/apple-reminders/PHASE0-SPIKE-REPORT.md`. Tags best-effort; notes + sections explicitly deferred. | **Paused before Phase 2 (deliberate).** Resume = collector registration in `index_ops.py` + `apple_reminders` table/upsert. Before that, optionally: eyeball 5 records vs the Reminders UI, and decide whether to invest in full-fidelity notes/section decode. |
+| **Phases 0 + 1 complete (2026-06-25), committed (`e81cb5e`).** FDA granted to VS Code; access gate passed. Active store discovered deterministically (`Data-1FB0F4BF`, 9010 reminders). WAL-safe snapshot pipeline + dynamic REMCD schema mapper in `src/rebalance/ingest/apple_reminders.py` with 9 unit tests (epoch, parent-child linking, graceful degradation). Read-only extraction verified live (9010 reminders, 0 skipped, 8 lists, ~0.18s) and **operator-verified against the Reminders UI**. Tags best-effort; notes + sections deferred. **2026-06-26:** measured the ~209 MB snapshot breakdown (~85% CloudKit/Core-Data sync bookkeeping — see perf note) and **decided Phase 2 ingest scope = default `Reminders` list only** (configurable). | **Build Phase 2 (scope decided).** Register the `apple_reminders` collector in `index_ops.py` + storage (table keyed on `reminder_id`, `is_completed` index), apply the configurable default-list filter, reconcile disappearances, integration tests. Fold in the two perf wins (active-store-only snapshot; mtime-skip). |
 
 ## Table of Contents
 
@@ -120,8 +120,18 @@ Minimum required fields:
 - Never open the live store. File-copy the triplet (`.sqlite` + `-wal` + `-shm`) into
   `temp/apple-reminders/`, then open the **copy** with `mode=ro`. `PRAGMA quick_check` = `ok` on every
   copy. Whole-snapshot wall-clock ~0.29s; full discover→snapshot→extract ~0.18–0.29s.
-- **Perf note for Phase 2:** the active store is ~209 MB and is copied in full each run. Fine for a spike;
-  consider snapshot reuse / `VACUUM INTO` / incremental strategy if sync frequency rises.
+- **Perf note for Phase 2 (measured 2026-06-26):** one sync currently copies **~219 MB** — the code globs
+  *all four* account stores' triplets (3 are empty, ~9 MB) plus the 209 MB active store. The 209 MB is
+  **not reminder content and not fragmentation** (free space is only 287 KB, so `VACUUM` won't help). By
+  on-disk size (`dbstat`): `ACHANGE` + its txn index = **111 MB / 53%** (Core Data persistent-history
+  change tracking), `ZREMCDOBJECT` = **52 MB / 25%** (CloudKit object state), `ZREMCDREMINDER` = **37 MB /
+  18%** — and even that is mostly sync metadata (`ZCKSERVERRECORDDATA` 18.9 MB + `ZRESOLUTIONTOKENMAP_V3`
+  10 MB); the real title rich-text (`ZTITLEDOCUMENT`) is ~1.2 MB. **So ~85% of the copy is CloudKit/Core-Data
+  sync bookkeeping the extractor never reads.** The copy is fast (~0.2s sequential SSD read); the cost is
+  disk churn (~5 GB/day at hourly sync). Cheap optimizations: (1) snapshot only the **active** store, not
+  all four; (2) **skip snapshot+extract when the active store's mtime is unchanged** since last sync.
+  Copying only the read columns would need a live read-handle, which breaks the no-live-handle invariant —
+  so full file-copy stays, and ~209 MB is the price of doing it safely.
 
 ### Schema generation
 
@@ -212,10 +222,25 @@ Objective: ship a deterministic local extractor that remains robust across schem
 
 Objective: integrate Apple Reminders as a first-class source via orchestrator workflow.
 
+### Ingest scope (decided 2026-06-26)
+
+- **Scope = the default list only**, targeted **by name** (`"Reminders"`), exposed as config —
+  the default-list preference is NOT stored in this SQLite, so it can't be auto-detected; only the
+  conventional name is available. Default name `"Reminders"`, overridable.
+- **Known tradeoff (accepted):** the default list is 8,147 rows but only **14 active**; the other 61
+  of 75 active reminders live in non-default lists (Cars, Crystal & Noel, Billing, …) and are
+  intentionally **not** ingested under this scope. Revisit by widening the list allowlist if those are
+  wanted later. (Per-list counts captured in [Verified Discovery](#verified-discovery-phase-0-and-1-findings).)
+- **Completed history:** store all rows from the in-scope list (history is cheap) but index
+  `is_completed` so Phase 3 can default to active-only and avoid a completed-history flood.
+- The extractor already returns all lists; list filtering is applied at the collector/storage boundary,
+  keeping `apple_reminders.py` a pure reader.
+
 ### Observable checklist
 
 - [ ] Register `apple_reminders` collector in `src/rebalance/ingest/index_ops.py`.
-- [ ] Create/ensure source table schema and upsert path for normalized contract.
+- [ ] Create/ensure source table schema (incl. `is_completed` index) and upsert path for normalized contract.
+- [ ] Apply the configurable list filter (default `"Reminders"`) at the storage boundary.
 - [ ] Wire source into index/status freshness reporting.
 - [ ] Add integration tests for first sync, unchanged sync, updated row, completed row, and deleted/hidden handling.
 - [ ] Validate `refresh_index` route behavior with scope-specific dry-run and real run.
