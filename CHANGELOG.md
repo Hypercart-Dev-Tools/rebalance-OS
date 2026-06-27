@@ -15,6 +15,9 @@ Added a bottom note to the Focus 5 Float macOS card: it reads a hand-written `fo
 - Focus 5 Float now fetches the note on every refresh/poll and renders it pinned at the bottom of the Focus 5 / Dirty Five card (`Focus5NoteView` in `ContentView.swift`), with light markdown (headings, bullets, inline emphasis/links). When the vault has no `focus5.md`, it shows: *"To show a text file here, add a doc called focus5.md into your Obsidian vault."*
 - Wire contract documented in `macOS/Apps/Focus5Float/CONTRACT.md` (new "Bottom note" section) with the Swift `Focus5Note` codec.
 
+### Changed
+- Focus 5 Float layout polish: the note now renders as a content-hugging card at the end of the roster scroll (was a greedy fixed-height footer that reserved ~280px even for a short note). Default panel size 360×640 → 380×560 with a 360-wide minimum so the 3-tab header + status light stop clipping; frame autosave bumped to `.v2` so a stale oversized saved frame resets once.
+
 ## [0.47.2] - 2026-06-25
 
 Registered a new Apple Reminders project and consolidated prior reference docs into one execution-ready working plan.

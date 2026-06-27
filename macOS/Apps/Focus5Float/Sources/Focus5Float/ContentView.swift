@@ -15,15 +15,18 @@ struct ContentView: View {
             header
             Divider().overlay(Theme.separator)
             content
-            // Bottom note from the operator's vault focus5.md. Roster/Dirty views
-            // only — Telemetry owns the whole pane. Hidden until the first fetch so
-            // an offline cold-start doesn't flash the "add a note" hint.
-            if model.viewMode != .telemetry && model.noteLoaded {
-                Divider().overlay(Theme.separator)
-                Focus5NoteView(exists: model.noteExists, content: model.noteContent)
-            }
         }
         .background(Theme.window)
+    }
+
+    /// The vault `focus5.md` note, rendered as the last card in the roster scroll
+    /// (Focus 5 / Dirty Five only). Content-hugging so it takes only the space it
+    /// needs; hidden until the first successful fetch so an offline cold-start
+    /// doesn't flash the "add a note" hint.
+    @ViewBuilder private var noteFooter: some View {
+        if model.viewMode != .telemetry && model.noteLoaded {
+            Focus5NoteView(exists: model.noteExists, content: model.noteContent)
+        }
     }
 
     // MARK: Header
@@ -159,9 +162,16 @@ struct ContentView: View {
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             case .loaded where model.roster.isEmpty:
-                emptyState(icon: "tray",
-                           title: model.isDirtyView ? "Nothing at risk" : "No active repos found",
-                           detail: "The server roster is empty. Build it server-side (open /focus-5 in the browser or run a Focus 5 sync), then Refresh here to re-pull.")
+                ScrollView {
+                    LazyVStack(spacing: Theme.Space.s) {
+                        emptyState(icon: "tray",
+                                   title: model.isDirtyView ? "Nothing at risk" : "No active repos found",
+                                   detail: "The server roster is empty. Build it server-side (open /focus-5 in the browser or run a Focus 5 sync), then Refresh here to re-pull.")
+                            .frame(minHeight: 160)
+                        noteFooter
+                    }
+                    .padding(Theme.Space.m)
+                }
             case .loaded:
                 ScrollView {
                     LazyVStack(spacing: Theme.Space.s) {
@@ -171,6 +181,7 @@ struct ContentView: View {
                         if !model.offRoster.isEmpty {
                             OffRosterFooter(warnings: model.offRoster)
                         }
+                        noteFooter
                     }
                     .padding(Theme.Space.m)
                 }
@@ -420,10 +431,11 @@ struct TelemetryRowView: View {
 // MARK: - Bottom note (vault focus5.md)
 
 /// Free-form note pulled from the operator's Obsidian vault (`focus5.md`), shown
-/// pinned at the bottom of the Focus 5 / Dirty Five card. Renders light markdown
-/// (headings, bullets, inline emphasis/links); falls back to a one-line hint when
-/// the vault has no such note. Bounded height with its own scroll so a long note
-/// never crowds out the roster above it.
+/// as the last card in the roster scroll (Focus 5 / Dirty Five). Renders light
+/// markdown (headings, bullets, inline emphasis/links); falls back to a one-line
+/// hint when the vault has no such note. Content-hugging — it takes only the
+/// vertical space its text needs and scrolls with the roster above it, so it
+/// never reserves a fixed slab of the panel.
 struct Focus5NoteView: View {
     let exists: Bool
     let content: String
@@ -433,26 +445,30 @@ struct Focus5NoteView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: Theme.Space.xs) {
-                if exists && hasText {
-                    let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-                    ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                        MarkdownLine(raw: line)
-                    }
-                } else {
-                    Text("To show a text file here, add a doc called focus5.md into your Obsidian vault.")
-                        .font(Theme.body)
-                        .foregroundStyle(Theme.text3)
-                        .multilineTextAlignment(.center)
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, Theme.Space.m)
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            Text("NOTE")
+                .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
+            if exists && hasText {
+                let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
+                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
+                    MarkdownLine(raw: line)
                 }
+            } else {
+                Text("To show a text file here, add a doc called focus5.md into your Obsidian vault.")
+                    .font(Theme.body)
+                    .foregroundStyle(Theme.text3)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, Theme.Space.s)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(Theme.Space.m)
         }
-        .frame(maxHeight: 280)
+        .padding(Theme.Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 1)
+        )
     }
 }
 
