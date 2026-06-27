@@ -4,7 +4,7 @@ doc_type: project-plan
 status: active
 owner: Noel Saw
 created: 2026-06-25
-updated: 2026-06-25
+updated: 2026-06-26
 goal: "Deliver a safe, read-only Apple Reminders source for rebalance with deterministic extraction of reminders, tags, sections, and parent-child structure, then expose it through existing index/query surfaces."
 priority: P2
 related:
@@ -33,6 +33,7 @@ related:
 - [Phase 2 - Collector Registration + Storage](#phase-2---collector-registration--storage)
 - [Phase 3 - Query Surface + Product Integration](#phase-3---query-surface--product-integration)
 - [Phase 4 - Hardening + Upgrade Safety](#phase-4---hardening--upgrade-safety)
+- [Phase 5 - Optional Write-Back Track](#phase-5---optional-write-back-track)
 - [Explicit Non-Goals](#explicit-non-goals)
 - [Risks and Mitigations](#risks-and-mitigations)
 
@@ -59,6 +60,7 @@ Unified decision:
 - Default path is **read-only SQLite ingest** from a snapshot.
 - EventKit stays optional and secondary for verification only; it is not the collector primary path.
 - No mutation of Apple's live DB under any phase.
+- If write-back is ever pursued, it is a **separate deferred track** with its own spike, safety gates, and runtime surface; it is not a prerequisite for the read-only collector.
 
 ## Target Architecture
 
@@ -264,10 +266,82 @@ Objective: ensure ongoing reliability through macOS updates and schema drift.
 - [ ] Hardening changes do not widen data collection scope.
 - [ ] Docs remain aligned with actual runtime behavior after final implementation.
 
+## Phase 5 - Optional Write-Back Track
+
+Objective: document the narrowest plausible path to Apple Reminders write-back without contaminating the current read-only ingest design.
+
+This phase is **explicitly deferred**. It does not change the current goal, sequence, or safety invariant of Phases 0-4. The intent is to preserve the findings from the adjacent Swift project and avoid re-research if product direction changes later.
+
+### Architecture decision for any future write path
+
+- **Do not** promote direct SQLite mutation to the default write surface.
+- Use **EventKit first** for plain reminder CRUD, recurrence, due dates, and list assignment.
+- Use **ReminderKit / private framework** only if section CRUD is a hard requirement.
+- Use **direct SQLite + token-map updates** only for the narrow gap EventKit/ReminderKit cannot cover reliably: section membership sync.
+- Keep the write surface **separate from `refresh_index()`**. Refresh is an ingest/orchestration path; write-back needs its own mutation contract, audit trail, confirmation flow, and failure handling.
+
+### What to borrow from `text-replacement-studio-macos`
+
+Useful patterns to reuse:
+
+- **Dry-run first, explicit apply second** (`plan` vs `--apply`) so the operator sees intended mutations before anything touches Apple-owned storage.
+- **Timestamped backups before live writes** so the failure path starts with a restorable checkpoint.
+- **Mock-target save harness** for dangerous paths: exercise the real writer against a throwaway Core Data-shaped DB and assert resulting state.
+- **Transaction discipline** around explicit write boundaries, preflight validation, and "fail before mutate" behavior.
+- **Thin Swift wrapper / bridge** around the writer surface so rebalance can keep the orchestration contract small and typed.
+
+Things **not** to borrow directly:
+
+- The other repo's **table-level row mutation logic** (`Z_PK` / `Z_ENT` / tombstone handling) is specific to Text Replacements and does not model `remindd`, CloudKit token maps, list-level counters, or section membership blobs.
+- The other repo's **merge / replace semantics** are a poor fit for reminders, where per-item mutation and sync-side effects matter more than whole-set replacement.
+- The other repo's **SQLite-as-primary-writer posture** is too risky here. For Reminders, SQLite should be the last-resort layer, not the first one.
+
+### Phase 5.0 - Technical Spike (write path)
+
+Objective: prove the smallest write path that survives real sync behavior before any product integration.
+
+#### Observable checklist
+
+- [ ] Implement a tiny **native helper spike** (Swift preferred) outside the collector path that can:
+      request Reminders permission, create one reminder via EventKit, update it, then delete it.
+- [ ] Verify the helper works from the **actual intended runtimes**: interactive shell first, then the agent-hosted process tree, then a launchd-like context if relevant.
+- [ ] Record the **stable identifier mapping** across layers: EventKit reminder id, `ZCKIDENTIFIER`, and any local PKs needed for follow-on section membership work.
+- [ ] Confirm write-after-read convergence: create/update/delete through EventKit, then re-read through the existing read-only snapshot extractor and verify the normalized row shape reflects the mutation.
+- [ ] If section support is required, add a **second micro-spike** limited to section CRUD via ReminderKit or equivalent private API surface.
+- [ ] If section membership is required, prove the exact SQLite sync sequence on a scratch list only:
+      membership blob write, checksum write, token-map bump, connection close, wait, sync trigger.
+- [ ] Capture timings, required permissions, failure modes, and rollback steps in this doc before any Phase 5.1 work starts.
+
+#### QA checklist
+
+- [ ] No spike path writes directly to the live SQLite store for ordinary CRUD that EventKit can perform.
+- [ ] Every destructive action has preview/logging and an obvious recovery step.
+- [ ] The spike is scoped to one disposable test list or clearly tagged test reminders, not the operator's general task corpus.
+- [ ] Live verification includes both **Reminders UI visibility** and **read-side extractor visibility**.
+
+### Phase 5.1 - Write Surface Design
+
+Objective: design a safe product-facing mutation path only after the spike proves the underlying primitives.
+
+#### Observable checklist
+
+- [ ] Define a dedicated write orchestrator (`create_reminder`, `update_reminder`, `complete_reminder`, `delete_reminder`, later `move_to_section`) rather than overloading ingest commands.
+- [ ] Define the write contract fields and the single writer for each mutation type.
+- [ ] Add structured audit logging for every mutation attempt, including timestamp, operation, target ids, dry-run/apply, and outcome.
+- [ ] Add explicit confirmation / dry-run support for destructive mutations and bulk operations.
+- [ ] Add integration tests with mock harness coverage for auth denial, validation failure, sync lag, and partial failure.
+
+#### QA checklist
+
+- [ ] The write path stays logically separate from the read-only collector and does not weaken Phases 0-4 safety guarantees.
+- [ ] EventKit remains the primary write layer for ordinary reminder CRUD.
+- [ ] Private-framework and direct-SQLite code paths are optional, feature-gated, and only used for capabilities unavailable in public APIs.
+- [ ] A failed write cannot silently leave rebalance's local table claiming success when the live store disagrees.
+
 ## Explicit Non-Goals
 
-- Writing back to Apple Reminders.
-- Forcing section/membership edits through direct SQLite writes.
+- Writing back to Apple Reminders as part of the **current core delivery path**.
+- Forcing section/membership edits through direct SQLite writes as the **default** implementation strategy.
 - Replacing Sleuth reminders.
 - Default semantic indexing of personal reminder history before source quality proves stable.
 
