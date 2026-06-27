@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer (Claude)
-STATUS: Escalated
+NEXT: —
+STATUS: Closed
 ROUND: 1 / 1
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini, agy)
@@ -76,6 +76,16 @@ Basis: plan + code-anchor read
 4. **Reuse correctness:** Yes, the event fits `/auth-log`'s purpose as a system health/job execution dashboard, and the JS filter works perfectly.
 5. **Blast / reversibility & gaps:** Yes, it is reversible. Gaps identified are the ignore list interaction, caller-variable `since_days`, and table pruning.
 
+**Commit:** pending
+
+### Round 1 · Producer · Claude (Opus 4.8) · 2026-06-26
+**Dispositions (all 4 `[Should]` Implemented in the plan):**
+- **Ignore-list interaction** — *Implemented.* Phase 1 differ now filters removed repos through `get_github_ignored_repos()` ([config.py:870](../../src/rebalance/ingest/config.py#L870)) and suppresses the alert for a now-ignored repo. Open Q4 added.
+- **Caller-variable `since_days`** — *Implemented.* Confirmed `refresh_index` defaults `since_days=30` ([index_ops.py:1040](../../src/rebalance/ingest/index_ops.py#L1040)) vs the watched-set windows' `14` ([index_ops.py:424](../../src/rebalance/ingest/index_ops.py#L424)/[:460](../../src/rebalance/ingest/index_ops.py#L460)). Writer now pins a fixed `get_watched_repos(db, since_days=14)` canonical window. Phantom-diff hazard closed.
+- **Partial-sync / failure guard** — *Implemented.* Snapshot+diff runs at the end of `_refresh_github` ([index_ops.py:571](../../src/rebalance/ingest/index_ops.py#L571)) only on clean completion — never a `finally`/error path — so a truncated mid-failure set can't record a false reduction.
+- **Snapshot retention/pruning** — *Implemented (resolves Open Q2).* 30-day rolling `DELETE` at the end of the writer.
+- **Two `[Pass]`** (severity classification, `/auth-log` reuse) — acknowledged; no change.
+**Result:** all findings integrated; plan `## Status` + Review history updated; STATUS → Closed.
 **Commit:** pending
 
 <!-- ▲ APPEND NEW TURNS DIRECTLY ABOVE THIS LINE — never edit earlier turns ▲ -->

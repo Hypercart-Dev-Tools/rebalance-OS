@@ -28,7 +28,7 @@ rollout_rule: >
 
 | What was just completed | What's next |
 |---|---|
-| **Diagnosis done (2026-06-26).** `diagnose_repo` + `list_watched_repos` confirm `BinoidCBD/LTVera-Pandas` is currently `watched_and_fresh` — held by the active registry **and** both rolling windows (`activity` 14d, `pushed`), not ignored. Root cause of the *perceived* drop: the watched set is a **recomputed union with no persisted history**, so a repo held only by a rolling window vanishes with no trace when the window slides. Plan scaffolded against existing house patterns (focus5 snapshot table, `auth_log` event surface, `github-sync` piggyback). | **Phase 1** — additive snapshot table (migration `0009`) + pure `diff_watched_set` + single writer in the github sync path that emits a `watched_repos_reduced` event on a concerning reduction. |
+| **Plan QA-passed (agy relay r1, 2026-06-26).** Diagnosis: `BinoidCBD/LTVera-Pandas` is currently `watched_and_fresh` — held by the active registry **and** both rolling windows, not ignored. Root cause of the *perceived* drop: the watched set is a **recomputed union with no persisted history**, so a window-only-held repo vanishes with no trace. agy review = 2 `[Pass]` + 4 `[Should]`, **all four folded into Phase 1** (canonical `since_days=14` window, clean-sync guard, ignore-list suppression, 30-day pruning). Plan reuses focus5 snapshot table / `auth_log` surface / `github-sync` piggyback — no new patterns. | **Implement Phase 1** — additive snapshot table (migration `0009`) + pure `diff_watched_set` + the single `_refresh_github` writer emitting `watched_repos_reduced` to `/auth-log` on a concerning reduction. |
 
 ## Table of Contents
 
@@ -111,13 +111,35 @@ to the computed watch set.
 - [ ] **Pure `diff_watched_set(prev: set, curr: set) -> {added, removed}`** in
       `index_ops.py` (or a small `watchlist_guard.py` sibling) — no I/O, fully unit-testable.
 - [ ] **Single writer** hooked into the github sync path where `get_watched_repos()` already
-      runs (the `_github_adapter` / `refresh_index(scope=["github"])` flow,
-      [index_ops.py:1035](../../src/rebalance/ingest/index_ops.py#L1035)). It: (a) reads the
+      runs (`_refresh_github`, [index_ops.py:571](../../src/rebalance/ingest/index_ops.py#L571),
+      reached via `_github_adapter` / `refresh_index(scope=["github"])`). It: (a) reads the
       latest prior snapshot, (b) writes the new snapshot, (c) diffs, (d) classifies removals.
-- [ ] **Classify removals** so the alarm is signal, not noise: a removed repo that was last
-      held by `project`/`external` (durable monitoring *intent*) → **concerning**; one held
-      only by `activity`/`pushed` (rolling window) → **expected churn** (info, not warn). See
-      Open Question 1 for the default.
+- [ ] **Pin a canonical window (agy r1 [Should]).** `refresh_index` defaults `since_days=30`
+      ([index_ops.py:1040](../../src/rebalance/ingest/index_ops.py#L1040)) but the watched-set
+      windows default to `14` ([index_ops.py:424](../../src/rebalance/ingest/index_ops.py#L424),
+      [:460](../../src/rebalance/ingest/index_ops.py#L460)). If the snapshot reflected the
+      *caller's* `since_days`, a 30-day sync vs a 14-day sync would diff against each other and
+      manufacture **phantom** reductions/additions. The writer therefore calls
+      `get_watched_repos(db, since_days=14)` with a **fixed canonical window**, independent of
+      the triggering sync's window.
+- [ ] **Run only on a clean sync (agy r1 [Should]).** A github sync that raises partway could
+      leave a *truncated* set and record a **false** reduction. The snapshot+diff runs at the
+      **end of `_refresh_github`** ([index_ops.py:571](../../src/rebalance/ingest/index_ops.py#L571)),
+      only when the adapter completed without raising — never in a `finally`/error path.
+- [ ] **Classify removals** so the alarm is signal, not noise: a removed repo whose last-known
+      bucket set includes `project`/`external` (durable monitoring *intent*) → **concerning**
+      (`warn`); one held only by `activity`/`pushed` (rolling window) → **expected churn**
+      (`info`). Multi-bucket membership resolves by "warn if `project` **or** `external` is in
+      the last-known bucket set" (agy r1 confirmed this resolves the ambiguity). See Open
+      Question 1.
+- [ ] **Exclude intentional ignores (agy r1 [Should]).** A repo the operator just added to
+      `github_ignored_repos` ([config.py:870](../../src/rebalance/ingest/config.py#L870)) leaves
+      the watched set and would look like a reduction. The differ filters removed repos through
+      `get_github_ignored_repos()` and **suppresses** the alert for any now-ignored repo (an
+      intentional opt-out is not a coverage loss).
+- [ ] **Prune the snapshot table (agy r1 [Should] — resolves Open Q2).** At the end of the
+      writer, `DELETE FROM watched_repos_snapshot WHERE snapshot_ts < <now − 30d>` so the table
+      keeps ~30 days of diffable history without unbounded growth.
 - [ ] **Emit via the existing surface** — on a concerning reduction call
       `auth_log.log_event("github", "watched_repos_reduced", {...})` with per-repo
       `{repo, last_bucket, ...}`; add a typed helper
@@ -178,11 +200,14 @@ to the computed watch set.
    removed repo's last-known bucket was `project` or `external` (durable monitoring intent);
    record `activity`/`pushed`-only churn at `info`. Alternative: warn on all, let the operator
    filter. _Recommend the default; revisit if the info line proves noisy._
-2. **Snapshot retention.** Keep every snapshot (full history, cheap — tens of repos/hour) or
-   prune to the latest N? **Recommended:** keep latest + a rolling window (e.g. 30 days) so a
-   drop is diagnosable for a few weeks without unbounded growth. Decide in Phase 1.
+2. ~~**Snapshot retention.**~~ **RESOLVED (agy r1):** prune to a rolling 30-day window
+   (`DELETE ... WHERE snapshot_ts < now−30d`) at the end of the writer — folded into Phase 1.
 3. **Should a re-add also surface?** A repo that drops then returns is arguably worth an
    `info` "recovered" line. Default OFF for v1 (reductions are the ask); trivial to add later.
+4. ~~**Ignore-list & caller-variable window.**~~ **RESOLVED (agy r1):** the differ filters
+   removed repos through `get_github_ignored_repos()` (intentional opt-out ≠ reduction), and
+   the writer pins a fixed `since_days=14` canonical window so a 30-day sync can't manufacture
+   phantom diffs — both folded into Phase 1.
 
 ## Review history
 
@@ -192,3 +217,11 @@ to the computed watch set.
   of the watched set ⇒ reductions are silent and unrecoverable. Plan scaffolded against the
   focus5 snapshot table, the `auth_log`/`auth-log` event surface, and the `github-sync`
   piggyback — no new patterns invented.
+- **agy relay r1 (2026-06-26) — PLAN QA, Verdict: FAIL → all findings integrated.** Thread:
+  [relay-system/2026-06-26/watchlist-guard-qa.md](../../relay-system/2026-06-26/watchlist-guard-qa.md).
+  Two `[Pass]` (severity classification sound; `/auth-log` reuse correct, no extra render code).
+  Four `[Should]`, all folded into Phase 1: (1) **caller-variable `since_days`** — pin a fixed
+  `since_days=14` window so a 30-day sync can't manufacture phantom diffs; (2) **partial-sync
+  guard** — run snapshot+diff only on a clean `_refresh_github` completion; (3) **ignore-list
+  interaction** — suppress alerts for repos just added to `github_ignored_repos`; (4) **table
+  pruning** — 30-day retention `DELETE` (resolved Open Q2).
