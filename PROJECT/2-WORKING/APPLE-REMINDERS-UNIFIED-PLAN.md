@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 0–4 complete (2026-06-27), incl. the P3 product surface.** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
+| **Phase 5.0 write spike CONVERGENCE PROVEN (2026-06-27).** Full EventKit create→read→update→converge→delete→absence loop passes from a signed LaunchServices app bundle with Reminders + Full Disk Access grants; identifier mapping is 1:1. Build harness `scripts/build_apple_reminders_write_spike_app.sh` + self-locating bundle landed. → **Now: Phase 5.1 write-surface design.** _Earlier:_ **Phases 0–4 complete (2026-06-27), incl. the P3 product surface.** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
 
 ## Table of Contents
 
@@ -366,19 +366,19 @@ Objective: prove the smallest write path that survives real sync behavior before
       _Implemented as `scripts/apple_reminders_write_spike.swift` plus app-bundle helper `scripts/apple_reminders_write_spike_app.swift` and plist companions._
 - [x] Verify the helper works from the **actual intended runtimes**: interactive shell first, then the agent-hosted process tree, then a launchd-like context if relevant.
       _Verified the opposite is also important: launch mode changes TCC behavior materially. Direct CLI / agent-hosted launches fail; LaunchServices app-bundle launch can prompt + grant._
-- [ ] Record the **stable identifier mapping** across layers: EventKit reminder id, `ZCKIDENTIFIER`, and any local PKs needed for follow-on section membership work.
-- [ ] Confirm write-after-read convergence: create/update/delete through EventKit, then re-read through the existing read-only snapshot extractor and verify the normalized row shape reflects the mutation.
-- [ ] If section support is required, add a **second micro-spike** limited to section CRUD via ReminderKit or equivalent private API surface.
+- [x] Record the **stable identifier mapping** across layers: EventKit reminder id, `ZCKIDENTIFIER`, and any local PKs needed for follow-on section membership work. _(**1:1, no translation needed.** EventKit `calendarItemIdentifier` == `calendarItemExternalIdentifier` == the extractor's `reminder_id` (`ZCKIDENTIFIER`); all three were `2CC71CE6-…` for the same reminder. Local `Z_PK` is only needed for parent-child / section blobs, not for the EventKit CRUD path.)_
+- [x] Confirm write-after-read convergence: create/update/delete through EventKit, then re-read through the existing read-only snapshot extractor and verify the normalized row shape reflects the mutation. _(**Proven live 2026-06-27.** Full loop passed: create → extractor-sees-it → update (title+notes+completed) → extractor-converges → delete → extractor-absence, all 8 probes green, ~1.3s end-to-end.)_
+- [ ] If section support is required, add a **second micro-spike** limited to section CRUD via ReminderKit or equivalent private API surface. _(Still deferred — only if sections become a hard requirement.)_
 - [ ] If section membership is required, prove the exact SQLite sync sequence on a scratch list only:
       membership blob write, checksum write, token-map bump, connection close, wait, sync trigger.
 - [x] Capture timings, required permissions, failure modes, and rollback steps in this doc before any Phase 5.1 work starts.
 
 #### QA checklist
 
-- [ ] No spike path writes directly to the live SQLite store for ordinary CRUD that EventKit can perform.
-- [ ] Every destructive action has preview/logging and an obvious recovery step.
-- [ ] The spike is scoped to one disposable test list or clearly tagged test reminders, not the operator's general task corpus.
-- [ ] Live verification includes both **Reminders UI visibility** and **read-side extractor visibility**.
+- [x] No spike path writes directly to the live SQLite store for ordinary CRUD that EventKit can perform. _(All create/update/delete go through EventKit; SQLite is read-only via the extractor.)_
+- [x] Every destructive action has preview/logging and an obvious recovery step. _(Each phase is a logged `probe`; on any failure the spike runs `cleanupLeftover()` to remove the test reminder — verified live on the FDA-missing run, which left no orphan.)_
+- [x] The spike is scoped to one disposable test list or clearly tagged test reminders, not the operator's general task corpus. _(Single reminder, unique `RBOS-WRITE-SPIKE-APP-<ts>` prefix, created and deleted within the run.)_
+- [~] Live verification includes both **Reminders UI visibility** and **read-side extractor visibility**. _(Read-side extractor visibility proven across create/update/delete. UI visibility not separately asserted — the reminder is created and deleted within ~1.3s, so it is not durably visible in the app by design; deferred as low-value given extractor convergence is proven.)_
 
 #### Phase 5.0 findings (2026-06-26 to 2026-06-27)
 
@@ -459,9 +459,137 @@ Picking the spike back up on `feat/apple-reminders-write`:
   tree. Run: `scripts/build_apple_reminders_write_spike_app.sh --launch`, grant both, then inspect
   `temp/apple-reminders/PHASE5-WRITE-SPIKE-APP.json` (live progress in the sibling `.status.txt`).
 
+#### Phase 5.0 CONVERGENCE PROVEN (2026-06-27 14:51Z)
+
+**Phase 5.0 is functionally complete** for the EventKit CRUD path. After granting the app bundle both
+EventKit Reminders access (prompt) and Full Disk Access (manual, no prompt — the FDA list never prompts;
+this tripped the first run), the app-bundle spike passed the full loop end-to-end:
+
+| Probe | Result |
+|---|---|
+| `permission` | granted, status `authorized` |
+| `create_eventkit` | reminder created in list `Reminders` (`2CC71CE6-…`) |
+| `create_extractor_visibility` | extractor saw it |
+| `update_eventkit` | title + notes + completion written |
+| `update_extractor_visibility` | extractor reflected updated title + completed state |
+| `delete_eventkit` | deleted |
+| `delete_extractor_visibility` | extractor no longer returns it |
+
+Total wall-clock ~1.3s. **Identifier mapping is 1:1** (EventKit `calendarItemIdentifier` ==
+`calendarItemExternalIdentifier` == extractor `reminder_id`/`ZCKIDENTIFIER`).
+
+**Proven runtime contract for any write-back surface:** writes must execute from a **signed,
+LaunchServices-launched app bundle** holding **two TCC grants — Reminders (EventKit) AND Full Disk
+Access** (the latter only because read-back convergence goes through the SQLite extractor; a pure-EventKit
+read-back would not need FDA). No CLI/agent-hosted runtime can satisfy this. EventKit alone covers
+create/update/complete/delete + list assignment; SQLite/private frameworks remain unneeded until sections
+are required. Artifact: `temp/apple-reminders/PHASE5-WRITE-SPIKE-APP.json`.
+
 ### Phase 5.1 - Write Surface Design
 
 Objective: design a safe product-facing mutation path only after the spike proves the underlying primitives.
+
+#### Proposed design (2026-06-27, grounded in the Phase 5.0 runtime contract)
+
+**The binding constraint shapes the whole design.** Phase 5.0 proved that EventKit writes only succeed
+from a **signed, LaunchServices-launched app bundle** — never from the rebalance Python process (it lives
+under the agent/VS Code responsible tree, where TCC suppresses the grant). So the write surface is **not**
+in-process Python calling EventKit. It is a Python **orchestrator that delegates to an out-of-process
+signed helper** over a typed request/response contract. The proven spike is already a degenerate,
+single-op instance of exactly this shape.
+
+**Topology (two processes, one writer):**
+
+```
+rebalance core (Python, agent/CLI-hosted)        signed helper app bundle (the ONLY writer)
+  apple_reminders_write.py                          AppleRemindersHelper.app  (LaunchServices-launched)
+    1. build request (plan|apply) ─ write ─▶ temp/apple-reminders/write-io/<request_id>.req.json
+    2. `open` the helper bundle ───────────▶ helper reads req, dispatches ops via EventKit
+    3. wait for response ◀── write ─────────── helper writes <request_id>.resp.json, exits
+    4. on apply: re-run sync_apple_reminders() to reconcile local table from Apple (source of truth)
+    5. append request+response to write-audit log
+```
+
+- **Why `open`, not exec:** invoking the bundle's binary directly would re-parent it under the agent tree
+  and re-trigger TCC suppression. Launch must go through LaunchServices (`open`), which makes launchd the
+  responsible process and lets the bundle's durable grant apply.
+- **File-based IPC** (request/response JSON in `temp/apple-reminders/write-io/`) keeps the contract
+  language-agnostic and auditable; `open --args` passes the request path, the baked `RBOSRepoRoot`
+  Info.plist key locates the I/O dir.
+
+**Helper TCC footprint — recommend dropping the FDA requirement.** The spike needed *two* grants only
+because it confirmed convergence through the SQLite extractor (FDA territory). For the product helper,
+**confirm each write via EventKit self-read-back** (`calendarItem(withIdentifier:)`) instead — the helper
+already holds the Reminders grant, so it needs **no FDA**. Local-table convergence is a *separate*
+concern handled by re-running the existing read collector (`sync_apple_reminders`) on whichever host
+already has FDA. Net: the **product write helper needs only the Reminders grant**; FDA stays confined to
+the read path where it already lives.
+
+**Identifier contract (no mapping layer):** because EventKit `calendarItemIdentifier` ==
+`calendarItemExternalIdentifier` == `ZCKIDENTIFIER` == the local `reminder_id`, Python addresses
+reminders by the same `reminder_id` it already stores. For `create` (id doesn't exist yet), the caller
+supplies a `client_token`; the helper echoes it back alongside the new `reminder_id`.
+
+**Operations & single writer:** `create`, `update`, `complete`, `delete` (Phase 5.1); `move_to_section`
+deferred to a later phase (needs ReminderKit/SQLite, see Phase 5.0 non-goals). The helper is the **one
+writer** to Apple Reminders; Python never touches EventKit or the live SQLite. Python's local
+`apple_reminders` table is **never written by the write path** — it is reconciled only by
+`sync_apple_reminders` after an apply, so the local table can never claim a success the live store
+disagrees with (closes the key QA item).
+
+**Request / response contract (schema_version 1):**
+
+```jsonc
+// request: <request_id>.req.json
+{ "schema_version": 1, "request_id": "<uuid>", "mode": "plan" | "apply",
+  "confirm_destructive": false,                 // required true for delete / bulk under apply
+  "operations": [
+    { "op": "create",   "client_token": "c1", "list_name": "Reminders",
+      "title": "...", "notes": "...", "due_at": "<iso8601|null>", "priority": 0 },
+    { "op": "update",   "reminder_id": "<uuid>", "fields": { "title": "...", "due_at": "..." } },
+    { "op": "complete", "reminder_id": "<uuid>" },
+    { "op": "delete",   "reminder_id": "<uuid>" } ] }
+
+// response: <request_id>.resp.json
+{ "schema_version": 1, "request_id": "<uuid>", "mode": "...",
+  "host_runtime": "com.rebalanceos.apple-reminders-helper", "authorization_status": "authorized",
+  "started_at": "...", "finished_at": "...",
+  "results": [ { "op": "create", "client_token": "c1", "status": "ok|skipped|error",
+                 "reminder_id": "<uuid|null>", "readback_ok": true, "detail": "..." } ] }
+```
+
+**Dry-run / apply:** `mode:"plan"` resolves and validates every target (reminder exists, list exists,
+fields well-typed) and returns the intended diff **without mutating**. `mode:"apply"` executes. `delete`
+and bulk mutations require `mode:"apply"` **and** `confirm_destructive:true`, else they are returned as
+`skipped` with a reason.
+
+**Backups / recovery:** EventKit `delete` is not cheaply reversible (re-create yields a *new* id), so
+before an apply that contains `delete`/`update`, the helper captures the full current field-set of each
+affected reminder into a timestamped restore file (`temp/apple-reminders/write-backups/<request_id>.json`).
+Recovery is re-create-from-backup (new id), documented as such — not a true in-place undo.
+
+**Audit log:** every request+response pair is appended to an audit trail
+(`apple_reminders_write_audit` table, or `temp/apple-reminders/write-audit/<ts>-<request_id>.json`):
+timestamp, op, target ids, mode, confirm flag, per-op outcome, readback result.
+
+**Failure semantics:** auth denial → structured error, zero mutation. Validation failures are caught in
+the `plan` phase before any apply. Within an `apply`, EventKit has no cross-item transaction, so ops are
+per-item with `continue-on-error`; the response reports each, and Python's post-apply `sync_apple_reminders`
+makes the local table match whatever Apple actually committed (partial-failure-safe). Sync lag is
+tolerated by polling the reconcile until convergence or a timeout, with the convergence status surfaced.
+
+**Module placement:** new `src/rebalance/ingest/apple_reminders_write.py` (orchestrator), separate from
+`index_ops.py` / `refresh_index()` and exposed via its own CLI/MCP verb — never the ingest path. The
+helper evolves from `apple_reminders_write_spike_app.swift` into `apple_reminders_helper_app.swift`
+(generalize the proven create/update/delete primitives behind the op dispatcher; reuse the same build
+harness). One-time operator setup: build + sign the helper, grant it Reminders once.
+
+**Open questions for review (good `/consult` targets):**
+1. On-demand `open`-per-request (simple, ~launch latency) vs. a persistent signed **LaunchAgent** helper
+   on a watched dir/socket (no per-call launch, more infra). Recommend starting on-demand.
+2. Audit sink: dedicated SQLite table vs. append-only JSON files. (Leaning table, for queryability.)
+3. Whether `create`/`update` should be allowed into **non-default lists** at all in v1, or restricted to
+   the configured ingest list to keep the write scope aligned with the read scope.
 
 #### Observable checklist
 
