@@ -60,6 +60,7 @@ from rebalance.web import (  # noqa: E402
     Focus5HideRequest,
     auth_log_page as _auth_log_page,
     auth_log_raw as _auth_log_raw,
+    focus5_note as _focus5_note,
     focus5_page as _focus5_page,
     focus5_set_hidden as _focus5_set_hidden,
     sleuth_graph_page as _sleuth_graph_page,
@@ -82,6 +83,14 @@ def focus5(refresh: bool = False, view: str = "focus5"):
     # Forward ``view`` so the Focus 5 / Dirty Five toggle works on this surface too
     # (shared renderer in rebalance.web — keeps both /focus-5 surfaces identical).
     return _focus5_page(refresh=refresh, view=view)
+
+
+@app.get("/focus-5/note")
+def focus5_note():
+    # Mirror the read-only focus5.md note here too: this is the always-running
+    # server, so the Focus 5 Float client gets the note regardless of which local
+    # server it points at (keeps both /focus-5 surfaces identical — see web.py).
+    return _focus5_note()
 
 
 @app.post("/api/focus5/hide")

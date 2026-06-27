@@ -67,7 +67,9 @@ struct Focus5Client {
         let (data, response) = try await session.data(for: req)
         guard let http = response as? HTTPURLResponse,
               (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
+            // Note is optional: a non-2xx (e.g. a server that doesn't expose the
+            // route) means "no note", not a failure — never break the card over it.
+            return Focus5Note(exists: false, content: "", path: nil)
         }
         return try Focus5JSON.decoder().decode(Focus5Note.self, from: data)
     }
