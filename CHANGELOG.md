@@ -6,6 +6,14 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.49.0] - 2026-06-27
+
+Slimmed the Focus 5 Float panel back down after the Telemetry tab + status counter had roughly doubled its minimum width and clipped the header left/right.
+
+### Changed
+- Focus 5 Float header is now two purpose-built rows: row 1 is a compact emoji-only tab switcher (🎯 / 🧹 / 📊, with the tab names preserved as help tooltips + accessibility labels); the health light (dirty count + tinted dot) drops to row 2, the status line, alongside the repo count / freshness badges. This lets the panel shrink without the segmented tabs or status counter clipping (`ContentView.swift`).
+- Default panel size 380×560 → 200×560 and the minimum width floor 360 → 180 so the panel can sit as a slim floating strip; frame autosave bumped to `.v3` so a stale wide frame from the 360/380 layout resets once (`Focus5FloatApp.swift`). App bundle version → 0.49.0.
+
 ## [0.48.0] - 2026-06-26
 
 Added a bottom note to the Focus 5 Float macOS card: it reads a hand-written `focus5.md` from the operator's Obsidian vault and renders it under the roster, with a hint when no note exists.
