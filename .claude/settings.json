@@ -103,7 +103,12 @@
       "Bash(rtk du *)",
       "Bash(rtk ls *)",
       "Bash(sed -n '1,80p' relay-system/2026-06-24/gh81-rank-vector.md)",
-      "Bash(awk '/NEXT TURN APPENDS BELOW/{f=1;next} f' relay-system/2026-06-24/gh81-code-qa.md)"
+      "Bash(awk '/NEXT TURN APPENDS BELOW/{f=1;next} f' relay-system/2026-06-24/gh81-code-qa.md)",
+      "mcp__rebalance__diagnose_repo",
+      "mcp__rebalance__list_watched_repos",
+      "Bash(utils/pdda.sh status-table *)",
+      "Bash(utils/pdda.sh roadmap-coverage *)",
+      "Bash(utils/pdda.sh frontmatter *)"
     ]
   }
 }
