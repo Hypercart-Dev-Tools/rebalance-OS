@@ -18,7 +18,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| Plan written → /ponytail-scoped → SWE-rubric reviewed → **/ponytail-trimmed to a v1 (2026-06-27)**: cut the JSONL audit log, the 4-phase scaffold, and (for v1) the restart endpoint + Focus 5 wiring — all deferred. **v1 = make the existing Refresh button populate the reminders column via the signed helper (EventKit, no FDA).** Kept the SWE correctness wins that are free for v1 (fast-data-only refresh, helper poll stop-condition, single-write-path). | **Build v1** — 3 edits: helper `list-active` op → `/api/refresh` reads it → column renders it. |
+| Plan written → /ponytail-scoped → SWE-rubric reviewed → **/ponytail-trimmed to a v1 (2026-06-27)**: cut the JSONL audit log, the 4-phase scaffold, and (for v1) the restart endpoint + Focus 5 wiring — all deferred. **v1 = make the existing Refresh button populate the reminders column via the signed helper (EventKit, no FDA).** Kept the SWE correctness wins that are free for v1 (fast-data-only refresh, helper poll stop-condition, single-write-path). **Codex consult QA (2026-06-27)** confirmed the cut + boundary; folded its 2 findings: **last-good-snapshot-wins** (a failed refresh must never empty the column) and a **~5s** refresh timeout (not 30s) on the synchronous handler. (agy lane unavailable — auth.) | **Build v1** — 3 edits: helper `list-active` op → `/api/refresh` reads it (atomic, last-good-wins) → column renders it. |
 
 ## Problem
 
@@ -31,7 +31,7 @@ The launchd `pulse-server` has **no Full Disk Access**, so it can't run the SQLi
 Make the **existing** Refresh button populate the column, FDA-free, via the helper. Three edits, no new files, no DB writes, no log files.
 
 1. **Helper** (`apple_reminders_helper_app.swift`): add a `list-active` op — list incomplete reminders in the configured list via EventKit, write `[{reminder_id, title, due_at}]` to the response JSON.
-2. **`/api/refresh`** (`pulse_server.py`): before the existing render, `open` the helper (reuse the orchestrator's invoker) with a `list-active` request, read the response, write it to `temp/apple-reminders/active.json`. Catch failure → status in the response, never fatal. Does **not** run the heavy `refresh_index()` sources inline (they'd block the single-thread server; they stay scheduled).
+2. **`/api/refresh`** (`pulse_server.py`): before the existing render, `open` the helper (reuse the orchestrator's invoker, **short timeout ~5s** for this synchronous handler) with a `list-active` request. **Last-good-snapshot-wins:** write `temp/apple-reminders/active.json` **only** after a fully-parsed successful response (atomic tmp→rename); on timeout/malformed/failure, **leave the prior `active.json` untouched** and return the error in the status — a failed refresh must never empty the column. Does **not** run the heavy `refresh_index()` sources inline (they'd block the single-thread server; they stay scheduled).
 3. **Column** (`pulse_web.py`): render the column from `active.json`.
 
 ### Observable checklist
@@ -40,10 +40,10 @@ Make the **existing** Refresh button populate the column, FDA-free, via the help
 - [ ] Column renders active reminders from that JSON.
 
 ### QA gate
-- [ ] Clicking Refresh repopulates the column in **<2s** on a machine where the helper holds only the Reminders grant (no FDA); no UI freeze.
+- [ ] Normal refresh repopulates the column in **<2s** on a machine where the helper holds only the Reminders grant (no FDA); a helper failure returns a typed error within the bounded **~5s** timeout (no longer hang, no full-page freeze).
+- [ ] **Last-good-snapshot-wins:** a failed/timed-out/malformed helper response leaves the prior `active.json` intact — a failed refresh never empties the column. (Self-check: feed a failing invoker, assert `active.json` unchanged.)
 - [ ] No FDA dependency and no inline `refresh_index` heavy sync in the render path.
-- [ ] **Single write path:** the column path writes only the ephemeral `active.json` — it is **not** a second writer to the `apple_reminders` table (sole writer stays `upsert_apple_reminders`).
-- [ ] Helper `open`+poll has a fixed timeout (default 30s) → typed error, never an unbounded wait.
+- [ ] **Single write path:** the column path writes only the ephemeral `active.json` (atomic tmp→rename) — it is **not** a second writer to the `apple_reminders` table (sole writer stays `upsert_apple_reminders`).
 - [ ] `pytest tests/` green; one self-check parses a fixture `list-active` payload.
 
 ## Deferred follow-ups (not v1 — build when the trigger fires)
