@@ -19,7 +19,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 5.1 write surface SHIPPED + live-verified (2026-06-27).** Python orchestrator (`apple_reminders_write.py`) + signed helper (`apple_reminders_helper_app.swift`) + `rebalance apple-reminders` CLI (create/update/complete/delete/audit, dry-run by default) + 57 tests green. Full create→complete→delete cycle proven LIVE through the helper (readback ok). All consult-hardening landed (request_id idempotency, write serialization, helper-identity verify, three-state audit, atomic IPC). _Earlier:_ **Phase 5.0 convergence PROVEN**; **Phases 0–4 complete** incl. P3 surface. → **Optional next: enable post-apply reconcile on an FDA host; MCP write tool deferred by design (agent-mutation risk).** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
+| **Phase 5.1 write surface SHIPPED + live-verified (2026-06-27).** Python orchestrator (`apple_reminders_write.py`) + signed helper (`apple_reminders_helper_app.swift`) + `rebalance apple-reminders` CLI (create/update/complete/delete/audit, dry-run by default) + 57 tests green. Full create→complete→delete cycle proven LIVE through the helper (readback ok). All consult-hardening landed (request_id idempotency, write serialization, helper-identity verify, three-state audit, atomic IPC). _Earlier:_ **Phase 5.0 convergence PROVEN**; **Phases 0–4 complete** incl. P3 surface. → **Optional next (documented follow-ups): (1) freshness gap — keep the read-only pulse column populated via a scoped sync from an FDA host (Phase 4 runbook); (2) Phase 6 — dashboard write-back ("complete" checkbox), proposed/not started; enable post-apply reconcile on an FDA host; MCP write tool deferred by design (agent-mutation risk).** P0–P2: FDA access, deterministic discovery, WAL-safe snapshot, dynamic REMCD mapper, extraction operator-verified; `apple_reminders` collector (opt-in) + storage (reconcile-don't-delete) verified live via `refresh_index` (8147, idempotent). P3: `list_apple_reminders` read accessor (safe-by-default) **+ read-only Apple Reminders column on the pulse "Today" dashboard** (live-verified on :8767). P4: schema-drift health (`doctor` + `index_status`), schema fingerprint, FDA/drift runbook. **31 module tests + 60 in the surface sweep pass.** | **Ship / review.** Plan is functionally complete. Deferred by choice: cross-version validation (needs 2nd macOS), snapshot perf wins (active-store-only, mtime-skip), notes/sections full decode. |
 
 ## Table of Contents
 
@@ -34,6 +34,7 @@ related:
 - [Phase 3 - Query Surface + Product Integration](#phase-3---query-surface--product-integration)
 - [Phase 4 - Hardening + Upgrade Safety](#phase-4---hardening--upgrade-safety)
 - [Phase 5 - Optional Write-Back Track](#phase-5---optional-write-back-track)
+- [Phase 6 - Optional Dashboard Write-Back (proposed)](#phase-6---optional-dashboard-write-back-proposed)
 - [Explicit Non-Goals](#explicit-non-goals)
 - [Risks and Mitigations](#risks-and-mitigations)
 
@@ -324,6 +325,24 @@ Objective: ensure ongoing reliability through macOS updates and schema drift.
 
 **Symptom: `doctor` shows `apple reminders: OK — not enabled (opt-in)`.** Expected on machines that never
 synced — `apple_reminders` is `included_in_all=False`. Enable by running `refresh_index(scope=["apple_reminders"])`.
+
+**Symptom: the pulse "Today" dashboard Apple Reminders column shows "No active reminders" even though you
+have active ones.** This is the **freshness gap** (documented 2026-06-27): the column reads the
+`apple_reminders` table in the canonical DB (`~/Library/Application Support/rebalance-os/rebalance.db`),
+but because the source is opt-in (`included_in_all=False`), the **default daily launchd refresh never
+syncs it** — and after any DB rebuild the table is empty until a scoped sync runs.
+1. Re-populate it with a **scoped sync from an FDA-holding host** (your interactive VS Code terminal — NOT
+   a headless/launchd context, which lacks Full Disk Access):
+   ```bash
+   cd <repo> && .venv/bin/python -c "from pathlib import Path; from rebalance.ingest.apple_reminders import sync_apple_reminders; print(sync_apple_reminders(Path.home()/'Library/Application Support/rebalance-os/rebalance.db').as_dict())"
+   ```
+   Then hit **Refresh** on the dashboard.
+2. **Why not just schedule it:** the read path reads the Reminders SQLite store directly (FDA territory),
+   and launchd/headless runtimes can't hold that grant (same constraint as Phase 0). So continuous
+   freshness needs a periodic sync from an FDA host, not a launchd job. **Supported path = run the scoped
+   sync above whenever the column looks stale** (or after any reindex). A first-class "keep the column
+   fresh automatically" mechanism is **not yet built** — it would need either an FDA-holding background
+   agent or an EventKit-backed read for the column. Tracked as a follow-up; see Phase 6 below.
 
 ## Phase 5 - Optional Write-Back Track
 
@@ -641,6 +660,55 @@ delete of a disposable reminder, all `ok` with EventKit `readback_ok=true`, via 
 the live CLI; helper needed only the Reminders grant (no FDA). **Remaining (optional):** run the
 post-apply reconcile on an FDA-holding host so the local table refreshes automatically after a write
 (currently best-effort; skipped on the agent tree which lacks FDA).
+
+## Phase 6 - Optional Dashboard Write-Back (proposed)
+
+> **Status: proposed / not started (added 2026-06-27).** New scope beyond Phases 0–5. Phase 3
+> deliberately shipped the pulse column **read-only** ("no checkboxes"); this phase would reverse that
+> stance for a narrow, safe set of actions. Do not start without an explicit go — it is a product-surface
+> change, not a continuation of the read collector.
+
+Objective: make the read-only pulse "Today" Apple Reminders column **actionable** by routing user actions
+through the Phase 5.1 write orchestrator — without weakening any Phase 0–5 safety guarantee.
+
+### Why it's now feasible
+
+The Phase 5.1 orchestrator launches the signed helper via LaunchServices (`open`), so the **web server can
+trigger a write even though it lacks FDA** — the helper only needs the Reminders grant (already held). No
+new runtime primitive is required; this is wiring, not research.
+
+### Proposed v1 scope (narrowest useful)
+
+- **One action only: "complete"** — a checkbox per reminder in the column that calls
+  `apply_reminder_writes` with a single `complete` op. Least destructive, highest daily value.
+- **Keep `create`/`delete` OUT of the dashboard** in v1 — they stay CLI-only (the human-in-the-loop
+  surface). Revisit only if there's demand.
+- **Reverse the read-only UX copy** for the column and add a minimal confirm affordance.
+
+### Known caveats to design around
+
+- **Freshness after a write:** a dashboard `complete` mutates Apple, but the *displayed* list comes from
+  the local `apple_reminders` table, which only refreshes on a scoped sync (FDA-gated — see the freshness
+  runbook entry in Phase 4). So either (a) optimistically grey the row immediately and reconcile on the
+  next sync, or (b) have the column re-read via EventKit. Pick before building; (a) is simpler for v1.
+- **Single-writer + audit discipline** from Phase 5.1 must be preserved (every dashboard write goes
+  through the orchestrator → audit table; no direct EventKit/SQLite from `pulse_web.py`).
+- **Confirmation:** even "complete" should be reversible/visible (it writes an audit row; uncomplete is a
+  follow-up `update`). No destructive op without explicit confirm.
+
+### Observable checklist (proposed)
+
+- [ ] Add a write endpoint in `scripts/pulse_web.py` that calls `apply_reminder_writes` (complete op) and returns the result.
+- [ ] Add a per-reminder "complete" affordance to the column; reverse the read-only UX copy.
+- [ ] Decide + implement post-write display refresh (optimistic grey-out vs EventKit re-read).
+- [ ] Tests: endpoint builds the right one-op request; failure surfaces; no direct EventKit/SQLite write from the web layer.
+
+### QA checklist (proposed)
+
+- [ ] Every dashboard write flows through the Phase 5.1 orchestrator (audit row written; single-writer preserved).
+- [ ] The web layer holds no EventKit/SQLite write code of its own.
+- [ ] A failed or unauthorized write surfaces in the UI; the row never falsely shows "done".
+- [ ] `create`/`delete` remain CLI-only unless explicitly added later.
 
 ## Explicit Non-Goals
 
