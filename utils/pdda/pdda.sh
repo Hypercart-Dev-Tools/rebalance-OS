@@ -2,9 +2,9 @@
 set -u
 
 # PDDA unified entry point. One dispatcher for every deterministic hygiene check plus the aggregate
-# run. The LLM-assisted readiness review stays in its own file (utils/pdda-doc-ready.sh) — it is a
+# run. The LLM-assisted readiness review stays in its own file (utils/pdda/pdda-doc-ready.sh) — it is a
 # different class of automation (opt-in, model-dependent, advisory/warn-max), per PROJECT/PDDA.md
-# "Automation layers". Shared helpers live in utils/pdda-lib.sh.
+# "Automation layers". Shared helpers live in utils/pdda/pdda-lib.sh.
 #
 # Usage:
 #   pdda.sh run                 # run every deterministic check, then the LLM review (steps in order)
@@ -15,7 +15,7 @@ set -u
 #   pdda.sh roadmap-coverage
 #   pdda.sh changelog
 #   pdda.sh stale
-#   pdda.sh doc-ready           # delegates to utils/pdda-doc-ready.sh (the LLM layer)
+#   pdda.sh doc-ready           # delegates to utils/pdda/pdda-doc-ready.sh (the LLM layer)
 #   pdda.sh help
 #
 # Mode/format/overrides are honored exactly as before via the env vars resolved in pdda-lib.sh
@@ -24,7 +24,7 @@ set -u
 # standalone (`pdda.sh frontmatter`) or as part of `pdda.sh run`.
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
-# shellcheck source=utils/pdda-lib.sh
+# shellcheck source=utils/pdda/pdda-lib.sh
 . "$HERE/pdda-lib.sh"
 
 pdda_reset_counts() { ERROR_COUNT=0; WARN_COUNT=0; INFO_COUNT=0; }
@@ -36,7 +36,7 @@ check_frontmatter() {
   pdda_reset_counts
   local CHECK_NAME="pdda-check-frontmatter" rc=0
   local REQUIRED_KEYS="title status created updated owner goal"
-  local file key value date_key
+  local file key value date_key rating_key
 
   while IFS= read -r file; do
     if ! pdda_has_frontmatter "$file"; then
@@ -76,6 +76,27 @@ check_frontmatter() {
         fi
       fi
     done
+
+    # Optional triage ratings (PDDA.md "Triage ratings for medium-large work"). Validate ONLY when
+    # present: whether a doc SHOULD carry them depends on it being medium-large — a judgment the LLM
+    # layer flags, not this script. But a present value out of range is unambiguous => error. Effort,
+    # complexity, and risk are integers 1 (low) .. 5 (highest); phases is a positive integer.
+    for rating_key in effort complexity risk; do
+      if pdda_frontmatter_has_key "$file" "$rating_key"; then
+        value="$(pdda_trim "$(pdda_frontmatter_value "$file" "$rating_key")")"
+        if ! printf '%s' "$value" | grep -Eq '^[1-5]$'; then
+          pdda_record_finding error "$CHECK_NAME" "$file" 1 "frontmatter rating '$rating_key' must be an integer 1-5 (got '$value')" "fix-rating-value"
+          rc=1
+        fi
+      fi
+    done
+    if pdda_frontmatter_has_key "$file" "phases"; then
+      value="$(pdda_trim "$(pdda_frontmatter_value "$file" "phases")")"
+      if ! printf '%s' "$value" | grep -Eq '^[1-9][0-9]*$'; then
+        pdda_record_finding error "$CHECK_NAME" "$file" 1 "frontmatter 'phases' must be a positive integer (got '$value')" "fix-phases-value"
+        rc=1
+      fi
+    fi
   done < <(pdda_list_working_docs)
 
   pdda_emit_summary "$CHECK_NAME" "$rc"
@@ -341,7 +362,7 @@ check_changelog() {
     return "$(pdda_gated_exit "$rc")"
   fi
 
-  cl_line="$(grep -Em1 '^##[[:space:]]+(\[[0-9]+\.[0-9]+\.[0-9]+\][[:space:]]*-[[:space:]]*)?[0-9]{4}-[0-9]{2}-[0-9]{2}' "$PDDA_CHANGELOG" 2>/dev/null || true)"
+  cl_line="$(grep -Em1 '^##[[:space:]]+[0-9]{4}-[0-9]{2}-[0-9]{2}' "$PDDA_CHANGELOG" 2>/dev/null || true)"
   cl_date="$(printf '%s' "$cl_line" | grep -Eo '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)"
 
   if [ -z "$cl_date" ] || ! pdda_is_real_date "$cl_date"; then
@@ -517,10 +538,11 @@ Commands:
   changelog          end-of-iteration changelog nudge (warn-only)
   stale              flag stale working docs (flag-only; never moves)
   doc-ready          LLM readiness review (delegates to pdda-doc-ready.sh; opt-in via PDDA_LLM_BIN)
+  catchup            LLM repo triage and ROUTER.md recommendations (delegates to pdda-catchup.sh)
   help               this message
 
 Mode/format/path overrides come from the environment (PDDA_MODE, PDDA_FORMAT, PDDA_WORKING_DIR,
-PDDA_ROADMAP, ...) and are documented in PROJECT/PDDA.md and utils/PDDA-INSTALL.md.
+PDDA_ROADMAP, ...) and are documented in PROJECT/PDDA.md and utils/pdda/PDDA-INSTALL.md.
 USAGE
 }
 
@@ -536,6 +558,7 @@ case "$cmd" in
   changelog)        check_changelog; exit "$?" ;;
   stale)            check_stale; exit "$?" ;;
   doc-ready)        exec "$HERE/pdda-doc-ready.sh" "$@" ;;
+  catchup)          exec "$HERE/pdda-catchup.sh" "$@" ;;
   help|-h|--help)   pdda_usage; exit 0 ;;
   *)                printf 'pdda.sh: unknown command %q\n\n' "$cmd" >&2; pdda_usage >&2; exit 2 ;;
 esac
