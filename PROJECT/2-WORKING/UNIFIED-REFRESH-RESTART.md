@@ -20,7 +20,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| Plan written (2026-06-27) after a /ponytail review. Established the shape: **two endpoints on the always-on pulse-server (`POST /api/refresh`, `POST /api/restart`), every UI a thin caller.** Root cause captured: the launchd pulse-server has no Full Disk Access, so the Apple Reminders refresh must route through the already-built signed helper (EventKit, Reminders grant, no FDA), not the SQLite sync. | **Phase 1** — add an FDA-free `list-active` EventKit op to the helper and read it for the dashboard column. |
+| Plan written + /ponytail-scoped, then **SWE-rubric reviewed and tightened (2026-06-27)**: dropped `pulse-server` self-restart (Blast race), re-scoped `/api/refresh` to fast data only (Minimal — no inline heavy sync that blocks the server), and added the Diagnosability section (JSONL audit per call, helper poll stop-condition, single-write-path, UTC, idempotent). Shape: **two endpoints on the always-on pulse-server (`POST /api/refresh`, `POST /api/restart`), every UI a thin caller**; reminders route through the signed helper (EventKit, no FDA). | **Phase 1** — add an FDA-free `list-active` EventKit op to the helper and read it for the dashboard column. |
 
 ## Problem
 
@@ -42,14 +42,21 @@ Focus 5 app menu item  ├── POST ──▶ pulse-server :8767 (launchd, alw
                                      └─ POST /api/restart → launchctl kickstart -k <allowlist>
 ```
 
-- **`/api/refresh`** runs `refresh_index()` for the launchd-capable sources **plus Apple Reminders via the signed helper** (`open` it → EventKit `list-active`, no FDA), then re-renders. Returns per-source status; one source failing never fails the whole call.
-- **`/api/restart`** runs `launchctl kickstart -k` against a **hardcoded allowlist** of `com.rebalance-os.*` labels. Self-restart (pulse-server) is a detached kickstart that outlives the response; the page auto-reloads.
+- **`/api/refresh`** refreshes **fast, user-facing data only** — Apple Reminders via the signed helper (`open` it → EventKit `list-active`, no FDA) + re-render. It does **not** run the heavy `refresh_index()` sources (github/vault scans) inline: those would block the single-threaded server for seconds–minutes. They stay on their scheduled launchd jobs and are recovered via `/api/restart`. Returns per-source status (one source failing never fails the whole call) and appends one JSONL audit line.
+- **`/api/restart`** runs `launchctl kickstart -k` against a **hardcoded allowlist** of `com.rebalance-os.*` **sync** labels. **`pulse-server` is excluded** — self-restart would SIGKILL the process serving the request (kill-group race); a rare server restart stays a manual action. Idempotent (safe to click twice); appends one JSONL audit line.
 
 Why durable: logic lives in committed code, buttons live in committed UI, the launchd jobs are already installed. Reboot-safe; nothing to re-paste.
 
 Why it sidesteps FDA: the launchd server can't hold FDA, so reminders go through the helper (Reminders grant, durable on bundle id). Every other source already runs under launchd today.
 
-Known launchd labels (2026-06-27): `pulse-server`, `pulse-sync`, `pulse-web-sync`, `daily-sync`, `github-sync`, `vault-sync`, `obsidian-rollover`, `com.user.git-pulse`.
+Known launchd labels (2026-06-27): `pulse-server`, `pulse-sync`, `pulse-web-sync`, `daily-sync`, `github-sync`, `vault-sync`, `obsidian-rollover`, `com.user.git-pulse`. The restart allowlist is the **sync** subset (excludes `pulse-server`).
+
+## Diagnosability
+
+- Every `/api/refresh` and `/api/restart` call appends one **JSONL** line to `temp/logs/refresh-restart.jsonl` (append-only, **UTC**): action, labels/sources touched, per-item outcome, `duration_ms`. This is both the audit trail and the repro breadcrumb.
+- The helper `open`+poll has a **fixed timeout** (default 30s) — the loop's stop condition. A non-responding helper returns a typed error and a logged line, never an unbounded wait.
+- Both endpoints are **idempotent / crash-safe**: safe to click twice; a mid-run crash leaves no half-written state (column writes an atomic temp JSON; `kickstart` is naturally re-runnable).
+- **Single write path:** the column read path writes only the ephemeral JSON above — it is **not** a second writer to the `apple_reminders` table (whose sole writer stays `upsert_apple_reminders`).
 
 ## Phase 1 - FDA-free reminders read for the column
 
@@ -70,24 +77,28 @@ Objective: populate the Apple Reminders column without Full Disk Access, reusing
 Objective: make the existing Refresh button refresh **data**, not just repaint.
 
 ### Observable checklist
-- [ ] `/api/refresh` runs `refresh_index()` for launchd-capable sources + the Phase 1 helper read for reminders, then renders.
+- [ ] `/api/refresh` refreshes fast data — the Phase 1 helper read for reminders — then re-renders. Heavy `refresh_index()` sources are **not** run inline (they stay scheduled; recovered via `/api/restart`).
 - [ ] Returns a per-source status object; a single source error is reported, not fatal.
+- [ ] Appends one JSONL line per refresh (UTC ts, sources touched, per-source outcome, `duration_ms`).
 
 ### QA gate
-- [ ] Clicking Refresh repopulates reminders and the other sources; partial failure surfaces in the response and never 500s the whole call.
-- [ ] `pytest tests/` green; self-check asserts partial-failure status shape.
+- [ ] Clicking Refresh repopulates the reminders column in **<2s** (no UI freeze); partial failure surfaces in the response and never 500s the whole call.
+- [ ] The refresh never blocks the server on a heavy sync (no inline `refresh_index` of github/vault).
+- [ ] `pytest tests/` green; self-check asserts the partial-failure status shape **and** that a JSONL line is written.
 
 ## Phase 3 - `/api/restart` + dashboard button
 
 Objective: restart wedged services (e.g. `daily-sync`) from the UI.
 
 ### Observable checklist
-- [ ] `/api/restart` kickstarts a hardcoded allowlist of `com.rebalance-os.*` labels; detached self-restart for `pulse-server`.
+- [ ] `/api/restart` kickstarts a hardcoded allowlist of `com.rebalance-os.*` **sync** labels (e.g. `daily-sync`, `pulse-sync`, `vault-sync`, `github-sync`); **`pulse-server` excluded** (no self-restart).
+- [ ] Each restart appends one JSONL line (UTC ts, labels, outcome).
 - [ ] Add a "Restart services" button to the pulse dashboard next to Refresh.
 
 ### QA gate
-- [ ] Restart bounces `daily-sync` and the page survives a pulse-server self-restart (reconnects after).
-- [ ] **Trust boundary:** server stays localhost-only; restart takes NO user-supplied label; subprocess args passed as a list (no shell). Self-check asserts the label set is fixed and contains no caller input.
+- [ ] Restart bounces `daily-sync` (its `launchctl list` non-zero exit clears); the dashboard stays up (pulse-server not in the set).
+- [ ] Restart is idempotent — clicking twice is safe.
+- [ ] **Trust boundary:** server stays localhost-only; restart takes NO user-supplied label; subprocess args passed as a list (no shell). Self-check asserts the label set is a fixed constant with no caller input.
 
 ## Phase 4 - Focus 5 app wiring
 
@@ -111,6 +122,6 @@ Objective: same two endpoints, surfaced in the Focus 5 app — zero refresh logi
 
 ## Risks and Mitigations
 
-- **`/api/restart` is command execution over HTTP** — mitigated by localhost-only bind (already enforced), a fixed label allowlist, and list-form subprocess args (no shell, no injection).
+- **`/api/restart` is command execution over HTTP** (undo class: *easy* — `kickstart` is idempotent) — mitigated by localhost-only bind (already enforced), a fixed label allowlist, and list-form subprocess args (no shell, no injection). Shield: the allowlist; tripwire: n/a (reversible). Note: localhost endpoints are reachable by any browser page via `fetch` (same exposure as the existing `/api/refresh`/`/api/goals/complete`) — acceptable for a single-user local tool.
+- **Self-restart race (avoided, not mitigated)** — restarting `pulse-server` from itself SIGKILLs the responder and races the kill-group; **resolved by excluding `pulse-server` from the allowlist**, not by engineering a detached double-fork. The one-way door is removed by scope cut.
 - **Helper grant drift** — the Reminders grant is durable on the stable bundle id; a rebuild keeps the id, so the grant survives (codesign id verified before trust).
-- **Self-restart kills the responder** — detached kickstart + the dashboard's existing auto-reload covers reconnection.
