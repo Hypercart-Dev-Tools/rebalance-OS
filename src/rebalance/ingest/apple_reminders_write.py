@@ -72,6 +72,14 @@ STATE_FAILED = "failed"
 STATE_SKIPPED = "skipped"
 _DONE_STATES = frozenset({STATE_APPLIED, STATE_RECONCILED})
 
+# ponytail: the audit table + 3-state lifecycle, helper-side flock serialization,
+# and codesign identity verification below are heavier than a single-user personal
+# tool needs (they came from a cross-model consult's enterprise-hardening pass).
+# They're built, tested, and cheap to keep, so left in — but don't grow them.
+# If this ever gets trimmed: keep request_id idempotency (guards a real
+# duplicate-create-on-timeout bug); the rest (audit 3-state, flock, codesign
+# verify) can collapse to a 1-line log + plain create for one user on one Mac.
+
 
 class AppleRemindersWriteError(AppleRemindersError):
     """Base for write-path failures (distinct from read/extract errors)."""
