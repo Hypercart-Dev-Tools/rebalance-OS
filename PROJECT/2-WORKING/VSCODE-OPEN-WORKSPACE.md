@@ -2,9 +2,13 @@
 title: Repo links open VS Code with "focus-if-open" — Build Plan
 status: Not started
 owner: noel
-created: 2026-06-27   # UTC
-updated: 2026-06-27   # UTC — bump every time the plan changes
+created: 2026-06-27
+updated: 2026-06-27
 reversibility: Easy (Mac app) · Costly (web exec endpoint — see §Blast) — both are flag/fallback-shielded
+goal: >
+  Make the repo-card "Open ↗" button focus an already-open VS Code window for that
+  repo (or spawn exactly one new one) on both the Focus 5 Mac app and the pulse web
+  dashboard, replacing the window-hijacking vscode:// URI scheme.
 ---
 
 # Repo links open VS Code with "focus-if-open" — Build Plan
@@ -14,9 +18,11 @@ focus the window if that repo is already open, spawn exactly one new window if
 it isn't. Today both surfaces fire the `vscode://file/{path}` URI scheme, which
 either hijacks the active window or always spawns a new one.
 
-| Most recently completed phase | What's next |
+## Status
+
+| What was just completed | What's next |
 | --- | --- |
-| — (not started) | Phase 1: Mac app (Focus 5 Float) |
+| — (promoted to 2-WORKING 2026-06-27; not started) | Phase 1: Mac app (Focus 5 Float) |
 
 ## Table of contents
 - [The protocol (from research)](#the-protocol-from-research)
