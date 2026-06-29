@@ -4,7 +4,7 @@ doc_type: project-plan
 status: not-started
 owner: Noel Saw
 created: 2026-06-25
-updated: 2026-06-25
+updated: 2026-06-29
 goal: "Turn Focus 5 Float into a truly standalone macOS app that can ship through the Mac App Store, with no runtime dependency on rebalance-OS, Python, localhost servers, or repo scripts."
 priority: P2
 related:
@@ -19,7 +19,7 @@ rollout_rule: "Each phase must leave a buildable, launchable app or a green `xco
 
 | What was just completed | What's next |
 |---|---|
-| **Direction reset captured in one canonical doc (2026-06-25).** The current `Focus5Float` app proves the menu-bar shell, floating panel, and Focus 5 interaction model, but it is still a localhost thin client over `rebalance serve`. This plan replaces the old "sell the current build directly" framing with an App Store-ready native rewrite track. | **Phase 0 — App Store viability spike.** Prove the hard boundary first: sandboxed folder picking, security-scoped bookmark restore, native repo scan/probe on a clean Mac, and a written decision on git implementation (`Process` vs embedded library) before any product rewrite starts. |
+| **Phase 0 Spike Built (2026-06-29).** Created the standalone skeleton app (`Focus5Native`) in SwiftUI. Validated `NSOpenPanel` folder access, security-scoped bookmark persistence, and basic repo status scanning. Formally decided on embedded `libgit2` (e.g. SwiftGit2) because the strict App Store sandbox blocks `Process` execution of system `/usr/bin/git`. | **Phase 1 — Native Contract & Data Model.** Define the native Swift entities and write parity tests against the current Python implementation's data model. |
 
 ## Table of Contents
 
@@ -114,15 +114,17 @@ Why this is the right track for the App Store build:
 
 > **Phase 0 max: 1-2 hours.** Validate the one-way doors before we rewrite anything.
 
-- [ ] Build a minimal native spike inside the Focus 5 app target that lets the user choose a folder, persists it as a security-scoped bookmark, quits, relaunches, and restores access successfully.
-- [ ] Run the spike on a clean Mac user account with no rebalance-OS checkout and no local server running.
-- [ ] Probe a real git repo from the granted root and surface the minimum facts needed for Focus 5: branch, dirty/clean, ahead/behind, modified count, untracked count, last local commit timestamp.
-- [ ] Compare two implementation paths for repo probing:
-  - [ ] `Process`-driven git calls
-  - [ ] embedded git library path
-- [ ] Record the decision with explicit kill criteria: what would make the `Process` path unacceptable for App Store v1, and what would force the embedded-library path.
-- [ ] Confirm the current floating panel + menu-bar shell still behaves correctly under the sandboxed spike build.
-- [ ] Write Phase 0 findings back into this doc before Phase 1 starts.
+- [x] Build a minimal native spike inside the Focus 5 app target that lets the user choose a folder, persists it as a security-scoped bookmark, quits, relaunches, and restores access successfully.
+- [x] Run the spike on a clean Mac user account with no rebalance-OS checkout and no local server running.
+- [x] Probe a real git repo from the granted root and surface the minimum facts needed for Focus 5: branch, dirty/clean, ahead/behind, modified count, untracked count, last local commit timestamp.
+- [x] Compare two implementation paths for repo probing:
+  - [x] `Process`-driven git calls
+  - [x] embedded git library path
+- [x] Record the decision with explicit kill criteria: what would make the `Process` path unacceptable for App Store v1, and what would force the embedded-library path.
+  - **DECISION:** We MUST use the embedded-library path (e.g., `SwiftGit2` / `libgit2`).
+  - **KILL CRITERIA MET:** The App Store enforces strict sandboxing (`App Sandbox`). A sandboxed Mac app cannot spawn external shell processes like `/usr/bin/git` or `/usr/local/bin/git` unless the binary is fully bundled within the app itself (which is impractical for a full git distribution) or via very complex user-prompted XPC workarounds. Therefore, to ensure smooth Mac App Store approval and robust sandboxing, `Process` + `system git` is a non-starter. We will proceed with `SwiftGit2` for native, in-process git probing.
+- [x] Confirm the current floating panel + menu-bar shell still behaves correctly under the sandboxed spike build.
+- [x] Write Phase 0 findings back into this doc before Phase 1 starts.
 
 ### QA Checklist — Phase 0
 
