@@ -17,6 +17,14 @@ struct ContentView: View {
             content
         }
         .background(Theme.window)
+        .overlay(alignment: .top) {
+            if let banner = model.banner {
+                TopBanner(text: banner)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .zIndex(1)
+            }
+        }
+        .animation(.easeInOut(duration: 0.35), value: model.banner)
     }
 
     /// The vault `focus5.md` note, rendered as the last card in the roster scroll
@@ -32,7 +40,10 @@ struct ContentView: View {
     // MARK: Header
 
     private var header: some View {
-        VStack(spacing: Theme.Space.s) {
+        VStack(spacing: Theme.Space.xs) {
+            // Row 1 — compact tab switcher + actions. Emoji-only labels keep the
+            // 3-segment picker narrow enough for a ~180-wide panel; the tab names
+            // live in the help tooltips + accessibility labels.
             HStack(spacing: Theme.Space.s) {
                 Picker("", selection: Binding(
                     get: { model.viewMode },
@@ -45,15 +56,27 @@ struct ContentView: View {
                         }
                     }
                 )) {
-                    Text("🎯 Focus 5").tag(ViewMode.focus5)
-                    Text("🧹 Dirty Five").tag(ViewMode.dirtyFive)
-                    Text("📊 Telemetry").tag(ViewMode.telemetry)
+                    Text("🎯").tag(ViewMode.focus5)
+                        .help("Focus 5").accessibilityLabel("Focus 5")
+                    Text("🧹").tag(ViewMode.dirtyFive)
+                        .help("Dirty Five").accessibilityLabel("Dirty Five")
+                    Text("📊").tag(ViewMode.telemetry)
+                        .help("Telemetry").accessibilityLabel("Telemetry")
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .fixedSize(horizontal: true, vertical: false)
 
                 Button {
-                    Task { await model.refresh() }
+                    Task {
+                        await model.refresh()
+                        // Confirm the manual refresh did something — the button
+                        // otherwise gives no visible feedback. Skip when offline so
+                        // we never claim success the fetch didn't actually achieve.
+                        if model.viewMode == .telemetry || !model.isOffline {
+                            model.flashBanner("Repos refreshed")
+                        }
+                    }
                 } label: {
                     Image(systemName: "arrow.clockwise")
                 }
@@ -73,40 +96,18 @@ struct ContentView: View {
                     .help("Start rebalance serve")
                 }
 
-                Spacer(minLength: Theme.Space.s)
-
-                // Top-right health light — adapts to the active tab.
-                if model.viewMode == .telemetry {
-                    if !model.telemetryEntries.isEmpty {
-                        let nonGreen = model.telemetryEntries.filter { $0.health != .green }.count
-                        HStack(spacing: 5) {
-                            Text("Status: \(nonGreen)")
-                                .font(Theme.caption).foregroundStyle(Theme.text2)
-                            Circle()
-                                .fill(RosterHealth.tint(dirty: nonGreen, total: model.telemetryEntries.count))
-                                .frame(width: 11, height: 11)
-                        }
-                        .help("\(nonGreen) of \(model.telemetryEntries.count) signals need attention")
-                    }
-                } else if !model.roster.isEmpty {
-                    let dirty = model.roster.filter(\.isDirty).count
-                    HStack(spacing: 5) {
-                        Text("Status: \(dirty)")
-                            .font(Theme.caption).foregroundStyle(Theme.text2)
-                        Circle()
-                            .fill(RosterHealth.tint(dirty: dirty, total: model.roster.count))
-                            .frame(width: 11, height: 11)
-                    }
-                    .help("\(dirty) of \(model.roster.count) roster repos dirty")
-                    .accessibilityLabel("Status: \(dirty) of \(model.roster.count) roster repos dirty")
-                }
+                Spacer(minLength: 0)
             }
 
+            // Row 2 — status line. Wrapped down off the tab row so the panel can
+            // shrink to ~180 wide: count/updated on the left (truncates first),
+            // the health light pinned right.
             HStack(spacing: Theme.Space.s) {
                 if model.viewMode == .telemetry {
                     if let url = model.telemetryFileURL {
                         Text(url.lastPathComponent)
-                            .font(Theme.caption).foregroundStyle(Theme.text2).lineLimit(1)
+                            .font(Theme.caption).foregroundStyle(Theme.text2)
+                            .lineLimit(1).truncationMode(.middle)
                         if !model.telemetryEntries.isEmpty {
                             Text("· \(model.telemetryEntries.count)")
                                 .font(Theme.caption).foregroundStyle(Theme.text3)
@@ -117,29 +118,58 @@ struct ContentView: View {
                     }
                 } else {
                     Text("\(model.roster.count) repos")
-                        .font(Theme.caption)
-                        .foregroundStyle(Theme.text2)
+                        .font(Theme.caption).foregroundStyle(Theme.text2).fixedSize()
                     if !model.lastUpdatedAgo.isEmpty {
-                        Text("· updated \(model.lastUpdatedAgo)")
-                            .font(Theme.caption)
-                            .foregroundStyle(Theme.text3)
+                        Text("· \(model.lastUpdatedAgo)")
+                            .font(Theme.caption).foregroundStyle(Theme.text3)
+                            .lineLimit(1).truncationMode(.tail)
                     }
-                }
-                Spacer(minLength: 0)
-                if model.viewMode != .telemetry {
                     if model.isStale {
-                        Text("⚠ stale").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
+                        Text("⚠").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
+                            .help("Roster is stale")
                     }
                     if model.showingCache {
-                        Text("cached \(model.cachedAgo)")
-                            .font(Theme.caption).foregroundStyle(Theme.diffUpdate)
+                        Text("cached").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
+                            .help("Showing cached roster from \(model.cachedAgo)")
                     } else if model.isOffline {
                         Text("offline").font(Theme.caption).foregroundStyle(Theme.diffRemove)
                     }
                 }
+                Spacer(minLength: Theme.Space.xs)
+                healthLight
             }
         }
         .padding(Theme.Space.m)
+    }
+
+    /// The roster/telemetry health light — a dirty-count + tinted dot, adapting to
+    /// the active tab. Lives on the status row (row 2) so it no longer widens the
+    /// tab row.
+    @ViewBuilder private var healthLight: some View {
+        if model.viewMode == .telemetry {
+            if !model.telemetryEntries.isEmpty {
+                let nonGreen = model.telemetryEntries.filter { $0.health != .green }.count
+                healthBadge(count: nonGreen,
+                            tint: RosterHealth.tint(dirty: nonGreen, total: model.telemetryEntries.count),
+                            help: "\(nonGreen) of \(model.telemetryEntries.count) signals need attention")
+            }
+        } else if !model.roster.isEmpty {
+            let dirty = model.roster.filter(\.isDirty).count
+            healthBadge(count: dirty,
+                        tint: RosterHealth.tint(dirty: dirty, total: model.roster.count),
+                        help: "\(dirty) of \(model.roster.count) roster repos dirty")
+                .accessibilityLabel("Status: \(dirty) of \(model.roster.count) roster repos dirty")
+        }
+    }
+
+    private func healthBadge(count: Int, tint: Color, help: String) -> some View {
+        HStack(spacing: 5) {
+            Text("\(count)")
+                .font(Theme.caption).foregroundStyle(Theme.text2)
+            Circle().fill(tint).frame(width: 11, height: 11)
+        }
+        .fixedSize()
+        .help(help)
     }
 
     // MARK: Content
