@@ -225,7 +225,43 @@ def health():
 
 @app.post("/api/refresh")
 def refresh():
+    import uuid
+    import json
+    from rebalance.ingest.apple_reminders_write import _open_bundle_invoker
+    from rebalance.ingest.config import get_apple_reminders_list_name
+
     started = time.perf_counter()
+
+    helper_error = None
+    try:
+        req_id = uuid.uuid4().hex
+        list_name = get_apple_reminders_list_name()
+        request = {
+            "schema_version": 1,
+            "request_id": req_id,
+            "mode": "apply",
+            "confirm_destructive": False,
+            "operations": [{"op": "list-active", "list_name": list_name}]
+        }
+
+        response = _open_bundle_invoker(request, timeout_seconds=5.0)
+        results = response.get("results") or []
+        if not results:
+            helper_error = "no results in helper response"
+        else:
+            first_res = results[0]
+            if first_res.get("status") == "ok":
+                active_items = json.loads(first_res.get("detail", "[]"))
+                active_path = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
+                active_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp_path = active_path.with_suffix(".tmp")
+                tmp_path.write_text(json.dumps(active_items), encoding="utf-8")
+                tmp_path.replace(active_path)
+            else:
+                helper_error = str(first_res.get("detail", "helper returned error"))
+    except Exception as exc:
+        helper_error = f"{type(exc).__name__}: {exc}"
+
     proc = _run_pulse_render(timeout=60)
     duration_ms = round((time.perf_counter() - started) * 1000)
     if proc.returncode != 0:
@@ -235,6 +271,7 @@ def refresh():
                 "duration_ms": duration_ms,
                 "returncode": proc.returncode,
                 "stderr": proc.stderr[-2000:],
+                "helper_error": helper_error,
             },
             status_code=500,
         )
@@ -243,6 +280,7 @@ def refresh():
         "ok": True,
         "duration_ms": duration_ms,
         "generated_at": mtime.isoformat(),
+        "helper_error": helper_error,
     }
 
 

@@ -4,7 +4,7 @@ doc_type: project-plan
 status: active
 owner: Noel Saw
 created: 2026-06-27
-updated: 2026-06-27
+updated: 2026-06-29
 goal: "Make the pulse dashboard's existing Refresh button repopulate the Apple Reminders column (FDA-free, via the signed EventKit helper) so it never silently empties — then, only if the need proves out, grow to a system-wide refresh/restart. v1 is the column; everything else is deferred."
 priority: P2
 related:
@@ -18,7 +18,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| Plan written → /ponytail-scoped → SWE-rubric reviewed → **/ponytail-trimmed to a v1 (2026-06-27)**: cut the JSONL audit log, the 4-phase scaffold, and (for v1) the restart endpoint + Focus 5 wiring — all deferred. **v1 = make the existing Refresh button populate the reminders column via the signed helper (EventKit, no FDA).** Kept the SWE correctness wins that are free for v1 (fast-data-only refresh, helper poll stop-condition, single-write-path). **Codex consult QA (2026-06-27)** confirmed the cut + boundary; folded its 2 findings: **last-good-snapshot-wins** (a failed refresh must never empty the column) and a **~5s** refresh timeout (not 30s) on the synchronous handler. (agy lane unavailable — auth.) | **Build v1** — 3 edits: helper `list-active` op → `/api/refresh` reads it (atomic, last-good-wins) → column renders it. |
+| **Built v1 (2026-06-29)**: Implemented `list-active` in the helper, wired `/api/refresh` to use it with atomic `active.json` writes, and updated `pulse_web.py` to read it. Tests pass and live refresh is confirmed. | Gather feedback on v1 before deciding whether to pursue the rest of the plan. |
 
 ## Problem
 

@@ -244,6 +244,51 @@ final class HelperApp: NSObject, NSApplicationDelegate {
             } catch { res.detail = "remove failed: \(error)" }
             return res
 
+        case "list-active":
+            guard let cal = calendar(named: op.list_name) else {
+                res.detail = "no calendar found for list-active"; return res
+            }
+            if planning {
+                res.status = "ok"; res.detail = "would list active from '\(cal.title)'"; return res
+            }
+            let predicate = store.predicateForIncompleteReminders(withDueDateStarting: nil, ending: nil, calendars: [cal])
+            let semaphore = DispatchSemaphore(value: 0)
+            var fetched: [EKReminder]? = nil
+            store.fetchReminders(matching: predicate) { result in
+                fetched = result
+                semaphore.signal()
+            }
+            semaphore.wait()
+
+            var items: [[String: Any]] = []
+            if let fetched = fetched {
+                for r in fetched {
+                    var dict: [String: Any] = [
+                        "reminder_id": r.calendarItemIdentifier,
+                        "title": r.title ?? ""
+                    ]
+                    if let due = r.dueDateComponents, let d = due.date {
+                        let f = ISO8601DateFormatter()
+                        f.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                        dict["due_at"] = f.string(from: d)
+                    } else {
+                        dict["due_at"] = NSNull()
+                    }
+                    items.append(dict)
+                }
+            }
+
+            if let data = try? JSONSerialization.data(withJSONObject: items, options: []),
+               let jsonStr = String(data: data, encoding: .utf8) {
+                res.detail = jsonStr
+                res.status = "ok"
+                res.readback_ok = true
+            } else {
+                res.detail = "[]"
+                res.status = "error"
+            }
+            return res
+
         default:
             res.detail = "unknown op: \(op.op)"; return res
         }
