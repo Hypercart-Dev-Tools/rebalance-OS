@@ -71,6 +71,22 @@ enum Focus5SelfTest {
             exit(ok ? 0 : 1)
         }
 
+        // VS Code launcher test: FOCUS5_VSCODETEST=1 swift run Focus5Float — asserts the
+        // candidate ORDER + argv SHAPE (focus-if-open is `code <folder>`, no -n/-r, no shell).
+        // Does NOT launch VS Code; resolveBinary() is reported for diagnosis only.
+        if ProcessInfo.processInfo.environment["FOCUS5_VSCODETEST"] != nil {
+            let argv = VSCodeLauncher.arguments(forRepoPath: "/tmp/demo repo")
+            let argvOK = argv == ["/tmp/demo repo"]        // exactly the folder; spaces safe (argv array)
+            let c = VSCodeLauncher.candidates
+            let orderOK = c.count == 3
+                && c.first == "/opt/homebrew/bin/code"
+                && c.last == "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code"
+            let bin = VSCodeLauncher.resolveBinary()
+            print("VSCODETEST \(argvOK && orderOK ? "OK" : "FAIL") — argv=\(argv) candidates=\(c.count) "
+                  + "resolved=\(bin ?? "none (vscode:// fallback)")")
+            exit(argvOK && orderOK ? 0 : 1)
+        }
+
         guard ProcessInfo.processInfo.environment["FOCUS5_SELFTEST"] != nil else { return }
         do {
             let resp = try SampleData.load()

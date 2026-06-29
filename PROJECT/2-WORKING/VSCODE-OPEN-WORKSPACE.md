@@ -1,9 +1,9 @@
 ---
 title: Repo links open VS Code with "focus-if-open" — Build Plan
-status: Not started
+status: Phase 1 code complete (operator GUI litmus pending) · Phase 2 gated
 owner: noel
 created: 2026-06-27
-updated: 2026-06-27
+updated: 2026-06-29
 reversibility: Easy (Mac app) · Costly (web exec endpoint — see §Blast) — both are flag/fallback-shielded
 goal: >
   Make the repo-card "Open ↗" button focus an already-open VS Code window for that
@@ -22,7 +22,7 @@ either hijacks the active window or always spawns a new one.
 
 | What was just completed | What's next |
 | --- | --- |
-| — (promoted to 2-WORKING 2026-06-27; not started) | Phase 1: Mac app (Focus 5 Float) |
+| **Phase 1 (Mac app) code shipped 2026-06-29:** `VSCodeLauncher` (resolve `code` via override→known-paths→login-shell → direct-argv `Process` → `vscode://` fallback), the "Open ↗" button now calls `VSCodeLauncher.launch(repoPath:fallbackURL:)`, and `FOCUS5_VSCODETEST` guards the candidate order + argv shape. `swift build` green; `FOCUS5_VSCODETEST` + `FOCUS5_SELFTEST` pass. | **Operator GUI litmus** (eyeball: already-open repo → focuses that window / not-open → exactly one new window / `code` absent → `vscode://` fallback), then the **Phase 2 gate decision** (build the web exec endpoint only if `vscode://` is actually annoying). |
 
 ## Table of contents
 - [The protocol (from research)](#the-protocol-from-research)
@@ -82,20 +82,20 @@ Touch points (already located):
 - [ContentView.swift:376](macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift#L376) — the `open(_:)` helper (`NSWorkspace.shared.open`).
 - [Models.swift](macOS/Apps/Focus5Float/Sources/Focus5Float/Models.swift) — `RepoCard.localPath` is already on the model; `vscodeUrl` stays as the fallback.
 
-- [ ] Add `localPath` use to the launch path: the button calls a new
-      `launchInVSCode(repoPath:fallbackURL:)` instead of `open(card.vscodeUrl)`.
-- [ ] Resolve the `code` binary once from a fixed candidate list — first that
-      exists wins: `/opt/homebrew/bin/code`, `/usr/local/bin/code`,
-      `/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code`.
-      Output: a helper returning `URL?` (nil ⇒ none found).
-- [ ] Launch with a **direct argv** `Process`: `executableURL` = resolved
-      binary, `arguments = [repoPath]`. **No `/bin/sh -c`, no string escaping** —
-      argv arrays are immune to the quoting/injection class the raw research's
-      `sh -c` reintroduced. Run off the main thread.
-- [ ] If the binary is nil, fall back to `NSWorkspace.shared.open(fallbackURL)`
-      (today's `vscode://` path) so the button is **never dead**.
-- [ ] Log each launch: chosen binary (or "fallback"), repoPath, and
-      `process.terminationStatus`. One line, to the app's existing log sink.
+- [x] Add `localPath` use to the launch path: the button calls
+      `VSCodeLauncher.launch(repoPath:fallbackURL:)` instead of `open(card.vscodeUrl)`. → [ContentView.swift:286](macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift#L286)
+- [x] Resolve the `code` binary from a fixed candidate list — first that exists
+      wins: `/opt/homebrew/bin/code`, `/usr/local/bin/code`,
+      `/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code`
+      (plus a `VSCODE_BIN` override + login-shell `which`, mirroring `ServerLauncher`,
+      since a GUI app inherits no shell PATH). Helper `resolveBinary() -> String?` (nil ⇒ none). → [VSCodeLauncher.swift](macOS/Apps/Focus5Float/Sources/Focus5Float/VSCodeLauncher.swift)
+- [x] Launch with a **direct argv** `Process`: `executableURL` = resolved binary,
+      `arguments = [repoPath]`. No `/bin/sh -c`, no string escaping. Runs off the
+      main thread (`DispatchQueue.global`).
+- [x] If the binary is nil (or `run()` throws), fall back to
+      `NSWorkspace.shared.open(fallbackURL)` (the `vscode://` path) so the button is **never dead**.
+- [x] Log each launch: chosen binary (or "fallback"), repoPath, and
+      `terminationStatus`, via `os.Logger` (category `vscode`).
 - [ ] *Deferred (YAGNI):* foreground-pull via `NSRunningApplication … activate`.
       `code <folder>` usually raises its own window. Add this **only if** you
       observe VS Code launching behind the app — don't pre-build it.
@@ -106,14 +106,14 @@ Touch points (already located):
 - [ ] **Observed:** repo not open → click spawns **exactly one** new window.
 - [ ] **Observed:** rename/quit the `code` symlink so resolution returns nil →
       click still opens the repo via the `vscode://` fallback.
-- [ ] Self-check on the pure logic (binary resolution + argv assembly) — a tiny
-      Swift `assert`-based check or XCTest that fails if the candidate order or
-      argv shape regresses. Point to the run, not an assertion.
-- [ ] Diagnosable: launch log line present; one-shot launch has **no retry
-      loop** (stop-condition trivially satisfied — note it in the PR).
-- [ ] Blast: undo = revert one Swift file (Easy). Shield = `vscode://` fallback.
-      No tripwire needed (no shared state touched).
-- [ ] Status table + `updated:` bumped before marking this phase done.
+- [x] Self-check on the pure logic (binary resolution + argv assembly) —
+      `FOCUS5_VSCODETEST=1 swift run Focus5Float` asserts the candidate order +
+      argv shape (`["<folder>"]`, no `-n`/`-r`), fails on regression. **Run: `VSCODETEST OK — argv=["/tmp/demo repo"] candidates=3`.** → [SelfTest.swift](macOS/Apps/Focus5Float/Sources/Focus5Float/SelfTest.swift)
+- [x] Diagnosable: launch log line present (`os.Logger` category `vscode`);
+      one-shot launch, **no retry loop**.
+- [x] Blast: undo = revert `VSCodeLauncher.swift` + 2 one-line call-site edits (Easy).
+      Shield = `vscode://` fallback. No shared state touched (no tripwire needed).
+- [x] Status table + `updated:` bumped (2026-06-29). *(The 3 unchecked `Observed:` items above are the operator GUI litmus — all that remains for Phase 1.)*
 
 ---
 

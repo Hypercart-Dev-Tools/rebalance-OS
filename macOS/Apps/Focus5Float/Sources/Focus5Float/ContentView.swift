@@ -283,7 +283,7 @@ struct RepoCardView: View {
                 Text(card.repoName)
                     .font(Theme.bodyMed).foregroundStyle(Theme.text).lineLimit(1)
                 Spacer(minLength: Theme.Space.s)
-                Button("Open ↗") { open(card.vscodeUrl) }
+                Button("Open ↗") { VSCodeLauncher.launch(repoPath: card.localPath, fallbackURL: card.vscodeUrl) }
                     .buttonStyle(.borderless)
                     .font(Theme.caption)
                     .foregroundStyle(Theme.accent)
