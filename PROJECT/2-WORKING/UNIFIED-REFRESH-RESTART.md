@@ -18,7 +18,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Built v1 (2026-06-29)**: Implemented `list-active` in the helper, wired `/api/refresh` to use it with atomic `active.json` writes, and updated `pulse_web.py` to read it. Tests pass and live refresh is confirmed. | Gather feedback on v1 before deciding whether to pursue the rest of the plan. |
+| **Built v1 (2026-06-29)**: Implemented `list-active` in the helper, wired `/api/refresh` to use it with atomic `active.json` writes, and updated `pulse_web.py` to read it. Live refresh confirmed by hand. | **Phase QA-R — v1 Remediation (2026-06-29).** QA review found the v1 build merged with its own Observable checklist + QA gate still unchecked: helper failures are swallowed into a `200 OK`, no automated coverage was added, and the DB read path was dropped. Close those before "gather feedback". |
 
 ## Problem
 
@@ -45,6 +45,33 @@ Make the **existing** Refresh button populate the column, FDA-free, via the help
 - [ ] No FDA dependency and no inline `refresh_index` heavy sync in the render path.
 - [ ] **Single write path:** the column path writes only the ephemeral `active.json` (atomic tmp→rename) — it is **not** a second writer to the `apple_reminders` table (sole writer stays `upsert_apple_reminders`).
 - [ ] `pytest tests/` green; one self-check parses a fixture `list-active` payload.
+
+## Phase QA-R — v1 Remediation (2026-06-29)
+
+> QA review of the Lane B build (commit `74b8b52`). The code is close, but it
+> shipped with the v1 **Observable checklist and QA gate above still unchecked**,
+> and three of those gate items are not actually met. The Status said "tests pass"
+> — true of the pre-existing suite, but **no test exercises the new path**. Fix the
+> following before v1 is considered gate-passed and feedback is gathered.
+
+**Findings (what the review surfaced):**
+
+- **Silent helper failure (contradicts the v1 mandate "a failed refresh must never empty the column").** `/api/refresh` captures `helper_error` but still returns `{"ok": True, …, "helper_error": …}` (`pulse_server.py`). The dashboard only keys off `ok`, so a helper failure is invisible: the button reports success while the column silently serves stale/empty data. The error is *in the response* but not *surfaced to the operator*.
+- **No automated coverage.** QA gate "one self-check parses a fixture `list-active` payload" and "feed a failing invoker, assert `active.json` unchanged" are both unmet — nothing under `tests/` references `list-active` / `active.json` / `/api/refresh`. Last-good-wins is implemented (atomic `tmp→replace`, untouched on error) but **never tested**, so a future edit can regress it silently.
+- **DB read path dropped → cold-start regression.** `pulse_web.py` now reads **only** `temp/apple-reminders/active.json`; the prior `list_apple_reminders(DB_PATH, …)` render was removed. On any host where `active.json` doesn't exist yet (helper never succeeded), the column renders empty — the exact "silently empties" failure this plan exists to kill. Decide and document: seed `active.json` from the DB on first render, or accept DB-less rendering and state it explicitly.
+- **One fact, two hardcoded literals.** `temp/apple-reminders/active.json` is written in `pulse_server.py` and re-derived in `pulse_web.py`. Extract a single shared constant (one canonical place) so the writer and reader cannot drift.
+- **Reaching into a private API + in-handler imports.** `/api/refresh` imports `_open_bundle_invoker` (underscore = private) and does four `import`s inside the function body. Promote a public invoker entry point (or document the coupling) and lift the imports to module scope.
+- **Unversioned cross-process contract.** The `{reminder_id, title, due_at}` shape in `active.json` is an implicit contract between the Swift helper and `pulse_web.py` with no `schema_version`. Add a version field or a single typed reader so a helper-side shape change is caught, not silently mis-rendered.
+- **Helper fetch has no timeout.** `list-active` blocks on `semaphore.wait()` with no deadline; if EventKit never calls back the helper process hangs (the Python 5s invoker kills the `open`, but the helper can leak). Bound the wait.
+
+### QA gate — Remediation
+- [ ] **Failure is visible, not swallowed:** a helper error surfaces in the dashboard (badge/marker), and the column renders last-good **with a staleness indicator** — never a silent empty. (Self-check: failing invoker → response signals not-ok **and** column shows the prior snapshot.)
+- [ ] **Last-good-wins is tested:** `pytest tests/` adds (a) a fixture `list-active` parse self-check and (b) a failing-invoker assertion that `active.json` is left byte-for-byte unchanged.
+- [ ] **Cold-start decided + covered:** behavior when `active.json` is absent is explicit (seed-from-DB or documented DB-less) and has a test.
+- [ ] **One canonical path constant** shared by writer and reader; **no private-symbol import** across modules; handler imports at module scope.
+- [ ] **Contract versioned:** `active.json` items carry a `schema_version` (or a single typed reader guards the shape).
+- [ ] **Bounded helper:** the EventKit fetch wait has a timeout; a hung list returns a typed error within the ~5s budget.
+- [ ] The original **Observable checklist and QA gate above are checked off with evidence** (or amended with the reason a box is intentionally N/A).
 
 ## Deferred follow-ups (not v1 — build when the trigger fires)
 
