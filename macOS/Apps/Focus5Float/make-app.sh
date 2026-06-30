@@ -19,7 +19,7 @@ cd "$PKG_DIR"
 APP_NAME="Focus 5 Float"
 EXEC_NAME="Focus5Float"
 BUNDLE_ID="me.neochro.Focus5Float"
-VERSION="0.48.0"
+VERSION="0.49.0"
 DIST="$PKG_DIR/dist"
 APP="$DIST/$APP_NAME.app"
 
@@ -73,6 +73,11 @@ $ICON_KEY
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- Apple Reminders bottom panel reads/writes via EventKit. Full-access key is
+       the macOS 14+ requirement; the legacy key is kept for older fallbacks.
+       (Reminders grant only — no Full Disk Access; read-back is via EventKit.) -->
+  <key>NSRemindersFullAccessUsageDescription</key><string>Focus 5 Float shows your most recent Reminders and lets you check them off.</string>
+  <key>NSRemindersUsageDescription</key><string>Focus 5 Float shows your most recent Reminders and lets you check them off.</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 </dict>

@@ -49,6 +49,16 @@ final class Focus5Model {
     var noteExists = false            // true once the vault actually has a focus5.md
     var noteLoaded = false            // true after the first successful note fetch
 
+    // Bottom Apple Reminders — read+write DIRECTLY via EventKit (not the server).
+    // See RemindersStore for why the app is the runtime that can hold the grant.
+    let reminders = RemindersStore()
+
+    // Transient top banner ("Repos refreshed") — set after a successful *manual*
+    // refresh so the recycle button gives visible feedback; the view fades it out
+    // on clear. Background polling never sets it (it'd flash unprompted every 90s).
+    var banner: String?
+    private var bannerToken = 0       // guards a rapid re-flash from clearing early
+
     private let client = Focus5Client()
     private let cache = RosterCache()
     private var fetchGeneration = 0    // guards against out-of-order fetch results
@@ -89,6 +99,21 @@ final class Focus5Model {
         } else {
             _ = await fetchAndApply(dirty: isDirtyView)
             await refreshNote()
+            await reminders.refresh()   // EventKit; no-ops until access granted
+        }
+    }
+
+    /// Show a transient top banner for ~3s, then clear it (the view fades it out).
+    /// A token guards against a second flash's timer being cancelled by the first:
+    /// only the most recent flash may clear the banner.
+    func flashBanner(_ text: String) {
+        banner = text
+        bannerToken += 1
+        let token = bannerToken
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard token == bannerToken else { return }
+            banner = nil
         }
     }
 

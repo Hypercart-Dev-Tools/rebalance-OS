@@ -2734,8 +2734,17 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     goals = all_goals[:PRIMARY_GOAL_LIMIT]
     secondary_todos = all_goals[PRIMARY_GOAL_LIMIT:]
     # Read-only Apple Reminders column — active items from the configured list,
-    # soonest-due first. [] if never synced (the accessor never raises).
-    apple_reminders = list_apple_reminders(DB_PATH, order_by="due", limit=APPLE_REMINDER_LIMIT)
+    # now sourced from the helper's JSON output rather than the DB.
+    apple_reminders = []
+    active_json_path = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
+    if active_json_path.exists():
+        try:
+            with open(active_json_path, encoding="utf-8") as fh:
+                items = json.load(fh)
+                items.sort(key=lambda x: x.get("due_at") or "9999-12-31T23:59:59Z")
+                apple_reminders = items[:APPLE_REMINDER_LIMIT]
+        except (json.JSONDecodeError, OSError, TypeError):
+            pass
     recent_completions = load_goal_history(goals_path=goals_path)
     for item in recent_completions:
         completed_at = item.get("completed_at")

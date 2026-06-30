@@ -57,8 +57,12 @@ Every doc in `PROJECT/2-WORKING` should have:
 ```
 
 3. clear phase or work sections if the doc is a plan
-4. QA gates or acceptance criteria after each phase if the plan is multi-phase
-5. repo-relative paths only; no hardcoded absolute local paths
+4. a table of contents (`## Table of contents`) listing each phase, if the plan is multi-phase — so a
+   cold agent can see the full phase span and jump to the live one without scrolling the whole body
+5. QA gates or acceptance criteria after each phase if the plan is multi-phase
+6. for any discovery or spike phase, its findings written **back into this doc** before its QA gate can
+   pass (see [Discovery & spike phases](#discovery--spike-phases))
+7. repo-relative paths only; no hardcoded absolute local paths
 
 Recommended fields when relevant:
 
@@ -67,6 +71,71 @@ Recommended fields when relevant:
 - `branch`
 - `non_goals`
 - `gh_issue`
+- `effort`, `complexity`, `risk`, `phases` — triage ratings; **required for medium-large work** (see
+  [Triage ratings for medium-large work](#triage-ratings-for-medium-large-work))
+
+## Triage ratings for medium-large work
+
+So automation can pick *which* task to pursue without re-reading every plan, every newly recorded
+**medium-large** task or project carries four triage fields in its frontmatter:
+
+| Field | Range | Meaning |
+|---|---|---|
+| `effort` | integer `1`–`5` | how much work — `1` low, `5` highest |
+| `complexity` | integer `1`–`5` | how intricate / how many moving parts — `1` low, `5` highest |
+| `risk` | integer `1`–`5` | blast radius + uncertainty — `1` safe/contained, `5` one-way-door or unknown |
+| `phases` | positive integer | total number of phases in the plan |
+
+```yaml
+effort: 2
+complexity: 3
+risk: 1
+phases: 4
+```
+
+`risk` should track the repo's existing reversibility scale (`Easy / Costly / One-way door`,
+`AGENTS.md` #3): `1`–`2` ≈ Easy, `3` ≈ Costly, `4`–`5` ≈ one-way door / high uncertainty. It is not a
+parallel notion of danger — it is that scale expressed as a number.
+
+**Scope.** Required for medium-large work (project plans, experiments, features, multi-phase efforts).
+Genuinely small/trivial docs (a typo, a path repoint, a ≤2–3 line bug-fix — the same floor as the
+issue-first SOP) do not need them. "Medium-large" is a judgment, so *presence* is enforced by the LLM
+layer, not a regex (below).
+
+### How to combine them — derive, don't store
+
+There is deliberately **no stored composite "score" field.** A frozen aggregate would (a) drift from
+the three numbers it came from, violating Principle #4 (*one canonical place per fact*), and (b) bake a
+weighting choice into every doc that you then cannot re-tune without rewriting them. Compute the
+selection signal **live, at selection time**, from the raw fields:
+
+- **`risk` is a gate, not an addend.** A trivial-but-risky task (`effort 1`, `complexity 1`, `risk 5`)
+  is easy to *do* but exactly what automation should not auto-pick — folding risk into a linear sum
+  lets it slip through mid-ranked. Gate on it instead.
+- **`effort` and `complexity` are correlated** (complex work is usually effortful), so summing them is
+  a rough "size" proxy, not two independent signals — treat the sum as one ease axis, not two.
+
+Reference selection rule (tune the thresholds per repo):
+
+```text
+eligible      = risk <= 2                 # hard safety gate; risk >= 4 => route to a human
+ease          = effort + complexity       # 2..10, lower = easier
+pick          = among eligible, lowest ease, then fewest phases as the tiebreak
+```
+
+This keeps the raw ratings canonical and queryable while letting the "what's the easiest *safe* thing
+to grab" logic live in one place that can evolve. (See the resolved `priority` note under
+[Proposed extensions](#proposed-extensions-not-yet-locked).)
+
+### How this is enforced
+
+- **deterministic (values)** — `pdda.sh frontmatter` validates the fields **only when present**:
+  `effort`/`complexity`/`risk` must be integers `1`–`5`, `phases` a positive integer. A present-but-bad
+  value is unambiguous, so it `error`s. The script does **not** force presence — it cannot know whether
+  a doc is "medium-large."
+- **LLM (presence)** — `pdda-doc-ready.sh` flags a medium-large plan that is *missing* the triage
+  ratings. Whether a doc is medium-large is a judgment, so it stays advisory/warn-capped like every
+  other readiness finding.
 
 ## Why the two-column status header matters
 
@@ -81,6 +150,37 @@ exactly `What was just completed | What's next` — there is no alias/compatibil
 specced with a `2026-07-31` cutover, but a single-repo system controls its own docs: no doc here used
 an old alias, so a dated, silently-changing branch guarded nothing and was removed 2026-06-22.)
 
+## Discovery & spike phases
+
+Discovery and spike phases exist to *learn* — reverse-engineer an existing system, probe an unknown,
+prove or kill a risky approach before committing the plan to it. Their output is knowledge, and under
+Principle #1 (*docs are the runtime state, not a record of it*) that knowledge is project state. If it
+lives only in an agent's context or a throwaway scratch note, a cold agent resuming the plan cannot see
+what was learned, why a path was chosen or abandoned, or what the spike actually proved — and the work
+gets re-done.
+
+Contract: **a phase tagged as discovery or spike must write its findings back into the originating plan
+doc before its QA gate can pass.** Concretely, that phase's section (or a clearly linked sibling
+section in the same doc) must capture:
+
+- **what was investigated** — the system/area reverse-engineered or the question the spike asked
+- **what was found** — the concrete mechanics learned, with repo-relative pointers (`file:line`) where
+  the finding lives in code, not a vague summary
+- **what it changes** — how the finding confirms, redirects, or kills the plan's later phases; an
+  unfinished "we'll know after the spike" left dangling is itself the gap
+
+This satisfies Principle #4 (*one canonical place per fact*): the originating plan is that place. A
+spike whose findings sit in chat is the exact drift PDDA exists to prevent. The QA gate for a
+discovery/spike phase therefore includes "findings are written back to this doc" as an acceptance
+criterion alongside the phase's normal checks.
+
+Enforcement is **advisory (LLM layer, warn-capped)** — `pdda-doc-ready.sh` flags a discovery/spike
+phase whose findings were not written back. "Did the agent actually capture what it learned" is a
+judgment a regex cannot make honestly, so it stays with the LLM reviewer and, like every finding from
+that layer, never blocks a build (see [LLM-assisted doc readiness review](#2-llm-assisted-doc-readiness-review)).
+To tag a phase, name it plainly (e.g. `## Phase 2 — Discovery: …` / `## Phase 3 — Spike: …`) or set
+`doc_type: research` / a phase-level marker the reviewer can see.
+
 ## Bug-fix doc stance
 
 Bug-fix docs may use a lighter template than multi-phase project plans, but they still need:
@@ -91,20 +191,39 @@ Bug-fix docs may use a lighter template than multi-phase project plans, but they
 - source of truth for intake, including a GitHub issue when relevant
 - verification steps
 
-GitHub issues are a valid source for bug reports and intake. They are not a substitute for the local active-work doc
-once execution starts in this repo.
+GitHub issues are the default intake for substantive bug reports (issue-first SOP — see below). They are not a
+substitute for the local active-work doc once execution starts in this repo.
 
 ## GitHub issue intake
 
-GitHub issues are a first-class intake source. The bug-fix stance above states the principle; this
-section owns the *format*. When an issue should be tracked in-repo, capture it as a doc in
-`PROJECT/1-INBOX/` using this convention:
+GitHub issues are the **default front door** for substantive work — every project plan and every
+non-trivial bug/fix opens an issue *first*, and that issue gets an in-repo pointer doc. The signal
+stream lives in GitHub (machine-queryable state, labels, commit↔issue linkage); the execution
+surface of record stays in `PROJECT/**`. This is the **issue-first SOP**; the bug-fix stance above
+states the principle, and this section owns the *format*. To prevent duplicate intake and forgotten
+work, every captured `GH-*.md` doc is also **parked immediately in `ROADMAP.md`** as a one-line queue
+entry until it is promoted, deferred, or closed.
 
-- **Filename:** `GH-<number>-SHORT-DESCRIPTION.md` (e.g. `GH-11-CROSS-REPO-TARGETING.md`).
+**Floor (what needs an issue).** The operational test is **lines of code touched**: any change
+beyond a **2–3 line** fix opens a GitHub issue first, and its local plan doc is named after that
+issue (see Filename below). Project plans, experiments, and features are always above this line.
+**Exempt:** genuinely trivial edits — a ≤2–3 line code fix, a typo, a path repoint, a doc-only
+one-liner, formatting — commit directly with a clear message and no issue. When in doubt, open the
+issue — it is a cheap `gh issue create`. The SOP applies to *new* efforts going forward; in-flight
+`1-INBOX`/`2-WORKING` docs are not backfilled.
+
+Capture a tracked issue as a doc in `PROJECT/1-INBOX/` using this convention:
+
+- **Filename:** `GH-<number>-VERY-SHORT-DESCRIPTION.md` — the local plan doc is always named after
+  its GitHub issue (e.g. `GH-1234-SHOWME-COMMAND.md`, `GH-11-CROSS-REPO-TARGETING.md`). Keep the
+  description to ~2–4 words; the issue number is the real key, the slug is just a human hint.
   SCREAMING-KEBAB to match the other inbox docs; no zero-padding — mirror the GitHub issue number.
   `<number>` resolves against `origin` (a single canonical repo), so the bare number is unambiguous.
 - **Minimum frontmatter:** `gh_issue`, `source` (the full issue URL), `title`, `status`
   (`Proposed (1-INBOX — not yet active)`), `created`, and `doc_type` (`feedback` or `bugfix`).
+  For medium-large captures, also include the triage ratings `effort`, `complexity`, `risk`, `phases`
+  at capture time, so the queue can be triaged before promotion (see
+  [Triage ratings for medium-large work](#triage-ratings-for-medium-large-work)).
 - **Body:** transcribe the issue's actionable substance (the asks / acceptance criteria), not the whole
   thread. The live issue stays the discussion surface; this doc is the in-repo capture and back-reference.
 
@@ -112,13 +231,17 @@ Lifecycle:
 
 - The `GH-` inbox doc is the **capture**, not the active-work doc. It carries no `## Status` table while
   it sits in `1-INBOX` (the inbox is the rough/untriaged bucket).
+- Capture time also adds a **one-line `ROADMAP.md` queue pointer** linking that inbox doc. This is a
+  temporary parking slot: it makes fresh intake visible to humans and automation before promotion,
+  which is the duplicate-prevention guard.
 - When execution starts, **promote** it to `PROJECT/2-WORKING/` — keep the `GH-` prefix for provenance —
   and it must then satisfy the full active-doc contract (frontmatter, exact status table, QA gates if
-  phased), **carrying `gh_issue` forward**. A `ROADMAP.md` pointer is optional at capture and required
-  once the doc is active. This is the concrete mechanism behind "GitHub issues are not a substitute for
-  the local active-work doc once execution starts" (bug-fix stance above).
+  phased), **carrying `gh_issue` forward**. The `ROADMAP.md` pointer is therefore required twice:
+  first as a queued parking entry at capture, then as an active-work ledger entry after promotion.
+  This is the concrete mechanism behind "GitHub issues are not a substitute for the local active-work
+  doc once execution starts" (bug-fix stance above).
 - If a captured issue is never actioned it ages out of `1-INBOX` like any other untriaged note; if it is
-  closed without work, move the doc to `PROJECT/4-MISC`.
+  closed without work, move the doc to `PROJECT/4-MISC` and remove its queue pointer from `ROADMAP.md`.
 
 A foreign-repo issue (not `origin`) is the rare exception: the `source:` URL disambiguates it, since the
 bare `GH-<number>` only guarantees uniqueness within the canonical repo.
@@ -129,16 +252,21 @@ PDDA should have two classes of automation:
 
 Implementation note:
 
-- the deterministic shell scripts currently live under `utils/`
-- the canonical deterministic entry point is `utils/pdda.sh` (`run` + every single check as a subcommand)
-- `utils/pdda-doc-ready.sh` stays separate as the opt-in LLM layer
-- do not ship parallel wrapper commands unless a real external integration forces them; the durable surface is the smallest one that fully expresses the system
+- the automation ships as a single dispatcher, `utils/pdda/pdda.sh`, which sources shared helpers from
+  `utils/pdda/pdda-lib.sh`
+- every deterministic check is a subcommand: `pdda.sh frontmatter`, `pdda.sh status-table`,
+  `pdda.sh hardcoded-paths`, `pdda.sh roadmap`, `pdda.sh roadmap-coverage`, `pdda.sh changelog`,
+  `pdda.sh stale`
+- the aggregate runner is `pdda.sh run` (it runs the deterministic checks in order, then the LLM
+  review)
+- each finding still carries a stable `check` id (e.g. `pdda-check-frontmatter`) in stdout and the
+  activity log, independent of how the check is invoked
 
-### 1. Deterministic hygiene scripts
+### 1. Deterministic hygiene checks
 
 These catch issues where the answer should be the same every time.
 
-#### A. `pdda-stale-working-docs.sh`
+#### A. `pdda.sh stale`
 
 Purpose:
 - inspect docs in `PROJECT/2-WORKING`
@@ -158,7 +286,7 @@ Why flag-only (design call, 2026-06-22):
   guess cost nothing but an ignorable line. An opt-in move can be re-added later behind `pdda_hold` +
   `full` mode if it ever earns the miles.
 
-#### B. `pdda-check-status-table.sh`
+#### B. `pdda.sh status-table`
 
 Purpose:
 - verify every doc in `PROJECT/2-WORKING` contains the exact two-column status table
@@ -168,7 +296,7 @@ Minimum behavior:
 - fail if the table headers are not exactly `What was just completed` and `What's next`
 - fail if either first-row cell is blank
 
-#### C. `pdda-check-frontmatter.sh`
+#### C. `pdda.sh frontmatter`
 
 Purpose:
 - ensure active docs expose the minimum machine-readable metadata
@@ -177,8 +305,11 @@ Minimum behavior:
 - verify required keys exist
 - flag empty required values
 - flag invalid or missing dates
+- when the triage ratings are present, validate their values — `effort`/`complexity`/`risk` must be
+  integers `1`–`5`, `phases` a positive integer (presence itself is judged by the LLM layer; see
+  [Triage ratings for medium-large work](#triage-ratings-for-medium-large-work))
 
-#### D. `pdda-check-hardcoded-paths.sh`
+#### D. `pdda.sh hardcoded-paths`
 
 Purpose:
 - catch absolute machine-specific paths before they fossilize into plans
@@ -191,7 +322,7 @@ Expected exceptions:
 - quoted terminal output
 - explicitly marked transcript blocks
 
-#### E. `pdda-check-roadmap.sh`
+#### E. `pdda.sh roadmap`
 
 Purpose:
 - enforce the `ROADMAP.md` pointer/ledger contract deterministically (the cheap, hourly guard that
@@ -205,18 +336,18 @@ Minimum behavior:
 
 Expected exceptions:
 - fenced `console` / `text` / `transcript` blocks and blockquote lines (the carve-out exception note)
-  are not scanned — same convention as `pdda-check-hardcoded-paths.sh`
+  are not scanned — same convention as `pdda.sh hardcoded-paths`
 
 The fuzzy judgment ("deep execution notes that belong elsewhere") stays with the LLM layer below; this
 script only catches the unambiguous signals.
 
-#### F. `pdda-check-changelog.sh`
+#### F. `pdda.sh changelog`
 
 Purpose:
 - nudge that `CHANGELOG.md` (the first-class end-of-iteration record) was updated this iteration
 
 Minimum behavior:
-- read `CHANGELOG.md` (override via `PDDA_CHANGELOG`); find the newest `## [x.y.z] - YYYY-MM-DD` entry, or the legacy `## YYYY-MM-DD` form
+- read `CHANGELOG.md` (override via `PDDA_CHANGELOG`); find the newest `## YYYY-MM-DD` entry
 - `warn` (never `error` — does not block, even in `full`) when that entry predates the latest git
   commit by more than `PDDA_CHANGELOG_STALE_DAYS` days (default `0`)
 - `warn` if `CHANGELOG.md` is missing or has no dated entry; emit `info` (skip the compare) when there
@@ -226,12 +357,12 @@ Why warn-only:
 - "did you update the changelog" is a reminder, not a correctness gate — blocking a build because a
   human hasn't written the prose yet is the wrong kind of friction (the calibration principle)
 
-#### G. `pdda-check-roadmap-coverage.sh`
+#### G. `pdda.sh roadmap-coverage`
 
 Purpose:
 - enforce the *coverage* direction of the `ROADMAP.md` contract: every active doc in `PROJECT/2-WORKING`
   must be reflected by a pointer in `ROADMAP.md`, so the ledger can never silently fall behind the
-  working set. This is the inverse of `pdda-check-roadmap.sh` (which keeps execution detail from leaking
+  working set. This is the inverse of `pdda.sh roadmap` (which keeps execution detail from leaking
   *into* the roadmap); together they guard the pointer/working-set relationship in both directions.
 
 Minimum behavior:
@@ -239,14 +370,11 @@ Minimum behavior:
 - `error` on any working doc whose repo-relative path (`PROJECT/2-WORKING/<name>.md`) does not appear in
   `ROADMAP.md` (override the roadmap location via `PDDA_ROADMAP`) — the action is "add a one-line ledger
   entry linking it"
-- list captured GitHub issue docs (`PROJECT/1-INBOX/GH-*.md`, `blank.md` excluded)
-- `error` on any captured GitHub issue doc whose repo-relative path (`PROJECT/1-INBOX/GH-*.md`) does not
-  appear in `ROADMAP.md` — the action is "add a one-line queue entry linking it"
 - `error` if `ROADMAP.md` is missing entirely
 
 Expected exceptions:
 - a working doc that should not appear in the ledger opts out with `roadmap_exempt: true` in its
-  frontmatter (mirrors the `pdda_hold` escape hatch in `pdda-stale-working-docs.sh`); the check then
+  frontmatter (mirrors the `pdda_hold` escape hatch in `pdda.sh stale`); the check then
   emits `info` (skip) for that doc
 
 ### 2. LLM-assisted doc readiness review
@@ -262,6 +390,9 @@ It should check for:
 
 - phased plans missing QA gates after a phase
 - phase sections with actions but no observable acceptance criteria
+- multi-phase plans missing a table of contents listing each phase
+- discovery or spike phases whose findings were not written back into the plan doc
+- medium-large plans missing the triage ratings (`effort`, `complexity`, `risk`, `phases`)
 - status tables that are technically present but stale versus the body
 - docs that bury the next action in prose instead of making it explicit
 - plans that duplicate detail already meant to live in another canonical doc
@@ -308,6 +439,7 @@ onto the rails deliberately.
 
 It should contain:
 
+- queued / parked intake pointers for newly captured `GH-*.md` docs
 - projects in progress
 - completed work
 - attempted work
@@ -332,16 +464,17 @@ Coverage rule:
   that links it), so the ledger never falls behind the working set. A working doc that legitimately
   should not appear opts out with `roadmap_exempt: true` in its frontmatter. This is the inverse of the
   "no detail leaks in" rule above: nothing active goes *missing from* the roadmap either.
-- every captured GitHub issue doc in `PROJECT/1-INBOX/GH-*.md` is also first-class intake and must be
-  parked here as a one-line queue entry immediately at capture, then promoted or removed later.
+- every captured GitHub issue doc in `PROJECT/1-INBOX/GH-*.md` must also be reflected here as a
+  one-line **queued / parked** pointer until it is promoted, deferred out, or closed, so intake cannot
+  quietly disappear and later be duplicated.
 
 How this is enforced (so it cannot quietly rot in either direction):
-- **deterministic (no leak in)** — `utils/pdda.sh roadmap` errors on task checklists / `### Checklist` /
+- **deterministic (no leak in)** — `pdda.sh roadmap` errors on task checklists / `### Checklist` /
   `### QA checklist` headings and warns on size sprawl (runs hourly, free, no model needed)
-- **deterministic (no gap missing)** — `utils/pdda.sh roadmap-coverage` errors when an active
-  `PROJECT/2-WORKING` doc has no pointer here and when a captured `PROJECT/1-INBOX/GH-*.md` issue doc is
+- **deterministic (no gap missing)** — `pdda.sh roadmap-coverage` errors when either an
+  active `PROJECT/2-WORKING` doc has no pointer here, or a captured `PROJECT/1-INBOX/GH-*.md` doc is
   not parked here as a queue entry (honors `roadmap_exempt: true`)
-- **LLM** — `utils/pdda-doc-ready.sh` reviews `ROADMAP.md` against the full pointer contract for the
+- **LLM** — `utils/pdda/pdda-doc-ready.sh` reviews `ROADMAP.md` against the full pointer contract for the
   fuzzier "this paragraph is really execution detail" cases (honors the carve-out)
 - the file itself carries a top banner restating the contract, so a human editing it sees the rule
 
@@ -354,7 +487,7 @@ findings, and durable Costly / one-way-door bets still earn a `decisions/` recor
 
 It should contain:
 
-- newest-first, dated `## [x.y.z] - YYYY-MM-DD` sections (legacy plain `## YYYY-MM-DD` sections remain readable by the check)
+- newest-first, dated `## YYYY-MM-DD` sections
 - one entry per substantive iteration: what changed, why, and the verification (test / suite result)
 - the bet behind a consequential change when one applies (the call, the expected signal, reversibility)
 
@@ -379,7 +512,7 @@ Recording a bet (when a change is consequential):
   bet*; this contract owns the *where and how*, so governance is not fragmented across the two files.)
 
 How this is enforced (a nudge, not a gate):
-- **deterministic** — `utils/pdda.sh changelog` **warns** (never `error`, so it never blocks —
+- **deterministic** — `pdda.sh changelog` **warns** (never `error`, so it never blocks —
   even in `full`) when the newest dated entry predates the latest git commit by more than
   `PDDA_CHANGELOG_STALE_DAYS` days (default `0`), i.e. an iteration shipped without a changelog entry
 - whether an entry is actually *substantive* stays a human / LLM judgment, not a regex
@@ -400,19 +533,20 @@ Each script run should append:
 
 Run the deterministic checks every hour in this order:
 
-1. `utils/pdda.sh frontmatter`
-2. `utils/pdda.sh status-table`
-3. `utils/pdda.sh hardcoded-paths`
-4. `utils/pdda.sh roadmap`
-5. `utils/pdda.sh roadmap-coverage`
-6. `utils/pdda.sh changelog`
-7. `utils/pdda.sh stale`
+1. `pdda.sh frontmatter`
+2. `pdda.sh status-table`
+3. `pdda.sh hardcoded-paths`
+4. `pdda.sh roadmap`
+5. `pdda.sh roadmap-coverage`
+6. `pdda.sh changelog`
+7. `pdda.sh stale`
 
 Then run:
 
-8. `utils/pdda.sh doc-ready`
+8. `pdda.sh doc-ready`
 
-(`utils/pdda.sh run` runs exactly this sequence and applies the active `PDDA_MODE` gate.)
+(`pdda.sh run` runs exactly this sequence and applies the active `PDDA_MODE` gate. Scheduling the
+single aggregate command is the recommended hourly cron entry.)
 
 Reason for the order:
 
@@ -452,6 +586,8 @@ A doc is "automation ready" when:
 - it has the exact status table
 - the next action is singular and explicit
 - each phase has a visible QA gate
+- a multi-phase plan has a table of contents listing its phases
+- any discovery or spike phase has its findings written back into the doc
 - links to canonical related docs are present where needed
 - there are no hardcoded absolute paths
 - `ROADMAP.md` is pointing at it rather than duplicating it
@@ -470,7 +606,10 @@ A doc is "automation ready" when:
 These are likely useful for full automation, but they are still policy choices:
 
 - a `doc_type` field such as `project`, `bugfix`, `research`, `feedback`, `roadmap`
-- a `priority` field if you want deterministic triage beyond folder placement
+- ~~a `priority` field if you want deterministic triage beyond folder placement~~ **superseded** by the
+  `effort`/`complexity`/`risk`/`phases` [triage ratings](#triage-ratings-for-medium-large-work), which
+  give richer triage than a single priority scalar — automation derives the selection signal from them
+  rather than storing one frozen number
 - a `pdda_hold: true` override for docs that should remain in `2-WORKING` despite inactivity
 - a second generated PDDA summary artifact beyond the activity log
 
@@ -502,5 +641,5 @@ If the goal is "get project docs onto rails quickly," the safest v1 is:
 - forbid hardcoded absolute paths
 - run deterministic checks hourly
 - let the LLM reviewer flag readiness issues
-- keep `ROADMAP.md` pointer-only (deterministic `pdda-check-roadmap.sh` + the LLM rubric guard it)
+- keep `ROADMAP.md` pointer-only (deterministic `pdda.sh roadmap` + the LLM rubric guard it)
 - append all script activity to `PROJECT/PDDA-ACTIVITY.jsonl`

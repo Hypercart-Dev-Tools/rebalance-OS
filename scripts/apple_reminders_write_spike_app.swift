@@ -75,15 +75,39 @@ func appStatusName(_ status: EKAuthorizationStatus) -> String {
     }
 }
 
+func appLooksLikeRepoRoot(_ url: URL) -> Bool {
+    FileManager.default.fileExists(atPath: url.appendingPathComponent("pyproject.toml").path)
+        && FileManager.default.fileExists(atPath: url.appendingPathComponent("src/rebalance").path)
+}
+
 func appRepoRoot() -> URL {
+    // 1. Explicit env override (only reachable when launched from a shell — NOT under
+    //    LaunchServices, which gives the app no cwd/env. Kept for terminal-side testing.)
     let env = ProcessInfo.processInfo.environment
     if let explicit = env["RBOS_REPO_ROOT"], !explicit.isEmpty {
         return URL(fileURLWithPath: explicit).standardizedFileURL
     }
+    // 2. Repo root baked into the bundle at build time. This is the canonical path under a
+    //    LaunchServices launch (`open`), where cwd is `/` and there is no inherited env.
+    //    The build harness injects RBOSRepoRoot into Info.plist as an absolute path.
+    if let baked = Bundle.main.object(forInfoDictionaryKey: "RBOSRepoRoot") as? String, !baked.isEmpty {
+        let url = URL(fileURLWithPath: baked).standardizedFileURL
+        if appLooksLikeRepoRoot(url) {
+            return url
+        }
+    }
+    // 3. cwd heuristic (shell launch from inside the repo).
     let cwd = URL(fileURLWithPath: FileManager.default.currentDirectoryPath).standardizedFileURL
-    if FileManager.default.fileExists(atPath: cwd.appendingPathComponent("pyproject.toml").path),
-       FileManager.default.fileExists(atPath: cwd.appendingPathComponent("src/rebalance").path) {
+    if appLooksLikeRepoRoot(cwd) {
         return cwd
+    }
+    // 4. Last-resort: walk up from the bundle location looking for a repo root.
+    var probe = Bundle.main.bundleURL.standardizedFileURL
+    for _ in 0..<8 {
+        probe = probe.deletingLastPathComponent()
+        if appLooksLikeRepoRoot(probe) {
+            return probe
+        }
     }
     return Bundle.main.bundleURL
         .deletingLastPathComponent()
