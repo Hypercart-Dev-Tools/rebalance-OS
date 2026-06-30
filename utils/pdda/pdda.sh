@@ -446,6 +446,105 @@ check_stale() {
 }
 
 # ------------------------------------------------------------------------------------------------
+# H. issue-doc-sync (warn-only, flag-only; gh-degrades to a cached state file, never blocks)
+# ------------------------------------------------------------------------------------------------
+# The gh-fetch primitives (_pdda_gh_repo_slug, _pdda_gh_state_table) live in pdda-lib.sh so the
+# cache producer (pdda-gh-refresh.sh) and this consumer share ONE definition of the cache format.
+
+# Cached issue-state table ('#'-comment lines stripped). Empty when no cache file exists.
+_pdda_cache_state_table() {
+  [ -f "$PDDA_GH_STATE_CACHE" ] || return 0
+  grep -v '^[[:space:]]*#' "$PDDA_GH_STATE_CACHE" 2>/dev/null
+}
+
+# Resolve the issue-state table from the best source, honoring PDDA_ISSUE_SYNC_SOURCE
+# (auto|gh|cache; default auto = live gh when it succeeds, else the cached file). The Stop hook sets
+# `cache` to stay fast and offline-tolerant; `pdda.sh run` uses `auto`. Prints "<number>\t<STATE>".
+_pdda_issue_state_table() {
+  local out
+  case "${PDDA_ISSUE_SYNC_SOURCE:-auto}" in
+    cache) _pdda_cache_state_table ;;
+    gh)    _pdda_gh_state_table ;;
+    auto|*)
+      if command -v gh >/dev/null 2>&1 && out="$(_pdda_gh_state_table)"; then
+        printf '%s' "$out"
+      else
+        _pdda_cache_state_table
+      fi
+      ;;
+  esac
+}
+
+# Issue number for a doc: frontmatter gh_issue (preferred), else the GH-<n>- filename. Empty if neither.
+_pdda_doc_issue_number() {
+  local file="$1" num base
+  num="$(pdda_trim "$(pdda_frontmatter_value "$file" gh_issue)")"
+  case "$num" in \"*\") num="${num#\"}"; num="${num%\"}" ;; \'*\') num="${num#\'}"; num="${num%\'}" ;; esac
+  num="${num#\#}"
+  if printf '%s' "$num" | grep -Eq '^[0-9]+$'; then printf '%s' "$num"; return; fi
+  base="$(basename "$file")"
+  case "$base" in
+    GH-[0-9]*) num="${base#GH-}"; num="${num%.md}"; num="${num%%-*}"   # strip .md first so a bare GH-<n>.md (no description) still resolves
+      if printf '%s' "$num" | grep -Eq '^[0-9]+$'; then printf '%s' "$num"; fi ;;
+  esac
+}
+
+# Leading alphabetic word of a doc's status (lowercased): "Active — Phase 0 complete" -> "active";
+# "🟢 Shipped" -> "shipped". Anchors the (b) signal on the status field's first word, which declares
+# the whole doc's state — so a mid-status mention like "Phase 0 complete" never false-flags.
+_pdda_status_leadword() {
+  printf '%s' "$1" | tr '[:upper:]' '[:lower:]' | grep -oE '[a-z]+' | head -1
+}
+
+# Terminal status words that mean "this doc is done" (so a still-OPEN issue is the drift).
+PDDA_TERMINAL_STATUS_WORDS="complete completed done shipped fixed closed merged resolved landed"
+_pdda_is_terminal_word() {
+  case " $PDDA_TERMINAL_STATUS_WORDS " in *" $1 "*) return 0 ;; esac
+  return 1
+}
+
+check_issue_doc_sync() {
+  pdda_reset_counts
+  local CHECK_NAME="pdda-check-issue-doc-sync" rc=0
+  local table file num state status_val leadword target rel_target
+  table="$(_pdda_issue_state_table)"
+
+  while IFS= read -r file; do
+    num="$(_pdda_doc_issue_number "$file")"
+    [ -n "$num" ] || continue            # not an issue-tracked doc — nothing to reconcile
+
+    state="$(printf '%s\n' "$table" | awk -F'\t' -v n="$num" '$1 == n { print toupper($2); exit }')"
+    if [ -z "$state" ]; then
+      pdda_record_finding info "$CHECK_NAME" "$file" 1 \
+        "issue #$num state unavailable (gh absent/offline and no cached state) — sync not evaluated" "skip"
+      continue
+    fi
+
+    # Direction (a): issue CLOSED but the doc still sits in 2-WORKING => recommend the move (flag-only).
+    if [ "$state" = "CLOSED" ]; then
+      target="$PDDA_COMPLETED_DIR/$(basename "$file")"
+      rel_target="$(pdda_relpath "$target")"
+      pdda_record_finding warn "$CHECK_NAME" "$file" 1 \
+        "issue #$num is CLOSED but the doc is still in 2-WORKING — recommend: git mv $(pdda_relpath "$file") $rel_target" \
+        "move-to-completed"
+      continue                            # closed-issue drift dominates; skip the (b) test
+    fi
+
+    # Direction (b): doc declares itself done (status lead word) while the issue is still OPEN.
+    status_val="$(pdda_trim "$(pdda_frontmatter_value "$file" status)")"
+    leadword="$(_pdda_status_leadword "$status_val")"
+    if [ -n "$leadword" ] && _pdda_is_terminal_word "$leadword"; then
+      pdda_record_finding warn "$CHECK_NAME" "$file" 1 \
+        "doc status reads '$leadword' (done) but issue #$num is still OPEN — close the issue or correct the status" \
+        "reconcile-status"
+    fi
+  done < <(pdda_list_working_docs)
+
+  pdda_emit_summary "$CHECK_NAME" "$rc"
+  return "$(pdda_gated_exit "$rc")"
+}
+
+# ------------------------------------------------------------------------------------------------
 # run — the aggregate deterministic suite, then the LLM readiness review (in order)
 # ------------------------------------------------------------------------------------------------
 # Decoration -> stdout in text mode, stderr in json mode, so PDDA_FORMAT=json leaves stdout a clean
@@ -461,6 +560,7 @@ pdda-check-roadmap:check_roadmap
 pdda-check-roadmap-coverage:check_roadmap_coverage
 pdda-check-changelog:check_changelog
 pdda-stale-working-docs:check_stale
+pdda-check-issue-doc-sync:check_issue_doc_sync
 "
 
 cmd_run() {
@@ -537,6 +637,8 @@ Commands:
   roadmap-coverage   nothing active goes MISSING from ROADMAP.md
   changelog          end-of-iteration changelog nudge (warn-only)
   stale              flag stale working docs (flag-only; never moves)
+  issue-doc-sync     flag 2-WORKING/GH-*.md docs drifted from their GitHub issue state (warn-only)
+  gh-refresh         refresh the cached GitHub issue-state file issue-doc-sync reads offline (needs gh)
   doc-ready          LLM readiness review (delegates to pdda-doc-ready.sh; opt-in via PDDA_LLM_BIN)
   catchup            LLM repo triage and ROUTER.md recommendations (delegates to pdda-catchup.sh)
   help               this message
@@ -557,6 +659,8 @@ case "$cmd" in
   roadmap-coverage) check_roadmap_coverage; exit "$?" ;;
   changelog)        check_changelog; exit "$?" ;;
   stale)            check_stale; exit "$?" ;;
+  issue-doc-sync)   check_issue_doc_sync; exit "$?" ;;
+  gh-refresh)       exec "$HERE/pdda-gh-refresh.sh" "$@" ;;
   doc-ready)        exec "$HERE/pdda-doc-ready.sh" "$@" ;;
   catchup)          exec "$HERE/pdda-catchup.sh" "$@" ;;
   help|-h|--help)   pdda_usage; exit 0 ;;
