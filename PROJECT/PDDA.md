@@ -256,7 +256,7 @@ Implementation note:
   `utils/pdda/pdda-lib.sh`
 - every deterministic check is a subcommand: `pdda.sh frontmatter`, `pdda.sh status-table`,
   `pdda.sh hardcoded-paths`, `pdda.sh roadmap`, `pdda.sh roadmap-coverage`, `pdda.sh changelog`,
-  `pdda.sh stale`
+  `pdda.sh stale`, `pdda.sh issue-doc-sync`
 - the aggregate runner is `pdda.sh run` (it runs the deterministic checks in order, then the LLM
   review)
 - each finding still carries a stable `check` id (e.g. `pdda-check-frontmatter`) in stdout and the
@@ -377,6 +377,33 @@ Expected exceptions:
   frontmatter (mirrors the `pdda_hold` escape hatch in `pdda.sh stale`); the check then
   emits `info` (skip) for that doc
 
+#### H. `pdda.sh issue-doc-sync`
+
+Purpose:
+- catch a `PROJECT/2-WORKING/GH-*.md` doc whose recorded state has drifted from its **GitHub issue**,
+  in either direction — the gap a 2026-06-29 manual reconciliation pass had to cross-reference by hand
+
+Minimum behavior:
+- for each working doc, resolve its issue number from the `gh_issue` frontmatter key (preferred) or the
+  `GH-<number>-` filename; silently skip docs that carry neither (they are not issue-tracked)
+- resolve each issue's state from the best available source (see gh-degrade below), then flag two drifts:
+  - **(a)** issue **CLOSED** but the doc is still in `2-WORKING` -> `warn`, recommending the exact
+    `git mv` to `PROJECT/3-COMPLETED` (flag-only; a human runs the one reversible move)
+  - **(b)** issue **OPEN** but the doc's `status:` lead word declares it done (`complete`, `done`,
+    `shipped`, `fixed`, `closed`, `merged`, `resolved`, `landed`) -> `warn` to reconcile (close the
+    issue or correct the status). Anchoring on the status **lead word** means a mid-status mention like
+    `Active — Phase 0 complete` never false-flags.
+- `warn` (never `error` — does not block, even in `full`, mirroring `pdda.sh changelog`); **flag-only**,
+  never moves a file
+- gh-degrade: with `PDDA_ISSUE_SYNC_SOURCE=auto` (default) it uses live `gh` when that succeeds, else a
+  cached state file (`PDDA_GH_STATE_CACHE`, written by `pdda-gh-refresh.sh`); when neither is available
+  it emits `info` (skip) for the affected doc and evaluates nothing. `gh`/`cache` force one source.
+
+Why warn-only + flag-only:
+- every drift class here is mechanical, so the check carries zero false-judgment risk; a false flag is
+  one ignorable warn line and a missed flag just leaves today's manual reconciliation — both cheap, so
+  warn-only never-blocks is the right calibration (same stance as `pdda.sh stale` and `pdda.sh changelog`)
+
 ### 2. LLM-assisted doc readiness review
 
 This catches the issues where structure exists but planning quality is weak.
@@ -406,6 +433,42 @@ It should not:
 - **block a build.** The LLM layer is advisory: its findings are capped at `warn` (any model `error`
   is clamped to `warn` in `pdda-doc-ready.sh`), so a non-deterministic oracle can never fail a build —
   the same doc must not pass at 2pm and fail at 3pm. Only deterministic checks earn blocking power.
+
+### 3. Doc-health hooks (event-triggered delivery)
+
+The deterministic checks above can also run automatically from Claude Code hooks, as a two-tier
+doc-health system. The hooks are pure **delivery** — they run the SAME section-1 checks on a trigger;
+they add no new analysis class. Both are **warn-only and fail-open: they always exit `0` and can never
+block** an edit or a stop (a doc-hygiene reminder is never worth interrupting work — the calibration
+principle, same as `pdda.sh changelog`).
+
+- **Tier 1 — `pdda-edit-doc-hook.sh` (`PostToolUse` on `Edit|Write|MultiEdit`).** Reads the edited
+  `tool_input.file_path`; exits `0` instantly unless it is `ROADMAP.md` or a `PROJECT/**/*.md` doc;
+  otherwise runs the fast **local single-file** subset for just that file — `frontmatter`,
+  `status-table`, `hardcoded-paths`, `roadmap-coverage` (and `roadmap` for `ROADMAP.md`), scoped via
+  `PDDA_ONLY_FILE`. **No network, no `gh`, no LLM**, so it stays instant and cannot gate an edit.
+- **Tier 2 — Stop full-scan (`pdda-stop-doc-health.sh`).** The companion that runs one consolidated,
+  system-wide doc-health scan per turn (the deterministic suite plus `issue-doc-sync` against the
+  cached gh-state file). See [Suggested Stop doc-health scan](#suggested-stop-doc-health-scan).
+
+`PDDA_ONLY_FILE=<path>` is the seam that scopes any check to a single file (unset = full scan, the
+default everywhere else). Wiring is repo-local in `.claude/settings.json`; installs receive the hook
+scripts via the manifest and opt in by adding the hook entries.
+
+#### Suggested Stop doc-health scan
+
+Tier 2's `pdda-stop-doc-health.sh` runs **one** system-wide scan per turn and prints a **single
+consolidated report**:
+
+- it runs the deterministic suite with `PDDA_ISSUE_SYNC_SOURCE=cache`, so `issue-doc-sync` reads the
+  cached gh-state file (written by `pdda.sh gh-refresh`) and the scan makes **no network call**;
+- it runs in `observe` mode with the LLM layer disabled — purely deterministic, fast, offline;
+- it aggregates the run into one report: a header with the error/warn totals, then the warn/error
+  finding lines (an `all clear` line when there are none);
+- it **always exits `0`** (proven by `test/pdda-doc-health-hooks.sh`), so it can never block a stop.
+
+Wire it as a `Stop` hook in `.claude/settings.json` (no matcher). Because it reads the cache rather
+than calling `gh`, keep `pdda.sh gh-refresh` on the hourly cadence so the Stop report stays current.
 
 ## Enforcement modes
 
@@ -540,17 +603,26 @@ Run the deterministic checks every hour in this order:
 5. `pdda.sh roadmap-coverage`
 6. `pdda.sh changelog`
 7. `pdda.sh stale`
+8. `pdda.sh issue-doc-sync`
 
 Then run:
 
-8. `pdda.sh doc-ready`
+9. `pdda.sh doc-ready`
 
 (`pdda.sh run` runs exactly this sequence and applies the active `PDDA_MODE` gate. Scheduling the
 single aggregate command is the recommended hourly cron entry.)
 
+The cached GitHub issue-state refresh is a separate, network-only step. Run `pdda.sh gh-refresh`
+(the standalone `utils/pdda/pdda-gh-refresh.sh`) on the same hourly cron/launchd cadence, **before**
+the suite, so `issue-doc-sync` and the Stop doc-health scan read fresh state. It is the only step that
+needs `gh`/the network; it writes `PDDA_GH_STATE_CACHE` atomically and leaves the existing cache
+untouched on any `gh` failure, so the suite itself stays offline-tolerant by reading the cache.
+
 Reason for the order:
 
 - deterministic failures should surface first
+- the network-dependent `issue-doc-sync` runs last among the deterministic checks, so every local
+  check still completes when `gh` is offline (it then degrades to the cache or an `info` skip)
 - the LLM review should spend time only on docs that passed basic structural hygiene
 
 ## Suggested output contract
