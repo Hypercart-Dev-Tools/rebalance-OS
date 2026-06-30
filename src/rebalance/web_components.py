@@ -70,6 +70,7 @@ def button_link(
     title: str | None = None,
     arrow: bool = True,
     cls: str = "",
+    attrs: str = "",
 ) -> str:
     """Render the standard ``Label ↗`` button shared across every web page.
 
@@ -80,13 +81,15 @@ def button_link(
     """
     target = ' target="_blank" rel="noopener noreferrer"' if external else ""
     title_attr = f' title="{html.escape(title, quote=True)}"' if title else ""
+    # `attrs` is emitted verbatim (caller-escaped) — used for data-* hooks.
+    extra_attrs = f" {attrs}" if attrs else ""
     arrow_html = (
         ' <span class="rb-btn-arrow" aria-hidden="true">↗</span>' if arrow else ""
     )
     klass = ("rb-btn " + cls).strip()
     return (
         f'<a class="{html.escape(klass, quote=True)}" '
-        f'href="{html.escape(href, quote=True)}"{target}{title_attr}>'
+        f'href="{html.escape(href, quote=True)}"{target}{title_attr}{extra_attrs}>'
         f"{html.escape(label)}{arrow_html}</a>"
     )
 

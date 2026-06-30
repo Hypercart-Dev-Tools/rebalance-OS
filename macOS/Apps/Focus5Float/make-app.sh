@@ -73,6 +73,11 @@ $ICON_KEY
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>LSUIElement</key><true/>
   <key>NSHighResolutionCapable</key><true/>
+  <!-- Apple Reminders bottom panel reads/writes via EventKit. Full-access key is
+       the macOS 14+ requirement; the legacy key is kept for older fallbacks.
+       (Reminders grant only — no Full Disk Access; read-back is via EventKit.) -->
+  <key>NSRemindersFullAccessUsageDescription</key><string>Focus 5 Float shows your most recent Reminders and lets you check them off.</string>
+  <key>NSRemindersUsageDescription</key><string>Focus 5 Float shows your most recent Reminders and lets you check them off.</string>
   <key>NSPrincipalClass</key><string>NSApplication</string>
   <key>LSApplicationCategoryType</key><string>public.app-category.developer-tools</string>
 </dict>

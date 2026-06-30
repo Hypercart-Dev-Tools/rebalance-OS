@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import EventKit
 
 // Phase 3 UI: vertical stack of collapsible repo cards over the live
 // /focus-5.json (Phase 4), using the harvested Theme + components. Collapsed
@@ -27,12 +28,15 @@ struct ContentView: View {
         .animation(.easeInOut(duration: 0.35), value: model.banner)
     }
 
-    /// The vault `focus5.md` note, rendered as the last card in the roster scroll
-    /// (Focus 5 / Dirty Five only). Content-hugging so it takes only the space it
-    /// needs; hidden until the first successful fetch so an offline cold-start
-    /// doesn't flash the "add a note" hint.
-    @ViewBuilder private var noteFooter: some View {
-        if model.viewMode != .telemetry && model.noteLoaded {
+    // MARK: Bottom sections (Reminders + Note)
+
+    /// The two bottom sections — Apple Reminders (A) over the focus5.md note (B) —
+    /// rendered inline at the end of the single roster scroll so they size to
+    /// their content (liquid) and flow right under the cards with no dead space.
+    /// Non-telemetry only; the note appears once its first fetch lands.
+    @ViewBuilder private var bottomSections: some View {
+        RemindersSection(store: model.reminders)
+        if model.noteLoaded {
             Focus5NoteView(exists: model.noteExists, content: model.noteContent)
         }
     }
@@ -83,6 +87,17 @@ struct ContentView: View {
                 .buttonStyle(.borderless)
                 .foregroundStyle(Theme.text2)
                 .help(model.viewMode == .telemetry ? "Re-read telemetry files" : "Re-pull /focus-5.json")
+
+                Button {
+                    narrowWindow()
+                } label: {
+                    Text("「」")
+                        .font(.system(size: 13))
+                        .fixedSize()
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Theme.text2)
+                .help("Snap to narrowest width (keeps height)")
 
                 if model.viewMode != .telemetry && model.isOffline {
                     Button {
@@ -142,6 +157,15 @@ struct ContentView: View {
         .padding(Theme.Space.m)
     }
 
+    /// Snap the floating panel to its minimum width, leaving height + position
+    /// otherwise as-is (the bottom-left corner stays put, the right edge moves in).
+    private func narrowWindow() {
+        guard let panel = NSApp.windows.first(where: { $0 is FloatingPanel }) else { return }
+        var frame = panel.frame
+        frame.size.width = panel.minSize.width   // height unchanged
+        panel.setFrame(frame, display: true, animate: true)
+    }
+
     /// The roster/telemetry health light — a dirty-count + tinted dot, adapting to
     /// the active tab. Lives on the status row (row 2) so it no longer widens the
     /// tab row.
@@ -198,7 +222,7 @@ struct ContentView: View {
                                    title: model.isDirtyView ? "Nothing at risk" : "No active repos found",
                                    detail: "The server roster is empty. Build it server-side (open /focus-5 in the browser or run a Focus 5 sync), then Refresh here to re-pull.")
                             .frame(minHeight: 160)
-                        noteFooter
+                        bottomSections
                     }
                     .padding(Theme.Space.m)
                 }
@@ -211,7 +235,7 @@ struct ContentView: View {
                         if !model.offRoster.isEmpty {
                             OffRosterFooter(warnings: model.offRoster)
                         }
-                        noteFooter
+                        bottomSections
                     }
                     .padding(Theme.Space.m)
                 }
@@ -307,16 +331,16 @@ struct RepoCardView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
-            // Always-visible summary
+            // Row 1 — position badge + actions (Open / status / chevron), so the
+            // controls share one slim row regardless of how wide the name is.
             HStack(spacing: Theme.Space.s) {
                 KeyCap(text: "#\(card.position)")
-                Text(card.repoName)
-                    .font(Theme.bodyMed).foregroundStyle(Theme.text).lineLimit(1)
                 Spacer(minLength: Theme.Space.s)
                 Button("Open ↗") { VSCodeLauncher.launch(repoPath: card.localPath, fallbackURL: card.vscodeUrl) }
                     .buttonStyle(.borderless)
                     .font(Theme.caption)
                     .foregroundStyle(Theme.accent)
+                    .fixedSize()
                     .help("Open \(card.repoName) in VS Code")
                 StatusDot(isDirty: card.isDirty, healthAvailable: card.healthAvailable)
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
@@ -324,8 +348,16 @@ struct RepoCardView: View {
                     .foregroundStyle(Theme.text3)
             }
 
+            // Row 2 — repo name, full width + prominent; wraps in the narrow panel
+            // instead of competing with the badge/controls for horizontal space.
+            Text(card.repoName)
+                .font(Theme.display).foregroundStyle(Theme.text)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Rank reason / last-commit line — smaller + greyer (a caption, not body).
             Text(card.rankReason)
-                .font(Theme.body).foregroundStyle(Theme.text2)
+                .font(.system(size: 11)).foregroundStyle(Theme.text3)
                 .lineLimit(2).fixedSize(horizontal: false, vertical: true)
 
             HStack(spacing: Theme.Space.m) {
@@ -455,6 +487,121 @@ struct TelemetryRowView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                 .strokeBorder(Theme.separator, lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Apple Reminders (section A)
+
+/// Section A — the 10 most-recent active tasks from the default Apple Reminders
+/// list, read+written LIVE via EventKit (see `RemindersStore`). Branches on the
+/// TCC authorization state: an enable button before the grant, a System-Settings
+/// hint if denied, the bounded scrollable task list once granted. Each row's
+/// checkbox completes the reminder (the only mutation in v1).
+struct RemindersSection: View {
+    let store: RemindersStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            Text("REMINDERS")
+                .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, Theme.Space.s)
+    }
+
+    @ViewBuilder private var content: some View {
+        switch store.access {
+        case .notDetermined:
+            Button {
+                // A non-activating accessory panel must come forward so the
+                // system TCC prompt is presented frontmost.
+                NSApp.activate(ignoringOtherApps: true)
+                Task { await store.requestAccess() }
+            } label: {
+                Label("Enable Apple Reminders", systemImage: "checklist")
+            }
+            .buttonStyle(.borderless)
+            .font(Theme.body).foregroundStyle(Theme.accent)
+            .help("Grant Reminders access to show your default list here")
+
+        case .denied:
+            Text("Reminders access is off. Enable it in System Settings ▸ Privacy & Security ▸ Reminders, then Refresh.")
+                .font(Theme.monoSmall).foregroundStyle(Theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+
+        case .granted:
+            if store.items.isEmpty {
+                Text("No active reminders.")
+                    .font(Theme.body).foregroundStyle(Theme.text3)
+                    .padding(.vertical, 2)
+            } else {
+                // Inline (no inner scroll) so the section sizes to its content and
+                // flows within the single panel scroll — liquid, no reserved slab.
+                VStack(spacing: 4) {
+                    ForEach(store.items, id: \.calendarItemIdentifier) { reminder in
+                        ReminderRow(reminder: reminder, store: store)
+                    }
+                }
+            }
+            if let err = store.loadError {
+                Text(err)
+                    .font(Theme.monoSmall).foregroundStyle(Theme.diffRemove)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+    }
+}
+
+/// One reminder: a tap-to-complete checkbox + title (+ relative due date). The
+/// checkbox is the single write surface — completing drops the row on re-read.
+struct ReminderRow: View {
+    let reminder: EKReminder
+    let store: RemindersStore
+
+    /// True during the ~2s check-then-fade beat after the user completes it.
+    private var isCompleting: Bool {
+        store.completingIDs.contains(reminder.calendarItemIdentifier)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Theme.Space.s) {
+            Button {
+                Task { await store.complete(reminder) }
+            } label: {
+                Image(systemName: isCompleting ? "circle.inset.filled" : "circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(isCompleting ? Theme.accent : Theme.text3)
+            }
+            .buttonStyle(.borderless)
+            .disabled(isCompleting)
+            .help("Mark complete")
+
+            VStack(alignment: .leading, spacing: 1) {
+                Text(reminder.title ?? "(untitled)")
+                    .font(Theme.body).foregroundStyle(isCompleting ? Theme.text3 : Theme.text)
+                    .strikethrough(isCompleting)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if let due = dueText {
+                    Text(due).font(Theme.monoSmall).foregroundStyle(Theme.text3)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .opacity(isCompleting ? 0.6 : 1)
+        .animation(.easeInOut(duration: 0.2), value: isCompleting)
+    }
+
+    /// "due <relative>" for a dated reminder (past or future), else nil.
+    private var dueText: String? {
+        guard let comps = reminder.dueDateComponents,
+              let date = Calendar.current.date(from: comps) else { return nil }
+        let f = RelativeDateTimeFormatter()
+        f.unitsStyle = .short
+        return "due \(f.localizedString(for: date, relativeTo: Date()))"
     }
 }
 

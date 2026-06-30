@@ -942,6 +942,116 @@ class WebRouteTests(unittest.TestCase):
             self.assertEqual(resp.headers["location"], "/focus-5")
             self.assertTrue(m.called)                        # recompute fired
 
+    # --- /api/focus5/open — focus-if-open exec endpoint (VSCODE Phase 2) ---
+
+    def _post_open(self, db: Path, payload: dict, **kw):
+        from fastapi.testclient import TestClient
+        from rebalance.web import app
+        os.environ["REBALANCE_DB"] = str(db)
+        try:
+            return TestClient(app).post("/api/focus5/open", json=payload, **kw)
+        finally:
+            os.environ.pop("REBALANCE_DB", None)
+
+    def test_open_allowlist_resolves_known_and_rejects_unknown(self) -> None:
+        # The resolver runs the REAL summarize over the seeded temp repo (no mocks):
+        # a known id maps to a server-owned local_path; an unknown id is absent.
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            from rebalance import web
+            os.environ["REBALANCE_DB"] = str(db)
+            try:
+                allow = web._focus5_open_allowlist(db)
+            finally:
+                os.environ.pop("REBALANCE_DB", None)
+            self.assertTrue(allow, "seeded roster should resolve at least one repo")
+            _identity, local_path = next(iter(allow.items()))
+            self.assertTrue(os.path.isdir(local_path))     # a real, server-owned path
+            self.assertNotIn("no/such-repo", allow)        # unknown id not in allowlist
+
+    def test_open_known_repo_runs_code_with_server_path(self) -> None:
+        # Known id → the launcher runs `code <server_path>` as a direct argv (no
+        # shell). Allowlist mocked so no git/subprocess from the resolver collides.
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            fake = mock.Mock(returncode=0)
+            with mock.patch("rebalance.web._request_is_local", return_value=True), \
+                 mock.patch("rebalance.web._focus5_open_allowlist",
+                            return_value={"demo/repo": "/repos/demo"}), \
+                 mock.patch("rebalance.web._resolve_code_binary", return_value="/usr/bin/code"), \
+                 mock.patch("subprocess.run", return_value=fake) as run:
+                resp = self._post_open(db, {"repo": "demo/repo"})
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json()["ok"])
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0], ["/usr/bin/code", "/repos/demo"])
+
+    def test_open_unknown_repo_is_404_and_runs_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            with mock.patch("rebalance.web._request_is_local", return_value=True), \
+                 mock.patch("rebalance.web._focus5_open_allowlist",
+                            return_value={"demo/repo": "/repos/demo"}), \
+                 mock.patch("rebalance.web._resolve_code_binary", return_value="/usr/bin/code"), \
+                 mock.patch("subprocess.run") as run:
+                resp = self._post_open(db, {"repo": "no/such-repo"})
+            self.assertEqual(resp.status_code, 404)
+            run.assert_not_called()
+
+    def test_open_missing_code_binary_is_409(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            with mock.patch("rebalance.web._request_is_local", return_value=True), \
+                 mock.patch("rebalance.web._focus5_open_allowlist",
+                            return_value={"demo/repo": "/repos/demo"}), \
+                 mock.patch("rebalance.web._resolve_code_binary", return_value=None):
+                resp = self._post_open(db, {"repo": "demo/repo"})
+            self.assertEqual(resp.status_code, 409)   # client falls back to vscode://
+
+    def test_open_non_local_request_is_403_and_runs_nothing(self) -> None:
+        # Integration: with the real guard in place, a TestClient POST (non-loopback
+        # client host) is refused before anything runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            with mock.patch("subprocess.run") as run:
+                resp = self._post_open(db, {"repo": "anything"})
+            self.assertEqual(resp.status_code, 403)
+            run.assert_not_called()
+
+    def test_request_is_local_guard(self) -> None:
+        # Unit-test the two-layer gate over a fake request (agy QA r1 Finding 1).
+        from types import SimpleNamespace
+        from rebalance.web import _request_is_local
+
+        def req(host: str | None, origin: str | None = None):
+            client = SimpleNamespace(host=host) if host is not None else None
+            headers = {"origin": origin} if origin else {}
+            return SimpleNamespace(client=client, headers=headers)
+
+        # loopback client, no Origin (curl-style) → allowed
+        self.assertTrue(_request_is_local(req("127.0.0.1")))
+        self.assertTrue(_request_is_local(req("::1")))
+        # loopback client + same-origin → allowed
+        self.assertTrue(_request_is_local(req("127.0.0.1", "http://127.0.0.1:8787")))
+        self.assertTrue(_request_is_local(req("localhost", "http://localhost:8787")))
+        # loopback client + cross-origin → refused (CSRF guard)
+        self.assertFalse(_request_is_local(req("127.0.0.1", "http://evil.example")))
+        # non-loopback client → refused even with no Origin (the LAN/curl gap)
+        self.assertFalse(_request_is_local(req("192.168.1.50")))
+        self.assertFalse(_request_is_local(req("192.168.1.50", "http://127.0.0.1")))
+        # missing client → refused
+        self.assertFalse(_request_is_local(req(None)))
+
+    def test_resolve_code_binary_rejects_directory(self) -> None:
+        # agy QA r1 Finding 2: a VSCODE_BIN pointing at a dir (X_OK true for dirs)
+        # must NOT be returned as the launcher.
+        from rebalance.web import _resolve_code_binary
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.dict(os.environ, {"VSCODE_BIN": d}), \
+                 mock.patch("rebalance.web._VSCODE_CODE_CANDIDATES", ()), \
+                 mock.patch("shutil.which", return_value=None):
+                self.assertIsNone(_resolve_code_binary())
+
     def test_dirty_view_renders_transiently_without_resync(self) -> None:
         # /focus-5?view=dirty re-ranks the cached signals under dirty_first; a
         # fresh roster means no ~30s scan, and the persisted roster is untouched.
