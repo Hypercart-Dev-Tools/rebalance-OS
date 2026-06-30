@@ -1,6 +1,6 @@
 ---
 title: "Gemini-reviewed 'What to do next' → fixed vault file"
-status: "Queued (intake — not started). Two deliverables captured 2026-06-29."
+status: "DONE 2026-06-29 — both deliverables shipped + live-verified (Gemini gemini-2.5-flash, paid key file, vault file written). Full suite 1202 green, doctor passed."
 created: 2026-06-29
 updated: 2026-06-29
 owner: Noel
@@ -13,8 +13,31 @@ roadmap_exempt: false
 
 # Gemini-reviewed "What to do next" → fixed vault file
 
-> **Intake doc — queued, not started.** Captured per Noel's request (2026-06-29) to create two
-> queued tasks. This is a follow-on to the shipped next-action engine; it does **not** restart it.
+> **DONE 2026-06-29.** Both deliverables shipped and live-verified. Captured per Noel's request
+> (2026-06-29) as two queued tasks, then implemented in the same session via `/loop`.
+
+## Outcome (2026-06-29)
+
+**Root cause found beyond the original scope:** the runtime wasn't just missing a key — the repo's
+`DEFAULT_GEMINI_MODEL` was `gemini-2.0-flash`, which **Google retired** (the endpoint now 404s "no
+longer available"). So *every* synthesis silently fell back to local Qwen-0.6B regardless of the key,
+which is what produced the `<rank>. <title>` placeholder titles. Fixed all three layers:
+
+| # | Change | Where |
+|---|---|---|
+| Task 1a | Paid-key **file resolver** added to the key chain (env `GEMINI_API_KEY_FILE` → `gemini_key_file` config → default `~/secrets/gemini-paid-key.txt`); multi-line files handled — extracts the `AIza…` line past the project-id line. | [config.py](src/rebalance/ingest/config.py) `get_gemini_api_key` / `_gemini_key_from_file` / `_pick_api_key` |
+| (root cause) | `DEFAULT_GEMINI_MODEL` `gemini-2.0-flash` → **`gemini-2.5-flash`** (current; repo-consistent with note_builder/dashboard); ranking call given 2048-token headroom. | [querier.py](src/rebalance/ingest/querier.py), [next_actions.py](src/rebalance/ingest/next_actions.py) |
+| Task 1b | Parser **rejects echoed-template placeholders** (`<rank>. <title>` titles dropped → deterministic fallback; `<…>` field values ignored). Defense-in-depth so a weak fallback can never surface placeholder junk again. | `next_actions._parse_ranked_synthesis` + `_title_is_placeholder`/`_value_is_placeholder` |
+| Task 2 | **Vault render sink** — `render_next_actions_markdown` + `write_next_actions_to_vault` write the SAME ranked output to `Dashboards/What To Do Next.md` (single-writer banner), wired into the `refresh_index` precompute hook (gated on `update_dashboard_note` + resolved vault). | `next_actions.py`, [index_ops.py](src/rebalance/ingest/index_ops.py) |
+
+**Live verification (real paid key, real DB):** `rank_next_actions` returned `model_used=gemini-2.5-flash`,
+**0 placeholder titles**, real titles; `Dashboards/What To Do Next.md` written. **Full suite 1202 passed /
+10 skipped**, `rebalance doctor` passed. Also fixed latent env-dependent `test_repair_fsm` tests (they
+assumed no resolvable key) — and as a positive side effect, repair's LLM escalation now actually fires in
+prod since a key resolves.
+
+> **Original intake (queued) follows, for the record.** This is a follow-on to the shipped next-action
+> engine; it did **not** restart it.
 
 ## Cross-links (don't rebuild)
 
@@ -45,15 +68,15 @@ Take the raw ranked candidates (the deterministic `rank_next_actions` output / c
 today") and have **Gemini** review them and re-write the synthesis into the final operator-facing
 list — using the paid key supplied below as a new key source.
 
-- [ ] **Key source:** read the Gemini key from the plaintext file `/Users/noelsaw/secrets/gemini-paid-key.txt`.
+- [x] **Key source:** read the Gemini key from the plaintext file `/Users/noelsaw/secrets/gemini-paid-key.txt`.
       Wire it into the existing `get_gemini_api_key()` chain (e.g. as a new file-path resolver) so the
       whole engine — `/whats-next`, `ask(team=True)`, the precompute hook — benefits, not a one-off.
       Prefer extending the resolver over hardcoding a read in one call site (DRY / decision #5).
-- [ ] **Behavior:** Gemini reviews the raw ranked candidates and rewrites them into the final synthesis
+- [x] **Behavior:** Gemini reviews the raw ranked candidates and rewrites them into the final synthesis
       (clean titles, deduped, person-attributed, ordered). The existing deterministic ranked fallback
       MUST remain the guard so a bad/empty Gemini parse never overwrites a good deterministic list
       (this was a prior HIGH finding in P2 — do not regress it).
-- [ ] **Acceptance:** `model_used` in the `ranked_next_actions` cache reads a **Gemini** model (not
+- [x] **Acceptance:** `model_used` in the `ranked_next_actions` cache reads a **Gemini** model (not
       `Qwen/Qwen3-0.6B`), and titles are real text — **no `<rank>. <title>` placeholder** survives.
 
 ### Open considerations (decide at execution)
@@ -70,17 +93,17 @@ list — using the paid key supplied below as a new key source.
 Render the Gemini-rewritten "what to do next" list to **one fixed markdown file** in the Obsidian
 vault so it is the calm daily surface (per P1-SIGNAL).
 
-- [ ] **Fixed output path (decided 2026-06-29):**
+- [x] **Fixed output path (decided 2026-06-29):**
       `/Users/noelsaw/Documents/Noel Saw/Dashboards/What To Do Next.md`
       (vault root from `temp/rbos.config` `vault_path`; overwrite-in-place, not a dated note).
-- [ ] **Writer:** generate it from the **same** `rank_next_actions` output as the route/cache — a new
+- [x] **Writer:** generate it from the **same** `rank_next_actions` output as the route/cache — a new
       render-to-vault sink, not a re-implementation of ranking (DRY parity gate from P2).
-- [ ] **Single-writer contract (P1-SIGNAL):** the file is fully generated/owned by rebalance — make
+- [x] **Single-writer contract (P1-SIGNAL):** the file is fully generated/owned by rebalance — make
       that explicit (header banner + "generated, do not edit by hand"); do not interleave with
       human-authored notes.
-- [ ] **Cadence:** write on the existing daily precompute hook (the 6:30 AM `daily-sync`) and/or on
+- [x] **Cadence:** write on the existing daily precompute hook (the 6:30 AM `daily-sync`) and/or on
       `?refresh`, reusing the cache so the vault file matches `/whats-next`.
-- [ ] **Privacy:** the list can include person-attributed teammate items — this writes to the **local**
+- [x] **Privacy:** the list can include person-attributed teammate items — this writes to the **local**
       vault only (not the pushed `git-pulse-sync` repo), so the P2 export-filter invariant is not
       crossed. Confirm no teammate `person` data leaks into any pushed artifact via this path.
 

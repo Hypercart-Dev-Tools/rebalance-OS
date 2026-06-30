@@ -415,6 +415,108 @@ class TestParseRankedSynthesis(unittest.TestCase):
         self.assertTrue(actions)
         self.assertTrue(all(not na._has_structured_field(a) for a in actions))
 
+    def test_echoed_template_title_rejected(self) -> None:
+        """A weak model that echoes the `<rank>. <title>` spec verbatim — even
+        WITH the other fields filled — must parse to NOTHING, so the caller keeps
+        the deterministic fallback instead of surfacing placeholder titles.
+        Regression for the live Qwen-0.6B failure mode (`<rank>. <title>` titles).
+        """
+        echoed = (
+            "1. <rank>. <title> | person=Matthew | source=github | "
+            "project=Binoid | evidence=GH 894 | automation=no | why=urgent\n"
+            "2. <rank>. <title> | person=operator | source=calendar | "
+            "project= | evidence=10:00 | automation=no | why=hold"
+        )
+        actions = na._parse_ranked_synthesis(echoed)
+        self.assertEqual(actions, [])
+
+    def test_placeholder_field_values_ignored(self) -> None:
+        """A real title but unfilled `<...>` field values (e.g. `source=<source>`)
+        are treated as omitted, not stored as literal junk."""
+        text = (
+            "1. Review the Binoid PR | person=operator | source=<source> | "
+            "project=<project-or-empty> | evidence=GH 894 | why=<one-line reason>"
+        )
+        actions = na._parse_ranked_synthesis(text)
+        self.assertEqual(len(actions), 1)
+        a = actions[0]
+        self.assertEqual(a.title, "Review the Binoid PR")
+        self.assertEqual(a.source, "")        # <source> ignored
+        self.assertIsNone(a.project)          # <project-or-empty> ignored
+        self.assertEqual(a.why, "")           # <one-line reason> ignored
+        self.assertEqual(a.evidence, ["GH 894"])  # real value kept
+
+    def test_bare_angle_token_title_rejected(self) -> None:
+        """A title that is wholly a `<...>` token is dropped."""
+        actions = na._parse_ranked_synthesis(
+            "1. <title> | person=operator | source=github | evidence=x | why=y"
+        )
+        self.assertEqual(actions, [])
+
+
+class TestVaultRender(unittest.TestCase):
+    """The fixed-vault-file render sink (render_next_actions_markdown +
+    write_next_actions_to_vault)."""
+
+    def _result(self) -> "na.RankedNextActions":
+        return na.RankedNextActions(
+            ranked=[
+                na.RankedAction(
+                    rank=1, title="Review Binoid PR 894", person=None,
+                    source="github", project="Binoid", evidence=["GH 894"],
+                    why="bug fix for Bloomz", automation=True,
+                ),
+                na.RankedAction(
+                    rank=2, title="Sync with Matthew", person="Matthew",
+                    source="calendar", project=None, evidence=["14:00"],
+                    why="cross-person", automation=False,
+                ),
+            ],
+            model_used="gemini-2.5-flash", blended=True,
+            note="team blended: 1 additive block",
+            computed_at="2026-06-30T01:30:00+00:00",
+        )
+
+    def test_render_has_banner_and_items(self) -> None:
+        md = na.render_next_actions_markdown(self._result())
+        self.assertIn("# What To Do Next", md)
+        self.assertIn("do not edit by hand", md)            # single-writer banner
+        self.assertIn("gemini-2.5-flash", md)               # provenance
+        self.assertIn("1. **Review Binoid PR 894**", md)
+        self.assertIn("👤 Matthew", md)                      # teammate attribution
+        self.assertIn("evidence: GH 894", md)
+
+    def test_render_empty_is_graceful(self) -> None:
+        md = na.render_next_actions_markdown(
+            na.RankedNextActions(ranked=[], model_used="x", computed_at="2026-06-30T00:00:00+00:00")
+        )
+        self.assertIn("Nothing surfaced", md)
+
+    def test_write_to_vault_creates_fixed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            target = na.write_next_actions_to_vault(self._result(), vault_path=d)
+            self.assertIsNotNone(target)
+            self.assertEqual(target, Path(d) / na.VAULT_NEXT_ACTIONS_RELPATH)
+            self.assertTrue(target.exists())
+            self.assertIn("Review Binoid PR 894", target.read_text(encoding="utf-8"))
+
+    def test_write_to_vault_none_when_unconfigured(self) -> None:
+        # No override and no configured vault → no-op (None), not an error.
+        orig = na.get_vault_path
+        na.get_vault_path = lambda: None
+        try:
+            self.assertIsNone(na.write_next_actions_to_vault(self._result()))
+        finally:
+            na.get_vault_path = orig
+
+    def test_write_to_vault_overwrites_in_place(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            na.write_next_actions_to_vault(self._result(), vault_path=d)
+            na.write_next_actions_to_vault(self._result(), vault_path=d)  # second write
+            target = Path(d) / na.VAULT_NEXT_ACTIONS_RELPATH
+            # One file, single-writer — not appended/duplicated.
+            self.assertEqual(target.read_text(encoding="utf-8").count("# What To Do Next"), 1)
+
 
 class TestAcceptanceGate(unittest.TestCase):
     """rank_next_actions keeps the deterministic fallback when synthesis is prose

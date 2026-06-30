@@ -56,7 +56,7 @@ from rebalance.ingest.calendar_helpers import (
     event_duration_minutes,
     parse_calendar_dt,
 )
-from rebalance.ingest.config import get_pulse_config
+from rebalance.ingest.config import get_pulse_config, get_vault_path
 from rebalance.ingest.db import db_connection, run_migrations
 from rebalance.ingest.pulse import _query_day_activity
 from rebalance.tz_utils import local_tz
@@ -606,6 +606,28 @@ def _strip_markdown(s: str) -> str:
     return s.strip().strip("*`").strip()
 
 
+# An unfilled ``<...>`` template token. A small/weak model sometimes echoes the
+# OUTPUT CONTRACT format spec (``<rank>. <title> | person=<operator|Name> ...``)
+# verbatim instead of substituting real values. Such a line is junk, not a real
+# action — reject it so the deterministic fallback survives (this was the live
+# Qwen-0.6B failure mode: placeholder titles persisted because the OTHER fields
+# were also echoed and passed the structured-field gate).
+_PLACEHOLDER_VALUE_RE = re.compile(r"^<[^<>]+>$")
+_TITLE_PLACEHOLDER_RE = re.compile(r"<\s*(?:rank|title)\s*>", re.IGNORECASE)
+
+
+def _value_is_placeholder(val: str) -> bool:
+    """True when *val* is wholly an unfilled ``<...>`` template token."""
+    return bool(_PLACEHOLDER_VALUE_RE.match((val or "").strip()))
+
+
+def _title_is_placeholder(title: str) -> bool:
+    """True when the model echoed the literal ``<rank>``/``<title>`` format spec
+    (or a bare ``<...>`` token) instead of producing a real title."""
+    t = (title or "").strip()
+    return bool(_TITLE_PLACEHOLDER_RE.search(t) or _PLACEHOLDER_VALUE_RE.match(t))
+
+
 def _parse_ranked_synthesis(text: str) -> list[RankedAction]:
     """Parse the model's flat ranked list back into :class:`RankedAction`.
 
@@ -634,6 +656,13 @@ def _parse_ranked_synthesis(text: str) -> list[RankedAction]:
         parts = re.split(r"\s*\|\s*", rest)
         title = _strip_markdown(parts[0])
 
+        # Reject a line whose title is an unfilled template token (e.g. the model
+        # echoed `<rank>. <title>`). When the model echoes the WHOLE spec, every
+        # line is dropped here → parsed == [] → caller keeps the deterministic
+        # fallback instead of surfacing placeholder junk.
+        if _title_is_placeholder(title):
+            continue
+
         person: str | None = None
         source = ""
         project: str | None = None
@@ -647,6 +676,10 @@ def _parse_ranked_synthesis(text: str) -> list[RankedAction]:
             key, _, val = fld.partition("=")
             key = key.strip().lower()
             val = val.strip()
+            # An unfilled `<...>` field value (e.g. `source=<source>`) is the
+            # echoed spec — treat it as omitted rather than literal junk.
+            if _value_is_placeholder(val):
+                continue
             if key == "person":
                 person = None if val.lower() in ("operator", "self", "me", "") else val
             elif key == "source":
@@ -856,7 +889,10 @@ def rank_next_actions(
         try:
             from rebalance.ingest.querier import _synthesize_with_fallback
 
-            synthesis, model_used = _synthesize_with_fallback(prompt)
+            # 2048: the ranked list can be long, and gemini-2.5-flash spends some
+            # of the budget on reasoning before emitting text — too small a cap
+            # truncates to a no-text MAX_TOKENS response and needlessly falls back.
+            synthesis, model_used = _synthesize_with_fallback(prompt, max_tokens=2048)
             parsed = _parse_ranked_synthesis(synthesis)
             # STRUCTURED acceptance gate: only trust the parse over the
             # deterministic fallback when it is non-empty AND at least half its
@@ -1144,3 +1180,111 @@ def get_ranked_meta(database_path: Path) -> dict[str, Any]:
         "model_used": row["model_used"] if row else None,
         "row_count": n,
     }
+
+
+# ---------------------------------------------------------------------------
+# Vault render sink — the fixed Obsidian dashboard file (Task, 2026-06-29)
+#
+# Writes the SAME ranked output as the route/cache to one fixed vault file so
+# the vault is the calm daily operator surface (P1-SIGNAL). This is a render
+# sink, NOT a second ranker — it serializes a RankedNextActions produced by
+# rank_next_actions(); it never re-ranks. LOCAL-ONLY: the vault is on-device and
+# is not the pushed git-pulse repo, so teammate `person` labels here do not
+# cross the export boundary (mirrors the ranked_next_actions cache invariant).
+# ---------------------------------------------------------------------------
+
+# Fixed, overwrite-in-place dashboard file inside the Obsidian vault.
+VAULT_NEXT_ACTIONS_RELPATH = "Dashboards/What To Do Next.md"
+
+
+def _fmt_local_stamp(iso_utc: str, tz: Any) -> str:
+    """Format an ISO-8601 (UTC) timestamp as a local human stamp for the banner."""
+    try:
+        dt = datetime.fromisoformat(iso_utc)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z")
+    except (ValueError, TypeError):
+        return iso_utc or "unknown"
+
+
+def render_next_actions_markdown(
+    result: RankedNextActions, *, now: datetime | None = None
+) -> str:
+    """Render *result* to the fixed-vault-file markdown (single-writer, generated).
+
+    Pure string-from-dataclass; no I/O. The banner carries the generated-file
+    contract + provenance (when, which model, item count, blended vs operator-only)
+    so a reader can trust freshness at a glance.
+    """
+    tz = local_tz()
+    stamp = _fmt_local_stamp(result.computed_at, tz)
+    model = result.model_used or "deterministic (no model)"
+    n = len(result.ranked)
+    blend = "team-blended" if result.blended else "operator-only"
+
+    lines: list[str] = [
+        "# What To Do Next",
+        "",
+        "> [!note] Generated by rebalance-OS — do not edit by hand.",
+        (
+            f"> Overwritten on each refresh. Last updated **{stamp}** · "
+            f"model `{model}` · {n} item{'' if n == 1 else 's'} · {blend}."
+        ),
+    ]
+    if result.note:
+        # The note carries provenance (team-blend stats) AND any degradation
+        # ("synthesis failed…"); render it neutrally rather than as an alarm.
+        lines.append(">")
+        lines.append(f"> _{result.note}_")
+    lines.append("")
+
+    if not result.ranked:
+        lines.append("_Nothing surfaced to rank right now._")
+        lines.append("")
+        return "\n".join(lines)
+
+    for a in result.ranked:
+        meta: list[str] = []
+        if a.source:
+            meta.append(a.source)
+        if a.project:
+            meta.append(a.project)
+        if a.person:
+            meta.append(f"👤 {a.person}")
+        if a.automation:
+            meta.append("⚙️ automatable")
+        meta_str = f" _({' · '.join(meta)})_" if meta else ""
+        lines.append(f"{a.rank}. **{a.title}**{meta_str}")
+        if a.why:
+            lines.append(f"   {a.why}")
+        if a.evidence:
+            lines.append(f"   ↳ evidence: {'; '.join(a.evidence)}")
+    lines.append("")
+    return "\n".join(lines)
+
+
+def write_next_actions_to_vault(
+    result: RankedNextActions,
+    *,
+    vault_path: str | Path | None = None,
+    now: datetime | None = None,
+) -> Path | None:
+    """Write the ranked markdown to the fixed vault file. Returns the path, or None.
+
+    Resolves the vault root from *vault_path* (override) or ``get_vault_path()``
+    (config). Returns None when no vault is configured — a no-op, not an error.
+    Creates the ``Dashboards/`` parent if missing and overwrites the file in
+    place (single-writer). Raises only on a genuine filesystem error so the
+    caller (precompute hook) can record it; the hook wraps this in try/except so
+    a vault-write failure never breaks a refresh.
+    """
+    vp = vault_path if vault_path is not None else get_vault_path()
+    if not vp:
+        logger.info("next_actions: no vault_path configured; skipping vault write")
+        return None
+    target = Path(vp).expanduser() / VAULT_NEXT_ACTIONS_RELPATH
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(render_next_actions_markdown(result, now=now), encoding="utf-8")
+    logger.info("next_actions: wrote vault dashboard %s", target)
+    return target

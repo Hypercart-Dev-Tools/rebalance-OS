@@ -164,6 +164,82 @@ class NextActionsPrecomputeTests(unittest.TestCase):
             finally:
                 COLLECTORS.pop("precompute_probe", None)
 
+    def test_full_refresh_writes_vault_file_when_enabled(self) -> None:
+        """With update_dashboard_note=True and a vault scope, the precompute
+        renders the ranked list to the fixed vault file (vault_path passed
+        through to the writer)."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            vault = Path(tmp) / "vault"
+            vault.mkdir()
+            try:
+                self._register_noop_full_refresh_collector()
+                with (
+                    patch(
+                        "rebalance.ingest.index_ops._all_scope_names",
+                        return_value=["precompute_probe", "vault"],
+                    ),
+                    patch(
+                        "rebalance.ingest.index_ops.get_vault_path",
+                        return_value=str(vault),
+                    ),
+                    patch.object(
+                        next_actions, "rank_next_actions",
+                        return_value=_deterministic_ranked(),
+                    ),
+                ):
+                    result = refresh_index(
+                        db_path,
+                        scope=["all"],
+                        dry_run=False,
+                        update_dashboard_note=True,
+                    )
+                target = vault / next_actions.VAULT_NEXT_ACTIONS_RELPATH
+                self.assertTrue(target.exists())
+                self.assertIn("Ship the ranked-next-actions cache",
+                              target.read_text(encoding="utf-8"))
+                na = next(r for r in result["results"] if r.get("scope") == "next_actions")
+                self.assertIsNotNone(na.get("vault_file"))
+                # resolved_vault is .resolve()'d (/tmp -> /private/tmp on macOS).
+                self.assertEqual(Path(na["vault_file"]).resolve(), target.resolve())
+            finally:
+                COLLECTORS.pop("precompute_probe", None)
+
+    def test_vault_write_skipped_when_dashboard_note_disabled(self) -> None:
+        """update_dashboard_note=False suppresses the vault write (so the suite
+        never clobbers a real vault), while the cache is still persisted."""
+        with tempfile.TemporaryDirectory() as tmp:
+            db_path = Path(tmp) / "test.db"
+            vault = Path(tmp) / "vault"
+            vault.mkdir()
+            try:
+                self._register_noop_full_refresh_collector()
+                with (
+                    patch(
+                        "rebalance.ingest.index_ops._all_scope_names",
+                        return_value=["precompute_probe", "vault"],
+                    ),
+                    patch(
+                        "rebalance.ingest.index_ops.get_vault_path",
+                        return_value=str(vault),
+                    ),
+                    patch.object(
+                        next_actions, "rank_next_actions",
+                        return_value=_deterministic_ranked(),
+                    ),
+                ):
+                    refresh_index(
+                        db_path,
+                        scope=["all"],
+                        dry_run=False,
+                        update_dashboard_note=False,
+                    )
+                self.assertFalse((vault / next_actions.VAULT_NEXT_ACTIONS_RELPATH).exists())
+                # Cache still written (precompute itself does not gate on the note).
+                self.assertIsNotNone(load_ranked_next_actions(db_path))
+            finally:
+                COLLECTORS.pop("precompute_probe", None)
+
     def test_dry_run_does_not_precompute(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             db_path = Path(tmp) / "test.db"
