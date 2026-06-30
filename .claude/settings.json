@@ -110,5 +110,8 @@
       "Bash(utils/pdda.sh roadmap-coverage *)",
       "Bash(utils/pdda.sh frontmatter *)"
     ]
+  },
+  "env": {
+    "PDDA_STALE_DAYS": "14"
   }
 }
