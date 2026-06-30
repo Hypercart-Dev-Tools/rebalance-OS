@@ -46,6 +46,12 @@ from pulse_web import (  # noqa: E402
     load_goal_history,
     undo_goal_completion_in_file,
 )
+from rebalance.ingest.apple_reminders_write import (  # noqa: E402
+    AppleRemindersWriteError,
+    WriteOp,
+    apply_reminder_writes,
+    build_request,
+)
 from rebalance.ingest.config import add_figma_file_key, get_figma_file_keys  # noqa: E402
 from rebalance.ingest.index_ops import refresh_index  # noqa: E402
 from rebalance.paths import resolve_database_path  # noqa: E402
@@ -121,6 +127,47 @@ def focus5_goals():
 @app.post("/api/focus5/goals/complete")
 def focus5_complete_goal(req: Focus5GoalCompleteRequest, request: Request):
     return _focus5_complete_goal(req, request)
+
+
+class AppleReminderCompleteRequest(BaseModel):
+    reminder_id: str
+    title: str | None = None  # carried for the audit trail / readability only
+
+
+@app.post("/api/apple-reminders/complete")
+def apple_reminders_complete(req: AppleReminderCompleteRequest):
+    """Complete one Apple Reminder from the dashboard column (Phase 6 dashboard
+    write-back; APPLE-REMINDERS-UNIFIED-PLAN.md).
+
+    The ONLY web-surface Apple Reminders write, and it routes through the Phase
+    5.1 orchestrator (`apply_reminder_writes`) so the single-writer + audit-table
+    discipline is preserved — this layer holds no EventKit/SQLite write code of
+    its own. `reconcile=False`: the local `apple_reminders` table re-syncs on the
+    next scoped sync (FDA-gated; this loopback server can't hold that grant), so
+    the UI greys the row optimistically. A non-2xx here makes the row revert
+    rather than falsely show "done".
+    """
+    reminder_id = (req.reminder_id or "").strip()
+    if not reminder_id:
+        raise HTTPException(status_code=400, detail="reminder_id is required")
+
+    request = build_request(
+        [WriteOp(op="complete", reminder_id=reminder_id)], mode="apply"
+    )
+    try:
+        result = apply_reminder_writes(
+            resolve_database_path(), request, reconcile=False
+        )
+    except AppleRemindersWriteError as exc:
+        # Helper missing/unauthorized, scope/confirmation failure, IPC error, …
+        raise HTTPException(status_code=502, detail=f"{type(exc).__name__}: {exc}")
+
+    payload = result.as_dict()
+    if not result.ok:
+        # A per-op error (auth denied, helper rejected) — surface it so the row
+        # never falsely shows complete.
+        return JSONResponse(payload, status_code=502)
+    return payload
 
 
 @app.post("/api/focus5/hide")

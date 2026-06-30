@@ -576,18 +576,37 @@ def _render_goal_rows(goals: list[dict[str, Any]], *, empty_html: str, compact: 
 def _render_reminder_rows(
     reminders: list[dict[str, Any]], *, tz: ZoneInfo, empty_html: str
 ) -> str:
-    """Read-only rows for the Apple Reminders column — no checkbox, no POST."""
+    """Rows for the Apple Reminders column. Each row with a `reminder_id` gets a
+    clickable complete check that POSTs to `/api/apple-reminders/complete`
+    (Phase 6 dashboard write-back). The write itself routes through the Phase 5.1
+    orchestrator (single writer + audit); this layer only renders the affordance
+    and carries the id. A row missing an id degrades to read-only."""
     rows = []
     for r in reminders:
+        rid = r.get("reminder_id") or ""
+        title = r.get("title") or ""
         due = r.get("due_at")
         due_html = (
             f'<div class="goal-desc">{_esc(_format_dt_short(due, tz=tz))}</div>'
             if due else ""
         )
+        if rid:
+            check = (
+                f'<span class="check" role="checkbox" tabindex="0" '
+                f'aria-label="Complete: {_esc(title)}"></span>'
+            )
+            li_open = (
+                f'<li class="goal goal-compact goal-reminder" '
+                f'data-reminder-id="{_esc(rid)}" data-reminder-title="{_esc(title)}">'
+            )
+        else:
+            check = ""
+            li_open = '<li class="goal goal-compact goal-readonly">'
         rows.append(f"""
-        <li class="goal goal-compact goal-readonly">
+        {li_open}
+          {check}
           <div class="goal-body">
-            <div class="goal-title">{_linkify(r.get('title') or '')}</div>
+            <div class="goal-title">{_linkify(title)}</div>
             {due_html}
           </div>
         </li>
@@ -624,7 +643,7 @@ def render_hero(
     reminder_rows = _render_reminder_rows(
         apple_reminders,
         tz=TZ,
-        empty_html='<li class="goal empty goal-compact goal-readonly"><div class="goal-body"><div class="goal-title">No active reminders</div><div class="goal-desc">Apple Reminders, read-only.</div></div></li>',
+        empty_html='<li class="goal empty goal-compact goal-readonly"><div class="goal-body"><div class="goal-title">No active reminders</div><div class="goal-desc">Apple Reminders.</div></div></li>',
     )
     date_str = now.strftime("%A, %B %-d")
     open_link = (
@@ -2332,6 +2351,45 @@ PULSE_JS = r"""
       if (e.key === ' ' || e.key === 'Enter') {
         e.preventDefault();
         completeGoal(el.closest('.goal'));
+      }
+    });
+  });
+
+  // Apple Reminders — clickable check spans. POST /api/apple-reminders/complete
+  // (Phase 6 dashboard write-back), then optimistically collapse the row. The
+  // local table reconciles on the next scoped sync, so we only update the UI.
+  const completeReminder = async (li) => {
+    if (!li || li.classList.contains('is-busy')) return;
+    const reminderId = li.dataset.reminderId || '';
+    const title = li.dataset.reminderTitle || '';
+    if (!reminderId) return;
+    li.classList.add('is-busy');
+    const check = li.querySelector('.check');
+    try {
+      const res = await fetch('/api/apple-reminders/complete', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ reminder_id: reminderId, title }),
+      });
+      if (!res.ok) throw new Error('complete failed: ' + res.status);
+      if (check) check.classList.add('checked');
+      setTimeout(() => {
+        li.classList.add('is-completing');
+        setTimeout(() => { li.style.display = 'none'; }, 220);
+      }, 140);
+    } catch (err) {
+      console.warn('reminder complete failed:', err);
+      li.classList.remove('is-busy');
+      alert('Could not complete reminder — check the server log.');
+    }
+  };
+
+  document.querySelectorAll('.goal-reminder[data-reminder-id] .check').forEach((el) => {
+    el.addEventListener('click', () => completeReminder(el.closest('.goal-reminder')));
+    el.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        completeReminder(el.closest('.goal-reminder'));
       }
     });
   });

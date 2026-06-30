@@ -6,6 +6,17 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.51.0] - 2026-06-30
+
+Made the pulse "Today" dashboard Apple Reminders column actionable (Apple Reminders Unified Plan, Phase 6 dashboard write-back v1).
+
+### Added
+- **Dashboard "complete" for Apple Reminders** — a per-reminder check in the pulse "Today" column now completes the reminder via `POST /api/apple-reminders/complete` (`scripts/pulse_server.py`). The write routes through the existing Phase 5.1 orchestrator (`apply_reminder_writes` → signed helper), so the single-writer + audit-table discipline is preserved and the web layer holds no EventKit/SQLite write of its own. `create`/`delete` stay CLI-only.
+- **Regression tests** — `tests/test_pulse_server_apple_reminders.py` (5 tests): the endpoint builds exactly one `complete` op in `apply` mode, missing id → 400, helper/auth failure → 502, per-op error → 502 (the row never falsely shows "done"), and a static guard that the web layer contains no direct EventKit/SQLite write.
+
+### Changed
+- **Apple Reminders column UX** (`scripts/pulse_web.py`) — rows now render a clickable complete check carrying `data-reminder-id`; on success the row greys out optimistically (the local table reconciles on the next scoped sync, since the loopback server has no Full Disk Access). The "read-only" empty-state copy was dropped. A row without a `reminder_id` degrades to read-only.
+
 ## [0.50.1] - 2026-06-30
 
 Fixed the Focus 5 macOS app assuming `rebalance serve` on port 8787 was the only valid local backend.
