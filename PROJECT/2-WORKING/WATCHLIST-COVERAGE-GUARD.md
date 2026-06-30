@@ -14,7 +14,7 @@ goal: >
 priority: P2
 related:
   - PROJECT/3-COMPLETED/FOCUS-5-RANKING-BUG-AND-REMEDIATION.md
-  - PROJECT/2-WORKING/GH-81-FOCUS5-RANK-VECTOR.md
+  - PROJECT/3-COMPLETED/GH-81-FOCUS5-RANK-VECTOR.md
 non_goals:
   - "Does not change how the watched set is *computed* (the union in get_watched_repos)."
   - "Does not add a new web screen or a new launchd job — reuses /auth-log and github-sync."

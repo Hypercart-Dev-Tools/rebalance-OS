@@ -75,8 +75,8 @@ enum Focus5SelfTest {
         // candidate ORDER + argv SHAPE (focus-if-open is `code <folder>`, no -n/-r, no shell).
         // Does NOT launch VS Code; resolveBinary() is reported for diagnosis only.
         if ProcessInfo.processInfo.environment["FOCUS5_VSCODETEST"] != nil {
-            let argv = VSCodeLauncher.arguments(forRepoPath: "/tmp/demo repo")
-            let argvOK = argv == ["/tmp/demo repo"]        // exactly the folder; spaces safe (argv array)
+            let argv = VSCodeLauncher.arguments(forRepoPath: "/repos/demo repo")
+            let argvOK = argv == ["/repos/demo repo"]      // exactly the folder; spaces safe (argv array)
             let c = VSCodeLauncher.candidates
             let orderOK = c.count == 3
                 && c.first == "/opt/homebrew/bin/code"
