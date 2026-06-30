@@ -688,9 +688,22 @@ def _refresh_github(
     from rebalance.ingest.github_knowledge import embed_github_documents
 
     gh_embed = embed_github_documents(database_path=database_path)
+
+    # Coverage guard: snapshot the resolved watched set and alarm on a silent
+    # reduction. Runs LAST, only on a clean sync (an earlier raise never reaches
+    # here), so a truncated mid-failure set can't record a false reduction. Never
+    # let the guard break a sync — observability must not reduce reliability.
+    try:
+        from rebalance.ingest.watchlist_guard import snapshot_and_detect
+
+        watchlist_guard = snapshot_and_detect(database_path)
+    except Exception as e:  # noqa: BLE001
+        watchlist_guard = {"error": str(e)}
+
     return {
         "scope": "github",
         "dry_run": False,
+        "watchlist_guard": watchlist_guard,
         "pushed_repos_sync": {
             "fetched": pushed_result.fetched,
             "inserted": pushed_result.inserted,

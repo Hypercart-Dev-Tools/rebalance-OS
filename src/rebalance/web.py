@@ -88,6 +88,8 @@ _EVENT_BADGE = {
     "job_started":          ("info",    "▶ started"),
     "job_completed":        ("ok",      "✓ completed"),
     "job_failed":           ("danger",  "✗ failed"),
+    # watch-list coverage guard (only emitted on a concerning drop)
+    "watched_repos_reduced": ("warn",   "⚠ watched repos reduced"),
 }
 
 _SOURCE_BADGE = {
