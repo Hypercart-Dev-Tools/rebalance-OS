@@ -8,6 +8,7 @@ private struct Focus5APIErrorBody: Decodable {
 }
 
 enum Focus5ClientError: LocalizedError {
+    case allCandidatesFailed(path: String, attempts: [String])
     case transport(url: URL, underlying: URLError)
     case invalidResponse(path: String)
     case http(url: URL, status: Int, message: String?)
@@ -15,6 +16,11 @@ enum Focus5ClientError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
+        case .allCandidatesFailed(let path, let attempts):
+            if attempts.isEmpty {
+                return "Couldn't load \(path) from the local Focus 5 servers."
+            }
+            return "Couldn't load \(path). Tried " + attempts.joined(separator: " | ")
         case .transport(let url, let err):
             switch err.code {
             case .cannotConnectToHost, .cannotFindHost, .networkConnectionLost, .notConnectedToInternet:
@@ -50,6 +56,8 @@ struct Focus5Client {
     var baseURL: URL
     var session: URLSession
 
+    static let pulseServerBaseURL = URL(string: "http://127.0.0.1:8767")!
+
     init(baseURL: URL = Focus5Client.defaultBaseURL, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.session = session
@@ -75,27 +83,92 @@ struct Focus5Client {
         return host == "localhost" || host == "127.0.0.1" || host == "::1" || host == "[::1]"
     }
 
-    private func execute(_ req: URLRequest) async throws -> (Data, HTTPURLResponse) {
-        do {
-            let (data, response) = try await session.data(for: req)
-            guard let http = response as? HTTPURLResponse else {
-                throw Focus5ClientError.invalidResponse(path: req.url?.path ?? "(unknown)")
-            }
-            guard (200..<300).contains(http.statusCode) else {
-                throw Focus5ClientError.http(
-                    url: req.url ?? baseURL,
-                    status: http.statusCode,
-                    message: Self.errorMessage(from: data)
-                )
-            }
-            return (data, http)
-        } catch let err as Focus5ClientError {
-            throw err
-        } catch let err as URLError {
-            throw Focus5ClientError.transport(url: req.url ?? baseURL, underlying: err)
-        } catch {
-            throw error
+    private var candidateBaseURLs: [URL] {
+        let env = ProcessInfo.processInfo.environment
+        if env["FOCUS5_BASE_URL"] != nil {
+            return [baseURL]
         }
+        return Self.dedupedURLs([baseURL, Self.pulseServerBaseURL])
+    }
+
+    private static func dedupedURLs(_ urls: [URL]) -> [URL] {
+        var seen: Set<String> = []
+        var out: [URL] = []
+        for url in urls {
+            let key = "\(url.scheme ?? "http")://\(url.host(percentEncoded: false) ?? ""):\(url.port ?? 80)"
+            if seen.insert(key).inserted {
+                out.append(url)
+            }
+        }
+        return out
+    }
+
+    private func request(_ req: URLRequest, for base: URL) -> URLRequest {
+        guard let current = req.url,
+              var comps = URLComponents(url: current, resolvingAgainstBaseURL: false)
+        else { return req }
+        comps.scheme = base.scheme
+        comps.host = base.host(percentEncoded: false)
+        comps.port = base.port
+        var copy = req
+        copy.url = comps.url
+        return copy
+    }
+
+    private static func describeAttempt(_ error: Focus5ClientError) -> String {
+        switch error {
+        case .transport(let url, let underlying):
+            return "\(url.host(percentEncoded: false) ?? "localhost"):\(url.port ?? 80) \(underlying.localizedDescription)"
+        case .http(let url, let status, let message):
+            if let message, !message.isEmpty {
+                return "\(url.host(percentEncoded: false) ?? "localhost"):\(url.port ?? 80) HTTP \(status) \(message)"
+            }
+            return "\(url.host(percentEncoded: false) ?? "localhost"):\(url.port ?? 80) HTTP \(status)"
+        case .decoding(let url, let underlying):
+            return "\(url.host(percentEncoded: false) ?? "localhost"):\(url.port ?? 80) decode \(underlying.localizedDescription)"
+        case .invalidResponse(let path):
+            return "invalid response for \(path)"
+        case .allCandidatesFailed(_, let attempts):
+            return attempts.joined(separator: " | ")
+        }
+    }
+
+    private func execute(_ req: URLRequest) async throws -> (Data, HTTPURLResponse) {
+        var attempts: [String] = []
+        var lastError: Focus5ClientError?
+        let path = req.url?.path ?? "(unknown)"
+
+        for base in candidateBaseURLs {
+            let candidateReq = request(req, for: base)
+            do {
+                let (data, response) = try await session.data(for: candidateReq)
+                guard let http = response as? HTTPURLResponse else {
+                    throw Focus5ClientError.invalidResponse(path: candidateReq.url?.path ?? path)
+                }
+                guard (200..<300).contains(http.statusCode) else {
+                    throw Focus5ClientError.http(
+                        url: candidateReq.url ?? baseURL,
+                        status: http.statusCode,
+                        message: Self.errorMessage(from: data)
+                    )
+                }
+                return (data, http)
+            } catch let err as Focus5ClientError {
+                lastError = err
+                attempts.append(Self.describeAttempt(err))
+            } catch let err as URLError {
+                let wrapped = Focus5ClientError.transport(url: candidateReq.url ?? baseURL, underlying: err)
+                lastError = wrapped
+                attempts.append(Self.describeAttempt(wrapped))
+            } catch {
+                throw error
+            }
+        }
+
+        if attempts.count <= 1, let lastError {
+            throw lastError
+        }
+        throw Focus5ClientError.allCandidatesFailed(path: path, attempts: attempts)
     }
 
     private func decode<T: Decodable>(_ type: T.Type, from req: URLRequest) async throws -> T {

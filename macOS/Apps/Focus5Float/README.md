@@ -13,9 +13,11 @@ renders JSON.
 
 ## Prerequisite
 
-**`rebalance serve` must be running** (default `http://localhost:8787`). The app
-polls `GET /focus-5.json` from it. With the server down, the app shows the last
-cached roster and an offline badge; it can start the server for you.
+The app first tries **`rebalance serve`** (`http://localhost:8787`) and, if that
+is unavailable, falls back to the always-on **pulse server**
+(`http://127.0.0.1:8767`) for the mirrored Focus 5 routes. With both servers
+down, the app shows the last cached roster and an offline badge; it can start
+`rebalance serve` for you.
 
 ### Making `rebalance` findable (required for "Start server")
 
@@ -113,5 +115,6 @@ intentionally **not** reusable by any remote mirror without a sanitized projecti
 
 Configurable via environment, not a settings window (YAGNI for a personal tool):
 
-- `FOCUS5_BASE_URL` — server base URL (default `http://localhost:8787`, gated to
-  loopback unless a debug build).
+- `FOCUS5_BASE_URL` — server base URL override. When unset, the app probes
+  `http://localhost:8787` first, then `http://127.0.0.1:8767`. The override is
+  loopback-gated unless a debug build.

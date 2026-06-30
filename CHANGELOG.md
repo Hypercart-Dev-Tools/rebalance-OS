@@ -6,6 +6,14 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.50.1] - 2026-06-30
+
+Fixed the Focus 5 macOS app assuming `rebalance serve` on port 8787 was the only valid local backend.
+
+### Fixed
+- **Dual-port local fallback** — when `FOCUS5_BASE_URL` is unset, the Focus 5 macOS client now probes `http://localhost:8787` first and then the mirrored pulse server on `http://127.0.0.1:8767` for the Focus 5 JSON/note/goals routes, instead of failing outright on the first dead port.
+- **Misleading offline copy** — the app's offline message and README now describe both supported local server paths so an always-on pulse-server setup does not look broken when `rebalance serve` is down.
+
 ## [0.50.0] - 2026-06-30
 
 Added Obsidian-backed reminders to the Focus 5 macOS app and made their failure states diagnosable instead of collapsing into a generic load error.

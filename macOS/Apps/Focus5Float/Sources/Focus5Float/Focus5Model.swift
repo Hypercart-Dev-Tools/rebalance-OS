@@ -253,5 +253,5 @@ final class Focus5Model {
     }
 
     static let offlineMessage =
-        "Can't reach rebalance serve at localhost:8787.\nStart it with:  rebalance serve"
+        "Can't reach the local Focus 5 servers on localhost:8787 or 127.0.0.1:8767.\nStart rebalance serve, or verify the pulse server is running."
 }
