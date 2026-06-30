@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 
 from rebalance.ingest.db import db_connection, ensure_schema, run_migrations
+from rebalance.ingest.db.migrate import discover_migrations
 from rebalance.ingest.db.schema import (
     ensure_baseline_schema,
     ensure_schema_version_table,
@@ -47,14 +48,25 @@ def _teammate_row(id_: str, cal: str) -> tuple:
 
 class CalendarCompositePkMigrationTests(unittest.TestCase):
     def _v4_db_with_rows(self, conn, rows: list[tuple]) -> None:
-        """Bring conn to the pre-0005 (v4) shape with seeded calendar rows."""
+        """Bring conn to the pre-0005 (v4) shape with seeded calendar rows.
+
+        A faithful v4 DB actually HAS the objects migrations 0002..0004 create
+        (e.g. focus5_repo_signals from 0003) — so we apply those migration files
+        for real rather than merely stamping them, otherwise a later additive
+        migration that ALTERs one of those tables hits a missing table. The point
+        of stopping at v4 is unchanged: run_migrations() then applies 0005 onward,
+        and the seeded rows let us assert 0005's rebuild preserves them.
+        """
         ensure_baseline_schema(conn)          # single-PK calendar_events
         ensure_schema_version_table(conn)
-        # Stamp baseline + 0002..0004 so run_migrations() applies ONLY 0005.
-        for v in (1, 2, 3, 4):
-            conn.execute(
-                "INSERT OR IGNORE INTO schema_version (version, applied_at) "
-                "VALUES (?, ?)", (v, "2026-06-01T00:00:00Z"))
+        conn.execute("INSERT OR IGNORE INTO schema_version (version, applied_at) "
+                     "VALUES (1, '2026-06-01T00:00:00Z')")
+        for ver, path in discover_migrations():
+            if ver > 4:
+                break
+            conn.executescript(path.read_text(encoding="utf-8"))
+            conn.execute("INSERT OR IGNORE INTO schema_version (version, applied_at) "
+                         "VALUES (?, '2026-06-01T00:00:00Z')", (ver,))
         conn.executemany(_INSERT, rows)
         conn.commit()
 

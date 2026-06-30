@@ -1,8 +1,17 @@
 from __future__ import annotations
 
 import json
+import sys
+from pathlib import Path
 
-from scripts.pulse_warning_watch import PulseSnapshot, append_log, extract_banner_text
+# scripts/ is not a package; add it to sys.path so the module imports directly
+# (matches the convention in test_pulse_server_figma.py and the other pulse tests).
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS_DIR = ROOT / "scripts"
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from pulse_warning_watch import PulseSnapshot, append_log, extract_banner_text  # noqa: E402
 
 
 def test_extract_banner_text_with_warning_banner() -> None:

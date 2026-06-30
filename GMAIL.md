@@ -37,6 +37,14 @@ rebalance can feed `email_messages` two ways. Pick one with
 > grant it (tokens 403 with "insufficient authentication scopes"), but your own
 > Desktop OAuth client can. That's why `oauth` mode uses the browser flow below.
 
+> **Data boundary — pick deliberately.** `oauth` keeps your email **on this
+> machine**: the token reads Gmail straight into local SQLite; nothing transits a
+> third-party cloud. `mcp` routes your messages through the **host's cloud** (e.g.
+> claude.ai) via its Gmail connector — choose it only if that data path is
+> acceptable. `mcp` also **requires** that your MCP host actually ships a Gmail
+> connector and that you have already connected and consented your Google account
+> there; without that, use `oauth`.
+
 ---
 
 ## Quick Start
@@ -154,8 +162,7 @@ After flipping to Internal, re-mint once so the token is issued under the new
 status:
 
 ```bash
-python scripts/setup_gmail_oauth.py --test
-rebalance config migrate-to-keyring
+python scripts/setup_gmail_oauth.py --test   # re-mints under the new status; writes keyring + JSON fallback
 ```
 
 ---
@@ -165,6 +172,11 @@ rebalance config migrate-to-keyring
 No local credential needed. `email_messages` is populated by an agent (e.g.
 Claude) using the Gmail MCP connector, which calls the `ingest_gmail_messages`
 tool.
+
+> **Before you switch:** this path sends your Gmail through the **host's cloud**
+> (e.g. claude.ai), unlike `oauth`, which keeps it local. It works only if your
+> MCP host ships a Gmail connector **and** you have already connected and
+> consented your Google account in that host. If either isn't true, stay on `oauth`.
 
 ```bash
 rebalance config set-gmail-method mcp
@@ -184,9 +196,9 @@ If you use Claude Code, open this file in an editor pane, select it, and prompt:
 > ingest on this device using the `oauth` method including browser authorization.
 
 Claude Code will: check prerequisites → enable the Gmail API → run
-`python scripts/setup_gmail_oauth.py --test` → `rebalance config migrate-to-keyring`
-→ `rebalance config set-gmail-method oauth` → `rebalance refresh --scope email` →
-`rebalance doctor` to verify.
+`python scripts/setup_gmail_oauth.py --test` (writes keyring + JSON fallback in
+one pass) → `rebalance config set-gmail-method oauth` →
+`rebalance refresh --scope email` → `rebalance doctor` to verify.
 
 **Notes for Claude Code:**
 
@@ -215,7 +227,7 @@ On `mcp` mode, ask your agent to refresh whenever you want fresh email.
 
 | Problem | What to do |
 |---------|-----------|
-| `doctor`: `gmail — no OAuth credentials` | Run `python scripts/setup_gmail_oauth.py --test` then `rebalance config migrate-to-keyring` |
+| `doctor`: `gmail — no OAuth credentials` | Run `python scripts/setup_gmail_oauth.py --test` (writes keyring + JSON fallback in one pass) |
 | `scope_insufficient` in the auth log | The token lacks `gmail.readonly` (or you're on leftover gcloud ADC). Re-run the OAuth flow above; don't use `gcloud auth application-default login` for Gmail |
 | Re-authorizing every few days | Consent screen is in *Testing* (7-day refresh-token expiry). Make it **Internal** (Workspace) or publish to production — see [Durable tokens](#durable-tokens--make-the-consent-screen-internal) |
 | `email data — stale` but you just synced | Your `gmail_query_filter` is too narrow; freshness keys on `received_at`. Broaden it in `temp/rbos.config` |

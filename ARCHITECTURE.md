@@ -1,6 +1,6 @@
 # rebalance OS — ARCHITECTURE.md
 
-> How data flows through the system. For execution decisions see [PROJECT.md](./PROJECT.md), for tool specs see [MCP.md](./MCP.md).
+> How data flows through the system. For execution decisions see [PROJECT.md](./PROJECT.md), for tool specs see [MCP.md](./MCP.md), for the *why* behind these decisions see [GUIDING-PRINCIPLES.md](./GUIDING-PRINCIPLES.md).
 
 ---
 
@@ -100,7 +100,7 @@ Obsidian Vault ──────▶ note_ingester.py          walk *.md, chunk,
                      └▶ embedder.py              Qwen3-Embedding-0.6B         ──▶ embeddings (vec0, 1024-dim)
                                                    via mlx-embeddings
 
-Google Calendar ─────▶ calendar.py               OAuth pickled token,         ──▶ calendar_events
+Google Calendar ─────▶ calendar.py               OAuth token (keyring+JSON),  ──▶ calendar_events
   (Calendar API)                                   30d back / 7d forward
 
 Sleuth Web API ──────▶ sleuth_reminders.py       Bearer auth, stdlib urllib,  ──▶ sleuth_reminders
@@ -160,11 +160,11 @@ Project Registry ────▶ registry.py +              MD registry → proj
 
 | Source | Secret store | Mechanism |
 |---|---|---|
-| GitHub | OS keyring + `temp/rbos.config` fallback; `gh` CLI as last-resort read fallback | PAT: classic `repo` scope, or fine-grained with All-repos read-only Contents/Metadata (public-only tokens hide private work); persisted to both keyring and config for launchd reachability |
-| Google Calendar | `google-calendar.env` (client credentials) via `resolve_secret_path()` + pickled OAuth user-token at `resolve_oauth_token_path("calendar")` → `~/.config/rebalance-os/google-calendar-oauth` | OAuth 2.0 user consent |
-| Sleuth | `~/secrets/sleuth-web-api-development.env` (mode 600) | Bearer token, 64-hex |
-| Gmail | Desktop OAuth token in keyring + `~/.config/rebalance-os/google-gmail-oauth` fallback, or MCP push-ingest mode | `gmail.readonly` desktop OAuth, or agent-pushed `ingest_gmail_messages` path when `gmail_ingest_method=mcp` |
-| Figma | OS keyring for PAT + `temp/rbos.config` for file-key allow-list | Personal access token + explicit file selection |
+| GitHub | OS keyring + out-of-repo secret store (`~/.config/rebalance-os/secrets`, `0600`) fallback; `gh` CLI as last-resort read fallback | PAT: classic `repo` scope, or fine-grained with All-repos read-only Contents/Metadata (public-only tokens hide private work); persisted to keyring + secret store for launchd reachability — no longer written to `temp/rbos.config` |
+| Google Calendar | `google-calendar.env` (client credentials) via `resolve_secret_path()` + OAuth user-token in keyring with a JSON fallback at `~/.config/rebalance-os/secrets/google-calendar-oauth` (a legacy pickle migrates to JSON on read) | OAuth 2.0 user consent |
+| Sleuth | OS keyring + secret store (`~/.config/rebalance-os/secrets/sleuth_web_api`); legacy `*.env` files still read for un-migrated devices | Bearer token, 64-hex |
+| Gmail | Desktop OAuth token in keyring + JSON fallback at `~/.config/rebalance-os/secrets/google-gmail-oauth`, or MCP push-ingest mode | `gmail.readonly` desktop OAuth, or agent-pushed `ingest_gmail_messages` path when `gmail_ingest_method=mcp` |
+| Figma | OS keyring + secret store for the PAT; `temp/rbos.config` holds only the (non-secret) file-key allow-list | Personal access token + explicit file selection |
 | Obsidian vault | none | filesystem read only |
 
 Env-file paths resolve via [src/rebalance/paths.py](src/rebalance/paths.py)::`resolve_secret_path(name)` — the layered chain is `REBALANCE_SECRETS_DIR` env var → `secrets_dir` field in `~/.config/rebalance-os/config.json` (set via `rebalance config set-secrets-dir`) → `~/secrets/` legacy default. The domain CLI loaders (for example, [src/rebalance/cli/calendar.py](src/rebalance/cli/calendar.py) and [src/rebalance/cli/sleuth.py](src/rebalance/cli/sleuth.py)) use this resolver, so the repo is portable across operator home directories without hardcoded env-file paths. Env files should sit at mode 600. Env files are parsed manually (no `python-dotenv`). Nothing with a secret value is committed.

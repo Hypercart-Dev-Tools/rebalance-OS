@@ -171,6 +171,24 @@ def _safe_max(conn: Any, table: str, column: str) -> str | None:
         return None
 
 
+def _safe_count_where(conn: Any, table: str, where: str) -> int | None:
+    try:
+        row = conn.execute(f"SELECT COUNT(*) FROM {table} WHERE {where}").fetchone()
+        return int(row[0]) if row else 0
+    except Exception:
+        return None
+
+
+def _apple_reminders_health_status(database_path: Path) -> str | None:
+    """Cheap apple_reminders health status (ok | drift | never_synced) for the
+    status payload. None if the probe itself fails — never crashes status."""
+    try:
+        from rebalance.ingest.apple_reminders import apple_reminders_health
+        return apple_reminders_health(database_path).get("status")
+    except Exception:
+        return None
+
+
 def _safe_meta(conn: Any, table: str) -> dict[str, str]:
     try:
         rows = conn.execute(f"SELECT key, value FROM {table}").fetchall()
@@ -248,6 +266,15 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
         payload["sources"]["sleuth"] = {
             "reminders": _safe_count(conn, "sleuth_reminders"),
             "last_synced_at": _safe_max(conn, "sleuth_reminders", "last_synced_at"),
+        }
+
+        payload["sources"]["apple_reminders"] = {
+            "reminders": _safe_count(conn, "apple_reminders"),
+            "active": _safe_count_where(
+                conn, "apple_reminders", "is_active=1 AND is_completed=0"
+            ),
+            "last_synced_at": _safe_max(conn, "apple_reminders", "last_synced_at"),
+            "health": _apple_reminders_health_status(database_path),
         }
 
         payload["sources"]["email"] = {
@@ -789,6 +816,26 @@ def _refresh_sleuth(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     return {"scope": "sleuth", "dry_run": False, **result.as_dict()}
 
 
+def _refresh_apple_reminders(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    if dry_run:
+        return {
+            "scope": "apple_reminders",
+            "dry_run": True,
+            "steps": ["sync_apple_reminders() [read-only snapshot of local store]"],
+        }
+
+    # Local read-only macOS source — requires Full Disk Access for the host
+    # process. Surface the typed access/schema errors as a structured result
+    # rather than crashing the whole refresh run.
+    from rebalance.ingest.apple_reminders import AppleRemindersError, sync_apple_reminders
+
+    try:
+        result = sync_apple_reminders(database_path)
+    except AppleRemindersError as exc:
+        return {"scope": "apple_reminders", "dry_run": False, "error": str(exc)}
+    return {"scope": "apple_reminders", "dry_run": False, **result.as_dict()}
+
+
 def _refresh_code(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
     """Code projection into semantic_documents is owned by the semantic stage (Phase 3).
 
@@ -879,8 +926,8 @@ def _refresh_figma(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
             "scope": "figma",
             "dry_run": False,
             "error": (
-                "Figma token not configured. Set it with "
-                "`rebalance config set-figma-token` (stored in keyring)."
+                "Figma token not configured. Store a Figma personal access "
+                "token in the `figma_token` secret (keyring + secret store)."
             ),
         }
     if not file_keys:
@@ -1289,6 +1336,7 @@ def _calendar_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
 
 
 _sleuth_adapter = _dry_run_adapter(_refresh_sleuth)
+_apple_reminders_adapter = _dry_run_adapter(_refresh_apple_reminders)
 _email_adapter = _dry_run_adapter(_refresh_email)
 _code_adapter = _dry_run_adapter(_refresh_code)
 _figma_adapter = _dry_run_adapter(_refresh_figma)
@@ -1429,6 +1477,10 @@ register_collector(Collector("vault", _vault_adapter, requires=("vault_path",)))
 register_collector(Collector("github", _github_adapter, requires=("github_token",)))
 register_collector(Collector("calendar", _calendar_adapter))
 register_collector(Collector("sleuth", _sleuth_adapter))
+# Apple Reminders — local macOS read-only source. Opt-in (included_in_all=False):
+# it requires Full Disk Access for the host process and is macOS-only, so it must
+# never be part of a default/launchd `all` run on machines that can't read it.
+register_collector(Collector("apple_reminders", _apple_reminders_adapter, included_in_all=False))
 register_collector(Collector("email", _email_adapter))
 register_collector(Collector("code", _code_adapter, kind="derived_scan"))
 register_collector(Collector("semantic", _semantic_adapter, kind="projection"))

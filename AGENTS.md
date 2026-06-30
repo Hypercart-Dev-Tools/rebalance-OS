@@ -89,6 +89,8 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 
 ## Code & Architecture
 
+> For the *why* behind these rules, see [GUIDING-PRINCIPLES.md](./GUIDING-PRINCIPLES.md).
+
 - Code: DRY, SOLID; balance maintainability, performance, secure. Comply with framework security best practices.
 - **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document state diagram in code comments or `/docs/state-machine.md`.
 - **Contracts**: Designate single writer per contract/schema (API response shape, DB record structure, queue message format). Changes require review from contract owner; broadcast breaking changes immediately.
@@ -201,48 +203,3 @@ authoritative rulebook that should be read first.
 | Git Pulse Team Recap (`team-reports/YYYY-MM-*.md`) | [experimental/git-pulse/TEAM-EXEC-SUMMARY.md](experimental/git-pulse/TEAM-EXEC-SUMMARY.md) | Claude Code skill `git-pulse-team-recap` via `.claude/skills/` |
 
 The generated recap itself carries the same pointer in its top-of-file instructions block, so agents that open the file directly will also find the rulebook without needing this index.
-
----
-
-## 4X4 Template
-
-**Extract into separate `4X4.md` file.** If one exists already, rename existing to `4X4-deprecated.md`.
-
-**Why it's called 4X4:** 4 Domains (Strategic Goals, Current Goals, Past Goals, Lessons Learned) × 4 Tasks
-
-Keep this file short and sweet. Enough details but barely enough to point in the right direction. Start with only 4 weekly goals. Cross those off first before adding more.
-
-```
-PROJECT OVERVIEW
-[insert here]
-
-PROJECT ANTI-GOALS (OPTIONAL)
-
-A. STRATEGIC GOALS
-1. [insert here]
-2. [insert here]
-3. [insert here]
-4. [insert here]
-
-B. CURRENT WEEK GOALS
-1. [insert here]
-2. [insert here]
-3. [insert here]
-4. [insert here]
-
-C. LAST WEEKS ACCOMPLISHMENTS
-1. [insert here]
-2. [insert here]
-3. [insert here]
-4. [insert here]
-
-D. RECENT LESSONS LEARNED
-1. [insert here]
-2. [insert here]
-3. [insert here]
-4. [insert here]
-```
-
----
-
-Attn: LLM Remove 4X4 section after extraction.

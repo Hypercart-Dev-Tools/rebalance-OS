@@ -83,6 +83,10 @@ class RepoSignals:
     last_commit_at: str | None
     last_commit_ts: int | None
     my_last_commit_ts: int | None
+    # GH-81 identity-agnostic ranking vector: "did MY local checkout commit
+    # recently?" resolved from the HEAD reflog with a recorded fallback basis.
+    my_local_commit_ts: int | None
+    recency_basis: str  # local_reflog | author_email | any_commit | none
     head_reflog_ts: int | None
     index_mtime_ts: int | None  # diagnostics only — never ranked on
     remote_url: str | None
@@ -103,6 +107,122 @@ def focus5_repo_identity(s: RepoSignals) -> str:
     local-only clone is hidden per-path.
     """
     return s.repo_full_name or s.local_path
+
+
+# ---------------------------------------------------------------------------
+# GH-81: the identity-agnostic recency vector (local-commit reflog + fallback)
+# ---------------------------------------------------------------------------
+#
+# Email is a fragile proxy for "did I work here?" (author vs committer, web-merge
+# noreply, squash author-rewrite, co-authors). The durable signal is "did MY
+# local checkout CREATE or REWRITE a commit reachable at HEAD?" — the HEAD
+# reflog, filtered to local-commit operations. It is identity-agnostic (no email
+# list to maintain) and foreign-push-resistant (a pull-only repo has no local
+# `commit:` reflog entry). Author email is retained only as a fallback + display.
+
+# Op families for a HEAD-reflog subject (git ``%gs``). Classification keys on the
+# LEADING operation keyword so message-tail variance across git versions doesn't
+# matter. Accept = the op creates/rewrites a locally-authored commit reachable at
+# HEAD; reject = it moves HEAD to a commit produced elsewhere (foreign push,
+# navigation). Enumerated in ONE place; an unrecognized op is treated
+# conservatively as reject and logged so a new git phrasing is diagnosable.
+_REFLOG_ACCEPT_OPS = frozenset({"commit", "cherry-pick", "revert", "rebase"})
+_REFLOG_REJECT_OPS = frozenset({"pull", "fetch", "clone", "checkout", "reset", "branch"})
+
+
+def _classify_reflog_op(subject: str) -> bool | None:
+    """Classify a HEAD-reflog subject as a local-commit op.
+
+    Returns ``True`` (accept — creates/rewrites a local commit reachable at HEAD),
+    ``False`` (reject — a foreign/navigation move), or ``None`` (unrecognized →
+    caller treats conservatively as reject and logs). Examples: ``commit: x`` /
+    ``commit (amend): x`` / ``cherry-pick: x`` / ``rebase (pick): x`` → accept;
+    ``pull: Fast-forward`` / ``checkout: moving …`` / ``reset: …`` → reject; a
+    non-fast-forward ``merge feature: Merge made …`` → accept (a real local merge
+    commit), a ``merge …: Fast-forward`` → reject (foreign).
+    """
+    op = subject.split(":", 1)[0].strip()
+    head = op.split(" ", 1)[0].split("(", 1)[0]  # "merge feat"→"merge", "commit (amend)"→"commit"
+    if head == "merge":
+        detail = subject.split(":", 1)[1].strip().lower() if ":" in subject else ""
+        return not detail.startswith("fast-forward")
+    if head in _REFLOG_ACCEPT_OPS:
+        return True
+    if head in _REFLOG_REJECT_OPS:
+        return False
+    return None
+
+
+def resolve_recency(
+    *, reflog_commit_ts: int | None, reflog_available: bool,
+    author_email_ts: int | None, any_commit_ts: int | None,
+) -> tuple[int | None, str]:
+    """Resolve the headline ranking recency + its (recorded, never silent) basis.
+
+    Fallback ladder: ``local_reflog`` (a local-commit op in HEAD's reflog) →
+    ``author_email`` (the old ``user.email`` match, so we never regress below
+    today) → ``any_commit`` (**only** when the reflog is genuinely unavailable, so
+    a foreign-only clone whose reflog IS readable can never masquerade as my work)
+    → ``none`` (ineligible). The ``reflog_available`` gate on the ``any_commit``
+    rung is the GH-81 refinement that keeps the core fix intact: an available
+    reflog with no local-commit op is a *definitive* "I have not committed here",
+    not a reason to fall through to a foreign author's commit time.
+    """
+    if reflog_commit_ts is not None:
+        return reflog_commit_ts, "local_reflog"
+    if author_email_ts is not None:
+        return author_email_ts, "author_email"
+    if not reflog_available and any_commit_ts is not None:
+        return any_commit_ts, "any_commit"
+    return None, "none"
+
+
+# Human "why" for each fallback basis (GH-81 Phase 2). Only the degraded rungs get
+# a note — a fallback must be SHOWN, never silent; `local_reflog` needs none (it's
+# the expected basis). `none` is handled separately (ineligibility, not a fallback).
+_BASIS_NOTE = {
+    "author_email": "ranked by author email — this clone's HEAD reflog is disabled",
+    "any_commit": "ranked by latest commit — reflog disabled, no commit under your email",
+}
+
+# Short form of the same vocabulary for a compact on-card badge.
+_BASIS_BADGE = {
+    "author_email": "via author email",
+    "any_commit": "via latest commit",
+}
+
+
+def basis_badge(recency_basis: str | None) -> str:
+    """Short fallback-basis label for a rostered card (GH-81 Phase 2).
+
+    Returns ``""`` for the expected ``local_reflog`` basis (and ``none``); a
+    non-empty badge means "this repo ranked by a FALLBACK" — surfaced so a
+    degraded basis is visible on the board, never silent.
+    """
+    return _BASIS_BADGE.get(recency_basis or "", "")
+
+
+def explain_recency(
+    recency_basis: str | None, my_local_commit_ts: int | None,
+    rank_cutoff_ts: int | None, now_ts: int,
+) -> str:
+    """One-line operator-facing "why does this repo rank where it does?" string.
+
+    A pure render over the Phase-1 explain payload (basis + resolved recency + the
+    #5 cutoff) — no git, no recompute — so the question that needed ``git log``
+    forensics in GH-81 has a one-line answer, including when a fallback basis was
+    used. Eligible: "your local commit 3d ago · below the #5 cutoff (16h ago) ·
+    <fallback note>"; ineligible: the no-local-commit reason.
+    """
+    if recency_basis in (None, "none") or my_local_commit_ts is None:
+        return "no local commit here — not eligible for Focus 5"
+    parts = [f"your local commit {_humanize_ago(my_local_commit_ts, now_ts)}"]
+    if rank_cutoff_ts is not None and my_local_commit_ts < rank_cutoff_ts:
+        parts.append(f"below the #5 cutoff ({_humanize_ago(rank_cutoff_ts, now_ts)})")
+    note = _BASIS_NOTE.get(recency_basis)
+    if note:
+        parts.append(note)
+    return " · ".join(parts)
 
 
 # ---------------------------------------------------------------------------
@@ -185,26 +305,26 @@ def rank_dirty_first(s: RepoSignals, now_ts: int) -> RankVerdict:
 
 
 def rank_recent_activity(s: RepoSignals, now_ts: int) -> RankVerdict:
-    """My most recently *authored* active repos (DEFAULT — the headline Focus 5).
+    """My most recently *locally-committed* active repos (DEFAULT — the headline).
 
-    Answers "what am I working on right now?" Ranks purely on operator-authored
-    commit recency (``my_last_commit_ts``) with **no dirty pinning**, so a clean,
-    freshly-pushed repo I committed to an hour ago outranks a repo sitting on
-    someone else's stale WIP. That is the whole point: a commit-often/push-often
-    workflow keeps active repos clean, and every other mode buries them under any
-    repo with leftover uncommitted files.
+    Answers "what am I working on right now?" GH-81: ranks on the
+    identity-agnostic **local-commit recency** (``my_local_commit_ts``, resolved
+    from the HEAD reflog with a recorded fallback ``recency_basis``) — NOT on a
+    single ``user.email`` match. The operator commits under multiple author emails
+    (CLI vs web-merge noreply), so an email-only gate silently drops recent local
+    work authored under a non-matching identity; the reflog vector does not.
 
-    Eligibility requires that I authored a commit here (``my_last_commit_ts is not
-    None``). A dirty-only / never-authored repo is therefore **excluded** from
-    Focus 5 — it is carried by ``dirty_first`` (the Dirty Five safety view) and
-    the off-roster "needs attention" strip instead. Ranking on ``my_last_commit_ts``
-    specifically (not :func:`_recency`, which falls back to head-reflog/any-author
-    commit time) keeps a foreign push or a clone/checkout from masquerading as my
-    activity.
+    Eligibility requires a resolved local-commit recency (``my_local_commit_ts is
+    not None`` ⇔ ``recency_basis != "none"``). A dirty-only / never-committed repo
+    is therefore **excluded** from Focus 5 — it is carried by ``dirty_first`` (the
+    Dirty Five safety view) and the off-roster strip instead. Because the basis
+    prefers the reflog and only falls to a foreign author's commit time when the
+    reflog is *unavailable*, a foreign push or clone/checkout cannot masquerade as
+    my activity.
     """
-    eligible = s.my_last_commit_ts is not None
-    reason = f"your commit {_humanize_ago(s.my_last_commit_ts, now_ts)}"
-    return RankVerdict(eligible, (s.my_last_commit_ts or 0,), reason)
+    eligible = s.my_local_commit_ts is not None
+    reason = f"your commit {_humanize_ago(s.my_local_commit_ts, now_ts)}"
+    return RankVerdict(eligible, (s.my_local_commit_ts or 0,), reason)
 
 
 def rank_any_touch(s: RepoSignals, now_ts: int) -> RankVerdict:
@@ -367,6 +487,38 @@ def _mtime(path: Path) -> int | None:
         return None
 
 
+def _probe_head_reflog_commit(
+    repo: Path, stats: dict[str, Any] | None = None,
+) -> tuple[int | None, bool]:
+    """GH-81: ``(newest local-commit-op epoch | None, reflog_available)``.
+
+    Reads HEAD's reflog newest-first and returns the committer timestamp of the
+    first entry whose op CREATES/REWRITES a local commit reachable at HEAD (see
+    :func:`_classify_reflog_op`). The second value distinguishes "reflog is
+    unavailable" (disabled via ``core.logAllRefUpdates=false``, GC-expired, or an
+    atypical clone — caller may fall back to author-email/any-commit) from "reflog
+    is readable but shows no local-commit op" (a definitive negative). Never
+    raises; unrecognized ops are skipped (treated as reject) and logged so a new
+    git phrasing surfaces instead of being silently counted.
+    """
+    out = _git(repo, "reflog", "show", "--format=%ct%x1f%gs")
+    if not out or not out.strip():
+        return None, False  # unreadable / disabled / empty → unavailable
+    for line in out.splitlines():
+        ts_str, _sep, subject = line.partition("\x1f")
+        verdict = _classify_reflog_op(subject)
+        if verdict is True:
+            return (int(ts_str) if ts_str.strip().isdigit() else None), True
+        if verdict is None:
+            logger.info(
+                "focus5: unrecognized HEAD-reflog op %r in %s (treated as reject)",
+                subject.split(":", 1)[0][:40], repo,
+            )
+            if stats is not None:
+                stats.setdefault("unknown_reflog_ops", []).append(subject.split(":", 1)[0][:40])
+    return None, True  # readable, but no local-commit op among the entries
+
+
 def probe_repo_signals(
     repo: Path, *, device_id: str, probed_at: str, stats: dict[str, Any] | None = None,
 ) -> RepoSignals:
@@ -402,6 +554,14 @@ def probe_repo_signals(
         if mine and mine.strip().isdigit():
             my_last_commit_ts = int(mine.strip())
 
+    # GH-81: identity-agnostic local-commit recency from the HEAD reflog, with a
+    # recorded fallback basis (never raises — degrades to author_email/any_commit).
+    reflog_commit_ts, reflog_available = _probe_head_reflog_commit(repo, stats)
+    my_local_commit_ts, recency_basis = resolve_recency(
+        reflog_commit_ts=reflog_commit_ts, reflog_available=reflog_available,
+        author_email_ts=my_last_commit_ts, any_commit_ts=last_commit_ts,
+    )
+
     remote_url = (_git(repo, "remote", "get-url", "origin") or "").strip() or None
 
     git_dir = repo / ".git"
@@ -422,6 +582,8 @@ def probe_repo_signals(
         last_commit_at=last_commit_at,
         last_commit_ts=last_commit_ts,
         my_last_commit_ts=my_last_commit_ts,
+        my_local_commit_ts=my_local_commit_ts,
+        recency_basis=recency_basis,
         head_reflog_ts=head_reflog_ts,
         index_mtime_ts=index_mtime_ts,
         remote_url=remote_url,
@@ -453,7 +615,8 @@ _SIGNAL_COLUMNS = (
     "device_id", "local_path", "repo_name", "repo_full_name", "branch",
     "upstream", "has_upstream", "ahead", "behind", "modified_count",
     "untracked_count", "is_dirty", "last_commit_at", "last_commit_ts",
-    "my_last_commit_ts", "head_reflog_ts", "index_mtime_ts", "remote_url",
+    "my_last_commit_ts", "my_local_commit_ts", "recency_basis",
+    "head_reflog_ts", "index_mtime_ts", "remote_url",
     "probed_at",
 )
 
@@ -814,7 +977,8 @@ def summarize_focus5(
     empty = {
         "roster": [], "off_roster_warnings": [],
         "computed_at": None, "ranking_mode": None,
-        "summary": {"discovered": 0, "roster_size": 0, "off_roster_attention": 0},
+        "summary": {"discovered": 0, "roster_size": 0,
+                    "off_roster_attention": 0, "rank_cutoff_ts": None},
     }
     try:
         with db_connection(database_path) as conn:
@@ -861,7 +1025,8 @@ def summarize_focus5(
             hidden = set(get_focus5_hidden_repos())
             warn_rows = conn.execute(
                 "SELECT repo_name, local_path, repo_full_name, branch, ahead, "
-                "       modified_count, untracked_count, is_dirty, probed_at "
+                "       modified_count, untracked_count, is_dirty, probed_at, "
+                "       my_local_commit_ts, recency_basis "  # GH-81 minimal explain
                 "FROM focus5_repo_signals "
                 "WHERE device_id=? AND (is_dirty=1 OR ahead>0) "
                 "ORDER BY is_dirty DESC, ahead DESC, repo_name",
@@ -880,6 +1045,16 @@ def summarize_focus5(
     except Exception:  # noqa: BLE001 — tables absent on a brand-new DB
         return empty
 
+    # GH-81 minimal explain: the #5 cutoff is the resolved local-commit recency of
+    # the lowest-ranked rostered repo — the threshold an off-roster repo must beat
+    # to make the board. Lets QA distinguish "fixed ranking" from a new silent bias
+    # (read each off-roster repo's my_local_commit_ts + recency_basis against this).
+    # Only meaningful for the headline recent_activity board: the explain copy
+    # ("below the #5 cutoff", "Focus 5") is recent_activity-specific, so a transient
+    # view (Dirty Five reranks under dirty_first) must NOT publish a cutoff that the
+    # renderer would then mislabel with Focus 5 semantics. (Codex relay r2.)
+    rank_cutoff_ts = roster[-1].get("my_local_commit_ts") if (roster and mode is None) else None
+
     return {
         "roster": roster,
         "off_roster_warnings": off_roster,
@@ -889,5 +1064,6 @@ def summarize_focus5(
             "discovered": discovered,
             "roster_size": len(roster),
             "off_roster_attention": len(off_roster),
+            "rank_cutoff_ts": rank_cutoff_ts,
         },
     }

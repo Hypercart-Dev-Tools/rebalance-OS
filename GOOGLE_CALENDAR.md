@@ -102,6 +102,12 @@ After clicking Allow, the script prints a list of your Google Calendars and thei
 > a legacy pickle token? Run `rebalance config migrate-secrets` once to convert and
 > retire it. See [UPGRADE.md](./UPGRADE.md) for the full credential model.
 
+> **Calendar has no host-connector (`mcp`) ingest mode.** Unlike Gmail (which
+> offers an `oauth`/`mcp` choice), Google Calendar is ingested only via local
+> OAuth into local SQLite — the path on this page. Routing Calendar through a
+> host connector (e.g. claude.ai) is **planned, not shipped**; nothing sends your
+> Calendar data to a host cloud today.
+
 ---
 
 ### Step 2: Configure your calendar
@@ -529,7 +535,7 @@ To automate it on macOS or Linux, add it to your crontab (`crontab -e`):
 | Times look wrong | Update `timezone` in `temp/calendar_config.json` to your local timezone |
 | Project names still look heuristic (`Cr`, `Ai`, `Smart`) | Sync your canonical registry into the same SQLite database so `project_registry` is available to the calendar report |
 | I do not use Obsidian | Add `projects` directly to `temp/calendar_config.json`; the report will use that fallback automatically |
-| Need to re-authorize | Re-run Step 1, then `rebalance config migrate-to-keyring` to refresh the keyring copy |
+| Need to re-authorize | Re-run Step 1 — `setup_calendar_oauth.py` rewrites the keyring + JSON fallback in one pass |
 | **Re-authorizing every few days** | Your OAuth consent screen is in *Testing* mode — Google revokes refresh tokens after **7 days**. Fix below. |
 
 ### Durable tokens — stop the weekly re-auth
@@ -547,8 +553,8 @@ client is in **"Testing"** publishing status, which expires refresh tokens after
   clock, or accept periodic re-auth.
 
 After flipping to Internal, re-mint once so the token is issued under the new
-status: `python scripts/setup_calendar_oauth.py --write-access --test` then
-`rebalance config migrate-to-keyring`. The same client backs Gmail — see
+status: `python scripts/setup_calendar_oauth.py --write-access --test` (writes
+the keyring + JSON fallback in one pass). The same client backs Gmail — see
 [GMAIL.md](./GMAIL.md).
 
 **Common questions**

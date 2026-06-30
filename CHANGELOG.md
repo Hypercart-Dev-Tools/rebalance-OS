@@ -6,6 +6,182 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.48.0] - 2026-06-26
+
+Added a bottom note to the Focus 5 Float macOS card: it reads a hand-written `focus5.md` from the operator's Obsidian vault and renders it under the roster, with a hint when no note exists.
+
+### Added
+- New read-only route `GET /focus-5/note` in `src/rebalance/web.py` (`focus5_note()`) — projects `focus5.md` at the configured vault root as `{exists, content, path}`, capped at 64 KiB, always HTTP 200. Strictly read-only (never creates/writes the file). Covered by `tests/test_web_focus5.py::Focus5NoteRouteTests`.
+- Focus 5 Float now fetches the note on every refresh/poll and renders it pinned at the bottom of the Focus 5 / Dirty Five card (`Focus5NoteView` in `ContentView.swift`), with light markdown (headings, bullets, inline emphasis/links). When the vault has no `focus5.md`, it shows: *"To show a text file here, add a doc called focus5.md into your Obsidian vault."*
+- Wire contract documented in `macOS/Apps/Focus5Float/CONTRACT.md` (new "Bottom note" section) with the Swift `Focus5Note` codec.
+
+### Changed
+- Focus 5 Float layout polish: the note now renders as a content-hugging card at the end of the roster scroll (was a greedy fixed-height footer that reserved ~280px even for a short note). Default panel size 360×640 → 380×560 with a 360-wide minimum so the 3-tab header + status light stop clipping; frame autosave bumped to `.v2` so a stale oversized saved frame resets once.
+
+## [0.47.2] - 2026-06-25
+
+Registered a new Apple Reminders project and consolidated prior reference docs into one execution-ready working plan.
+
+### Added
+- New active project plan at `PROJECT/2-WORKING/APPLE-REMINDERS-UNIFIED-PLAN.md` with frontmatter, near-top status table, TOC, phased execution checklists, and QA gates per phase.
+
+### Changed
+- Added roadmap ledger registration for the Apple Reminders unified integration plan under in-progress work.
+
+## [0.47.1] - 2026-06-25
+
+Focus 5 Float Telemetry tab is hardened against large files: the loader is bounded and the row list keys are made collision-proof.
+
+### Fixed
+- Telemetry `ForEach` now keys on the enumeration offset instead of `health_title`, eliminating SwiftUI duplicate-ID glitches (dropped rows, broken scroll) when two rows share the same health + title — likely once a file holds thousands of entries.
+- Telemetry loader caps retained/rendered rows at the newest 10k (`Focus5Model.telemetryRowCap`) via `prefix` after the newest-first sort, so decode and render stay bounded even if the source file grows unbounded.
+
+## [0.47.0] - 2026-06-25
+
+Focus 5 Float Telemetry tab gains explicit file selection from the F5 menu bar and surfaces decode errors in the UI.
+
+### Added
+- "Select Telemetry File…" (⌘T) menu item in the F5 right-click menu; opens `NSOpenPanel` for `.json` files, saves the selection to `UserDefaults`, and switches the panel to the Telemetry tab automatically.
+- Menu item label updates dynamically to "Telemetry: \<filename\>" after a file is selected; reverts to "Select Telemetry File…" when cleared.
+- Visible decode error state in the Telemetry tab: if the selected file exists but has invalid structure, the tab shows an actionable error message instead of a blank screen.
+- "No file selected" empty state in the Telemetry tab (default before any file is chosen); replaces the Phase 1 auto-folder scan as the primary entry point.
+- Cold-start restore: previously-selected telemetry file reloads automatically on relaunch (path persisted in `UserDefaults`).
+
+### Changed
+- Telemetry tab header info row now shows the selected filename + entry count instead of a generic "N signals" label.
+
+## [0.46.0] - 2026-06-25
+
+Focus 5 Float gains a third Telemetry tab: reads health-annotated JSON rows from `~/Documents/telemetry/` and renders them with green/orange/red dots, title, description, and relative timestamp — all via existing design tokens and components.
+
+### Added
+- Focus 5 Float Telemetry tab: a third panel option (`📊 Telemetry`) in the header segmented control that reads `*.json` files from `~/Documents/telemetry/`, decodes them as flat arrays of `{ health, title, description, updatedAt }` rows, and renders them newest-first with `HealthDot` (green/orange/red), title, description, and a relative timestamp.
+- `TelemetryModels.swift`: `HealthStatus` enum and `TelemetryEntry: Codable, Identifiable` wire model.
+- `TelemetryReader.swift`: pure file-reader that merges all `*.json` files in the telemetry folder, skips malformed files with a logged warning, and sorts by `updatedAt` descending.
+- `HealthDot` component in `Components.swift`: orange-capable status dot for telemetry rows (parallel to `StatusDot`, which remains unchanged for repo cards).
+- `ViewMode` enum (`Focus5Model.swift`): decouples panel selection (`focus5` / `dirtyFive` / `telemetry`) from server-side `rankingMode` so switching to Telemetry and back preserves the last ranking.
+- Telemetry header health rollup: the existing `RosterHealth.tint` logic now drives a "Status: N" dot over non-green telemetry signals when the Telemetry tab is active.
+- Demo seed at `~/Documents/telemetry/focus5float-demo.json` with three sample rows (green/orange/red).
+
+### Changed
+- Focus 5 Float header Picker binding migrated from `isDirtyView: Bool` to `ViewMode`; `isDirtyView` is retained as a computed shim so all existing server-fetch and caching paths are unchanged.
+- Refresh button (`↻`) now re-reads telemetry files when the Telemetry tab is active; Start Server button is hidden in Telemetry mode (irrelevant).
+
+## [0.45.0] - 2026-06-25
+
+Focus 5 Float reaches a real installable app: it now ships to `/Applications`, can launch at login, and surfaces overall roster health at a glance.
+
+### Added
+- Focus 5 Float roster-health traffic light in the panel header (top-right, so it never reads as a close button): green = all roster repos clean, orange = some dirty, red = all dirty, labeled "Status: N" where N is the dirty count. Backed by a pure `RosterHealth.tint` rollup with a `FOCUS5_HEALTHTEST` headless self-check.
+- Focus 5 Float launch-at-login: a "Launch at Login" toggle in the F5 menu-bar menu (via `SMAppService.mainApp`) with a live checkmark and graceful failure logging.
+- Focus 5 Float docs: an app `README.md` (build/run, `rebalance serve` prerequisite, launch-at-login, icon, self-checks, contract) and a pointer to it from `macOS/README.md`.
+
+### Changed
+- Focus 5 Float Phase 5 (packaging) completed and the project doc marked `status: complete`; the settings-window and per-setting controls were deliberately descoped (YAGNI for a single-operator menu-bar tool — `FOCUS5_BASE_URL` covers server config). Icon wiring is in place (`make-app.sh` auto-picks `Resources/AppIcon.icns`); artwork is pending.
+
+## [0.44.0] - 2026-06-24
+
+The headline activity board now ranks on whether *your local checkout* committed recently — read from the HEAD reflog — instead of matching a single configured author email. Working under more than one identity (CLI vs web-merge noreply) no longer silently drops recent local work off the board.
+
+### Added
+- Local-commit recency vector: a reflog operation classifier (accept a commit / amend / cherry-pick / revert / rebase / real merge; reject a fast-forward pull, fetch, checkout, clone, reset; an unrecognized op is rejected and logged) feeding a recorded fallback ladder — local reflog → author email → any commit (only when the reflog is genuinely unavailable) → none.
+- A recorded ranking basis on every repo signal plus a minimal explain payload (per-repo basis and the board's #5 cutoff) so it is always visible *why* a repo ranks, with no silent bias.
+- Operator-facing explain UX on the activity board: each off-roster repo now shows, inline, why it isn't in the top 5 (its last local commit vs the #5 cutoff), and any repo ranked by a fallback basis (e.g. a clone whose reflog is disabled) carries a visible badge — answering "why is repo X here / not here?" without `git log` forensics.
+
+### Changed
+- The default headline ranking now uses the identity-agnostic local-commit recency; the author-email signal is retained as a displayed diagnostic and a fallback input. Other ranking modes are unchanged.
+- A migration-test fixture now builds its prior-version database by applying the real intermediate migrations rather than stamping them, so additive column migrations that touch earlier tables are exercised faithfully.
+
+### Fixed
+- Repos whose recent local commits were authored under a non-matching email (forks, web-merge noreply, multi-identity work) no longer silently disappear from the board. On a real 88-repo device, 24 such repos became eligible again.
+- Hiding a repo right after the upgrade can no longer blank the board: a backfill step populates the new recency columns for pre-existing rows, so a re-rank before the first fresh scan reproduces the prior roster instead of dropping everything as ineligible.
+- The "below the #5 cutoff" explanation is shown only on the headline board; the at-risk (Dirty Five) view no longer labels its own cutoff with headline-board wording.
+
+## [0.43.0] - 2026-06-23
+
+Focus 5 Float reaches feature-complete (Phases 1–4) and passes an automated Codex QA pass — the macOS menu-bar app now renders the real, live Focus 5 roster as a floating, collapsible card stack over the same `summarize_focus5()` the web `/focus-5` uses.
+
+### Added
+- macOS `Focus 5 Float` is now a runnable menu-bar app: a non-activating, always-on-top floating `NSPanel` (F5 status-item toggle, right-click menu, Esc-to-hide, first-mouse interaction, frame autosave, hidden window chrome) hosting a SwiftUI card stack.
+- Live data: a read-only `Focus5Client` pulls `GET /focus-5.json` (90s poll, manual Refresh, ranking-mode re-fetch, offline handling, tap-a-card-to-open-in-VS-Code) — no ranking/git/DB logic in Swift; the server stays the source of truth.
+- Collapsible repo cards mirroring the web card: tap to expand into Tree health / Newest PR / Recent activity, plus an in-panel Focus 5 ⇄ Dirty Five toggle, a ⚠ stale badge, and a collapsible off-roster footer.
+- `Focus5Float` SwiftPM package harvesting the TextReplacementStudio design system (`Theme`, `KeyCap`/`GroupTag`/`StatusDot`), `Codable` wire models, a bundled fixture, and headless `FOCUS5_SELFTEST` / `FOCUS5_LIVETEST` decode smoke tests.
+- `make-app.sh` packaging for Focus 5 Float: release build → ad-hoc-signed `.app` bundle (menu-bar agent via `LSUIElement`) installed to `/Applications` (Phase 5 install path).
+
+### Changed
+- Focus 5 Float repo cards are now zebra-striped — alternate rows use an `elevatedAlt` fill (the elevated color darkened ~12%) for easier row scanning.
+
+### Fixed
+- Focus 5 Float mode/refresh race: concurrent poll, manual refresh, and ranking-mode switches could apply out of order; a generation guard now lets only the latest fetch apply, and an optimistic mode flip reverts on a real fetch failure. (Codex QA)
+- Focus 5 Float empty-state copy no longer implies that in-app Refresh rebuilds the roster — it correctly directs the operator to build the roster server-side, then re-pull. (Codex QA)
+- Focus 5 Float now keeps its local-only data posture: a non-loopback `FOCUS5_BASE_URL` is honored only under an explicit debug opt-in, otherwise it falls back to localhost (the payload carries `local_path` / `vscode_url` / `author_email`). (Codex QA)
+- Focus 5 Float menu-bar checkmarks no longer drift from the active ranking mode: the context menu recomputes its checkmarks from the model on open, so the in-panel toggle and the menu stay in sync. (Codex QA)
+
+## [0.42.0] - 2026-06-23
+
+Focus 5 Float Phase 0 spike and PDDA doc compliance corrections — shipping the local FastAPI JSON endpoint and macOS floating panel spike, alongside repo-wide doc hygiene and test collection fixes.
+
+### Added
+- FastAPI `GET /focus-5.json` read-only local endpoint (macOS Focus 5 Float Phase 0) serving the Focus 5 card stack roster and off-roster warnings.
+- macOS `Focus 5 Float` SwiftUI application target scaffolding and the interactive, non-activating always-on-top spike (`FloatPanelSpike.swift`).
+
+### Changed
+- Consolidated the `utilities/` folder into `utils/` at the repository root to simplify project directories.
+
+### Fixed
+- A bug in `pdda-check-changelog.sh` regex parser that missed SemVer formatted headings and falsely reported the changelog as stale.
+- Cleaned up absolute hardcoded paths in project documents to comply with the portable, machine-neutral contract.
+- Added required frontmatter (`title` and `goal`) and `## Status` headers to active plans to satisfy the PDDA active-doc contract.
+- Linked active plans (`FOCUS-5-RANKING-BUG-AND-REMEDIATION.md` and `P2-TEAM-CALENDAR-SIGNAL.md`) in `ROADMAP.md` to satisfy roadmap coverage checks.
+- Renamed the onboarding manual test script to `smoke_onboarding.py` to prevent it from breaking standard pytest collection.
+
+## [0.41.1] - 2026-06-21
+
+Front-door, portability, and auth-hardening cleanup — closing the remaining
+runtime-contract, test-coverage, and documentation gaps so a newcomer's
+clone-to-working path and the credential model are accurate and enforced.
+
+### Fixed
+- Semantic-maintenance commands no longer silently accept calendar/reminder
+  sources they cannot actually index. The accepted source set is now derived
+  from the live indexing stage, so the maintenance CLI and the runtime can no
+  longer drift apart, and an unsupported source is rejected with a clear error
+  instead of doing nothing.
+- Restored the test suite: a broken module import had been interrupting
+  collection and leaving continuous integration red, so the contract tests
+  were not actually running on every change.
+- The Gmail re-auth hint no longer tells operators to run a redundant migration
+  step that the setup flow already performs in one pass.
+
+### Added
+- The health check now reports posture for the Figma integration and
+  distinguishes "optional and not configured" (a clean skip) from "configured
+  but broken" — for example, files selected to sync with no token — so a
+  silently failing integration becomes visible. This immediately surfaced a
+  real, previously-silent misconfiguration.
+- CI-enforced contract tests for the credential model: secrets can no longer
+  leak back into repo-local config; migration refuses to remove a secret from
+  the legacy location until the new store has provably retained it, so an
+  unattended job can never be locked out; and auth-activity plus token-lifetime
+  metadata survive migration and token refresh (fingerprint-only, with the
+  original authorization date preserved). The dashboard re-ingest path and the
+  opt-in Figma path gained real (non-mocked) coverage.
+
+### Changed
+- Operator and newcomer documentation now matches the shipped credential model
+  everywhere: the OS keyring is primary, with a permission-locked data-only
+  fallback stored outside the repository. Retired token-format and redundant
+  migration wording were removed; the one legacy migration step that still does
+  real work is kept and scoped to that purpose.
+- The front door now states the supported platform, the cross-platform subset
+  that runs without the on-device embedding stack, and the one-time first-run
+  network access (the model download and the GitHub/Google APIs) before the
+  first install command — correcting the prior overstated platform requirement.
+- The Gmail local-account versus host-connector ingest choice now states the
+  privacy trade-off (whether data stays on the machine or routes through the
+  host cloud) and the connector precondition inline. Calendar host-connector
+  ingestion is clearly marked as planned, not shipped.
+
 ## [0.41.0] - 2026-06-18
 
 P2 **Phase 2 — v0.5 "What should we work on next"** (product milestone *v0.5*; the
@@ -437,7 +613,7 @@ P2 Phase 1 — team-calendar signal — plus a max-effort code-review hardening 
   already-rendered rows (each tagged with `data-severity`); no backend change.
 
 - **Obsidian daily-notes rollover utility.** A nightly launchd job
-  (`utilities/obsidian_daily_rollover.py` + the `utilities/obsidian_rollover.sh`
+  (`utils/obsidian_daily_rollover.py` + the `utils/obsidian_rollover.sh`
   wrapper) that, at midnight, prepends `0. Today's Notes.md` to the top of
   `0. Yesterday.md` under a dated header (a rolling, newest-first log) and blanks
   Today's Notes so each morning starts clean. Auto-creates Today's Notes if it

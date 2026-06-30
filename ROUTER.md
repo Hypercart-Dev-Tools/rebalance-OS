@@ -1,0 +1,80 @@
+# ROUTER.md
+
+This file is the first entry point for an AI agent working in this repo: it tells you what to read, what to run, and which files are canonical. **This repo is an MCP server** — reach for the MCP tools before scanning code or writing ad-hoc shell pipelines.
+
+## Role split
+
+- `ROUTER.md` = startup order and canonical entry points (this file)
+- `AGENTS.md` = behavioral rules, the MCP tool surface, the onboarding flow, and decision quality
+- `ARCHITECTURE.md` = system orientation (Signal Sources, Source→Table fanout, "Adding a New Source") — read at session start
+- `GUIDING-PRINCIPLES.md` = the *why* behind architecture and design decisions; includes the AI doc-review heuristics appendix
+- `README.md` = human-facing repo/product overview and install path
+- `ROADMAP.md` = pointer ledger of in-progress, completed, attempted, and deferred work
+- `CHANGELOG.md` = the end-of-iteration running log
+- `PROJECT/**` docs = canonical execution detail for a specific effort
+- `PROJECT/PDDA.md` = document contract and PDDA automation rules
+
+## Startup sequence
+
+1. Read `ROUTER.md` to understand the repo's operating order and canonical files. -> expect one clear next file, not a repo-wide scavenger hunt.
+2. Read `AGENTS.md` before making recommendations or edits. -> expect the MCP tool surface, the onboarding flow, explicit assumptions, and verified-claims-only discipline.
+3. Read `ARCHITECTURE.md` for orientation, then `src/rebalance/ingest/index_ops.py` — the `COLLECTORS` registry is the data-plane spine. -> expect to extend a source with one `register_collector(...)` call, not edits to the dispatch chain.
+4. Read `ROADMAP.md` to find the active effort. -> expect links outward to the canonical `PROJECT/**` docs; `ROADMAP.md` is a pointer ledger, not a plan body.
+5. Read the linked `PROJECT/**` document that owns the work you are touching. -> expect a near-top `## Status` table telling you what was just completed and what is next.
+6. If the task touches project docs, read `PROJECT/PDDA.md` and follow the PDDA contract. -> expect `PROJECT/2-WORKING` docs to have frontmatter, the exact status table, and QA gates when phased.
+7. Before reporting success on code or runtime work, run `rebalance doctor` and `pytest tests/`. -> expect doctor clean and the suite green; do not claim completion if either fails or was skipped.
+8. Before reporting success on doc-hygiene or roadmap work, run `utils/pdda/pdda.sh run` (or the relevant `utils/pdda/pdda.sh <check>` command). -> expect deterministic findings first, then any LLM review.
+
+## Canonical rules
+
+- This repo **is** an MCP server. Use the MCP tools (`index_status`, `refresh_index`, `semantic_query`, …) for data refresh and retrieval, and `rebalance doctor` for setup/health. Do not write ad-hoc `rebalance ...` shell pipelines or grep for setup scripts.
+- Do not put phase checklists, build steps, or deep execution notes in `ROADMAP.md`.
+- Every active doc in `PROJECT/2-WORKING/` must be reflected by a one-line pointer in `ROADMAP.md` — or opt out with `roadmap_exempt: true` in its frontmatter. Enforced by `utils/pdda/pdda.sh roadmap-coverage`; governance lives in `PROJECT/PDDA.md`.
+- Every captured GitHub issue doc in `PROJECT/1-INBOX/GH-*.md` is first-class intake and must also be parked in `ROADMAP.md` as a one-line queue entry immediately at capture, then promoted or removed later. Enforced by `utils/pdda/pdda.sh roadmap-coverage`; governance lives in `PROJECT/PDDA.md`.
+- Do not create a second competing plan when a canonical `PROJECT/**` doc already exists.
+- Do not override deterministic PDDA findings with prose.
+- Do not report a win you did not verify with `rebalance doctor`, `pytest tests/`, or the relevant PDDA check.
+
+## Command rails
+
+For setup/health:
+
+```bash
+rebalance doctor
+```
+
+For code correctness:
+
+```bash
+pytest tests/
+```
+
+For document hygiene:
+
+```bash
+utils/pdda/pdda.sh run
+```
+
+For targeted PDDA debugging:
+
+```bash
+utils/pdda/pdda.sh frontmatter
+utils/pdda/pdda.sh status-table
+utils/pdda/pdda.sh hardcoded-paths
+utils/pdda/pdda.sh roadmap
+utils/pdda/pdda.sh roadmap-coverage
+utils/pdda/pdda.sh changelog
+utils/pdda/pdda.sh stale
+utils/pdda/pdda.sh doc-ready   # LLM readiness review — set PDDA_LLM_BIN (codex/claude/agy) for recommendations, else it self-skips
+utils/pdda/pdda.sh help
+```
+
+## Routing hints
+
+- If the task is about current priorities or active work, start in `ROADMAP.md`, then follow the linked `PROJECT/**` doc.
+- If the task is about data sources, refresh, or "why is X empty?", start with `rebalance doctor`, then `src/rebalance/ingest/index_ops.py` (the `COLLECTORS` registry).
+- If the task is about retrieval or synthesis (the read side), start in `src/rebalance/querier.py`.
+- If the task is about the MCP tool surface or operator onboarding, start in `AGENTS.md`.
+- If the task is about document quality, active-doc lifecycle, roadmap sprawl, or automation policy, start in `PROJECT/PDDA.md`.
+- If the task is about installing PDDA into another repo, read `PDDA-INSTALL.md`.
+- If the task originates from a GitHub issue, capture it as `PROJECT/1-INBOX/GH-<number>-SHORT-DESCRIPTION.md`, then follow the normal `1-INBOX` → `2-WORKING` flow.

@@ -22,8 +22,12 @@ from unittest import mock
 from rebalance.ingest.focus5_scan import (
     RepoSignals,
     _SIGNAL_COLUMNS,
+    _classify_reflog_op,
     _parse_status,
+    _probe_head_reflog_commit,
     _signal_row,
+    basis_badge,
+    explain_recency,
     focus5_repo_identity,
     get_roster_meta,
     iter_git_repos,
@@ -33,6 +37,7 @@ from rebalance.ingest.focus5_scan import (
     recent_activity,
     rerank_focus5_from_cache,
     resolve_ranking_strategy,
+    resolve_recency,
     summarize_focus5,
     sync_focus5,
     vscode_url,
@@ -44,16 +49,30 @@ DAY = 86400
 
 
 def _sig(name: str, **over) -> RepoSignals:
-    """Build a RepoSignals with sensible clean-repo defaults; override per test."""
+    """Build a RepoSignals with sensible clean-repo defaults; override per test.
+
+    When ``my_local_commit_ts``/``recency_basis`` aren't given explicitly, they
+    are resolved from the raw inputs exactly as :func:`probe_repo_signals` does
+    (with no reflog, so ``reflog_available=True`` — a foreign-only clone resolves
+    to ``none``, not ``any_commit``). A test wanting the ``local_reflog`` basis
+    sets both fields explicitly (e.g. the sleuth/EOS oracle).
+    """
     base = dict(
         device_id="dev", local_path=f"/repos/{name}", repo_name=name,
         repo_full_name=None, branch="main", upstream=None, has_upstream=False,
         ahead=0, behind=0, modified_count=0, untracked_count=0, is_dirty=False,
         last_commit_at=None, last_commit_ts=None, my_last_commit_ts=None,
+        my_local_commit_ts=None, recency_basis="none",
         head_reflog_ts=None, index_mtime_ts=None, remote_url=None,
         probed_at="2026-06-05T00:00:00Z",
     )
     base.update(over)
+    if "my_local_commit_ts" not in over and "recency_basis" not in over:
+        ts, basis = resolve_recency(
+            reflog_commit_ts=None, reflog_available=True,
+            author_email_ts=base["my_last_commit_ts"], any_commit_ts=base["last_commit_ts"],
+        )
+        base["my_local_commit_ts"], base["recency_basis"] = ts, basis
     return RepoSignals(**base)
 
 
@@ -209,6 +228,126 @@ class RankingTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# GH-81: reflog op classification (the semantic accept/reject op set)
+# ---------------------------------------------------------------------------
+
+class ReflogOpClassificationTests(unittest.TestCase):
+    """The one place that decides 'is this reflog op a local commit?' — proven
+    against the accept/reject op families + unrecognized-op handling."""
+
+    def test_accept_ops_create_or_rewrite_a_local_commit(self) -> None:
+        for subject in (
+            "commit: add feature",
+            "commit (amend): reword",
+            "commit (initial): first",
+            "cherry-pick: port fix",
+            "revert: undo bad change",
+            "rebase (pick): replay",
+            "rebase (finish): returning to refs/heads/main",
+            "rebase -i (pick): squash",
+            "merge feature: Merge made by the 'ort' strategy.",
+        ):
+            self.assertIs(_classify_reflog_op(subject), True, subject)
+
+    def test_reject_ops_move_head_to_foreign_or_navigation(self) -> None:
+        for subject in (
+            "pull: Fast-forward",
+            "pull origin main: Fast-forward",
+            "merge origin/main: Fast-forward",
+            "fetch origin: storing head",
+            "clone: from https://github.com/x/y.git",
+            "checkout: moving from main to feature",
+            "reset: moving to HEAD~1",
+            "branch: Created from HEAD",
+        ):
+            self.assertIs(_classify_reflog_op(subject), False, subject)
+
+    def test_unrecognized_op_is_none_so_caller_rejects_and_logs(self) -> None:
+        # A future/unknown git phrasing must NOT be silently counted as my commit.
+        self.assertIsNone(_classify_reflog_op("teleport: beam HEAD aboard"))
+
+
+# ---------------------------------------------------------------------------
+# GH-81: the recency fallback ladder (local_reflog → author_email → any_commit)
+# ---------------------------------------------------------------------------
+
+class ResolveRecencyTests(unittest.TestCase):
+    def test_local_reflog_wins_when_present(self) -> None:
+        ts, basis = resolve_recency(
+            reflog_commit_ts=NOW, reflog_available=True,
+            author_email_ts=NOW - DAY, any_commit_ts=NOW - 2 * DAY,
+        )
+        self.assertEqual((ts, basis), (NOW, "local_reflog"))
+
+    def test_falls_to_author_email_when_no_reflog_commit(self) -> None:
+        ts, basis = resolve_recency(
+            reflog_commit_ts=None, reflog_available=True,
+            author_email_ts=NOW - DAY, any_commit_ts=NOW,
+        )
+        self.assertEqual((ts, basis), (NOW - DAY, "author_email"))
+
+    def test_any_commit_only_when_reflog_unavailable(self) -> None:
+        # Reflog disabled + no author-email match → the last-resort rung fires.
+        ts, basis = resolve_recency(
+            reflog_commit_ts=None, reflog_available=False,
+            author_email_ts=None, any_commit_ts=NOW - 3 * DAY,
+        )
+        self.assertEqual((ts, basis), (NOW - 3 * DAY, "any_commit"))
+
+    def test_available_reflog_without_commit_does_NOT_surface_foreign_clone(self) -> None:
+        # The GH-81 refinement: a readable reflog with no local-commit op is a
+        # DEFINITIVE 'I never committed here' — a foreign-only clone stays
+        # ineligible (none), it must NOT fall through to any_commit.
+        ts, basis = resolve_recency(
+            reflog_commit_ts=None, reflog_available=True,
+            author_email_ts=None, any_commit_ts=NOW,  # foreign commit present
+        )
+        self.assertEqual((ts, basis), (None, "none"))
+
+
+# ---------------------------------------------------------------------------
+# GH-81 Phase 2: operator-facing explain UX (pure)
+# ---------------------------------------------------------------------------
+
+class ExplainRecencyTests(unittest.TestCase):
+    def test_on_roster_local_reflog_just_shows_recency(self) -> None:
+        # Above the cutoff (on the board), normal basis → no cutoff/fallback noise.
+        s = explain_recency("local_reflog", NOW - HOUR, rank_cutoff_ts=NOW - 2 * HOUR, now_ts=NOW)
+        self.assertEqual(s, "your local commit 1h ago")
+
+    def test_off_roster_eligible_shows_below_cutoff(self) -> None:
+        # The original GH-81 forensics question answered in one line.
+        s = explain_recency("local_reflog", NOW - 3 * DAY, rank_cutoff_ts=NOW - 16 * HOUR, now_ts=NOW)
+        self.assertIn("your local commit 3d ago", s)
+        self.assertIn("below the #5 cutoff (16h ago)", s)
+
+    def test_ineligible_none_basis(self) -> None:
+        s = explain_recency("none", None, rank_cutoff_ts=NOW - HOUR, now_ts=NOW)
+        self.assertEqual(s, "no local commit here — not eligible for Focus 5")
+
+    def test_fallback_basis_is_explained(self) -> None:
+        ae = explain_recency("author_email", NOW - HOUR, rank_cutoff_ts=None, now_ts=NOW)
+        self.assertIn("ranked by author email", ae)
+        ac = explain_recency("any_commit", NOW - HOUR, rank_cutoff_ts=None, now_ts=NOW)
+        self.assertIn("ranked by latest commit", ac)
+
+    def test_no_cutoff_note_when_cutoff_unknown(self) -> None:
+        s = explain_recency("local_reflog", NOW - 3 * DAY, rank_cutoff_ts=None, now_ts=NOW)
+        self.assertNotIn("cutoff", s)
+
+
+class BasisBadgeTests(unittest.TestCase):
+    def test_fallback_bases_get_a_badge(self) -> None:
+        self.assertEqual(basis_badge("author_email"), "via author email")
+        self.assertEqual(basis_badge("any_commit"), "via latest commit")
+
+    def test_normal_and_ineligible_bases_have_no_badge(self) -> None:
+        self.assertEqual(basis_badge("local_reflog"), "")
+        self.assertEqual(basis_badge("none"), "")
+        self.assertEqual(basis_badge(None), "")
+
+
+# ---------------------------------------------------------------------------
 # Real git helpers
 # ---------------------------------------------------------------------------
 
@@ -219,14 +358,20 @@ def _run(cwd: Path, *args: str, env: dict | None = None) -> None:
 def _make_git_repo(
     root: Path, name: str, *, user_email: str = "me@example.com",
     author_email: str | None = None, commit: bool = True,
-    dirty: bool = False, untracked: bool = False,
+    dirty: bool = False, untracked: bool = False, disable_reflog: bool = False,
 ) -> Path:
-    """Create a real git repo under *root*. author_email defaults to user_email."""
+    """Create a real git repo under *root*. author_email defaults to user_email.
+
+    ``disable_reflog`` sets ``core.logAllRefUpdates=false`` BEFORE any commit, so
+    no HEAD reflog is ever written (the GH-81 reflog-unavailable fixture).
+    """
     repo = root / name
     repo.mkdir(parents=True)
     _run(repo, "git", "init", "-q", "-b", "main")
     _run(repo, "git", "config", "user.email", user_email)
     _run(repo, "git", "config", "user.name", "Test User")
+    if disable_reflog:
+        _run(repo, "git", "config", "core.logAllRefUpdates", "false")
     if commit:
         (repo / "file.txt").write_text("hello", encoding="utf-8")
         _run(repo, "git", "add", ".")
@@ -322,6 +467,198 @@ class ProbeTests(unittest.TestCase):
             self.assertFalse(s.is_dirty)
             self.assertIsNone(s.branch)
             self.assertIsNone(s.my_last_commit_ts)
+            self.assertIsNone(s.my_local_commit_ts)
+            self.assertEqual(s.recency_basis, "none")
+
+
+# ---------------------------------------------------------------------------
+# GH-81: real-git reflog vector + the fallback ladder rungs
+# ---------------------------------------------------------------------------
+
+class ReflogVectorProbeTests(unittest.TestCase):
+    def test_local_commit_basis_is_reflog(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(Path(tmp), "mine")
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertEqual(s.recency_basis, "local_reflog")
+            self.assertIsNotNone(s.my_local_commit_ts)
+            ts, available = _probe_head_reflog_commit(repo)
+            self.assertTrue(available)
+            self.assertEqual(ts, s.my_local_commit_ts)
+
+    def test_foreign_authored_local_commit_is_eligible_via_reflog(self) -> None:
+        # THE GH-81 FIX: I committed locally, but under an author email that does
+        # NOT match this repo's user.email (CLI identity vs web-merge noreply). The
+        # old author-email gate (my_last_commit_ts) misses it → silent drop. The
+        # reflog catches the local `commit` op, so the repo is still eligible.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(
+                Path(tmp), "sleuth", user_email="bot@noreply.github",
+                author_email="noel@neochro.me",
+            )
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertIsNone(s.my_last_commit_ts)        # old gate would drop it
+            self.assertEqual(s.recency_basis, "local_reflog")
+            self.assertIsNotNone(s.my_local_commit_ts)    # new vector keeps it
+
+    def test_reflog_disabled_falls_back_to_author_email(self) -> None:
+        # core.logAllRefUpdates=false → no HEAD reflog. We must NOT regress below
+        # today: fall back to the author-email match.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(Path(tmp), "noreflog", disable_reflog=True)
+            ts, available = _probe_head_reflog_commit(repo)
+            self.assertFalse(available)                   # reflog unavailable
+            self.assertIsNone(ts)
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertEqual(s.recency_basis, "author_email")
+            self.assertEqual(s.my_local_commit_ts, s.my_last_commit_ts)
+
+    def test_reflog_disabled_foreign_author_falls_back_to_any_commit(self) -> None:
+        # Reflog off AND no author-email match → the last-resort any_commit rung.
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(
+                Path(tmp), "vendor", user_email="bot@noreply.github",
+                author_email="upstream@x.com", disable_reflog=True,
+            )
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertIsNone(s.my_last_commit_ts)
+            self.assertEqual(s.recency_basis, "any_commit")
+            self.assertEqual(s.my_local_commit_ts, s.last_commit_ts)
+
+    def test_empty_repo_basis_is_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = _make_git_repo(Path(tmp), "empty", commit=False)
+            s = probe_repo_signals(repo, device_id="dev", probed_at="t")
+            self.assertIsNone(s.my_local_commit_ts)
+            self.assertEqual(s.recency_basis, "none")
+
+
+class Focus5RankOracleTests(unittest.TestCase):
+    """Regression oracle for GH-81: local hands-on work outranks web-merge-only."""
+
+    def test_oracle_pure_local_reflog_outranks_email_fallback(self) -> None:
+        # sleuth: recent LOCAL commit (reflog), but its author-email match is an
+        # OLD merge (3d). eos: no local commit — only a stale author-email match.
+        # OLD ranking (my_last_commit_ts) → eos wins (the bug). NEW ranking
+        # (my_local_commit_ts) → sleuth wins (fixed).
+        sleuth = _sig("sleuth", my_last_commit_ts=NOW - 3 * DAY,
+                      my_local_commit_ts=NOW - 15 * HOUR, recency_basis="local_reflog")
+        eos = _sig("eos", my_last_commit_ts=NOW - 2 * DAY,
+                   my_local_commit_ts=NOW - 2 * DAY, recency_basis="author_email")
+        new = [r.signals.repo_name for r in
+               rank_repos([eos, sleuth], mode="recent_activity", now_ts=NOW)]
+        self.assertEqual(new, ["sleuth", "eos"])
+        # Document the bug the fix inverts: ranking on the old email vector alone.
+        old = sorted([sleuth, eos], key=lambda s: s.my_last_commit_ts, reverse=True)
+        self.assertEqual([s.repo_name for s in old], ["eos", "sleuth"])
+
+    def test_oracle_real_git_webmerge_only_repo_drops_off_roster(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repos"
+            root.mkdir()
+            # sleuth: a local commit authored under a non-user.email identity.
+            _make_git_repo(root, "sleuth", user_email="bot@noreply.github",
+                           author_email="noel@neochro.me")
+            # eos: receives its commit from a foreign repo via fetch+checkout — NO
+            # local-commit op in its reflog (the web-merge-only analog). The
+            # upstream lives OUTSIDE the scan root so it isn't itself rostered.
+            upstream = _make_git_repo(Path(tmp) / "_up", "upstream",
+                                      user_email="other@up.com")
+            eos = root / "eos"
+            eos.mkdir()
+            _run(eos, "git", "init", "-q", "-b", "main")
+            _run(eos, "git", "config", "user.email", "bot@noreply.github")
+            _run(eos, "git", "config", "user.name", "Bot")
+            _run(eos, "git", "remote", "add", "origin", str(upstream))
+            _run(eos, "git", "fetch", "-q", "origin")
+            _run(eos, "git", "checkout", "-q", "-B", "main", "origin/main")
+
+            db = _db(Path(tmp))
+            sync_focus5(db, roots=[root], device_id="dev", mode="recent_activity")
+            out = summarize_focus5(db, device_id="dev",
+                                   with_activity=False, with_live_health=False)
+            cards = {c["repo_name"]: c for c in out["roster"]}
+            self.assertIn("sleuth", cards)            # local work surfaces
+            self.assertNotIn("eos", cards)            # web-merge-only does not
+            # And the fix is via the reflog, not the email gate (which is blind here).
+            self.assertEqual(cards["sleuth"]["recency_basis"], "local_reflog")
+            self.assertIsNone(cards["sleuth"]["my_last_commit_ts"])
+
+
+class Focus5LegacyRowBackfillTests(unittest.TestCase):
+    """Codex r2 [Should]: a pre-0007 row has NULL GH-81 recency; rerank-from-cache
+    (fired on every hide click) must NOT blank the board before the first resync.
+    Migration 0008 backfills NULL rows to the old author-email behavior."""
+
+    def test_migration_0008_backfills_and_rerank_keeps_roster(self) -> None:
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.db.migrate import discover_migrations
+        from rebalance.ingest.db.schema import (
+            ensure_baseline_schema, ensure_schema_version_table,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "rebalance.db"
+            with db_connection(db) as conn:
+                ensure_baseline_schema(conn)
+                ensure_schema_version_table(conn)
+                conn.execute("INSERT OR IGNORE INTO schema_version (version, applied_at) "
+                             "VALUES (1, 't')")
+                # Apply real migrations THROUGH 0007 (adds the NULL columns) but not 0008.
+                for ver, path in discover_migrations():
+                    if ver > 7:
+                        break
+                    conn.executescript(path.read_text(encoding="utf-8"))
+                    conn.execute("INSERT OR IGNORE INTO schema_version (version, applied_at) "
+                                 "VALUES (?, 't')", (ver,))
+                # Seed a legacy row: authored commit, but NULL GH-81 recency — exactly
+                # a pre-0007 row after 0007 adds the columns.
+                conn.execute(
+                    "INSERT INTO focus5_repo_signals "
+                    "(device_id, local_path, repo_name, has_upstream, ahead, behind, "
+                    " modified_count, untracked_count, is_dirty, my_last_commit_ts, "
+                    " my_local_commit_ts, recency_basis, probed_at) "
+                    "VALUES ('dev','/r/legacy','legacy',0,0,0,0,0,0,?,NULL,NULL,'t')",
+                    (NOW - HOUR,),
+                )
+                conn.commit()
+                # run_migrations now applies 0008 → backfills the NULL row.
+                run_migrations(conn)
+                row = conn.execute(
+                    "SELECT my_local_commit_ts, recency_basis FROM focus5_repo_signals "
+                    "WHERE local_path='/r/legacy'"
+                ).fetchone()
+                self.assertEqual(row["my_local_commit_ts"], NOW - HOUR)
+                self.assertEqual(row["recency_basis"], "author_email")
+            # The hide/rerank path (recent_activity) keeps the repo — board not blanked.
+            self.assertEqual(
+                rerank_focus5_from_cache(db, device_id="dev", mode="recent_activity"), 1
+            )
+
+
+class Focus5WorktreeTopologyTests(unittest.TestCase):
+    """Codex r2 [Nit]: discovery handles `.git` as a file (linked worktree), but no
+    reflog fixture exercised it. Pin that the vector resolves for a worktree."""
+
+    def test_linked_worktree_git_file_resolves_reflog_basis(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            main = _make_git_repo(Path(tmp), "main_repo")  # one commit on main
+            wt = Path(tmp) / "wt"
+            _run(main, "git", "worktree", "add", "-q", str(wt), "-b", "feature")
+            (wt / "w.txt").write_text("x", encoding="utf-8")
+            _run(wt, "git", "add", ".")
+            env = {
+                **os.environ,
+                "GIT_AUTHOR_EMAIL": "me@example.com", "GIT_AUTHOR_NAME": "A",
+                "GIT_COMMITTER_EMAIL": "me@example.com", "GIT_COMMITTER_NAME": "A",
+            }
+            _run(wt, "git", "commit", "-q", "-m", "wt commit", env=env)
+            self.assertTrue((wt / ".git").is_file())  # linked worktree → .git is a FILE
+            ts, available = _probe_head_reflog_commit(wt)
+            self.assertTrue(available)
+            self.assertIsNotNone(ts)
+            s = probe_repo_signals(wt, device_id="dev", probed_at="t")
+            self.assertEqual(s.recency_basis, "local_reflog")
+            self.assertIsNotNone(s.my_local_commit_ts)
 
 
 # ---------------------------------------------------------------------------
@@ -605,6 +942,116 @@ class WebRouteTests(unittest.TestCase):
             self.assertEqual(resp.headers["location"], "/focus-5")
             self.assertTrue(m.called)                        # recompute fired
 
+    # --- /api/focus5/open — focus-if-open exec endpoint (VSCODE Phase 2) ---
+
+    def _post_open(self, db: Path, payload: dict, **kw):
+        from fastapi.testclient import TestClient
+        from rebalance.web import app
+        os.environ["REBALANCE_DB"] = str(db)
+        try:
+            return TestClient(app).post("/api/focus5/open", json=payload, **kw)
+        finally:
+            os.environ.pop("REBALANCE_DB", None)
+
+    def test_open_allowlist_resolves_known_and_rejects_unknown(self) -> None:
+        # The resolver runs the REAL summarize over the seeded temp repo (no mocks):
+        # a known id maps to a server-owned local_path; an unknown id is absent.
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            from rebalance import web
+            os.environ["REBALANCE_DB"] = str(db)
+            try:
+                allow = web._focus5_open_allowlist(db)
+            finally:
+                os.environ.pop("REBALANCE_DB", None)
+            self.assertTrue(allow, "seeded roster should resolve at least one repo")
+            _identity, local_path = next(iter(allow.items()))
+            self.assertTrue(os.path.isdir(local_path))     # a real, server-owned path
+            self.assertNotIn("no/such-repo", allow)        # unknown id not in allowlist
+
+    def test_open_known_repo_runs_code_with_server_path(self) -> None:
+        # Known id → the launcher runs `code <server_path>` as a direct argv (no
+        # shell). Allowlist mocked so no git/subprocess from the resolver collides.
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            fake = mock.Mock(returncode=0)
+            with mock.patch("rebalance.web._request_is_local", return_value=True), \
+                 mock.patch("rebalance.web._focus5_open_allowlist",
+                            return_value={"demo/repo": "/repos/demo"}), \
+                 mock.patch("rebalance.web._resolve_code_binary", return_value="/usr/bin/code"), \
+                 mock.patch("subprocess.run", return_value=fake) as run:
+                resp = self._post_open(db, {"repo": "demo/repo"})
+            self.assertEqual(resp.status_code, 200)
+            self.assertTrue(resp.json()["ok"])
+            run.assert_called_once()
+            self.assertEqual(run.call_args.args[0], ["/usr/bin/code", "/repos/demo"])
+
+    def test_open_unknown_repo_is_404_and_runs_nothing(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            with mock.patch("rebalance.web._request_is_local", return_value=True), \
+                 mock.patch("rebalance.web._focus5_open_allowlist",
+                            return_value={"demo/repo": "/repos/demo"}), \
+                 mock.patch("rebalance.web._resolve_code_binary", return_value="/usr/bin/code"), \
+                 mock.patch("subprocess.run") as run:
+                resp = self._post_open(db, {"repo": "no/such-repo"})
+            self.assertEqual(resp.status_code, 404)
+            run.assert_not_called()
+
+    def test_open_missing_code_binary_is_409(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            with mock.patch("rebalance.web._request_is_local", return_value=True), \
+                 mock.patch("rebalance.web._focus5_open_allowlist",
+                            return_value={"demo/repo": "/repos/demo"}), \
+                 mock.patch("rebalance.web._resolve_code_binary", return_value=None):
+                resp = self._post_open(db, {"repo": "demo/repo"})
+            self.assertEqual(resp.status_code, 409)   # client falls back to vscode://
+
+    def test_open_non_local_request_is_403_and_runs_nothing(self) -> None:
+        # Integration: with the real guard in place, a TestClient POST (non-loopback
+        # client host) is refused before anything runs.
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            with mock.patch("subprocess.run") as run:
+                resp = self._post_open(db, {"repo": "anything"})
+            self.assertEqual(resp.status_code, 403)
+            run.assert_not_called()
+
+    def test_request_is_local_guard(self) -> None:
+        # Unit-test the two-layer gate over a fake request (agy QA r1 Finding 1).
+        from types import SimpleNamespace
+        from rebalance.web import _request_is_local
+
+        def req(host: str | None, origin: str | None = None):
+            client = SimpleNamespace(host=host) if host is not None else None
+            headers = {"origin": origin} if origin else {}
+            return SimpleNamespace(client=client, headers=headers)
+
+        # loopback client, no Origin (curl-style) → allowed
+        self.assertTrue(_request_is_local(req("127.0.0.1")))
+        self.assertTrue(_request_is_local(req("::1")))
+        # loopback client + same-origin → allowed
+        self.assertTrue(_request_is_local(req("127.0.0.1", "http://127.0.0.1:8787")))
+        self.assertTrue(_request_is_local(req("localhost", "http://localhost:8787")))
+        # loopback client + cross-origin → refused (CSRF guard)
+        self.assertFalse(_request_is_local(req("127.0.0.1", "http://evil.example")))
+        # non-loopback client → refused even with no Origin (the LAN/curl gap)
+        self.assertFalse(_request_is_local(req("192.168.1.50")))
+        self.assertFalse(_request_is_local(req("192.168.1.50", "http://127.0.0.1")))
+        # missing client → refused
+        self.assertFalse(_request_is_local(req(None)))
+
+    def test_resolve_code_binary_rejects_directory(self) -> None:
+        # agy QA r1 Finding 2: a VSCODE_BIN pointing at a dir (X_OK true for dirs)
+        # must NOT be returned as the launcher.
+        from rebalance.web import _resolve_code_binary
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.dict(os.environ, {"VSCODE_BIN": d}), \
+                 mock.patch("rebalance.web._VSCODE_CODE_CANDIDATES", ()), \
+                 mock.patch("shutil.which", return_value=None):
+                self.assertIsNone(_resolve_code_binary())
+
     def test_dirty_view_renders_transiently_without_resync(self) -> None:
         # /focus-5?view=dirty re-ranks the cached signals under dirty_first; a
         # fresh roster means no ~30s scan, and the persisted roster is untouched.
@@ -641,6 +1088,81 @@ class WebRouteTests(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             self.assertFalse(m.called)                       # stale → no inline scan
             self.assertIn("⚠ stale", resp.text)             # but the staleness is surfaced
+
+    # --- /focus-5.json — the read-only JSON contract the macOS app consumes ---
+
+    def _roster_rows(self, db: Path):
+        conn = sqlite3.connect(str(db))
+        try:
+            return conn.execute(
+                "SELECT device_id, local_path, position, rank_reason, "
+                "ranking_mode, computed_at FROM focus5_roster ORDER BY position"
+            ).fetchall()
+        finally:
+            conn.close()
+
+    def test_focus5_json_returns_contract_shape(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            resp = self._get(db, "/focus-5.json")
+            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.headers["content-type"], "application/json")
+            data = resp.json()
+            self.assertEqual(
+                set(data),
+                {"roster", "off_roster_warnings", "computed_at", "ranking_mode", "summary"},
+            )
+            self.assertLessEqual(len(data["roster"]), 5)
+            self.assertEqual(
+                set(data["summary"]),
+                {"discovered", "roster_size", "off_roster_attention", "rank_cutoff_ts"},
+            )
+            card = data["roster"][0]
+            for key in ("position", "repo_name", "local_path", "vscode_url",
+                        "branch", "is_dirty", "newest_pr", "recent_activity",
+                        "health_available", "my_local_commit_ts", "recency_basis"):
+                self.assertIn(key, card)
+            self.assertTrue(card["vscode_url"].startswith("vscode://file"))
+
+    def test_focus5_json_is_read_only_no_scan_no_write(self) -> None:
+        # The macOS client polls this on a timer; it must never trigger the ~30s
+        # device git scan and must never rewrite the persisted roster.
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            before = self._roster_rows(db)
+            with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
+                resp = self._get(db, "/focus-5.json")
+            self.assertEqual(resp.status_code, 200)
+            self.assertFalse(m.called)                       # GET never scans
+            self.assertEqual(self._roster_rows(db), before)  # GET never writes
+
+    def test_focus5_json_dirty_view_reranks_without_write(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db, _ = self._seed(Path(tmp))
+            before = self._roster_rows(db)
+            with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
+                resp = self._get(db, "/focus-5.json?view=dirty")
+            self.assertEqual(resp.status_code, 200)
+            self.assertFalse(m.called)
+            self.assertEqual(resp.json()["ranking_mode"], "dirty_first")
+            self.assertEqual(self._roster_rows(db), before)  # transient re-rank only
+
+    def test_focus5_json_missing_db_returns_empty_contract(self) -> None:
+        # Brand-new machine (no DB): same shape, empty roster — not a 404/500.
+        from fastapi.testclient import TestClient
+        from rebalance.paths import DatabaseNotFoundError
+        from rebalance.web import app
+        with mock.patch("rebalance.paths.resolve_database_path",
+                        side_effect=DatabaseNotFoundError([])):
+            resp = TestClient(app).get("/focus-5.json")
+        self.assertEqual(resp.status_code, 200)
+        data = resp.json()
+        self.assertEqual(
+            set(data),
+            {"roster", "off_roster_warnings", "computed_at", "ranking_mode", "summary"},
+        )
+        self.assertEqual(data["roster"], [])
+        self.assertEqual(data["summary"]["roster_size"], 0)
 
 
 # ---------------------------------------------------------------------------
