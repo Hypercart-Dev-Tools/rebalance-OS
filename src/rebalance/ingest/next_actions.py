@@ -68,6 +68,23 @@ logger = logging.getLogger(__name__)
 # boundary (mirrors temp/ab_team_signal.NOISE_REPOS).
 NOISE_REPOS = {"hypercart-dev-tools/rebalance-git-pulse"}
 
+# priority_tier is 1 (highest) .. 5 (lowest). At/above this tier a project is a
+# low-cadence/periodic effort (e.g. a weekly devops repo) and is SOFT down-weighted
+# in the ranking — tagged for the synthesis and sunk in the deterministic fallback,
+# never muted. # ponytail: one threshold constant, no new config surface.
+_DEPRIORITIZE_TIER = 4
+
+
+def _is_low_priority(project: str | None, priority_by_project: dict[str, int]) -> bool:
+    """True when *project*'s effective priority_tier marks it low-cadence/periodic.
+
+    Drives both the ``[priority:low]`` prompt tag and the deterministic fallback
+    demotion, so the soft down-weight is defined in exactly one place.
+    """
+    if not project:
+        return False
+    return priority_by_project.get(project, 0) >= _DEPRIORITIZE_TIER
+
 
 # ---------------------------------------------------------------------------
 # De-dup — lifted from temp/ab_team_signal.py (they exist nowhere in src/)
@@ -309,6 +326,7 @@ def build_rank_prompt(
     blended: bool,
     client_by_project: dict[str, str] | None = None,
     client_roster: dict[str, list[str]] | None = None,
+    priority_by_project: dict[str, int] | None = None,
 ) -> str:
     """Assemble the ranking prompt — a flat ranked-list request, no analytics.
 
@@ -342,14 +360,16 @@ def build_rank_prompt(
 
     # [OWN] operator candidates — the operator's own signal.
     clients = client_by_project or {}
+    priorities = priority_by_project or {}
     if operator_candidates:
         lines = ["## [OWN] Operator signals"]
         for c in operator_candidates:
             proj = f" {{{c.project}}}" if c.project else ""
             client = clients.get(c.project) if c.project else None
             cli = f" [client:{client}]" if client else ""
+            pri = " [priority:low]" if _is_low_priority(c.project, priorities) else ""
             ev = f"  — {'; '.join(c.evidence)}" if c.evidence else ""
-            lines.append(f"- ({c.source}){proj}{cli} {c.title}{ev}")
+            lines.append(f"- ({c.source}){proj}{cli}{pri} {c.title}{ev}")
         sections.append("\n".join(lines))
 
     # Client roster — the discrete client buckets, so synthesis can group items by
@@ -407,6 +427,13 @@ def build_rank_prompt(
         f"- Penalize an item that merely restates one already counted "
         f"(redundancy_penalty={weights.redundancy_penalty})."
     )
+    if any(_is_low_priority(c.project, priorities) for c in operator_candidates):
+        lever_lines.append(
+            "- PRIORITY DOWN-WEIGHT: an item tagged [priority:low] belongs to a "
+            "low-cadence/periodic project (e.g. a weekly devops/sync repo). Rank it "
+            "BELOW comparable items unless its evidence is unusually strong or "
+            "time-critical. Down-weight, do not drop — it stays in the list."
+        )
     lever_lines.append(
         f"- A signal that dropped/disappeared moves the ranking "
         f"(drop_sensitivity={weights.drop_sensitivity})."
@@ -817,33 +844,42 @@ def _shared_event_ids(
     return operator_ids & teammate_ids
 
 
-def _client_views(database_path: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
-    """Build the per-candidate client lookup + the client roster for the prompt.
+def _signal_views(
+    database_path: Path,
+) -> tuple[dict[str, str], dict[str, int], dict[str, list[str]]]:
+    """Build the per-candidate client + priority lookups and the client roster.
 
-    ``client_by_project`` maps both a project's repos and its name to the effective
-    client, so an operator candidate keyed by ``owner/repo`` resolves. ``roster`` is
-    the discrete client buckets (``get_clients``). Best-effort: any failure returns
-    empties so ranking is never blocked by client metadata.
+    Both lookups map a project's name AND each of its repos to a value, so an
+    operator candidate keyed by ``owner/repo`` resolves. ``client_by_project`` ->
+    effective client; ``priority_by_project`` -> effective ``priority_tier``
+    (operator-local priority rules overlaid via ``apply_project_priorities``, so a
+    configured tier for e.g. git-pulse is honored). ``roster`` is the client
+    buckets. Best-effort: any failure returns empties so ranking is never blocked
+    by this metadata.
     """
     try:
+        from rebalance.ingest.project_priority import apply_project_priorities
         from rebalance.ingest.registry import (
             effective_client,
             get_clients,
             get_projects,
         )
 
-        by_project: dict[str, str] = {}
-        for project in get_projects(database_path):
+        client_by_project: dict[str, str] = {}
+        priority_by_project: dict[str, int] = {}
+        for project in apply_project_priorities(get_projects(database_path)):
+            keys = [project["name"], *(project.get("repos") or [])]
             client = effective_client(project.get("custom_fields"))
-            if not client:
-                continue
-            by_project[project["name"]] = client
-            for repo in project.get("repos") or []:
-                by_project[repo] = client
-        return by_project, get_clients(database_path)
-    except Exception as exc:  # noqa: BLE001 — client metadata is never load-bearing
-        logger.warning("_client_views: %s", exc)
-        return {}, {}
+            tier = project.get("priority_tier")
+            for key in keys:
+                if client:
+                    client_by_project[key] = client
+                if tier is not None:
+                    priority_by_project[key] = int(tier)
+        return client_by_project, priority_by_project, get_clients(database_path)
+    except Exception as exc:  # noqa: BLE001 — this metadata is never load-bearing
+        logger.warning("_signal_views: %s", exc)
+        return {}, {}, {}
 
 
 def rank_next_actions(
@@ -920,11 +956,22 @@ def rank_next_actions(
             computed_at=datetime.now(timezone.utc).isoformat(),
         )
 
+    # Client + priority lookups (computed once; used for both the deterministic
+    # demotion below and the synthesis prompt).
+    client_by_project, priority_by_project, client_roster = _signal_views(database_path)
+
     # Deterministic candidate objects (operator + additive teammate delta).
     operator_actions = [
         _candidate_to_action(c, i)
         for i, c in enumerate(operator_candidates_raw, 1)
     ]
+    # Soft down-weight in the fallback floor: low-priority (periodic) projects sink
+    # to the bottom of the operator arm via a STABLE sort (original recency order
+    # preserved within each group), so the down-weight holds even when synthesis is
+    # skipped or fails. Not a drop — they remain in the list.
+    operator_actions.sort(
+        key=lambda a: 1 if _is_low_priority(a.project, priority_by_project) else 0
+    )
     teammate_actions = [
         _candidate_to_action(_teammate_candidate(b), 0) for b in teammate_delta
     ]
@@ -937,7 +984,6 @@ def rank_next_actions(
     model_used = ""
     ranked = fallback
     if synthesize:
-        client_by_project, client_roster = _client_views(database_path)
         prompt = build_rank_prompt(
             operator_candidates=operator_actions,
             teammate_delta=teammate_delta,
@@ -946,6 +992,7 @@ def rank_next_actions(
             blended=blended,
             client_by_project=client_by_project,
             client_roster=client_roster,
+            priority_by_project=priority_by_project,
         )
         try:
             from rebalance.ingest.querier import _synthesize_with_fallback
