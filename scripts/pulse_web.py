@@ -2365,6 +2365,16 @@ PULSE_JS = r"""
     if (!reminderId) return;
     li.classList.add('is-busy');
     const check = li.querySelector('.check');
+    // Optimistic: check + collapse the row IMMEDIATELY, then fire the write in
+    // the background. The EventKit op is ~1s; the lag is the audit-row INSERT
+    // waiting on the rebalance.db write lock during a concurrent sync (up to
+    // busy_timeout=30s). Awaiting that would freeze the row, so we don't —
+    // a real failure rolls the row back instead.
+    if (check) check.classList.add('checked');
+    setTimeout(() => {
+      li.classList.add('is-completing');
+      setTimeout(() => { li.style.display = 'none'; }, 220);
+    }, 140);
     try {
       const res = await fetch('/api/apple-reminders/complete', {
         method: 'POST',
@@ -2372,14 +2382,11 @@ PULSE_JS = r"""
         body: JSON.stringify({ reminder_id: reminderId, title }),
       });
       if (!res.ok) throw new Error('complete failed: ' + res.status);
-      if (check) check.classList.add('checked');
-      setTimeout(() => {
-        li.classList.add('is-completing');
-        setTimeout(() => { li.style.display = 'none'; }, 220);
-      }, 140);
     } catch (err) {
       console.warn('reminder complete failed:', err);
-      li.classList.remove('is-busy');
+      li.style.display = '';
+      li.classList.remove('is-busy', 'is-completing');
+      if (check) check.classList.remove('checked');
       alert('Could not complete reminder — check the server log.');
     }
   };

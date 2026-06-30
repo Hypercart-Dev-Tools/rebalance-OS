@@ -6,6 +6,11 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.51.1] - 2026-06-30
+
+### Changed
+- **Apple Reminders dashboard complete is now truly optimistic** (`scripts/pulse_web.py`) — the row checks + collapses immediately on click and the write runs in the background, instead of freezing the row until the server responds. The server-side write can wait on the `rebalance.db` write lock during a concurrent sync (`busy_timeout=30s`); only a real failure now rolls the row back. The EventKit op itself is ~1s; the lag was the audit-row `INSERT` contending with syncs, not the reminder write.
+
 ## [0.51.0] - 2026-06-30
 
 Made the pulse "Today" dashboard Apple Reminders column actionable (Apple Reminders Unified Plan, Phase 6 dashboard write-back v1).
