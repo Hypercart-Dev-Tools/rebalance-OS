@@ -1,6 +1,6 @@
 ---
 title: "Watch-list coverage guard — canonical snapshot + silent-reduction alarm"
-status: "complete (ponytail-trimmed) — ready to move to 3-COMPLETED"
+status: "Completed (2026-06-30 — PR #82 merged; archived to 3-COMPLETED)"
 doc_type: bugfix
 owner: noel@neochro.me
 created: 2026-06-26
