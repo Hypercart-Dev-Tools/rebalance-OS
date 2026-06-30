@@ -61,6 +61,7 @@ from rebalance.web import (  # noqa: E402
     Focus5HideRequest,
     focus5_complete_goal as _focus5_complete_goal,
     focus5_goals as _focus5_goals,
+    focus5_json as _focus5_json,
     auth_log_page as _auth_log_page,
     auth_log_raw as _auth_log_raw,
     focus5_note as _focus5_note,
@@ -102,6 +103,14 @@ def focus5_note():
     # server, so the Focus 5 Float client gets the note regardless of which local
     # server it points at (keeps both /focus-5 surfaces identical — see web.py).
     return _focus5_note()
+
+
+@app.get("/focus-5.json")
+def focus5_json(view: str = "focus5"):
+    # The native/desktop roster fetch. Mirror it on this always-running server so
+    # Focus 5 Float loads a live roster without a separate `rebalance serve` on
+    # :8787 (shared renderer in rebalance.web — keeps both surfaces identical).
+    return _focus5_json(view=view)
 
 
 @app.get("/focus-5/goals")
