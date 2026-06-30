@@ -2,6 +2,8 @@
 
 > How data flows through the system. For execution decisions see [PROJECT.md](./PROJECT.md), for tool specs see [MCP.md](./MCP.md), for the *why* behind these decisions see [GUIDING-PRINCIPLES.md](./GUIDING-PRINCIPLES.md).
 
+> **New maintainer? Start with [Maintainer Orientation](#maintainer-orientation-start-here)** — the load-bearing symbols, the two hubs, where to start reading, and one end-to-end trace. **This doc is load-bearing, not decorative:** `audit_modules` (the `audit_modules` MCP tool / [scripts/audit_modules.py](scripts/audit_modules.py)) and the PDDA gate enforce that collectors, render modules, and scheduled jobs stay documented here — update ARCHITECTURE.md in the *same PR* as any structural change.
+
 ---
 
 ## Core Pipeline
@@ -45,6 +47,65 @@ A few caps to know about up-front:
 - **Vault, sleuth, embeddings** are unbounded — they cover everything they can see.
 
 Detailed per-source mechanics live in [Storage Layer → Sync semantics per source](#sync-semantics-per-source).
+
+---
+
+## Maintainer Orientation (start here)
+
+New to the codebase? Read this section first — it is the mental model the rest of the doc assumes.
+
+### The two hubs (the model that prevents confusion)
+
+The system has **two** central things with *opposite* roles. Conflating them is the most common newcomer mistake:
+
+- **Orchestration spine — fan-OUT.** `refresh_index()` plus the `COLLECTORS` registry in
+  [src/rebalance/ingest/index_ops.py](src/rebalance/ingest/index_ops.py) reach **out** into every collector. This is the
+  one intended write/refresh entry point. New ingestion work registers here (`register_collector(Collector(...))`).
+- **Persistence base — fan-IN.** [src/rebalance/paths.py](src/rebalance/paths.py)::`resolve_database_path()` (answers *which* DB file)
+  → `db_connection()` in [src/rebalance/ingest/db/](src/rebalance/ingest/db/) (answers *how* to open it). Everything reaches **down** to these.
+
+They compose in a single hop (`refresh_index() → db_connection()`). Keeping orchestration and persistence in
+**separate** nodes is *why the codebase has no god-object* despite `db_connection()` being the single most-connected
+symbol: it is a thin, stateless connection factory (a dependency *sink*), not a place where logic lives. **Read from it
+freely; think twice before changing it** — its blast radius is the whole system.
+
+### Load-bearing symbols (you will see these in almost every file)
+
+| Symbol | Where | What it is / why it's everywhere |
+|---|---|---|
+| `db_connection()` | `ingest/db/connection.py` | SQLite factory (WAL, foreign keys, 30s busy-timeout, sqlite-vec). Every collector opens its connection here. **High fan-in, zero business logic.** |
+| `resolve_database_path()` | `paths.py` | "Which DB file" — layered resolver (`--database` flag → `REBALANCE_DB` → canonical app-data path → user config). Single source of truth for the DB location. |
+| `_read_config()` / `_write_config()` | `ingest/config.py` | Layered config + secrets (`temp/rbos.config` + keyring/secret-store). |
+| `CalendarConfig` | `ingest/calendar_config.py` | Validated calendar settings (event filters, signal weights). |
+| `normalize_github_repo_name()` | `ingest/github_scan.py` | Canonical `owner/repo` string used across every GitHub path. |
+| `refresh_index()` | `ingest/index_ops.py` | The orchestrated ingest entry point (see "two hubs" above). |
+| `rank_next_actions()` | `ingest/next_actions.py` | Entry point for the "what to do next" engine (see [Query Layer](#the-next-actions-engine-what-to-do-next)). |
+| `run_doctor()` | `doctor.py` | Health-check orchestrator; backs `rebalance doctor` (run it before claiming a change works). |
+
+### Where to start reading when touching X
+
+| If you're working on… | Start in | Then read |
+|---|---|---|
+| A data source (add/fix ingest) | `ingest/index_ops.py` (the `COLLECTORS` registry) + that source's `ingest/<source>.py` | [Adding a New Source](#adding-a-new-source) |
+| The read / query side | `ingest/semantic_index.py` (retrieval primitive) + `ingest/querier.py` (`ask()` orchestrator) | [Query Layer](#query-layer) |
+| Focus 5 roster / ranking | `ingest/focus5_scan.py` | the `web.py` `/focus-5` route |
+| Apple Reminders | `ingest/apple_reminders.py` (read) + `ingest/apple_reminders_write.py` (write, via signed helper) | — |
+| "What to do next" | `ingest/next_actions.py` | [The Next Actions engine](#the-next-actions-engine-what-to-do-next) |
+| Web dashboard surfaces | `web.py` + `web_components.py` | [Invocation Modes](#invocation-modes) |
+| Config / secrets | `ingest/config.py` + `paths.py` | [Credentials](#credentials) |
+| Scheduling / launchd jobs | [SCHEDULER.md](SCHEDULER.md) + `scripts/*_sync.sh` | [Invocation Modes](#invocation-modes) |
+| The database itself (schema/migrations) | `ingest/db/` (connection, schema, migrations) | [Storage Layer](#storage-layer) |
+
+### One request, end-to-end (worked trace)
+
+A `rebalance refresh` (or the `refresh_index` MCP tool) flows through real symbols like this:
+
+1. **`refresh_index()`** [`index_ops.py`] resolves the scope and iterates the `COLLECTORS` registry (each entry added via `register_collector(Collector(...))`).
+2. Each collector's **`sync_*()`** runs fetch → normalize → upsert — e.g. `sync_apple_reminders()`, `github_scan()`, `sync_sleuth_reminders()`.
+3. The collector opens storage via **`db_connection(path, ensure_<source>_schema)`** and upserts (e.g. `sync_apple_reminders()` → `upsert_apple_reminders()` → `db_connection()`).
+4. **Derived stages** follow (`code`, `semantic`, `sync`): the unified semantic index is rebuilt by `backfill_semantic_documents()` and embedded.
+5. **Read side:** `semantic_index.query()` (raw retrieval primitive; MCP `semantic_query`) and `querier.ask()` (broad synthesis orchestrator) read the *same* SQLite via `resolve_database_path()` → `db_connection()`.
+6. **Surfaces:** the `web.py` routes (`/focus-5`, `/auth-log`, what's-next), the Typer CLI, and the MCP tools all read through that one persistence base.
 
 ---
 
@@ -196,6 +257,15 @@ No changes needed to the query layer, LLM synthesis, or MCP transport.
 
 Single SQLite file resolved by `src/rebalance/paths.py::resolve_database_path()`. Default canonical location is `~/Library/Application Support/rebalance-os/rebalance.db` on macOS (or `$XDG_DATA_HOME/rebalance-os/rebalance.db` on Linux); `REBALANCE_DB` env var, an `--database` flag, or a user-config override all win against the canonical path when set. sqlite-vec extension loaded for vector operations.
 
+### Write discipline (one writer per table)
+
+The single most important invariant for a new maintainer to preserve:
+
+- **Reads are unrestricted.** Anything may open `db_connection()` and `SELECT`. The "Tables by Domain" list below names the *writer* for each table — that ownership is about **writes**, not reads.
+- **One writer per table.** Each table is written by exactly one module (e.g. `github_activity` ← `github_scan.py`, `sleuth_reminders` ← `sleuth_reminders.py`, `semantic_documents` ← the `semantic` stage only). Do not add a second writer; extend the owning collector instead.
+- **Writes go through the orchestrator.** New ingestion/refresh writes register as a `Collector` in `index_ops.py` and run under `refresh_index()` — not as a fresh leaf that opens `db_connection()` and upserts on its own.
+- **Known, accepted exceptions (direct `db_connection()` writers outside `refresh_index`).** A few interactive/operator commands write directly *by design* — they are human-in-the-loop mutations, not unattended ingest: `rebalance github-sync-artifacts` (`cli/github.py::github_sync_artifacts()`) and the `rebalance apple-reminders` write path (`cli/apple_reminders.py`). Most other direct `db_connection()` calls from `cli/*` (`onboard`, `config-doctor`, `raw`, `dashboard-render`) are **reads**, which are fine. If you add a new direct *writer*, document it here and say why it can't go through the registry.
+
 ### Tables by Domain
 
 ```
@@ -341,6 +411,18 @@ SQLite @ $REBALANCE_DB
 2. **Assembles a prompt** with all context formatted into labeled sections.
 
 3. **Synthesizes** via local Qwen3 LLM (mlx-lm). Returns both synthesis and raw context.
+
+### The Next Actions engine ("what to do next")
+
+A distinct read-side subsystem in [src/rebalance/ingest/next_actions.py](src/rebalance/ingest/next_actions.py) — structurally one of the larger clusters in the codebase, and separate from `ask()`. It answers the single ranked question *"what should I work on next?"* and is the engine behind the dashboard's what's-next view and the fixed vault file `Dashboards/What To Do Next.md`.
+
+Pipeline (real symbols):
+
+1. **`assemble_day_bundle()`** gathers the operator's own day signal (`_operator_candidates()`) plus teammate deltas (`_gather_teammate_delta()`) from calendar / GitHub / registry — an `OperatorBundle`.
+2. **`build_rank_prompt()`** formats the candidates; **`rank_next_actions()`** synthesizes the ranking. **Primary path = Gemini** (`get_gemini_api_key()` → `gemini-2.5-flash`); a deterministic local fallback (Qwen) keeps it working offline. `_parse_ranked_synthesis()` rejects placeholder echoes.
+3. Output is a **`RankedNextActions`** (list of `RankedAction`), **persisted** to a cache table via `persist_ranked_next_actions()` and read back by `load_ranked_next_actions()`.
+4. **`render_next_actions_markdown()`** writes the ranked list to the fixed vault file (single-writer, generated).
+5. **Consumers:** the `web.py` what's-next route (`whatsnext_page()`) and `ask()` both read the persisted ranking — they never re-rank inline.
 
 ### Two-Layer LLM Architecture
 
