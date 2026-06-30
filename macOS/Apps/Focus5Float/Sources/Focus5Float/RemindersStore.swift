@@ -10,7 +10,7 @@ import os
 // need only the Reminders (EventKit) grant — NOT Full Disk Access — because the
 // read-back here goes through EventKit, not the SQLite extractor.
 //
-// Scope v1: show the 10 most-recent ACTIVE tasks from the default list; the only
+// Scope v1: show the 8 most-recent ACTIVE tasks from the default list; the only
 // mutation is `complete` (least destructive). create/edit/delete stay with the
 // `rebalance apple-reminders` CLI (human-in-the-loop).
 
@@ -24,7 +24,7 @@ final class RemindersStore {
     enum Access { case notDetermined, denied, granted }
 
     var access: Access = .notDetermined
-    var items: [EKReminder] = []        // ≤10, newest-first, active only
+    var items: [EKReminder] = []        // ≤8, newest-first, active only
     var listName: String?               // default list title, for the header
     var loadError: String?              // last read/write failure (nil when none)
     /// Reminders saved as complete but still shown (filled) for a brief beat
@@ -32,7 +32,7 @@ final class RemindersStore {
     var completingIDs: Set<String> = []
 
     private let store = EKEventStore()
-    static let maxItems = 10
+    static let maxItems = 8
 
     init() { syncAuthorization() }
 
@@ -67,7 +67,7 @@ final class RemindersStore {
         }
     }
 
-    /// Re-read the ≤10 most-recent active reminders from the default list.
+    /// Re-read the ≤8 most-recent active reminders from the default list.
     /// No-op (keeps the UI in its access-prompt state) until access is granted.
     func refresh() async {
         syncAuthorization()

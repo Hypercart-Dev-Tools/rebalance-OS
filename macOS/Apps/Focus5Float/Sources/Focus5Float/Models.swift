@@ -85,3 +85,31 @@ struct OffRosterWarning: Codable, Identifiable {
     let isDirty: Bool
     let probedAt: String?
 }
+
+struct Focus5GoalsResponse: Codable {
+    let exists: Bool
+    let items: [ObsidianReminder]
+    let path: String?
+    let totalOpen: Int
+    let reason: String?
+    let message: String?
+}
+
+struct Focus5GoalCompleteResponse: Codable {
+    let ok: Bool
+    let title: String
+    let lineIndex: Int
+    let exists: Bool
+    let items: [ObsidianReminder]
+    let path: String?
+    let totalOpen: Int
+    let reason: String?
+    let message: String?
+}
+
+struct ObsidianReminder: Codable, Identifiable {
+    var id: Int { lineIndex }
+    let title: String
+    let description: String
+    let lineIndex: Int
+}

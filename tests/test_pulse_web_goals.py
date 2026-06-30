@@ -39,6 +39,27 @@ class PulseWebGoalTests(unittest.TestCase):
 
         self.assertEqual([goal["title"] for goal in goals], [f"Open item {i}" for i in range(1, 10)])
 
+    def test_parse_goals_exposes_source_line_index(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            goals_path = Path(tmpdir) / "0. Goals.md"
+            goals_path.write_text(
+                "\n".join(
+                    [
+                        "# Header",
+                        "- [ ] First open",
+                        "  details",
+                        "- [x] Done",
+                        "- [ ] Second open",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            goals = pulse_web.parse_goals(goals_path, limit=None)
+
+        self.assertEqual([goal["line_index"] for goal in goals], [1, 4])
+        self.assertEqual(goals[0]["description"], "details")
+
     def test_render_hero_shows_secondary_todo_column(self) -> None:
         all_goals = [
             {"done": False, "title": f"Open item {i}", "description": ""}

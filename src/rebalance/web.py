@@ -44,6 +44,12 @@ FOCUS5_ROSTER_TTL_SECONDS = 24 * 3600
 FOCUS5_NOTE_FILENAME = "focus5.md"
 FOCUS5_NOTE_MAX_CHARS = 64 * 1024
 
+# A second bottom drawer in Focus 5 Float reads the operator's top open tasks
+# from the vault-root ``0. Goals.md`` file. Keep the list short enough for the
+# panel and only mutate the checkbox marker on completion.
+FOCUS5_GOALS_FILENAME = "0. Goals.md"
+FOCUS5_GOALS_MAX_ITEMS = 8
+
 app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
 
 
@@ -729,6 +735,123 @@ def focus5_note() -> JSONResponse:
 
     logger.info("focus5.note: served %d chars from %s", len(content), note)
     return JSONResponse({"exists": True, "content": content, "path": str(note)})
+
+
+def _focus5_goals_payload() -> dict[str, Any]:
+    from rebalance.ingest.config import get_vault_path
+    from rebalance.ingest.goals_file import parse_goals
+
+    vault = get_vault_path()
+    if not vault:
+        return {
+            "exists": False,
+            "items": [],
+            "path": None,
+            "total_open": 0,
+            "reason": "vault_not_configured",
+            "message": "vault_path is not configured",
+        }
+
+    goals = Path(vault).expanduser() / FOCUS5_GOALS_FILENAME
+    try:
+        if not goals.is_file():
+            return {
+                "exists": False,
+                "items": [],
+                "path": str(goals),
+                "total_open": 0,
+                "reason": "file_missing",
+                "message": f"{FOCUS5_GOALS_FILENAME} not found in the configured vault",
+            }
+        all_items = parse_goals(goals, limit=None)
+    except OSError as exc:
+        logger.warning("focus5.goals: could not read %s: %s", goals, exc)
+        return {
+            "exists": False,
+            "items": [],
+            "path": str(goals),
+            "total_open": 0,
+            "reason": "read_failed",
+            "message": str(exc),
+        }
+
+    items = [
+        {
+            "title": str(item.get("title") or ""),
+            "description": str(item.get("description") or ""),
+            "line_index": item.get("line_index"),
+        }
+        for item in all_items[:FOCUS5_GOALS_MAX_ITEMS]
+    ]
+    logger.info(
+        "focus5.goals: served %d of %d open tasks from %s",
+        len(items), len(all_items), goals,
+    )
+    return {
+        "exists": True,
+        "items": items,
+        "path": str(goals),
+        "total_open": len(all_items),
+        "reason": None,
+        "message": None,
+    }
+
+
+@app.get("/focus-5/goals")
+def focus5_goals() -> JSONResponse:
+    """Read-only projection of the operator's top open tasks from ``0. Goals.md``.
+
+    Always returns ``{exists, items, path, total_open}`` at HTTP 200 so the
+    native client decodes one shape. ``items`` are the first 8 unchecked tasks
+    in file order, each with ``title``, ``description``, and ``line_index``.
+    """
+    return JSONResponse(_focus5_goals_payload())
+
+
+class Focus5GoalCompleteRequest(BaseModel):
+    title: str
+    line_index: int | None = None
+
+
+@app.post("/api/focus5/goals/complete")
+def focus5_complete_goal(req: Focus5GoalCompleteRequest, request: Request) -> JSONResponse:
+    """Flip one ``0. Goals.md`` checkbox from open to complete, then re-read."""
+    from rebalance.ingest.goals_file import complete_goal_in_file
+
+    if not _request_is_local(request):
+        logger.warning("focus5 goals: rejected non-local request from %s", request.client)
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+
+    title = (req.title or "").strip()
+    if not title:
+        return JSONResponse({"ok": False, "error": "title is required"}, status_code=400)
+
+    payload = _focus5_goals_payload()
+    path = payload.get("path")
+    if not path:
+        return JSONResponse(
+            {"ok": False, "error": "goals file missing"},
+            status_code=404,
+        )
+
+    completion = complete_goal_in_file(
+        Path(path),
+        title,
+        line_index=req.line_index,
+    )
+    if not completion:
+        return JSONResponse(
+            {"ok": False, "error": "goal not found", "title": title},
+            status_code=404,
+        )
+
+    refreshed = _focus5_goals_payload()
+    return JSONResponse({
+        "ok": True,
+        "title": title,
+        "line_index": completion["line_index"],
+        **refreshed,
+    })
 
 
 class Focus5HideRequest(BaseModel):

@@ -391,5 +391,87 @@ class Focus5NoteRouteTests(unittest.TestCase):
             self.assertFalse(resp.json()["exists"])
 
 
+class Focus5GoalsRouteTests(unittest.TestCase):
+    def _get(self):
+        from fastapi.testclient import TestClient
+        from rebalance.web import app
+        return TestClient(app).get("/focus-5/goals")
+
+    def _post_complete(self, payload: dict[str, object]):
+        from fastapi.testclient import TestClient
+        from rebalance.web import app
+        return TestClient(app).post("/api/focus5/goals/complete", json=payload)
+
+    def test_serves_top_open_goals_when_present(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "0. Goals.md").write_text(
+                "\n".join(f"- [ ] Open item {i}" for i in range(1, 11)),
+                encoding="utf-8",
+            )
+            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp):
+                resp = self._get()
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertTrue(body["exists"])
+        self.assertEqual(body["total_open"], 10)
+        self.assertEqual(len(body["items"]), 8)
+        self.assertEqual(body["items"][0]["title"], "Open item 1")
+        self.assertEqual(body["items"][-1]["title"], "Open item 8")
+
+    def test_missing_goals_returns_exists_false(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp):
+                resp = self._get()
+        self.assertEqual(resp.status_code, 200)
+        self.assertFalse(resp.json()["exists"])
+        self.assertEqual(resp.json()["items"], [])
+        self.assertEqual(resp.json()["reason"], "file_missing")
+        self.assertTrue(resp.json()["path"].endswith("0. Goals.md"))
+
+    def test_no_vault_configured_returns_reason(self) -> None:
+        with mock.patch("rebalance.ingest.config.get_vault_path", return_value=None):
+            resp = self._get()
+        self.assertEqual(resp.status_code, 200)
+        body = resp.json()
+        self.assertFalse(body["exists"])
+        self.assertEqual(body["reason"], "vault_not_configured")
+        self.assertIn("vault_path", body["message"])
+
+    def test_complete_marks_exact_line_then_returns_refreshed_items(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            goals = Path(tmp) / "0. Goals.md"
+            goals.write_text(
+                "\n".join(
+                    [
+                        "- [ ] Duplicate",
+                        "- [ ] Unique",
+                        "- [ ] Duplicate",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp), \
+                 mock.patch("rebalance.web._request_is_local", return_value=True):
+                resp = self._post_complete({"title": "Duplicate", "line_index": 2})
+            self.assertEqual(resp.status_code, 200)
+            body = resp.json()
+            self.assertTrue(body["ok"])
+            self.assertEqual(body["total_open"], 2)
+            self.assertEqual([item["title"] for item in body["items"]], ["Duplicate", "Unique"])
+            self.assertEqual(
+                goals.read_text(encoding="utf-8").splitlines(),
+                ["- [ ] Duplicate", "- [ ] Unique", "- [x] Duplicate"],
+            )
+
+    def test_complete_rejects_non_local_requests(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "0. Goals.md").write_text("- [ ] One\n", encoding="utf-8")
+            with mock.patch("rebalance.ingest.config.get_vault_path", return_value=tmp), \
+                 mock.patch("rebalance.web._request_is_local", return_value=False):
+                resp = self._post_complete({"title": "One", "line_index": 0})
+        self.assertEqual(resp.status_code, 403)
+        self.assertFalse(resp.json()["ok"])
+
+
 if __name__ == "__main__":
     unittest.main()

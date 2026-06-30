@@ -30,12 +30,13 @@ struct ContentView: View {
 
     // MARK: Bottom sections (Reminders + Note)
 
-    /// The two bottom sections — Apple Reminders (A) over the focus5.md note (B) —
-    /// rendered inline at the end of the single roster scroll so they size to
-    /// their content (liquid) and flow right under the cards with no dead space.
-    /// Non-telemetry only; the note appears once its first fetch lands.
+    /// The bottom drawer sections — Apple Reminders, Obsidian Reminders, then the
+    /// focus5.md note — rendered inline at the end of the single roster scroll so
+    /// they size to their content (liquid) and flow right under the cards with no
+    /// dead space. Non-telemetry only; the note appears once its first fetch lands.
     @ViewBuilder private var bottomSections: some View {
         RemindersSection(store: model.reminders)
+        ObsidianRemindersSection(store: model.obsidianReminders)
         if model.noteLoaded {
             Focus5NoteView(exists: model.noteExists, content: model.noteContent)
         }
@@ -492,7 +493,7 @@ struct TelemetryRowView: View {
 
 // MARK: - Apple Reminders (section A)
 
-/// Section A — the 10 most-recent active tasks from the default Apple Reminders
+/// Section A — the 8 most-recent active tasks from the default Apple Reminders
 /// list, read+written LIVE via EventKit (see `RemindersStore`). Branches on the
 /// TCC authorization state: an enable button before the grant, a System-Settings
 /// hint if denied, the bounded scrollable task list once granted. Each row's
@@ -502,7 +503,7 @@ struct RemindersSection: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
-            Text("REMINDERS")
+            Text("APPLE REMINDERS")
                 .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
             content
         }
@@ -549,6 +550,56 @@ struct RemindersSection: View {
                     .font(Theme.monoSmall).foregroundStyle(Theme.diffRemove)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+}
+
+// MARK: - Obsidian Reminders (section B)
+
+/// Section B — the top 8 unchecked tasks from the vault-root `0. Goals.md`,
+/// read + checkbox-complete through the shared localhost Focus 5 routes.
+struct ObsidianRemindersSection: View {
+    let store: ObsidianRemindersStore
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.xs) {
+            Text("OBSIDIAN REMINDERS")
+                .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
+            content
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.top, Theme.Space.s)
+    }
+
+    @ViewBuilder private var content: some View {
+        if !store.isLoaded && store.items.isEmpty {
+            Text("Loading 0. Goals.md…")
+                .font(Theme.body).foregroundStyle(Theme.text3)
+                .padding(.vertical, 2)
+        } else if let err = store.loadError, store.items.isEmpty {
+            Text(err)
+                .font(Theme.monoSmall).foregroundStyle(Theme.diffRemove)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if !store.fileExists {
+            Text(store.emptyStateMessage)
+                .font(Theme.body).foregroundStyle(Theme.text3)
+                .fixedSize(horizontal: false, vertical: true)
+        } else if store.items.isEmpty {
+            Text("No open tasks in 0. Goals.md.")
+                .font(Theme.body).foregroundStyle(Theme.text3)
+                .padding(.vertical, 2)
+        } else {
+            VStack(spacing: 4) {
+                ForEach(store.items) { reminder in
+                    ObsidianReminderRow(reminder: reminder, store: store)
+                }
+            }
+        }
+
+        if let err = store.loadError, !store.items.isEmpty {
+            Text(err)
+                .font(Theme.monoSmall).foregroundStyle(Theme.diffRemove)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 }
@@ -602,6 +653,48 @@ struct ReminderRow: View {
         let f = RelativeDateTimeFormatter()
         f.unitsStyle = .short
         return "due \(f.localizedString(for: date, relativeTo: Date()))"
+    }
+}
+
+struct ObsidianReminderRow: View {
+    let reminder: ObsidianReminder
+    let store: ObsidianRemindersStore
+
+    private var isCompleting: Bool {
+        store.completingLineIndexes.contains(reminder.lineIndex)
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: Theme.Space.s) {
+            Button {
+                Task { await store.complete(reminder) }
+            } label: {
+                Image(systemName: isCompleting ? "circle.inset.filled" : "circle")
+                    .font(.system(size: 13))
+                    .foregroundStyle(isCompleting ? Theme.accent : Theme.text3)
+            }
+            .buttonStyle(.borderless)
+            .disabled(isCompleting)
+            .help("Mark complete in 0. Goals.md")
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(reminder.title)
+                    .font(Theme.body).foregroundStyle(isCompleting ? Theme.text3 : Theme.text)
+                    .strikethrough(isCompleting)
+                    .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                if !reminder.description.isEmpty {
+                    Text(reminder.description)
+                        .font(Theme.monoSmall).foregroundStyle(Theme.text3)
+                        .lineLimit(3).fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(Theme.Space.s)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .opacity(isCompleting ? 0.6 : 1)
+        .animation(.easeInOut(duration: 0.2), value: isCompleting)
     }
 }
 

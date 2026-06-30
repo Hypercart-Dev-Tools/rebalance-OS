@@ -6,6 +6,22 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.50.0] - 2026-06-30
+
+Added Obsidian-backed reminders to the Focus 5 macOS app and made their failure states diagnosable instead of collapsing into a generic load error.
+
+### Added
+- **Obsidian Reminders block in Focus 5 Float** — the macOS app now shows a second reminders section under Apple Reminders, sourced from the first 8 open checkbox items in the vault-root `0. Goals.md`, with checkbox-complete write-back that flips only the exact matched markdown line.
+- **Shared goals-file runtime** — `0. Goals.md` parsing and checkbox mutation now live in one shared helper used by both the pulse flow and Focus 5, including line-index-aware completion fallback and atomic tmp-file replace.
+- **Local Focus 5 goals routes** — `GET /focus-5/goals` and `POST /api/focus5/goals/complete` expose the Obsidian reminders read + partial-write path to the native app through the same localhost contract pattern already used by the Focus 5 note drawer.
+
+### Changed
+- **Apple reminders labeling and cap** — the native app now labels the EventKit block explicitly as Apple Reminders and caps both Apple and Obsidian reminder lists at 8 rows for a consistent drawer height.
+
+### Fixed
+- **Opaque Obsidian-reminders errors** — the native client now distinguishes transport, HTTP, and decode failures for `/focus-5/goals`, so server-down, route-missing, and malformed-response failures surface different messages instead of the generic "Couldn't load Obsidian reminders."
+- **Missing-vault/file observability** — the server goals payload now carries explicit `reason` / `message` metadata for `vault_not_configured`, `file_missing`, and `read_failed`, letting the app explain exactly why `0. Goals.md` is unavailable.
+
 ## [0.49.1] - 2026-06-30
 
 Fixed the "what to do next" list collapsing to ~2 items right after 0.49.0 shipped.

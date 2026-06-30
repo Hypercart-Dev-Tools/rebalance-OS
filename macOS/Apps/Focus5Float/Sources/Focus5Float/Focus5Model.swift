@@ -53,6 +53,10 @@ final class Focus5Model {
     // See RemindersStore for why the app is the runtime that can hold the grant.
     let reminders = RemindersStore()
 
+    // Bottom Obsidian Reminders — top open tasks from vault `0. Goals.md`,
+    // read+complete via the shared localhost Focus 5 routes.
+    let obsidianReminders = ObsidianRemindersStore()
+
     // Transient top banner ("Repos refreshed") — set after a successful *manual*
     // refresh so the recycle button gives visible feedback; the view fades it out
     // on clear. Background polling never sets it (it'd flash unprompted every 90s).
@@ -100,6 +104,7 @@ final class Focus5Model {
             _ = await fetchAndApply(dirty: isDirtyView)
             await refreshNote()
             await reminders.refresh()   // EventKit; no-ops until access granted
+            await obsidianReminders.refresh()
         }
     }
 

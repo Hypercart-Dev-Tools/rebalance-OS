@@ -30,7 +30,6 @@ from collections.abc import Iterable
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4
 from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -59,6 +58,13 @@ from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
 from rebalance.health import HealthStatus, compute_health_status  # noqa: E402
 from rebalance.ingest.apple_reminders import list_apple_reminders  # noqa: E402
 from rebalance.ingest.config import get_figma_file_keys  # noqa: E402
+from rebalance.ingest.goals_file import (  # noqa: E402
+    CHECKBOX_RE,
+    complete_goal_in_file,
+    goal_completion_still_applied as _goal_completion_still_applied,
+    parse_goals,
+    undo_goal_completion_in_file,
+)
 from rebalance.ingest.index_ops import COLLECTORS, get_index_status  # noqa: E402
 from rebalance.ingest import next_actions  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
@@ -107,49 +113,6 @@ STREAM_COUNT_KEYS = (
 )
 
 
-# ---------------------------------------------------------------------------
-# Goals parser
-# ---------------------------------------------------------------------------
-
-CHECKBOX_RE = re.compile(r"^\s*-\s*\[(?P<mark>[ xX])\]\s*(?P<title>.*)$")
-
-
-def parse_goals(path: Path, limit: int = 3) -> list[dict[str, Any]]:
-    """Parse a Things-style checklist into [{done, title, description}, ...].
-
-    Format:
-        - [ ] Title line
-        Optional description spanning until blank line or next checkbox.
-    """
-    if not path.exists():
-        return []
-    items: list[dict[str, Any]] = []
-    current: dict[str, Any] | None = None
-    for raw in path.read_text(encoding="utf-8").splitlines():
-        if not raw.strip():
-            continue
-        m = CHECKBOX_RE.match(raw)
-        if m:
-            if current is not None:
-                items.append(current)
-            is_done = m.group("mark").lower() == "x"
-            if is_done:
-                current = None
-            else:
-                current = {
-                    "done": False,
-                    "title": m.group("title").strip(),
-                    "description": "",
-                }
-            continue
-        if current is None:
-            continue
-        current["description"] = (current["description"] + " " + raw.strip()).strip()
-    if current is not None:
-        items.append(current)
-    return items[:limit]
-
-
 def resolve_goals_path(explicit: Path | None = None) -> Path | None:
     """Resolve the active Goals.md path the same way `main()` does.
 
@@ -175,35 +138,6 @@ def _read_json_list(path: Path) -> list[dict[str, Any]]:
     except (OSError, json.JSONDecodeError):
         return []
     return data if isinstance(data, list) else []
-
-
-def _goal_completion_still_applied(path: Path, entry: dict[str, Any]) -> bool:
-    """Return True when the completion record still matches a checked line."""
-    if not path.exists():
-        return False
-    title = str(entry.get("title") or "").strip()
-    after_line = str(entry.get("after_line") or "")
-    if not title:
-        return False
-
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    line_index = entry.get("line_index")
-    if isinstance(line_index, int) and 0 <= line_index < len(lines):
-        raw = lines[line_index]
-        m = CHECKBOX_RE.match(raw.rstrip("\n"))
-        if m and m.group("mark").lower() == "x" and m.group("title").strip() == title:
-            if not after_line or raw == after_line:
-                return True
-
-    for raw in lines:
-        m = CHECKBOX_RE.match(raw.rstrip("\n"))
-        if not m or m.group("mark").lower() != "x":
-            continue
-        if m.group("title").strip() != title:
-            continue
-        if not after_line or raw == after_line:
-            return True
-    return False
 
 
 def load_goal_history(*, goals_path: Path | None = None, history_path: Path = GOAL_HISTORY_PATH) -> list[dict[str, Any]]:
@@ -255,90 +189,6 @@ def forget_goal_completion(entry_id: str, *, history_path: Path = GOAL_HISTORY_P
         if isinstance(entry, dict) and entry.get("id") != entry_id
     ]
     return _write_goal_history(kept, history_path=history_path)
-
-
-def complete_goal_in_file(path: Path, title: str) -> dict[str, Any] | None:
-    """Mark the first matching `- [ ] <title>` line as `- [x] <title>` in place.
-
-    Returns a completion record describing the rewritten line, or ``None`` if
-    no unchecked line matched. Write is atomic (tmp + replace). Comparison is
-    on the stripped title text so it survives surrounding whitespace differences.
-    """
-    if not path.exists():
-        return None
-    target = title.strip()
-    if not target:
-        return None
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    record: dict[str, Any] | None = None
-    for i, raw in enumerate(lines):
-        m = CHECKBOX_RE.match(raw.rstrip("\n"))
-        if not m or m.group("mark").lower() == "x":
-            continue
-        if m.group("title").strip() != target:
-            continue
-        # Preserve the original line ending (LF / CRLF / none).
-        ending = ""
-        if raw.endswith("\r\n"):
-            ending = "\r\n"
-        elif raw.endswith("\n"):
-            ending = "\n"
-        # Preserve indent + bullet by swapping only the marker character.
-        body = raw[: -len(ending)] if ending else raw
-        # body looks like "  - [ ] title…" — replace first "[ ]" with "[x]".
-        updated = body.replace("[ ]", "[x]", 1) + ending
-        lines[i] = updated
-        record = {
-            "id": uuid4().hex,
-            "title": target,
-            "goals_path": str(path.expanduser().resolve()),
-            "line_index": i,
-            "before_line": raw,
-            "after_line": updated,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
-        }
-        break
-    if record is None:
-        return None
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    tmp.write_text("".join(lines), encoding="utf-8")
-    tmp.replace(path)
-    return record
-
-
-def undo_goal_completion_in_file(path: Path, entry: dict[str, Any]) -> bool:
-    """Revert one completion record back to an unchecked checkbox."""
-    if not path.exists():
-        return False
-    before_line = str(entry.get("before_line") or "")
-    after_line = str(entry.get("after_line") or "")
-    title = str(entry.get("title") or "").strip()
-    if not before_line or not title:
-        return False
-
-    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
-    candidate_indexes: list[int] = []
-    line_index = entry.get("line_index")
-    if isinstance(line_index, int) and 0 <= line_index < len(lines):
-        candidate_indexes.append(line_index)
-    candidate_indexes.extend(i for i in range(len(lines)) if i not in candidate_indexes)
-
-    for i in candidate_indexes:
-        raw = lines[i]
-        m = CHECKBOX_RE.match(raw.rstrip("\n"))
-        if not m or m.group("mark").lower() != "x":
-            continue
-        if m.group("title").strip() != title:
-            continue
-        if after_line and raw != after_line and i == line_index:
-            # The exact line changed under us; continue to the fallback scan.
-            continue
-        lines[i] = before_line
-        tmp = path.with_suffix(path.suffix + ".tmp")
-        tmp.write_text("".join(lines), encoding="utf-8")
-        tmp.replace(path)
-        return True
-    return False
 
 
 def load_vault_path() -> Path | None:
