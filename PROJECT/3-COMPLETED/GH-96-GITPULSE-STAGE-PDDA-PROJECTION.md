@@ -1,6 +1,6 @@
 ---
 title: git-pulse collector stages the PDDA registry projection file
-status: In progress
+status: Completed (2026-06-30 — merged to development via PR #97; #96 closed; archived to 3-COMPLETED)
 created: 2026-06-30
 updated: 2026-06-30
 owner: noel
@@ -25,7 +25,7 @@ phases: 1
 
 | What was just completed | What's next |
 |---|---|
-| Root cause confirmed: `experimental/git-pulse/collect.sh` stages `pulse-<device>.md` and `devices/<device>.yaml` (and `snapshots/`) but never the PDDA projection `pdda/registry-<device>.tsv`, so on a PDDA-installed device it stays `?? pdda/` and never syncs. Verified live on `noels-mac-studio` (the file pdda#7's fix just started writing). Branch cut; one-line guarded `append_stage_path` added before `git add`. | Verify the collector stages + commits the projection (dry-run then real), run `rebalance doctor` + `pytest tests/` + `utils/pdda/pdda.sh run`, record in `CHANGELOG.md`, commit (`Closes #96`), push, land via self-mergeable PR, then archive this doc to `3-COMPLETED/`. |
+| Done. Guarded `append_stage_path "pdda/registry-$device_id.tsv"` added before `git add` in `experimental/git-pulse/collect.sh`; new `tests/test_git_pulse_collect_cli.py` staging case (5/5); `rebalance doctor` clean; `pytest tests/` 1242 passed; `pdda.sh run` clean; CHANGELOG `0.51.2`. Merged to `development` via PR [#97](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/97); issue [#96](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/96) closed; doc archived to `3-COMPLETED/`. | Nothing — closed. Ships to `main` in the next batched `development → main` PR; each device picks up the staging fix when its installed collector (`~/bin/git-pulse`) is next deployed/synced. |
 
 ## Problem
 
