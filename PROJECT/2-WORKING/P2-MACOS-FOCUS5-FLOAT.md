@@ -4,7 +4,7 @@ status: complete
 doc_type: project-plan
 owner: Noel Saw
 created: 2026-06-23
-updated: 2026-06-25
+updated: 2026-06-26
 goal: "Build Focus 5 Float, a small always-on-top macOS application that renders the Focus 5 card stack as a collapsible native projection."
 priority: P2
 source_app: macOS/ (TextReplacementStudio — SwiftPM, Swift 5.10, macOS 14+)
@@ -19,7 +19,7 @@ rollout_rule: each phase must leave a buildable, launchable app (or a green `swi
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 5 — Packaging, Launch-at-Login & Docs — COMPLETE (descoped, 2026-06-25).** `make-app.sh` ships the installed `/Applications` app (ad-hoc signed, `LSUIElement`); **launch-at-login** via `SMAppService` toggle in the F5 menu; app `README.md` + `macOS/README.md` pointer written; icon wiring present (auto-picks `Resources/AppIcon.icns`) — artwork in progress via Figma Make. **Also shipped:** a top-right roster-health traffic light (green/orange/red over the dirty count) with a `FOCUS5_HEALTHTEST` self-check. _Descoped (YAGNI for a personal menu-bar tool):_ full settings window (env `FOCUS5_BASE_URL` covers it); poll-interval/Dock-toggle settings. **All phases (0–5) done.** | **Done — ready to move to `3-COMPLETED`** once the `feat/macos-focus5-float` work lands on `development` and the icon `.icns` is dropped in. |
+| **Post-1.0 add — Bottom note from vault `focus5.md` (2026-06-26).** New read-only `GET /focus-5/note` projects a hand-written `focus5.md` at the configured Obsidian vault root (`{exists, content, path}`, 64 KiB cap, never writes). The app fetches it on every refresh/poll and pins it under the roster (`Focus5NoteView`, light-markdown render); empty → "add a focus5.md to your Obsidian vault" hint. Tests: `Focus5NoteRouteTests`. CONTRACT.md updated. _Prior:_ **Phase 5 — Packaging, Launch-at-Login & Docs — COMPLETE (descoped, 2026-06-25).** `make-app.sh` ships the installed `/Applications` app (ad-hoc signed, `LSUIElement`); **launch-at-login** via `SMAppService`; roster-health traffic light. **All phases (0–5) done.** | **Done.** Bottom-note feature landing on `development`. Ready to move to `3-COMPLETED` once the icon `.icns` is dropped in. |
 
 ## Table of Contents
 

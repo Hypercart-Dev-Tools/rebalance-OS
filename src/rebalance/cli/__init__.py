@@ -59,6 +59,7 @@ from rebalance.cli import onboard as _onboard  # noqa: F401,E402
 from rebalance.cli import reset as _reset  # noqa: F401,E402
 from rebalance.cli import profile_sync as _profile_sync  # noqa: F401,E402
 from rebalance.cli import refresh as _refresh  # noqa: F401,E402
+from rebalance.cli import apple_reminders as _apple_reminders  # noqa: F401,E402
 
 # Re-exported for ingest.index_ops, which imports `from rebalance.cli import _load_sleuth_env`.
 from rebalance.cli.sleuth import _load_sleuth_env  # noqa: F401,E402

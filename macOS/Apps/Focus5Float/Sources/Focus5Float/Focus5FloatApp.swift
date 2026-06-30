@@ -149,7 +149,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Panel
 
     private func buildPanel() {
-        let defaultRect = NSRect(x: 0, y: 0, width: 360, height: 640)
+        // Compact by default now the header is a slim emoji tab row over a
+        // wrapped status line: 200 wide is a comfortable starting point that can
+        // be dragged down to the 180 floor without clipping. 660 tall leaves the
+        // roster room above the new two-section bottom drawer (Reminders + note).
+        let defaultRect = NSRect(x: 0, y: 0, width: 200, height: 660)
 
         let hostingView = FirstMouseHostingView(rootView: ContentView(model: model))
         hostingView.frame = defaultRect
@@ -179,8 +183,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         panel.contentView = hostingView
 
-        // Frame autosave — remembers position & size across launches.
-        panel.setFrameAutosaveName("Focus5FloatPanel")
+        // Floor — 180 wide is the narrow target the emoji tab row + wrapped
+        // status line are built for; below that the tab row would start to clip.
+        panel.minSize = NSSize(width: 180, height: 320)
+
+        // Frame autosave — remembers position & size across launches. Bumped to
+        // ".v4" so the taller default (room for the Reminders + note drawer) takes
+        // effect once over any stale ".v3" height, then persists again.
+        panel.setFrameAutosaveName("Focus5FloatPanel.v4")
         if panel.frame.origin == .zero {
             panel.center()
         }

@@ -17,9 +17,10 @@ from __future__ import annotations
 import html
 import logging
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.responses import (
     HTMLResponse, JSONResponse, PlainTextResponse, RedirectResponse,
 )
@@ -37,7 +38,30 @@ logger = logging.getLogger(__name__)
 # health is always re-probed live on load regardless.
 FOCUS5_ROSTER_TTL_SECONDS = 24 * 3600
 
+# The free-form note shown at the bottom of the Focus 5 Float card lives in the
+# operator's Obsidian vault as ``focus5.md``. Cap the read so an oversized note
+# can't balloon the JSON response (the file is hand-written, normally tiny).
+FOCUS5_NOTE_FILENAME = "focus5.md"
+FOCUS5_NOTE_MAX_CHARS = 64 * 1024
+
 app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
+
+
+async def unhandled_exception_handler(request: Request, exc: Exception) -> PlainTextResponse:
+    """Local dashboard: show the real traceback in-browser instead of a bare
+    'Internal Server Error'. Gated by ``app.state.show_tracebacks`` (default
+    True; serve.py turns it off when bound to a non-loopback host so tracebacks
+    never leak off-box). The traceback is always logged regardless."""
+    import traceback
+
+    logger.exception("unhandled error on %s %s", request.method, request.url.path)
+    if getattr(request.app.state, "show_tracebacks", True):
+        tb = "".join(traceback.format_exception(type(exc), exc, exc.__traceback__))
+        return PlainTextResponse(tb, status_code=500)
+    return PlainTextResponse("Internal Server Error", status_code=500)
+
+
+app.add_exception_handler(Exception, unhandled_exception_handler)
 
 # Auth-log badges keyed to a semantic variant (ok|warn|danger|info|neutral),
 # resolved to a design token by web_components.badge_html — no inline hex.
@@ -291,30 +315,18 @@ def _render_sleuth_groups() -> str:
     )
 
 
-@app.get("/", response_class=HTMLResponse)
-def index() -> HTMLResponse:
-    sleuth_section = _render_sleuth_groups()
-    body = (
-        """
-<h2>Local dashboards</h2>
-<ul style="margin-top:16px;line-height:2;list-style:none;">
-  <li><a href="/focus-5" style="color:var(--accent);font-size:15px;">
-      Focus 5</a>
-      <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
-      — the 5 repos you're actively working on, ranked by your most recent
-      commits: working-tree health, newest PR, and recent local commits
-      (with a Dirty Five view for uncommitted/unpushed work)</span>
-  </li>
-  <li><a href="/auth-log" style="color:var(--accent);font-size:15px;">
-      System Log</a>
-      <span style="color:var(--fg-muted);font-size:13px;margin-left:8px;">
-      — unified event stream: auth events (calendar, github, gmail) and background
-      job starts, completions, and failures — filterable by type</span>
-  </li>
-</ul>"""
-        + sleuth_section
-    )
-    return _page("Home", body, active="today")
+# The rich "Today" dashboard is rendered by the pulse server (web/pulse.html on
+# :8767). This web app exists mainly to serve JSON (e.g. /focus-5.json) and the
+# sub-pages; its bare "/" used to render a sparse near-duplicate landing, which
+# read as a "reverted" home. Redirect to the canonical pulse dashboard so both
+# servers present one coherent home. (:8767 is the documented pulse-server port;
+# the pulse server is the always-running launchd job.)
+PULSE_DASHBOARD_URL = "http://127.0.0.1:8767/"
+
+
+@app.get("/")
+def index() -> RedirectResponse:
+    return RedirectResponse(PULSE_DASHBOARD_URL, status_code=307)
 
 
 def _rel_time(iso: str | None) -> str:
@@ -452,8 +464,14 @@ def _f5_card(card: dict[str, Any]) -> str:
         card.get("repo_full_name") or card.get("local_path") or "", quote=True
     )
     # Top-right action cluster: the standard "Open ↗" button (shared helper, so it
-    # matches the dashboard home) next to the ✕ hide control.
-    open_btn = button_link("Open", vs_href, title="Open repo in VS Code")
+    # matches the dashboard home) next to the ✕ hide control. `data-f5-open` carries
+    # the repo identity so the click JS can POST it to /api/focus5/open (focus-if-
+    # open via the server's `code <folder>`); the vscode:// href stays as the no-JS
+    # / failure fallback so the button is never dead.
+    open_btn = button_link(
+        "Open", vs_href, title="Open repo in VS Code",
+        attrs=f'data-f5-open="{identity}"',
+    )
     hide_btn = (
         f"<button class='f5-hide' data-f5-hide=\"{identity}\" "
         f"title='Hide from Focus 5' aria-label='Hide {name} from Focus 5'>✕</button>"
@@ -463,7 +481,7 @@ def _f5_card(card: dict[str, Any]) -> str:
         f"<div class='f5-card'>"
         f"{actions}"
         f"<div><div class='f5-pos'>#{card['position']}</div>"
-        f"<a class='f5-name' href='{vsurl}' title='Open in VS Code'>{name}</a>"
+        f"<a class='f5-name' href='{vsurl}' title='Open in VS Code' data-f5-open=\"{identity}\">{name}</a>"
         f"<div class='f5-reason'>{reason}{reason_badge}</div></div>"
         f"{_f5_health(card)}{_f5_pr(card)}{_f5_activity(card)}"
         f"</div>"
@@ -512,7 +530,7 @@ def _focus5_body(data: dict[str, Any], *, view: str = "focus5") -> str:
     )
     strip = _f5_warning_strip(data)
     cards = "".join(_f5_card(c) for c in roster)
-    return f"{head}{meta}{strip}<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}"
+    return f"{head}{meta}{strip}<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}{_FOCUS5_OPEN_ASSETS}"
 
 
 # Scoped CSS + JS for the per-card hide (✕) control. Kept in the Focus 5 body so
@@ -549,6 +567,35 @@ document.addEventListener('click', async (e) => {
   } catch (_) { /* fall through to re-enable */ }
   btn.disabled = false;
   btn.title = 'Hide failed — try again';
+});
+</script>
+"""
+
+
+# Scoped JS for the "Open ↗" focus-if-open action. Any element carrying
+# `data-f5-open="<identity>"` (the Open button AND the repo-name link) POSTs that
+# identity to /api/focus5/open, which runs `code <folder>` server-side so an
+# already-open VS Code window is focused instead of clobbered. On ANY failure
+# (no-JS, server down, `code` missing → 409, unknown id → 404) it falls through to
+# the element's vscode:// href, so the action is never dead.
+_FOCUS5_OPEN_ASSETS = """
+<script>
+document.addEventListener('click', async (e) => {
+  const el = e.target.closest('[data-f5-open]');
+  if (!el) return;
+  const repo = el.getAttribute('data-f5-open');
+  if (!repo) return;
+  e.preventDefault();
+  try {
+    const res = await fetch('/api/focus5/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ repo }),
+    });
+    if (res.ok) return;
+  } catch (_) { /* fall through to the vscode:// fallback */ }
+  const href = el.getAttribute('href');
+  if (href && href !== '#') window.location.href = href;
 });
 </script>
 """
@@ -648,6 +695,42 @@ def focus5_json(view: str = "focus5") -> JSONResponse:
     return JSONResponse(data)
 
 
+@app.get("/focus-5/note")
+def focus5_note() -> JSONResponse:
+    """Read-only projection of the operator's Obsidian ``focus5.md`` note.
+
+    Surfaces a free-form markdown note — kept at the root of the configured
+    Obsidian vault — at the bottom of the Focus 5 Float card. **Strictly
+    read-only:** it never creates or writes the file; it only reads it.
+
+    LOCAL-ONLY: the note lives on the operator's machine and may hold private
+    context, so this serves the localhost desktop client only — never a remote
+    mirror.
+
+    Always returns ``{exists, content, path}`` with HTTP 200 (never a 404), so
+    the client decodes one shape. ``exists`` is False with empty ``content`` when
+    no vault is configured, the vault has no ``focus5.md``, or the file can't be
+    read — the client then shows its "add a focus5.md to your vault" hint.
+    """
+    from rebalance.ingest.config import get_vault_path
+
+    vault = get_vault_path()
+    if not vault:
+        return JSONResponse({"exists": False, "content": "", "path": None})
+
+    note = Path(vault).expanduser() / FOCUS5_NOTE_FILENAME
+    try:
+        if not note.is_file():
+            return JSONResponse({"exists": False, "content": "", "path": None})
+        content = note.read_text(encoding="utf-8", errors="replace")[:FOCUS5_NOTE_MAX_CHARS]
+    except OSError as exc:
+        logger.warning("focus5.note: could not read %s: %s", note, exc)
+        return JSONResponse({"exists": False, "content": "", "path": None})
+
+    logger.info("focus5.note: served %d chars from %s", len(content), note)
+    return JSONResponse({"exists": True, "content": content, "path": str(note)})
+
+
 class Focus5HideRequest(BaseModel):
     repo: str
 
@@ -692,6 +775,152 @@ def focus5_hide(req: Focus5HideRequest) -> JSONResponse:
 @app.post("/api/focus5/unhide")
 def focus5_unhide(req: Focus5HideRequest) -> JSONResponse:
     return JSONResponse(focus5_set_hidden(req.repo, hidden=False))
+
+
+# ---------------------------------------------------------------------------
+# Focus 5 "Open ↗" focus-if-open (VSCODE-OPEN-WORKSPACE Phase 2).
+#
+# The browser can't run `code <folder>`, so the dashboard POSTs a repo IDENTITY
+# here and the local server runs it. The path is NEVER client-supplied: the id is
+# resolved to a local_path from the server's own freshly-summarized roster (the
+# allowlist), unknown ids are rejected (404, logged as a tripwire), and the launch
+# is a direct-argv subprocess (shell=False) so there is no command-injection class.
+# Bound to loopback + same-origin only — this executes a binary, so it refuses any
+# request that isn't from the local dashboard itself.
+# ---------------------------------------------------------------------------
+
+# Same fixed candidate order as the Mac app's VSCodeLauncher (Homebrew arm64 →
+# Intel → app bundle); the order is part of the contract.
+_VSCODE_CODE_CANDIDATES = (
+    "/opt/homebrew/bin/code",
+    "/usr/local/bin/code",
+    "/Applications/Visual Studio Code.app/Contents/Resources/app/bin/code",
+)
+
+
+def _resolve_code_binary() -> str | None:
+    """Resolve the ``code`` executable: ``VSCODE_BIN`` override → known locations →
+    PATH lookup. Returns None when none is found (caller returns 409)."""
+    import os
+    import shutil
+
+    # `os.access(.., X_OK)` is true for a directory (execute == traverse), so guard
+    # with isfile — else a VSCODE_BIN pointing at a dir would later raise IsADirectoryError.
+    override = os.environ.get("VSCODE_BIN")
+    if override and os.path.isfile(override) and os.access(override, os.X_OK):
+        return override
+    for cand in _VSCODE_CODE_CANDIDATES:
+        if os.path.isfile(cand) and os.access(cand, os.X_OK):
+            return cand
+    return shutil.which("code")
+
+
+def _focus5_open_allowlist(db: Path) -> dict[str, str]:
+    """Build ``identity → local_path`` from the server's own roster — the allowlist.
+
+    Unions the default (Focus 5) and dirty (Dirty Five) boards so a card visible in
+    either view resolves. The identity is the same key the card renders
+    (``repo_full_name`` or, lacking a remote, ``local_path``). Only the server's
+    scanned data is trusted; a client-supplied path never reaches the launcher.
+    """
+    from rebalance.ingest.focus5_scan import summarize_focus5
+
+    allow: dict[str, str] = {}
+    for mode in (None, "dirty_first"):
+        try:
+            data = summarize_focus5(db, mode=mode)
+        except Exception:  # noqa: BLE001 — a probe hiccup must not break resolution
+            continue
+        for card in data.get("roster") or []:
+            identity = card.get("repo_full_name") or card.get("local_path")
+            local_path = card.get("local_path")
+            if identity and local_path:
+                allow[identity] = local_path
+    return allow
+
+
+def focus5_open_repo(repo: str) -> tuple[int, dict[str, Any]]:
+    """Resolve *repo* (a card identity) to its local_path via the allowlist and run
+    ``code <local_path>``. Returns ``(http_status, body)``. Never raises."""
+    identity = (repo or "").strip()
+    if not identity:
+        return 400, {"ok": False, "error": "empty repo identity"}
+
+    from rebalance.paths import DatabaseNotFoundError, resolve_database_path
+
+    try:
+        db = resolve_database_path()
+    except DatabaseNotFoundError:
+        return 404, {"ok": False, "error": "no database"}
+
+    local_path = _focus5_open_allowlist(db).get(identity)
+    if not local_path:
+        # Tripwire: a miss means a caller asked for an id the server never issued.
+        logger.warning("focus5 open: allowlist MISS for identity=%r", identity)
+        return 404, {"ok": False, "error": "unknown repo"}
+
+    code_bin = _resolve_code_binary()
+    if not code_bin:
+        logger.info("focus5 open: no `code` binary — client falls back to vscode://")
+        return 409, {"ok": False, "error": "code binary not found"}
+
+    import subprocess
+
+    try:
+        # Direct argv — no shell, no string interpolation. `code <folder>` returns
+        # promptly (it talks to VS Code over IPC); cap it so a hung launch can't pin
+        # the request.
+        proc = subprocess.run(  # noqa: S603 — argv list, allowlisted path, no shell
+            [code_bin, local_path],
+            stdin=subprocess.DEVNULL,
+            capture_output=True,
+            timeout=15,
+        )
+    except Exception as exc:  # noqa: BLE001 — surface as 500, client falls back
+        logger.error("focus5 open: launch failed for %s: %s", local_path, exc)
+        return 500, {"ok": False, "error": "launch failed"}
+
+    logger.info(
+        "focus5 open: identity=%r path=%s bin=%s exit=%s",
+        identity, local_path, code_bin, proc.returncode,
+    )
+    return 200, {"ok": True, "exit_code": proc.returncode}
+
+
+def _request_is_local(request: Request) -> bool:
+    """Two-layer local-only gate for the exec endpoint (defense in depth).
+
+    1. **Client host must be loopback.** ``rebalance serve`` *can* bind a non-loopback
+       host (web.py turns off tracebacks in that mode), so the bind alone is not a
+       guarantee. Without this check a LAN client could POST with no ``Origin``
+       (e.g. ``curl``) and trigger ``code`` opens on the host. (Per agy QA r1.)
+    2. **Same-origin.** A cross-origin browser fetch always carries an ``Origin``
+       header, so reject any ``Origin`` whose host isn't loopback — defeats a
+       malicious page CSRF-ing the browser into POSTing here.
+
+    Returns False to refuse. NOTE: Starlette's ``TestClient`` reports a non-loopback
+    client host, so route tests bypass this guard (patch ``_request_is_local``) and
+    the gate itself is covered by dedicated unit tests over a fake request.
+    """
+    from urllib.parse import urlparse
+
+    loopback = {"127.0.0.1", "::1", "localhost"}
+    client_host = (request.client.host if request.client else "") or ""
+    if client_host not in loopback:
+        return False
+    origin = request.headers.get("origin")
+    if origin and (urlparse(origin).hostname or "") not in loopback:
+        return False
+    return True
+
+
+@app.post("/api/focus5/open")
+def focus5_open(req: Focus5HideRequest, request: Request) -> JSONResponse:
+    if not _request_is_local(request):
+        logger.warning("focus5 open: rejected non-local request from %s", request.client)
+        return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+    status, body = focus5_open_repo(req.repo)
+    return JSONResponse(body, status_code=status)
 
 
 # ---------------------------------------------------------------------------

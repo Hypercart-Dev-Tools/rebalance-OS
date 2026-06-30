@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key>
+	<string>en</string>
+	<key>CFBundleExecutable</key>
+	<string>apple_reminders_write_spike</string>
+	<key>CFBundleIdentifier</key>
+	<string>com.rebalanceos.apple-reminders-write-spike</string>
+	<key>CFBundleInfoDictionaryVersion</key>
+	<string>6.0</string>
+	<key>CFBundleName</key>
+	<string>AppleRemindersWriteSpike</string>
+	<key>CFBundlePackageType</key>
+	<string>APPL</string>
+	<key>CFBundleShortVersionString</key>
+	<string>0.1</string>
+	<key>CFBundleVersion</key>
+	<string>1</string>
+	<key>NSRemindersFullAccessUsageDescription</key>
+	<string>Apple Reminders write spike for rebalance-OS: create, update, and delete a disposable test reminder to verify EventKit write access.</string>
+</dict>
+</plist>

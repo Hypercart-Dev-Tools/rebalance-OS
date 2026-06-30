@@ -44,6 +44,21 @@ final class Focus5Model {
     }
     var telemetryLoadError: String?
 
+    // Bottom note — the operator's vault `focus5.md`, projected by GET /focus-5/note.
+    var noteContent = ""              // raw markdown (empty until first load / when absent)
+    var noteExists = false            // true once the vault actually has a focus5.md
+    var noteLoaded = false            // true after the first successful note fetch
+
+    // Bottom Apple Reminders — read+write DIRECTLY via EventKit (not the server).
+    // See RemindersStore for why the app is the runtime that can hold the grant.
+    let reminders = RemindersStore()
+
+    // Transient top banner ("Repos refreshed") — set after a successful *manual*
+    // refresh so the recycle button gives visible feedback; the view fades it out
+    // on clear. Background polling never sets it (it'd flash unprompted every 90s).
+    var banner: String?
+    private var bannerToken = 0       // guards a rapid re-flash from clearing early
+
     private let client = Focus5Client()
     private let cache = RosterCache()
     private var fetchGeneration = 0    // guards against out-of-order fetch results
@@ -83,7 +98,33 @@ final class Focus5Model {
             refreshTelemetry()
         } else {
             _ = await fetchAndApply(dirty: isDirtyView)
+            await refreshNote()
+            await reminders.refresh()   // EventKit; no-ops until access granted
         }
+    }
+
+    /// Show a transient top banner for ~3s, then clear it (the view fades it out).
+    /// A token guards against a second flash's timer being cancelled by the first:
+    /// only the most recent flash may clear the banner.
+    func flashBanner(_ text: String) {
+        banner = text
+        bannerToken += 1
+        let token = bannerToken
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard token == bannerToken else { return }
+            banner = nil
+        }
+    }
+
+    /// Re-pull the bottom note (`focus5.md`) from the server's read-only route.
+    /// A fetch failure (server down) keeps the last-known note on screen rather
+    /// than flashing the empty-state hint — `noteLoaded` only ever goes true.
+    func refreshNote() async {
+        guard let note = try? await client.fetchNote() else { return }
+        noteExists = note.exists
+        noteContent = note.content
+        noteLoaded = true
     }
 
     /// Open an NSOpenPanel to pick a telemetry .json file, persist it, and refresh.

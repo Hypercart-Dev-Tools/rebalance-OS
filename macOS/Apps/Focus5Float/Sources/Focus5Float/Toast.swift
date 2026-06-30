@@ -22,6 +22,31 @@ extension ToastMessage.Action {
     }
 }
 
+/// Transient top banner — a compact confirmation pill (e.g. "Repos refreshed")
+/// that slides down from the top, holds, and fades out. Unlike `ToastView` it has
+/// no dismiss/action chrome: it's pure lightweight feedback for an action (the
+/// recycle button) that otherwise gives no visible sign it did anything.
+struct TopBanner: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 7) {
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Theme.diffAdd)
+            Text(text)
+                .font(Theme.bodyMed)
+                .foregroundStyle(Theme.text)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
+        .background(.regularMaterial, in: Capsule())
+        .overlay(Capsule().strokeBorder(Theme.separator, lineWidth: 1))
+        .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 6)
+        .padding(.top, Theme.Space.s)
+    }
+}
+
 /// Bottom feedback capsule. Success/info auto-dismiss; errors keep an action.
 struct ToastView: View {
     let toast: ToastMessage

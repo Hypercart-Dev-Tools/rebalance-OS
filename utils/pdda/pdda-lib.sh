@@ -2,7 +2,8 @@
 set -u
 
 PDDA_LIB_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PDDA_REPO_ROOT="${PDDA_REPO_ROOT:-$(cd "$PDDA_LIB_DIR/.." && pwd)}"
+# Runtime lives in <repo>/utils/pdda/, so the repo root is two levels up from the lib dir.
+PDDA_REPO_ROOT="${PDDA_REPO_ROOT:-$(cd "$PDDA_LIB_DIR/../.." && pwd)}"
 PDDA_INBOX_DIR="${PDDA_INBOX_DIR:-$PDDA_REPO_ROOT/PROJECT/1-INBOX}"
 PDDA_WORKING_DIR="${PDDA_WORKING_DIR:-$PDDA_REPO_ROOT/PROJECT/2-WORKING}"
 PDDA_MISC_DIR="${PDDA_MISC_DIR:-$PDDA_REPO_ROOT/PROJECT/4-MISC}"

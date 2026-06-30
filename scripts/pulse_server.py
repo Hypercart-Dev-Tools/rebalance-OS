@@ -60,11 +60,20 @@ from rebalance.web import (  # noqa: E402
     Focus5HideRequest,
     auth_log_page as _auth_log_page,
     auth_log_raw as _auth_log_raw,
+    focus5_note as _focus5_note,
     focus5_page as _focus5_page,
     focus5_set_hidden as _focus5_set_hidden,
     sleuth_graph_page as _sleuth_graph_page,
+    unhandled_exception_handler as _unhandled_exception_handler,
     whatsnext_page as _whatsnext_page,
 )
+
+# Show the real traceback in-browser on an unhandled error instead of a bare
+# "Internal Server Error". Same shared handler the :8787 web app uses. This
+# server enforces a loopback bind (see main()), so tracebacks never leave the
+# box and gating is unnecessary.
+app.state.show_tracebacks = True
+app.add_exception_handler(Exception, _unhandled_exception_handler)
 
 
 @app.get("/auth-log")
@@ -82,6 +91,14 @@ def focus5(refresh: bool = False, view: str = "focus5"):
     # Forward ``view`` so the Focus 5 / Dirty Five toggle works on this surface too
     # (shared renderer in rebalance.web — keeps both /focus-5 surfaces identical).
     return _focus5_page(refresh=refresh, view=view)
+
+
+@app.get("/focus-5/note")
+def focus5_note():
+    # Mirror the read-only focus5.md note here too: this is the always-running
+    # server, so the Focus 5 Float client gets the note regardless of which local
+    # server it points at (keeps both /focus-5 surfaces identical — see web.py).
+    return _focus5_note()
 
 
 @app.post("/api/focus5/hide")
@@ -208,7 +225,43 @@ def health():
 
 @app.post("/api/refresh")
 def refresh():
+    import uuid
+    import json
+    from rebalance.ingest.apple_reminders_write import _open_bundle_invoker
+    from rebalance.ingest.config import get_apple_reminders_list_name
+
     started = time.perf_counter()
+
+    helper_error = None
+    try:
+        req_id = uuid.uuid4().hex
+        list_name = get_apple_reminders_list_name()
+        request = {
+            "schema_version": 1,
+            "request_id": req_id,
+            "mode": "apply",
+            "confirm_destructive": False,
+            "operations": [{"op": "list-active", "list_name": list_name}]
+        }
+
+        response = _open_bundle_invoker(request, timeout_seconds=5.0)
+        results = response.get("results") or []
+        if not results:
+            helper_error = "no results in helper response"
+        else:
+            first_res = results[0]
+            if first_res.get("status") == "ok":
+                active_items = json.loads(first_res.get("detail", "[]"))
+                active_path = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
+                active_path.parent.mkdir(parents=True, exist_ok=True)
+                tmp_path = active_path.with_suffix(".tmp")
+                tmp_path.write_text(json.dumps(active_items), encoding="utf-8")
+                tmp_path.replace(active_path)
+            else:
+                helper_error = str(first_res.get("detail", "helper returned error"))
+    except Exception as exc:
+        helper_error = f"{type(exc).__name__}: {exc}"
+
     proc = _run_pulse_render(timeout=60)
     duration_ms = round((time.perf_counter() - started) * 1000)
     if proc.returncode != 0:
@@ -218,6 +271,7 @@ def refresh():
                 "duration_ms": duration_ms,
                 "returncode": proc.returncode,
                 "stderr": proc.stderr[-2000:],
+                "helper_error": helper_error,
             },
             status_code=500,
         )
@@ -226,6 +280,7 @@ def refresh():
         "ok": True,
         "duration_ms": duration_ms,
         "generated_at": mtime.isoformat(),
+        "helper_error": helper_error,
     }
 
 

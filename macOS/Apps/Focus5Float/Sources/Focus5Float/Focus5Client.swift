@@ -54,4 +54,30 @@ struct Focus5Client {
         }
         return try Focus5JSON.decoder().decode(Focus5Response.self, from: data)
     }
+
+    /// Fetch the operator's `focus5.md` note from the local vault, projected by the
+    /// server's read-only `GET /focus-5/note` route. The server always answers with
+    /// `{exists, content, path}`; `exists == false` means no vault / no note yet.
+    func fetchNote() async throws -> Focus5Note {
+        var req = URLRequest(url: baseURL.appendingPathComponent("focus-5/note"))
+        req.httpMethod = "GET"                       // read-only, always GET
+        req.timeoutInterval = 6
+        req.cachePolicy = .reloadIgnoringLocalCacheData
+
+        let (data, response) = try await session.data(for: req)
+        guard let http = response as? HTTPURLResponse,
+              (200..<300).contains(http.statusCode) else {
+            // Note is optional: a non-2xx (e.g. a server that doesn't expose the
+            // route) means "no note", not a failure — never break the card over it.
+            return Focus5Note(exists: false, content: "", path: nil)
+        }
+        return try Focus5JSON.decoder().decode(Focus5Note.self, from: data)
+    }
+}
+
+/// Wire shape of `GET /focus-5/note` — the Focus 5 Float bottom note.
+struct Focus5Note: Codable {
+    let exists: Bool
+    let content: String
+    let path: String?
 }

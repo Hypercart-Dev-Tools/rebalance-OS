@@ -57,6 +57,7 @@ from dashboard import (  # type: ignore  # noqa: E402
 )
 from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
 from rebalance.health import HealthStatus, compute_health_status  # noqa: E402
+from rebalance.ingest.apple_reminders import list_apple_reminders  # noqa: E402
 from rebalance.ingest.config import get_figma_file_keys  # noqa: E402
 from rebalance.ingest.index_ops import COLLECTORS, get_index_status  # noqa: E402
 from rebalance.ingest import next_actions  # noqa: E402
@@ -82,6 +83,7 @@ HEALTH_ISSUES_URL = (
 MAX_GOAL_HISTORY = 3
 PRIMARY_GOAL_LIMIT = 3
 SECONDARY_TODO_LIMIT = 6
+APPLE_REMINDER_LIMIT = 6  # read-only column; soonest-due active reminders
 STREAM_SOURCE_EXCLUDE = frozenset({"ask_self", "code", "focus5", "semantic", "sync"})
 STREAM_DISPLAY = {
     "github": {"label": "GitHub", "kbd": "G", "sort": 10},
@@ -721,6 +723,30 @@ def _render_goal_rows(goals: list[dict[str, Any]], *, empty_html: str, compact: 
     return "".join(rows)
 
 
+def _render_reminder_rows(
+    reminders: list[dict[str, Any]], *, tz: ZoneInfo, empty_html: str
+) -> str:
+    """Read-only rows for the Apple Reminders column — no checkbox, no POST."""
+    rows = []
+    for r in reminders:
+        due = r.get("due_at")
+        due_html = (
+            f'<div class="goal-desc">{_esc(_format_dt_short(due, tz=tz))}</div>'
+            if due else ""
+        )
+        rows.append(f"""
+        <li class="goal goal-compact goal-readonly">
+          <div class="goal-body">
+            <div class="goal-title">{_linkify(r.get('title') or '')}</div>
+            {due_html}
+          </div>
+        </li>
+        """)
+    if not rows:
+        rows.append(empty_html)
+    return "".join(rows)
+
+
 def render_hero(
     goals: list[dict[str, Any]],
     pulled_from: str,
@@ -728,8 +754,10 @@ def render_hero(
     obsidian_url: str | None,
     recent_completions: list[dict[str, Any]],
     secondary_todos: list[dict[str, Any]] | None = None,
+    apple_reminders: list[dict[str, Any]] | None = None,
 ) -> str:
     secondary_todos = secondary_todos or []
+    apple_reminders = apple_reminders or []
     visible_goals = [*goals, *secondary_todos]
     done = sum(1 for g in visible_goals if g["done"])
     in_progress = len(visible_goals) - done
@@ -742,6 +770,11 @@ def render_hero(
         secondary_todos,
         empty_html='<li class="goal empty goal-compact"><div class="goal-body"><div class="goal-title">No more open todos</div><div class="goal-desc">Everything else is clear.</div></div></li>',
         compact=True,
+    )
+    reminder_rows = _render_reminder_rows(
+        apple_reminders,
+        tz=TZ,
+        empty_html='<li class="goal empty goal-compact goal-readonly"><div class="goal-body"><div class="goal-title">No active reminders</div><div class="goal-desc">Apple Reminders, read-only.</div></div></li>',
     )
     date_str = now.strftime("%A, %B %-d")
     open_link = (
@@ -794,6 +827,10 @@ def render_hero(
         <div class="hero-goal-column hero-goal-column-secondary">
           <div class="hero-column-label">Next open todos</div>
           <ul class="goals goals-secondary">{secondary_rows}</ul>
+        </div>
+        <div class="hero-goal-column hero-goal-column-reminders">
+          <div class="hero-column-label">Apple Reminders</div>
+          <ul class="goals goals-secondary">{reminder_rows}</ul>
         </div>
       </div>
       {undo_html}
@@ -1721,12 +1758,14 @@ PAGE_CSS = """
 .hero-stats .bar span { display: block; height: 100%; background: var(--accent); }
 .hero-stats .pct { font-variant-numeric: tabular-nums; min-width: 32px; text-align: right; }
 
-.hero-goal-board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 1fr); gap: 14px; align-items: stretch; }
+.hero-goal-board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 1fr) minmax(240px, 1fr); gap: 14px; align-items: stretch; }
 .hero-goal-column { min-width: 0; }
-.hero-goal-column-secondary {
+.hero-goal-column-secondary,
+.hero-goal-column-reminders {
   border-left: 1px solid var(--border);
   padding-left: 14px;
 }
+.goal-readonly { padding-left: 6px; }
 .hero-column-label {
   font-size: 11px;
   text-transform: uppercase;
@@ -2118,7 +2157,8 @@ PAGE_CSS = """
   .sidebar { border-right: 0; border-bottom: 1px solid var(--border); }
   .grid { grid-template-columns: 1fr; }
   .hero-goal-board { grid-template-columns: 1fr; }
-  .hero-goal-column-secondary { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: 10px; }
+  .hero-goal-column-secondary,
+  .hero-goal-column-reminders { border-left: 0; border-top: 1px solid var(--border); padding-left: 0; padding-top: 10px; }
   .email-row { grid-template-columns: 1fr; }
   .email-row-side { align-items: flex-start; }
   .email-row-time { white-space: normal; }
@@ -2693,6 +2733,18 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     all_goals = parse_goals(goals_path, limit=PRIMARY_GOAL_LIMIT + SECONDARY_TODO_LIMIT)
     goals = all_goals[:PRIMARY_GOAL_LIMIT]
     secondary_todos = all_goals[PRIMARY_GOAL_LIMIT:]
+    # Read-only Apple Reminders column — active items from the configured list,
+    # now sourced from the helper's JSON output rather than the DB.
+    apple_reminders = []
+    active_json_path = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
+    if active_json_path.exists():
+        try:
+            with open(active_json_path, encoding="utf-8") as fh:
+                items = json.load(fh)
+                items.sort(key=lambda x: x.get("due_at") or "9999-12-31T23:59:59Z")
+                apple_reminders = items[:APPLE_REMINDER_LIMIT]
+        except (json.JSONDecodeError, OSError, TypeError):
+            pass
     recent_completions = load_goal_history(goals_path=goals_path)
     for item in recent_completions:
         completed_at = item.get("completed_at")
@@ -2821,7 +2873,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
           </div>
         </div>
         {render_health_banner(health_status, now, last_activity)}
-        {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos)}
+        {render_hero(goals, pulled_from, local_now, obsidian_url, recent_completions, secondary_todos=secondary_todos, apple_reminders=apple_reminders)}
         <div class="full-row">
           {render_work_next(work_next_rows, now, computed_at=work_next_computed_at, blended=work_next_blended, model_used=work_next_model)}
         </div>
