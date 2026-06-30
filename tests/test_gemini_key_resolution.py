@@ -53,7 +53,10 @@ class GcloudHelperTests(unittest.TestCase):
 
 class GetGeminiApiKeyOrderTests(unittest.TestCase):
     def test_falls_back_to_gcloud_when_nothing_else_resolves(self) -> None:
+        # Patch the key-file step out too — on a real machine the default key
+        # file may exist and would resolve before gcloud.
         with patch.dict(os.environ, {}, clear=True), \
+             patch.object(cfg, "_gemini_key_from_file", return_value=None), \
              patch.object(cfg, "_gemini_key_via_gcloud", return_value="FROM_GCLOUD") as gc:
             self.assertEqual(cfg.get_gemini_api_key(), "FROM_GCLOUD")
             gc.assert_called_once()
@@ -68,6 +71,72 @@ class GetGeminiApiKeyOrderTests(unittest.TestCase):
         with patch.dict(os.environ, {"GEMINI_API_KEY": "G", "GOOGLE_API_KEY": "GG"}, clear=True), \
              patch.object(cfg, "_gemini_key_via_gcloud", return_value=None):
             self.assertEqual(cfg.get_gemini_api_key(), "G")
+
+
+class PickApiKeyTests(unittest.TestCase):
+    def test_extracts_aiza_from_multiline_file(self) -> None:
+        # The console-download shape: a project/client id line + the AIza key line.
+        aiza = "AIza" + "B" * 35
+        self.assertEqual(cfg._pick_api_key(f"gen-lang-client-0383065432\n{aiza}\n"), aiza)
+
+    def test_falls_back_to_first_nonempty_line_for_bare_key(self) -> None:
+        self.assertEqual(cfg._pick_api_key("\n  my-bare-key  \nsecond\n"), "my-bare-key")
+
+    def test_none_for_empty_or_blank(self) -> None:
+        self.assertIsNone(cfg._pick_api_key(""))
+        self.assertIsNone(cfg._pick_api_key("   \n\t\n"))
+
+
+class KeyFileResolverTests(unittest.TestCase):
+    """The key-file step: env path -> config path -> default; AIza extraction."""
+
+    def _write(self, content: str) -> str:
+        import tempfile
+        fd, path = tempfile.mkstemp(suffix=".txt")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        self.addCleanup(lambda: os.path.exists(path) and os.remove(path))
+        return path
+
+    def test_reads_key_from_env_path(self) -> None:
+        path = self._write("KEYFROMFILE\n")
+        with patch.dict(os.environ, {"GEMINI_API_KEY_FILE": path}, clear=True), \
+             patch.object(cfg, "get_pulse_config", return_value={}):
+            self.assertEqual(cfg._gemini_key_from_file(), "KEYFROMFILE")
+
+    def test_multiline_file_extracts_aiza_key(self) -> None:
+        aiza = "AIza" + "C" * 35
+        path = self._write(f"gen-lang-client-1\n{aiza}\n")
+        with patch.dict(os.environ, {"GEMINI_API_KEY_FILE": path}, clear=True), \
+             patch.object(cfg, "get_pulse_config", return_value={}):
+            self.assertEqual(cfg._gemini_key_from_file(), aiza)
+
+    def test_uses_config_path_when_no_env(self) -> None:
+        path = self._write("CFGKEY\n")
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(cfg, "get_pulse_config", return_value={"gemini_key_file": path}), \
+             patch.object(cfg, "DEFAULT_GEMINI_KEY_FILE", "/nonexistent/never.txt"):
+            self.assertEqual(cfg._gemini_key_from_file(), "CFGKEY")
+
+    def test_none_when_no_file_resolves(self) -> None:
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(cfg, "get_pulse_config", return_value={}), \
+             patch.object(cfg, "DEFAULT_GEMINI_KEY_FILE", "/nonexistent/never.txt"):
+            self.assertIsNone(cfg._gemini_key_from_file())
+
+    def test_get_key_uses_file_after_env_before_gcloud(self) -> None:
+        path = self._write("FILEKEY\n")
+        with patch.dict(os.environ, {}, clear=True), \
+             patch.object(cfg, "get_pulse_config", return_value={"gemini_key_file": path}), \
+             patch.object(cfg, "DEFAULT_GEMINI_KEY_FILE", "/nonexistent/never.txt"), \
+             patch.object(cfg, "_gemini_key_via_gcloud", return_value="GC") as gc:
+            self.assertEqual(cfg.get_gemini_api_key(), "FILEKEY")
+            gc.assert_not_called()
+
+    def test_env_var_wins_over_key_file(self) -> None:
+        path = self._write("FILEKEY\n")
+        with patch.dict(os.environ, {"GEMINI_API_KEY": "ENV", "GEMINI_API_KEY_FILE": path}, clear=True):
+            self.assertEqual(cfg.get_gemini_api_key(), "ENV")
 
 
 if __name__ == "__main__":

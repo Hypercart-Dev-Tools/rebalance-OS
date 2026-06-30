@@ -1254,9 +1254,24 @@ def refresh_index(
                 db_path, blend_team=True, synthesize=True
             )
             next_actions.persist_ranked_next_actions(db_path, ranked)
+            # Render the SAME ranked output to the fixed vault file so the vault
+            # is the calm daily surface (P1-SIGNAL). Gated like the dashboard-note
+            # write-back below (update_dashboard_note + a resolved vault), reusing
+            # the already-resolved path. A vault-write failure is non-fatal — log
+            # it and keep the (already persisted) precompute.
+            vault_file = None
+            if update_dashboard_note and resolved_vault is not None:
+                try:
+                    written = next_actions.write_next_actions_to_vault(
+                        ranked, vault_path=resolved_vault
+                    )
+                    vault_file = str(written) if written else None
+                except Exception as ve:  # noqa: BLE001 — vault write must never break refresh
+                    logger.warning("next_actions vault write failed: %s", ve)
             logger.info(
-                "next_actions precompute: model_used=%s blended=%s count=%d",
+                "next_actions precompute: model_used=%s blended=%s count=%d vault=%s",
                 ranked.model_used or "(none)", ranked.blended, len(ranked.ranked),
+                vault_file or "(skipped)",
             )
             results.append({
                 "scope": "next_actions",
@@ -1264,6 +1279,7 @@ def refresh_index(
                 "model_used": ranked.model_used,
                 "blended": ranked.blended,
                 "count": len(ranked.ranked),
+                "vault_file": vault_file,
             })
         except Exception as e:  # noqa: BLE001 — precompute must never break refresh
             logger.warning("next_actions precompute failed: %s", e)

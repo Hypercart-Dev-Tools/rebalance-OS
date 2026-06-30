@@ -345,7 +345,11 @@ Answer:"""
 _GEMINI_ENDPOINT = (
     "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 )
-DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
+# gemini-2.0-flash was retired by Google (the endpoint now 404s "no longer
+# available"), which silently forced every synthesis onto the local Qwen
+# fallback. Standardized on gemini-2.5-flash — current, and already the model
+# note_builder.py / cli/dashboard.py use.
+DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
 
 _cached_chat_model = None
 _cached_chat_tokenizer = None
@@ -357,19 +361,30 @@ def _synthesize_gemini(
     api_key: str,
     model: str = DEFAULT_GEMINI_MODEL,
     max_tokens: int = 1024,
+    thinking_budget: int | None = None,
 ) -> str:
     """Synthesize via Gemini REST API.
 
     The API key is passed in-memory and is never logged or written to disk.
     Uses the same REST pattern as repair.py so we don't pull in extra deps.
+
+    ``thinking_budget`` (Gemini 2.5+): when set, caps the model's hidden
+    reasoning tokens. Pass ``0`` to DISABLE thinking for tasks that emit a long
+    structured answer — a reasoning model otherwise spends most of
+    ``max_tokens`` on thinking and truncates the answer at finishReason=
+    MAX_TOKENS (e.g. the next-actions list collapsing to ~2 items). Left as
+    ``None`` (model default) for free-form answers where reasoning helps.
     """
     import json as _json
     import urllib.request
 
     url = _GEMINI_ENDPOINT.format(model=model) + f"?key={api_key}"
+    gen_config: dict[str, Any] = {"maxOutputTokens": max_tokens}
+    if thinking_budget is not None:
+        gen_config["thinkingConfig"] = {"thinkingBudget": thinking_budget}
     body = _json.dumps({
         "contents": [{"role": "user", "parts": [{"text": prompt}]}],
-        "generationConfig": {"maxOutputTokens": max_tokens},
+        "generationConfig": gen_config,
     }).encode()
     req = urllib.request.Request(
         url, data=body,
@@ -410,6 +425,7 @@ def _synthesize_with_fallback(
     *,
     chat_model: str = DEFAULT_CHAT_MODEL,
     max_tokens: int = 1024,
+    thinking_budget: int | None = None,
 ) -> tuple[str, str]:
     """Synthesize via the Gemini -> local Qwen ladder.
 
@@ -417,6 +433,10 @@ def _synthesize_with_fallback(
     logs and falls back to the local Qwen model. On a second failure, emits a
     dual-failure warning and returns a sentinel. When no Gemini key is present,
     goes straight to Qwen.
+
+    ``thinking_budget`` is forwarded to Gemini (pass ``0`` to disable reasoning
+    for long structured outputs — see :func:`_synthesize_gemini`); it does not
+    affect the local Qwen fallback.
 
     Returns ``(synthesis_text, model_used)`` where model_used is the Gemini
     model id, the Qwen model id (optionally annotated), or a "(failed)" marker.
@@ -426,7 +446,10 @@ def _synthesize_with_fallback(
     gemini_key = get_gemini_api_key()
     if gemini_key:
         try:
-            synthesis = _synthesize_gemini(prompt, api_key=gemini_key, max_tokens=max_tokens)
+            synthesis = _synthesize_gemini(
+                prompt, api_key=gemini_key, max_tokens=max_tokens,
+                thinking_budget=thinking_budget,
+            )
             return synthesis, DEFAULT_GEMINI_MODEL
         except Exception as e:
             logger.warning("Gemini synthesis failed, falling back to local LLM: %s", e)

@@ -6,6 +6,27 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.49.1] - 2026-06-30
+
+Fixed the "what to do next" list collapsing to ~2 items right after 0.49.0 shipped.
+
+### Fixed
+- **Reasoning-model truncation** — `gemini-2.5-flash` is a thinking model; on the ranking prompt it spent ~1962 of its 2048-token budget on hidden reasoning and hit `finishReason=MAX_TOKENS` after emitting only ~2 list items (24 candidates went in). `_synthesize_gemini` / `_synthesize_with_fallback` now accept a `thinking_budget`, and the next-actions ranking call passes `thinking_budget=0` to disable reasoning so the whole budget goes to the answer (the full ~15-item list). `ask()` is unchanged (default `None`). Covered by `tests/test_querier_gemini_parse.py::TestThinkingBudget` + `tests/test_next_actions.py`.
+- **Self-reference feedback loop** — the generated `Dashboards/What To Do Next.md` was itself picked up as a "recent vault edit" and ranked in its own list every refresh. `_operator_candidates` now skips rebalance's own generated next-actions file (`_is_generated_next_actions_file`).
+
+## [0.49.0] - 2026-06-29
+
+Made the daily "what to do next" genuinely Gemini-synthesized (paid key file) and published it to a fixed Obsidian vault file. Root cause of the prior placeholder titles: the default Gemini model had been retired, silently forcing every synthesis onto the local Qwen fallback.
+
+### Added
+- **Paid-key file resolver** in `get_gemini_api_key()` (`src/rebalance/ingest/config.py`): a new resolution step reads the key from a file — path from `GEMINI_API_KEY_FILE` env → `gemini_key_file` config → default `~/secrets/gemini-paid-key.txt` — after env vars and before the gcloud fallback. `_pick_api_key` extracts the `AIza…` key from a multi-line file (e.g. a project-id line + key line). The file lives outside the repo by design; the key is read in-memory and never logged. Covered by `tests/test_gemini_key_resolution.py`.
+- **Vault render sink** in `src/rebalance/ingest/next_actions.py`: `render_next_actions_markdown()` + `write_next_actions_to_vault()` write the SAME ranked output to the fixed file `Dashboards/What To Do Next.md` (single-writer generated banner), wired into the `refresh_index` precompute hook (gated on `update_dashboard_note` + a resolved vault, reusing the resolved path). Covered by `tests/test_next_actions.py::TestVaultRender` and `tests/test_next_actions_precompute.py`.
+
+### Fixed
+- **Retired Gemini model** — `DEFAULT_GEMINI_MODEL` was `gemini-2.0-flash`, which Google now 404s as "no longer available", silently forcing every synthesis onto the local Qwen-0.6B fallback (the source of the `<rank>. <title>` placeholder titles). Standardized on `gemini-2.5-flash` (already used by `note_builder.py`/`cli/dashboard.py`); the ranking synthesis call gets 2048-token headroom so a reasoning model isn't truncated to a no-text response.
+- **Placeholder-echo hardening** — `_parse_ranked_synthesis` now drops a line whose title is an unfilled `<rank>`/`<title>` template token and ignores `<…>` field values, so a weak fallback model can never surface the format spec as a real action (the deterministic ranking survives instead).
+- Made `tests/test_repair_fsm.py` hermetic — its `_make_fsm` helper no longer resolves an ambient machine key, so the "no API key" path is tested deterministically regardless of local key files.
+
 ## [0.48.0] - 2026-06-26
 
 Added a bottom note to the Focus 5 Float macOS card: it reads a hand-written `focus5.md` from the operator's Obsidian vault and renders it under the roster, with a hint when no note exists.

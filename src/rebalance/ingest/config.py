@@ -1352,7 +1352,14 @@ def get_gemini_api_key() -> str | None:
          GEMINI_SECRET_NAME, default "gemini-api-key").
       2. GEMINI_API_KEY environment variable.
       3. GOOGLE_API_KEY environment variable.
-      4. Google Secret Manager via the ``gcloud secrets versions access`` CLI —
+      4. Key FILE — the paid-key path. The file location resolves from
+         GEMINI_API_KEY_FILE env → ``gemini_key_file`` config → the default
+         ``~/secrets/gemini-paid-key.txt``. The file lives OUTSIDE the repo by
+         design (never committed), so an absolute/expanded path is read. This is
+         what makes a keyless machine (no GOOGLE_CLOUD_PROJECT, no env var, no
+         gcloud auth) resolve Gemini instead of silently falling back to local
+         Qwen — the common single-operator setup. Read in-memory; never logged.
+      5. Google Secret Manager via the ``gcloud secrets versions access`` CLI —
          the pattern the P2 design specifies (P2 decision #5). This last-resort
          path means a machine that can reach the secret through gcloud but lacks
          the optional Python package/env still resolves the key instead of
@@ -1380,8 +1387,79 @@ def get_gemini_api_key() -> str | None:
     if env_key:
         return env_key
 
-    # 4. gcloud CLI fallback (the documented P2 pattern) — last resort.
+    # 4. Key file (the paid-key path). Resolves a keyless single-operator setup.
+    file_key = _gemini_key_from_file()
+    if file_key:
+        return file_key
+
+    # 5. gcloud CLI fallback (the documented P2 pattern) — last resort.
     return _gemini_key_via_gcloud(project, secret_name)
+
+
+# The default key-file location. Outside the repo by design so it is never
+# committed; overridable via GEMINI_API_KEY_FILE env or the ``gemini_key_file``
+# config key.
+DEFAULT_GEMINI_KEY_FILE = "~/secrets/gemini-paid-key.txt"
+
+
+def _gemini_key_from_file() -> str | None:
+    """Return the Gemini API key read from a key file, or None.
+
+    The PATH is resolved first-hit-wins from:
+      1. ``GEMINI_API_KEY_FILE`` environment variable,
+      2. the ``gemini_key_file`` value in the rbos pulse config,
+      3. the default ``~/secrets/gemini-paid-key.txt``.
+
+    The key file holds the raw key as text (leading/trailing whitespace and
+    blank lines ignored). Returns None when no candidate resolves to a readable,
+    non-empty file. NEVER raises and NEVER logs the key value.
+    """
+    candidates: list[str] = []
+    env_path = os.environ.get("GEMINI_API_KEY_FILE")
+    if env_path:
+        candidates.append(env_path)
+    try:
+        cfg_path = get_pulse_config().get("gemini_key_file")
+    except Exception:  # noqa: BLE001 — config unreadable; skip to the default
+        cfg_path = None
+    if cfg_path:
+        candidates.append(str(cfg_path))
+    candidates.append(DEFAULT_GEMINI_KEY_FILE)
+
+    for raw in candidates:
+        try:
+            path = Path(raw).expanduser()
+            if not path.is_file():
+                continue
+            value = _pick_api_key(path.read_text(encoding="utf-8"))
+            if value:
+                return value
+        except Exception:  # noqa: BLE001 — unreadable / perms; try the next candidate
+            continue
+    return None
+
+
+# A Google API key: literal "AIza" + 35 url-safe chars.
+_GOOGLE_API_KEY_RE = re.compile(r"AIza[0-9A-Za-z_\-]{35}")
+
+
+def _pick_api_key(text: str) -> str | None:
+    """Extract the API key from key-file *text*.
+
+    A key file may hold the bare key, OR several lines — e.g. a project/client id
+    on one line and the ``AIza…`` key on another (the shape Google's console
+    "download" produces). Prefer a substring matching the Google API-key shape;
+    otherwise fall back to the first non-empty line so a plain single-line key
+    file (any future key format) still resolves.
+    """
+    match = _GOOGLE_API_KEY_RE.search(text or "")
+    if match:
+        return match.group(0)
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped:
+            return stripped
+    return None
 
 
 def _gemini_key_via_gcloud(project: str | None, secret_name: str) -> str | None:
