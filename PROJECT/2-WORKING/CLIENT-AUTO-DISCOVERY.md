@@ -5,14 +5,30 @@ codename: HiQS
 owner: Noel
 created: 2026-06-30
 updated: 2026-06-30
-status: "SKETCH (1-INBOX intake) — design only, no code. Lazy-by-default: clients are an attribute of a project, not a new entity. Reuses project_registry / inference / confirm / classifier / rank-prompt; adds ~50 lines across 3 existing files + 1 test. No new table, no new lifecycle, no new MCP tool in v1."
+status: "Active — Phase 1 (v1 deterministic owner-as-client). Phase 0 design accepted. Lazy-by-default: clients are an attribute of a project, not a new entity. Reuses project_registry / inference / classifier / rank-prompt; ~50 lines across 3 existing files + 1 test. No new table, no new lifecycle, no new MCP tool in v1."
 goal: "Auto-discover a CLIENT name per project and expose clients as discrete buckets the 'what to do next' synthesis can group/prioritize by — without building a parallel client entity or its own lifecycle."
-current_phase: "Phase 0 — design accepted? then build v1 (deterministic) + v1.1 (Gemini gap-fill)"
+current_phase: "Phase 1 complete (v1 deterministic shipped + verified). Next: Phase 2 — Gemini gap-fill for None-client projects (live keyed env)."
 endgame: "The ranked next-action list is client-aware: items roll up under their client, and a sparse/at-risk client surfaces even when its projects are individually quiet."
 kill_switch: "Kill if owner-as-client (free, deterministic) already labels >90% of active projects correctly — then Gemini gap-fill is unjustified and clients stay a pure derived GROUP BY."
 tags: [signal-quality, client-discovery, ponytail]
+effort: 2
+complexity: 2
+risk: 1
+phases: 3
 roadmap_exempt: false
 ---
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| **Phase 1 v1 deterministic shipped + verified (2026-06-30).** Edit 1 (`project_inference._infer_client` owner-as-client → `custom_fields.client_inferred`), Edit 2 (`registry.effective_client` curated-wins + `get_clients()` derived buckets), Edit 3 (`next_actions` client-aware rank prompt: per-`[OWN]`-line `[client:X]` tag + client roster, `_client_views()` best-effort). QA gate met: `tests/test_client_buckets.py` (4 tests) + full suite **1222 green**, `rebalance doctor` clean, PDDA gates 0 errors. No new table/lifecycle/MCP tool. | **Phase 2 — Gemini gap-fill** for `None`-client projects only (one batched call, fail-soft to `None`), verified live in the keyed env (sandbox has no GSM key). _Kill check first:_ measure owner-as-client coverage on the live registry — if >90% of active projects already labeled, skip Gemini and close at v1. |
+
+## Table of contents
+
+- [Phase 0 — accept design](#phased-delivery) _(complete)_
+- [Phase 1 — v1 deterministic](#phased-delivery) _(complete)_
+- [Phase 2 — v1.1 Gemini gap-fill](#phased-delivery) _(active/next)_
 
 # Client Auto-Discovery
 
@@ -149,10 +165,17 @@ is forward-compatible with a future table (the table's first migration just lift
 - **Phase 0 — accept design.** Confirm clients-as-project-attribute (not a new entity) is
   the intended v1. _Kill check:_ if owner-as-client already covers >90% of active projects,
   stop at v1 and skip Gemini entirely.
+  - **QA gate:** design accepted; doc carries triage ratings + status table; promoted to `2-WORKING`. ✅ (2026-06-30)
 - **Phase 1 — v1 deterministic.** Edits 1 (owner-as-client) + 2 + 3 + test. No API key
   needed; `get_clients()` returns real buckets; rank prompt is client-aware.
+  - **QA gate:** `tests/test_client_buckets.py` green (curated `client` beats `client_inferred`;
+    group-by buckets correct; null-client → `(unassigned)`); full `pytest tests/` green;
+    `rebalance doctor` clean. No new file beyond the one test; storage is `custom_fields.client_inferred` only. ✅ (2026-06-30 — suite 1222 green, doctor clean, PDDA 0 errors)
 - **Phase 2 — v1.1 Gemini gap-fill.** Batched call for `None`-client projects only.
   Verified live in the keyed env (sandbox has no GSM key).
+  - **QA gate:** batched gap-fill labels ≥1 previously-`None` project in the live keyed env;
+    any failure fails soft to `None` (pipeline never blocks); deterministic owner-as-client
+    path unchanged when the key is absent.
 
 ## Verification (per ROUTER §7)
 

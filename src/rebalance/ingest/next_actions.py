@@ -307,6 +307,8 @@ def build_rank_prompt(
     weights: SignalWeights,
     temporal_context: dict[str, Any] | None,
     blended: bool,
+    client_by_project: dict[str, str] | None = None,
+    client_roster: dict[str, list[str]] | None = None,
 ) -> str:
     """Assemble the ranking prompt — a flat ranked-list request, no analytics.
 
@@ -339,13 +341,24 @@ def build_rank_prompt(
         sections.append("\n".join(lines))
 
     # [OWN] operator candidates — the operator's own signal.
+    clients = client_by_project or {}
     if operator_candidates:
         lines = ["## [OWN] Operator signals"]
         for c in operator_candidates:
             proj = f" {{{c.project}}}" if c.project else ""
+            client = clients.get(c.project) if c.project else None
+            cli = f" [client:{client}]" if client else ""
             ev = f"  — {'; '.join(c.evidence)}" if c.evidence else ""
-            lines.append(f"- ({c.source}){proj} {c.title}{ev}")
+            lines.append(f"- ({c.source}){proj}{cli} {c.title}{ev}")
         sections.append("\n".join(lines))
+
+    # Client roster — the discrete client buckets, so synthesis can group items by
+    # client and surface an at-risk client whose projects are individually quiet.
+    if client_roster:
+        roster = ["## Client roster (group ranked items by client)"]
+        for client, projects in sorted(client_roster.items()):
+            roster.append(f"- {client}: {', '.join(sorted(projects))}")
+        sections.append("\n".join(roster))
 
     # [TEAMMATE] person-attributed blocks — classified project/duration/blocker
     # PREFERRED over verbatim detail (data minimization). The section header
@@ -804,6 +817,35 @@ def _shared_event_ids(
     return operator_ids & teammate_ids
 
 
+def _client_views(database_path: Path) -> tuple[dict[str, str], dict[str, list[str]]]:
+    """Build the per-candidate client lookup + the client roster for the prompt.
+
+    ``client_by_project`` maps both a project's repos and its name to the effective
+    client, so an operator candidate keyed by ``owner/repo`` resolves. ``roster`` is
+    the discrete client buckets (``get_clients``). Best-effort: any failure returns
+    empties so ranking is never blocked by client metadata.
+    """
+    try:
+        from rebalance.ingest.registry import (
+            effective_client,
+            get_clients,
+            get_projects,
+        )
+
+        by_project: dict[str, str] = {}
+        for project in get_projects(database_path):
+            client = effective_client(project.get("custom_fields"))
+            if not client:
+                continue
+            by_project[project["name"]] = client
+            for repo in project.get("repos") or []:
+                by_project[repo] = client
+        return by_project, get_clients(database_path)
+    except Exception as exc:  # noqa: BLE001 — client metadata is never load-bearing
+        logger.warning("_client_views: %s", exc)
+        return {}, {}
+
+
 def rank_next_actions(
     database_path: Path,
     *,
@@ -895,12 +937,15 @@ def rank_next_actions(
     model_used = ""
     ranked = fallback
     if synthesize:
+        client_by_project, client_roster = _client_views(database_path)
         prompt = build_rank_prompt(
             operator_candidates=operator_actions,
             teammate_delta=teammate_delta,
             weights=weights,
             temporal_context=_operator_temporal_context(database_path, now, tz),
             blended=blended,
+            client_by_project=client_by_project,
+            client_roster=client_roster,
         )
         try:
             from rebalance.ingest.querier import _synthesize_with_fallback

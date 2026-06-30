@@ -466,6 +466,22 @@ def _seed_summary(seed: _ProjectSeed) -> str:
     return "; ".join(parts)
 
 
+def _infer_client(seed: _ProjectSeed) -> str | None:
+    """Owner-as-client: the GitHub owner/org IS the client for the common case.
+
+    Deterministic, no API key. Calendar-only seeds have no repo owner → None
+    (the Gemini gap-fill in Phase 2 fills those). When a seed spans several owners
+    (grouped brand), the dominant owner wins.
+
+    # ponytail: owner-as-client is the free spine. Upgrade to Gemini gap-fill only
+    # for the None cases (personal/calendar-only), never the whole field.
+    """
+    owners = Counter(repo.partition("/")[0] for repo in seed.repos if "/" in repo)
+    if not owners:
+        return None
+    return owners.most_common(1)[0][0]
+
+
 def _seed_to_project_row(seed: _ProjectSeed) -> dict[str, Any]:
     name = _choose_seed_name(seed)
     aliases = sorted(
@@ -499,6 +515,7 @@ def _seed_to_project_row(seed: _ProjectSeed) -> dict[str, Any]:
         "custom_fields": {
             "aliases": aliases,
             "calendar_aliases": calendar_aliases,
+            "client_inferred": _infer_client(seed),
             "provenance": "inferred",
             "inference": {
                 "generated_by": INFERENCE_GENERATED_BY,
