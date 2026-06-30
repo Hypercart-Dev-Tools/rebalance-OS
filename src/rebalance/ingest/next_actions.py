@@ -507,6 +507,11 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
             "why": "thread you engaged on",
         })
     for v in bundle.vault_edits:
+        # Skip rebalance's OWN generated next-actions file: it is rewritten every
+        # refresh, so it would otherwise always show up as a "recent edit" and
+        # rank itself (a self-reference feedback loop).
+        if _is_generated_next_actions_file(v.get("rel_path") or "", v.get("title") or ""):
+            continue
         out.append({
             "rank_key": (5, v.get("last_modified") or ""),
             "title": v.get("title") or v.get("rel_path") or "vault note",
@@ -528,6 +533,17 @@ def _neg_iso(value: str) -> str:
     if not value:
         return "￿"  # empty → least recent → last
     return "".join(chr(0x10FFFD - ord(ch)) if ord(ch) < 0x10FFFD else ch for ch in value)
+
+
+def _is_generated_next_actions_file(rel_path: str, title: str) -> bool:
+    """True for rebalance's own generated What-To-Do-Next vault file, so it is
+    excluded from next-action candidates (it must not rank itself).
+
+    ``VAULT_NEXT_ACTIONS_RELPATH`` is defined later in the module (with the
+    render sink); referenced here at call time, which is fine."""
+    fname = VAULT_NEXT_ACTIONS_RELPATH.rsplit("/", 1)[-1].lower()  # "what to do next.md"
+    stem = fname.rsplit(".", 1)[0]                                  # "what to do next"
+    return (rel_path or "").lower().endswith(fname) or (title or "").strip().lower() == stem
 
 
 def _teammate_candidate(blk: dict[str, Any]) -> dict[str, Any]:
@@ -889,10 +905,14 @@ def rank_next_actions(
         try:
             from rebalance.ingest.querier import _synthesize_with_fallback
 
-            # 2048: the ranked list can be long, and gemini-2.5-flash spends some
-            # of the budget on reasoning before emitting text — too small a cap
-            # truncates to a no-text MAX_TOKENS response and needlessly falls back.
-            synthesis, model_used = _synthesize_with_fallback(prompt, max_tokens=2048)
+            # thinking_budget=0 DISABLES the model's hidden reasoning: gemini-2.5
+            # is a reasoning model that otherwise spent ~1900 of 2048 tokens
+            # "thinking" and truncated the ranked list to ~2 items at MAX_TOKENS.
+            # With thinking off the whole budget goes to the answer (the full
+            # ranked list). 2048 caps the answer length.
+            synthesis, model_used = _synthesize_with_fallback(
+                prompt, max_tokens=2048, thinking_budget=0
+            )
             parsed = _parse_ranked_synthesis(synthesis)
             # STRUCTURED acceptance gate: only trust the parse over the
             # deterministic fallback when it is non-empty AND at least half its

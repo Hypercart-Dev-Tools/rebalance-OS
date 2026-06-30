@@ -306,6 +306,31 @@ class TestRankNextActions(unittest.TestCase):
         # Degraded-but-ranked: empty synthesis falls back to deterministic order.
         self.assertTrue(any("Fallback Meeting" in a.title for a in result.ranked))
 
+    def test_synthesis_disables_thinking_to_avoid_truncation(self) -> None:
+        """The ranking call passes thinking_budget=0 so a reasoning model doesn't
+        spend the token budget on hidden thinking and truncate the list (the
+        '2 items only' regression)."""
+        self._patch_pulse_cfg()
+        self._patch_roster([])
+        _insert_event(self.db, event_id="mine", summary="A Meeting",
+                      start_time=_today_at(9, tz=self.tz),
+                      end_time=_today_at(10, tz=self.tz),
+                      calendar_id="primary", person=None)
+        import rebalance.ingest.querier as querier
+        captured: dict = {}
+        orig = querier._synthesize_with_fallback
+
+        def _capture(prompt, **kwargs):
+            captured.update(kwargs)
+            return ("", "fake")
+
+        querier._synthesize_with_fallback = _capture
+        try:
+            na.rank_next_actions(self.db, blend_team=False, synthesize=True)
+        finally:
+            querier._synthesize_with_fallback = orig
+        self.assertEqual(captured.get("thinking_budget"), 0)
+
     def test_never_raises_on_missing_db(self) -> None:
         self._patch_pulse_cfg()
         self._patch_roster([])
@@ -452,6 +477,16 @@ class TestParseRankedSynthesis(unittest.TestCase):
             "1. <title> | person=operator | source=github | evidence=x | why=y"
         )
         self.assertEqual(actions, [])
+
+    def test_generated_next_actions_file_excluded_from_candidates(self) -> None:
+        """rebalance's own What-To-Do-Next vault file must not rank itself."""
+        self.assertTrue(na._is_generated_next_actions_file(
+            "Dashboards/What To Do Next.md", "What To Do Next"))
+        self.assertTrue(na._is_generated_next_actions_file(
+            "Dashboards/What To Do Next.md", ""))
+        # A real, differently-named note is kept.
+        self.assertFalse(na._is_generated_next_actions_file(
+            "Projects/Binoid.md", "Binoid"))
 
 
 class TestVaultRender(unittest.TestCase):

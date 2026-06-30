@@ -6,6 +6,14 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.49.1] - 2026-06-30
+
+Fixed the "what to do next" list collapsing to ~2 items right after 0.49.0 shipped.
+
+### Fixed
+- **Reasoning-model truncation** — `gemini-2.5-flash` is a thinking model; on the ranking prompt it spent ~1962 of its 2048-token budget on hidden reasoning and hit `finishReason=MAX_TOKENS` after emitting only ~2 list items (24 candidates went in). `_synthesize_gemini` / `_synthesize_with_fallback` now accept a `thinking_budget`, and the next-actions ranking call passes `thinking_budget=0` to disable reasoning so the whole budget goes to the answer (the full ~15-item list). `ask()` is unchanged (default `None`). Covered by `tests/test_querier_gemini_parse.py::TestThinkingBudget` + `tests/test_next_actions.py`.
+- **Self-reference feedback loop** — the generated `Dashboards/What To Do Next.md` was itself picked up as a "recent vault edit" and ranked in its own list every refresh. `_operator_candidates` now skips rebalance's own generated next-actions file (`_is_generated_next_actions_file`).
+
 ## [0.49.0] - 2026-06-29
 
 Made the daily "what to do next" genuinely Gemini-synthesized (paid key file) and published it to a fixed Obsidian vault file. Root cause of the prior placeholder titles: the default Gemini model had been retired, silently forcing every synthesis onto the local Qwen fallback.
