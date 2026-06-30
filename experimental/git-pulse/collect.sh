@@ -565,6 +565,10 @@ append_stage_path "devices/$device_id.yaml"
 # own (this tool is the single git writer). Guard the dir — it doesn't exist until
 # the first snapshot lands; "snapshots" stages everything under it via git add -A.
 [ -d "$sync_repo_dir/snapshots" ] && append_stage_path "snapshots"
+# PDDA writes a per-device install projection here (Hypercart-Dev-Tools/pdda install.sh).
+# Guard the file — it only exists on devices with PDDA installed — and stage just this one
+# per-device file, not the whole pdda/ dir, so the projection rides the normal pulse commit.
+[ -f "$sync_repo_dir/pdda/registry-$device_id.tsv" ] && append_stage_path "pdda/registry-$device_id.tsv"
 git add -A -- "${stage_paths[@]}"
 if git diff --cached --quiet; then
     # Nothing actually staged (e.g. a same-second rerun that produced

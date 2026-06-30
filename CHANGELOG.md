@@ -6,6 +6,11 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.51.2] - 2026-06-30
+
+### Fixed
+- **git-pulse collector now stages the PDDA registry projection** (`experimental/git-pulse/collect.sh`, GH-[#96](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/96)) — the collector staged `pulse-<device>.md` and `devices/<device>.yaml` but not the `pdda/registry-<device>.tsv` projection that PDDA's `install.sh` writes into the sync repo, so on PDDA-installed devices it sat as untracked dirt and never committed/pushed. Added a guarded `append_stage_path "pdda/registry-$device_id.tsv"` before `git add` (scoped to the single per-device file; the `[ -f ]` guard keeps it a no-op on devices without PDDA). This is the sync-side half of the multi-device PDDA rollup; the write-side path-autodetection fix was `Hypercart-Dev-Tools/pdda#7`. Verified by a new `tests/test_git_pulse_collect_cli.py` case (projection is staged when present) → 5/5 in that file; `bash -n` clean; `rebalance doctor` clean; `pdda.sh run` clean. -> `PROJECT/3-COMPLETED/GH-96-GITPULSE-STAGE-PDDA-PROJECTION.md`
+
 ## [0.51.1] - 2026-06-30
 
 ### Changed

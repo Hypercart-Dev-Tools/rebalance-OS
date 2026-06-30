@@ -89,6 +89,7 @@ def _write_git_stub(
         textwrap.dedent(
             f"""\
             #!/usr/bin/env python3
+            import os
             import sys
             from pathlib import Path
 
@@ -136,6 +137,9 @@ def _write_git_stub(
                     raise SystemExit(0)
 
             if args[:3] == ["add", "-A", "--"]:
+                stage_log = os.environ.get("STAGE_LOG")
+                if stage_log:
+                    Path(stage_log).write_text("\\n".join(args[3:]))
                 raise SystemExit(0)
 
             if args[:2] == ["add", "--"]:
@@ -442,6 +446,67 @@ class GitPulseCollectCliTests(unittest.TestCase):
         self.assertIn('scan_status: "degraded"', metadata_text)
         self.assertIn(str(blocked_repo), metadata_text)
         self.assertEqual(last_run_text, "0\n")
+
+
+    def test_collect_stages_pdda_registry_projection(self) -> None:
+        """GH-96: the per-device PDDA projection rides the normal pulse commit when present."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            home = Path(tmpdir)
+            bin_dir = home / "bin"
+            config_dir = home / ".config" / "git-pulse"
+            sync_repo = config_dir / "repo"
+            devices_dir = sync_repo / "devices"
+            pdda_dir = sync_repo / "pdda"
+            local_repo = home / "code" / "sample-repo"
+            stage_log = home / "stage-log.txt"
+
+            bin_dir.mkdir(parents=True)
+            devices_dir.mkdir(parents=True)
+            pdda_dir.mkdir(parents=True)
+            (sync_repo / ".git").mkdir()
+            (local_repo / ".git").mkdir(parents=True)
+
+            _write_date_stub(bin_dir / "date")
+            _write_scutil_stub(bin_dir / "scutil")
+            _write_git_stub(bin_dir / "git", local_repo, sync_repo)
+
+            (config_dir / "config.sh").write_text(
+                textwrap.dedent(
+                    f"""\
+                    repos=("{local_repo}")
+                    sync_repo_dir="{sync_repo}"
+                    device_id="noels-macbook-pro-14"
+                    device_name="Noel's MacBook Pro 14"
+                    hostname="Noel's MacBook Pro 14"
+                    """
+                )
+            )
+            (config_dir / "last-run").write_text("0\n")
+            # PDDA's projection already exists in the sync repo (written by pdda install.sh).
+            (pdda_dir / "registry-noels-macbook-pro-14.tsv").write_text(
+                "# repo\tlast_install_utc\tmode\tsource_commit\tstartup_docs\n"
+                "sample-repo\t2026-06-30T22:00:00Z\tobserve\tdeadbee\tno\n"
+            )
+
+            subprocess.run(
+                ["/bin/bash", str(COLLECT_SCRIPT)],
+                check=True,
+                capture_output=True,
+                text=True,
+                env={
+                    **os.environ,
+                    "HOME": str(home),
+                    "PATH": f"{bin_dir}:{os.environ['PATH']}",
+                    "STAGE_LOG": str(stage_log),
+                },
+            )
+
+            staged = stage_log.read_text().splitlines()
+
+        self.assertIn("pdda/registry-noels-macbook-pro-14.tsv", staged)
+        # Sanity: the existing pulse + metadata files are still staged alongside it.
+        self.assertIn("pulse-noels-macbook-pro-14.md", staged)
+        self.assertIn("devices/noels-macbook-pro-14.yaml", staged)
 
 
 if __name__ == "__main__":
