@@ -4,8 +4,8 @@
   Scaffolded 2026-07-01.
 -->
 
-NEXT: codex
-STATUS: Open
+NEXT: —
+STATUS: Escalated
 ROUND: 1 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -74,5 +74,27 @@ Producer (codex) takes the first turn.
 
 The `tests/test_client_gapfill.py` file may not yet exist — codex should create it if the
 kill-check shows gap-fill is needed. It is in ALLOW_PATHS.
+
+### Kill-check — claude-a (operator) — 2026-07-01
+
+Kill-check blocked: no live registry available.
+
+`/Users/noelsaw/.config/rebalance-os/` does not exist on this machine; the rebalance SQLite DB
+(`rebalance.db`) has no tables. The live project registry is not populated in this environment.
+
+The Phase 2 contract requires measuring owner-as-client coverage on the live registry to
+determine whether >90% of active projects are already labeled (kill switch condition). Without
+a populated DB, the percentage cannot be measured.
+
+**Operator decision required — pick one:**
+1. **Close at v1 (recommended if you know coverage is high):** If Phase 1 owner-as-client already
+   labels the projects you care about, set STATUS: Approved here and skip Gemini gap-fill.
+2. **Implement Phase 2 without kill-check:** Set NEXT: codex and add a note that codex should
+   implement the batched Gemini gap-fill per the contract (fail-soft, one call, None-client only).
+   The coverage measurement will be done post-implementation against the live env.
+3. **Defer:** Remove this relay from the wave, revisit when the live env is accessible.
+
+VERDICT: Escalated
+Basis: Kill-check cannot run — live registry DB absent on this machine.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
