@@ -171,6 +171,9 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         from rebalance.ingest.calendar_config import CalendarConfig
         from rebalance.ingest.calendar_snap import snap_edges
 
+        if not (1 <= days <= 7):
+            return {"error": f"days must be between 1 and 7, got {days}", "status": "error"}
+
         config = CalendarConfig.load()
         resolved_calendar_id = calendar_id.strip() or config.calendar_id
         resolved_timezone = timezone_name.strip() or config.timezone
