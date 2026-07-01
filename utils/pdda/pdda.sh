@@ -362,12 +362,12 @@ check_changelog() {
     return "$(pdda_gated_exit "$rc")"
   fi
 
-  cl_line="$(grep -Em1 '^##[[:space:]]+[0-9]{4}-[0-9]{2}-[0-9]{2}' "$PDDA_CHANGELOG" 2>/dev/null || true)"
+  cl_line="$(grep -Em1 '^##[[:space:]]+(\[[^]]*\][[:space:]]*-[[:space:]]*)?[0-9]{4}-[0-9]{2}-[0-9]{2}' "$PDDA_CHANGELOG" 2>/dev/null || true)"
   cl_date="$(printf '%s' "$cl_line" | grep -Eo '[0-9]{4}-[0-9]{2}-[0-9]{2}' | head -1)"
 
   if [ -z "$cl_date" ] || ! pdda_is_real_date "$cl_date"; then
     pdda_record_finding warn "$CHECK_NAME" "$PDDA_CHANGELOG" 1 \
-      "no dated '## YYYY-MM-DD' entry at the top of CHANGELOG.md — add an end-of-iteration entry" "add-dated-entry"
+      "no dated '## YYYY-MM-DD' or '## [x.y.z] - YYYY-MM-DD' entry at the top of CHANGELOG.md — add an end-of-iteration entry" "add-dated-entry"
     pdda_emit_summary "$CHECK_NAME" "$rc"
     return "$(pdda_gated_exit "$rc")"
   fi
