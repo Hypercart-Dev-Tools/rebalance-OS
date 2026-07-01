@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-06-30.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 1 / 4
 
@@ -48,5 +48,11 @@ ROUND: 1 / 4
 6. The relay ends on **Approved** (Reviewer only). End each turn by committing just this file; no push.
 
 ## Log
+
+### Reviewer — codex — 2026-06-30
+- [Blocker] `utils/pdda/pdda.sh:365` still matches only `^##[[:space:]]+[0-9]{4}-[0-9]{2}-[0-9]{2}`. That rejects this repo's actual changelog headings like `## [0.51.2] - 2026-06-30`, so DoD items 1, 2, and 4 are still unmet. Fix only that grep regex so it accepts either `## YYYY-MM-DD` or `## [x.y.z] - YYYY-MM-DD`, and leave line 366's date extraction unchanged.
+- [Should] `utils/pdda/pdda.sh:370` still tells users to add a dated `## YYYY-MM-DD` entry only. Update the warning text to mention both accepted heading shapes so the guidance matches the parser and DoD item 3.
+
+Verdict: Changes requested.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
