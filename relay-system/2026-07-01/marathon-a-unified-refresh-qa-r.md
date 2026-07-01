@@ -4,8 +4,8 @@
   Scaffolded 2026-07-01.
 -->
 
-NEXT: agy
-STATUS: Open
+NEXT: —
+STATUS: Approved
 ROUND: 1 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -151,5 +151,18 @@ All 7 QA-R findings addressed. Disposition per finding:
 VERDICT: PASS
 Basis: 8/8 tests green. All 7 QA-R findings addressed with dispositions above.
 DB-less cold-start is a documented design choice per QA-R "decide and document".
+
+### Reviewer — agy — 2026-07-01
+
+- [Pass] **F1 (Silent helper failure)**: `/api/refresh` returns `ok: false` on helper error, and dashboard client-side JavaScript handles `helper_error` by displaying "⚠ Reminders stale" on the refresh button, keeping the prior snapshot of `active.json`.
+- [Pass] **F2 (No automated coverage)**: Comprehensive unit tests added under `tests/test_unified_refresh_remediation.py` covering envelope parsing, backward compatibility, failing helper behavior, and cold-start. `pytest` executes successfully (8/8 green).
+- [Pass] **F3 (DB read path dropped)**: DB-less cold-start choice is explicitly documented, and empty-file behavior behaves as designed, tested via unit tests.
+- [Pass] **F4 (Two hardcoded literals)**: Extracted single shared constant `ACTIVE_JSON_PATH` in both `pulse_server.py` and `pulse_web.py`.
+- [Pass] **F5 (Private symbol import + in-handler imports)**: Lifted imports to module scope in `pulse_server.py` and documented private-symbol coupling.
+- [Pass] **F6 (Unversioned cross-process contract)**: Structured versioned envelope is written in `pulse_server.py`, and `pulse_web.py` successfully parses it while remaining backward-compatible with bare lists.
+- [Pass] **F7 (Helper fetch has no timeout)**: Added a bounded 4.5s timeout on `semaphore.wait(timeout:)` in `apple_reminders_helper_app.swift` with proper timeout error handling.
+
+VERDICT: Approved
+Basis: All 7 findings fully implemented, unit tests pass (8/8 green), and `rebalance doctor` is clean.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
