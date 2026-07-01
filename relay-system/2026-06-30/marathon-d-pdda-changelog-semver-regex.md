@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-06-30.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: —
+STATUS: Approved
 ROUND: 2 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -68,5 +68,15 @@ Acceptance: `utils/pdda/pdda.sh changelog` → `SUMMARY [pdda-check-changelog] e
 
 VERDICT: PASS
 Basis: Both regex shapes recognized, acceptance check clean, no lines outside `utils/pdda/pdda.sh` touched.
+
+### Reviewer — agy — 2026-06-30
+
+- [Pass] `utils/pdda/pdda.sh:365` properly matches both bare-date and semver-date style changelog headings.
+- [Pass] `utils/pdda/pdda.sh:366` date extraction is untouched.
+- [Pass] `utils/pdda/pdda.sh:370` warning message is correctly updated to mention both accepted heading shapes.
+- [Pass] Acceptance check `utils/pdda/pdda.sh changelog` passes with 0 warnings/errors.
+
+VERDICT: Approved
+Basis: Both regex shapes recognized, warning message updated, acceptance check clean, no other lines in `utils/pdda/pdda.sh` touched.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
