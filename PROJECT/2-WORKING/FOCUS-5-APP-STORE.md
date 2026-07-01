@@ -1,10 +1,10 @@
 ---
 title: Focus 5 Native — Standalone Mac App Store Plan
 doc_type: project-plan
-status: not-started
+status: active
 owner: Noel Saw
 created: 2026-06-25
-updated: 2026-06-29
+updated: 2026-07-01
 goal: "Turn Focus 5 Float into a truly standalone macOS app that can ship through the Mac App Store, with no runtime dependency on rebalance-OS, Python, localhost servers, or repo scripts."
 priority: P2
 related:
@@ -19,7 +19,7 @@ rollout_rule: "Each phase must leave a buildable, launchable app or a green `xco
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 0 Spike Built (2026-06-29).** Created the standalone skeleton app (`Focus5Native`) in SwiftUI. Validated `NSOpenPanel` folder access, security-scoped bookmark persistence, and basic repo status scanning. Formally decided on embedded `libgit2` (e.g. SwiftGit2) because the strict App Store sandbox blocks `Process` execution of system `/usr/bin/git`. | **Phase 0-R — Spike Remediation (2026-06-29).** QA review: the spike's 8 build boxes are `[x]` but its Phase 0 QA Checklist is all `[ ]` — and the very first gate ("findings from a *real sandboxed* run, not guessed") is unmet. The build is an **unsandboxed** `swift run` executable, the `SwiftGit2` path was never spiked, and `Process` failure was asserted, not observed. Re-spike sandboxed before Phase 1. |
+| **Phase 0-R Sandboxed Re-spike PASSED (2026-07-01).** All five Phase 0-R remediation gates + all five Phase 0 QA gates now observed, not asserted, via a codesigned `.app` under `com.apple.security.app-sandbox`: `Process`→git empirically blocked (`xcrun: error: cannot be used within an App Sandbox.`), in-process **libgit2 1.7.2** returns the full typed fact set (incl. last-commit timestamp) on a permitted path, security-scoped bookmark round-trip verified in-sandbox. Evidence: [`macOS/Apps/Focus5Native/PHASE-0-R-FINDINGS.md`](../../macOS/Apps/Focus5Native/PHASE-0-R-FINDINGS.md); reproducer `build-and-run-sandboxed.sh`. **Key finding:** the SwiftGit2 SPM shortcut is iOS-only for macOS — Phase 2 must produce a macOS-sliced libgit2. | **Phase 1 — Native Contract & Data Model.** Phase 0/0-R are closed; freeze the native v1 entities (`RepoSnapshot`, `FocusRoster`, `OffRosterWarning`, `RankingMode`, `AppSettings`, `GrantedRoot`). Carry two Phase-0-R follow-ups forward: (a) source a **macOS-sliced libgit2** (Phase 2), (b) `restoreBookmark()` must call `stopAccessingSecurityScopedResource()`. |
 
 ## Table of Contents
 
@@ -123,17 +123,20 @@ Why this is the right track for the App Store build:
   - [x] embedded git library path
 - [x] Record the decision with explicit kill criteria: what would make the `Process` path unacceptable for App Store v1, and what would force the embedded-library path.
   - **DECISION:** We MUST use the embedded-library path (e.g., `SwiftGit2` / `libgit2`).
-  - **KILL CRITERIA MET:** The App Store enforces strict sandboxing (`App Sandbox`). A sandboxed Mac app cannot spawn external shell processes like `/usr/bin/git` or `/usr/local/bin/git` unless the binary is fully bundled within the app itself (which is impractical for a full git distribution) or via very complex user-prompted XPC workarounds. Therefore, to ensure smooth Mac App Store approval and robust sandboxing, `Process` + `system git` is a non-starter. We will proceed with `SwiftGit2` for native, in-process git probing.
+  - **KILL CRITERIA MET (empirically confirmed 2026-07-01):** The App Store enforces strict sandboxing (`App Sandbox`). A sandboxed Mac app cannot spawn `/usr/bin/git` — the Phase 0-R re-spike ran it inside the sandbox and captured the verbatim failure `xcrun: error: cannot be used within an App Sandbox.` In-process libgit2, by contrast, returns the full fact set on a permitted path. `Process` + `system git` is a non-starter; embedded, in-process git probing is required.
+  - **⚠ REVERSAL-COST NOTE (Phase 0-R finding):** "just add `SwiftGit2` via SPM" does NOT work for native macOS. `SwiftGit2` 0.6.0 has no `Package.swift` (Carthage-only); the SPM fork `light-tech/SwiftGit2` pulls a `Clibgit2` xcframework that is **iOS-only** (`ios-arm64`/sim/maccatalyst — no macOS slice, verified via its Info.plist). The Phase 0-R probe linked Xcode's internal arm64 `libgit2.dylib` (1.7.2) as a **spike stand-in only — not shippable**. **Phase 2 must budget for producing a macOS-sliced libgit2** (xcframework, or `systemLibrary` + a bundled dylib).
 - [x] Confirm the current floating panel + menu-bar shell still behaves correctly under the sandboxed spike build.
 - [x] Write Phase 0 findings back into this doc before Phase 1 starts.
 
 ### QA Checklist — Phase 0
 
-- [ ] **Spike truth:** findings are based on a real sandboxed app run, not guessed from the current unsandboxed `swift run` path.
-- [ ] **Standalone truth:** the spike proves zero dependency on `rebalance serve`, Python, or repo scripts.
-- [ ] **Decision quality:** the git implementation choice is written with reversal cost, not left as a hand-wave.
-- [ ] **Kill-switch:** if the spike shows App Store constraints break the core product value, pause here instead of carrying bad assumptions into Phase 1.
-- [ ] **Proof artifact:** this doc includes the exact result, date, and machine context from the spike.
+> **All five PASSED 2026-07-01** via the Phase 0-R sandboxed re-spike (evidence: `macOS/Apps/Focus5Native/PHASE-0-R-FINDINGS.md`).
+
+- [x] **Spike truth:** findings are from a real sandboxed, codesigned `.app` run — not the unsandboxed `swift run` path.
+- [x] **Standalone truth:** the probe harness (`Focus5Probe`) runs headless with zero dependency on `rebalance serve`, Python, or repo scripts — in-process libgit2 only.
+- [x] **Decision quality:** the embedded-libgit2 choice now carries an explicit reversal cost (the SwiftGit2 SPM shortcut is iOS-only for macOS — see the decision note below).
+- [x] **Kill-switch:** the App Store constraint was empirically probed, not assumed; the core product value (native repo probing) is achievable in-sandbox via libgit2, so proceeding is justified.
+- [x] **Proof artifact:** exact A/B/C result, date (2026-07-01), and machine context (Swift 6.2.4 / Xcode 26.3, ad-hoc sign) recorded in `PHASE-0-R-FINDINGS.md`.
 
 ## Phase 0-R — Spike Remediation (2026-06-29)
 
@@ -153,12 +156,19 @@ Why this is the right track for the App Store build:
 - **No proof artifact + no clean-account evidence.** QA gates "real result, date, machine context" and the build box "run on a clean Mac user account with no rebalance checkout" have no recorded output. Resource hygiene is also incomplete: `restoreBookmark()` never calls `stopAccessingSecurityScopedResource()` (acknowledged in a comment) — acceptable for a spike, fix before Phase 2.
 
 ### QA gate — Remediation
-- [ ] **Sandboxed build exists:** the spike runs as a codesigned `.app` with `com.apple.security.app-sandbox` + `files.user-selected.read-write` entitlements — not `swift run`. Bookmark pick/persist/restore is re-verified **inside** that sandbox.
-- [ ] **Kill criterion observed, not asserted:** the `Process` + `/usr/bin/git` path is run **inside the sandbox** and its actual failure is captured verbatim (output + date + machine), making the embedded-git decision evidence-backed.
-- [ ] **Embedded path proven viable:** a minimal `SwiftGit2`/`libgit2` probe builds and links under the sandbox and returns the full Focus 5 fact set (branch, ahead/behind, dirty, modified, untracked, **last-commit timestamp**) for a real repo.
-- [ ] **Structured facts, not raw text:** the spike extracts the typed fact set, proving the minimum is obtainable via the chosen path.
-- [ ] **Proof artifact written back:** exact result, date, and machine/clean-account context recorded in this doc; the line 124–125 decision is re-confirmed (or revised) against the empirical result.
-- [ ] Only after the above pass does Status "What's next" advance to Phase 1; until then it points here.
+
+> **PASSED 2026-07-01** (re-spike by the marathon MARATHON-A lane). Full evidence in
+> [`macOS/Apps/Focus5Native/PHASE-0-R-FINDINGS.md`](../../macOS/Apps/Focus5Native/PHASE-0-R-FINDINGS.md);
+> one-command reproducer: `macOS/Apps/Focus5Native/build-and-run-sandboxed.sh`.
+> Machine context: Swift 6.2.4 / Xcode 26.3, ad-hoc codesign (no Developer ID
+> identity present — ad-hoc still enforces the App Sandbox locally).
+
+- [x] **Sandboxed build exists:** spike runs as a codesigned `.app` with `com.apple.security.app-sandbox` + `files.user-selected.read-write` embedded/confirmed — not `swift run`. Sub-finding: a bare Mach-O CLI carrying the sandbox entitlement SIGTRAPs in `_libsecinit_appsandbox` before `main`; the sandbox requires a real `.app` bundle/container — so App Store packaging must be a bundle.
+- [x] **Kill criterion observed, not asserted:** `Process` → git run **inside** the sandbox fails verbatim with `xcrun: error: cannot be used within an App Sandbox.` (`/usr/bin/git` is an xcrun shim; xcrun refuses inside the sandbox). Empirically dead, not reasoned.
+- [x] **Embedded path proven viable:** in-process **libgit2 1.7.2** returns the full fact set on a permitted path (`branch=main ahead=0 behind=0 modified=1 untracked=1 dirty=true lastCommitUnix=…`, incl. last-commit timestamp); returns empty on a non-granted path — proving the file boundary, not the library, is the constraint. **Caveat:** linked via Xcode's internal arm64 `libgit2.dylib` as a spike stand-in — see the reversal-cost note at the Phase 0 decision; **not shippable as-is**.
+- [x] **Structured facts, not raw text:** typed `RepoFacts` extracted in-process ([`Sources/Focus5Core/GitProbe.swift:11`](../../macOS/Apps/Focus5Native/Sources/Focus5Core/GitProbe.swift#L11)), not a raw `git status` string dump.
+- [x] **Proof artifact written back:** exact A/B/C results, date, and machine context recorded in `PHASE-0-R-FINDINGS.md`; the line 124–125 decision is re-confirmed against the empirical result (with the macOS-libgit2 reversal-cost note added below).
+- [x] Phase 0-R passed → Status "What's next" advances to **Phase 1**. **Non-blocking follow-up carried to Phase 2:** `Focus5Native.swift` `restoreBookmark()` still omits `stopAccessingSecurityScopedResource()`.
 
 ## Phase 1 — Native Contract & Data Model
 
@@ -291,7 +301,7 @@ Why this is the right track for the App Store build:
 
 ## Open Questions
 
-1. **Git implementation path:** Is `Process` + git acceptable for a truly standalone App Store app, or should Phase 0 force an embedded library so the app does not depend on user toolchain state?
+1. ~~**Git implementation path:** Is `Process` + git acceptable for a truly standalone App Store app…~~ **RESOLVED 2026-07-01 (Phase 0-R):** `Process`+git is empirically dead in the sandbox (`xcrun: error: cannot be used within an App Sandbox.`); embedded in-process **libgit2** is required. Remaining sub-question moved to Phase 2: sourcing a **macOS-sliced** libgit2 (the SwiftGit2 SPM path ships only iOS slices).
 2. **GitHub enrichment scope:** Does v1 keep optional PR/remote enrichment, or do we cut to a local-only first release and add network features later?
 3. **Persistence layer:** GRDB/SQLite, SwiftData, or a smaller purpose-built store for bookmarks + roster cache + settings?
 4. **Window model:** Keep the always-on-top floating utility exactly as-is for App Store v1, or soften it into a more conventional menu-bar utility if review/testing friction appears?

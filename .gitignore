@@ -69,3 +69,7 @@ PROJECT/PDDA-ACTIVITY.jsonl
 .pdda-gh-state.tsv
 /graphify-out
 .xyz/
+
+# xyz/tick coordination runtime (machine-local, do not commit)
+xyz-tick/
+.tick/locks/

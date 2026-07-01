@@ -2,9 +2,11 @@
 title: "Signal-Quality Contract (observe-first source health)"
 codename: HiQS
 owner: Noel
-status: "Proposed (1-INBOX — not yet active). Phase 0 spike scoped, not yet run. Supersedes the two SKETCH-* drafts."
+gh_issue: 101
+source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/101"
+status: "Active (2-WORKING) — Phase 0 spike run 2026-07-01; findings written back. Phase 1 next. Supersedes the two SKETCH-* drafts."
 created: 2026-06-30
-updated: 2026-06-30
+updated: 2026-07-01
 branch: development
 doc_type: project
 goal: >
@@ -27,14 +29,13 @@ effort: 2
 complexity: 2
 risk: 1
 phases: 4
-roadmap_exempt: true
 ---
 
 ## Status
 
 | What was just completed | What's next |
 |---|---|
-| **Plan authored + grounded against live code (2026-06-30).** Merged the two `SKETCH-*` drafts into one phased plan and verified the central surfaces: `index_status()` → `get_index_status()` ([index_ops.py:224](../../src/rebalance/ingest/index_ops.py#L224)) already derives per-source freshness from each table's own timestamp via `_safe_max`; a `_safe_count_where` 7-day-window primitive **already exists** ([index_ops.py:273](../../src/rebalance/ingest/index_ops.py#L273)); `payload["freshness"]` is an empty dict ready to hold derived labels ([index_ops.py:236](../../src/rebalance/ingest/index_ops.py#L236)). **Correction to the sketch:** there is **no `sync_state` table** — freshness is already per-table, so the work is smaller and lower-risk than assumed. **Honesty pass (review feedback):** the doc now states plainly that v1 catches *collapse-to-empty* + staleness, **not** the *partial* silent drop GH-81 itself was (that is Phase 4+ relevance). | **Open a GitHub issue** (issue-first SOP), rename this doc `GH-<n>-SIGNAL-QUALITY-CONTRACT.md`, park a one-line pointer in `ROADMAP.md`, promote to `2-WORKING`, then **run Phase 0** (1–2h spike) and write its findings back here before the Phase 0 QA gate can pass. |
+| **Promoted + Phase 0 spike run (2026-07-01).** Opened [issue #101](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/101), `git mv`d this doc to `2-WORKING/GH-101-SIGNAL-QUALITY-CONTRACT.md`, parked its pointer in `ROADMAP.md`. **Phase 0 verified against live code + live DB** (findings in §Phase 0 below): `get_index_status` at [index_ops.py:224](../../src/rebalance/ingest/index_ops.py#L224) **CONFIRMED**; `_safe_max` per-table freshness **CONFIRMED**; `_safe_count_where` primitive exists at [index_ops.py:174](../../src/rebalance/ingest/index_ops.py#L174), used for apple_reminders at [L273](../../src/rebalance/ingest/index_ops.py#L273) **CONFIRMED**; no `sync_state` table (0 hits repo-wide) **CONFIRMED**. **REFUTED:** `payload["freshness"]` is *not* an empty dict ready to hold labels — it is initialized empty at [L236](../../src/rebalance/ingest/index_ops.py#L236) but **overwritten with the semantic-drift dict at [L385](../../src/rebalance/ingest/index_ops.py#L385)**; Phase 2 must merge into it, not assume it is free. `vault` make-or-break confirmed (outside `_PEEKABLE_SOURCES`). | **Run Phase 1** — add `recent_row_count_7d` per source to `get_index_status` via `_safe_count_where` on the content-timestamp column locked in Phase 0 (see the per-source table in §Phase 0 Findings). Pure additive read field; no ingest change, no new table. Then its QA gate (unit test, ≥2 seeded sources incl. a zero-volume case; `pytest tests/` green; `rebalance doctor` clean). |
 
 ---
 
@@ -200,6 +201,77 @@ Exit criteria:
 
 **QA gate:** findings (with `file:line`) written back into this doc; the four example outputs recorded
 here; per-source window decisions recorded. `utils/pdda/pdda.sh run` clean for the doc edit.
+
+#### Phase 0 — Findings (2026-07-01)
+
+Spike run against live code (`src/rebalance/ingest/index_ops.py`, `src/rebalance/mcp/tools/index.py`)
+and the live DB (`index_status` + `peek_source` MCP tools, DB
+`~/Library/Application Support/rebalance-os/rebalance.db`). Method: `graphify query` to orient, then
+Read the exact lines. Each claim below is CONFIRMED / REFUTED / UNVERIFIED against `file:line` actually read.
+
+**Claims from §2 / the Phase 0 checklist, verified:**
+
+| Claim (as drafted) | Verdict | Evidence (file:line read) |
+|---|---|---|
+| `index_status()` → `get_index_status()` is the surface; read-only per-source snapshot. | **CONFIRMED** | `get_index_status(database_path)` defined [index_ops.py:224](../../src/rebalance/ingest/index_ops.py#L224); docstring "Read-only. Safe to call frequently" L225-228. |
+| Per-source freshness is derived per-table via `_safe_max(conn, table, col)`, not from a `sync_state` table. | **CONFIRMED** | `_safe_max` = `SELECT MAX(col)` [index_ops.py:166](../../src/rebalance/ingest/index_ops.py#L166); used per source e.g. `vault.last_ingested_at` L247, `github.activity_last_scanned_at` L255, `calendar.last_fetched_at` L262, `sleuth.last_synced_at` L268. |
+| A `_safe_count_where` 7-day-window primitive already exists. | **CONFIRMED** | Defined `SELECT COUNT(*) FROM {table} WHERE {where}` at [index_ops.py:174](../../src/rebalance/ingest/index_ops.py#L174) (the *definition*; the sketch cited L273, which is a *use* site). Live-used for `apple_reminders.active` (`is_active=1 AND is_completed=0`) at [index_ops.py:273](../../src/rebalance/ingest/index_ops.py#L273). A `WHERE <ts_col> > <cutoff>` predicate is expressible with the same helper, no code change. |
+| There is **no `sync_state` table**. | **CONFIRMED** | `grep -rniE "sync_state"` → **0 matches** across `src/` and all `*.py`/`*.sql` in the repo (graphify-out excluded). |
+| `vault` is the make-or-break case (rows live in `vault_files`/`chunks`, outside `_PEEKABLE_SOURCES`). | **CONFIRMED** | `_PEEKABLE_SOURCES` [index.py:193](../../src/rebalance/mcp/tools/index.py#L193) has **no** `vault*` key; `get_index_status` reads vault from `vault_files`/`chunks` (L245-248). `peek_source` cannot reach vault; a bespoke count on `vault_files`/`chunks` is required for Phase 1. |
+
+**Correction the spike found (REFUTED — must be carried into Phase 2):**
+
+- The sketch/status claimed `payload["freshness"]` is "an initialized empty dict ready to hold derived
+  labels." **REFUTED.** It is initialized empty at [index_ops.py:236](../../src/rebalance/ingest/index_ops.py#L236),
+  but at [index_ops.py:385](../../src/rebalance/ingest/index_ops.py#L385) the function does
+  `payload["freshness"] = drift`, **overwriting** it with a semantic-drift dict
+  (`vault_chunks_missing_from_semantic`, `github_documents_missing_from_semantic`,
+  `semantic_documents_pending_embed` — built L346-385). Live proof: `index_status` returns
+  `"freshness":{"vault_chunks_missing_from_semantic":0,"github_documents_missing_from_semantic":302,"semantic_documents_pending_embed":12}`.
+  **What it changes:** Phase 2 must **merge** derived `status`/`reason` into this dict (or nest under a
+  sub-key), not assume it is a free home — writing there naively would clobber the existing drift signal.
+
+**Content-timestamp column per source (checklist item 3) — locked from `_PEEKABLE_SOURCES`
+([index.py:193](../../src/rebalance/mcp/tools/index.py#L193)) + `get_index_status` (L244-302):**
+
+| Source | Content-ts column for `recent_row_count_7d` | Window decision | Note (verified) |
+|---|---|---|---|
+| `vault` | `vault_files.last_modified` (count `vault_files`, not `chunks`) | rolling 7d | Outside `_PEEKABLE_SOURCES`; bespoke count required. `last_modified` = when the note changed (content), vs `ingested_at` = sync ts. |
+| `github` | `github_activity.scanned_at` | rolling 7d | `_PEEKABLE_SOURCES` maps `github_activity→scanned_at`; but `scanned_at` is a *sync* ts, so "recent volume" here means "rows scanned in", a weaker content signal — acceptable for v1 collapse-detection, flagged as a known approximation. |
+| `calendar` | `calendar_events.start_time` | **bespoke: back 7d AND forward** | `_PEEKABLE_SOURCES` maps `calendar_events→start_time`. **Live finding:** all current events are *future* (`earliest_event_start` = `2026-07-07`), so a naive `start_time > now-7d` over-counts forward events and a `start_time BETWEEN now-7d AND now` under-counts a legitimately busy upcoming week. Calendar **needs the custom window** the doc's §8 open question anticipated. |
+| `sleuth` | ambiguous — `created_on` (content) vs `last_seen_at` (sync) | rolling 7d, **decision: `created_on`** | Drift found: `_PEEKABLE_SOURCES` sorts `sleuth_reminders→last_seen_at`, but `get_index_status` reports `last_synced_at` (L268), while the true *content* ts is `created_on`. For volume-collapse we want *new* reminders → count on `created_on`. Live rows show `last_seen_at`/`last_synced_at` all today but `created_on` in early June — proof the columns diverge and the choice matters. |
+
+**Checklist item 5 — four concrete `recent_row_count_7d` + derived `status` examples (live DB, 2026-07-01, window `> 2026-06-24`):**
+
+- **`vault`** — 57 files, `last_modified_in_vault` = `2026-07-01T13:50` (today). Fresh + non-empty →
+  `recent_row_count_7d` > 0 (counted on `vault_files.last_modified`); **`status: ok`**.
+- **`github`** — 714 activity records, `activity_last_scanned_at` = `2026-07-01T15:45` (today); peeked rows
+  scanned today with high commit counts → `recent_row_count_7d` > 0; **`status: ok`**.
+- **`calendar`** — 1219 events, `last_fetched_at` = `2026-07-01T13:48` (fresh), but `earliest_event_start`
+  = `2026-07-07` (all future). With the **default** rolling-back window `recent_row_count_7d` would be
+  **0** → naive **`status: degraded`** — a **false positive**. With the **bespoke back-7d+forward** window it
+  reads > 0 → **`status: ok`**. This example is the concrete proof calendar needs its custom window.
+- **`sleuth`** — 121 reminders, `last_synced_at` = `2026-07-01T13:48` (fresh). Counted on `last_seen_at`
+  (all today) → high count; counted on `created_on` (early June) → **0** in the last 7d. The two columns
+  give opposite `status` (`ok` vs `degraded`), which is exactly why the column choice is a Phase 0
+  decision, not a Phase 1 detail. Decision above: count `created_on`, and treat a genuinely quiet week as
+  `warn`, not a hard fail (per §4 "not an adjudicator of zero").
+
+**Exit criteria (from Phase 0) — met:**
+
+- `last_*_at` + `recent_row_count_7d` are computable cheaply for the core sources with **no new table**
+  (reuse `_safe_max` + `_safe_count_where`). ✔
+- Sources needing a **custom window/column** are named, not empty: **`calendar`** (back-7d + forward) and
+  **`sleuth`** (content ts `created_on` ≠ the peekable `last_seen_at`); `vault` needs a bespoke *count target*
+  (`vault_files`) though a default window. `github` uses a sync-ts approximation, flagged. ✔
+- `vault` proven (not assumed) to live outside `_PEEKABLE_SOURCES`. ✔
+- **No contradiction of the no-new-table assumption** → Phase 1 is cleared to start (no escalation needed).
+  One correction (the `freshness`-dict overwrite) is folded into Phase 2's plan above. ✔
+
+**UNVERIFIED / deferred:** exact SQLite index presence per content-ts column (whether `start_time` /
+`created_on` / `last_modified` are indexed, i.e. index-scan vs full-scan cost) was **not** inspected at the
+`PRAGMA index_list` level in this spike; row counts are small (57–1282) so cost is negligible today, but
+Phase 1 should confirm before assuming O(log n). Marked UNVERIFIED rather than claimed.
 
 ### Phase 1 — `recent_row_count_7d` in `index_status`
 
