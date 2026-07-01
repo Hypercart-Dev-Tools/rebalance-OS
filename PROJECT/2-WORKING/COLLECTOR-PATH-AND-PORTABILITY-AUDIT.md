@@ -1,22 +1,41 @@
 ---
 title: Collector Path and Portability Audit
-status: in-progress
+status: "Active — reopened 2026-06-30 for 4 remaining Definition-of-Done gaps. Phases 0-5 of the original refactor are COMPLETE (2026-06-10) and preserved below as provenance; only Phase 6 is active work."
 doc_type: audit-project-plan
 owner: Noel Saw
-last_updated: 2026-06-10
+created: 2026-06-10
+updated: 2026-06-30
+goal: >
+  Close the 4 remaining Definition-of-Done gaps from the original collector-path/portability
+  refactor, surfaced by a Codex review (GH-62, closed 2026-06-30): (1) not every raw source has
+  exactly one source-owned write path, (4) semantic-maintenance CLI commands (`--source all`)
+  drift from the live semantic-stage source coverage, (6) some setup scripts still hardcode
+  auth/token paths outside the shared resolvers, (8) test/observability blind spots — e.g. the
+  mocked-signature test that let a real `dashboard.py` runtime break through undetected (that
+  specific break, GH-62 finding #1, is already fixed; the blind-spot gap itself is not).
+related:
+  - PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md
+gh_issue_context: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/62 (closed — reopened here as the tracking doc for its remaining findings)"
 surfaces:
   - mcp
   - cli
   - scheduler
   - web
   - obsidian
+effort: 2
+complexity: 3
+risk: 2
+phases: 6
+roadmap_exempt: false
 ---
 
-> Active sequencing for the remaining follow-up moved to [FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md:1). Keep this doc as source context for the completed audit, decisions, and shipped collector refactor work.
+## Status
 
-| Most recently completed phase | What's next |
+| What was just completed | What's next |
 |---|---|
-| **Phase 5 complete (2026-06-10):** Smoke, auth-failure, and idempotency tests added for all 5 raw sources (`tests/test_phase5_collector_smoke.py`, 13 tests GREEN). ARCHITECTURE.md updated: Calendar credential row corrected to reference `resolve_oauth_token_path`; `paths.py` entry documents `resolve_project_root` and `resolve_oauth_token_path`. 700 tests pass. | **All phases complete.** Portability contract audit done. |
+| **Reopened 2026-06-30.** Moved back from `PROJECT/4-MISC/` after a Codex review (GH-62) confirmed the audit's Definition of Done was never fully closed — 4 of 8 items are still `not yet`/`partial`. GH-62's own "High" finding (a runtime-breaking stale param in `scripts/dashboard.py`) was independently verified fixed in current code, so it is **not** part of the reopened scope; GH-62 was closed with that verification and a pointer here for the rest. | **Phase 6 — Close remaining DoD gaps** (below): single-write-path-per-source, semantic-CLI `all` normalization, hardcoded OAuth setup paths, test/observability blind spots. |
+
+Active sequencing for the earlier, now-complete follow-up lived in [FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md](FRONT-DOOR-PORTABILITY-AUTH-UNIFICATION.md). This doc stays the source context for the original audit, decisions, and shipped collector refactor (Phases 0-5), plus the new Phase 6 closing its remaining gaps.
 
 ## Table of Contents
 
@@ -30,8 +49,9 @@ surfaces:
 8. [Phase 3 - Unify Semantic Projection Ownership](#phase-3---unify-semantic-projection-ownership)
 9. [Phase 4 - Portability Contract Cleanup](#phase-4---portability-contract-cleanup)
 10. [Phase 5 - Tests, Observability, and Rollout](#phase-5---tests-observability-and-rollout)
-11. [Open Decisions and Risks](#open-decisions-and-risks)
-12. [Definition of Done](#definition-of-done)
+11. [Phase 6 - Close Remaining DoD Gaps](#phase-6---close-remaining-dod-gaps) _(active)_
+12. [Open Decisions and Risks](#open-decisions-and-risks)
+13. [Definition of Done](#definition-of-done)
 
 Decision lock-ins for this plan:
 
@@ -375,6 +395,33 @@ Goal: Land the refactor without silently breaking refresh behavior or data fresh
   `elapsed_seconds` present in all collector results; `scope` key enforced by existing contract tests; stage ownership explicit via `kind` field on `Collector` dataclass. Surfacing `kind` in the `refresh_index` result envelope deferred — not a blocker for rollout.
 - [x] Update docs and runbooks at rollout time:
   `ARCHITECTURE.md`: Calendar credential row updated to reference `resolve_oauth_token_path`; `paths.py` entry documents `resolve_project_root` and `resolve_oauth_token_path`. Scheduler script descriptions were corrected in Phase 3 (lines 358-359).
+
+## Phase 6 - Close Remaining DoD Gaps
+
+Goal: close the 4 Definition-of-Done items still `not yet`/`partial` (below), surfaced by the GH-62
+Codex review. Reopened 2026-06-30; not yet started.
+
+- [ ] **DoD #1 — single write path per raw source.** Audit which raw sources still expose more than
+  one user-facing write path (per the "known bypasses" pattern from Phase 2) and collapse each to
+  one source-owned helper.
+- [ ] **DoD #4 — semantic-CLI `all` normalization.** `rebalance semantic-backfill --source all` /
+  `semantic-embed --source all` still normalize to the legacy `["vault", "github"]` triad
+  (`src/rebalance/cli/semantic.py`), while the live `semantic` stage covers
+  `_all_semantic_sources()` = `['vault', 'github', 'email', 'code', 'figma']`. Make the CLI's `all`
+  match the stage's `all`.
+- [ ] **DoD #6 — hardcoded OAuth setup paths.** `scripts/setup_gmail_oauth.py` and
+  `scripts/setup_calendar_oauth.py` still hardcode token paths instead of calling
+  `resolve_oauth_token_path(service)` (already used by the runtime `calendar.py`/`gmail.py` paths
+  per Phase 4). Route the setup scripts through the same resolver.
+- [ ] **DoD #8 — test/observability blind spots.** The GH-62 root cause for its own finding #1: a
+  test asserted a stale, mocked call signature instead of exercising the real one
+  (`tests/test_dashboard_terminal_theme.py`), so a genuine runtime break shipped undetected. Audit
+  other mocked-signature tests on write-path call sites for the same blind spot; add at least one
+  test that exercises `refresh_index()`'s real signature from a caller surface, not a mock.
+
+**QA gate:** each of the 4 items above has a corresponding test (or an existing test upgraded from
+mock-signature to real-signature); `pytest tests/` green; `rebalance doctor` clean; the Definition of
+Done section below updated to `[x]`/`complete` for every item this phase closes.
 
 ## Open Decisions and Risks
 

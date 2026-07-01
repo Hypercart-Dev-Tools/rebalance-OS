@@ -18,7 +18,7 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| Reviewed the PDDA doc contract (`pdda/ROUTER.md`, `AGENTS.md`, `GUIDING-PRINCIPLES.md`, `ROADMAP.md` frontmatter); surveyed the device (17+ PDDA-style `ROADMAP.md` files under `GH Repos` alone) and verified **Spotlight is disabled** so `mdfind` is not usable here. Confirmed the **dedicated PDDA registry shipped 2026-06-30**: `~/git-pulse-sync/pdda/registry-<device>.tsv` (`repo · last_install_utc · mode · source_commit · startup_docs`), lists only PDDA-installed repos, cross-device, ships a name→path recipe — rollout partial (1 of 3 devices). Rewrote the plan around a **registry-seeds-read** discovery model. | Operator confirms discovery model + scan scope. If green-lit, open a GitHub issue, capture as `GH-<n>-*.md`, promote to `2-WORKING`, and build Phase 1 as a `register_collector(...)` source. |
+| Reviewed the PDDA doc contract (`pdda/ROUTER.md`, `AGENTS.md`, `GUIDING-PRINCIPLES.md`, `ROADMAP.md` frontmatter); surveyed the device (17+ PDDA-style `ROADMAP.md` files under `GH Repos` alone) and verified **Spotlight is disabled** so `mdfind` is not usable here. Confirmed the **dedicated PDDA registry shipped 2026-06-30**: `~/git-pulse-sync/pdda/registry-<device>.tsv` (`repo · last_install_utc · mode · source_commit · startup_docs`), lists only PDDA-installed repos, cross-device, ships a name→path recipe — rollout partial (1 of 3 devices). Rewrote the plan around a **registry-seeds-read** discovery model. | **Sequenced behind the signal-quality contract — do not start until that health contract ships**, so a new `roadmap` source is *born observable* (it inherits `recent_row_count_7d`/`status` instead of being a source whose degradation we can't yet grade). See [SIGNAL-QUALITY-CONTRACT.md](../SIGNAL-QUALITY-CONTRACT.md) §9. **Then:** operator confirms discovery model + scan scope; if green-lit, open a GitHub issue, capture as `GH-<n>-*.md`, promote to `2-WORKING`, build Phase 1 as a `register_collector(...)` source. |
 
 ---
 
@@ -167,6 +167,17 @@ phase and should reuse the existing signal-generation work, not reinvent it.
 5. **Cross-device** — single-device (this box) for v1, or design the table for the git-pulse
    multi-device registry from day one (path-normalized repo identity, no absolute folder paths —
    matching the pdda repo's own multi-device approach)?
+6. **Second downstream consumer: XYZ/tick cross-repo lanes (idea, not yet scoped)** — captured
+   2026-06-30 so it doesn't drop. Today's `MARATHON-QUEUE-2026-06-30.md` proves the pattern
+   *within* one repo: verified-path, disjoint, acceptance-checked lanes for the `tick` multi-agent
+   harness. Once this collector's `roadmap_signals` table exists (Phase 1) and lists `What's next`
+   rows across the 17+ device repos it discovers, that table is a plausible **second consumer**
+   beside the dashboard plane (Phase 2) — each cross-repo `What's next` row *could* seed a tick
+   task lane for cross-repo multi-agent coordination, not just cross-source signal aggregation.
+   **Explicitly not scoped or designed yet** — no path-verification, disjointness, or
+   repo-checkout-resolution story exists for a *cross-repo* tick lane (today's harness assumes one
+   working tree). Revisit after Phase 2 ships and only if cross-repo tick coordination is still
+   wanted. See §9 Phase 5.
 
 ---
 
@@ -199,6 +210,17 @@ This is a **source**, feeding the *existing* "what next" plane — not a new eng
 - pdda repo's **multi-device PDDA status via git-pulse** item — **now shipped** as
   `~/git-pulse-sync/pdda/registry-<device>.tsv`; this is the primary seed (Option B) and the
   cross-device path (§6.5).
+- [SIGNAL-QUALITY-CONTRACT.md](../SIGNAL-QUALITY-CONTRACT.md) — the observe-first **source-health**
+  contract. **Sequencing rule: that contract ships first.** This doc *adds a source*; the contract
+  *grades existing sources*. Landing it first means a new `roadmap` collector is *born observable*
+  (inherits `recent_row_count_7d`/`status`) rather than a source whose degradation we can't yet see.
+  Don't let this doc ride the contract's momentum.
+- **XYZ/tick (`.claude/skills/xyz/`, `MARATHON-QUEUE-*.md`)** — a *distinct, later* potential
+  consumer of this collector's table, not the dashboard plane and not conflated with it. The
+  dashboard plane (Phase 2) reads `What's next` rows to rank "what should I work on"; a future
+  XYZ consumer would instead read them to *seed cross-repo tick task lanes*. Same source table,
+  two different downstream shapes — keep them as two named consumers of one table, not one merged
+  concept. See §6 item 6.
 
 **Before promotion:** read `GEMINI-WHATS-NEXT-VAULT.md` and the SIGNAL-GENERATION doc to confirm the
 shared projection point, so we add one collector to one plane, not a parallel one.
@@ -222,6 +244,12 @@ shared projection point, so we add one collector to one plane, not a parallel on
   (B′) to surface active-but-not-PDDA repos as adoption candidates; path-normalized repo identity.
 - **Phase 4 (optional) — Smarter ranking.** Cross-reference GitHub activity/staleness/goal
   embeddings, reusing the existing signal-generation ranking rather than a new model.
+- **Phase 5 (speculative, unscoped) — XYZ/tick cross-repo lane seeding.** Only after Phase 2 ships
+  and only if still wanted: read `roadmap_signals` rows as candidate tick task lanes across the
+  discovered repos, not just this one. Needs its own design pass first — today's tick harness
+  assumes a single working tree, so a cross-repo lane needs a new story for repo-checkout
+  resolution, path-verification, and disjointness *across* repos, not just within one. See §6
+  item 6 for why this is captured now but not designed yet.
 
 Each phase: `rebalance doctor` + `pytest tests/` green, and `utils/pdda/pdda.sh run` clean for the
 doc work, before reporting done.

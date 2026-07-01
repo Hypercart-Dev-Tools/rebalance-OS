@@ -68,3 +68,4 @@ mrt-temp/
 PROJECT/PDDA-ACTIVITY.jsonl
 .pdda-gh-state.tsv
 /graphify-out
+.xyz/

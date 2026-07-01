@@ -34,7 +34,7 @@ roadmap_exempt: true
 
 | What was just completed | What's next |
 |---|---|
-| **Plan authored + grounded against live code (2026-06-30).** Merged the two `SKETCH-*` drafts into one phased plan and verified the central surfaces: `index_status()` → `get_index_status()` ([index_ops.py:224](../../src/rebalance/ingest/index_ops.py#L224)) already derives per-source freshness from each table's own timestamp via `_safe_max`; a `_safe_count_where` 7-day-window primitive **already exists** ([index_ops.py:273](../../src/rebalance/ingest/index_ops.py#L273)); `payload["freshness"]` is an empty dict ready to hold derived labels ([index_ops.py:236](../../src/rebalance/ingest/index_ops.py#L236)). **Correction to the sketch:** there is **no `sync_state` table** — freshness is already per-table, so the work is smaller and lower-risk than assumed. | **Open a GitHub issue** (issue-first SOP), rename this doc `GH-<n>-SIGNAL-QUALITY-CONTRACT.md`, park a one-line pointer in `ROADMAP.md`, promote to `2-WORKING`, then **run Phase 0** (1–2h spike) and write its findings back here before the Phase 0 QA gate can pass. |
+| **Plan authored + grounded against live code (2026-06-30).** Merged the two `SKETCH-*` drafts into one phased plan and verified the central surfaces: `index_status()` → `get_index_status()` ([index_ops.py:224](../../src/rebalance/ingest/index_ops.py#L224)) already derives per-source freshness from each table's own timestamp via `_safe_max`; a `_safe_count_where` 7-day-window primitive **already exists** ([index_ops.py:273](../../src/rebalance/ingest/index_ops.py#L273)); `payload["freshness"]` is an empty dict ready to hold derived labels ([index_ops.py:236](../../src/rebalance/ingest/index_ops.py#L236)). **Correction to the sketch:** there is **no `sync_state` table** — freshness is already per-table, so the work is smaller and lower-risk than assumed. **Honesty pass (review feedback):** the doc now states plainly that v1 catches *collapse-to-empty* + staleness, **not** the *partial* silent drop GH-81 itself was (that is Phase 4+ relevance). | **Open a GitHub issue** (issue-first SOP), rename this doc `GH-<n>-SIGNAL-QUALITY-CONTRACT.md`, park a one-line pointer in `ROADMAP.md`, promote to `2-WORKING`, then **run Phase 0** (1–2h spike) and write its findings back here before the Phase 0 QA gate can pass. |
 
 ---
 
@@ -67,6 +67,13 @@ with PDDA is not a reason to build.
 the pipeline executed perfectly, the rows were structurally sound, the sync was marked fresh — yet
 repos were silently dropped from the ranking and the system had **no way to detect it**. The pipeline
 currently *asserts* quality; it does not *observe* it. That is the gap.
+
+**Honest scope — v1 would not have caught GH-81 itself.** GH-81 was a *partial* silent drop: some
+repos fell out of a ranking that still returned plenty of structurally-sound rows. v1's two metrics
+catch *staleness* and *collapse-to-empty* (the auth-breaks-to-`[]` class), **not** partial relevance
+loss. GH-81 is the motivator for the **principle** — the pipeline cannot self-detect meaning-loss —
+not a defect v1 closes. The partial-relevance class is Phase 4+ (§7–§8). Shipping the tractable subset
+first is the point; claiming "this catches GH-81" is exactly the oversell to avoid.
 
 The contract must therefore:
 
@@ -117,7 +124,11 @@ the useful signal has degraded or vanished. Three modes:
 2. **Successful-but-empty / volume-collapse** — collector runs, returns `[]` or a sharply reduced set,
    exits clean, sync marked fresh. **(Not caught today.)**
 3. **Structurally-valid-but-meaning-compromised** — rows still write, but the result no longer means
-   what it did (the GH-81 class).
+   what it did (GH-81's actual class).
+
+**v1 scope: modes 1 and 2.** Mode 3 — the *partial* silent drop GH-81 actually was — is a relevance
+problem v1 does **not** detect. Do not conflate them: catching "fresh but empty" is real and
+shippable; catching "fresh, full, but subtly wrong" is Phase 4+.
 
 Concrete, each already plausible on this system:
 
@@ -182,6 +193,9 @@ Exit criteria:
 
 - `last_*_at` and `recent_row_count_7d` are computable cheaply for the core sources, **no new table**.
 - The set of sources needing custom windows/columns is named (or confirmed empty).
+- **`vault` is the make-or-break case** — its rows live in `vault_files`/`chunks`, outside
+  `_PEEKABLE_SOURCES`, so it is the source most likely to need a bespoke column/window. Prove it here;
+  don't assume it.
 - **If Phase 0 contradicts the no-new-table assumption, pause and escalate — do not start Phase 1.**
 
 **QA gate:** findings (with `file:line`) written back into this doc; the four example outputs recorded
@@ -247,6 +261,10 @@ The contract earns its place only if it flags defects the current system misses:
 - **Silent empty set:** Gmail/Calendar auth breaks into a clean `[]` → surface "fresh but empty"
   instead of letting `ask` answer "nothing happened."
 
+**Note the ceiling:** all three are *collapse-to-empty* or *stale* defects — none is the *partial*
+silent drop GH-81 was. v1 does not claim that class; if partial relevance loss is the real worry, that
+is the Phase 4+ relevance surface, not a v1 miss.
+
 If, after Phase 2, none of these three is caught on the live DB, **stop** — the contract is not paying
 for itself and Phase 3 is unjustified.
 
@@ -260,8 +278,10 @@ for itself and Phase 3 is unjustified.
   explicit floor in config?
 - Is a rolling `recent_row_count_7d` enough, or do some sources need bespoke windows (e.g.
   `calendar_30d_back_7d_forward`)? — **decided in Phase 0.**
-- Should relevance degradation (GH-81 class) share this "signal health" surface, or stay separate? v1
-  ships freshness/volume only; this question is deferred, not answered.
+- **Relevance degradation (the GH-81 class) is out of v1 by design, not merely deferred.** v1 ships
+  freshness/volume health only — it catches collapse-to-empty and staleness, *not* the partial silent
+  drop GH-81 itself was. Whether partial-relevance health shares this surface or gets its own is the
+  Phase 4+ question; v1 does not pretend to answer it.
 
 ---
 
