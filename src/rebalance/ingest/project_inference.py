@@ -53,6 +53,7 @@ _CALENDAR_NOISE_EXACT = {
     "verizon store",
 }
 _CALENDAR_SUFFIX_WORDS = {"weekly", "meetings", "meeting", "website", "deployment", "day", "daily"}
+_CLIENT_GAPFILL_UNCERTAIN = {"", "n/a", "na", "none", "null", "unclear", "unknown", "unsure", "?"}
 
 
 # Provenance marker for rows this module owns. Inference may create, update,
@@ -482,6 +483,130 @@ def _infer_client(seed: _ProjectSeed) -> str | None:
     return owners.most_common(1)[0][0]
 
 
+def _project_activity_snippets(seed: _ProjectSeed) -> list[str]:
+    snippets: list[str] = []
+    repos = sorted(seed.repos)
+    if repos:
+        snippets.append(f"Repos: {', '.join(repos[:2])}")
+        github_bits: list[str] = []
+        if seed.github_last_active_at:
+            github_bits.append(f"last GitHub activity {seed.github_last_active_at[:10]}")
+        if seed.github_score:
+            github_bits.append(f"github activity score {seed.github_score}")
+        if github_bits:
+            snippets.append("; ".join(github_bits))
+    if seed.calendar_event_count:
+        calendar_bits = [f"{seed.calendar_event_count} calendar event(s)"]
+        top_label = (seed.calendar_labels or Counter()).most_common(1)
+        if top_label:
+            calendar_bits.append(f"top calendar label {top_label[0][0]!r}")
+        if seed.calendar_last_event_at:
+            calendar_bits.append(f"last calendar event {seed.calendar_last_event_at[:10]}")
+        snippets.append("; ".join(calendar_bits))
+    return snippets[:2]
+
+
+def _build_client_gapfill_prompt(candidates: list[tuple[_ProjectSeed, dict[str, Any]]]) -> str:
+    lines = [
+        "Infer the client/customer for each project from the evidence below.",
+        "Return STRICT JSON only: {\"Project Name\": \"Client Name\" | null}.",
+        "Rules:",
+        "- Use only explicit evidence from the project name, repos, or activity snippets.",
+        "- If the project looks internal, personal, open-source, or the client is not evident, return null.",
+        "- Do not guess or explain.",
+        "",
+        "Projects:",
+    ]
+    for index, (seed, project) in enumerate(candidates, 1):
+        lines.append(f"{index}. project={project['name']}")
+        repos = sorted(seed.repos)
+        lines.append(f"   repos={repos if repos else []}")
+        snippets = _project_activity_snippets(seed)
+        if snippets:
+            for snippet in snippets:
+                lines.append(f"   signal={snippet}")
+        else:
+            lines.append("   signal=no recent activity snippets")
+    return "\n".join(lines)
+
+
+def _strip_json_fence(text: str) -> str:
+    stripped = text.strip()
+    if stripped.startswith("```"):
+        stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
+        stripped = re.sub(r"\s*```$", "", stripped)
+    return stripped.strip()
+
+
+def _normalize_gapfill_client(value: Any) -> str | None:
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if text.casefold() in _CLIENT_GAPFILL_UNCERTAIN:
+        return None
+    return text or None
+
+
+def _parse_client_gapfill_response(
+    raw_text: str,
+    *,
+    project_names: set[str],
+) -> dict[str, str | None]:
+    try:
+        payload = json.loads(_strip_json_fence(raw_text))
+    except json.JSONDecodeError:
+        return {}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    expected_by_key = {_normalize_text(name): name for name in project_names}
+    parsed: dict[str, str | None] = {}
+    for raw_name, raw_client in payload.items():
+        if not isinstance(raw_name, str):
+            continue
+        project_name = expected_by_key.get(_normalize_text(raw_name))
+        if not project_name:
+            continue
+        parsed[project_name] = _normalize_gapfill_client(raw_client)
+    return parsed
+
+
+def _gapfill_missing_clients(candidates: list[tuple[_ProjectSeed, dict[str, Any]]]) -> None:
+    if not candidates:
+        return
+
+    from rebalance.ingest.config import get_gemini_api_key
+    from rebalance.ingest.querier import (
+        DEFAULT_GEMINI_MODEL,
+        _synthesize_with_fallback,
+    )
+
+    if not get_gemini_api_key():
+        return
+
+    prompt = _build_client_gapfill_prompt(candidates)
+    try:
+        synthesis, model_used = _synthesize_with_fallback(
+            prompt,
+            max_tokens=1024,
+            thinking_budget=0,
+        )
+    except Exception:
+        return
+    if model_used != DEFAULT_GEMINI_MODEL:
+        return
+
+    inferred = _parse_client_gapfill_response(
+        synthesis,
+        project_names={project["name"] for _, project in candidates},
+    )
+    for _seed, project in candidates:
+        client = inferred.get(project["name"])
+        if client:
+            project["custom_fields"]["client_inferred"] = client
+
+
 def _seed_to_project_row(seed: _ProjectSeed) -> dict[str, Any]:
     name = _choose_seed_name(seed)
     aliases = sorted(
@@ -585,11 +710,16 @@ def infer_project_registry(
         days_forward=calendar_days_forward,
     )
 
-    projects = [
-        _seed_to_project_row(seed)
-        for seed in seeds.values()
-        if seed.repos or seed.calendar_event_count >= 2
-    ]
+    projects: list[dict[str, Any]] = []
+    gapfill_candidates: list[tuple[_ProjectSeed, dict[str, Any]]] = []
+    for seed in seeds.values():
+        if not seed.repos and seed.calendar_event_count < 2:
+            continue
+        project = _seed_to_project_row(seed)
+        projects.append(project)
+        if project["custom_fields"].get("client_inferred") is None:
+            gapfill_candidates.append((seed, project))
+    _gapfill_missing_clients(gapfill_candidates)
     projects.sort(key=lambda item: (item["status"] != "active", item["name"].casefold()))
 
     summary = InferenceSummary(
