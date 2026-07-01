@@ -262,5 +262,88 @@ class SnapEdgesValidationTests(unittest.TestCase):
             )
 
 
+# ---------------------------------------------------------------------------
+# snap_calendar_edges MCP tool — days range validation (GH-9)
+# ---------------------------------------------------------------------------
+
+
+class SnapCalendarEdgesMCPDaysValidationTests(unittest.TestCase):
+    """The MCP tool must return a structured error dict for out-of-range days,
+    never propagate the raw ValueError from snap_edges().
+
+    snap_calendar_edges is defined inside register(), so we extract it by
+    calling register() with a mock FastMCP that captures decorated functions.
+    The guard fires before CalendarConfig.load(), so no config mocking is
+    needed for the invalid-day cases.
+    """
+
+    def _get_snap_fn(self):
+        """Call register() with a capturing mock FastMCP; return the tool fn."""
+        from pathlib import Path
+        from unittest.mock import MagicMock
+
+        captured: dict = {}
+
+        mock_mcp = MagicMock()
+
+        def _tool_decorator():
+            def _wrap(fn):
+                captured[fn.__name__] = fn
+                return fn
+            return _wrap
+
+        mock_mcp.tool = _tool_decorator
+
+        import rebalance.mcp.tools.calendar as cal_mod
+        cal_mod.register(mock_mcp, Path("/fake/db.sqlite"))
+        return captured["snap_calendar_edges"]
+
+    def test_days_zero_returns_error_dict(self) -> None:
+        result = self._get_snap_fn()(date_str="", days=0, calendar_id="", timezone_name="")
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result.get("status"), "error")
+        self.assertIn("days", result.get("error", ""))
+
+    def test_days_eight_returns_error_dict(self) -> None:
+        result = self._get_snap_fn()(date_str="", days=8, calendar_id="", timezone_name="")
+        self.assertIsInstance(result, dict)
+        self.assertEqual(result.get("status"), "error")
+        self.assertIn("days", result.get("error", ""))
+
+    def test_days_valid_boundary_does_not_error(self) -> None:
+        """days=1 and days=7 must not hit the validation guard."""
+        import dataclasses
+        from unittest.mock import MagicMock, patch
+
+        @dataclasses.dataclass
+        class _FakeSnap:
+            snapped: list = dataclasses.field(default_factory=list)
+            skipped_clusters: list = dataclasses.field(default_factory=list)
+            total_events_examined: int = 0
+            allday_count: int = 0
+
+        snap_fn = self._get_snap_fn()
+        for valid in (1, 7):
+            with patch(
+                "rebalance.ingest.calendar_config.CalendarConfig"
+            ) as mock_cfg, patch(
+                "rebalance.ingest.calendar_snap.snap_edges",
+                return_value=_FakeSnap(),
+            ):
+                mock_cfg.load.return_value = MagicMock(
+                    calendar_id="primary",
+                    timezone="America/Los_Angeles",
+                    snap_gap_minutes=0,
+                )
+                result = snap_fn(
+                    date_str="2026-04-15", days=valid, calendar_id="", timezone_name=""
+                )
+                self.assertNotEqual(
+                    result.get("status"),
+                    "error",
+                    msg=f"days={valid} should not return an error dict",
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
