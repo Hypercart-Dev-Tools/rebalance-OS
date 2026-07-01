@@ -18,10 +18,12 @@ interface — there is no auth and /api/refresh runs a subprocess.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import subprocess
 import sys
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import urlparse
@@ -34,9 +36,16 @@ import uvicorn
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PULSE_HTML = PROJECT_ROOT / "web" / "pulse.html"
 PULSE_WEB_PY = PROJECT_ROOT / "scripts" / "pulse_web.py"
+# Canonical path shared with pulse_web.py — must stay in sync
+ACTIVE_JSON_PATH = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
 PYTHON = sys.executable
 
 import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
+# _open_bundle_invoker is a private symbol; coupling is intentional and documented here.
+# It is the only public-facing invoker for the signed Apple Reminders helper bundle.
+# Promote to a public name in apple_reminders_write.py when the module API stabilises.
+from rebalance.ingest.apple_reminders_write import _open_bundle_invoker  # noqa: PLC2701
+from rebalance.ingest.config import get_apple_reminders_list_name
 from pulse_web import (  # noqa: E402
     complete_goal_in_file,
     forget_goal_completion,
@@ -294,11 +303,6 @@ def health():
 
 @app.post("/api/refresh")
 def refresh():
-    import uuid
-    import json
-    from rebalance.ingest.apple_reminders_write import _open_bundle_invoker
-    from rebalance.ingest.config import get_apple_reminders_list_name
-
     started = time.perf_counter()
 
     helper_error = None
@@ -321,11 +325,14 @@ def refresh():
             first_res = results[0]
             if first_res.get("status") == "ok":
                 active_items = json.loads(first_res.get("detail", "[]"))
-                active_path = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
-                active_path.parent.mkdir(parents=True, exist_ok=True)
-                tmp_path = active_path.with_suffix(".tmp")
-                tmp_path.write_text(json.dumps(active_items), encoding="utf-8")
-                tmp_path.replace(active_path)
+                ACTIVE_JSON_PATH.parent.mkdir(parents=True, exist_ok=True)
+                tmp_path = ACTIVE_JSON_PATH.with_suffix(".tmp")
+                # Versioned envelope so pulse_web.py can detect schema changes.
+                tmp_path.write_text(
+                    json.dumps({"schema_version": 1, "items": active_items}),
+                    encoding="utf-8",
+                )
+                tmp_path.replace(ACTIVE_JSON_PATH)
             else:
                 helper_error = str(first_res.get("detail", "helper returned error"))
     except Exception as exc:
@@ -345,8 +352,10 @@ def refresh():
             status_code=500,
         )
     mtime = datetime.fromtimestamp(PULSE_HTML.stat().st_mtime, tz=timezone.utc)
+    # ok is False when the helper failed even though the render succeeded —
+    # the dashboard must surface this, not silently show stale data.
     return {
-        "ok": True,
+        "ok": helper_error is None,
         "duration_ms": duration_ms,
         "generated_at": mtime.isoformat(),
         "helper_error": helper_error,
