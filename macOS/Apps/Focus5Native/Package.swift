@@ -23,13 +23,7 @@ let package = Package(
         // In-process git fact extractor built on the shim.
         .target(
             name: "Focus5Core",
-            dependencies: ["Clibgit2"]
-        ),
-        // Headless Phase 0-R harness: runs embedded probe + Process-exec so the
-        // codesigned+sandboxed binary can be OBSERVED (not asserted).
-        .executableTarget(
-            name: "Focus5Probe",
-            dependencies: ["Focus5Core"],
+            dependencies: ["Clibgit2"],
             linkerSettings: [
                 .unsafeFlags([
                     "-L", xcodeLibDir,
@@ -38,9 +32,19 @@ let package = Package(
                 ])
             ]
         ),
+        // Headless Phase 0-R harness: runs embedded probe + Process-exec so the
+        // codesigned+sandboxed binary can be OBSERVED (not asserted).
+        .executableTarget(
+            name: "Focus5Probe",
+            dependencies: ["Focus5Core"]
+        ),
         // Original GUI spike (unchanged behavior; still the SwiftUI shell).
         .executableTarget(
             name: "Focus5Native"
+        ),
+        .testTarget(
+            name: "Focus5CoreTests",
+            dependencies: ["Focus5Core"]
         ),
     ]
 )

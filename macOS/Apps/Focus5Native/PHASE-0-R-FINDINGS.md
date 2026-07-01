@@ -24,7 +24,7 @@ which is what this spike needs to observe.
 | `Sources/Clibgit2/include/module.modulemap` | Module map exposing the shim to Swift. |
 | `Sources/Clibgit2/shim.c` | Empty TU; symbols resolve at link time against the Xcode libgit2 dylib. |
 | `Sources/Focus5Core/GitProbe.swift` | In-process libgit2 probe → typed `RepoFacts` (branch, ahead/behind, modified, untracked, dirty, **last-commit timestamp**). |
-| `Sources/Focus5Probe/main.swift` | Headless harness: runs [A] embedded probe, [B] `Process`→`/usr/bin/git`, [C] security-scoped bookmark round-trip. |
+| `Sources/Focus5Probe/main.swift` | Headless harness: runs [A] embedded probe, [B] `Process`→`/usr/bin/git`, [C] security-scoped bookmark round-trip. Output is written with `Darwin.write`/`SIGPIPE` ignore instead of Foundation `print`, so sandboxed or detached app launches do not abort on missing stdio. |
 | `Focus5.entitlements` | `com.apple.security.app-sandbox` + `files.user-selected.read-write`. |
 | `Info.probe.plist` | Minimal bundle Info.plist (a bare Mach-O CLI cannot host the sandbox — see Finding 3). |
 | `build-and-run-sandboxed.sh` | Reproduces the whole thing (clean build → wrap `.app` → sign sandboxed → run). |

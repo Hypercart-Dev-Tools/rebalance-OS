@@ -1,4 +1,3 @@
-import Darwin
 import Foundation
 import Focus5Core
 
@@ -15,36 +14,11 @@ let repoPath = CommandLine.arguments.count > 1
     ? CommandLine.arguments[1]
     : FileManager.default.currentDirectoryPath
 
-signal(SIGPIPE, SIG_IGN)
-
-@discardableResult
-func writeLine(_ text: String, to fileDescriptor: Int32) -> Bool {
-    guard let data = (text + "\n").data(using: .utf8) else { return false }
-
-    return data.withUnsafeBytes { buffer in
-        guard let baseAddress = buffer.baseAddress else { return false }
-
-        var offset = 0
-        while offset < buffer.count {
-            let written = Darwin.write(fileDescriptor,
-                                       baseAddress.advanced(by: offset),
-                                       buffer.count - offset)
-            if written > 0 {
-                offset += written
-                continue
-            }
-            if written == -1 && errno == EINTR {
-                continue
-            }
-            return false
-        }
-        return true
-    }
-}
+SafeStdIO.installSignalHandling()
 
 func line(_ s: String) {
-    if writeLine(s, to: STDOUT_FILENO) { return }
-    _ = writeLine(s, to: STDERR_FILENO)
+    if SafeStdIO.writeLine(s, to: STDOUT_FILENO) { return }
+    _ = SafeStdIO.writeLine(s, to: STDERR_FILENO)
 }
 
 line("=== Focus5Probe (Phase 0-R sandboxed harness) ===")
