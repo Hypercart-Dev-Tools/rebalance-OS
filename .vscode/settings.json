@@ -4,8 +4,8 @@
     "sideBar.background": "#191b22",
     "activityBar.background": "#191b22",
     "panel.background": "#191b22",
-    "titleBar.activeBackground": "#2b303c",
+    "titleBar.activeBackground": "#102c6c",
     "tab.activeBackground": "#1d2029",
-    "statusBar.background": "#2b303c"
+    "statusBar.background": "#193a86"
   }
 }

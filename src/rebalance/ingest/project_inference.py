@@ -503,7 +503,7 @@ def _project_activity_snippets(seed: _ProjectSeed) -> list[str]:
         if seed.calendar_last_event_at:
             calendar_bits.append(f"last calendar event {seed.calendar_last_event_at[:10]}")
         snippets.append("; ".join(calendar_bits))
-    return snippets[:2]
+    return snippets
 
 
 def _build_client_gapfill_prompt(candidates: list[tuple[_ProjectSeed, dict[str, Any]]]) -> str:

@@ -4,10 +4,10 @@ project: "Client Auto-Discovery"
 codename: HiQS
 owner: Noel
 created: 2026-06-30
-updated: 2026-06-30
-status: "Active — Phase 1 (v1 deterministic owner-as-client). Phase 0 design accepted. Lazy-by-default: clients are an attribute of a project, not a new entity. Reuses project_registry / inference / classifier / rank-prompt; ~50 lines across 3 existing files + 1 test. No new table, no new lifecycle, no new MCP tool in v1."
+updated: 2026-07-01
+status: "Closed at v1 — Phase 2 kill-check fired (2026-07-01). Owner-as-client covers 100% of the live registry (15/15 active projects), so the Gemini gap-fill path is code-complete but currently dormant (zero None-client rows to fill). Lazy-by-default: clients are an attribute of a project, not a new entity. No new table, no new lifecycle, no new MCP tool."
 goal: "Auto-discover a CLIENT name per project and expose clients as discrete buckets the 'what to do next' synthesis can group/prioritize by — without building a parallel client entity or its own lifecycle."
-current_phase: "Phase 1 complete (v1 deterministic shipped + verified). Next: Phase 2 — Gemini gap-fill for None-client projects (live keyed env)."
+current_phase: "Phase 2 closed by kill-check (2026-07-01). All phases complete; ready for archive to 3-COMPLETED."
 endgame: "The ranked next-action list is client-aware: items roll up under their client, and a sparse/at-risk client surfaces even when its projects are individually quiet."
 kill_switch: "Kill if owner-as-client (free, deterministic) already labels >90% of active projects correctly — then Gemini gap-fill is unjustified and clients stay a pure derived GROUP BY."
 tags: [signal-quality, client-discovery, ponytail]
@@ -22,13 +22,13 @@ roadmap_exempt: false
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 1 v1 deterministic shipped + verified (2026-06-30).** Edit 1 (`project_inference._infer_client` owner-as-client → `custom_fields.client_inferred`), Edit 2 (`registry.effective_client` curated-wins + `get_clients()` derived buckets), Edit 3 (`next_actions` client-aware rank prompt: per-`[OWN]`-line `[client:X]` tag + client roster, `_client_views()` best-effort). QA gate met: `tests/test_client_buckets.py` (4 tests) + full suite **1222 green**, `rebalance doctor` clean, PDDA gates 0 errors. No new table/lifecycle/MCP tool. | **Phase 2 — Gemini gap-fill** for `None`-client projects only (one batched call, fail-soft to `None`), verified live in the keyed env (sandbox has no GSM key). _Kill check first:_ measure owner-as-client coverage on the live registry — if >90% of active projects already labeled, skip Gemini and close at v1. |
+| **Phase 2 kill-check closed at v1 (2026-07-01, PR #100).** Gemini gap-fill (`_infer_client` owner-as-client spine, `_build_client_gapfill_prompt`, `_gapfill_missing_clients`, batched-call fail-soft-to-`None`) was built code-complete in MARATHON-C-WAVE2 (2026-06-30) and shipped with `tests/test_client_buckets.py` + `tests/test_client_gapfill.py` (9 tests). The kill-check then measured owner-as-client coverage against the live repo-local registry: **15/15 active projects (100%) already labeled** — zero calendar-only/personal-account rows needing a Gemini fill. Kill switch fired (≥90% threshold); the gap-fill path stays in the codebase, dormant, ready to activate the moment a `None`-client row appears. `registry.py`/`next_actions.py` interfaces untouched. → `relay-system/2026-07-01/marathon-c-client-autodiscovery-phase2.md` | **None queued.** All phases complete. Move this doc to `3-COMPLETED`; re-open only if live coverage drops below 90% (e.g. a calendar-only or personal-account project is added). |
 
 ## Table of contents
 
 - [Phase 0 — accept design](#phased-delivery) _(complete)_
 - [Phase 1 — v1 deterministic](#phased-delivery) _(complete)_
-- [Phase 2 — v1.1 Gemini gap-fill](#phased-delivery) _(active/next)_
+- [Phase 2 — v1.1 Gemini gap-fill](#phased-delivery) _(closed by kill-check)_
 
 # Client Auto-Discovery
 
@@ -172,10 +172,17 @@ is forward-compatible with a future table (the table's first migration just lift
     group-by buckets correct; null-client → `(unassigned)`); full `pytest tests/` green;
     `rebalance doctor` clean. No new file beyond the one test; storage is `custom_fields.client_inferred` only. ✅ (2026-06-30 — suite 1222 green, doctor clean, PDDA 0 errors)
 - **Phase 2 — v1.1 Gemini gap-fill.** Batched call for `None`-client projects only.
-  Verified live in the keyed env (sandbox has no GSM key).
-  - **QA gate:** batched gap-fill labels ≥1 previously-`None` project in the live keyed env;
-    any failure fails soft to `None` (pipeline never blocks); deterministic owner-as-client
-    path unchanged when the key is absent.
+  Built code-complete (2026-06-30, MARATHON-C-WAVE2); kill-check closed 2026-07-01.
+  - **QA gate:** `tests/test_client_buckets.py` + `tests/test_client_gapfill.py` green (9 tests,
+    unit-level: batched-prompt shape, fail-soft-to-`None` on invalid JSON / non-Gemini fallback /
+    missing key); deterministic owner-as-client path unchanged when the key is absent. ✅ (2026-07-01)
+  - **Kill-check (superseded the "verified live" bullet):** measured owner-as-client coverage on
+    the live repo-local registry — **15/15 active projects (100%) ≥ 90% threshold** → kill switch
+    fired. Zero `None`-client rows exist to gap-fill, so "labels ≥1 previously-`None` project in
+    the live keyed env" is **not applicable** — there was nothing left for Gemini to label. The
+    gap-fill code ships dormant, covered by mocked unit tests only; it has not been exercised
+    against a live Gemini call. Re-open if live coverage ever drops below 90%.
+    → `relay-system/2026-07-01/marathon-c-client-autodiscovery-phase2.md` (VERDICT: Approved).
 
 ## Verification (per ROUTER §7)
 

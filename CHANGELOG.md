@@ -6,6 +6,15 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.51.3] - 2026-07-01
+
+### Fixed
+- **Client gap-fill prompt silently dropped the calendar signal when a GitHub signal was also present** (`src/rebalance/ingest/project_inference.py`) — `_project_activity_snippets()` capped its return to `snippets[:2]`, but a project with both repo activity (2 lines: `Repos:` + GitHub activity) and calendar activity (1 line) produces 3 candidate lines, so the calendar line was truncated away before ever reaching the Gemini gap-fill prompt. Found reviewing the PR #100 merge (`test_client_gapfill.py::test_gapfill_prompt_includes_recent_signals` was failing on `development`, uncaught because it wasn't in that PR's test plan). Removed the cap — all built snippets (max 3) now reach the prompt. `pytest tests/` 1258/1258 green.
+- **Unified refresh QA-R remediation** (`scripts/pulse_server.py`, `scripts/pulse_web.py`, `scripts/apple_reminders_helper_app.swift`, [PR #100](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/100)) — closed all 7 findings from the v1 QA review: a failed EventKit helper call now returns `ok: false` and the dashboard shows a "⚠ Reminders stale" badge instead of silently serving stale data (last-good `active.json` preserved); DB-less rendering on cold start is now an explicit documented design choice instead of an unstated regression; the `active.json` path is a single shared `ACTIVE_JSON_PATH` constant instead of two hardcoded literals; the on-disk contract is a versioned envelope (`{"schema_version": 1, "items": [...]}`) with a backward-compat reader for the old bare-list shape; the Swift helper's `semaphore.wait()` is now bounded to 4.5s with a typed timeout instead of hanging indefinitely. 8 new tests in `tests/test_unified_refresh_remediation.py`. agy-reviewed, Approved. → `PROJECT/2-WORKING/UNIFIED-REFRESH-RESTART.md`
+
+### Changed
+- **Client auto-discovery Phase 2 closed at v1 by kill-check** (`src/rebalance/ingest/project_inference.py`, [PR #100](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/100)) — the Gemini gap-fill for `None`-client projects (batched call, fail-soft) shipped code-complete, but measuring owner-as-client coverage against the live repo-local registry found 15/15 active projects (100%) already labeled, so the ≥90% kill switch fired: Gemini gap-fill ships dormant with no live rows to exercise it, activating automatically only if a calendar-only or personal-account project appears. No interface changes to `registry.py`/`next_actions.py`. → `PROJECT/2-WORKING/CLIENT-AUTO-DISCOVERY.md`
+
 ## [0.51.2] - 2026-06-30
 
 ### Fixed
