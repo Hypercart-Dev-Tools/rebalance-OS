@@ -33,6 +33,8 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+# Canonical path shared with pulse_server.py — must stay in sync
+ACTIVE_JSON_PATH = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
 import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
 
 # Reuse the TUI's data layer so both views move in lockstep.
@@ -2429,6 +2431,13 @@ PULSE_JS = r"""
       try {
         const res = await fetch('/api/refresh', { method: 'POST' });
         if (!res.ok) throw new Error('refresh failed: ' + res.status);
+        const data = await res.json().catch(() => null);
+        if (data && data.helper_error) {
+          // Helper failed — last-good active.json preserved; surface the error.
+          btn.textContent = '⚠ Reminders stale';
+          btn.title = 'Helper error: ' + data.helper_error;
+          await new Promise(r => setTimeout(r, 2500));
+        }
         location.reload();
       } catch (err) {
         // Static-file mode (no server) or refresh failed — fall back to a plain reload.
@@ -2648,14 +2657,21 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     all_goals = parse_goals(goals_path, limit=PRIMARY_GOAL_LIMIT + SECONDARY_TODO_LIMIT)
     goals = all_goals[:PRIMARY_GOAL_LIMIT]
     secondary_todos = all_goals[PRIMARY_GOAL_LIMIT:]
-    # Read-only Apple Reminders column — active items from the configured list,
-    # now sourced from the helper's JSON output rather than the DB.
+    # Read-only Apple Reminders column.
+    # Design choice (QA-R F3): DB-less rendering. The column reads only from
+    # ACTIVE_JSON_PATH written by /api/refresh (via the signed EventKit helper).
+    # On cold-start (file absent), the column renders empty with a prompt to
+    # click Refresh — this is intentional and tested. We do NOT fall back to
+    # the DB because the DB apple_reminders table is written by a separate
+    # FDA-gated sync path, while this column is specifically the FDA-free path.
     apple_reminders = []
-    active_json_path = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
-    if active_json_path.exists():
+    if ACTIVE_JSON_PATH.exists():
         try:
-            with open(active_json_path, encoding="utf-8") as fh:
-                items = json.load(fh)
+            with open(ACTIVE_JSON_PATH, encoding="utf-8") as fh:
+                payload = json.load(fh)
+                # Support both old bare-list format and new versioned envelope
+                # {"schema_version": 1, "items": [...]} written by pulse_server.py.
+                items = payload.get("items", payload) if isinstance(payload, dict) else payload
                 items.sort(key=lambda x: x.get("due_at") or "9999-12-31T23:59:59Z")
                 apple_reminders = items[:APPLE_REMINDER_LIMIT]
         except (json.JSONDecodeError, OSError, TypeError):

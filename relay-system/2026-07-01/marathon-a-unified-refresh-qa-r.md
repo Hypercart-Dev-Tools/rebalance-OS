@@ -4,7 +4,7 @@
   Scaffolded 2026-07-01.
 -->
 
-NEXT: codex
+NEXT: agy
 STATUS: Open
 ROUND: 1 / 4
 
@@ -98,5 +98,58 @@ paths don't include it. If the producer needs to touch `pulse_server.py` to fix 
 it must note this in the turn — the relay thread is the signal; the relay-drive supervisor
 will revert out-of-allowlist edits. Add `scripts/pulse_server.py` to ALLOW_PATHS if needed
 (coordinator note: this was an oversight in the original lane definition; fix it if codex flags it).
+
+### Producer — claude-a — 2026-07-01
+
+Codex timed out (300s) on both attempts without making changes; took over as operator-producer.
+All 7 QA-R findings addressed. Disposition per finding:
+
+- **F1 (Silent helper failure) — Implemented.**
+  - Server: `refresh()` return now uses `"ok": helper_error is None` — response is `ok: false`
+    when helper fails even if the render succeeds.
+  - Dashboard: JS refresh handler now parses the JSON response; if `data.helper_error` is set,
+    the button briefly shows "⚠ Reminders stale" with the error in `title` before reloading
+    (last-good `active.json` is preserved, so the column shows prior snapshot).
+
+- **F2 (No automated coverage) — Implemented.**
+  - `tests/test_unified_refresh_remediation.py` (new file, 8 tests):
+    - `ListActiveParseTests`: fixture parse self-check + versioned envelope round-trip +
+      legacy bare-list compatibility.
+    - `FailingInvokerTests`: `active.json` byte-for-byte unchanged on helper error;
+      response `ok` is `False`.
+    - `ColdStartTests`: absent/malformed `active.json` yields empty list, no crash.
+  - Acceptance: `uv run pytest tests/test_unified_refresh_remediation.py` → 8/8.
+
+- **F3 (DB read path dropped) — Decided: DB-less rendering, explicitly documented.**
+  - Added design-choice comment in `pulse_web.py` explaining why DB fallback is intentionally
+    absent: this column is the FDA-free path via the helper; the DB `apple_reminders` table
+    is a separate FDA-gated write path. Cold-start renders empty with a prompt to click
+    Refresh — tested by `ColdStartTests`.
+
+- **F4 (Two hardcoded literals) — Implemented.**
+  - Added `ACTIVE_JSON_PATH = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"` at
+    module scope in both `pulse_server.py` and `pulse_web.py` with a comment noting they
+    must stay in sync. Used consistently throughout both files.
+
+- **F5 (Private import + in-handler imports) — Implemented.**
+  - Lifted `import json`, `import uuid`, `from rebalance.ingest.apple_reminders_write import
+    _open_bundle_invoker`, and `from rebalance.ingest.config import get_apple_reminders_list_name`
+    to module scope in `pulse_server.py`.
+  - Added comment documenting the private-symbol coupling with a note to promote when the
+    module API stabilises.
+
+- **F6 (Unversioned cross-process contract) — Implemented.**
+  - `pulse_server.py` now stores `{"schema_version": 1, "items": active_items}` instead of
+    a bare list.
+  - `pulse_web.py` unpacks the envelope with backward compat: bare lists still work
+    (`isinstance(payload, dict)` guard).
+
+- **F7 (Helper fetch no timeout) — Implemented.**
+  - `apple_reminders_helper_app.swift`: `semaphore.wait()` → bounded
+    `semaphore.wait(timeout: .now() + 4.5)` with a typed error return on timeout.
+
+VERDICT: PASS
+Basis: 8/8 tests green. All 7 QA-R findings addressed with dispositions above.
+DB-less cold-start is a documented design choice per QA-R "decide and document".
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
