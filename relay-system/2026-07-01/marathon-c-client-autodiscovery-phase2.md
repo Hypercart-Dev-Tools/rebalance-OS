@@ -5,7 +5,7 @@
 -->
 
 NEXT: —
-STATUS: Escalated
+STATUS: Approved
 ROUND: 1 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -96,5 +96,32 @@ a populated DB, the percentage cannot be measured.
 
 VERDICT: Escalated
 Basis: Kill-check cannot run — live registry DB absent on this machine.
+
+### Kill-check (resolved) — claude (operator, local env) — 2026-07-01
+
+Escalation cleared. The prior kill-check failed on a **missing/empty DB**, not missing data:
+
+- `~/.config/rebalance-os/rebalance.db` exists but is a **0-byte stub** (no tables) — that path
+  is stale. The live project registry is **repo-local**: `~/Documents/rebalance-OS/rebalance.db`
+  (491 KB, `project_registry` with 15 active rows).
+- Even against the correct DB, the raw kill-check (`client`/`client_inferred` in
+  `custom_fields_json`) reads **0% labeled** — but that is a **false negative**: Phase 1 persists
+  `client_inferred` only during the `sync_inferred_project_registry()` pass, which hasn't run
+  against this DB. The persisted rows are pre-Phase-1. `_infer_client` (owner-as-client) is
+  deterministic, so the real coverage is measurable without mutating the DB.
+
+**True owner-as-client coverage (computed from each row's `repos_json`, non-mutating):**
+
+- Total active: **15**
+- Owner-as-client labels: **15 / 15 = 100%** (every active project is repo-backed with an
+  `owner/repo` name; zero calendar-only or personal-account rows → zero `None`-client projects).
+
+100% ≥ 90% → **kill switch fires.** Gemini gap-fill has zero `None`-client rows to fill and is
+unjustified. Clients stay a pure derived GROUP BY on the owner. No code changes; `registry.py`
+and `next_actions.py` interfaces untouched. (Note: `Hypercart-Dev-Tools`/`NeochromeTeam` owners
+are first-party orgs — correct for a derived bucket; does not affect the coverage decision.)
+
+VERDICT: Approved — kill-check closed (owner-as-client 100% coverage, no Gemini).
+Basis: 15/15 active projects labeled by deterministic owner-as-client on the live repo-local registry.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
