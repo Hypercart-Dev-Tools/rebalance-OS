@@ -30,7 +30,7 @@ phases: 5
 
 | Most recently completed | What's next |
 |---|---|
-| **Promoted to `2-WORKING` + Phase 0 discovery run (2026-07-03).** Cut branch `gh-102-xyz-rebalance-integration`, `git mv`'d here, updated the ROADMAP pointer. **Phase 0 run against XYZ's [GH-75 doc](https://github.com/Claude-AI-Tools-Ventura-County/xyz-3-agents-swarm/issues/75) + code — findings in [§Phase 0 Findings](#phase-0--findings-2026-07-03) below.** Both consult blockers **resolved**: (a) `XYZ.json` is **completion-only** telemetry (fires at terminal exits: `relay-drive.sh:208-217/324-330`, `marathon.sh:95`, `marathon-drive.sh:344-347`) — **#1 reframed to a "recently-completed marathons/sessions" signal**, no XYZ-side emitter needed for v1; (b) enumeration source located (`~/.config/xyz/registry.tsv` install rows), opt-in/dedup is the one remaining Reb-side design call. Bonus: XYZ already writes `XYZ.json` **atomically** (temp+`os.replace` + lock), so the Phase 2 atomic-read concern is XYZ-side-satisfied. | **Start Phase 1 (seam #2 — `xyz-sync check`).** Needs no GH-101. Open in parallel: Phase 1 build on the Reb/XYZ side (committed pin file + reuse the existing `xyz-sync.sh`/`find-harness.sh` drift surface). **Phase 2 stays blocked on GH-101** landing `recent_row_count_7d`+`status`/`reason`. One open Phase 0 sub-decision remains (harness-root opt-in/dedup rule) — lockable during Phase 1. |
+| **Phase 1 Reb-side landed (2026-07-03).** Promoted to `2-WORKING`; Phase 0 discovery written back (see [§Phase 0 Findings](#phase-0--findings-2026-07-03)). **Reb half of seam #2 built:** committed `.xyz-pin` at repo root (pins XYZ harness `c829000`, the commit Phase 0 was verified against), a `read_pin()` reader ([xyz_pin.py](../../src/rebalance/xyz_pin.py)), and a `doctor` check that surfaces it — an absent pin is a clean OK (invariant 1, mutual independence), a pin missing `commit=` warns. Gates green: `pytest tests/` **1264 passed**; `rebalance doctor` shows `xyz pin — xyz harness pinned @ c829000bad5e`; new `tests/test_xyz_pin.py` (6 cases). | **XYZ-side `xyz-sync check` (deferred to the `xyz-3-agents-swarm` repo)** — extends the existing `xyz-sync.sh` / `find-harness.sh` drift surface to diff the machine-local install's `source_commit` against Reb's committed `.xyz-pin`. Then **lock the one open Phase 0 sub-decision** (harness-root opt-in/dedup rule). **Phase 2 (seam #1) stays gated on GH-101** landing `recent_row_count_7d` + `status`/`reason`. |
 
 ---
 
@@ -257,10 +257,10 @@ mechanism — the columns exist — so it is a subcommand, not new infrastructur
       "harness drift" warning; exit non-zero (contract locked in Phase 0). On match, exit clean.
 - [ ] **No auto-update.** The tool *reports*; updates land manually via PR — matching Reb's
       `doctor` + `pytest` + `pdda` gate discipline. No network fetch that mutates the install.
-- [ ] **Reb pin surface — committed, not machine-local.** Reb records its pinned commit in a
-      **committed** file (per Phase 0) so a fresh clone is reproducible; `registry.tsv` (machine-local,
-      uncommitted) is the *install* side of the diff, not the pin's home. The update decision stays a
-      human PR; confirm the pin is where `doctor` can see it.
+- [x] **Reb pin surface — committed, not machine-local.** ✔ **DONE** — committed [`.xyz-pin`](../../.xyz-pin)
+      at repo root records `commit=c829000…` + `pinned_at`; a fresh clone is reproducible (`registry.tsv`,
+      machine-local, is the *install* side of the diff). Read by [`xyz_pin.read_pin()`](../../src/rebalance/xyz_pin.py)
+      and surfaced by `_check_xyz_pin` in [doctor.py](../../src/rebalance/doctor.py). Update stays a human PR.
 - [ ] **No duplicate drift channel.** Per Phase 0, `xyz-sync check` reuses/extends the existing
       `find-harness.sh` / `xyz-sync.sh` drift surface or is scoped to non-vendored installs — it does
       not stand up a second, overlapping drift path.
@@ -279,9 +279,14 @@ mechanism — the columns exist — so it is a subcommand, not new infrastructur
 - [ ] **Reversibility.** Unregistering / not running the check returns the system to baseline with
       no residue (matches the seam's "trivial" reversibility claim).
 - [ ] **Gate discipline (XYZ side).** XYZ-repo tests green for the new subcommand; the change lands
-      via PR, not direct push.
-- [ ] **Gate discipline (Reb side, if any Reb glue lands):** `rebalance doctor` clean + `pytest tests/`
-      green before any success claim; `utils/pdda/pdda.sh run` clean.
+      via PR, not direct push. _(Deferred with the `xyz-sync check` subcommand — XYZ repo.)_
+- [x] **Gate discipline (Reb side).** ✔ `rebalance doctor` clean (`xyz pin` OK); `pytest tests/`
+      **1264 passed** incl. `tests/test_xyz_pin.py`; `utils/pdda/pdda.sh run` clean.
+
+> **Phase 1 status (2026-07-03):** the **Reb half is done** (committed pin + reader + doctor check +
+> tests). The **XYZ half** — the `xyz-sync check` subcommand that consumes `.xyz-pin` — is **deferred to
+> the `xyz-3-agents-swarm` repo** (per operator decision), where it extends the existing `xyz-sync.sh` /
+> `find-harness.sh` drift surface rather than forking a new one.
 
 ---
 

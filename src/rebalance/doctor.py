@@ -631,6 +631,41 @@ def _check_figma() -> Check:
     return Check("figma", OK, f"token present (via {where}) · {len(file_keys)} file(s)")
 
 
+def _check_xyz_pin() -> Check:
+    """XYZ harness pin — GH-102 seam #2 (optional cross-repo integration).
+
+    Posture, not nagging (mirrors :func:`_check_figma`): no ``.xyz-pin`` is a
+    clean OK skip — Rebalance runs fully standalone without XYZ (GH-102 invariant
+    1, mutual independence). A pin that is present but missing its ``commit`` key
+    is a real misconfiguration and warns. The recorded-vs-installed drift check
+    itself is XYZ-side (``xyz-sync check``, GH-102 Phase 1, deferred); doctor only
+    surfaces the pin so the operator can see what the integration targets.
+    """
+    try:
+        from rebalance.xyz_pin import read_pin
+    except Exception as exc:  # noqa: BLE001 — doctor must never crash
+        return Check("xyz pin", WARN, f"xyz_pin module unavailable: {exc}")
+
+    try:
+        pin = read_pin()
+    except Exception as exc:  # noqa: BLE001 — never let a file read crash doctor
+        return Check("xyz pin", WARN, f"could not read .xyz-pin: {exc}")
+
+    if pin is None:
+        return Check("xyz pin", OK, "no XYZ harness pinned (optional integration)")
+
+    commit = pin.get("commit", "").strip()
+    if not commit:
+        return Check(
+            "xyz pin", WARN,
+            ".xyz-pin present but has no `commit=` — pin is unusable",
+            "record the pinned xyz-3-agents-swarm commit in .xyz-pin (via PR)",
+        )
+    pinned_at = pin.get("pinned_at", "").strip()
+    suffix = f" · pinned {pinned_at}" if pinned_at else ""
+    return Check("xyz pin", OK, f"xyz harness pinned @ {commit[:12]}{suffix}")
+
+
 _AUTH_FAIL_HINT = {
     "github": "PAT revoked, expired, or lost a scope — run "
               "`rebalance config set-github-token` with a fresh token",
@@ -887,6 +922,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     report.checks.append(_check_gmail(db_path))
     report.checks.append(_check_calendar())
     report.checks.append(_check_figma())
+    report.checks.append(_check_xyz_pin())
     report.checks.append(_check_pulse())
 
     # Auth-event log — last deauth/auth failure per integration (calendar,
