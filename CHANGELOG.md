@@ -6,6 +6,11 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.52.0] - 2026-07-03
+
+### Added
+- **6 low-risk GSD Core pattern-review adoptions landed** ([GH-106](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/106), follow-on to the closed review [GH-103](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/103)) — all scored low-medium risk / trivial-to-easy reversibility, batched into one pass rather than an XYZ marathon (marathon is serial anyway, and two of the six share `PROJECT/PDDA.md` as a target, which marathon's phase isolation can't safely coordinate): (1) a `Verification summary` phase-close convention plus (4) a named `Discuss` pre-planning step, both in `PROJECT/PDDA.md` → "Named phase-loop steps"; (2) a corrected read-before-edit hook port — gsd-core's own `gsd-read-guard.js` explicitly self-disables on Claude Code ("Claude Code natively enforces read-before-edit"), so the actual gap was a leaf-ingest bypass nudge instead: `utils/pdda/pdda-leaf-ingest-guard.py`, an advisory (never-blocking) `PreToolUse` hook wired in `.claude/settings.json`, firing only on inline-Python `rebalance.ingest` calls that bypass `register_collector`/`refresh_index`; (3) a subagent/`consult` hand-back contract (`PROJECT/PDDA.md` → "Subagent & consult hand-back contract"); (5)+(6) a new `SKILLS-INVENTORY.md` — a hand-maintained (not dynamically generated, per a real YAGNI objection raised during cross-model review) skill/command/hook ownership map + discoverability index. `doctor` clean, `pytest tests/` 1264 passed / 10 skipped, `pdda.sh run` clean. The 7th, higher-effort adoption (a narrow `capabilities/`-style manifest) stays queued as GH-106 Phase 2.
+
 ## [0.51.4] - 2026-07-02
 
 ### Added

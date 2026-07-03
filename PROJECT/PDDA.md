@@ -181,6 +181,52 @@ that layer, never blocks a build (see [LLM-assisted doc readiness review](#2-llm
 To tag a phase, name it plainly (e.g. `## Phase 2 — Discovery: …` / `## Phase 3 — Spike: …`) or set
 `doc_type: research` / a phase-level marker the reviewer can see.
 
+## Named phase-loop steps: Discuss & Verification summary
+
+Adopted from gsd-core's `Discuss → Plan → Execute → Verify → Ship` loop and verifier-agent pattern
+(external MIT review, [GH-103](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/103) /
+[GH-106](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/106) — pattern reuse, no code
+vendored). PDDA already names discovery/spike write-back explicitly (above); it did not name a
+decisions-before-plan step or a phase-close verification record. Both are cheap to add as naming
+conventions on top of the existing phase-doc structure — no new tooling.
+
+Contract:
+
+- **Discuss (before planning).** A phase's build work should be preceded by a short `Discuss` note —
+  2-3 bullets recording the implementation decisions made and why, and what's explicitly out of
+  scope. It can live under the phase's own section or `## Scope`; the point is the decision trail
+  exists *before* code changes, not reconstructed from the diff after the fact.
+- **Verification summary (before phase close).** A phase's QA gate should not be marked passed
+  without a `Verification summary` naming what was actually run (`doctor` / `pytest` / `pdda.sh run`),
+  the result, and any unmet acceptance items stated explicitly rather than silently dropped. This
+  closes the "commands were green, but nobody recorded a phase-goal verdict" gap — green output is
+  not the same claim as "this phase's acceptance criteria are met."
+
+Minimal shape:
+
+```md
+**Discuss:** <2-3 bullets — decisions made, why, what's out of scope>
+...
+**Verification summary:** doctor: clean · pytest: 1258/1258 green · pdda run: clean · unmet: none
+```
+
+Enforcement: **advisory (LLM layer)**, same posture as the discovery/spike write-back rule above —
+"did the agent actually verify, not just run a command" is a judgment call, so it stays with
+`pdda-doc-ready.sh` and never blocks a build.
+
+## Subagent & consult hand-back contract
+
+Adopted from the same review (GH-103/GH-106). When dispatching a `consult` call or an Agent-tool
+subagent for research/grading work, the prompt should require the response to return: **(1) what
+was found/changed**, **(2) evidence** (`file:line` citations), **(3) open questions**, **(4) next
+action**. This keeps writing findings back into the doc mechanical rather than re-deriving structure
+from free-form prose every time — the exact problem the discovery/spike write-back rule above exists
+to prevent, applied to subagent hand-back specifically.
+
+Scope note: this governs prompts *authored from this repo*. The `consult`/`xyz` skills themselves are
+maintained in the external `xyz-3-agents-swarm` harness, outside this repo's edit surface — adopting
+this shape here is a Rebalance-side convention, not a change to those skills.
+
 ## Bug-fix doc stance
 
 Bug-fix docs may use a lighter template than multi-phase project plans, but they still need:
