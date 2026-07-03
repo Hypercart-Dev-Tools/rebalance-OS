@@ -73,3 +73,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P2-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/p2/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · agy
+
+Implemented GH-104 to replace the generic "needs attention" label with a short, specific reason badge for off-roster warnings:
+- Added `off_roster_reason` helper to classify reasons as "uncommitted changes" (dirty), "N ahead of origin" (ahead/unpushed), or "needs attention" (fallback).
+- Exposed `warning_reason` for each warning in `off_roster_warnings` within `summarize_focus5` in `src/rebalance/ingest/focus5_scan.py`.
+- Updated `src/rebalance/web.py` warning strip view to render this dynamic/cached reason badge.
+- Added comprehensive unit tests in `tests/test_focus5_scan.py` and updated/added tests in `tests/test_web_focus5.py` covering all cases.

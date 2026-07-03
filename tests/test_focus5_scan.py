@@ -32,6 +32,7 @@ from rebalance.ingest.focus5_scan import (
     get_roster_meta,
     iter_git_repos,
     live_health,
+    off_roster_reason,
     pick_newest_dirty_off_roster,
     probe_repo_signals,
     rank_repos,
@@ -408,6 +409,33 @@ class PickNewestDirtyOffRosterTests(unittest.TestCase):
             _off_roster_row("aaa", my_local_commit_ts=NOW - HOUR),
         ]
         self.assertEqual(pick_newest_dirty_off_roster(rows)["repo_name"], "bbb")
+
+
+class OffRosterReasonTests(unittest.TestCase):
+    def test_dirty_repo_reason(self) -> None:
+        # If the repo is dirty, the reason must be "uncommitted changes"
+        # even if it has ahead commits as well.
+        w = _sig("wip", is_dirty=True, ahead=3)
+        self.assertEqual(off_roster_reason(w), "uncommitted changes")
+        
+        wd = {"is_dirty": True, "ahead": 3}
+        self.assertEqual(off_roster_reason(wd), "uncommitted changes")
+
+    def test_ahead_repo_reason(self) -> None:
+        # If the repo is not dirty but has ahead commits, it shows "N ahead of origin"
+        w = _sig("clean-ahead", is_dirty=False, ahead=3)
+        self.assertEqual(off_roster_reason(w), "3 ahead of origin")
+        
+        wd = {"is_dirty": False, "ahead": 5}
+        self.assertEqual(off_roster_reason(wd), "5 ahead of origin")
+
+    def test_fallback_reason(self) -> None:
+        # If not dirty and not ahead, returns fallback "needs attention"
+        w = _sig("clean-no-ahead", is_dirty=False, ahead=0)
+        self.assertEqual(off_roster_reason(w), "needs attention")
+        
+        wd = {"is_dirty": False, "ahead": 0}
+        self.assertEqual(off_roster_reason(wd), "needs attention")
 
 
 # ---------------------------------------------------------------------------

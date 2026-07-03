@@ -246,6 +246,22 @@ def pick_newest_dirty_off_roster(off_roster_warnings: list[dict]) -> dict | None
     return max(candidates, key=lambda w: (w["my_local_commit_ts"], w["repo_name"]))
 
 
+def off_roster_reason(w: dict | RepoSignals) -> str:
+    """The short, specific reason why a repo is in off-roster warnings (GH-104)."""
+    if isinstance(w, dict):
+        is_dirty = w.get("is_dirty")
+        ahead = w.get("ahead") or 0
+    else:
+        is_dirty = w.is_dirty
+        ahead = w.ahead or 0
+
+    if is_dirty:
+        return "uncommitted changes"
+    if ahead > 0:
+        return f"{ahead} ahead of origin"
+    return "needs attention"
+
+
 # ---------------------------------------------------------------------------
 # Ranking strategies — a pure function per mode, selected by config
 # ---------------------------------------------------------------------------
@@ -1053,12 +1069,15 @@ def summarize_focus5(
                 "ORDER BY is_dirty DESC, ahead DESC, repo_name",
                 (dev,),
             ).fetchall()
-            off_roster = [
-                {**{k: w[k] for k in w.keys()}, "is_dirty": bool(w["is_dirty"])}
-                for w in warn_rows
-                if w["local_path"] not in roster_paths
-                and (w["repo_full_name"] or w["local_path"]) not in hidden
-            ]
+            off_roster = []
+            for w in warn_rows:
+                if w["local_path"] in roster_paths:
+                    continue
+                if (w["repo_full_name"] or w["local_path"]) in hidden:
+                    continue
+                wd = {**{k: w[k] for k in w.keys()}, "is_dirty": bool(w["is_dirty"])}
+                wd["warning_reason"] = off_roster_reason(wd)
+                off_roster.append(wd)
 
             discovered = conn.execute(
                 "SELECT COUNT(*) FROM focus5_repo_signals WHERE device_id=?", (dev,)
