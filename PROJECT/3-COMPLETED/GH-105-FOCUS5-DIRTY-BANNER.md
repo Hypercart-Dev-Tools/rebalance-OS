@@ -2,7 +2,7 @@
 title: "Focus 5: single-row \"newest dirty repo\" banner above card #1"
 gh_issue: 105
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/105"
-status: "Active (2-WORKING) — Phases 1 & 2 shipped 2026-07-03; awaiting operator litmus"
+status: complete
 created: 2026-07-03
 updated: 2026-07-03
 owner: noel@neochro.me
@@ -20,7 +20,7 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 1 & 2 shipped (2026-07-03).** P1: `pick_newest_dirty_off_roster()` in `focus5_scan.py`; `summarize_focus5()` returns `dirty_banner` (gated to the default `recent_activity` view, `None` on the transient Dirty Five rerank — mirrors the existing `rank_cutoff_ts` gate); `_f5_dirty_banner()` renders it above the card grid in `web.py`. 9 new tests; full suite green (1271 passed, 0 failed, 10 skipped); `rebalance doctor` clean. P2: `CONTRACT.md` amended (additive), `Models.swift` + new `DirtyBannerView` in `ContentView.swift`; `swift build` (debug + release) green, all 4 self-test flavors OK; installed to `/Applications` via `make-app.sh`. | **Operator litmus**: quit + relaunch "Focus 5 Float" (was running during install) and confirm the banner renders against a live dirty repo, then move to `3-COMPLETED`. |
+| **DONE 2026-07-03.** Phases 1 & 2 shipped. P1: `pick_newest_dirty_off_roster()` in `focus5_scan.py`; `summarize_focus5()` returns `dirty_banner` (gated to the default `recent_activity` view, `None` on the transient Dirty Five rerank — mirrors the existing `rank_cutoff_ts` gate); `_f5_dirty_banner()` renders it above the card grid in `web.py`. 9 new tests; full suite green (1271 passed, 0 failed, 10 skipped); `rebalance doctor` clean. P2: `CONTRACT.md` amended (additive), `Models.swift` + new `DirtyBannerView` in `ContentView.swift`; `swift build` (debug + release) green, all 4 self-test flavors OK; installed to `/Applications` via `make-app.sh`. Operator directed move to `3-COMPLETED`; the app was running during install and picks up the banner on next relaunch (not independently re-verified live in this session). | **Done** — merged to `development` via PR from `feature/gh-105-focus5-dirty-banner`. |
 
 ## Table of Contents
 
