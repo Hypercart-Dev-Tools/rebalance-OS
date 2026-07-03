@@ -2,7 +2,7 @@
 title: Project Roadmap Ledger
 status: Active
 created: 2026-06-21
-updated: 2026-07-01
+updated: 2026-07-03
 branch: main
 supersedes: []
 synthesizes: []
@@ -31,6 +31,8 @@ goal: >
 
 ### Queued / parked
 
+- `Focus 5 newest-dirty-repo banner` ([#105](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/105)) — 1-INBOX capture, not yet promoted. Slim single-row banner above card #1 on the default Focus 5 view naming the single most-recently-touched dirty repo (`my_local_commit_ts`-ranked), so an operator sees forgotten uncommitted work without switching to Dirty Five. Informational only — no change to top-5 ranking. Feasibility researched: small (web slice); macOS app parity deferred (touches frozen `CONTRACT.md`). → [PROJECT/1-INBOX/GH-105-FOCUS5-DIRTY-BANNER.md](PROJECT/1-INBOX/GH-105-FOCUS5-DIRTY-BANNER.md)
+- `Focus 5 off-roster reason badge` ([#104](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/104)) — 1-INBOX capture, not yet promoted. Off-roster "needs attention" strip should surface *why* a repo isn't in the top-5 (uncommitted/dirty vs. unpushed vs. other) instead of a generic label — companion to GH-81's in-roster `explain_recency`/`basis_badge`. → [PROJECT/1-INBOX/GH-104-FOCUS5-OFFROSTER-REASON.md](PROJECT/1-INBOX/GH-104-FOCUS5-OFFROSTER-REASON.md)
 - `ROADMAP→dashboard collector` — 1-INBOX draft, not yet promoted. A new `roadmap` source scanning PDDA `ROADMAP.md` ledgers into the dashboard. Sequenced **behind** the now-promoted signal-quality contract so it is born observable (inherits the health fields) instead of shipping ungraded. Draft pending 5 operator decisions (§6) and partial cross-device registry rollout (1 of 3 devices). **Also captured (2026-06-30), unscoped:** a speculative Phase 5 — once the collector ships, its cross-repo `roadmap_signals` table is a second potential consumer beside the dashboard plane, seeding XYZ/tick task lanes *across repos*. Not designed; revisit after Phase 2. → [ROADMAP-SIGNAL-SCAN.md](PROJECT/1-INBOX/PDDA-INTEGRATION/ROADMAP-SIGNAL-SCAN.md)
 
 ### In progress
