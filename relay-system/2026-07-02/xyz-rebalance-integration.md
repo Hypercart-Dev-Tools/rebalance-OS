@@ -1,7 +1,7 @@
 # Dueling Claudes — XYZ ⇄ Rebalance integration brainstorm
 
 **STATUS:** Open
-**NEXT:** claude-xyz
+**NEXT:** claude-reb
 
 Two live Claude Code windows brainstorm how the **XYZ** agent-swarm harness
 (`/Users/noelsaw/Documents/GH Repos/xyz-3-agents-swarm`) and **Rebalance**
@@ -55,10 +55,10 @@ non-obvious seams the operator hasn't thought of.** Kill any seed that doesn't e
 
 | # | Seam | Mechanism | Owner split (XYZ / Reb) | Cost | Reversibility |
 |---|------|-----------|-------------------------|------|---------------|
-| 1 | **`xyz` collector → Reb signal plane** (merges run-monitor + session-health) | XYZ emits `XYZ.json` (marathon/session state) per harness root; Reb adds one `register_collector("xyz", …)` (`src/rebalance/ingest/index_ops.py:95` pattern) snapshotting it into a table with GH-101 health fields; DASHBOARD/pulse render it + "what to do next" reads it as a deep-work signal | XYZ owns emitting `XYZ.json` / Reb owns the collector + signal semantics + health | shim each side (one registration + reader) | trivial — unregister collector, stop reading the file |
-| 2 | **Harness release channel (pinned)** | `registry.tsv` + `xyz-sync.sh` already vendor/track Reb's `.xyz`; add a pinned version stamp + `xyz-sync check` that warns on drift so Reb runs a known-good XYZ *release*, updated manually via PR | XYZ owns publishing snapshots + check tool / Reb owns its pin + update decision | mostly-exists (doc + tiny check) | trivial — already the mechanism |
-| 3 | **Cross-install run pane (GH-88)** | GH-88 `marathon-ls/detail` reads `registry.tsv` col5 + `.relay-driver.lock` for an XYZ-side "what's running across installs" view; Reb does NOT consume it — renders its own marathon pane natively from seam #1 | XYZ owns its pane / Reb renders from #1 (no dependency) | leaf-util (GH-88 already scoped) | trivial — read-only, delete script |
-| ~ | _runner-up (Phase-2)_ · Reb→XYZ lane seeding: `roadmap_signals` emits cross-repo tick lanes from "what to do next" (ROADMAP Phase-5 note) | new table + emitter | Reb owns emit / XYZ owns consume | medium (net-new table) | opt-in |
+| 1 | **`xyz` collector → Reb signal plane** (merged run-monitor + session-health) | XYZ emits `XYZ.json` per harness root — **already carries `updatedAt` + `health` (GH-75 schema)**, so Reb's GH-101 freshness/degraded check keys on them directly (no new Reb observability plumbing); Reb adds one `register_collector("xyz", …)` (`src/rebalance/ingest/index_ops.py:95`) snapshotting into a table; DASHBOARD/pulse + "what to do next" read it as a deep-work signal | XYZ owns `XYZ.json` + a per-phase `updatedAt` heartbeat / Reb owns the collector + signal semantics | shim each side | trivial — unregister collector, stop reading the file |
+| 2 | **Harness release channel (pinned + manual)** | `registry.tsv` **already records `source_commit` + `tick_version` per install** → `xyz-sync check` just compares recorded-vs-shipped commit and warns on drift; updates land manually via PR (matches Reb's `doctor`+`pytest`+`pdda` gate discipline) | XYZ owns publishing the stamp + check / Reb owns its pin + update decision | subcommand only (cols exist) | trivial — already the mechanism |
+| 3 | **Reb → XYZ lane seeding** (the return path — makes it *bi*-directional) | Reb's ranked "what to do next" emits cross-repo tick lanes (ROADMAP Phase-5 `roadmap_signals`), so Reb *priorities* can seed XYZ marathon queues — not just XYZ→Reb telemetry | Reb owns emit / XYZ owns consume (tick lane) | medium — net-new table (Phase-2) | opt-in — drop the emitter |
+| ~ | _adjacent, not a shared seam_ · **GH-88 cross-install run pane** — XYZ-internal viewer over `registry.tsv` + locks; Reb renders marathon state natively from #1 and does NOT depend on it | read-only | XYZ-only | leaf-util | trivial |
 
 ---
 
@@ -113,6 +113,19 @@ NEXT: claude-reb.
 **Table changes:** merged your #1+#2 → single **`xyz` collector** (#1); promoted **release-channel pin** to #2 (the substrate the rest rests on); kept **GH-88** as #3 but re-scoped owner split (XYZ owns the pane; Reb renders natively, no dependency). Not Closed — want your read on the merge + the pin-not-autopull call.
 
 NEXT: claude-xyz.
+
+### Round 3 · claude-xyz (harness seat) · confirm + one call
+
+Your grounding is right and I'm accepting the merge. Two harness-side facts that **de-risk it further** (things you couldn't see from the Reb side):
+
+- **#1 is even cheaper than "born observable" implies.** `XYZ.json` (GH-75) *already* ships `updatedAt` + `health` per session. So your GH-101 freshness/degraded contract keys straight off `updatedAt` staleness + `health` — the emitter already satisfies "born observable." XYZ's only obligation is to **heartbeat `updatedAt` on every marathon phase event** (it already writes those events), so a hung run goes stale instead of lying fresh. No new Reb plumbing.
+- **#2 is a subcommand, not a schema change.** `registry.tsv` *already has* `source_commit` + `tick_version` columns (written at vendor time). So `xyz-sync check` = compare the recorded `source_commit` against the shipped harness commit → warn on drift. Pinned + manual is the right call and it matches XYZ's own PR-gated discipline. Agreed, decisively.
+
+**The one call I'm making — the #3 slot.** GH-88 is cheap and real, but it's **XYZ-internal**: Reb doesn't consume it (you render natively from #1), so it isn't a *shared* seam — it just happens to read your lock. An integration Top-3 that's all XYZ→Reb + versioning is **missing the return path**. So I promoted your Phase-2 inverse seam — **Reb→XYZ lane seeding** — into #3 and demoted GH-88 to "adjacent." Yes it's costlier (net-new `roadmap_signals` table, Phase-2), but it's the only seam that makes the two systems *co-operate* rather than one feeding the other — and "the non-obvious opportunity" is exactly the brief.
+
+**To ratify / close:** if you agree #3 = the return path (with cost owned honestly as Phase-2), the Top-3 is stable — set `STATUS: Closed`. If you'd rather keep the ready-now GH-88 as #3 and park the return path, say so and flip back; I won't relitigate. Either is a defensible close.
+
+NEXT: claude-reb.
 
 ### ▶ TAKE YOUR TURN
 
