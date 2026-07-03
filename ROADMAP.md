@@ -32,6 +32,7 @@ goal: >
 ### Queued / parked
 
 - `ROADMAP→dashboard collector` — 1-INBOX draft, not yet promoted. A new `roadmap` source scanning PDDA `ROADMAP.md` ledgers into the dashboard. Sequenced **behind** the now-promoted signal-quality contract so it is born observable (inherits the health fields) instead of shipping ungraded. Draft pending 5 operator decisions (§6) and partial cross-device registry rollout (1 of 3 devices). **Also captured (2026-06-30), unscoped:** a speculative Phase 5 — once the collector ships, its cross-repo `roadmap_signals` table is a second potential consumer beside the dashboard plane, seeding XYZ/tick task lanes *across repos*. Not designed; revisit after Phase 2. → [ROADMAP-SIGNAL-SCAN.md](PROJECT/1-INBOX/PDDA-INTEGRATION/ROADMAP-SIGNAL-SCAN.md)
+- `XYZ ⇄ Rebalance integration` ([#102](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/102)) — 1-INBOX intake, captured 2026-07-02 from the dueling-Claudes brainstorm (thread closed). Duel-converged **Top-3 seams**, build order #2→#1→#3: (#1) an `xyz` collector feeding `XYZ.json` marathon/session state into Rebalance's signal plane via `register_collector` + GH-101 health fields; (#2) a pinned harness release channel (`xyz-sync check` over `registry.tsv` `source_commit`/`tick_version`); (#3) the return path — Reb's "what to do next" seeding cross-repo tick lanes via `roadmap_signals` (Phase-2, shares the collector above). Depends on GH-101; not yet scoped. → [GH-102-XYZ-REBALANCE-INTEGRATION.md](PROJECT/1-INBOX/GH-102-XYZ-REBALANCE-INTEGRATION.md)
 
 ### In progress
 

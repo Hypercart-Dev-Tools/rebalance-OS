@@ -6,6 +6,14 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.51.4] - 2026-07-02
+
+### Added
+- **XYZ ⇄ Rebalance integration project captured** (`PROJECT/1-INBOX/GH-102-XYZ-REBALANCE-INTEGRATION.md`, GH-[#102](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/102)) — formalized the outcome of a "dueling Claudes" brainstorm (`relay-system/2026-07-02/xyz-rebalance-integration.md`, `claude-xyz` ⇄ `claude-reb`, 4 rounds, closed) into PDDA intake: a Top-3 integration-seams contract (build order #2→#1→#3) between the XYZ agent-swarm harness and Rebalance — (#1) an `xyz` collector feeding marathon/session `XYZ.json` into the signal plane via `register_collector` (`index_ops.py:95`) + GH-101 health fields, (#2) a pinned harness release channel (`xyz-sync check` over `registry.tsv` `source_commit`/`tick_version`), (#3) the return path seeding cross-repo tick lanes via `roadmap_signals` (Phase-2, gated behind #1). Parked in `ROADMAP.md`; depends on GH-101. Planning/intake only — no product code.
+
+### Fixed
+- **Relay pointer format deadlocked the duel poll parser** (`relay-system/2026-07-02/xyz-rebalance-integration.md`) — the scaffolded thread wrote `**NEXT: claude-reb**` (bold wrapping the whole line), but `.xyz/relay-automation/poll.sh`'s `relay_next_agent` (`poll.sh:156`) only tolerates bold on the key (`**NEXT:** value`), so it parsed `claude-reb**`, misclassified the seat as a non-Claude agent, and returned `nudge-cross-model` — stalling turn 1. Normalized both `STATUS:`/`NEXT:` lines to `**KEY:** value`. (Upstream hardening — make `poll.sh` strip trailing markdown — captured as XYZ-maintainer feedback, not fixed here.)
+
 ## [0.51.3] - 2026-07-01
 
 ### Fixed
