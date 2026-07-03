@@ -3,6 +3,11 @@
 The macOS app is a **read-only projection** of the Focus 5 roster. This file is the
 single source of truth for the wire shape it decodes.
 
+> **Amended 2026-07-03 (GH-105):** added the top-level `dirty_banner` field and
+> `OffRosterWarning.myLocalCommitTs` — additive, backward-compatible (both are
+> optional; an older client ignores the new field, a newer client tolerates its
+> absence).
+
 - **Endpoint:** `GET http://localhost:8787/focus-5.json`
 - **Query:** `?view=dirty` → re-rank to the "Dirty Five" board (read-only, in-memory).
   Omit (or `?view=focus5`) → the persisted `recent_activity` headline board.
@@ -22,11 +27,20 @@ single source of truth for the wire shape it decodes.
 {
   "roster": [ /* ≤ 5 RepoCard, ordered by position */ ],
   "off_roster_warnings": [ /* OffRosterWarning, dirty/unpushed repos outside top-5 */ ],
+  "dirty_banner": null,                          // OffRosterWarning shape, or null (GH-105)
   "computed_at": "2026-06-23T01:30:00+00:00",   // null when roster empty
   "ranking_mode": "recent_activity",             // or "dirty_first"; null when empty
   "summary": { "discovered": 21, "roster_size": 5, "off_roster_attention": 1 }
 }
 ```
+
+**`dirty_banner`** (GH-105): the single most-recently-touched dirty repo outside
+the top-5 (by `my_local_commit_ts`), same shape as one `off_roster_warnings`
+entry, or `null` when none qualifies. Server-computed
+(`pick_newest_dirty_off_roster` in `focus5_scan.py`) — the client renders it,
+it never re-derives the pick. Always `null` on a `?view=dirty` rerank (Dirty
+Five already shows every dirty repo as a full card, so the nudge would be
+redundant there).
 
 Brand-new machine (no DB) returns this exact shape with `roster: []`, `summary` zeros,
 nulls — HTTP 200, never a 404/500. The app decodes one shape always.
@@ -83,6 +97,7 @@ absent/null in real payloads (no PR, no upstream, non-GitHub/local-only repo, em
 struct Focus5Response: Codable {
     let roster: [RepoCard]
     let offRosterWarnings: [OffRosterWarning]
+    let dirtyBanner: OffRosterWarning?  // GH-105: single newest dirty repo, or nil
     let computedAt: String?          // ISO-8601; nil when roster empty
     let rankingMode: String?         // "recent_activity" | "dirty_first" | nil
     let summary: Summary
@@ -157,12 +172,15 @@ struct OffRosterWarning: Codable, Identifiable {
     let untrackedCount: Int
     let isDirty: Bool
     let probedAt: String?
+    let myLocalCommitTs: Int?         // GH-105: last local commit before going dirty
 }
 ```
 
 > Note: `device_id`, `head_reflog_ts`, `index_mtime_ts` exist on the wire but are
 > intentionally omitted from the Swift model — the app doesn't render them. `Codable`
-> ignores unknown keys, so this is safe.
+> ignores unknown keys, so this is safe. `recency_basis` (on each off-roster row) is
+> similarly omitted — the Swift dirty banner doesn't render the GH-81 fallback-basis
+> badge, only `my_local_commit_ts` for the "last commit Xh ago" text.
 
 ## Bottom note — `GET /focus-5/note` (vault `focus5.md`)
 

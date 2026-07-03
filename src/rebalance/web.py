@@ -188,6 +188,12 @@ tr:hover td { background: rgba(0,0,0,.03); }
            border-radius: 8px; padding: 10px 14px; margin-bottom: 16px; font-size: 13px;
            line-height: 1.5; }
 .f5-warn b { color: var(--warn); }
+/* GH-105: a slim, friendly (non-alarm) nudge — deliberately lighter than
+   .f5-warn so it reads as "BTW" rather than a risk warning. */
+.f5-dirty-banner { background: rgba(31,111,235,.06); border: 1px solid rgba(31,111,235,.2);
+                    color: var(--fg-muted); border-radius: 8px; padding: 6px 14px;
+                    margin-bottom: 12px; font-size: 12px; line-height: 1.4; }
+.f5-dirty-banner b { color: var(--fg); }
 /* GH-81 Phase 2: a fallback-basis badge on a rostered card (reflog disabled). */
 .f5-basis { color: var(--fg-muted); font-weight: 400; font-size: 12px; }
 /* Focus 5 / Dirty Five view toggle — a small segmented control. */
@@ -422,6 +428,35 @@ def _f5_warning_strip(data: dict[str, Any]) -> str:
     )
 
 
+def _f5_dirty_banner(data: dict[str, Any]) -> str:
+    """Slim single-row "BTW, this went dirty" nudge above card #1 (GH-105).
+
+    Deliberately shows at most one repo (the single most-recently-touched
+    dirty one, per ``pick_newest_dirty_off_roster``) so it stays a passive
+    nudge rather than duplicating ``_f5_warning_strip``'s full off-roster
+    list. ``dirty_banner`` is already ``None`` on the Dirty Five transient
+    rerank (every dirty repo is a full card there — see ``summarize_focus5``),
+    so no view check is needed here.
+    """
+    banner = data.get("dirty_banner")
+    if not banner:
+        return ""
+    name = html.escape(banner["repo_name"])
+    when = _rel_time(
+        datetime.fromtimestamp(banner["my_local_commit_ts"], tz=timezone.utc).isoformat()
+    )
+    bits = []
+    if banner.get("modified_count"):
+        bits.append(f"{banner['modified_count']} modified")
+    if banner.get("untracked_count"):
+        bits.append(f"{banner['untracked_count']} untracked")
+    detail = ", ".join(bits) or "uncommitted changes"
+    return (
+        f"<div class='f5-dirty-banner'>👋 BTW, recent work on <b>{name}</b> left it "
+        f"dirty ({detail}) — last commit {when}</div>"
+    )
+
+
 def _f5_pr(card: dict[str, Any]) -> str:
     """Newest remote PR, or an explicit unavailable state (never drop the repo)."""
     pr = card.get("newest_pr")
@@ -535,8 +570,9 @@ def _focus5_body(data: dict[str, Any], *, view: str = "focus5") -> str:
         f"<span class='f5-live'>● tree health checked live</span></div>"
     )
     strip = _f5_warning_strip(data)
+    banner = _f5_dirty_banner(data)
     cards = "".join(_f5_card(c) for c in roster)
-    return f"{head}{meta}{strip}<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}{_FOCUS5_OPEN_ASSETS}"
+    return f"{head}{meta}{strip}{banner}<div class='f5-grid'>{cards}</div>{_FOCUS5_HIDE_ASSETS}{_FOCUS5_OPEN_ASSETS}"
 
 
 # Scoped CSS + JS for the per-card hide (✕) control. Kept in the Focus 5 body so
@@ -690,7 +726,7 @@ def focus5_json(view: str = "focus5") -> JSONResponse:
         # Brand-new machine: return the empty contract shape (not a 404) so the
         # polling client always decodes the same structure.
         return JSONResponse({
-            "roster": [], "off_roster_warnings": [],
+            "roster": [], "off_roster_warnings": [], "dirty_banner": None,
             "computed_at": None, "ranking_mode": None,
             "summary": {"discovered": 0, "roster_size": 0,
                         "off_roster_attention": 0, "rank_cutoff_ts": None},

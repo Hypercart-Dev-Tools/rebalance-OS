@@ -91,7 +91,8 @@ enum Focus5SelfTest {
         do {
             let resp = try SampleData.load()
             print("SELFTEST OK — roster=\(resp.roster.count) mode=\(resp.rankingMode ?? "nil") "
-                  + "offRoster=\(resp.offRosterWarnings.count) discovered=\(resp.summary.discovered)")
+                  + "offRoster=\(resp.offRosterWarnings.count) discovered=\(resp.summary.discovered) "
+                  + "dirtyBanner=\(resp.dirtyBanner?.repoName ?? "nil")")
             for c in resp.roster {
                 print("  #\(c.position) \(c.repoName) dirty=\(c.isDirty) "
                       + "drift=↑\(c.ahead)↓\(c.behind) pr=\(c.newestPr?.number.description ?? "—") "

@@ -213,6 +213,44 @@ class FocusBodyTests(unittest.TestCase):
         body = _focus5_body(_data([card]))
         self.assertIn("unavailable", body)
 
+    # --- GH-105: the single "BTW, this went dirty" banner ---
+
+    def test_dirty_banner_renders_repo_and_detail(self) -> None:
+        now = int(datetime.now(timezone.utc).timestamp())
+        banner = {
+            "repo_name": "sleuth-app", "local_path": "/x/sleuth-app",
+            "repo_full_name": "me/sleuth-app", "branch": "development",
+            "ahead": 0, "modified_count": 4, "untracked_count": 0,
+            "is_dirty": True, "probed_at": _now_iso(hours=1),
+            "my_local_commit_ts": now - 2 * 3600, "recency_basis": "local_reflog",
+        }
+        body = _focus5_body(_data([_card()], dirty_banner=banner))
+        self.assertIn("f5-dirty-banner", body)
+        self.assertIn("sleuth-app", body)
+        self.assertIn("4 modified", body)
+        self.assertIn("2h ago", body)
+
+    def test_no_dirty_banner_when_absent(self) -> None:
+        body = _focus5_body(_data([_card()]))  # no dirty_banner key at all
+        self.assertNotIn("f5-dirty-banner", body)
+
+    def test_no_dirty_banner_when_none(self) -> None:
+        body = _focus5_body(_data([_card()], dirty_banner=None))
+        self.assertNotIn("f5-dirty-banner", body)
+
+    def test_dirty_banner_escapes_repo_name(self) -> None:
+        now = int(datetime.now(timezone.utc).timestamp())
+        banner = {
+            "repo_name": "<script>x</script>", "local_path": "/x/evil",
+            "repo_full_name": None, "branch": "main", "ahead": 0,
+            "modified_count": 1, "untracked_count": 0, "is_dirty": True,
+            "probed_at": _now_iso(hours=1),
+            "my_local_commit_ts": now - 3600, "recency_basis": "local_reflog",
+        }
+        body = _focus5_body(_data([_card()], dirty_banner=banner))
+        self.assertNotIn("<script>x</script>", body)
+        self.assertIn("&lt;script&gt;", body)
+
 
 class ViewToggleTests(unittest.TestCase):
     """The Focus 5 / Dirty Five segmented toggle, shared by both views."""
