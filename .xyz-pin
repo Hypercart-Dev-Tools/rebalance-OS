@@ -1,0 +1,17 @@
+# .xyz-pin — GH-102 seam #2 (harness release channel), Reb side.
+#
+# The xyz-3-agents-swarm (XYZ) harness commit this Rebalance install's XYZ
+# integration is pinned to. Committed on purpose so a fresh clone is
+# reproducible (Guiding Principle 10, portability) — unlike the machine-local,
+# never-committed ~/.config/xyz/registry.tsv, which records the *installed*
+# commit on this machine.
+#
+# The drift check itself (recorded-vs-installed diff, warn-on-mismatch) is
+# XYZ-side: `xyz-sync check` (GH-102 Phase 1, deferred to the XYZ repo). This
+# file is only the committed pin it reads; `rebalance doctor` also surfaces it.
+# Update via PR only.
+#
+# Simple key=value lines; `#` comments and blanks ignored.
+commit=c829000bad5e196392e5ffbff5838cc558877f67
+pinned_at=2026-07-03
+note=GH-102 Phase 0 discovery ran against this XYZ commit (GH-75 shipped).

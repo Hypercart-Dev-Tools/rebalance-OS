@@ -113,5 +113,18 @@
   },
   "env": {
     "PDDA_STALE_DAYS": "14"
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "utils/pdda/pdda-leaf-ingest-guard.py"
+          }
+        ]
+      }
+    ]
   }
 }
