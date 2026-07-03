@@ -60,6 +60,69 @@ class IndexOpsTests(unittest.TestCase):
         self.assertTrue(result["dry_run"])
         self.assertTrue(result["output_path"].endswith("Dashboards/rebalanceOS Dashboard.md"))
 
+    def test_get_index_status_recent_row_count_7d(self) -> None:
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+
+            # Initialize the database schema and migrations
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+
+                # Seed vault (table vault_files)
+                # 1 recent modified file, 1 stale modified file
+                conn.execute(
+                    "INSERT INTO vault_files (rel_path, content_hash, ingested_at, last_modified) "
+                    "VALUES ('recent.md', 'hash1', datetime('now'), datetime('now', '-2 days'))"
+                )
+                conn.execute(
+                    "INSERT INTO vault_files (rel_path, content_hash, ingested_at, last_modified) "
+                    "VALUES ('stale.md', 'hash2', datetime('now'), datetime('now', '-10 days'))"
+                )
+
+                # Seed calendar (table calendar_events)
+                # 1 recent past event, 1 recent future event, 1 stale past event, 1 stale future event
+                conn.execute(
+                    "INSERT INTO calendar_events (id, start_time, fetched_at) "
+                    "VALUES ('event1', datetime('now', '-2 days'), datetime('now'))"
+                )
+                conn.execute(
+                    "INSERT INTO calendar_events (id, start_time, fetched_at) "
+                    "VALUES ('event2', datetime('now', '+2 days'), datetime('now'))"
+                )
+                conn.execute(
+                    "INSERT INTO calendar_events (id, start_time, fetched_at) "
+                    "VALUES ('event3', datetime('now', '-10 days'), datetime('now'))"
+                )
+                conn.execute(
+                    "INSERT INTO calendar_events (id, start_time, fetched_at) "
+                    "VALUES ('event4', datetime('now', '+10 days'), datetime('now'))"
+                )
+                conn.commit()
+
+            # Query get_index_status
+            status = get_index_status(db_path)
+
+            # Verify keys are present for all sources
+            sources = status.get("sources", {})
+            expected_sources = [
+                "vault", "github", "calendar", "sleuth",
+                "apple_reminders", "email", "figma", "ask_self"
+            ]
+            for src in expected_sources:
+                self.assertIn(src, sources)
+                self.assertIn("recent_row_count_7d", sources[src])
+
+            # Verify seeded sources have correct count
+            self.assertEqual(sources["vault"]["recent_row_count_7d"], 1)
+            self.assertEqual(sources["calendar"]["recent_row_count_7d"], 2)
+
+            # Verify zero-volume sources return 0, not None
+            self.assertEqual(sources["email"]["recent_row_count_7d"], 0)
+            self.assertEqual(sources["github"]["recent_row_count_7d"], 0)
+
 
 if __name__ == "__main__":
     unittest.main()
