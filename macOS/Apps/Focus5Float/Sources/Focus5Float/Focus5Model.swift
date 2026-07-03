@@ -26,6 +26,10 @@ enum LoadState: Equatable {
 final class Focus5Model {
     var roster: [RepoCard] = []
     var offRoster: [OffRosterWarning] = []
+    // GH-105: single newest dirty off-roster repo, or nil — already nil on a
+    // Dirty Five rerank (rankingMode == "dirty_first"), so no extra view guard
+    // is needed at the call site.
+    var dirtyBanner: OffRosterWarning?
     var rankingMode: String?          // "recent_activity" | "dirty_first"
     var lastUpdated: String?          // computed_at from the payload
     var loadState: LoadState = .idle
@@ -248,6 +252,7 @@ final class Focus5Model {
     private func apply(_ resp: Focus5Response) {
         roster = resp.roster
         offRoster = resp.offRosterWarnings
+        dirtyBanner = resp.dirtyBanner
         rankingMode = resp.rankingMode
         lastUpdated = resp.computedAt
     }

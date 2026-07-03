@@ -230,6 +230,9 @@ struct ContentView: View {
             case .loaded:
                 ScrollView {
                     LazyVStack(spacing: Theme.Space.s) {
+                        if let banner = model.dirtyBanner {
+                            DirtyBannerView(warning: banner)
+                        }
                         ForEach(Array(model.roster.enumerated()), id: \.element.id) { index, card in
                             RepoCardView(card: card, darker: !index.isMultiple(of: 2))
                         }
@@ -796,6 +799,50 @@ private struct MarkdownLine: View {
             return String(t.dropFirst(2))
         }
         return nil
+    }
+}
+
+// MARK: - Dirty banner (GH-105)
+
+/// Slim single-row "BTW, this went dirty" nudge shown above card #1 — the
+/// single most-recently-touched dirty repo outside the top 5 (already picked
+/// server-side; this view only renders it). Deliberately lighter/friendlier
+/// than `OffRosterFooter` (accent tint, not warning) and never collapsible —
+/// it's a passive nudge, not a full list.
+struct DirtyBannerView: View {
+    let warning: OffRosterWarning
+
+    private var detail: String {
+        var bits: [String] = []
+        if warning.modifiedCount > 0 { bits.append("\(warning.modifiedCount) modified") }
+        if warning.untrackedCount > 0 { bits.append("\(warning.untrackedCount) untracked") }
+        return bits.isEmpty ? "uncommitted changes" : bits.joined(separator: ", ")
+    }
+
+    private var ago: String {
+        guard let ts = warning.myLocalCommitTs else { return "" }
+        return RelTime.ago(Date(timeIntervalSince1970: TimeInterval(ts)))
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text("👋 BTW,")
+                .font(Theme.caption).foregroundStyle(Theme.text2)
+            Text(warning.repoName)
+                .font(Theme.bodyMed).foregroundStyle(Theme.text)
+            Text("left it dirty (\(detail))" + (ago.isEmpty ? "" : " — last commit \(ago)"))
+                .font(Theme.caption).foregroundStyle(Theme.text2)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, Theme.Space.m)
+        .padding(.vertical, Theme.Space.xs)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                .strokeBorder(Theme.accent.opacity(0.2), lineWidth: 1)
+        )
     }
 }
 

@@ -170,7 +170,8 @@
       "modified_count": 0,
       "untracked_count": 0,
       "is_dirty": false,
-      "probed_at": "2026-06-23T20:10:00+00:00"
+      "probed_at": "2026-06-23T20:10:00+00:00",
+      "my_local_commit_ts": null
     },
     {
       "repo_name": "bloomz-prod-08-15",
@@ -181,9 +182,22 @@
       "modified_count": 6,
       "untracked_count": 2,
       "is_dirty": true,
-      "probed_at": "2026-06-23T20:10:00+00:00"
+      "probed_at": "2026-06-23T20:10:00+00:00",
+      "my_local_commit_ts": 1782260400
     }
   ],
+  "dirty_banner": {
+    "repo_name": "bloomz-prod-08-15",
+    "local_path": "/Users/me/Local Sites/bloomz-prod-08-15",
+    "repo_full_name": null,
+    "branch": "develop",
+    "ahead": 0,
+    "modified_count": 6,
+    "untracked_count": 2,
+    "is_dirty": true,
+    "probed_at": "2026-06-23T20:10:00+00:00",
+    "my_local_commit_ts": 1782260400
+  },
   "computed_at": "2026-06-23T20:10:00+00:00",
   "ranking_mode": "recent_activity",
   "summary": {

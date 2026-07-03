@@ -225,6 +225,27 @@ def explain_recency(
     return " · ".join(parts)
 
 
+def pick_newest_dirty_off_roster(off_roster_warnings: list[dict]) -> dict | None:
+    """The single most-recently-touched dirty repo outside the top 5 (GH-105).
+
+    A slim "BTW, recent work made this dirty" banner needs exactly one repo,
+    not the full off-roster list ``_f5_warning_strip`` already renders. Ranks
+    by ``my_local_commit_ts`` (last authored commit before it went dirty) —
+    never ``index_mtime_ts`` (clone/fetch pollution; see module docstring) —
+    so a repo the operator hasn't touched in months but merely re-cloned can't
+    win. Ties broken by ``repo_name`` for determinism. Returns ``None`` when no
+    off-roster repo is dirty (unpushed-only entries don't count — this banner
+    is specifically "you left uncommitted work", not "you forgot to push").
+    """
+    candidates = [
+        w for w in off_roster_warnings
+        if w.get("is_dirty") and w.get("my_local_commit_ts") is not None
+    ]
+    if not candidates:
+        return None
+    return max(candidates, key=lambda w: (w["my_local_commit_ts"], w["repo_name"]))
+
+
 # ---------------------------------------------------------------------------
 # Ranking strategies — a pure function per mode, selected by config
 # ---------------------------------------------------------------------------
@@ -975,7 +996,7 @@ def summarize_focus5(
     """
     dev = device_id or get_device_id()
     empty = {
-        "roster": [], "off_roster_warnings": [],
+        "roster": [], "off_roster_warnings": [], "dirty_banner": None,
         "computed_at": None, "ranking_mode": None,
         "summary": {"discovered": 0, "roster_size": 0,
                     "off_roster_attention": 0, "rank_cutoff_ts": None},
@@ -1054,10 +1075,16 @@ def summarize_focus5(
     # view (Dirty Five reranks under dirty_first) must NOT publish a cutoff that the
     # renderer would then mislabel with Focus 5 semantics. (Codex relay r2.)
     rank_cutoff_ts = roster[-1].get("my_local_commit_ts") if (roster and mode is None) else None
+    # GH-105: single "BTW, this went dirty" nudge — headline board only. Like
+    # rank_cutoff_ts above, a transient Dirty Five rerank (mode is not None)
+    # already shows every dirty repo as a full card, so the banner would be
+    # redundant there; gate it to the default recent_activity view.
+    dirty_banner = pick_newest_dirty_off_roster(off_roster) if mode is None else None
 
     return {
         "roster": roster,
         "off_roster_warnings": off_roster,
+        "dirty_banner": dirty_banner,
         "computed_at": roster[0]["computed_at"] if roster else None,
         "ranking_mode": roster[0]["ranking_mode"] if roster else None,
         "summary": {
