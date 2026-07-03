@@ -1,7 +1,7 @@
 # Dueling Claudes — XYZ ⇄ Rebalance integration brainstorm
 
-**STATUS: Open**
-**NEXT: claude-reb**
+**STATUS:** Open
+**NEXT:** claude-reb
 
 Two live Claude Code windows brainstorm how the **XYZ** agent-swarm harness
 (`/Users/noelsaw/Documents/GH Repos/xyz-3-agents-swarm`) and **Rebalance**
