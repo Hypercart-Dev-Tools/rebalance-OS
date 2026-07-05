@@ -6,6 +6,11 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.53.0] - 2026-07-05
+
+### Added
+- **Zapier ingest project created** ([GH-115](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/115)) — 5-phase project plan for Zapier webhook ingestion as an alternative to direct Gmail/GCal OAuth. HMAC-authenticated endpoint in `web.py` routes to normalizers in `zapier_ingest.py`; Zapier email reuses the existing `ingest_email_messages()` single-writer path; Zapier calendar gets a new push function in `calendar.py`. Operator config flags (`email_source`, `calendar_source`) keep OAuth the default. Phase 0 spike is next. → `PROJECT/2-WORKING/GH-115-ZAPIER-INGEST.md`
+
 ## [0.52.2] - 2026-07-05
 
 ### Added
