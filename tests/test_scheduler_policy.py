@@ -162,6 +162,15 @@ POLICY = {
         "wrapper_must_contain": ["obsidian_daily_rollover.py"],
         "doc_tokens": ["daily 00:00", "obsidian_rollover.sh"],
     },
+    "obsidian-daily-sync": {
+        "calendar": [{"Hour": 18, "Minute": 0}],
+        # Loading should not fire an off-schedule summary write.
+        "run_at_load": False,
+        "keep_alive": False,
+        "wrapper": "utils/obsidian_daily_sync.sh",
+        "wrapper_must_contain": ["obsidian_daily_sync.py"],
+        "doc_tokens": ["daily 18:00", "obsidian_daily_sync.sh"],
+    },
 }
 
 INSTALLERS = {
@@ -175,6 +184,7 @@ INSTALLERS = {
     "health-check": "install_health_check_scheduler.sh",
     "health-check-triage": "install_health_check_triage_scheduler.sh",
     "obsidian-rollover": "install_obsidian_rollover_scheduler.sh",
+    "obsidian-daily-sync": "install_obsidian_daily_sync_scheduler.sh",
 }
 
 

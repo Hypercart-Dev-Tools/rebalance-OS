@@ -26,7 +26,7 @@ phases: 4
 
 | What was just completed | What's next |
 | --- | --- |
-| Promoted to 2-WORKING (2026-07-04) | Start Phase 0 Spike |
+| **All phases shipped 2026-07-04** (via [MARATHON-2026-07-04.md](MARATHON-2026-07-04.md)). Phase 0 spike proven; Phases 1-3 built as one sequential session: `utils/obsidian_daily_sync.py` + 15 unit tests green, launchd job `com.rebalance-os.obsidian-daily-sync` (18:00) installed & registered, live idempotent append to real `0. Today's Notes.md` verified, `ARCHITECTURE.md`/`SCHEDULER.md` updated. | Operator: confirm the first unattended 18:00 fire, then archive to `3-COMPLETED`. |
 
 ## Table of contents
 - [System Design & Constraints](#system-design--constraints)
