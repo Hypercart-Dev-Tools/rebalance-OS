@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: —
+STATUS: Approved
 ROUND: 1 / 5
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
@@ -73,6 +73,21 @@ Implements [rebalance-OS#113](https://github.com/Hypercart-Dev-Tools/rebalance-O
 **Re-review this:**
 - Confirm the top-left button placement and styling in `ContentView.swift:53`-`62` are acceptable relative to the existing header controls.
 - Confirm the hide action reaches the unchanged `hidePanel()` implementation in `Focus5FloatApp.swift:227`-`230` through the closure wiring at `Focus5FloatApp.swift:158`-`165`.
+
+**Commit:**
+- Pending harness-managed commit per operator instruction; no self-commit run.
+
+### Round 1 · Reviewer · agy · 2026-07-05 14:39 PDT
+**Verdict:** Approved
+VERDICT: PASS
+
+**Findings & proposals:**
+- [Pass] **ContentView close button**: Added a small leading close/hide button to the header in `macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift` matching the existing borderless style (`.buttonStyle(.borderless)` and `.foregroundStyle(Theme.text2)`).
+- [Pass] **Closure propagation**: Threaded an `onHide` closure through the `ContentView` layout structure.
+- [Pass] **AppDelegate delegation**: Bound `onHide` in `Focus5FloatApp.swift` to invoke `self?.hidePanel()` asynchronously on `@MainActor` which delegates to the existing hide logic (`panel.orderOut(nil)`).
+- [Pass] **Build & self-test sanity**: Verified compiling passes, and both `FOCUS5_SELFTEST=1` and the other env-triggered tests (`FOCUS5_HEALTHTEST`, `FOCUS5_VSCODETEST`, `FOCUS5_CACHETEST`) run and exit successfully.
+
+Basis: behaviorally proven and textual analysis
 
 **Commit:**
 - Pending harness-managed commit per operator instruction; no self-commit run.
