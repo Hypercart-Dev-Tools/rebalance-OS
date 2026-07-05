@@ -16,12 +16,11 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import json
 import subprocess
 import sys
 import time
 import os
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 
 # Reuse the rollover module's vault config
