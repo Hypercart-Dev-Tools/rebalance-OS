@@ -1,8 +1,14 @@
 ---
 title: MARATHON-QUEUE — 2026-07-01 (path-disjoint build lanes)
-status: Active
+status: Completed
 created: 2026-07-01
-updated: 2026-07-01
+updated: 2026-07-04
+closed: 2026-07-04
+closure_note: >
+  Both lanes ran and closed 2026-07-01 — MARATHON-A (Focus5Native Phase 0-R, evidence in
+  PHASE-0-R-FINDINGS.md) and MARATHON-B (Signal-quality contract, GH #101 opened + promoted to
+  GH-101-SIGNAL-QUALITY-CONTRACT.md). Remaining "operator sweep" items are human GUI/TCC litmus
+  on other docs, not this marathon's lanes. Archived to 3-COMPLETED.
 owner: noel@neochro.me
 branch: development
 roadmap_exempt: true

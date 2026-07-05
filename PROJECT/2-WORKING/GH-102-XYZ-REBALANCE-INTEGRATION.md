@@ -28,7 +28,7 @@ phases: 5
 
 ## Status
 
-| Most recently completed | What's next |
+| What was just completed | What's next |
 |---|---|
 | **Phase 1 Reb-side landed (2026-07-03).** Promoted to `2-WORKING`; Phase 0 discovery written back (see [§Phase 0 Findings](#phase-0--findings-2026-07-03)). **Reb half of seam #2 built:** committed `.xyz-pin` at repo root (pins XYZ harness `c829000`, the commit Phase 0 was verified against), a `read_pin()` reader ([xyz_pin.py](../../src/rebalance/xyz_pin.py)), and a `doctor` check that surfaces it — an absent pin is a clean OK (invariant 1, mutual independence), a pin missing `commit=` warns. Gates green: `pytest tests/` **1264 passed**; `rebalance doctor` shows `xyz pin — xyz harness pinned @ c829000bad5e`; new `tests/test_xyz_pin.py` (6 cases). | **XYZ-side `xyz-sync check` (deferred to the `xyz-3-agents-swarm` repo)** — extends the existing `xyz-sync.sh` / `find-harness.sh` drift surface to diff the machine-local install's `source_commit` against Reb's committed `.xyz-pin`. Then **lock the one open Phase 0 sub-decision** (harness-root opt-in/dedup rule). **Phase 2 (seam #1) stays gated on GH-101** landing `recent_row_count_7d` + `status`/`reason`. |
 

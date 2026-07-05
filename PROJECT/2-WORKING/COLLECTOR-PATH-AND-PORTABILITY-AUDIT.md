@@ -404,15 +404,14 @@ Codex review. Reopened 2026-06-30; not yet started.
 - [ ] **DoD #1 — single write path per raw source.** Audit which raw sources still expose more than
   one user-facing write path (per the "known bypasses" pattern from Phase 2) and collapse each to
   one source-owned helper.
-- [ ] **DoD #4 — semantic-CLI `all` normalization.** `rebalance semantic-backfill --source all` /
-  `semantic-embed --source all` still normalize to the legacy `["vault", "github"]` triad
-  (`src/rebalance/cli/semantic.py`), while the live `semantic` stage covers
-  `_all_semantic_sources()` = `['vault', 'github', 'email', 'code', 'figma']`. Make the CLI's `all`
-  match the stage's `all`.
-- [ ] **DoD #6 — hardcoded OAuth setup paths.** `scripts/setup_gmail_oauth.py` and
-  `scripts/setup_calendar_oauth.py` still hardcode token paths instead of calling
-  `resolve_oauth_token_path(service)` (already used by the runtime `calendar.py`/`gmail.py` paths
-  per Phase 4). Route the setup scripts through the same resolver.
+- [x] **DoD #4 — semantic-CLI `all` normalization.** DONE (verified 2026-07-04, shipped via
+  MARATHON-QUEUE-2026-06-30 lane F). `src/rebalance/cli/semantic.py` now imports and expands
+  `--source all` through `_all_semantic_sources()` rather than the legacy `["vault", "github"]`
+  triad.
+- [x] **DoD #6 — hardcoded OAuth setup paths.** DONE (verified 2026-07-04, shipped via
+  MARATHON-QUEUE-2026-06-30 lane G). Both `scripts/setup_gmail_oauth.py` and
+  `scripts/setup_calendar_oauth.py` now call `resolve_oauth_token_path(service)` instead of
+  constructing token paths by hand.
 - [ ] **DoD #8 — test/observability blind spots.** The GH-62 root cause for its own finding #1: a
   test asserted a stale, mocked call signature instead of exercising the real one
   (`tests/test_dashboard_terminal_theme.py`), so a genuine runtime break shipped undetected. Audit

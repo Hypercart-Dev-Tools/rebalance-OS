@@ -100,7 +100,7 @@ def is_unrecoverable(error: str) -> bool:
 # FSM
 # ---------------------------------------------------------------------------
 
-_LLM_MODEL    = "gemini-3.1-flash-lite"
+_LLM_MODEL    = "gemini-3.5-flash"
 _LLM_ENDPOINT = "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent"
 
 

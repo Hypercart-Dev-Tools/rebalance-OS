@@ -507,7 +507,7 @@ class TestVaultRender(unittest.TestCase):
                     why="cross-person", automation=False,
                 ),
             ],
-            model_used="gemini-2.5-flash", blended=True,
+            model_used="gemini-3.5-flash", blended=True,
             note="team blended: 1 additive block",
             computed_at="2026-06-30T01:30:00+00:00",
         )
@@ -516,7 +516,7 @@ class TestVaultRender(unittest.TestCase):
         md = na.render_next_actions_markdown(self._result())
         self.assertIn("# What To Do Next", md)
         self.assertIn("do not edit by hand", md)            # single-writer banner
-        self.assertIn("gemini-2.5-flash", md)               # provenance
+        self.assertIn("gemini-3.5-flash", md)               # provenance
         self.assertIn("1. **Review Binoid PR 894**", md)
         self.assertIn("👤 Matthew", md)                      # teammate attribution
         self.assertIn("evidence: GH 894", md)

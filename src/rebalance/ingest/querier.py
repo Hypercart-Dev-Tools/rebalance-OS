@@ -347,9 +347,9 @@ _GEMINI_ENDPOINT = (
 )
 # gemini-2.0-flash was retired by Google (the endpoint now 404s "no longer
 # available"), which silently forced every synthesis onto the local Qwen
-# fallback. Standardized on gemini-2.5-flash — current, and already the model
+# fallback. Standardized on gemini-3.5-flash — current, and already the model
 # note_builder.py / cli/dashboard.py use.
-DEFAULT_GEMINI_MODEL = "gemini-2.5-flash"
+DEFAULT_GEMINI_MODEL = "gemini-3.5-flash"
 
 _cached_chat_model = None
 _cached_chat_tokenizer = None

@@ -1,8 +1,14 @@
 ---
 title: MARATHON-QUEUE — XYZ harness test (path-disjoint build lanes)
-status: Active
+status: Completed
 created: 2026-06-30
-updated: 2026-06-30
+updated: 2026-07-04
+closed: 2026-07-04
+closure_note: >
+  All 7 lanes closed — A/C/D/E/F/G ran and closed in wave 2; lane B (Focus5Native Phase 0-R)
+  was carried into MARATHON-QUEUE-2026-07-01 and ran/closed there. Deliverables verified on
+  disk (test_unified_refresh_remediation.py, test_calendar_snap.py, semantic.py + OAuth resolver
+  patches, PHASE-0-R-FINDINGS.md). Archived to 3-COMPLETED.
 owner: noel@neochro.me
 branch: development
 roadmap_exempt: true

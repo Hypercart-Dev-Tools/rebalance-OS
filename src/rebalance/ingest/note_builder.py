@@ -513,7 +513,7 @@ def build_dashboard_note_content(
     changelog_path: Path = DEFAULT_CHANGELOG_PATH,
     goals_path: Path = DEFAULT_4X4_PATH,
     gemini_synthesis: bool = False,
-    gemini_model: str = "gemini-2.5-flash",
+    gemini_model: str = "gemini-3.5-flash",
     cleanup: bool = False,
 ) -> str:
     """Build the final dashboard markdown, optionally with Gemini summary."""

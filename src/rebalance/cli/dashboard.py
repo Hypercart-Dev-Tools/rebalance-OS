@@ -26,7 +26,7 @@ def dashboard_render_cmd(
     output: Path = typer.Option(None, "--output", "-o", help="Write dashboard markdown to an explicit path"),
     gemini_synthesis: bool = typer.Option(False, "--gemini-synthesis", help="Add a Gemini-written operator summary"),
     cleanup: bool = typer.Option(False, "--cleanup", help="Tighten the Gemini-written summary to reduce redundancy"),
-    gemini_model: str = typer.Option("gemini-2.5-flash", "--gemini-model", help="Gemini model for optional synthesis"),
+    gemini_model: str = typer.Option("gemini-3.5-flash", "--gemini-model", help="Gemini model for optional synthesis"),
     reingest_note: bool = typer.Option(False, "--reingest-note/--no-reingest-note", help="When writing into the vault, re-ingest and embed the updated note"),
     changelog_path: Path = typer.Option(Path("CHANGELOG.md"), "--changelog-path", help="Path to the changelog source"),
     goals_path: Path = typer.Option(Path("4X4.md"), "--goals-path", help="Path to the 4X4 source"),
