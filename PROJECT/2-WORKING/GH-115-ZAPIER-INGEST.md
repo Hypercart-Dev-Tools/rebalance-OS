@@ -3,7 +3,7 @@ title: "Zapier ingest: alternative email & calendar data streams for the work si
 owner: Noel
 gh_issue: 115
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/115"
-status: "Active (2-WORKING) — Phase 0 spike not yet started"
+status: "Active (2-WORKING) — Phase 0 spike complete; Phase 1 next"
 created: 2026-07-05
 updated: 2026-07-05
 branch: development
@@ -33,7 +33,7 @@ phases: 5
 
 | What was just completed | What's next |
 |---|---|
-| GH-115 opened 2026-07-05. Project doc created. Agy review applied 2026-07-05 — Phase 3 writer renamed to source-agnostic `push_calendar_events()`; Phase 1 added SQLite 503 handling and rate-limiter ephemerality note; Phase 4 added `index_ops.py` collector early-return requirement; Phase 0 HMAC note expanded for Zapier Premium restriction. `swarm-preflight` run 2026-07-05: original single-module design (Phase 2 + Phase 3 both writing `zapier_ingest.py`) was not swarm-eligible — **forced a file-split** into `zapier_email.py` / `zapier_calendar.py` plus Phase 1 handler-stub ownership of `web.py`, making Phase 2 ‖ Phase 3 a genuine path-disjoint concurrent lane (see [Lane / swarm structure](#lane--swarm-structure)). | **Run Phase 0 spike** — catalog Zapier payload shapes for Gmail + GCal triggers, validate HMAC auth model (confirm free vs Premium header support), confirm schema gap for calendar push. Write findings back here before Phase 0 QA gate passes. Phase 0 and Phase 1 still run sequentially before the Phase 2 ‖ Phase 3 swarm wave opens. |
+| GH-115 opened 2026-07-05. Project doc created. Agy review applied 2026-07-05 — Phase 3 writer renamed to source-agnostic `push_calendar_events()`; Phase 1 added SQLite 503 handling and rate-limiter ephemerality note; Phase 4 added `index_ops.py` collector early-return requirement; Phase 0 HMAC note expanded for Zapier Premium restriction. `swarm-preflight` run 2026-07-05: original single-module design (Phase 2 + Phase 3 both writing `zapier_ingest.py`) was not swarm-eligible — **forced a file-split** into `zapier_email.py` / `zapier_calendar.py` plus Phase 1 handler-stub ownership of `web.py`, making Phase 2 ‖ Phase 3 a genuine path-disjoint concurrent lane (see [Lane / swarm structure](#lane--swarm-structure)). Phase 0 spike completed 2026-07-05 — public Zapier docs do not expose a canonical sample payload, so the mapping below is grounded in Zapier's documented trigger inventory plus the underlying Gmail Message / Google Calendar Event resource fields; auth decision changed from HMAC-first to Basic-Auth-first. | **Run Phase 1** — build `POST /api/zapier/ingest` around HTTP Basic Auth (query-param fallback only), then open the Phase 2 ‖ Phase 3 swarm wave once the stubbed receiver lands. |
 
 ---
 
@@ -93,7 +93,7 @@ The Gmail push-ingest pattern (`ingest_email_messages()`) is the right model: no
 
 **Module split (swarm-forced, 2026-07-05):** email and calendar normalization live in **two separate modules** — `src/rebalance/ingest/zapier_email.py` and `src/rebalance/ingest/zapier_calendar.py` — instead of one shared `zapier_ingest.py`. A single shared module would force Phase 2 (email) and Phase 3 (calendar) to write the same file, making them sequential by construction; splitting the module makes the two phases path-disjoint so they can run as a concurrent 2-lane swarm. See [Lane / swarm structure](#lane--swarm-structure) below.
 
-**Security model.** Every inbound Zapier webhook must be HMAC-SHA256 verified using a shared secret stored via `resolve_secret_path("zapier-webhook-secret")`. Zapier sends a signature header (`X-Hook-Signature` or configurable) on every request. The endpoint rejects any request that fails verification or lacks the header. This is the same pattern used by GitHub webhooks.
+**Security model.** Phase 0 changed the v1 auth decision: inbound Zapier webhooks should use HTTP Basic Auth with the shared secret from `resolve_secret_path("zapier-webhook-secret")` as the password (static username such as `zapier` is fine). Query-param secret fallback remains acceptable for operators who cannot use Basic Auth. HMAC-SHA256 is deferred: Zapier's documented webhook actions can send headers, but true per-request HMAC signing would require extra Zap logic (for example a Code step or private integration) and is not the low-friction default for this project.
 
 ---
 
@@ -107,32 +107,93 @@ The Gmail push-ingest pattern (`ingest_email_messages()`) is the right model: no
 
 ### Checklist
 
-- [ ] Document Zapier Gmail trigger output fields (message_id, subject, from, to, date, snippet/body, labels)
-- [ ] Document Zapier Google Calendar trigger output fields (event_id, summary, start, end, location, description, attendees)
-- [ ] Map each Zapier Gmail field → `email_messages` column; flag any gaps or mismatches
-- [ ] Map each Zapier GCal field → `calendar_events` column; flag any gaps or mismatches
-- [ ] Confirm Zapier webhook auth mechanism (HMAC-SHA256 vs shared-secret header vs IP allowlist)
-- [ ] Confirm `ingest_email_messages()` signature is reusable as-is (or document the minimal delta needed)
-- [ ] Identify any `calendar_events` schema columns that a Zapier payload cannot populate (flag as nullable or drop from push path)
-- [ ] Write all findings into the [Spike findings](#spike-findings-phase-0) section below before closing this phase
+- [x] Document Zapier Gmail trigger output fields (message_id, subject, from, to, date, snippet/body, labels)
+- [x] Document Zapier Google Calendar trigger output fields (event_id, summary, start, end, location, description, attendees)
+- [x] Map each Zapier Gmail field → `email_messages` column; flag any gaps or mismatches
+- [x] Map each Zapier GCal field → `calendar_events` column; flag any gaps or mismatches
+- [x] Confirm Zapier webhook auth mechanism (HTTP Basic Auth vs HMAC-SHA256 custom header vs shared-secret query param)
+- [x] Confirm `ingest_email_messages()` signature is reusable as-is (or document the minimal delta needed)
+- [x] Identify any `calendar_events` schema columns that a Zapier payload cannot populate (flag as nullable or drop from push path)
+- [x] Write all findings into the [Spike findings](#spike-findings-phase-0) section below before closing this phase
 
 ### Spike findings (Phase 0)
 
-> _To be filled in during the spike run. This section must be complete before the Phase 0 QA gate passes._
+**What was investigated:**
 
-**What was investigated:** _(Zapier Gmail + GCal trigger payload shapes; HMAC auth options)_
+- Zapier's public Gmail app docs for `New Email Matching Search` and Google Calendar app docs for `Event Start`, plus the `Webhooks by Zapier` action docs for plan availability and auth capabilities. Public Zapier docs list the trigger/action inventory and configuration fields, but they do **not** publish one canonical sample webhook payload for either trigger.
+- The local single-writer contracts for `email_messages` and `calendar_events`, using the actual source files instead of guessing: `src/rebalance/ingest/gmail.py:327`, `src/rebalance/ingest/db/schema.py:240`, `src/rebalance/ingest/calendar.py:173`, and `src/rebalance/ingest/db/migrations/0005_calendar_events_composite_pk.sql:27`.
+- The underlying Gmail Message and Google Calendar Event resource fields Zapier is surfacing from those triggers, to anchor the normalized mapping where Zapier's public docs stop short of showing raw JSON payloads.
 
-**What was found:** _(concrete field mapping, gaps, auth recommendation — with file:line pointers where relevant)_
+**What was found:**
 
-**What it changes:** _(confirms, redirects, or kills any Phase 1–4 assumptions)_
+**Gmail trigger mapping (`New Email Matching Search`)**
+
+Public Zapier docs confirm the trigger exists and is polling-based, but do not publish a canonical output JSON sample. The table below therefore uses the documented trigger plus Gmail's Message resource fields and the existing `ingest_email_messages()` contract (`message_id`, `thread_id`, `from_address`, `from_name`, `subject`, `snippet`, `received_at`, `labels`) as the normalization target.
+
+| Zapier/Gmail field | Normalize to | Evidence / note |
+|---|---|---|
+| `message_id` | `email_messages.message_id` | Required. `ingest_email_messages()` skips rows with no `message_id` and upserts by that key. See `src/rebalance/ingest/gmail.py:338` and `src/rebalance/ingest/gmail.py:351`. |
+| `thread_id` | `email_messages.thread_id` | Optional if Zapier exposes Gmail `threadId`; otherwise leave empty string. Local writer already treats it as optional. See `src/rebalance/ingest/gmail.py:338` and `src/rebalance/ingest/db/schema.py:248`. |
+| `from` | `email_messages.from_address` + `email_messages.from_name` | Split sender into address + display name to match the existing table. The Gmail API exposes `From` in message headers; the current OAuth path already parses it this way. See `src/rebalance/ingest/gmail.py:266` and `src/rebalance/ingest/gmail.py:365`. |
+| `subject` | `email_messages.subject` | Direct map. See `src/rebalance/ingest/gmail.py:339` and `src/rebalance/ingest/db/schema.py:253`. |
+| `date` | `email_messages.received_at` | Normalize to ISO text. Current OAuth path prefers headers, then falls back to Gmail `internalDate`. See `src/rebalance/ingest/gmail.py:268`, `src/rebalance/ingest/gmail.py:339`, and Gmail Message resource docs. |
+| `snippet` / body excerpt | `email_messages.snippet` | v1 should stay snippet-only. There is no full-body column in `email_messages`; long body fields must be truncated or reduced to excerpt text. See `src/rebalance/ingest/db/schema.py:254`. |
+| `labels` | `email_messages.labels_json` | Store as JSON array of label strings, exactly as `ingest_email_messages()` already does. See `src/rebalance/ingest/gmail.py:370` and `src/rebalance/ingest/db/schema.py:256`. |
+| `to` | dropped in v1 | There is no `to_*` column in `email_messages`, and `ingest_email_messages()` has no input slot for it. If later needed, that is a schema change, not a Phase 2 workaround. |
+
+**Result:** `ingest_email_messages()` is reusable as-is. No writer-signature change is needed for the Phase 2 path; the only deliberate drops are `to` and any full-body field that exceeds the existing snippet-only contract.
+
+**Google Calendar trigger mapping (`Event Start`)**
+
+Zapier's public docs confirm `Event Start` exists, is polling-based, and is configured with `Calendar`, `Time Before`, `Time Before (Unit)`, and optional search input. As with Gmail, the public docs do not publish a canonical raw webhook sample, so the mapping below is grounded in the standard Google Calendar Event resource fields and the actual `calendar_events` writer shape in `src/rebalance/ingest/calendar.py`.
+
+| Zapier/GCal field | Normalize to | Evidence / note |
+|---|---|---|
+| `event_id` | `calendar_events.id` | Required. This is the event identity field from Google Calendar. The existing writer uses `id` in every upsert row. See `src/rebalance/ingest/calendar.py:240` and `src/rebalance/ingest/db/migrations/0005_calendar_events_composite_pk.sql:28`. |
+| `summary` | `calendar_events.summary` | Direct map. See `src/rebalance/ingest/calendar.py:241` and `src/rebalance/ingest/db/migrations/0005_calendar_events_composite_pk.sql:29`. |
+| `start` | `calendar_events.start_time` | Required for the push path because `start_time` is `NOT NULL`. Normalize from event `start.dateTime` or `start.date`. See `src/rebalance/ingest/calendar.py:242` and `src/rebalance/ingest/db/migrations/0005_calendar_events_composite_pk.sql:30`. |
+| `end` | `calendar_events.end_time` | Optional. Normalize from `end.dateTime` or `end.date`. See `src/rebalance/ingest/calendar.py:243` and `src/rebalance/ingest/db/migrations/0005_calendar_events_composite_pk.sql:31`. |
+| `location` | `calendar_events.location` | Direct map. See `src/rebalance/ingest/calendar.py:246`. |
+| `description` | `calendar_events.description` | Direct map. See `src/rebalance/ingest/calendar.py:247`. |
+| `attendees` | `calendar_events.attendees_json` | Must normalize to JSON objects shaped like `{email, name, response}` to match the existing writer's attendee structure. See `src/rebalance/ingest/calendar.py:250`. |
+| trigger-selected calendar | `calendar_events.calendar_id` | Not reliably present as a payload field in the public docs. Phase 3 should treat this as a locally supplied value from the Zap step/config, not as something guaranteed to arrive in the request body. |
+| event status | `calendar_events.status` | Google's Event resource has a `status` field, but Zapier's public `Event Start` docs do not promise it in the raw output shape. Treat as optional; default if absent. See `src/rebalance/ingest/calendar.py:248`. |
+| ingest timestamp | `calendar_events.fetched_at` | Not from Zapier. Must be synthesized locally at ingest time. See `src/rebalance/ingest/calendar.py:204` and `src/rebalance/ingest/db/migrations/0005_calendar_events_composite_pk.sql:37`. |
+| operator/team attribution | `calendar_events.person` | Not from Zapier. Nullable column added by migration 0005; must come from config or remain `NULL`. See `src/rebalance/ingest/calendar.py:180` and `src/rebalance/ingest/db/migrations/0005_calendar_events_composite_pk.sql:38`. |
+
+**Calendar schema gaps / required local defaults**
+
+- `calendar_events.start_time`, `calendar_events.calendar_id`, and `calendar_events.fetched_at` are non-null local requirements. A Zapier push path cannot rely on the raw payload alone for all three.
+- `calendar_events.person` is nullable and should stay config-driven, not payload-driven.
+- Upsert identity is no longer just `event_id`; the live schema uses composite identity `(id, calendar_id)`. Any Phase 3 duplicate test must keep `calendar_id` stable when proving idempotency.
+
+**Webhook auth decision**
+
+- `Webhooks by Zapier` webhook **actions** are not available on the Free plan; Zapier's own help doc marks them available on `Professional`, `Team`, and `Enterprise` only.
+- The documented webhook actions expose both a `Headers` section and a dedicated `Basic Auth` field.
+- Zapier also notes that `Custom Request` is the path for "Extremely customized headers", which is a signal that true HMAC-by-header is possible only with a more advanced setup, not the low-friction baseline.
+
+**Decision:** Phase 1 should use **HTTP Basic Auth as the v1 default**, with the shared secret from `resolve_secret_path("zapier-webhook-secret")` used as the password. Query-param secret fallback is acceptable only for operators who cannot use Basic Auth. Do **not** make HMAC-SHA256 the default Phase 1 contract.
+
+**Why Basic Auth wins over HMAC and query-param secret**
+
+- It is a first-class documented field in Zapier's webhook actions, so the setup is simpler than asking operators to build a Code step or custom integration to compute a signature.
+- It keeps the secret out of the URL, which is better than a query param for logs, browser history, and reverse-proxy access logs.
+- It still uses a header transport, so the receiver can reject unauthorized requests before parsing the payload body.
+
+**What it changes:**
+
+- Kills the current Phase 1 assumption that Zapier will send a per-request HMAC signature header by default. Phase 1 should verify HTTP Basic Auth first, with optional query-param fallback, not `_verify_zapier_signature(...)`.
+- Confirms the Phase 2 single-writer plan unchanged: `ingest_email_messages()` is already the right writer contract, and the only deliberate v1 drops are `to` and full-body storage.
+- Tightens Phase 3 requirements: the push writer must synthesize `calendar_id`, `fetched_at`, and optional `person` locally, and it must treat duplicate identity as `(event_id, calendar_id)`, not just `event_id`.
 
 ### Phase 0 QA gate
 
-- [ ] Spike findings section above is filled in (not placeholder prose)
-- [ ] At least one field-mapping table exists for each source (Gmail, GCal)
-- [ ] Auth mechanism selected and documented
-- [ ] Any assumption-kills from the spike are reflected in the Phase 1–4 checklists below
-- [ ] No code written in this phase
+- [x] Spike findings section above is filled in (not placeholder prose)
+- [x] At least one field-mapping table exists for each source (Gmail, GCal)
+- [x] Auth mechanism selected and documented
+- [x] Any assumption-kills from the spike are reflected in the Phase 1–4 checklists below
+- [x] No code written in this phase
 
 ---
 
@@ -141,8 +202,8 @@ The Gmail push-ingest pattern (`ingest_email_messages()`) is the right model: no
 **Discuss:**
 - Endpoint lives in `web.py` (the FastAPI dashboard layer) — same host/port as `/api/refresh`, `/api/apple-reminders/complete`, etc. No new server process.
 - Route: `POST /api/zapier/ingest` — receives any Zapier event, routes internally by `source` field in the payload.
-- HMAC verification runs before any payload parsing. A failed verify → `403` immediately, no body read.
-- Dry-run support: `?dry_run=true` validates the envelope (signature verifies, `source` is a recognized value) and returns `ok: true` **without invoking the source handler** — so Phase 1's own dry-run test is provable against the stub handlers alone and doesn't depend on Phase 2/3 landing first. Per-field/normalization dry-run coverage is each source phase's own QA gate (Phase 2/3), once the real handler body exists.
+- HTTP Basic Auth verification runs before any payload parsing. A failed verify → `403` immediately, no body read. Query-param fallback (`?zapier_secret=...`) is acceptable only as a compatibility path, not the default contract.
+- Dry-run support: `?dry_run=true` validates the envelope (auth verifies, `source` is a recognized value) and returns `ok: true` **without invoking the source handler** — so Phase 1's own dry-run test is provable against the stub handlers alone and doesn't depend on Phase 2/3 landing first. Per-field/normalization dry-run coverage is each source phase's own QA gate (Phase 2/3), once the real handler body exists.
 - Secret stored via `resolve_secret_path("zapier-webhook-secret")` — never in `temp/rbos.config`, never in code.
 - **Swarm interface contract:** this phase creates `src/rebalance/ingest/zapier_email.py` and
   `src/rebalance/ingest/zapier_calendar.py` as thin placeholders — each exports a single
@@ -155,13 +216,13 @@ The Gmail push-ingest pattern (`ingest_email_messages()`) is the right model: no
 ### Checklist
 
 - [ ] Add `POST /api/zapier/ingest` route to `web.py`
-- [ ] Implement `_verify_zapier_signature(request, secret)` helper — HMAC-SHA256, constant-time compare (`hmac.compare_digest`)
+- [ ] Implement `_verify_zapier_auth(request, secret)` helper — HTTP Basic Auth primary, optional `?zapier_secret=` fallback, constant-time compare (`hmac.compare_digest` or `secrets.compare_digest`)
 - [ ] Load webhook secret via `resolve_secret_path("zapier-webhook-secret")` at startup (fail-open with a clear error log if not set)
 - [ ] Create placeholder `src/rebalance/ingest/zapier_email.py` (`handle_email_event()` stub, `NotImplementedError`) and `src/rebalance/ingest/zapier_calendar.py` (`handle_calendar_event()` stub, `NotImplementedError`)
 - [ ] Route payload by `source` field: `"email"` → `zapier_email.handle_email_event()`, `"calendar"` → `zapier_calendar.handle_calendar_event()`, unknown → `400`
 - [ ] Catch `NotImplementedError` from a stub handler and return `501 Not Implemented` (expected until Phase 2/3 land; not a Phase 1 bug)
 - [ ] Return structured JSON response: `{"ok": true, "source": "email", "dry_run": false, "message_id": "..."}` or error shape
-- [ ] Add `?dry_run=true` query param — validate envelope (signature + recognized `source`) and return `ok: true` without calling the source handler or writing to the DB
+- [ ] Add `?dry_run=true` query param — validate envelope (auth + recognized `source`) and return `ok: true` without calling the source handler or writing to the DB
 - [ ] Rate-limit guard: reject if > 100 requests/minute from same IP (simple in-memory token bucket — state is ephemeral and resets on worker restart; acceptable for local dashboard spam protection, not a distributed rate limiter)
 - [ ] Catch SQLite `database is locked` errors and return `503 Service Unavailable` — Zapier retries on 5xx; a 4xx causes Zapier to drop the payload permanently
 - [ ] Structured log line per request: `request_id`, `source`, `dry_run`, `status`, `duration_ms`
@@ -171,11 +232,11 @@ The Gmail push-ingest pattern (`ingest_email_messages()`) is the right model: no
 
 - [ ] `rebalance doctor` still clean after adding the endpoint
 - [ ] `pytest tests/` green (no regressions)
-- [ ] `curl -X POST /api/zapier/ingest` with wrong signature → `403`
-- [ ] `curl -X POST /api/zapier/ingest` with valid signature + unknown source → `400`
-- [ ] `?dry_run=true` with a valid signature + recognized `source` returns `ok: true` and writes nothing to DB (envelope-only — does not call the stub handler)
+- [ ] `curl -X POST /api/zapier/ingest` with wrong or missing auth → `403`
+- [ ] `curl -X POST /api/zapier/ingest` with valid auth + unknown source → `400`
+- [ ] `?dry_run=true` with valid auth + recognized `source` returns `ok: true` and writes nothing to DB (envelope-only — does not call the stub handler)
 - [ ] `/api/zapier/health` returns `secret_configured: true` when secret is set
-- [ ] New tests: `tests/test_zapier_webhook.py` covering HMAC accept, HMAC reject, routing (dispatch reaches the correct stub and gets its `NotImplementedError`, surfaced as `501`), dry-run, health
+- [ ] New tests: `tests/test_zapier_webhook.py` covering Basic Auth accept, Basic Auth reject, optional query-param fallback, routing (dispatch reaches the correct stub and gets its `NotImplementedError`, surfaced as `501`), dry-run, health
 
 **Verification summary:** _(fill in before marking gate passed — doctor: / pytest: / unmet: none)_
 
@@ -193,6 +254,7 @@ The Gmail push-ingest pattern (`ingest_email_messages()`) is the right model: no
   Gmail trigger payload into the `ingest_email_messages()` input shape, then calls
   `gmail.py::ingest_email_messages()`.
 - Idempotency: Gmail message_id is available from Zapier — the existing upsert in `ingest_email_messages()` handles dedup automatically.
+- Phase 0 confirmed two deliberate v1 drops: there is no destination column for `to`, and there is no full-body storage column. `normalize_zapier_email()` should keep snippet/excerpt text only and ignore `to` unless a later schema change adds a home for it.
 - Body handling: Zapier's Gmail trigger may surface the full body. Phase 1 email ingest was metadata+snippet only — Zapier email should also stay snippet-only in v1 (full body is a separate future decision, tracked in `PROJECT/1-INBOX/EMAIL-INGEST.md`).
 
 ### Checklist
@@ -230,9 +292,10 @@ The Gmail push-ingest pattern (`ingest_email_messages()`) is the right model: no
 - `calendar.py` is the single writer for `calendar_events`. The new push function belongs there, mirroring how `gmail.py` owns the push path for `email_messages`.
 - The push function in `calendar.py` must be **source-agnostic**: `push_calendar_events(db_path: str, events: list[dict]) -> dict`. It accepts a normalized event list and knows nothing about Zapier. This keeps `calendar.py` consistent with how `gmail.py` exposes its push path and avoids coupling the core writer to an external service name.
 - All Zapier-specific field translation belongs in `zapier_calendar.py::normalize_zapier_calendar(payload: dict) -> list[dict]`. The same module's `handle_calendar_event()` (replacing the Phase 1 stub) calls `normalize_zapier_calendar()` then `push_calendar_events()` — same layering as email, in its own file.
-- `push_calendar_events()` uses the existing `INSERT OR REPLACE` keyed on Google event ID — same upsert semantics as the OAuth sync path.
+- `push_calendar_events()` uses the existing `INSERT OR REPLACE` semantics keyed by `(id, calendar_id)` — same logical upsert behavior as the OAuth sync path, but with the migrated composite key.
 - Attendees: GCal trigger may include attendees as a comma-separated string or array — normalize to a consistent format matching the existing `calendar_events.attendees` column.
 - Phase 0 findings govern which fields are nullable when Zapier cannot supply them.
+- The normalized payload will not satisfy every `calendar_events` column by itself. Phase 3 must synthesize `calendar_id` and `fetched_at` locally, and either source `person` from config or leave it `NULL`; `status` should default when the trigger payload omits it.
 
 ### Checklist
 
@@ -240,6 +303,7 @@ The Gmail push-ingest pattern (`ingest_email_messages()`) is the right model: no
 - [ ] Add `normalize_zapier_calendar(payload: dict) -> list[dict]` to `src/rebalance/ingest/zapier_calendar.py` — all Zapier-specific field mapping lives here
 - [ ] Implement `handle_calendar_event(payload: dict) -> dict` in the same module — replaces the Phase 1 `NotImplementedError` stub; calls `normalize_zapier_calendar()` then `push_calendar_events()`
 - [ ] Add `push_calendar_events(db_path: str, events: list[dict]) -> dict` to `calendar.py` (single writer, source-agnostic, uses existing `ensure_calendar_schema`)
+- [ ] Synthesize non-payload columns in Phase 3: `calendar_id`, `fetched_at`, and optional `person` / default `status`
 - [ ] Handle attendees normalization (string list → consistent stored format)
 - [ ] Add `tests/test_zapier_calendar.py` — happy path, missing event_id, duplicate upsert, attendees normalization
 - [ ] Store a fixture in `fixtures/zapier_gcal_trigger.json`
@@ -294,6 +358,6 @@ The Gmail push-ingest pattern (`ingest_email_messages()`) is the right model: no
 
 ## Open questions
 
-1. Does Zapier's free tier support custom webhook headers (for HMAC delivery)? If not, a shared-secret URL param is the fallback — Phase 0 spike resolves this.
+1. If v1 Basic Auth later proves too weak for this threat model, do we want a Code-step/private-Zapier-app HMAC upgrade path, or is transport-level auth sufficient for local/self-hosted deployments?
 2. Should the webhook endpoint require the pulse server to be running, or should it also work via the CLI dashboard server (`rebalance serve`)? v1 = pulse server only; revisit if demand exists.
 3. Future: should `refresh_index(scope=["zapier"])` be a valid scope to replay buffered Zapier payloads from a local queue? Not in v1.

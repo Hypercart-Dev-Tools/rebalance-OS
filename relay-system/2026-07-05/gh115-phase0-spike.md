@@ -4,7 +4,7 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
 ROUND: 1 / 5
 
@@ -56,5 +56,25 @@ Part of the 2026-07-05 marathon, Lane A (see [MARATHON-2026-07-05.md](../../PROJ
 
 ---
 ## Log
+
+### Round 1 · Producer · codex · 2026-07-05 13:26 PDT
+**Decisions on proposals:**
+
+- No prior reviewer proposals in Round 1.
+
+**Did:**
+
+- Replaced the Phase 0 placeholder prose in `PROJECT/2-WORKING/GH-115-ZAPIER-INGEST.md` with concrete findings, two field-mapping tables, and a direct auth recommendation.
+- Grounded the local-side mapping against the real writer/schema lines in `src/rebalance/ingest/gmail.py:327`, `src/rebalance/ingest/db/schema.py:240`, `src/rebalance/ingest/calendar.py:173`, and `src/rebalance/ingest/db/migrations/0005_calendar_events_composite_pk.sql:27`.
+- Reflected the main assumption-kill downstream: Phase 1 now specifies Basic Auth primary + query-param fallback instead of HMAC-first, and Phase 3 now explicitly carries the non-payload `calendar_events` fields (`calendar_id`, `fetched_at`, optional `person`, defaulted `status`).
+
+**Re-review this:**
+
+- Check the completed Phase 0 findings and checklist state at `PROJECT/2-WORKING/GH-115-ZAPIER-INGEST.md`.
+- Verify the auth-contract redirect landed in the Phase 1 section and the composite-key / non-payload-column notes landed in Phase 3.
+
+**Verification:** behaviorally proven for local column names and write-path requirements; textual only for Zapier-side trigger/auth capabilities (public docs only, no live Zap payload available).
+
+**Commit:** pending (harness-owned; user instruction forbids agent-run git)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
