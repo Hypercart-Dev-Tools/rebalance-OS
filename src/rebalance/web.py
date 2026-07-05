@@ -161,7 +161,7 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .f5-card { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
            padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .f5-pos { font-size: 11px; font-weight: 700; color: var(--fg-dim); }
-.f5-name { font-size: 15px; font-weight: 600; color: var(--accent); text-decoration: none;
+.f5-name { font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none;
            word-break: break-word; }
 .f5-name:hover { text-decoration: underline; }
 .f5-reason { font-size: 11px; color: var(--fg-muted); }

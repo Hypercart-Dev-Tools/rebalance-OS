@@ -70,8 +70,8 @@ enum Theme {
 
     // MARK: Type ramp — SF Pro / SF Mono, three sizes only
 
-    /// 17 · Semibold — titles, shortcut, stats.
-    static let display = Font.system(size: 17, weight: .semibold)
+    /// 14 · Semibold — repo-name display (the card title; sole Theme.display consumer). GH-110.
+    static let display = Font.system(size: 14, weight: .semibold)
     /// 13 · Regular — list, controls, editor body.
     static let body    = Font.system(size: 13)
     /// 13 · Medium — emphasized body (selected row, control labels).

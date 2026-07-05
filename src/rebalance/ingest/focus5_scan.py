@@ -947,6 +947,22 @@ def _newest_pr(conn: Any, repo_full_name: str | None) -> dict[str, Any] | None:
     }
 
 
+def _repo_path_live(local_path: Any) -> bool:
+    """True if *local_path* is still a git repo on disk (the discovery predicate).
+
+    Mirrors ``iter_git_repos`` (a repo is a dir containing ``.git``): a checkout or
+    worktree removed from disk fails this, so a stale cached row can be dropped from
+    a read-only ``summarize_focus5`` without waiting for the next full disk resync.
+    """
+    if not local_path:
+        return False
+    try:
+        p = Path(local_path)
+        return p.exists() and (p / ".git").exists()
+    except OSError:
+        return False
+
+
 def _build_roster_card(
     conn: Any, base: dict[str, Any], *, with_activity: bool, with_live_health: bool,
 ) -> dict[str, Any]:
@@ -983,7 +999,7 @@ def _build_roster_card(
 def summarize_focus5(
     database_path: Path, *, device_id: str | None = None,
     with_activity: bool = True, with_live_health: bool = True,
-    mode: str | None = None,
+    mode: str | None = None, drop_missing_paths: bool = True,
 ) -> dict[str, Any]:
     """Return the roster cards, off-roster warnings, and snapshot metadata.
 
@@ -1048,6 +1064,12 @@ def summarize_focus5(
                      "ranking_mode": mode, "computed_at": computed_at}
                     for r in ranked
                 ]
+            # Drop cached entries whose checkout/worktree was removed from disk
+            # (GH-109): the Mac app's refresh is read-only and never re-scans, so a
+            # deleted repo would otherwise linger until the next full sync. Off for
+            # pure-ranking unit tests that seed synthetic (non-on-disk) signal rows.
+            if drop_missing_paths:
+                bases = [b for b in bases if _repo_path_live(b.get("local_path"))]
             roster = [
                 _build_roster_card(conn, b, with_activity=with_activity,
                                    with_live_health=with_live_health)
@@ -1072,6 +1094,8 @@ def summarize_focus5(
             off_roster = []
             for w in warn_rows:
                 if w["local_path"] in roster_paths:
+                    continue
+                if drop_missing_paths and not _repo_path_live(w["local_path"]):  # GH-109
                     continue
                 if (w["repo_full_name"] or w["local_path"]) in hidden:
                     continue
