@@ -6,6 +6,12 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.52.1] - 2026-07-04
+
+### Fixed
+- **focus5 Mac app: refresh no longer strands worktrees removed from disk** ([GH-109](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/109), [PR #111](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/111)) — `summarize_focus5` (`src/rebalance/ingest/focus5_scan.py`) gained a `_repo_path_live()` existence check (mirrors `iter_git_repos`'s `.git` predicate), applied on the read path via a `drop_missing_paths=True` default, so a repo whose folder or `.git` no longer exists drops from the roster/off-roster on the next read-only `GET /focus-5.json` fetch — no full ~30s device rescan required. 2 new regression tests in `tests/test_focus5_scan.py` (153 passed pre-merge, 105 in the focus5 file post-merge on `development`); the synthetic-path ranking unit tests opt out via `drop_missing_paths=False`. Visually verified end-to-end in the native Focus5Float app (not just the Python suite): a throwaway git worktree was synced into the live roster, deleted from disk, and confirmed to drop from the running app's panel via its own read-only refresh path.
+- **focus5 repo-name font shrunk ~20%** ([GH-110](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/110), [PR #111](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/111)) — the Mac app's `Theme.display` (`macOS/Apps/Focus5Float/Sources/Focus5Float/Theme.swift`) went 17pt → 14pt, and the HTML `/focus-5` page's `.f5-name` (`src/rebalance/web.py`) went 15px → 12px. Verified visually in a `swift build`/`swift run` of the native app — repo names render clearly legible at the smaller size with no clipping. `/Applications/Focus 5 Float.app` rebuilt and reinstalled via `make-app.sh` so the installed copy carries both fixes.
+
 ## [0.52.0] - 2026-07-03
 
 ### Added

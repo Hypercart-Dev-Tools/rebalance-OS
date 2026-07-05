@@ -2,7 +2,7 @@
 title: Project Roadmap Ledger
 status: Active
 created: 2026-06-21
-updated: 2026-07-03
+updated: 2026-07-04
 branch: main
 supersedes: []
 synthesizes: []
@@ -30,9 +30,6 @@ goal: >
 ## Ledger
 
 ### Queued / parked
-- **GH-110 · focus5 app: shrink repo-name font size by 20%** 🆕 **captured 2026-07-04 via HQ** — [GH-110-FOCUS5-APP-SHRINK-REPO.md](PROJECT/1-INBOX/GH-110-FOCUS5-APP-SHRINK-REPO.md) · [#110](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/110)
-- **GH-109 · focus5 app: refresh button does not drop Git Worktrees removed from disk** 🆕 **captured 2026-07-04 via HQ** — [GH-109-FOCUS5-APP-REFRESH-BUTTON.md](PROJECT/1-INBOX/GH-109-FOCUS5-APP-REFRESH-BUTTON.md) · [#109](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/109)
-
 - `ROADMAP→dashboard collector` — 1-INBOX draft, not yet promoted. A new `roadmap` source scanning PDDA `ROADMAP.md` ledgers into the dashboard. Sequenced **behind** the now-promoted signal-quality contract so it is born observable (inherits the health fields) instead of shipping ungraded. Draft pending 5 operator decisions (§6) and partial cross-device registry rollout (1 of 3 devices). **Also captured (2026-06-30), unscoped:** a speculative Phase 5 — once the collector ships, its cross-repo `roadmap_signals` table is a second potential consumer beside the dashboard plane, seeding XYZ/tick task lanes *across repos*. Not designed; revisit after Phase 2. → [ROADMAP-SIGNAL-SCAN.md](PROJECT/1-INBOX/PDDA-INTEGRATION/ROADMAP-SIGNAL-SCAN.md)
 ### In progress
 
@@ -50,6 +47,7 @@ goal: >
 
 ### Completed
 
+- `focus5 refresh worktree-drop + repo-name font shrink` ([PR #111](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/111), [#109](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/109), [#110](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/110)) — **DONE 2026-07-04.** `summarize_focus5` now filters out repos whose on-disk path/`.git` no longer exists on the read path (`drop_missing_paths=True`), so the Mac app's refresh drops a deleted worktree without a full rescan; repo-name font shrunk ~20% (Mac app 17pt→14pt, HTML 15px→12px). Both visually verified live in the native Focus5Float app (worktree create→sync→delete→refresh round-trip; font legibility screenshot), not just the Python suite (153 passed). `/Applications/Focus 5 Float.app` rebuilt via `make-app.sh`. → [GH-109-FOCUS5-APP-REFRESH-BUTTON.md](PROJECT/3-COMPLETED/GH-109-FOCUS5-APP-REFRESH-BUTTON.md) · [GH-110-FOCUS5-APP-SHRINK-REPO.md](PROJECT/3-COMPLETED/GH-110-FOCUS5-APP-SHRINK-REPO.md)
 - `GSD Core pattern review` ([#103](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/103)) — **DONE 2026-07-03.** Reviewed the MIT `gsd-core` framework for reusable patterns across XYZ (vendored) + Rebalance native, scoped to two families (phase-loop/context-engineering, skill/command/hook/agent architecture). All 4 phases run via `consult` (Codex + agy in parallel, not Claude subagents). Top-3 adopt calls (ranked by ROI, one deliberate override flagged): (1) a verify-before-done PDDA record, (2) a read-before-edit + blocking hook guard, (3) a narrow `capabilities/`-style manifest (scoped specifically to survive a real YAGNI objection one advisor raised) — XYZ had zero unique adopt items, only shared-with-Reb ones. One real cross-model fabrication caught and adjudicated in Phase 0 (agy invented out-of-bounds citations against a gitignored vendored dir). Next actions (a PDDA edit, a GH issue, and a ROADMAP-parked capture doc) are the operator's call, not executed here. → [PROJECT/3-COMPLETED/GH-103-GSD-CORE-PATTERN-REVIEW.md](PROJECT/3-COMPLETED/GH-103-GSD-CORE-PATTERN-REVIEW.md)
 - `Focus 5 newest-dirty-repo banner` ([PR #107](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/107), [#105](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/105)) — **DONE 2026-07-03.** Slim single-row banner above card #1 on the default Focus 5 view naming the single most-recently-touched dirty repo (`my_local_commit_ts`-ranked); informational only, no change to top-5 ranking. Backend (`focus5_scan.py`/`web.py`) + macOS Focus5Float parity (`CONTRACT.md`, `Models.swift`, new `DirtyBannerView`) both shipped; suite green (1271 passed), `rebalance doctor` clean, 4 Swift self-test flavors OK, installed to `/Applications`. → [PROJECT/3-COMPLETED/GH-105-FOCUS5-DIRTY-BANNER.md](PROJECT/3-COMPLETED/GH-105-FOCUS5-DIRTY-BANNER.md)
 - `Client auto-discovery` ([PR #100](https://github.com/Hypercart-Dev-Tools/rebalance-OS/pull/100)) — **DONE 2026-07-01.** Owner-as-client deterministic spine (Phase 1, 2026-06-30) plus a code-complete Gemini gap-fill (Phase 2) for `None`-client projects, batched call, fail-soft. Phase 2 kill-check measured live registry coverage: 15/15 active projects (100%) already owner-as-client labeled, so the kill switch fired (≥90% threshold) — Gemini gap-fill ships dormant, never exercised against a live key, re-activates automatically if a calendar-only/personal-account project appears. No new table/lifecycle/MCP tool. 9 tests (`test_client_buckets.py` + `test_client_gapfill.py`); suite green. → [PROJECT/2-WORKING/CLIENT-AUTO-DISCOVERY.md](PROJECT/2-WORKING/CLIENT-AUTO-DISCOVERY.md)
