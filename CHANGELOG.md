@@ -6,6 +6,11 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.52.2] - 2026-07-05
+
+### Added
+- **Multi-device Git Pulse daily synthesis to Obsidian vault** ([GH-114](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/114)) — created `utils/git_pulse_daily_synthesis.py` and Claude Code skill `git-pulse-daily-synthesis` to project multi-device git commit logs (via `view.sh --today`) into an idempotent block at the bottom of the Obsidian vault's "0. Today's Notes.md". The synthesis uses Gemini (no Qwen fallback) and includes a late-run guard to prevent colliding with the 00:00 rollover.
+
 ## [0.52.1] - 2026-07-04
 
 ### Fixed

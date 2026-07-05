@@ -205,15 +205,24 @@ def _resolved_config_path() -> Path:
     if env_path:
         return Path(env_path).expanduser().resolve()
 
-    cwd_root = find_project_root(Path.cwd())
-    if cwd_root is not None:
-        return cwd_root / "temp" / "rbos.config"
+    try:
+        cwd = Path.cwd()
+    except (PermissionError, OSError):
+        cwd = None
+
+    if cwd is not None:
+        cwd_root = find_project_root(cwd)
+        if cwd_root is not None:
+            return cwd_root / "temp" / "rbos.config"
 
     module_root = find_project_root(Path(__file__).resolve())
     if module_root is not None:
         return module_root / "temp" / "rbos.config"
 
-    return Path.cwd() / "temp" / "rbos.config"
+    if cwd is not None:
+        return cwd / "temp" / "rbos.config"
+
+    return Path(__file__).resolve().parent.parent.parent.parent / "temp" / "rbos.config"
 
 
 def _ensure_config_dir() -> None:
