@@ -246,6 +246,9 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "chunks": _safe_count(conn, "chunks"),
             "last_ingested_at": _safe_max(conn, "vault_files", "ingested_at"),
             "last_modified_in_vault": _safe_max(conn, "vault_files", "last_modified"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "vault_files", "julianday(last_modified) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         payload["sources"]["github"] = {
@@ -255,17 +258,26 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "activity_last_scanned_at": _safe_max(conn, "github_activity", "scanned_at"),
             "documents_last_fetched_at": _safe_max(conn, "github_documents", "fetched_at"),
             "documents_last_updated_at": _safe_max(conn, "github_documents", "updated_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "github_activity", "julianday(scanned_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         payload["sources"]["calendar"] = {
             "events": _safe_count(conn, "calendar_events"),
             "last_fetched_at": _safe_max(conn, "calendar_events", "fetched_at"),
             "earliest_event_start": _safe_max(conn, "calendar_events", "start_time"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "calendar_events", "julianday(start_time) >= julianday('now', '-7 days') AND julianday(start_time) <= julianday('now', '+7 days')"
+            ) or 0,
         }
 
         payload["sources"]["sleuth"] = {
             "reminders": _safe_count(conn, "sleuth_reminders"),
             "last_synced_at": _safe_max(conn, "sleuth_reminders", "last_synced_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "sleuth_reminders", "julianday(created_on) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         payload["sources"]["apple_reminders"] = {
@@ -275,18 +287,27 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             ),
             "last_synced_at": _safe_max(conn, "apple_reminders", "last_synced_at"),
             "health": _apple_reminders_health_status(database_path),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "apple_reminders", "julianday(last_synced_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         payload["sources"]["email"] = {
             "messages": _safe_count(conn, "email_messages"),
             "last_synced_at": _safe_max(conn, "email_messages", "synced_at"),
             "newest_received_at": _safe_max(conn, "email_messages", "received_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "email_messages", "julianday(received_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         payload["sources"]["figma"] = {
             "comments": _safe_count(conn, "figma_comments"),
             "last_synced_at": _safe_max(conn, "figma_comments", "synced_at"),
             "newest_comment_at": _safe_max(conn, "figma_comments", "created_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "figma_comments", "julianday(created_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         try:
@@ -299,6 +320,9 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "repos": _safe_count(conn, "ask_self_indexes"),
             "built_indexes": built,
             "last_scanned_at": _safe_max(conn, "ask_self_indexes", "scanned_at"),
+            "recent_row_count_7d": _safe_count_where(
+                conn, "ask_self_indexes", "julianday(scanned_at) >= julianday('now', '-7 days')"
+            ) or 0,
         }
 
         # Semantic index

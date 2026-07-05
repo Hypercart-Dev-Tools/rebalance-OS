@@ -161,7 +161,7 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .f5-card { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
            padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .f5-pos { font-size: 11px; font-weight: 700; color: var(--fg-dim); }
-.f5-name { font-size: 15px; font-weight: 600; color: var(--accent); text-decoration: none;
+.f5-name { font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none;
            word-break: break-word; }
 .f5-name:hover { text-decoration: underline; }
 .f5-reason { font-size: 11px; color: var(--fg-muted); }
@@ -404,14 +404,11 @@ def _f5_warning_strip(data: dict[str, Any]) -> str:
     now_ts = int(datetime.now(timezone.utc).timestamp())
     shown, items = warns[:8], []
     for w in shown:
-        bits = []
-        if w.get("modified_count"):
-            bits.append(f"{w['modified_count']} modified")
-        if w.get("untracked_count"):
-            bits.append(f"{w['untracked_count']} untracked")
-        if w.get("ahead"):
-            bits.append(f"{w['ahead']} unpushed")
-        item = f"<b>{html.escape(w['repo_name'])}</b> ({', '.join(bits) or 'attention'})"
+        reason = w.get("warning_reason")
+        if not reason:
+            from rebalance.ingest.focus5_scan import off_roster_reason
+            reason = off_roster_reason(w)
+        item = f"<b>{html.escape(w['repo_name'])}</b> ({html.escape(reason)})"
         if explain_on:
             why = html.escape(
                 explain_recency(w.get("recency_basis"), w.get("my_local_commit_ts"),

@@ -4,9 +4,9 @@ codename: HiQS
 owner: Noel
 gh_issue: 101
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/101"
-status: "Active (2-WORKING) — Phase 0 spike run 2026-07-01; findings written back. Phase 1 next. Supersedes the two SKETCH-* drafts."
+status: "Active (2-WORKING) — Phase 0 spike run 2026-07-01; Phase 1 shipped 2026-07-03. Phase 2 next. Supersedes the two SKETCH-* drafts."
 created: 2026-06-30
-updated: 2026-07-01
+updated: 2026-07-03
 branch: development
 doc_type: project
 goal: >
@@ -35,7 +35,7 @@ phases: 4
 
 | What was just completed | What's next |
 |---|---|
-| **Promoted + Phase 0 spike run (2026-07-01).** Opened [issue #101](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/101), `git mv`d this doc to `2-WORKING/GH-101-SIGNAL-QUALITY-CONTRACT.md`, parked its pointer in `ROADMAP.md`. **Phase 0 verified against live code + live DB** (findings in §Phase 0 below): `get_index_status` at [index_ops.py:224](../../src/rebalance/ingest/index_ops.py#L224) **CONFIRMED**; `_safe_max` per-table freshness **CONFIRMED**; `_safe_count_where` primitive exists at [index_ops.py:174](../../src/rebalance/ingest/index_ops.py#L174), used for apple_reminders at [L273](../../src/rebalance/ingest/index_ops.py#L273) **CONFIRMED**; no `sync_state` table (0 hits repo-wide) **CONFIRMED**. **REFUTED:** `payload["freshness"]` is *not* an empty dict ready to hold labels — it is initialized empty at [L236](../../src/rebalance/ingest/index_ops.py#L236) but **overwritten with the semantic-drift dict at [L385](../../src/rebalance/ingest/index_ops.py#L385)**; Phase 2 must merge into it, not assume it is free. `vault` make-or-break confirmed (outside `_PEEKABLE_SOURCES`). | **Run Phase 1** — add `recent_row_count_7d` per source to `get_index_status` via `_safe_count_where` on the content-timestamp column locked in Phase 0 (see the per-source table in §Phase 0 Findings). Pure additive read field; no ingest change, no new table. Then its QA gate (unit test, ≥2 seeded sources incl. a zero-volume case; `pytest tests/` green; `rebalance doctor` clean). |
+| **Promoted + Phase 0 spike run (2026-07-01).** Opened [issue #101](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/101), `git mv`d this doc to `2-WORKING/GH-101-SIGNAL-QUALITY-CONTRACT.md`, parked its pointer in `ROADMAP.md`. **Phase 0 verified against live code + live DB** (findings in §Phase 0 below): `get_index_status` at [index_ops.py:224](../../src/rebalance/ingest/index_ops.py#L224) **CONFIRMED**; `_safe_max` per-table freshness **CONFIRMED**; `_safe_count_where` primitive exists at [index_ops.py:174](../../src/rebalance/ingest/index_ops.py#L174), used for apple_reminders at [L273](../../src/rebalance/ingest/index_ops.py#L273) **CONFIRMED**; no `sync_state` table (0 hits repo-wide) **CONFIRMED**. **REFUTED:** `payload["freshness"]` is *not* an empty dict ready to hold labels — it is initialized empty at [L236](../../src/rebalance/ingest/index_ops.py#L236) but **overwritten with the semantic-drift dict at [L385](../../src/rebalance/ingest/index_ops.py#L385)**; Phase 2 must merge into it, not assume it is free. `vault` make-or-break confirmed (outside `_PEEKABLE_SOURCES`). | **Phase 1 shipped 2026-07-03** — `recent_row_count_7d` added to all 8 sources in `get_index_status`; new seeded test covers correct counts + the zero-volume case; `pytest tests/` 1278 passed / 10 skipped; `rebalance doctor` clean. **Run Phase 2 next.** |
 
 ---
 
@@ -273,17 +273,29 @@ Read the exact lines. Each claim below is CONFIRMED / REFUTED / UNVERIFIED again
 `PRAGMA index_list` level in this spike; row counts are small (57–1282) so cost is negligible today, but
 Phase 1 should confirm before assuming O(log n). Marked UNVERIFIED rather than claimed.
 
-### Phase 1 — `recent_row_count_7d` in `index_status`
+### Phase 1 — `recent_row_count_7d` in `index_status` — ✅ SHIPPED 2026-07-03
 
-- Add `recent_row_count_7d` to each source dict in `get_index_status`, via `_safe_count_where` on the
-  content-timestamp column locked in Phase 0.
-- **No ingest change. No gate. No new table.** Pure additive read field.
-- Host agents can immediately read it ("you asked about this week but github shows 0 events — token
-  scope?") even before `doctor` consumes it.
+- [x] Added `recent_row_count_7d` to each source dict in `get_index_status`
+      (`src/rebalance/ingest/index_ops.py`), via `_safe_count_where` on each source's
+      content-timestamp column: `vault_files.last_modified`, `github_activity.scanned_at`,
+      `calendar_events.start_time` (±7 days — events can be future-dated), `sleuth_reminders.created_on`,
+      `apple_reminders.last_synced_at`, `email_messages.received_at`, `figma_comments.created_at`.
+- [x] **No ingest change. No gate. No new table.** Pure additive read field.
+- [x] Host agents can immediately read it ("you asked about this week but github shows 0 events —
+      token scope?") even before `doctor` consumes it.
 
-**QA gate:** new unit test asserts `recent_row_count_7d` is present and correct for ≥2 seeded sources
-(incl. a zero-volume case); full `pytest tests/` green; `rebalance doctor` clean. No new file beyond
+**QA gate — passed:** `tests/test_index_ops.py::test_get_index_status_recent_row_count_7d` seeds
+recent+stale rows per source and asserts the field is present on all 8 sources, correct counts for
+seeded sources (vault=1, calendar=2 across past+future), and zero-volume sources report `0` not
+`None`. Full `pytest tests/` 1278 passed / 10 skipped; `rebalance doctor` clean. No new file beyond
 the test; `index_status` stays read-only.
+
+**Provenance:** built via a live XYZ marathon relay turn (builder=agy, reviewer=codex). The turn
+itself was escalated as a containment violation (agy also touched `phases/p1b/RELAY.md` and
+`uv.lock` outside its allowlist — both reverted by the turn-taker's safety guard), but the in-lane
+code change was correct and independently re-verified before landing. Reported upstream to the XYZ
+maintainer as three tooling gaps found live (reviewer-schema/runtime mismatch, unrecoverable
+"spent" tick tasks, and a cross-repo `AGY_TURN_ROOT` path-resolution bug).
 
 ### Phase 2 — derived `status`/`reason` + one `doctor` warning path
 

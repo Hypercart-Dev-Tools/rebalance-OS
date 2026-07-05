@@ -135,13 +135,18 @@ class FocusBodyTests(unittest.TestCase):
             {"repo_name": "scratch", "local_path": "/x/scratch", "repo_full_name": None,
              "branch": "main", "ahead": 0, "modified_count": 2, "untracked_count": 1,
              "is_dirty": True, "probed_at": _now_iso(hours=1)},
+            {"repo_name": "other-proj", "local_path": "/x/other-proj", "repo_full_name": None,
+             "branch": "main", "ahead": 0, "modified_count": 0, "untracked_count": 0,
+             "is_dirty": False, "probed_at": _now_iso(hours=1)},
         ]
         body = _focus5_body(_data([_card()], off_roster_warnings=warns))
         self.assertIn("f5-warn", body)
         self.assertIn("side-proj", body)
-        self.assertIn("3 unpushed", body)
+        self.assertIn("3 ahead of origin", body)
         self.assertIn("scratch", body)
-        self.assertIn("2 modified", body)
+        self.assertIn("uncommitted changes", body)
+        self.assertIn("other-proj", body)
+        self.assertIn("needs attention", body)
 
     def test_no_warning_strip_when_all_clear(self) -> None:
         body = _focus5_body(_data([_card()]))  # no off-roster warnings
