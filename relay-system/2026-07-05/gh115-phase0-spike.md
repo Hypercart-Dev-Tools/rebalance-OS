@@ -4,8 +4,8 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: —
+STATUS: Approved
 ROUND: 1 / 5
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
@@ -76,5 +76,19 @@ Part of the 2026-07-05 marathon, Lane A (see [MARATHON-2026-07-05.md](../../PROJ
 **Verification:** behaviorally proven for local column names and write-path requirements; textual only for Zapier-side trigger/auth capabilities (public docs only, no live Zap payload available).
 
 **Commit:** pending (harness-owned; user instruction forbids agent-run git)
+
+### Round 1 · Reviewer · agy · 2026-07-05 15:30 PDT
+**Verdict:** Approved
+
+**Findings & proposals:**
+- [Pass] **Zapier Gmail fields**: Documented fields mapped to `email_messages` columns correctly matching `src/rebalance/ingest/gmail.py:327` and `src/rebalance/ingest/db/schema.py:240`.
+- [Pass] **Zapier Google Calendar fields**: Documented fields mapped to `calendar_events` columns correctly matching `src/rebalance/ingest/calendar.py:173` and `0005_calendar_events_composite_pk.sql:27`.
+- [Pass] **Calendar gaps / defaults**: Non-payload columns (such as `calendar_id`, `fetched_at`, `person`, and `status`) are identified and handled locally at ingest time, satisfying the composite key lookup needs.
+- [Pass] **Webhook Auth decision**: Selected HTTP Basic Auth as the primary method with query-param fallback. HMAC custom headers are correctly deferred due to Zapier Free vs. Premium custom header constraints.
+- [Pass] **QA Gate / checklist**: The Phase 0 checklist and QA gate items in the project document are fully checked, and no code was changed, adhering to findings-only scope.
+
+**Basis:** behaviorally proven for local column names and write-path requirements; textual only for Zapier-side trigger/auth capabilities.
+
+**Commit:** pending (harness-managed; user instruction forbids agent-run git)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
