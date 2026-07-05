@@ -177,10 +177,10 @@ def synthesize(activity: dict) -> str | None:
 
 
 # --- Orchestration -----------------------------------------------------------
-def run(dry_run: bool = False, now: datetime | None = None) -> int:
+def run(dry_run: bool = False, now: datetime | None = None, force: bool = False) -> int:
     now = now or datetime.now()
 
-    if is_late_run(now):
+    if not force and is_late_run(now):
         log(f"SKIP: late catch-up run at {now:%H:%M} (< {RUN_HOUR_FLOOR:02d}:00) — the 00:00 "
             f"rollover has already moved Today->Yesterday. Writing nothing.")
         return 0
@@ -232,6 +232,8 @@ def main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true",
                         help="print the block that would be written; change nothing")
+    parser.add_argument("--force", action="store_true",
+                        help="bypass the 6 PM floor guard for manual runs (uses real current time)")
     parser.add_argument("--status", action="store_true",
                         help="show vault/block state, then exit")
     args = parser.parse_args(argv)
@@ -242,7 +244,7 @@ def main(argv: list[str]) -> int:
     _log_job("started")
     t0 = time.monotonic()
     try:
-        code = run(dry_run=args.dry_run)
+        code = run(dry_run=args.dry_run, force=args.force)
     except Exception as e:  # noqa: BLE001
         elapsed = time.monotonic() - t0
         log(f"ERROR: {e}")

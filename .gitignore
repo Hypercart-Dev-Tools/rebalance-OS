@@ -73,3 +73,5 @@ PROJECT/PDDA-ACTIVITY.jsonl
 # xyz/tick coordination runtime (machine-local, do not commit)
 xyz-tick/
 .tick/locks/
+/scratch
+/PROJECT/RELAY

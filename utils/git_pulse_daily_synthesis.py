@@ -1,0 +1,232 @@
+#!/usr/bin/env python3
+"""Git Pulse daily synthesis — the GH-114 exporter.
+
+Shells out to `experimental/git-pulse/view.sh --today` to collect multi-device
+git activity, synthesizes a daily summary via Gemini, and lands it in an idempotent,
+sentinel-bracketed block at the BOTTOM of the Obsidian vault's "0. Today's Notes.md".
+
+Appends AFTER the GH-112 AI Daily Summary block if both exist.
+
+Usage:
+  git_pulse_daily_synthesis.py            # do the sync
+  git_pulse_daily_synthesis.py --dry-run  # print the block that would be written
+  git_pulse_daily_synthesis.py --status   # show vault/block state, then exit
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+import time
+import os
+from datetime import datetime
+from pathlib import Path
+
+# Reuse the rollover module's vault config
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from obsidian_daily_rollover import TODAY_FILE, vault_ready  # noqa: E402
+
+MARKER_START = "<!-- Git Pulse Daily Summary Start -->"
+MARKER_END = "<!-- Git Pulse Daily Summary End -->"
+BLOCK_HEADING = "## 📊 Git Pulse Daily Summary"
+
+RUN_HOUR_FLOOR = 18
+
+try:
+    from rebalance.ingest.auth_log import (
+        log_job_completed,
+        log_job_failed,
+        log_job_started as _ljs,
+    )
+    _JOB_LOG = True
+except ImportError:
+    _JOB_LOG = False
+
+JOB_NAME = "git-pulse-daily-synthesis"
+
+
+def _log_job(event: str, elapsed: float | None = None, exit_code: int | None = None) -> None:
+    if not _JOB_LOG:
+        return
+    if event == "started":
+        _ljs(JOB_NAME)
+    elif event == "completed":
+        log_job_completed(JOB_NAME, elapsed)
+    elif event == "failed":
+        log_job_failed(JOB_NAME, exit_code or 1, elapsed)
+
+
+def log(msg: str) -> None:
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{stamp}] {msg}", flush=True)
+
+
+# --- Pure block logic ----------------------------------
+def _format_time(dt: datetime) -> str:
+    return dt.strftime("%I:%M %p").lstrip("0")
+
+
+def build_block(summary: str, generated_at: datetime) -> str:
+    stamp = f"*Auto-generated at {_format_time(generated_at)}.*"
+    return f"{MARKER_START}\n{BLOCK_HEADING}\n{stamp}\n\n{summary.strip()}\n{MARKER_END}\n"
+
+
+def upsert_block(content: str, summary: str, generated_at: datetime) -> str:
+    block = build_block(summary, generated_at)
+    if MARKER_START in content and MARKER_END in content:
+        before = content.split(MARKER_START, 1)[0]
+        tail = content.rsplit(MARKER_END, 1)[1].lstrip("\n")
+        return before + block + (f"\n{tail}" if tail else "")
+    
+    body = content if content.endswith("\n") else content + "\n"
+    if not body.endswith("\n\n"):
+        body += "\n"
+    return body + block
+
+
+def is_late_run(now: datetime) -> bool:
+    return now.hour < RUN_HOUR_FLOOR
+
+
+# --- Signal + synthesis ---------------------------------
+PROMPT_TEMPLATE = """You are an AI assistant summarizing the git commit activity of a software engineer for the day.
+Based on the following structured snapshot of today's git pulse activity, write a concise daily summary.
+Keep it casual but informative. Group by repository or theme where possible. Do NOT hallucinate data.
+If activity is sparse, say so briefly rather than padding.
+
+Activity data:
+{data}
+"""
+
+def collect_today_activity(dry_run: bool = False, force: bool = False) -> tuple[str | None, int]:
+    """Shells out to view.sh --today and returns the TSV stdout string and exit code."""
+    repo_root = Path(__file__).resolve().parent.parent
+    view_script = repo_root / "experimental" / "git-pulse" / "view.sh"
+    
+    if not view_script.exists():
+        log(f"SKIP: view.sh not found at {view_script}")
+        return None, 1
+        
+    cmd = [str(view_script), "--today"]
+    
+    try:
+        env = os.environ.copy()
+        result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
+        if result.returncode != 0:
+            log(f"SKIP: view.sh failed with exit code {result.returncode}. Is config missing?")
+            if result.stderr:
+                log(f"view.sh stderr: {result.stderr.strip()}")
+            return None, result.returncode
+        return result.stdout.strip(), 0
+    except Exception as e:
+        log(f"SKIP: failed to execute view.sh: {e}")
+        return None, 1
+
+
+def synthesize(activity_tsv: str) -> str | None:
+    from rebalance.ingest.config import get_gemini_api_key
+    from rebalance.ingest.querier import _synthesize_gemini
+    
+    lines = activity_tsv.splitlines()
+    if len(lines) <= 1:
+        # Zero-row case (only headers or empty)
+        return "No git activity found today."
+        
+    key = get_gemini_api_key()
+    if not key:
+        log("SKIP: no Gemini API key available — refusing to write a fallback summary.")
+        return None
+        
+    prompt = PROMPT_TEMPLATE.format(data=activity_tsv)
+    try:
+        return _synthesize_gemini(prompt, api_key=key, thinking_budget=0, max_tokens=2048)
+    except Exception as e:
+        log(f"SKIP: Gemini synthesis failed ({e}) — no fallback written to vault.")
+        return None
+
+
+# --- Orchestration -----------------------------------------------------------
+def run(dry_run: bool = False, now: datetime | None = None, force: bool = False) -> int:
+    now = now or datetime.now()
+
+    if not force and is_late_run(now):
+        log(f"SKIP: late catch-up run at {now:%H:%M} (< {RUN_HOUR_FLOOR:02d}:00) — the 00:00 "
+            f"rollover has already moved Today->Yesterday. Writing nothing.")
+        return 0
+
+    if not vault_ready():
+        log("SKIP: vault not ready (no sentinel found) — writing nothing.")
+        return 0
+
+    if not TODAY_FILE.exists():
+        log(f"SKIP: {TODAY_FILE.name} missing — the rollover owns file creation. Writing nothing.")
+        return 0
+
+    activity_tsv, exit_code = collect_today_activity(dry_run, force)
+    if exit_code != 0 or activity_tsv is None:
+        return 0  # skip reason already logged; clean no-op
+
+    summary = synthesize(activity_tsv)
+    if summary is None:
+        return 0
+
+    content = TODAY_FILE.read_text(encoding="utf-8")
+    new_content = upsert_block(content, summary, now)
+
+    if dry_run:
+        log("DRY RUN — would write this block to the bottom of Today's Notes:")
+        print("-" * 60)
+        print(build_block(summary, now), end="")
+        print("-" * 60)
+        return 0
+
+    if new_content != content:
+        TODAY_FILE.write_text(new_content, encoding="utf-8")
+        log(f"wrote Git Pulse daily summary block ({len(summary)} chars) to {TODAY_FILE.name}")
+    else:
+        log("summary block unchanged — no write needed.")
+    return 0
+
+
+def show_status() -> int:
+    now = datetime.now()
+    log(f"vault ready: {vault_ready()}")
+    log(f"Today's Notes exists: {TODAY_FILE.exists()}")
+    if TODAY_FILE.exists():
+        content = TODAY_FILE.read_text(encoding="utf-8")
+        present = MARKER_START in content and MARKER_END in content
+        log(f"Git Pulse summary block present: {present}")
+    log(f"would run now ({now:%H:%M}): {not is_late_run(now)} (hour floor {RUN_HOUR_FLOOR:02d}:00)")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true",
+                        help="print the block that would be written; change nothing")
+    parser.add_argument("--force", action="store_true",
+                        help="bypass the 6 PM floor guard for manual runs (uses real current time)")
+    parser.add_argument("--status", action="store_true",
+                        help="show vault/block state, then exit")
+    args = parser.parse_args(argv)
+
+    if args.status:
+        return show_status()
+
+    _log_job("started")
+    t0 = time.monotonic()
+    try:
+        code = run(dry_run=args.dry_run, force=args.force)
+    except Exception as e:
+        elapsed = time.monotonic() - t0
+        log(f"ERROR: {e}")
+        _log_job("failed", elapsed=elapsed, exit_code=1)
+        return 1
+    elapsed = time.monotonic() - t0
+    _log_job("completed" if code == 0 else "failed", elapsed=elapsed, exit_code=code)
+    return code
+
+
+if __name__ == "__main__":
+    raise SystemExit(main(sys.argv[1:]))
