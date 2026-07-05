@@ -12,7 +12,7 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -177,6 +177,113 @@ def _safe_count_where(conn: Any, table: str, where: str) -> int | None:
         return int(row[0]) if row else 0
     except Exception:
         return None
+
+
+_SIGNAL_HEALTH_RULES: dict[str, dict[str, Any]] = {
+    "vault": {"freshness_key": "last_ingested_at", "window_days": 7, "zero_status": "degraded"},
+    "github": {
+        "freshness_key": "activity_last_scanned_at",
+        "window_days": 7,
+        "zero_status": "degraded",
+    },
+    "calendar": {"freshness_key": "last_fetched_at", "window_days": 7, "zero_status": "degraded"},
+    "sleuth": {"freshness_key": "last_synced_at", "window_days": 7, "zero_status": "warn"},
+    "apple_reminders": {
+        "freshness_key": "last_synced_at",
+        "window_days": 7,
+        "zero_status": "warn",
+    },
+    "email": {"freshness_key": "last_synced_at", "window_days": 7, "zero_status": "degraded"},
+    "figma": {"freshness_key": "last_synced_at", "window_days": 7, "zero_status": "warn"},
+    "ask_self": {"freshness_key": "last_scanned_at", "window_days": 7, "zero_status": "warn"},
+}
+
+_SIGNAL_HEALTH_TOTAL_KEYS: dict[str, tuple[str, ...]] = {
+    "vault": ("files", "chunks"),
+    "github": ("activity_records", "items", "documents"),
+    "calendar": ("events",),
+    "sleuth": ("reminders",),
+    "apple_reminders": ("reminders",),
+    "email": ("messages",),
+    "figma": ("comments",),
+    "ask_self": ("repos",),
+}
+
+
+def _parse_status_timestamp(raw: Any) -> datetime | None:
+    if not raw or not isinstance(raw, str):
+        return None
+    text = raw.strip().replace("Z", "+00:00")
+    for candidate in (text, text.replace(" ", "T")):
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            if parsed.tzinfo is None:
+                return parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc)
+        except ValueError:
+            continue
+    return None
+
+
+def _source_total_rows(source_name: str, source_payload: dict[str, Any]) -> int:
+    for key in _SIGNAL_HEALTH_TOTAL_KEYS.get(source_name, ()):
+        value = source_payload.get(key)
+        if isinstance(value, int):
+            return value
+    return 0
+
+
+def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]]:
+    now = datetime.now(timezone.utc)
+    signal_health: dict[str, dict[str, str]] = {}
+
+    for source_name, rule in _SIGNAL_HEALTH_RULES.items():
+        source_payload = sources.get(source_name)
+        if not source_payload:
+            continue
+
+        recent_rows = int(source_payload.get("recent_row_count_7d") or 0)
+        total_rows = _source_total_rows(source_name, source_payload)
+        status_entry: dict[str, str] = {"status": "ok"}
+        freshness_value = _parse_status_timestamp(source_payload.get(rule["freshness_key"]))
+        stale_after = timedelta(days=int(rule["window_days"]))
+
+        if freshness_value is None:
+            if total_rows == 0:
+                status_entry = {"status": "warn", "reason": "no data has been observed yet"}
+            else:
+                status_entry = {
+                    "status": "degraded",
+                    "reason": f"freshness timestamp {rule['freshness_key']} is missing",
+                }
+        else:
+            age = now - freshness_value
+            if age > stale_after * 2:
+                status_entry = {
+                    "status": "degraded",
+                    "reason": f"last refresh advanced {age.days}d ago (window {rule['window_days']}d)",
+                }
+            elif age > stale_after:
+                status_entry = {
+                    "status": "warn",
+                    "reason": f"last refresh advanced {age.days}d ago (window {rule['window_days']}d)",
+                }
+            elif recent_rows == 0:
+                zero_status = str(rule["zero_status"])
+                if total_rows == 0:
+                    status_entry = {
+                        "status": "warn",
+                        "reason": "freshness timestamp is current but the source has no rows yet",
+                    }
+                else:
+                    status_entry = {
+                        "status": zero_status,
+                        "reason": "freshness timestamp is current but 0 rows landed in the last 7d",
+                    }
+
+        signal_health[source_name] = status_entry
+
+    return signal_health
 
 
 def _apple_reminders_health_status(database_path: Path) -> str | None:
@@ -406,7 +513,7 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
         except Exception:
             drift["semantic_documents_pending_embed"] = None
 
-        payload["freshness"] = drift
+        payload["freshness"] = {**drift, "signal_health": _derive_signal_health(payload["sources"])}
 
     return payload
 

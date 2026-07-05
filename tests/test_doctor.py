@@ -10,6 +10,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from typer.testing import CliRunner
+
+from rebalance.cli import app
 from rebalance.doctor import (
     FAIL,
     OK,
@@ -120,6 +123,32 @@ class DoctorCheckTests(unittest.TestCase):
             self.assertEqual(checks["database"].status, FAIL)
         finally:
             paths_mod.resolve_database_path = original
+
+
+class DoctorCliTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+
+    def test_doctor_cli_prints_degraded_signal_health_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            db = Path(tmp) / "rebalance.db"
+            with db_connection(db) as conn:
+                run_migrations(conn)
+                conn.execute(
+                    "INSERT INTO vault_files (rel_path, content_hash, ingested_at, last_modified) "
+                    "VALUES ('stale.md', 'hash1', datetime('now'), datetime('now', '-10 days'))"
+                )
+                conn.commit()
+
+            report = DoctorReport(checks=[Check("database", OK, str(db))])
+            with patch("rebalance.doctor.run_doctor", return_value=report):
+                result = self.runner.invoke(app, ["doctor", "--database", str(db)])
+
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("signal health", result.output)
+        self.assertIn("vault", result.output)
+        self.assertIn("0 rows landed", result.output)
+        self.assertIn("last 7d", result.output)
 
 
 class IntegrationCheckTests(unittest.TestCase):

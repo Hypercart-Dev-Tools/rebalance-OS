@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 1 / 5
+ROUND: 2 / 5
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -56,5 +56,27 @@ Part of the 2026-07-05 marathon, Lane B (see [MARATHON-2026-07-05.md](../../PROJ
 
 ---
 ## Log
+
+### Round 1 · Producer · codex · 2026-07-05 15:38 PDT
+**Decisions on proposals:**
+- No prior reviewer findings on this first producer turn.
+
+**Did:**
+- Added read-side signal-health derivation rules, timestamp parsing, staleness/zero-volume classification, and preserved the existing semantic-drift keys by merging under `freshness.signal_health` in [src/rebalance/ingest/index_ops.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.8xFKdR/src/rebalance/ingest/index_ops.py:182), [src/rebalance/ingest/index_ops.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.8xFKdR/src/rebalance/ingest/index_ops.py:236), and [src/rebalance/ingest/index_ops.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.8xFKdR/src/rebalance/ingest/index_ops.py:516).
+- Added the single warn-only `doctor` render path for degraded sources in [src/rebalance/cli/__init__.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.8xFKdR/src/rebalance/cli/__init__.py:143).
+- Extended status tests for fresh-but-empty => `degraded`, healthy => `ok`, and legit-quiet Sleuth => `warn` in [tests/test_index_ops.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.8xFKdR/tests/test_index_ops.py:126).
+- Added the seeded CLI regression test for the degraded doctor line in [tests/test_doctor.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.8xFKdR/tests/test_doctor.py:128).
+- Wrote the Phase 2 verification summary back into the contract doc in [PROJECT/2-WORKING/GH-101-SIGNAL-QUALITY-CONTRACT.md](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.8xFKdR/PROJECT/2-WORKING/GH-101-SIGNAL-QUALITY-CONTRACT.md:311).
+
+**Re-review this:**
+- Confirm the merge into `payload["freshness"]` leaves the three semantic-drift keys intact and adds only `signal_health`.
+- Sanity-check the quiet-source heuristic: `sleuth`/`figma`/`ask_self`/`apple_reminders` zero-volume weeks warn; `vault`/`github`/`calendar`/`email` zero-volume fresh syncs degrade.
+- Confirm the CLI path is warn-only output and does not change `doctor` exit semantics.
+
+**Verification:**
+- `PYTHONPATH=src /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_index_ops.py tests/test_doctor.py` → `33 passed`.
+- Initial attempts with system Python and `uv run` were environment-only failures (`rebalance`/`typer` missing; then no network for PyPI). The passing run above used the existing repo virtualenv and the exact two changed test files only.
+
+**Commit:** pending (relay harness owns the file-scoped commit; manual `git` was intentionally not run)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->

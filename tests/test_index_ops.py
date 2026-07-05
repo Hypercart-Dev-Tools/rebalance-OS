@@ -123,6 +123,76 @@ class IndexOpsTests(unittest.TestCase):
             self.assertEqual(sources["email"]["recent_row_count_7d"], 0)
             self.assertEqual(sources["github"]["recent_row_count_7d"], 0)
 
+    def test_get_index_status_signal_health_marks_fresh_but_empty_source_degraded(self) -> None:
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+                conn.execute(
+                    "INSERT INTO vault_files (rel_path, content_hash, ingested_at, last_modified) "
+                    "VALUES ('stale.md', 'hash1', datetime('now'), datetime('now', '-10 days'))"
+                )
+                conn.commit()
+
+            health = get_index_status(db_path)["freshness"]["signal_health"]["vault"]
+            self.assertEqual(health["status"], "degraded")
+            self.assertTrue(health["reason"])
+
+    def test_get_index_status_signal_health_marks_healthy_source_ok(self) -> None:
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+                conn.execute(
+                    "INSERT INTO vault_files (rel_path, content_hash, ingested_at, last_modified) "
+                    "VALUES ('fresh.md', 'hash1', datetime('now'), datetime('now', '-2 days'))"
+                )
+                conn.commit()
+
+            health = get_index_status(db_path)["freshness"]["signal_health"]["vault"]
+            self.assertEqual(health["status"], "ok")
+            self.assertNotIn("reason", health)
+
+    def test_get_index_status_signal_health_warns_for_legitimately_quiet_source(self) -> None:
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+        from rebalance.ingest.sleuth_reminders import ensure_sleuth_schema
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path, ensure_sleuth_schema) as conn:
+                run_migrations(conn)
+                conn.execute(
+                    """
+                    INSERT INTO sleuth_reminders (
+                        reminder_id, workspace_name, state, is_active,
+                        created_on, should_post_on, reminder_message_text,
+                        ignore_snooze, assignee_id, original_sender_id,
+                        target_channel_id, original_channel_id, original_channel_name,
+                        original_message_id, original_thread_ts, github_urls_json,
+                        first_seen_at, last_seen_at, last_synced_at
+                    ) VALUES (
+                        'quiet-1', 'ops', 'scheduled', 1,
+                        datetime('now', '-10 days'), datetime('now', '-9 days'), 'follow up',
+                        0, 'U1', 'U2',
+                        'C1', 'C2', 'eng',
+                        '123.456', NULL, '[]',
+                        datetime('now'), datetime('now'), datetime('now')
+                    )
+                    """
+                )
+                conn.commit()
+
+            health = get_index_status(db_path)["freshness"]["signal_health"]["sleuth"]
+            self.assertEqual(health["status"], "warn")
+            self.assertTrue(health["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

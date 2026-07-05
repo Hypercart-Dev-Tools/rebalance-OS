@@ -125,6 +125,7 @@ def doctor_cmd(database: Path | None = DBOption()) -> None:
     from rich.console import Console
 
     from rebalance.doctor import FAIL, OK, WARN, run_doctor
+    from rebalance.ingest.index_ops import get_index_status
 
     console = Console()
     report = run_doctor(database)
@@ -138,6 +139,20 @@ def doctor_cmd(database: Path | None = DBOption()) -> None:
         console.print(f"  {label[c.status]}  [bold]{c.name}[/bold] — {c.detail}")
         if c.hint and c.status != OK:
             console.print(f"         [dim]{c.hint}[/dim]")
+
+    try:
+        status = get_index_status(resolve_database_path(database))
+    except DatabaseNotFoundError:
+        status = {}
+
+    degraded = {
+        name: health.get("reason", "degraded")
+        for name, health in status.get("freshness", {}).get("signal_health", {}).items()
+        if health.get("status") == "degraded"
+    }
+    if degraded:
+        detail = "; ".join(f"{name}: {reason}" for name, reason in degraded.items())
+        console.print(f"  {label[WARN]}  [bold]signal health[/bold] — {detail}")
     console.print()
     if report.failed:
         console.print("[red]Health check found failures.[/red]")
@@ -154,5 +169,4 @@ def version() -> None:
     from rebalance import __version__
 
     typer.echo(__version__)
-
 
