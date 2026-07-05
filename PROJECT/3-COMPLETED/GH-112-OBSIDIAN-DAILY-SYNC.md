@@ -2,9 +2,10 @@
 gh_issue: 112
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/112
 title: Obsidian Vault Daily Activity Sync
-status: Active
+status: "Closed — ran and shipped 2026-07-04 (see MARATHON-2026-07-04.md). All phases complete, launchd job installed and live."
 created: 2026-07-04
-updated: 2026-07-04
+updated: 2026-07-05
+closed: 2026-07-05
 owner: Noel
 goal: >
   Schedule a new consumer of an existing Gemini pipeline to synthesize

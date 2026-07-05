@@ -308,8 +308,8 @@ maintainer as three tooling gaps found live (reviewer-schema/runtime mismatch, u
 `reason`, and a healthy source asserts `ok`; `doctor` shows the degraded line on the seeded DB; legit
 quiet source does **not** hard-fail (warn only). Full suite green; `doctor` clean.
 
-**Verification summary (2026-07-05):** `PYTHONPATH=src /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_index_ops.py tests/test_doctor.py`
-passed (`33 passed`). Coverage now proves three Phase 2 cases directly: a fresh-but-empty `vault`
+**Verification summary (2026-07-05):** `pytest tests/test_index_ops.py tests/test_doctor.py`
+passed (`33 passed`; independently re-run from the repo's own `.venv`). Coverage now proves three Phase 2 cases directly: a fresh-but-empty `vault`
 source degrades with a non-empty reason, a healthy `vault` source stays `ok`, and a fresh-but-quiet
 `sleuth` source warns instead of hard-failing. The CLI test also seeds a degraded DB and verifies the
 single `rebalance doctor` warning line prints the degraded source plus its reason.
