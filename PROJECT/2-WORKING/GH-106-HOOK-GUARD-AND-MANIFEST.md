@@ -3,9 +3,9 @@ title: "Adopt gsd-core patterns: hook guard + PDDA conventions + skills inventor
 owner: Noel
 gh_issue: 106
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/106"
-status: "Active (2-WORKING) — Phase 1 (6-item quick-win batch) complete 2026-07-03. Phase 2 (capabilities manifest) queued."
+status: "Active (2-WORKING) — Phase 1 (6-item quick-win batch) complete 2026-07-03. Phase 2 rebalance-side three-bundle capabilities-manifest slice implemented 2026-07-05; relay review pending."
 created: 2026-07-03
-updated: 2026-07-03
+updated: 2026-07-05
 doc_type: project
 goal: >
   Build the follow-on adoptions from the closed GSD Core pattern review (GH-103): a batch of 6
@@ -23,7 +23,7 @@ phases: 2
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 1 complete 2026-07-03** — all 6 low-risk/trivially-reversible items from the GSD Core review landed in one pass (not an XYZ marathon — marathon is serial anyway and two items share `PROJECT/PDDA.md`, which marathon's phase isolation can't coordinate). `doctor` clean, `pytest tests/` 1264 passed / 10 skipped, `pdda.sh run` clean, `CHANGELOG.md` updated (`0.52.0`). | **Phase 2** — the narrow `capabilities/`-style manifest (higher effort/risk, cross-repo) remains queued, not started. |
+| **Phase 2 slice implemented 2026-07-05** — added rebalance-side `capabilities/manifest.yaml` for exactly 3 XYZ-owned bundles (`relay-xyz`, `xyz`, `consult`), plus deterministic generator `scripts/generate_capabilities_index.py`, checked-in `capabilities/INDEX.md`, and a focused regression test. Scope stays pinned to by-reference facts already documented in this repo; no live `xyz-3-agents-swarm` scan, no edits there, no dynamic loader/trust engine. | **Relay review / ship the bounded slice.** If a fuller cross-repo capabilities system is ever wanted later, treat it as new scope rather than expanding this lane implicitly. |
 
 ## Goal
 
@@ -82,12 +82,18 @@ Rebalance, 3 shared with XYZ). COMPLETE 2026-07-03:**
    + "Cross-repo surfaces" tables. Hand-maintained, not a generation script (kept at the "S" effort
    the review scored it — no automation infrastructure added for a 5-skill/2-command catalog).
 
-**Phase 2 — Narrow capabilities-style manifest (target: both Rebalance + XYZ). NOT STARTED:**
-- A minimal, static bundle manifest (`id`, `owner`, `skills`, `commands`, `hooks`, `executables`,
-  `requires`) for high-risk bundles only — start with `relay-xyz`, `xyz`, `consult`.
-- Generate a read-only index from the manifest(s) for discoverability/ownership visibility.
-- Explicitly **not** gsd-core's dynamic overlay/trust engine (39-file system) — a static manifest +
-  generated index only.
+**Phase 2 — Narrow capabilities-style manifest (rebalance-side, scope-pinned slice). IMPLEMENTED
+2026-07-05:**
+- `capabilities/manifest.yaml` now records a static bundle manifest (`id`, `owner`, `skills`,
+  `commands`, `hooks`, `executables`, `requires`) for exactly 3 bundles: `relay-xyz`, `xyz`,
+  `consult`.
+- `scripts/generate_capabilities_index.py` renders the checked-in, read-only
+  `capabilities/INDEX.md` from that manifest.
+- The manifest documents the XYZ surfaces **by reference only** (names / known paths already cited in
+  this repo's docs). It does **not** scan `xyz-3-agents-swarm`, edit that repo, or claim to be a
+  full cross-repo capabilities system.
+- Explicitly **not** gsd-core's dynamic overlay/trust engine (39-file system) — still just a static
+  manifest + generated index.
 
 ## Non-goals
 
@@ -116,5 +122,7 @@ Rebalance, 3 shared with XYZ). COMPLETE 2026-07-03:**
 ## Acceptance
 
 - Phase 1: ✅ done — see Verification summary above.
-- Phase 2: a manifest exists for the 3 named high-risk bundles + a generated read-only index; no
-  dynamic loader/trust logic added. Not started.
+- Phase 2: ✅ the rebalance-side, scope-pinned slice is done — `capabilities/manifest.yaml` exists
+  for the 3 named bundles (`relay-xyz`, `xyz`, `consult`), `capabilities/INDEX.md` is generated
+  from it, and no dynamic loader/trust logic was added. This is intentionally **not** a broader
+  cross-repo capabilities system.

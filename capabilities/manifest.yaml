@@ -1,0 +1,38 @@
+- id: relay-xyz
+  owner: XYZ
+  skills:
+    - .xyz/skills/relay-xyz/SKILL.md
+  commands:
+    - relay-xyz
+  hooks:
+    - relay-automation/hooks/relay-xyz-guard.sh
+  executables:
+    - relay-automation/relay-drive.sh
+    - relay-automation/codex-turn.sh
+    - relay-automation/agy-turn.sh
+  requires:
+    - path-scoped artifact under review
+    - clean git handoff discipline
+- id: xyz
+  owner: XYZ
+  skills:
+    - skills/xyz/SKILL.md
+  commands:
+    - xyz
+  hooks: []
+  executables:
+    - bin/tick
+  requires:
+    - non-overlapping path claims
+    - shared .tick event log
+- id: consult
+  owner: XYZ
+  skills:
+    - skills/consult/SKILL.md
+  commands:
+    - consult
+  hooks: []
+  executables:
+    - relay-automation/consult.sh
+  requires:
+    - throwaway git worktree isolation

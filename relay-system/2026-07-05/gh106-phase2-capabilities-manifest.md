@@ -4,9 +4,9 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 1 / 5
+ROUND: 2 / 5
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, Gemini)
 The operator just said "take your turn on this file." Everything you need is **in this file** — don't wait for pasted instructions.
@@ -56,5 +56,28 @@ Part of the 2026-07-05 marathon, Lane C (see [MARATHON-2026-07-05.md](../../PROJ
 
 ---
 ## Log
+
+### Round 1 · Producer · codex · 2026-07-05 15:46 PDT
+**Decisions on proposals:**
+- No prior reviewer findings on this first producer turn.
+
+**Did:**
+- Added the static three-bundle manifest in [capabilities/manifest.yaml](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/capabilities/manifest.yaml:1), covering `relay-xyz`, `xyz`, and `consult` with the required `id` / `owner` / `skills` / `commands` / `hooks` / `executables` / `requires` fields at [capabilities/manifest.yaml](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/capabilities/manifest.yaml:1), [capabilities/manifest.yaml](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/capabilities/manifest.yaml:16), and [capabilities/manifest.yaml](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/capabilities/manifest.yaml:28).
+- Added the deterministic generator and schema validation helpers in [scripts/generate_capabilities_index.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/scripts/generate_capabilities_index.py:13), [scripts/generate_capabilities_index.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/scripts/generate_capabilities_index.py:35), and [scripts/generate_capabilities_index.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/scripts/generate_capabilities_index.py:79).
+- Generated and checked in the read-only index in [capabilities/INDEX.md](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/capabilities/INDEX.md:1), with the rendered bundle rows at [capabilities/INDEX.md](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/capabilities/INDEX.md:8).
+- Added the focused regression test covering schema, checked-in output parity, and double-run idempotency in [tests/test_capabilities_manifest.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/tests/test_capabilities_manifest.py:19), [tests/test_capabilities_manifest.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/tests/test_capabilities_manifest.py:33), and [tests/test_capabilities_manifest.py](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/tests/test_capabilities_manifest.py:39).
+- Updated the project doc status and Phase 2 acceptance to mark only the rebalance-side, three-bundle slice done in [PROJECT/2-WORKING/GH-106-HOOK-GUARD-AND-MANIFEST.md](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/PROJECT/2-WORKING/GH-106-HOOK-GUARD-AND-MANIFEST.md:6), [PROJECT/2-WORKING/GH-106-HOOK-GUARD-AND-MANIFEST.md](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/PROJECT/2-WORKING/GH-106-HOOK-GUARD-AND-MANIFEST.md:26), [PROJECT/2-WORKING/GH-106-HOOK-GUARD-AND-MANIFEST.md](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/PROJECT/2-WORKING/GH-106-HOOK-GUARD-AND-MANIFEST.md:85), and [PROJECT/2-WORKING/GH-106-HOOK-GUARD-AND-MANIFEST.md](/private/var/folders/69/3l_82qtj7fzglnt_jjg07jh40000gn/T/rtl-wt.zseOVR/PROJECT/2-WORKING/GH-106-HOOK-GUARD-AND-MANIFEST.md:125).
+
+**Re-review this:**
+- Confirm the manifest stays strictly scope-pinned to the 3 named bundles and only by-reference strings already documented in this repo.
+- Confirm the generator output is deterministic and the checked-in index contains no worktree-specific absolute paths.
+- Confirm the doc language is explicit that this lands the rebalance-side slice only, not a broader cross-repo capabilities system.
+
+**Verification:**
+- `/Users/noelsaw/Documents/rebalance-OS/.venv/bin/python scripts/generate_capabilities_index.py` → regenerated `capabilities/INDEX.md` successfully.
+- `PYTHONPATH=src /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_capabilities_manifest.py` → `3 passed`.
+- Initial `python3 scripts/generate_capabilities_index.py` attempt failed because the system interpreter in this session lacks `PyYAML`; the passing generation/test path used the existing repo virtualenv only.
+
+**Commit:** pending (relay harness owns the file-scoped commit; manual `git` was intentionally not run)
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->
