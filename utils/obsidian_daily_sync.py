@@ -79,19 +79,31 @@ def log(msg: str) -> None:
 
 
 # --- Pure block logic (unit-tested, no I/O) ----------------------------------
-def build_block(summary: str) -> str:
-    """The exact sentinel-bracketed block written to the vault."""
-    return f"{MARKER_START}\n{BLOCK_HEADING}\n\n{summary.strip()}\n{MARKER_END}\n"
+def _format_time(dt: datetime) -> str:
+    """12-hour clock like '6:00 PM' (no leading zero) for the reminder line."""
+    return dt.strftime("%I:%M %p").lstrip("0")
 
 
-def upsert_block(content: str, summary: str) -> str:
+def build_block(summary: str, generated_at: datetime) -> str:
+    """The exact sentinel-bracketed block written to the vault.
+
+    A subtle italic reminder line under the heading flags the block as machine-
+    written and stamps *when* — the actual run time (~6 PM for the scheduled job,
+    or later if launchd caught up on wake). ``generated_at`` is passed in (not
+    read from the clock here) so the block stays byte-stable across reruns.
+    """
+    stamp = f"*Auto-generated at {_format_time(generated_at)}.*"
+    return f"{MARKER_START}\n{BLOCK_HEADING}\n{stamp}\n\n{summary.strip()}\n{MARKER_END}\n"
+
+
+def upsert_block(content: str, summary: str, generated_at: datetime) -> str:
     """Replace an existing sentinel block in-place, else append one at the bottom.
 
     Idempotent: rerunning always yields exactly ONE block with the markers intact
     and every byte of surrounding human markdown untouched. Uses first-start /
     last-end so an accidental duplicate pair collapses back to a single block.
     """
-    block = build_block(summary)
+    block = build_block(summary, generated_at)
     if MARKER_START in content and MARKER_END in content:
         before = content.split(MARKER_START, 1)[0]
         # Strip leading blank lines the old block left behind so trailing newlines
@@ -187,12 +199,12 @@ def run(dry_run: bool = False, now: datetime | None = None) -> int:
         return 0  # skip reason already logged; clean no-op
 
     content = TODAY_FILE.read_text(encoding="utf-8")
-    new_content = upsert_block(content, summary)
+    new_content = upsert_block(content, summary, now)
 
     if dry_run:
         log("DRY RUN — would write this block to the bottom of Today's Notes:")
         print("-" * 60)
-        print(build_block(summary), end="")
+        print(build_block(summary, now), end="")
         print("-" * 60)
         return 0
 
