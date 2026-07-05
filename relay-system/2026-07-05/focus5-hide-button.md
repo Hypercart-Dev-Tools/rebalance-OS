@@ -4,7 +4,7 @@
   Read this ENTIRE file before doing anything. Act only on your turn.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
 ROUND: 1 / 5
 
@@ -56,5 +56,25 @@ Implements [rebalance-OS#113](https://github.com/Hypercart-Dev-Tools/rebalance-O
 
 ---
 ## Log
+
+### Round 1 · Producer · codex · 2026-07-05 14:35 PDT
+**Decisions on proposals:**
+- No reviewer proposals yet; implemented the task brief directly.
+
+**Did:**
+- Added a small leading hide button to the header row in `macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift:53`-`62`, styled to match the existing borderless header actions.
+- Threaded a new `onHide` closure into `ContentView` at `macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift:11`-`13`.
+- Wired that closure from `macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5FloatApp.swift:158`-`165` back into the existing `hidePanel()` path at `macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5FloatApp.swift:227`-`230` via `self?.hidePanel()`.
+
+**Verification:**
+- Re-read the artifact after editing and confirmed the new button and closure wiring are present at the cited lines above.
+- Build check passed from `macOS/Apps/Focus5Float` with `swift build --disable-sandbox` after plain `swift build` was blocked by this runner's SwiftPM sandbox (`sandbox-exec: sandbox_apply: Operation not permitted`).
+
+**Re-review this:**
+- Confirm the top-left button placement and styling in `ContentView.swift:53`-`62` are acceptable relative to the existing header controls.
+- Confirm the hide action reaches the unchanged `hidePanel()` implementation in `Focus5FloatApp.swift:227`-`230` through the closure wiring at `Focus5FloatApp.swift:158`-`165`.
+
+**Commit:**
+- Pending harness-managed commit per operator instruction; no self-commit run.
 
 <!-- ↓↓↓  NEXT TURN GOES ABOVE THIS LINE — keep this marker last  ↓↓↓ -->

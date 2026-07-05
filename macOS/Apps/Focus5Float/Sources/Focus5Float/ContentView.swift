@@ -10,6 +10,7 @@ import EventKit
 
 struct ContentView: View {
     let model: Focus5Model
+    let onHide: () -> Void
 
     var body: some View {
         VStack(spacing: 0) {
@@ -50,6 +51,16 @@ struct ContentView: View {
             // 3-segment picker narrow enough for a ~180-wide panel; the tab names
             // live in the help tooltips + accessibility labels.
             HStack(spacing: Theme.Space.s) {
+                Button(action: onHide) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .semibold))
+                        .frame(width: 14, height: 14)
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(Theme.text2)
+                .help("Hide panel")
+                .accessibilityLabel("Hide panel")
+
                 Picker("", selection: Binding(
                     get: { model.viewMode },
                     set: { mode in

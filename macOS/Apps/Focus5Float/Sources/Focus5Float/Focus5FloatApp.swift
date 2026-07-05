@@ -155,7 +155,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // roster room above the bottom drawer (Apple + Obsidian reminders + note).
         let defaultRect = NSRect(x: 0, y: 0, width: 200, height: 660)
 
-        let hostingView = FirstMouseHostingView(rootView: ContentView(model: model))
+        let hostingView = FirstMouseHostingView(rootView: ContentView(
+            model: model,
+            onHide: { [weak self] in
+                Task { @MainActor in
+                    self?.hidePanel()
+                }
+            }
+        ))
         hostingView.frame = defaultRect
 
         panel = FloatingPanel(
