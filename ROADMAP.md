@@ -30,6 +30,8 @@ goal: >
 ## Ledger
 
 ### Queued / parked
+- **GH-110 · focus5 app: shrink repo-name font size by 20%** 🆕 **captured 2026-07-04 via HQ** — [GH-110-FOCUS5-APP-SHRINK-REPO.md](PROJECT/1-INBOX/GH-110-FOCUS5-APP-SHRINK-REPO.md) · [#110](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/110)
+- **GH-109 · focus5 app: refresh button does not drop Git Worktrees removed from disk** 🆕 **captured 2026-07-04 via HQ** — [GH-109-FOCUS5-APP-REFRESH-BUTTON.md](PROJECT/1-INBOX/GH-109-FOCUS5-APP-REFRESH-BUTTON.md) · [#109](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/109)
 
 - `ROADMAP→dashboard collector` — 1-INBOX draft, not yet promoted. A new `roadmap` source scanning PDDA `ROADMAP.md` ledgers into the dashboard. Sequenced **behind** the now-promoted signal-quality contract so it is born observable (inherits the health fields) instead of shipping ungraded. Draft pending 5 operator decisions (§6) and partial cross-device registry rollout (1 of 3 devices). **Also captured (2026-06-30), unscoped:** a speculative Phase 5 — once the collector ships, its cross-repo `roadmap_signals` table is a second potential consumer beside the dashboard plane, seeding XYZ/tick task lanes *across repos*. Not designed; revisit after Phase 2. → [ROADMAP-SIGNAL-SCAN.md](PROJECT/1-INBOX/PDDA-INTEGRATION/ROADMAP-SIGNAL-SCAN.md)
 ### In progress
