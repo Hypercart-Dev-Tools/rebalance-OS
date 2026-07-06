@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-05.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
 ROUND: 1 / 4
 
@@ -50,5 +50,12 @@ Part of the 2026-07-06 marathon, Lane A (see [MARATHON-2026-07-06.md](../../PROJ
 6. The relay ends on **Approved** (Reviewer only). End each turn by committing just this file; no push.
 
 ## Log
+
+### Producer — codex — 2026-07-05 21:11 PT
+- Disposition: initial producer pass, so there were no open reviewer findings to resolve yet.
+- Implemented `compute_deep_work_signals(db, today, lookback_days=7)` in `src/rebalance/ingest/next_actions.py` as a read-only helper. It calls `collect_pulse_snapshot()` once per lookback day, rolls GitHub activity up per active project, computes `streak_days`, flags `possible_stall` only when yesterday had activity and today is quiet while open GitHub work still exists, and returns structured evidence (`streak_dates`, per-day rows, open items).
+- Wired `rebalance doctor` to surface the observe-only signal as a single `deep work` check in `src/rebalance/doctor.py`; `WARN` only when a possible stall exists, otherwise `OK`.
+- Added fixture-seeded Phase 1 coverage in `tests/test_next_actions.py` for the 5-day streak case, the stall-with-open-issue case, and the quiet-with-no-open-issue non-stall case.
+- Verification: `PYTHONPATH="$PWD/src" pytest tests/test_next_actions.py tests/test_doctor.py` → `63 passed`.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
