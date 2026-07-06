@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-05.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: None
+STATUS: Approved
 ROUND: 1 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -57,5 +57,13 @@ Part of the 2026-07-06 marathon, Lane A (see [MARATHON-2026-07-06.md](../../PROJ
 - Wired `rebalance doctor` to surface the observe-only signal as a single `deep work` check in `src/rebalance/doctor.py`; `WARN` only when a possible stall exists, otherwise `OK`.
 - Added fixture-seeded Phase 1 coverage in `tests/test_next_actions.py` for the 5-day streak case, the stall-with-open-issue case, and the quiet-with-no-open-issue non-stall case.
 - Verification: `PYTHONPATH="$PWD/src" pytest tests/test_next_actions.py tests/test_doctor.py` → `63 passed`.
+
+### Reviewer — agy — 2026-07-05 21:12 PT
+- **Verdict:** Approved
+- `[Pass]` Function `compute_deep_work_signals` successfully implemented with correct lookback window mapping, reuse of `collect_pulse_snapshot`, and database query optimization.
+- `[Pass]` Stall conditions successfully evaluated: checks that yesterday had activity, today has zero activity, and has open GitHub issues.
+- `[Pass]` Report surfaced via a clean `deep work` check in `rebalance doctor` without interfering with `rank_next_actions()` or writing to the vault.
+- `[Pass]` Fixture-seeded tests covering streak, stall with open issue, and quiet non-stall are comprehensive and verify all requested phase 1 behaviors.
+- Verification: Ran `pytest tests/test_next_actions.py tests/test_doctor.py` → 63 passed. Ran `rebalance doctor` and verified it reports the `deep work` signal correctly.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
