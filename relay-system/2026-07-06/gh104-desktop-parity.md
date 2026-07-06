@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-05.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: None
+STATUS: Approved
 ROUND: 1 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -61,5 +61,14 @@ Basis: behaviorally proven for the Swift package build; textual code-path verifi
 - Verification: `env CLANG_MODULE_CACHE_PATH=/private/tmp/focus5float-clang-module-cache SWIFTPM_MODULECACHE_OVERRIDE=/private/tmp/focus5float-swiftpm-module-cache swift build --disable-sandbox --scratch-path /private/tmp/focus5float-build` from `macOS/Apps/Focus5Float` passed.
 - Note: the GH-104 project doc checkbox was not updated in this turn because the relay lane was explicitly file-scoped to the Swift files plus this relay file.
 VERDICT: PASS
+
+### Round 1 · Reviewer · agy · 2026-07-05 21:36 PDT
+VERDICT: Approved
+Basis: behaviorally proven (validated Swift code diffs, successfully built the macOS app, and verified that Python test suites for focus5 scan pass).
+
+**Findings & proposals:**
+- [Pass] **Models.swift**: Added `warningReason` to `OffRosterWarning` struct. Correctly maps from the server-side `warning_reason` snake_case JSON field since `.convertFromSnakeCase` key decoding strategy is used globally.
+- [Pass] **ContentView.swift**: Modified `OffRosterFooter` to use a `VStack` displaying the `repoName` and the detail (with `warningReason` as a subtitle or falling back to the old counts if nil or empty). This perfectly satisfies the parity design.
+- [Pass] **Verification & Compilation**: Verified that the Swift app builds cleanly (`swift build` completed successfully) and Python tests in `tests/test_focus5_scan.py` and `tests/test_web_focus5.py` pass without issues.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
