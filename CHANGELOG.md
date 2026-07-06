@@ -6,6 +6,13 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.55.0] - 2026-07-06
+
+### Added
+- **Cross-day deep-work signal (observe-only)** ([GH-116](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/116)) — a new `rebalance doctor` check flags a project that went quiet after recent activity while it still has open GitHub work, computed by diffing the existing daily pulse snapshot across day boundaries (no re-summarization of the vault's Gemini prose, no new table). Read-only for now — does not change the "what to do next" ranking; folding it in is a gated follow-up. 63 new/updated tests green.
+- **Zapier webhook receiver (Phase 1)** ([GH-115](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/115)) — a new authenticated endpoint accepts Zapier-triggered events (HTTP Basic Auth primary, query-param fallback, dry-run support, in-memory rate limiting, a health-check route), routing by source to placeholder handlers. The real email/calendar ingest logic behind those handlers lands in a follow-up phase. 8 new tests green.
+- **Focus 5 off-roster reason — desktop parity** ([GH-104](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/104)) — the macOS Focus5Float app's off-roster strip now shows the same specific reason (uncommitted, unpushed, etc.) per repo that the web view already showed, reusing the existing server-computed reason string rather than re-deriving the logic client-side. Web slice shipped 2026-07-03; this closes the desktop half.
+
 ## [0.54.0] - 2026-07-05
 
 ### Added
