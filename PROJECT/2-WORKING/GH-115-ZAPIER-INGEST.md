@@ -215,30 +215,30 @@ Zapier's public docs confirm `Event Start` exists, is polling-based, and is conf
 
 ### Checklist
 
-- [ ] Add `POST /api/zapier/ingest` route to `web.py`
-- [ ] Implement `_verify_zapier_auth(request, secret)` helper — HTTP Basic Auth primary, optional `?zapier_secret=` fallback, constant-time compare (`hmac.compare_digest` or `secrets.compare_digest`)
-- [ ] Load webhook secret via `resolve_secret_path("zapier-webhook-secret")` at startup (fail-open with a clear error log if not set)
-- [ ] Create placeholder `src/rebalance/ingest/zapier_email.py` (`handle_email_event()` stub, `NotImplementedError`) and `src/rebalance/ingest/zapier_calendar.py` (`handle_calendar_event()` stub, `NotImplementedError`)
-- [ ] Route payload by `source` field: `"email"` → `zapier_email.handle_email_event()`, `"calendar"` → `zapier_calendar.handle_calendar_event()`, unknown → `400`
-- [ ] Catch `NotImplementedError` from a stub handler and return `501 Not Implemented` (expected until Phase 2/3 land; not a Phase 1 bug)
-- [ ] Return structured JSON response: `{"ok": true, "source": "email", "dry_run": false, "message_id": "..."}` or error shape
-- [ ] Add `?dry_run=true` query param — validate envelope (auth + recognized `source`) and return `ok: true` without calling the source handler or writing to the DB
-- [ ] Rate-limit guard: reject if > 100 requests/minute from same IP (simple in-memory token bucket — state is ephemeral and resets on worker restart; acceptable for local dashboard spam protection, not a distributed rate limiter)
-- [ ] Catch SQLite `database is locked` errors and return `503 Service Unavailable` — Zapier retries on 5xx; a 4xx causes Zapier to drop the payload permanently
-- [ ] Structured log line per request: `request_id`, `source`, `dry_run`, `status`, `duration_ms`
-- [ ] Add `/api/zapier/health` GET endpoint — returns `{"ok": true, "secret_configured": bool}` (no secret value ever returned)
+- [x] Add `POST /api/zapier/ingest` route to `web.py`
+- [x] Implement `_verify_zapier_auth(request, secret)` helper — HTTP Basic Auth primary, optional `?zapier_secret=` fallback, constant-time compare (`hmac.compare_digest` or `secrets.compare_digest`)
+- [x] Load webhook secret via `resolve_secret_path("zapier-webhook-secret")` at startup (fail-open with a clear error log if not set)
+- [x] Create placeholder `src/rebalance/ingest/zapier_email.py` (`handle_email_event()` stub, `NotImplementedError`) and `src/rebalance/ingest/zapier_calendar.py` (`handle_calendar_event()` stub, `NotImplementedError`)
+- [x] Route payload by `source` field: `"email"` → `zapier_email.handle_email_event()`, `"calendar"` → `zapier_calendar.handle_calendar_event()`, unknown → `400`
+- [x] Catch `NotImplementedError` from a stub handler and return `501 Not Implemented` (expected until Phase 2/3 land; not a Phase 1 bug)
+- [x] Return structured JSON response: `{"ok": true, "source": "email", "dry_run": false, "message_id": "..."}` or error shape
+- [x] Add `?dry_run=true` query param — validate envelope (auth + recognized `source`) and return `ok: true` without calling the source handler or writing to the DB
+- [x] Rate-limit guard: reject if > 100 requests/minute from same IP (simple in-memory token bucket — state is ephemeral and resets on worker restart; acceptable for local dashboard spam protection, not a distributed rate limiter)
+- [x] Catch SQLite `database is locked` errors and return `503 Service Unavailable` — Zapier retries on 5xx; a 4xx causes Zapier to drop the payload permanently
+- [x] Structured log line per request: `request_id`, `source`, `dry_run`, `status`, `duration_ms`
+- [x] Add `/api/zapier/health` GET endpoint — returns `{"ok": true, "secret_configured": bool}` (no secret value ever returned)
 
 ### Phase 1 QA gate
 
-- [ ] `rebalance doctor` still clean after adding the endpoint
-- [ ] `pytest tests/` green (no regressions)
-- [ ] `curl -X POST /api/zapier/ingest` with wrong or missing auth → `403`
-- [ ] `curl -X POST /api/zapier/ingest` with valid auth + unknown source → `400`
-- [ ] `?dry_run=true` with valid auth + recognized `source` returns `ok: true` and writes nothing to DB (envelope-only — does not call the stub handler)
-- [ ] `/api/zapier/health` returns `secret_configured: true` when secret is set
-- [ ] New tests: `tests/test_zapier_webhook.py` covering Basic Auth accept, Basic Auth reject, optional query-param fallback, routing (dispatch reaches the correct stub and gets its `NotImplementedError`, surfaced as `501`), dry-run, health
+- [x] `rebalance doctor` still clean after adding the endpoint
+- [x] `pytest tests/` green (no regressions) — full suite 1322 passed / 14 skipped (1 pre-existing unrelated failure, confirmed reproducing on untouched `development`)
+- [x] `curl -X POST /api/zapier/ingest` with wrong or missing auth → `403` — covered by `tests/test_zapier_webhook.py`
+- [x] `curl -X POST /api/zapier/ingest` with valid auth + unknown source → `400` — covered by `tests/test_zapier_webhook.py`
+- [x] `?dry_run=true` with valid auth + recognized `source` returns `ok: true` and writes nothing to DB (envelope-only — does not call the stub handler) — covered by `tests/test_zapier_webhook.py`
+- [x] `/api/zapier/health` returns `secret_configured: true` when secret is set — covered by `tests/test_zapier_webhook.py`
+- [x] New tests: `tests/test_zapier_webhook.py` covering Basic Auth accept, Basic Auth reject, optional query-param fallback, routing (dispatch reaches the correct stub and gets its `NotImplementedError`, surfaced as `501`), dry-run, health — 8 passed
 
-**Verification summary:** _(fill in before marking gate passed — doctor: / pytest: / unmet: none)_
+**Verification summary:** doctor: clean · pytest: `tests/test_zapier_webhook.py` 8 passed; full suite 1322 passed/14 skipped, 1 pre-existing unrelated failure · unmet: none. Built via `relay-xyz` (Producer=codex, Reviewer=agy, Approved r1), independently re-verified 2026-07-06.
 
 ---
 
