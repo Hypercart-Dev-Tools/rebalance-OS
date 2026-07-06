@@ -149,11 +149,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Panel
 
     private func buildPanel() {
-        // Compact by default now the header is a slim emoji tab row over a
-        // wrapped status line: 200 wide is a comfortable starting point that can
-        // be dragged down to the 180 floor without clipping. 660 tall leaves the
-        // roster room above the bottom drawer (Apple + Obsidian reminders + note).
-        let defaultRect = NSRect(x: 0, y: 0, width: 200, height: 660)
+        // Reference-design refresh: default back to a deliberate 340-wide shell,
+        // matching the RepoMonitor panel proportions while keeping the existing
+        // scroll-driven height. The header still allows a bounded wider state.
+        let defaultRect = NSRect(x: 0, y: 0, width: 340, height: 660)
 
         let hostingView = FirstMouseHostingView(rootView: ContentView(
             model: model,
@@ -177,6 +176,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.isMovableByWindowBackground = true
         panel.level = .floating
         panel.isFloatingPanel = true
+        panel.isOpaque = false
+        panel.backgroundColor = .clear
         panel.becomesKeyOnlyIfNeeded = true
         panel.hidesOnDeactivate = false
         panel.animationBehavior = .utilityWindow
@@ -190,14 +191,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         panel.contentView = hostingView
 
-        // Floor — 180 wide is the narrow target the emoji tab row + wrapped
-        // status line are built for; below that the tab row would start to clip.
-        panel.minSize = NSSize(width: 180, height: 320)
+        // Keep the reference width by default but allow one bounded wider state
+        // from the in-panel expand action.
+        panel.minSize = NSSize(width: 340, height: 360)
+        panel.maxSize = NSSize(width: 420, height: 1200)
 
-        // Frame autosave — remembers position & size across launches. Bumped to
-        // ".v4" so the taller default (room for the reminders + note drawer) takes
-        // effect once over any stale ".v3" height, then persists again.
-        panel.setFrameAutosaveName("Focus5FloatPanel.v4")
+        // Frame autosave — bumped so the refreshed width/glass shell takes effect
+        // once over any prior narrow saved frame, then persists again.
+        panel.setFrameAutosaveName("Focus5FloatPanel.v5")
         if panel.frame.origin == .zero {
             panel.center()
         }
