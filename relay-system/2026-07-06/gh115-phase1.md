@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-05.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
 ROUND: 1 / 4
 
@@ -51,5 +51,13 @@ Part of the 2026-07-06 marathon, Lane B (see [MARATHON-2026-07-06.md](../../PROJ
 6. The relay ends on **Approved** (Reviewer only). End each turn by committing just this file; no push.
 
 ## Log
+
+### Producer — codex — r1
+- Disposition: no prior reviewer findings on the opening producer turn.
+- Implemented `POST /api/zapier/ingest` and `GET /api/zapier/health` in `src/rebalance/web.py`.
+- Added `_verify_zapier_auth()` with HTTP Basic Auth primary and `?zapier_secret=` fallback, constant-time compare, startup/lifespan secret load from `resolve_secret_path("zapier-webhook-secret")`, in-memory token-bucket rate limiting, structured request logging, `dry_run`, unknown-source `400`, stub `NotImplementedError` → `501`, and SQLite `"database is locked"` → `503`.
+- Added placeholder Phase 1 stubs in `src/rebalance/ingest/zapier_email.py` and `src/rebalance/ingest/zapier_calendar.py`.
+- Added `tests/test_zapier_webhook.py` covering Basic Auth accept/reject, query fallback, routing, dry-run, health, unknown source, and DB-lock error mapping.
+- Verification: `PYTHONPATH=src python -m pytest tests/test_zapier_webhook.py -q` → `8 passed`.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
