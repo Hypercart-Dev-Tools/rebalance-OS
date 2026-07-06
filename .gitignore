@@ -75,3 +75,7 @@ xyz-tick/
 .tick/locks/
 /scratch
 /PROJECT/RELAY
+
+# Aider Studio (auto-added)
+REPO_MAP.md
+.aider/
