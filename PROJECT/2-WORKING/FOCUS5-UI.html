@@ -1,0 +1,702 @@
+---
+title: Focus 5 Float — Repo Monitor Floating Panel UI Refresh
+status: "Active (2-WORKING) — worktree created 2026-07-05; prototype + first Swift implementation pass in progress"
+doc_type: project-plan
+owner: Noel Saw
+created: 2026-07-05
+updated: 2026-07-05
+goal: "Refresh Focus5Float against the RepoMonitor reference shell while preserving the current product contract: Focus/Tidy/Stats modes, reminders, offline/start-server affordances, and live localhost data."
+source_design: /Users/noelsaw/Downloads/RepoMonitor.html
+branch: focus5/floating-panel
+worktree: .claude/worktrees/focus5-floating-panel
+---
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Focus 5 Float — Repo Monitor UI Refresh</title>
+  <style>
+    :root {
+      --bg-1: #02131f;
+      --bg-2: #0e4a65;
+      --bg-3: #7ed9d4;
+      --panel-fill: rgba(252, 252, 253, 0.96);
+      --panel-stroke: rgba(0, 0, 0, 0.1);
+      --row-alt: rgba(118, 118, 128, 0.08);
+      --hover-fill: rgba(118, 118, 128, 0.12);
+      --text: #1d1d1f;
+      --text-2: #6a6a70;
+      --text-3: #8a8a8f;
+      --blue: #0a73ff;
+      --green: #2db55d;
+      --red: #e0544e;
+      --amber: #f0a020;
+      --unknown: #9a9aa1;
+      --danger-bg: rgba(226, 72, 61, 0.14);
+      --danger-fg: #d13f39;
+      --radius-window: 16px;
+      --radius-control: 8px;
+      --radius-row: 12px;
+      --shadow: 0 28px 72px rgba(0, 0, 0, 0.28), 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+      --panel-width: 340px;
+      color-scheme: light;
+      font-family: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, sans-serif;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 36px 20px 48px;
+      background:
+        radial-gradient(circle at top left, rgba(255,255,255,0.16), transparent 26%),
+        radial-gradient(circle at bottom right, rgba(255,255,255,0.14), transparent 18%),
+        linear-gradient(135deg, var(--bg-1) 0%, var(--bg-2) 38%, #0f8ca7 60%, var(--bg-3) 100%);
+      color: var(--text);
+    }
+
+    main {
+      width: min(1080px, 100%);
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) minmax(280px, 1fr);
+      gap: 32px;
+      align-items: start;
+    }
+
+    .panel-shell {
+      position: relative;
+      display: flex;
+      justify-content: center;
+    }
+
+    .panel {
+      width: var(--panel-width);
+      border-radius: var(--radius-window);
+      background: var(--panel-fill);
+      border: 0.5px solid var(--panel-stroke);
+      box-shadow: var(--shadow);
+      backdrop-filter: blur(34px) saturate(1.45);
+      -webkit-backdrop-filter: blur(34px) saturate(1.45);
+      overflow: hidden;
+      transition: width 180ms ease;
+    }
+
+    .toolbar {
+      padding: 16px 16px 12px;
+    }
+
+    .toolbar-row {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    .spacer {
+      flex: 1 1 auto;
+    }
+
+    button,
+    .open-link {
+      transition: background-color 120ms ease, color 120ms ease, border-color 120ms ease;
+    }
+
+    .icon-btn {
+      width: 28px;
+      height: 28px;
+      border: 0;
+      border-radius: var(--radius-control);
+      background: transparent;
+      color: var(--text-2);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      appearance: none;
+    }
+
+    .icon-btn:hover {
+      background: rgba(0, 0, 0, 0.06);
+      color: var(--text);
+    }
+
+    .icon-btn.close:hover {
+      background: var(--danger-bg);
+      color: var(--danger-fg);
+    }
+
+    .segmented {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px;
+      border-radius: 10px;
+      background: rgba(118, 118, 128, 0.1);
+      border: 0.5px solid rgba(0, 0, 0, 0.08);
+      box-shadow: inset 0 0.5px 1px rgba(255,255,255,0.65);
+    }
+
+    .segmented .divider {
+      width: 0.5px;
+      height: 16px;
+      background: rgba(0, 0, 0, 0.12);
+    }
+
+    .seg-btn {
+      width: 30px;
+      height: 26px;
+      border: 0;
+      border-radius: 7px;
+      background: transparent;
+      color: #3a3a40;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+    }
+
+    .seg-btn:hover {
+      background: rgba(0, 0, 0, 0.06);
+    }
+
+    .seg-btn.active {
+      background: rgba(0, 0, 0, 0.08);
+      color: var(--text);
+      box-shadow: inset 0 0 0 0.5px rgba(0,0,0,0.05);
+    }
+
+    .status-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-top: 12px;
+      font-size: 12.5px;
+    }
+
+    .status-row .meta {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      color: var(--text-3);
+      min-width: 0;
+    }
+
+    .status-row .meta strong {
+      color: var(--text);
+      font-weight: 600;
+    }
+
+    .attention-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      min-width: fit-content;
+      font-weight: 600;
+      color: var(--text);
+    }
+
+    .dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      display: inline-block;
+      flex: 0 0 auto;
+      box-shadow: 0 0 0 0.5px rgba(0,0,0,0.08);
+    }
+
+    .divider-line {
+      height: 0.5px;
+      background: rgba(0, 0, 0, 0.1);
+      margin: 0 16px;
+    }
+
+    .repo-list {
+      padding: 8px;
+    }
+
+    .repo-row {
+      padding: 13px 14px;
+      margin: 4px 0;
+      border-radius: var(--radius-row);
+      background: transparent;
+      transition: background-color 120ms ease;
+    }
+
+    .repo-row.alt {
+      background: var(--row-alt);
+    }
+
+    .repo-row:hover {
+      background: var(--hover-fill);
+    }
+
+    .repo-top,
+    .repo-footer {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .index-badge {
+      min-width: 32px;
+      height: 24px;
+      padding: 0 8px;
+      border-radius: 7px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(255,255,255,0.88);
+      box-shadow: 0 0.5px 1.5px rgba(0,0,0,0.1), inset 0 0 0 0.5px rgba(0,0,0,0.06);
+      font: 600 12.5px/1 "SF Mono", ui-monospace, monospace;
+      color: var(--text);
+    }
+
+    .open-link {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      color: var(--blue);
+      font-size: 12.5px;
+      font-weight: 600;
+      text-decoration: none;
+      padding: 2px 5px;
+      border-radius: 6px;
+    }
+
+    .open-link:hover {
+      background: rgba(10, 115, 255, 0.1);
+    }
+
+    .chevron {
+      color: #b0b0b6;
+      font-size: 13px;
+      line-height: 1;
+    }
+
+    .repo-name {
+      margin-top: 9px;
+      font-size: 16px;
+      line-height: 1.26;
+      font-weight: 600;
+      color: var(--text);
+      overflow-wrap: anywhere;
+      word-break: normal;
+    }
+
+    .repo-meta {
+      margin-top: 8px;
+      font-size: 12.5px;
+      color: var(--text-3);
+    }
+
+    .repo-footer {
+      margin-top: 10px;
+      gap: 12px;
+      flex-wrap: wrap;
+      color: var(--text-2);
+      font: 12px/1.1 "SF Mono", ui-monospace, monospace;
+    }
+
+    .branch-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 9px 4px 8px;
+      border-radius: 7px;
+      background: rgba(118, 118, 128, 0.12);
+    }
+
+    .doc {
+      display: grid;
+      gap: 18px;
+      align-content: start;
+    }
+
+    .card {
+      padding: 18px 18px 16px;
+      border-radius: 16px;
+      background: rgba(255,255,255,0.78);
+      border: 1px solid rgba(255,255,255,0.3);
+      backdrop-filter: blur(18px);
+      -webkit-backdrop-filter: blur(18px);
+      box-shadow: 0 10px 32px rgba(0, 0, 0, 0.12);
+    }
+
+    .card h1,
+    .card h2 {
+      margin: 0 0 10px;
+      line-height: 1.15;
+    }
+
+    .card h1 {
+      font-size: 28px;
+    }
+
+    .card h2 {
+      font-size: 16px;
+    }
+
+    .card p,
+    .card li,
+    .card table {
+      font-size: 13px;
+      line-height: 1.5;
+      color: #24303a;
+    }
+
+    .status-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    .status-table th,
+    .status-table td {
+      vertical-align: top;
+      text-align: left;
+      padding: 10px 0;
+      border-top: 1px solid rgba(0,0,0,0.08);
+    }
+
+    .status-table th {
+      width: 38%;
+      padding-right: 16px;
+      font-size: 12px;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      color: #52606d;
+    }
+
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 12px;
+    }
+
+    .width-btn {
+      padding: 8px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(0,0,0,0.08);
+      background: rgba(255,255,255,0.9);
+      color: var(--text);
+      font: 600 12px/1 -apple-system, BlinkMacSystemFont, sans-serif;
+      cursor: pointer;
+    }
+
+    .width-btn:hover,
+    .width-btn.active {
+      background: rgba(10, 115, 255, 0.1);
+      border-color: rgba(10, 115, 255, 0.18);
+    }
+
+    .width-label {
+      margin-top: 10px;
+      font: 12px/1.4 "SF Mono", ui-monospace, monospace;
+      color: #52606d;
+    }
+
+    .checklist {
+      margin: 0;
+      padding-left: 18px;
+      display: grid;
+      gap: 6px;
+    }
+
+    .toast {
+      position: absolute;
+      left: 50%;
+      bottom: 14px;
+      transform: translateX(-50%) translateY(10px);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 16px;
+      border-radius: 999px;
+      background: rgba(28, 29, 31, 0.94);
+      color: #fff;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.32);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 180ms ease, transform 180ms ease;
+    }
+
+    .toast.visible {
+      opacity: 1;
+      transform: translateX(-50%) translateY(0);
+    }
+
+    .toast-check {
+      width: 16px;
+      height: 16px;
+      border-radius: 999px;
+      background: var(--green);
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    svg {
+      width: 16px;
+      height: 16px;
+      stroke: currentColor;
+      fill: none;
+      stroke-width: 1.5;
+      stroke-linecap: round;
+      stroke-linejoin: round;
+    }
+
+    @media (max-width: 920px) {
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      .panel-shell {
+        order: 2;
+      }
+
+      .doc {
+        order: 1;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel-shell">
+      <div class="panel" id="panel">
+        <div class="toolbar">
+          <div class="toolbar-row">
+            <button class="icon-btn close" type="button" aria-label="Close">
+              <svg viewBox="0 0 16 16"><path d="M4 4l8 8"></path><path d="M12 4l-8 8"></path></svg>
+            </button>
+
+            <div class="segmented" aria-label="Modes">
+              <button class="seg-btn active" type="button" aria-label="Focus">
+                <svg viewBox="0 0 16 16"><circle cx="8" cy="8" r="5.8"></circle><circle cx="8" cy="8" r="2.2"></circle></svg>
+              </button>
+              <span class="divider"></span>
+              <button class="seg-btn" type="button" aria-label="Tidy">
+                <svg viewBox="0 0 16 16"><path d="M11.2 3.2l1.6 1.6-4 4-1.6-1.6z"></path><path d="M7.4 6.6L3.5 10.5a1.8 1.8 0 0 0-.5.95L2.6 13.4l1.95-.4a1.8 1.8 0 0 0 .95-.5l3.9-3.9"></path></svg>
+              </button>
+              <span class="divider"></span>
+              <button class="seg-btn" type="button" aria-label="Stats">
+                <svg viewBox="0 0 16 16"><path d="M3 12.5V8.7"></path><path d="M6.5 12.5V4"></path><path d="M10 12.5V6.8"></path><path d="M13.5 12.5V5.2"></path></svg>
+              </button>
+            </div>
+
+            <span class="spacer"></span>
+
+            <button class="icon-btn" type="button" id="refresh-btn" aria-label="Refresh">
+              <svg viewBox="0 0 16 16"><path d="M13 3v3h-3"></path><path d="M12.7 6A5 5 0 1 0 13.5 9"></path></svg>
+            </button>
+            <button class="icon-btn" type="button" id="expand-btn" aria-label="Expand">
+              <svg viewBox="0 0 16 16"><path d="M6 3H3v3"></path><path d="M10 13h3v-3"></path><path d="M3 3l4 4"></path><path d="M13 13l-4-4"></path></svg>
+            </button>
+          </div>
+
+          <div class="status-row">
+            <div class="meta">
+              <strong>5 repos</strong>
+              <span>&middot;</span>
+              <span>synced 20m ago</span>
+            </div>
+            <div class="attention-badge">
+              <span>1</span>
+              <span class="dot" style="background: var(--amber)"></span>
+            </div>
+          </div>
+        </div>
+
+        <div class="divider-line"></div>
+
+        <div class="repo-list">
+          <article class="repo-row">
+            <div class="repo-top">
+              <span class="index-badge">#1</span>
+              <a class="open-link" href="#">
+                <span>Open</span>
+                <svg viewBox="0 0 12 12"><path d="M4 8l4-4"></path><path d="M4.5 4H8v3.5"></path></svg>
+              </a>
+              <span class="dot" style="background: var(--green)"></span>
+              <span class="chevron">›</span>
+            </div>
+            <div class="repo-name">xyz-3-agents-swarm</div>
+            <div class="repo-meta">your commit 5m ago</div>
+            <div class="repo-footer">
+              <span class="branch-chip"><span class="dot" style="width:8px;height:8px;background:#1aaea0"></span><span>main</span></span>
+              <span>↑0 ↓0</span>
+              <span>0M 0U</span>
+            </div>
+          </article>
+
+          <article class="repo-row alt">
+            <div class="repo-top">
+              <span class="index-badge">#2</span>
+              <a class="open-link" href="#">
+                <span>Open</span>
+                <svg viewBox="0 0 12 12"><path d="M4 8l4-4"></path><path d="M4.5 4H8v3.5"></path></svg>
+              </a>
+              <span class="dot" style="background: var(--green)"></span>
+              <span class="chevron">›</span>
+            </div>
+            <div class="repo-name">shipstation-fork</div>
+            <div class="repo-meta">your commit 40m ago</div>
+            <div class="repo-footer">
+              <span class="branch-chip"><span class="dot" style="width:8px;height:8px;background:#0a73ff"></span><span>release/ops</span></span>
+              <span>↑0 ↓0</span>
+              <span>0M 0U</span>
+            </div>
+          </article>
+
+          <article class="repo-row">
+            <div class="repo-top">
+              <span class="index-badge">#3</span>
+              <a class="open-link" href="#">
+                <span>Open</span>
+                <svg viewBox="0 0 12 12"><path d="M4 8l4-4"></path><path d="M4.5 4H8v3.5"></path></svg>
+              </a>
+              <span class="dot" style="background: var(--red)"></span>
+              <span class="chevron">›</span>
+            </div>
+            <div class="repo-name">rebalance-OS</div>
+            <div class="repo-meta">your commit 2h ago</div>
+            <div class="repo-footer">
+              <span class="branch-chip"><span class="dot" style="width:8px;height:8px;background: var(--unknown)"></span><span>gh-104</span></span>
+              <span>↑0 ↓0</span>
+              <span>5M 2U</span>
+            </div>
+          </article>
+
+          <article class="repo-row alt">
+            <div class="repo-top">
+              <span class="index-badge">#4</span>
+              <a class="open-link" href="#">
+                <span>Open</span>
+                <svg viewBox="0 0 12 12"><path d="M4 8l4-4"></path><path d="M4.5 4H8v3.5"></path></svg>
+              </a>
+              <span class="dot" style="background: var(--green)"></span>
+              <span class="chevron">›</span>
+            </div>
+            <div class="repo-name">giant-brains-claude-skills</div>
+            <div class="repo-meta">your commit 18h ago</div>
+            <div class="repo-footer">
+              <span class="branch-chip"><span class="dot" style="width:8px;height:8px;background:#1aaea0"></span><span>main</span></span>
+              <span>↑0 ↓0</span>
+              <span>0M 0U</span>
+            </div>
+          </article>
+
+          <article class="repo-row">
+            <div class="repo-top">
+              <span class="index-badge">#5</span>
+              <a class="open-link" href="#">
+                <span>Open</span>
+                <svg viewBox="0 0 12 12"><path d="M4 8l4-4"></path><path d="M4.5 4H8v3.5"></path></svg>
+              </a>
+              <span class="dot" style="background: var(--unknown)"></span>
+              <span class="chevron">›</span>
+            </div>
+            <div class="repo-name">focus5-ui-proof-for-extra-narrow-width-wrap-testing</div>
+            <div class="repo-meta">your commit 1d ago</div>
+            <div class="repo-footer">
+              <span class="branch-chip"><span class="dot" style="width:8px;height:8px;background: var(--unknown)"></span><span>detached</span></span>
+              <span>↑2 ↓1</span>
+              <span>1M 4U</span>
+            </div>
+          </article>
+        </div>
+      </div>
+
+      <div class="toast" id="toast" role="status" aria-live="polite">
+        <span class="toast-check">✓</span>
+        <span>Repos refreshed</span>
+      </div>
+    </section>
+
+    <section class="doc">
+      <article class="card">
+        <h1>Focus 5 Float UI Refresh</h1>
+        <p>
+          Active design/implementation doc for the floating Mac app refresh. The prototype at left follows the
+          RepoMonitor reference shell while preserving the live Focus5Float contract already in the app.
+        </p>
+
+        <table class="status-table">
+          <tr>
+            <th>What just landed</th>
+            <td>Dedicated worktree, PDDA frontmatter, and a live executable prototype for the reference shell. This first pass also proves the narrow-width repo-name wrapping fix down to 120px.</td>
+          </tr>
+          <tr>
+            <th>What’s next</th>
+            <td>Carry the same shell into Swift: glass panel, icon segmented control, repo row hierarchy, bottom refresh toast, and hover affordances without changing the data contract or reminders/offline features.</td>
+          </tr>
+        </table>
+      </article>
+
+      <article class="card">
+        <h2>Width Test</h2>
+        <p>Use the width presets to verify the original wrapping bug stays fixed and repo names never share their line with controls.</p>
+        <div class="controls">
+          <button class="width-btn active" type="button" data-width="340">340px</button>
+          <button class="width-btn" type="button" data-width="180">180px</button>
+          <button class="width-btn" type="button" data-width="120">120px</button>
+        </div>
+        <div class="width-label" id="width-label">panel width = 340px</div>
+      </article>
+
+      <article class="card">
+        <h2>Checklist</h2>
+        <ul class="checklist">
+          <li>Glass panel shell, 16px corners, soft shadow, hairline edge definition.</li>
+          <li>Icon-only segmented control with background hover states on every button.</li>
+          <li>Repo controls stay on row 1; repo name always gets its own wrapping line.</li>
+          <li>Status badge uses amber for attention and avoids traffic-light semantics.</li>
+          <li>Refresh is the only action that emits a snackbar, shown bottom-center.</li>
+        </ul>
+      </article>
+    </section>
+  </main>
+
+  <script>
+    const panel = document.getElementById("panel");
+    const toast = document.getElementById("toast");
+    const widthLabel = document.getElementById("width-label");
+
+    function showToast() {
+      toast.classList.add("visible");
+      clearTimeout(showToast.timer);
+      showToast.timer = setTimeout(() => toast.classList.remove("visible"), 2400);
+    }
+
+    document.getElementById("refresh-btn").addEventListener("click", showToast);
+
+    document.querySelectorAll("[data-width]").forEach((button) => {
+      button.addEventListener("click", () => {
+        const width = button.getAttribute("data-width");
+        panel.style.setProperty("--panel-width", width + "px");
+        document.documentElement.style.setProperty("--panel-width", width + "px");
+        widthLabel.textContent = "panel width = " + width + "px";
+        document.querySelectorAll("[data-width]").forEach((node) => node.classList.remove("active"));
+        button.classList.add("active");
+      });
+    });
+
+    document.getElementById("expand-btn").addEventListener("click", () => {
+      const current = getComputedStyle(document.documentElement).getPropertyValue("--panel-width").trim();
+      const next = current === "340px" ? "420px" : "340px";
+      document.documentElement.style.setProperty("--panel-width", next);
+      widthLabel.textContent = "panel width = " + next;
+      document.querySelectorAll("[data-width]").forEach((node) => node.classList.remove("active"));
+    });
+  </script>
+</body>
+</html>

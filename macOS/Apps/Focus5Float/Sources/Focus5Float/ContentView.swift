@@ -13,16 +13,29 @@ struct ContentView: View {
     let onHide: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            Divider().overlay(Theme.separator)
-            content
+        ZStack {
+            RoundedRectangle(cornerRadius: Theme.Radius.window, style: .continuous)
+                .fill(.ultraThinMaterial)
+            RoundedRectangle(cornerRadius: Theme.Radius.window, style: .continuous)
+                .fill(Theme.glassFill)
+            VStack(spacing: 0) {
+                header
+                Divider().overlay(Theme.separator)
+                content
+            }
         }
-        .background(Theme.window)
-        .overlay(alignment: .top) {
+        .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.window, style: .continuous))
+        .overlay {
+            RoundedRectangle(cornerRadius: Theme.Radius.window, style: .continuous)
+                .strokeBorder(Theme.glassEdge, lineWidth: 0.5)
+        }
+        .shadow(color: .black.opacity(0.24), radius: 30, x: 0, y: 18)
+        .padding(6)
+        .background(Color.clear)
+        .overlay(alignment: .bottom) {
             if let banner = model.banner {
                 TopBanner(text: banner)
-                    .transition(.move(edge: .top).combined(with: .opacity))
+                    .transition(.move(edge: .bottom).combined(with: .opacity))
                     .zIndex(1)
             }
         }
@@ -46,163 +59,154 @@ struct ContentView: View {
     // MARK: Header
 
     private var header: some View {
-        VStack(spacing: Theme.Space.xs) {
-            // Row 1 — compact tab switcher + actions. Emoji-only labels keep the
-            // 3-segment picker narrow enough for a ~180-wide panel; the tab names
-            // live in the help tooltips + accessibility labels.
+        VStack(spacing: Theme.Space.s) {
             HStack(spacing: Theme.Space.s) {
-                Button(action: onHide) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 11, weight: .semibold))
-                        .frame(width: 14, height: 14)
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(Theme.text2)
-                .help("Hide panel")
-                .accessibilityLabel("Hide panel")
+                ToolbarIconButton(systemName: "xmark", isDestructive: true, action: onHide)
+                    .help("Hide panel")
+                    .accessibilityLabel("Hide panel")
 
-                Picker("", selection: Binding(
-                    get: { model.viewMode },
-                    set: { mode in
-                        model.viewMode = mode
-                        switch mode {
-                        case .focus5:    Task { await model.setMode(dirty: false) }
-                        case .dirtyFive: Task { await model.setMode(dirty: true) }
-                        case .telemetry: model.refreshTelemetry()
-                        }
-                    }
-                )) {
-                    Text("🎯").tag(ViewMode.focus5)
-                        .help("Focus 5").accessibilityLabel("Focus 5")
-                    Text("🧹").tag(ViewMode.dirtyFive)
-                        .help("Dirty Five").accessibilityLabel("Dirty Five")
-                    Text("📊").tag(ViewMode.telemetry)
-                        .help("Telemetry").accessibilityLabel("Telemetry")
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .fixedSize(horizontal: true, vertical: false)
+                ModeSegmentedControl(selected: model.viewMode, onSelect: selectMode)
 
-                Button {
-                    Task {
-                        await model.refresh()
-                        // Confirm the manual refresh did something — the button
-                        // otherwise gives no visible feedback. Skip when offline so
-                        // we never claim success the fetch didn't actually achieve.
-                        if model.viewMode == .telemetry || !model.isOffline {
-                            model.flashBanner("Repos refreshed")
-                        }
-                    }
-                } label: {
-                    Image(systemName: "arrow.clockwise")
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(Theme.text2)
-                .help(model.viewMode == .telemetry ? "Re-read telemetry files" : "Re-pull /focus-5.json")
+                Spacer(minLength: Theme.Space.xs)
 
-                Button {
-                    narrowWindow()
-                } label: {
-                    Text("「」")
-                        .font(.system(size: 13))
-                        .fixedSize()
-                }
-                .buttonStyle(.borderless)
-                .foregroundStyle(Theme.text2)
-                .help("Snap to narrowest width (keeps height)")
+                ToolbarIconButton(systemName: "arrow.clockwise", action: refreshPanel)
+                    .help(model.viewMode == .telemetry ? "Re-read telemetry files" : "Re-pull /focus-5.json")
 
-                if model.viewMode != .telemetry && model.isOffline {
-                    Button {
-                        Task { await model.startServer() }
-                    } label: {
-                        Image(systemName: model.isStartingServer ? "hourglass" : "play.circle")
-                    }
-                    .buttonStyle(.borderless)
-                    .foregroundStyle(Theme.accent)
-                    .disabled(model.isStartingServer)
-                    .help("Start rebalance serve")
-                }
-
-                Spacer(minLength: 0)
+                ToolbarIconButton(systemName: "arrow.up.left.and.arrow.down.right", action: togglePanelWidth)
+                    .help("Toggle panel width")
             }
 
-            // Row 2 — status line. Wrapped down off the tab row so the panel can
-            // shrink to ~180 wide: count/updated on the left (truncates first),
-            // the health light pinned right.
             HStack(spacing: Theme.Space.s) {
                 if model.viewMode == .telemetry {
-                    if let url = model.telemetryFileURL {
-                        Text(url.lastPathComponent)
-                            .font(Theme.caption).foregroundStyle(Theme.text2)
-                            .lineLimit(1).truncationMode(.middle)
-                        if !model.telemetryEntries.isEmpty {
-                            Text("· \(model.telemetryEntries.count)")
-                                .font(Theme.caption).foregroundStyle(Theme.text3)
-                        }
-                    } else {
-                        Text("No file selected")
-                            .font(Theme.caption).foregroundStyle(Theme.text3)
-                    }
+                    telemetryStatus
+                    Spacer(minLength: Theme.Space.xs)
+                    telemetryBadge
                 } else {
-                    Text("\(model.roster.count) repos")
-                        .font(Theme.caption).foregroundStyle(Theme.text2).fixedSize()
-                    if !model.lastUpdatedAgo.isEmpty {
-                        Text("· \(model.lastUpdatedAgo)")
-                            .font(Theme.caption).foregroundStyle(Theme.text3)
-                            .lineLimit(1).truncationMode(.tail)
-                    }
-                    if model.isStale {
-                        Text("⚠").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
-                            .help("Roster is stale")
-                    }
-                    if model.showingCache {
-                        Text("cached").font(Theme.caption).foregroundStyle(Theme.diffUpdate)
-                            .help("Showing cached roster from \(model.cachedAgo)")
-                    } else if model.isOffline {
-                        Text("offline").font(Theme.caption).foregroundStyle(Theme.diffRemove)
-                    }
+                    rosterStatus
+                    Spacer(minLength: Theme.Space.xs)
+                    rosterAttentionBadge
                 }
-                Spacer(minLength: Theme.Space.xs)
-                healthLight
             }
         }
-        .padding(Theme.Space.m)
+        .padding(.horizontal, Theme.Space.l)
+        .padding(.top, Theme.Space.l)
+        .padding(.bottom, Theme.Space.m)
     }
 
-    /// Snap the floating panel to its minimum width, leaving height + position
-    /// otherwise as-is (the bottom-left corner stays put, the right edge moves in).
-    private func narrowWindow() {
+    @ViewBuilder private var telemetryStatus: some View {
+        if let url = model.telemetryFileURL {
+            Text(url.lastPathComponent)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if !model.telemetryEntries.isEmpty {
+                Text("· \(model.telemetryEntries.count)")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+            }
+        } else {
+            Text("No file selected")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text3)
+        }
+    }
+
+    private var rosterStatus: some View {
+        HStack(spacing: 6) {
+            Text("\(model.roster.count) repos")
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .fixedSize()
+            if !model.lastUpdatedAgo.isEmpty {
+                Text("·")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+                Text("synced \(model.lastUpdatedAgo)")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+            }
+            if model.showingCache {
+                Text("· cached")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.attention)
+                    .help("Showing cached roster from \(model.cachedAgo)")
+            } else if model.isOffline {
+                Text("· offline")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.diffRemove)
+            } else if model.isStale {
+                Text("· stale")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.attention)
+                    .help("Roster is stale")
+            }
+        }
+    }
+
+    @ViewBuilder private var telemetryBadge: some View {
+        if !model.telemetryEntries.isEmpty {
+            let nonGreen = model.telemetryEntries.filter { $0.health != .green }.count
+            statusBadge(
+                count: nonGreen,
+                tint: nonGreen == 0 ? Theme.diffAdd : Theme.attention,
+                help: "\(nonGreen) of \(model.telemetryEntries.count) signals need attention"
+            )
+        }
+    }
+
+    private var rosterAttentionBadge: some View {
+        let attentionCount = model.offRoster.count
+        return statusBadge(
+            count: attentionCount,
+            tint: attentionCount == 0 ? Theme.diffAdd : Theme.attention,
+            help: attentionCount == 0
+                ? "No off-roster repos currently need attention"
+                : "\(attentionCount) off-roster repos need attention"
+        )
+        .accessibilityLabel(attentionCount == 0 ? "No repos need attention" : "\(attentionCount) repos need attention")
+    }
+
+    private func refreshPanel() {
+        Task {
+            await model.refresh()
+            if model.viewMode == .telemetry || !model.isOffline {
+                model.flashBanner("Repos refreshed")
+            }
+        }
+    }
+
+    private func selectMode(_ mode: ViewMode) {
+        model.viewMode = mode
+        switch mode {
+        case .focus5:
+            Task { await model.setMode(dirty: false) }
+        case .dirtyFive:
+            Task { await model.setMode(dirty: true) }
+        case .telemetry:
+            model.refreshTelemetry()
+        }
+    }
+
+    /// Toggle between the reference width (340) and a bounded wider mode for
+    /// longer repo names / telemetry descriptions.
+    private func togglePanelWidth() {
         guard let panel = NSApp.windows.first(where: { $0 is FloatingPanel }) else { return }
         var frame = panel.frame
-        frame.size.width = panel.minSize.width   // height unchanged
+        frame.size.width = frame.width < 380 ? 420 : 340
         panel.setFrame(frame, display: true, animate: true)
     }
 
-    /// The roster/telemetry health light — a dirty-count + tinted dot, adapting to
-    /// the active tab. Lives on the status row (row 2) so it no longer widens the
-    /// tab row.
-    @ViewBuilder private var healthLight: some View {
-        if model.viewMode == .telemetry {
-            if !model.telemetryEntries.isEmpty {
-                let nonGreen = model.telemetryEntries.filter { $0.health != .green }.count
-                healthBadge(count: nonGreen,
-                            tint: RosterHealth.tint(dirty: nonGreen, total: model.telemetryEntries.count),
-                            help: "\(nonGreen) of \(model.telemetryEntries.count) signals need attention")
-            }
-        } else if !model.roster.isEmpty {
-            let dirty = model.roster.filter(\.isDirty).count
-            healthBadge(count: dirty,
-                        tint: RosterHealth.tint(dirty: dirty, total: model.roster.count),
-                        help: "\(dirty) of \(model.roster.count) roster repos dirty")
-                .accessibilityLabel("Status: \(dirty) of \(model.roster.count) roster repos dirty")
-        }
-    }
-
-    private func healthBadge(count: Int, tint: Color, help: String) -> some View {
-        HStack(spacing: 5) {
+    private func statusBadge(count: Int, tint: Color, help: String) -> some View {
+        HStack(spacing: 7) {
             Text("\(count)")
-                .font(Theme.caption).foregroundStyle(Theme.text2)
-            Circle().fill(tint).frame(width: 11, height: 11)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.text)
+            Circle()
+                .fill(tint)
+                .frame(width: 10, height: 10)
         }
         .fixedSize()
         .help(help)
@@ -337,43 +341,134 @@ struct ContentView: View {
     }
 }
 
+// MARK: - Header controls
+
+private struct ToolbarIconButton: View {
+    let systemName: String
+    var isDestructive = false
+    let action: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 16, height: 16)
+                .frame(width: 28, height: 28)
+                .contentShape(RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(hovered ? foregroundHover : Theme.text2)
+        .background(hovered ? backgroundHover : Color.clear,
+                    in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        .onHover { hovered = $0 }
+    }
+
+    private var backgroundHover: Color {
+        isDestructive ? Theme.destructiveHover : Theme.hover
+    }
+
+    private var foregroundHover: Color {
+        isDestructive ? Theme.destructiveText : Theme.text
+    }
+}
+
+private struct ModeSegmentedControl: View {
+    let selected: ViewMode
+    let onSelect: (ViewMode) -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            SegmentedModeButton(systemName: "scope",
+                                label: "Focus",
+                                isSelected: selected == .focus5) { onSelect(.focus5) }
+            divider
+            SegmentedModeButton(systemName: "paintbrush",
+                                label: "Tidy",
+                                isSelected: selected == .dirtyFive) { onSelect(.dirtyFive) }
+            divider
+            SegmentedModeButton(systemName: "chart.bar",
+                                label: "Stats",
+                                isSelected: selected == .telemetry) { onSelect(.telemetry) }
+        }
+        .padding(2)
+        .background(Theme.hover, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 0.5)
+        )
+    }
+
+    private var divider: some View {
+        Rectangle()
+            .fill(Theme.separator)
+            .frame(width: 0.5, height: 16)
+    }
+}
+
+private struct SegmentedModeButton: View {
+    let systemName: String
+    let label: String
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 13, weight: .semibold))
+                .frame(width: 30, height: 26)
+                .contentShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .foregroundStyle(isSelected ? Theme.text : Theme.text2)
+        .background(background,
+                    in: RoundedRectangle(cornerRadius: 7, style: .continuous))
+        .help(label)
+        .accessibilityLabel(label)
+        .onHover { hovered = $0 }
+    }
+
+    private var background: Color {
+        if isSelected { return Theme.hover }
+        return hovered ? Theme.hover : .clear
+    }
+}
+
 // MARK: - Repo card (collapsible)
 
 struct RepoCardView: View {
     let card: RepoCard
-    var darker: Bool = false        // zebra stripe — alternate rows use elevatedAlt
+    var darker: Bool = false
     @State private var expanded = false
+    @State private var hovered = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            // Row 1 — position badge + actions (Open / status / chevron), so the
-            // controls share one slim row regardless of how wide the name is.
+        VStack(alignment: .leading, spacing: 0) {
             HStack(spacing: Theme.Space.s) {
-                KeyCap(text: "#\(card.position)")
+                KeyCap(text: "#\(card.position)", font: Theme.monoSmall, height: 24)
                 Spacer(minLength: Theme.Space.s)
-                Button("Open ↗") { VSCodeLauncher.launch(repoPath: card.localPath, fallbackURL: card.vscodeUrl) }
-                    .buttonStyle(.borderless)
-                    .font(Theme.caption)
-                    .foregroundStyle(Theme.accent)
-                    .fixedSize()
-                    .help("Open \(card.repoName) in VS Code")
+                OpenRepoButton(repoName: card.repoName, localPath: card.localPath, vscodeURL: card.vscodeUrl)
                 StatusDot(isDirty: card.isDirty, healthAvailable: card.healthAvailable)
                 Image(systemName: expanded ? "chevron.down" : "chevron.right")
                     .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(Theme.text3)
             }
 
-            // Row 2 — repo name, full width + prominent; wraps in the narrow panel
-            // instead of competing with the badge/controls for horizontal space.
             Text(card.repoName)
-                .font(Theme.display).foregroundStyle(Theme.text)
+                .font(.system(size: 16, weight: .semibold))
+                .foregroundStyle(Theme.text)
+                .lineSpacing(1)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 9)
 
-            // Rank reason / last-commit line — smaller + greyer (a caption, not body).
-            Text(card.rankReason)
-                .font(.system(size: 11)).foregroundStyle(Theme.text3)
-                .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+            Text(commitLine)
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text3)
+                .padding(.top, 8)
 
             HStack(spacing: Theme.Space.m) {
                 if let branch = card.branch { GroupTag(name: branch) }
@@ -381,24 +476,33 @@ struct RepoCardView: View {
                 Text("\(card.modifiedCount)M \(card.untrackedCount)U")
                 Spacer(minLength: 0)
             }
-            .font(Theme.monoSmall).foregroundStyle(Theme.text3)
+            .font(Theme.monoSmall)
+            .foregroundStyle(Theme.text2)
+            .padding(.top, 10)
 
-            if expanded { detail }
+            if expanded {
+                detail
+                    .padding(.top, 10)
+            }
         }
         .padding(Theme.Space.m)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(darker ? Theme.elevatedAlt : Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
-                .strokeBorder(Theme.separator, lineWidth: 1)
-        )
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
         .contentShape(Rectangle())
         .onTapGesture { withAnimation(Theme.spring) { expanded.toggle() } }
+        .onHover { hovered = $0 }
     }
 
     // Expanded sub-sections — mirrors the web card.
     @ViewBuilder private var detail: some View {
-        Divider().overlay(Theme.separator).padding(.vertical, 2)
+        Divider().overlay(Theme.separator).padding(.bottom, 2)
+
+        CardSection(label: "Why ranked") {
+            Text(card.rankReason)
+                .font(Theme.body)
+                .foregroundStyle(Theme.text2)
+                .fixedSize(horizontal: false, vertical: true)
+        }
 
         CardSection(label: "Tree health") {
             HStack(spacing: 6) {
@@ -444,6 +548,21 @@ struct RepoCardView: View {
         return card.isDirty ? "\(card.modifiedCount) modified, \(card.untrackedCount) untracked" : "clean"
     }
 
+    private var commitLine: String {
+        if let ts = card.myLastCommitTs {
+            return "your commit \(RelTime.ago(Date(timeIntervalSince1970: TimeInterval(ts))))"
+        }
+        if let last = card.lastCommitAt {
+            return "recent commit \(RelTime.ago(last))"
+        }
+        return card.rankReason
+    }
+
+    private var rowBackground: Color {
+        if hovered { return Theme.hover }
+        return darker ? Theme.hover : .clear
+    }
+
     private var prFallback: String {
         if card.repoFullName != nil { return "no open PR synced yet" }
         if card.remoteUrl != nil { return "non-GitHub remote" }
@@ -452,6 +571,36 @@ struct RepoCardView: View {
 
     private func open(_ urlString: String) {
         if let url = URL(string: urlString) { NSWorkspace.shared.open(url) }
+    }
+}
+
+private struct OpenRepoButton: View {
+    let repoName: String
+    let localPath: String
+    let vscodeURL: String
+
+    @State private var hovered = false
+
+    var body: some View {
+        Button {
+            VSCodeLauncher.launch(repoPath: localPath, fallbackURL: vscodeURL)
+        } label: {
+            HStack(spacing: 3) {
+                Text("Open")
+                Image(systemName: "arrow.up.right")
+                    .font(.system(size: 10, weight: .bold))
+            }
+            .font(.system(size: 12.5, weight: .semibold))
+            .foregroundStyle(Theme.accent)
+            .padding(.horizontal, 5)
+            .padding(.vertical, 2)
+            .background(hovered ? Theme.accentSoft : .clear,
+                        in: RoundedRectangle(cornerRadius: 6, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .fixedSize()
+        .help("Open \(repoName) in VS Code")
+        .onHover { hovered = $0 }
     }
 }
 
@@ -837,8 +986,9 @@ struct DirtyBannerView: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Text("👋 BTW,")
-                .font(Theme.caption).foregroundStyle(Theme.text2)
+            Image(systemName: "exclamationmark.circle.fill")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(Theme.attention)
             Text(warning.repoName)
                 .font(Theme.bodyMed).foregroundStyle(Theme.text)
             Text("left it dirty (\(detail))" + (ago.isEmpty ? "" : " — last commit \(ago)"))

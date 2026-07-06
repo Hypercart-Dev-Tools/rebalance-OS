@@ -22,8 +22,8 @@ extension ToastMessage.Action {
     }
 }
 
-/// Transient top banner — a compact confirmation pill (e.g. "Repos refreshed")
-/// that slides down from the top, holds, and fades out. Unlike `ToastView` it has
+/// Transient refresh toast — a compact confirmation pill (e.g. "Repos refreshed")
+/// that lifts in at the bottom, holds, and fades out. Unlike `ToastView` it has
 /// no dismiss/action chrome: it's pure lightweight feedback for an action (the
 /// recycle button) that otherwise gives no visible sign it did anything.
 struct TopBanner: View {
@@ -31,19 +31,24 @@ struct TopBanner: View {
 
     var body: some View {
         HStack(spacing: 7) {
-            Image(systemName: "checkmark.circle.fill")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Theme.diffAdd)
+            ZStack {
+                Circle()
+                    .fill(Theme.diffAdd)
+                    .frame(width: 16, height: 16)
+                Image(systemName: "checkmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .foregroundStyle(.white)
+            }
             Text(text)
                 .font(Theme.bodyMed)
-                .foregroundStyle(Theme.text)
+                .foregroundStyle(.white)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: Capsule())
-        .overlay(Capsule().strokeBorder(Theme.separator, lineWidth: 1))
-        .shadow(color: .black.opacity(0.18), radius: 12, x: 0, y: 6)
-        .padding(.top, Theme.Space.s)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+        .background(Color.black.opacity(0.82), in: Capsule())
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.08), lineWidth: 1))
+        .shadow(color: .black.opacity(0.26), radius: 16, x: 0, y: 8)
+        .padding(.bottom, Theme.Space.l)
     }
 }
 
