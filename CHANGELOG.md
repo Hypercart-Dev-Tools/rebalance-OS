@@ -6,6 +6,13 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.54.0] - 2026-07-05
+
+### Added
+- **Signal-quality contract Phase 2 — derived status/reason + doctor warning** ([GH-101](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/101)) — `get_index_status()` now derives a `status` (`ok`/`warn`/`degraded`) + `reason` per source from staleness and collapsed 7-day volume, merged into the existing `payload["freshness"]` dict alongside the pre-existing semantic-drift keys (never clobbering them). One new `rebalance doctor` warning line prints degraded sources with their reason — read-side only, no ingest gate, no new table. Live-verified: `doctor` correctly flagged `email` (fresh, 0 rows/7d) and `figma` (stale 25d) same day. 33 new/updated tests green.
+- **Capabilities manifest (Phase 2, scope-pinned)** ([GH-106](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/106)) — a static `capabilities/manifest.yaml` + generated read-only `capabilities/INDEX.md` documenting 3 high-risk skill bundles (`relay-xyz`, `xyz`, `consult`) by reference — no dynamic loader/trust engine. Scoped to this repo only; the full cross-repo (Rebalance + XYZ) manifest remains open. 3 tests green; regeneration confirmed idempotent.
+- **Zapier ingest — module split forced for swarm eligibility** ([GH-115](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/115)) — a `swarm-preflight` pass found the original single-module design (Phase 2 email + Phase 3 calendar both writing one `zapier_ingest.py`, both wiring into `web.py`) wasn't path-disjoint. Split into `zapier_email.py`/`zapier_calendar.py`, with Phase 1 owning `web.py`'s dispatch exclusively via stub handlers, so Phase 2 and Phase 3 can run as a real concurrent lane. Phase 0 spike also shipped: Gmail/GCal trigger field mapping documented, auth decision landed (HTTP Basic Auth primary, query-param fallback; HMAC deferred pending Zapier Premium header support).
+
 ## [0.53.0] - 2026-07-05
 
 ### Added
