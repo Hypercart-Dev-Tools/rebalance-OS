@@ -42,9 +42,10 @@ import logging
 import re
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 from rebalance.ingest.calendar_config import (
     OPERATOR_CALENDAR_ID,
@@ -58,7 +59,7 @@ from rebalance.ingest.calendar_helpers import (
 )
 from rebalance.ingest.config import get_pulse_config, get_vault_path
 from rebalance.ingest.db import db_connection, run_migrations
-from rebalance.ingest.pulse import _query_day_activity
+from rebalance.ingest.pulse import _query_day_activity, collect_pulse_snapshot
 from rebalance.tz_utils import local_tz
 
 logger = logging.getLogger(__name__)
@@ -880,6 +881,211 @@ def _signal_views(
     except Exception as exc:  # noqa: BLE001 — this metadata is never load-bearing
         logger.warning("_signal_views: %s", exc)
         return {}, {}, {}
+
+
+def _resolve_signal_day(today: date | datetime | str, *, tz: Any) -> date:
+    """Normalize *today* to a local date for deep-work signal windows."""
+    if isinstance(today, datetime):
+        return today.astimezone(tz).date()
+    if isinstance(today, date):
+        return today
+    raw = (today or "").strip()
+    if not raw:
+        raise ValueError("today must not be empty")
+    try:
+        return datetime.fromisoformat(raw).astimezone(tz).date()
+    except ValueError:
+        return date.fromisoformat(raw)
+
+
+def _project_activity_rows_for_day(
+    snapshot: Any,
+    *,
+    repos: set[str],
+) -> list[str]:
+    """Return concrete GitHub-backed activity rows for one project's day."""
+    rows: list[str] = []
+
+    def in_project(repo: str | None) -> bool:
+        return (repo or "").lower() in repos
+
+    for commit in snapshot.today.gh_commits:
+        if not in_project(commit.get("repo")):
+            continue
+        sha = commit.get("sha") or "commit"
+        subject = (commit.get("subject") or "").strip()
+        rows.append(f"{commit.get('repo')} commit {sha} {subject}".strip())
+
+    for item in snapshot.today.gh_items:
+        if not in_project(item.get("repo")):
+            continue
+        kind = "pr" if item.get("item_type") == "pull_request" else (item.get("item_type") or "item")
+        rows.append(
+            f"{item.get('repo')} {kind} #{item.get('number')} {(item.get('title') or '').strip()}".strip()
+        )
+
+    for comment in snapshot.today.gh_comments:
+        if not in_project(comment.get("repo")):
+            continue
+        preview = (comment.get("preview") or "").strip()
+        rows.append(
+            f"{comment.get('repo')} comment #{comment.get('item_number')} {preview}".strip()
+        )
+
+    for watched in getattr(snapshot, "watched_repos", []) or []:
+        if not in_project(watched.get("repo")):
+            continue
+        counts: list[str] = []
+        commits = int(watched.get("commits") or 0)
+        items = len(watched.get("items") or [])
+        comments = int(watched.get("comments") or 0)
+        if commits:
+            counts.append(f"{commits} commit{'s' if commits != 1 else ''}")
+        if items:
+            counts.append(f"{items} item{'s' if items != 1 else ''}")
+        if comments:
+            counts.append(f"{comments} comment{'s' if comments != 1 else ''}")
+        if counts:
+            rows.append(f"{watched.get('repo')} watched activity ({', '.join(counts)})")
+
+    return rows
+
+
+def _open_items_for_projects(
+    database_path: Path,
+    *,
+    project_repos: dict[str, list[str]],
+) -> dict[str, list[dict[str, Any]]]:
+    """Read open GitHub items per project from the existing collector tables."""
+    out = {project: [] for project in project_repos}
+    repo_to_projects: dict[str, set[str]] = {}
+    for project, repos in project_repos.items():
+        for repo in repos:
+            repo_to_projects.setdefault(repo.lower(), set()).add(project)
+
+    if not repo_to_projects:
+        return out
+
+    placeholders = ",".join("?" for _ in repo_to_projects)
+    from rebalance.ingest.db import ensure_github_schema
+
+    with db_connection(database_path, ensure_github_schema) as conn:
+        rows = conn.execute(
+            f"""
+            SELECT repo_full_name, item_type, number, title, html_url,
+                   created_at, updated_at
+            FROM github_items
+            WHERE LOWER(repo_full_name) IN ({placeholders})
+              AND LOWER(COALESCE(state, '')) = 'open'
+            ORDER BY COALESCE(updated_at, created_at) DESC, number DESC
+            """,
+            tuple(repo_to_projects),
+        ).fetchall()
+
+    for row in rows:
+        repo = (row["repo_full_name"] or "").lower()
+        for project in repo_to_projects.get(repo, set()):
+            out[project].append(
+                {
+                    "repo": row["repo_full_name"],
+                    "item_type": row["item_type"],
+                    "number": row["number"],
+                    "title": row["title"] or "",
+                    "html_url": row["html_url"] or "",
+                    "updated_at": row["updated_at"] or row["created_at"] or "",
+                }
+            )
+    return out
+
+
+def compute_deep_work_signals(
+    database_path: Path,
+    today: date | datetime | str,
+    lookback_days: int = 7,
+) -> dict[str, dict[str, Any]]:
+    """Compute read-only cross-day streak/stall signals per active project.
+
+    Reuses ``collect_pulse_snapshot()`` once per day across the lookback window,
+    with ``github_token=None`` so the signal stays hermetic and never triggers a
+    live GitHub assigned-issues fetch.
+    """
+    if lookback_days <= 0 or not database_path.exists():
+        return {}
+
+    from rebalance.ingest.registry import get_projects
+
+    pulse_cfg = get_pulse_config()
+    tz_name = pulse_cfg.get("pulse_timezone") or local_tz().key
+    tz = ZoneInfo(tz_name)
+    github_login = pulse_cfg.get("github_login") or ""
+    slack_user_id = pulse_cfg.get("slack_user_id")
+    anchor_day = _resolve_signal_day(today, tz=tz)
+
+    active_projects = get_projects(database_path, status="active")
+    project_repos = {
+        project["name"]: [repo for repo in (project.get("repos") or []) if repo]
+        for project in active_projects
+    }
+    daily_rows: dict[str, dict[str, list[str]]] = {
+        project["name"]: {} for project in active_projects
+    }
+
+    for offset in range(lookback_days):
+        day = anchor_day - timedelta(days=offset)
+        snapshot = collect_pulse_snapshot(
+            database_path,
+            github_login=github_login,
+            slack_user_id=slack_user_id,
+            timezone_name=tz_name,
+            github_token=None,
+            now=datetime(day.year, day.month, day.day, 12, tzinfo=tz),
+        )
+        for project_name, repos in project_repos.items():
+            daily_rows[project_name][day.isoformat()] = _project_activity_rows_for_day(
+                snapshot,
+                repos={repo.lower() for repo in repos},
+            )
+
+    open_items = _open_items_for_projects(database_path, project_repos=project_repos)
+    today_key = anchor_day.isoformat()
+    yesterday_key = (anchor_day - timedelta(days=1)).isoformat()
+
+    signals: dict[str, dict[str, Any]] = {}
+    for project in active_projects:
+        project_name = project["name"]
+        streak_days = 0
+        streak_dates: list[str] = []
+        recent_activity: list[dict[str, Any]] = []
+        streak_open = True
+        for offset in range(lookback_days):
+            day_key = (anchor_day - timedelta(days=offset)).isoformat()
+            day_rows = list(daily_rows.get(project_name, {}).get(day_key, []))
+            if day_rows:
+                recent_activity.append({"date": day_key, "rows": day_rows})
+            if streak_open and day_rows:
+                streak_days += 1
+                streak_dates.append(day_key)
+            else:
+                streak_open = False
+        today_rows = list(daily_rows.get(project_name, {}).get(today_key, []))
+        yesterday_rows = list(daily_rows.get(project_name, {}).get(yesterday_key, []))
+        project_open_items = list(open_items.get(project_name, []))
+        signals[project_name] = {
+            "project": project_name,
+            "repos": list(project_repos.get(project_name, [])),
+            "streak_days": streak_days,
+            "possible_stall": bool(yesterday_rows and not today_rows and project_open_items),
+            "evidence": {
+                "streak_dates": streak_dates,
+                "recent_activity": recent_activity,
+                "today_date": today_key,
+                "today_rows": today_rows,
+                "yesterday_date": yesterday_key,
+                "yesterday_rows": yesterday_rows,
+                "open_items": project_open_items,
+            },
+        }
+    return signals
 
 
 def rank_next_actions(

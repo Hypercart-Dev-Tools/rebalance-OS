@@ -842,6 +842,44 @@ def _check_pulse() -> Check:
     return Check("pulse", OK, f"configured ({target})")
 
 
+def _check_deep_work_stalls(db_path: Path) -> Check:
+    """Observe-only Phase 1 signal: projects that went quiet with open work."""
+    try:
+        from rebalance.ingest.next_actions import compute_deep_work_signals
+
+        signals = compute_deep_work_signals(
+            db_path,
+            datetime.now(timezone.utc).date(),
+            lookback_days=7,
+        )
+    except Exception as exc:  # noqa: BLE001 — doctor must never crash
+        return Check("deep work", WARN, f"stall signal unavailable: {exc}")
+
+    flagged = [
+        signal for signal in signals.values()
+        if signal.get("possible_stall")
+    ]
+    if not flagged:
+        return Check("deep work", OK, "no possible-stall projects in the last 7 days")
+
+    parts: list[str] = []
+    for signal in flagged:
+        evidence = signal.get("evidence") or {}
+        yesterday = evidence.get("yesterday_date") or "yesterday"
+        yesterday_rows = ", ".join((evidence.get("yesterday_rows") or [])[:2]) or "activity recorded"
+        open_items = evidence.get("open_items") or []
+        open_summary = ", ".join(
+            f"{'pr' if item.get('item_type') == 'pull_request' else item.get('item_type') or 'item'} "
+            f"#{item.get('number')} {item.get('title') or ''}".strip()
+            for item in open_items[:2]
+        ) or "open work item"
+        parts.append(
+            f"{signal.get('project')}: quiet {evidence.get('today_date')} after {yesterday} "
+            f"({yesterday_rows}); still open: {open_summary}"
+        )
+    return Check("deep work", WARN, "; ".join(parts))
+
+
 # ---------------------------------------------------------------------------
 # Collector freshness registry
 #
@@ -915,6 +953,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
         report.checks.append(_check_projects(db_path))
         for collector in _COLLECTOR_FRESHNESS:
             report.checks.append(_check_collector_freshness(db_path, **collector))
+        report.checks.append(_check_deep_work_stalls(db_path))
 
     # Integration credentials — Sleuth/Slack, Gmail, Google Calendar, Figma.
     report.checks.append(_check_sleuth(db_path))

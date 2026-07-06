@@ -14,11 +14,19 @@ GET /auth-log/raw  — raw JSONL file download
 
 from __future__ import annotations
 
+import base64
 import html
+import json
 import logging
+import secrets
+import sqlite3
+import threading
+import time
+import uuid
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from fastapi import FastAPI, Request
 from fastapi.responses import (
@@ -27,8 +35,9 @@ from fastapi.responses import (
 from pydantic import BaseModel
 
 from rebalance.ingest.auth_log import read_log, _log_path
+from rebalance.ingest import zapier_calendar, zapier_email
 from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
-from rebalance.paths import resolve_db
+from rebalance.paths import resolve_db, resolve_secret_path
 from rebalance.web_components import badge_html, button_link, render_shell
 
 logger = logging.getLogger(__name__)
@@ -50,7 +59,124 @@ FOCUS5_NOTE_MAX_CHARS = 64 * 1024
 FOCUS5_GOALS_FILENAME = "0. Goals.md"
 FOCUS5_GOALS_MAX_ITEMS = 8
 
-app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None)
+@asynccontextmanager
+async def _app_lifespan(web_app: FastAPI):
+    _refresh_zapier_secret_state(web_app, log_errors=True)
+    yield
+
+
+app = FastAPI(title="rebalance-OS", docs_url=None, redoc_url=None, lifespan=_app_lifespan)
+
+ZAPIER_SECRET_NAME = "zapier-webhook-secret"
+_ZAPIER_RATE_LIMIT_CAPACITY = 100.0
+_ZAPIER_RATE_LIMIT_REFILL_PER_SECOND = _ZAPIER_RATE_LIMIT_CAPACITY / 60.0
+_ZAPIER_RATE_LIMIT_BUCKETS: dict[str, tuple[float, float]] = {}
+_ZAPIER_RATE_LIMIT_LOCK = threading.Lock()
+
+
+def _load_zapier_secret(*, log_errors: bool) -> str | None:
+    path = resolve_secret_path(ZAPIER_SECRET_NAME)
+    try:
+        secret = path.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        if log_errors:
+            logger.error("zapier webhook secret missing: %s", path)
+        return None
+    except OSError as exc:
+        if log_errors:
+            logger.error("zapier webhook secret unreadable: %s (%s)", path, exc)
+        return None
+    if not secret:
+        if log_errors:
+            logger.error("zapier webhook secret empty: %s", path)
+        return None
+    return secret
+
+
+def _refresh_zapier_secret_state(web_app: FastAPI, *, log_errors: bool) -> str | None:
+    secret = _load_zapier_secret(log_errors=log_errors)
+    web_app.state.zapier_webhook_secret = secret
+    return secret
+
+
+def _get_zapier_secret(web_app: FastAPI) -> str | None:
+    if not hasattr(web_app.state, "zapier_webhook_secret"):
+        return _refresh_zapier_secret_state(web_app, log_errors=False)
+    return web_app.state.zapier_webhook_secret
+
+def _verify_zapier_auth(request: Request, secret: str) -> bool:
+    auth = (request.headers.get("authorization") or "").strip()
+    if auth.lower().startswith("basic "):
+        token = auth.split(" ", 1)[1].strip()
+        try:
+            decoded = base64.b64decode(token, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError):
+            return False
+        username, sep, password = decoded.partition(":")
+        if sep and username and secrets.compare_digest(password, secret):
+            return True
+
+    fallback = request.query_params.get("zapier_secret")
+    return bool(fallback) and secrets.compare_digest(fallback, secret)
+
+
+def _zapier_rate_limit_allows(client_ip: str, *, now: float | None = None) -> bool:
+    current = time.monotonic() if now is None else now
+    key = client_ip or "unknown"
+    with _ZAPIER_RATE_LIMIT_LOCK:
+        tokens, updated_at = _ZAPIER_RATE_LIMIT_BUCKETS.get(
+            key, (_ZAPIER_RATE_LIMIT_CAPACITY, current),
+        )
+        tokens = min(
+            _ZAPIER_RATE_LIMIT_CAPACITY,
+            tokens + max(0.0, current - updated_at) * _ZAPIER_RATE_LIMIT_REFILL_PER_SECOND,
+        )
+        allowed = tokens >= 1.0
+        if allowed:
+            tokens -= 1.0
+        _ZAPIER_RATE_LIMIT_BUCKETS[key] = (tokens, current)
+    return allowed
+
+
+def _zapier_is_dry_run(request: Request) -> bool:
+    return (request.query_params.get("dry_run") or "").strip().lower() in {
+        "1", "true", "yes", "on",
+    }
+
+
+def _zapier_handler_for(source: str) -> Callable[[dict[str, Any]], dict[str, Any]] | None:
+    if source == "email":
+        return zapier_email.handle_email_event
+    if source == "calendar":
+        return zapier_calendar.handle_calendar_event
+    return None
+
+
+def _zapier_is_database_locked(exc: Exception) -> bool:
+    return "database is locked" in str(exc).lower()
+
+
+def _zapier_log_request(
+    *,
+    request_id: str,
+    source: str | None,
+    dry_run: bool,
+    status: int,
+    duration_ms: int,
+) -> None:
+    logger.info(
+        "zapier_webhook %s",
+        json.dumps(
+            {
+                "request_id": request_id,
+                "source": source,
+                "dry_run": dry_run,
+                "status": status,
+                "duration_ms": duration_ms,
+            },
+            sort_keys=True,
+        ),
+    )
 
 
 async def unhandled_exception_handler(request: Request, exc: Exception) -> PlainTextResponse:
@@ -1077,6 +1203,136 @@ def focus5_open(req: Focus5HideRequest, request: Request) -> JSONResponse:
         return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
     status, body = focus5_open_repo(req.repo)
     return JSONResponse(body, status_code=status)
+
+
+# ---------------------------------------------------------------------------
+# Zapier ingest — Phase 1 webhook receiver.
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/zapier/health")
+def zapier_health(request: Request) -> JSONResponse:
+    return JSONResponse({
+        "ok": True,
+        "secret_configured": bool(_get_zapier_secret(request.app)),
+    })
+
+
+@app.post("/api/zapier/ingest")
+async def zapier_ingest(request: Request) -> JSONResponse:
+    request_id = uuid.uuid4().hex
+    source: str | None = None
+    dry_run = _zapier_is_dry_run(request)
+    started_at = time.monotonic()
+    status_code = 500
+
+    try:
+        secret = _get_zapier_secret(request.app)
+        if not secret:
+            status_code = 503
+            return JSONResponse(
+                {"ok": False, "error": "secret_not_configured", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        if not _verify_zapier_auth(request, secret):
+            status_code = 403
+            return JSONResponse(
+                {"ok": False, "error": "forbidden", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        client_ip = (request.client.host if request.client else "") or "unknown"
+        if not _zapier_rate_limit_allows(client_ip):
+            status_code = 429
+            return JSONResponse(
+                {"ok": False, "error": "rate_limited", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        try:
+            payload = await request.json()
+        except json.JSONDecodeError:
+            status_code = 400
+            return JSONResponse(
+                {"ok": False, "error": "invalid_json", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        if not isinstance(payload, dict):
+            status_code = 400
+            return JSONResponse(
+                {"ok": False, "error": "invalid_payload", "request_id": request_id},
+                status_code=status_code,
+            )
+
+        source = str(payload.get("source") or "").strip().lower()
+        handler = _zapier_handler_for(source)
+        if handler is None:
+            status_code = 400
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "unknown_source",
+                    "request_id": request_id,
+                    "source": source or None,
+                },
+                status_code=status_code,
+            )
+
+        if dry_run:
+            status_code = 200
+            return JSONResponse(
+                {
+                    "ok": True,
+                    "request_id": request_id,
+                    "source": source,
+                    "dry_run": True,
+                },
+                status_code=status_code,
+            )
+
+        result = handler(payload)
+        body: dict[str, Any] = {"ok": True, "request_id": request_id, "source": source}
+        if isinstance(result, dict):
+            body.update(result)
+        else:
+            body["result"] = result
+        status_code = 200
+        return JSONResponse(body, status_code=status_code)
+    except NotImplementedError as exc:
+        status_code = 501
+        return JSONResponse(
+            {
+                "ok": False,
+                "error": "not_implemented",
+                "request_id": request_id,
+                "source": source,
+                "detail": str(exc),
+            },
+            status_code=status_code,
+        )
+    except sqlite3.OperationalError as exc:
+        if _zapier_is_database_locked(exc):
+            status_code = 503
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "error": "database_locked",
+                    "request_id": request_id,
+                    "source": source,
+                },
+                status_code=status_code,
+            )
+        raise
+    finally:
+        _zapier_log_request(
+            request_id=request_id,
+            source=source,
+            dry_run=dry_run,
+            status=status_code,
+            duration_ms=int((time.monotonic() - started_at) * 1000),
+        )
 
 
 # ---------------------------------------------------------------------------

@@ -3,10 +3,10 @@ title: "Cross-day velocity / unfinished-work signal (observe-first, from the exi
 owner: Noel
 gh_issue: 116
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/116"
-status: "Draft (2-WORKING) — escalated directly from a design conversation, no code written yet. Phase 1 next."
+status: "Active (2-WORKING) — Phase 1 shipped 2026-07-06 (MARATHON-2026-07-06 Lane A). Phase 2 gated on an observation window."
 created: 2026-07-05
-updated: 2026-07-05
-branch: development
+updated: 2026-07-06
+branch: marathon/2026-07-06
 doc_type: project
 goal: >
   Determine whether diffing the daily pulse snapshot across day boundaries can produce two cheap,
@@ -40,7 +40,7 @@ phases: 2
 
 | What was just completed | What's next |
 |---|---|
-| Escalated straight to `2-WORKING` per operator request (2026-07-05) — design conversation only, prior art surveyed (GH-102, GH-101, ROADMAP-SIGNAL-SCAN, GEMINI-WHATS-NEXT-VAULT), no code written. | Run Phase 1: implement `compute_deep_work_signals()` as a read-only report, observe for the stated window, then decide on Phase 2. |
+| **Phase 1 shipped 2026-07-06** via `relay-xyz` (Producer=codex, Reviewer=agy, Approved r1; `relay-system/2026-07-06/gh116-phase1.md`), driven in an isolated worktree/branch (`marathon/2026-07-06`). `compute_deep_work_signals()` added to `next_actions.py`; one `rebalance doctor` "deep work" line wired in `doctor.py`. Independently re-verified (`PYTHONPATH=src pytest tests/test_next_actions.py tests/test_doctor.py` → 63 passed; live `rebalance doctor` shows `OK deep work — no possible-stall projects in the last 7 days`). No change to `rank_next_actions()` output or the vault. | Operator: observe the `deep work` signal over the stated window; then decide Phase 2 (folding it into ranking) per the doc's kill-gate. |
 
 ## Table of contents
 - [The question](#the-question)

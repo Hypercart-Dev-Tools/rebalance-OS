@@ -3,10 +3,10 @@ title: "Zapier ingest: alternative email & calendar data streams for the work si
 owner: Noel
 gh_issue: 115
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/115"
-status: "Active (2-WORKING) — Phase 0 spike complete; Phase 1 next"
+status: "Active (2-WORKING) — Phase 1 shipped 2026-07-06 (MARATHON-2026-07-06 Lane B). Phase 2 ‖ Phase 3 next."
 created: 2026-07-05
-updated: 2026-07-05
-branch: development
+updated: 2026-07-06
+branch: marathon/2026-07-06
 doc_type: project
 goal: >
   Let operators bring email and calendar into the work signal via Zapier webhooks instead of
@@ -33,7 +33,7 @@ phases: 5
 
 | What was just completed | What's next |
 |---|---|
-| GH-115 opened 2026-07-05. Project doc created. Agy review applied 2026-07-05 — Phase 3 writer renamed to source-agnostic `push_calendar_events()`; Phase 1 added SQLite 503 handling and rate-limiter ephemerality note; Phase 4 added `index_ops.py` collector early-return requirement; Phase 0 HMAC note expanded for Zapier Premium restriction. `swarm-preflight` run 2026-07-05: original single-module design (Phase 2 + Phase 3 both writing `zapier_ingest.py`) was not swarm-eligible — **forced a file-split** into `zapier_email.py` / `zapier_calendar.py` plus Phase 1 handler-stub ownership of `web.py`, making Phase 2 ‖ Phase 3 a genuine path-disjoint concurrent lane (see [Lane / swarm structure](#lane--swarm-structure)). Phase 0 spike completed 2026-07-05 — public Zapier docs do not expose a canonical sample payload, so the mapping below is grounded in Zapier's documented trigger inventory plus the underlying Gmail Message / Google Calendar Event resource fields; auth decision changed from HMAC-first to Basic-Auth-first. | **Run Phase 1** — build `POST /api/zapier/ingest` around HTTP Basic Auth (query-param fallback only), then open the Phase 2 ‖ Phase 3 swarm wave once the stubbed receiver lands. |
+| **Phase 1 shipped 2026-07-06** via `relay-xyz` (Producer=codex, Reviewer=agy, Approved r1; `relay-system/2026-07-06/gh115-phase1.md`), driven in an isolated worktree/branch (`marathon/2026-07-06`). `POST /api/zapier/ingest` + `GET /api/zapier/health` added to `web.py`; `_verify_zapier_auth()` (Basic Auth primary, query-param fallback, constant-time compare); placeholder `zapier_email.py`/`zapier_calendar.py` stubs; `dry_run`, rate-limit guard, DB-lock → 503, structured logging. Independently re-verified: `PYTHONPATH=src pytest tests/test_zapier_webhook.py` → 8 passed; full suite 1322 passed/14 skipped (1 pre-existing unrelated failure in `test_google_oauth_client.py`, reproduces identically on untouched `development`). | Open the Phase 2 ‖ Phase 3 swarm wave (email + calendar ingest) now that the stubbed receiver has landed. |
 
 ---
 

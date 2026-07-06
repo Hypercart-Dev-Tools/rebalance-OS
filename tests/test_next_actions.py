@@ -7,6 +7,7 @@ a temp SQLite DB built through the real migration runner.
 import sqlite3
 import tempfile
 import unittest
+import json
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -54,6 +55,89 @@ def _today_at(hour: int, minute: int = 0, tz=None) -> str:
     now = datetime.now(tz)
     dt = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     return dt.isoformat()
+
+
+def _insert_project(db: Path, *, name: str, repos: list[str]) -> None:
+    conn = sqlite3.connect(db)
+    conn.execute(
+        """
+        INSERT INTO project_registry
+            (name, status, summary, value_level, priority_tier, risk_level,
+             repos_json, tags_json, custom_fields_json)
+        VALUES (?, 'active', '', NULL, NULL, NULL, ?, '[]', '{}')
+        """,
+        (name, json.dumps(repos)),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _insert_commit(
+    db: Path,
+    *,
+    repo: str,
+    sha: str,
+    author_login: str,
+    message: str,
+    committed_at: str,
+) -> None:
+    conn = sqlite3.connect(db)
+    conn.execute(
+        """
+        INSERT INTO github_commits
+            (repo_full_name, item_type, item_number, sha, author_login, message,
+             committed_at, html_url, fetched_at)
+        VALUES (?, 'commit', 0, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            repo,
+            sha,
+            author_login,
+            message,
+            committed_at,
+            f"https://github.example/{repo}/commit/{sha}",
+            committed_at,
+        ),
+    )
+    conn.commit()
+    conn.close()
+
+
+def _insert_github_item(
+    db: Path,
+    *,
+    repo: str,
+    item_type: str,
+    number: int,
+    title: str,
+    state: str,
+    author_login: str,
+    created_at: str,
+    updated_at: str,
+) -> None:
+    conn = sqlite3.connect(db)
+    conn.execute(
+        """
+        INSERT INTO github_items
+            (repo_full_name, item_type, number, title, state, author_login,
+             html_url, created_at, updated_at, fetched_at, is_merged)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)
+        """,
+        (
+            repo,
+            item_type,
+            number,
+            title,
+            state,
+            author_login,
+            f"https://github.example/{repo}/{item_type}/{number}",
+            created_at,
+            updated_at,
+            updated_at,
+        ),
+    )
+    conn.commit()
+    conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +278,103 @@ class TestAssembleDayBundle(unittest.TestCase):
         summaries = {b["summary"] for b in bundle.calendar_blocks}
         self.assertIn("My Block", summaries)
         self.assertNotIn("Their Block", summaries)
+
+
+class TestComputeDeepWorkSignals(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.tmp = Path(self._tmp.name)
+        self.db = self.tmp / "rebalance.db"
+        _seed_migrated_db(self.db)
+        self.tz = na.local_tz()
+        self.today = datetime(2026, 7, 5, 12, 0, tzinfo=self.tz)
+        self._orig_pulse_cfg = na.get_pulse_config
+        na.get_pulse_config = lambda: {
+            "github_login": "me",
+            "slack_user_id": None,
+            "pulse_timezone": self.tz.key,
+        }
+
+    def tearDown(self) -> None:
+        na.get_pulse_config = self._orig_pulse_cfg
+        self._tmp.cleanup()
+
+    def _stamp(self, days_ago: int, hour: int = 10) -> str:
+        dt = (self.today - timedelta(days=days_ago)).replace(
+            hour=hour, minute=0, second=0, microsecond=0
+        )
+        return dt.isoformat()
+
+    def test_compute_deep_work_signals_phase1_cases(self) -> None:
+        _insert_project(self.db, name="Streak Project", repos=["acme/streak"])
+        _insert_project(self.db, name="Stall Project", repos=["acme/stall"])
+        _insert_project(self.db, name="Quiet Project", repos=["acme/quiet"])
+
+        for days_ago in range(5):
+            _insert_commit(
+                self.db,
+                repo="acme/streak",
+                sha=f"streak{days_ago}",
+                author_login="me",
+                message=f"Keep shipping day {days_ago}",
+                committed_at=self._stamp(days_ago),
+            )
+
+        _insert_commit(
+            self.db,
+            repo="acme/stall",
+            sha="stall1",
+            author_login="me",
+            message="Touched yesterday only",
+            committed_at=self._stamp(1),
+        )
+        _insert_github_item(
+            self.db,
+            repo="acme/stall",
+            item_type="issue",
+            number=42,
+            title="Still open follow-up",
+            state="open",
+            author_login="someone-else",
+            created_at=self._stamp(3),
+            updated_at=self._stamp(2),
+        )
+
+        _insert_commit(
+            self.db,
+            repo="acme/quiet",
+            sha="quiet1",
+            author_login="me",
+            message="Finished yesterday",
+            committed_at=self._stamp(1),
+        )
+
+        signals = na.compute_deep_work_signals(
+            self.db,
+            self.today.date(),
+            lookback_days=7,
+        )
+
+        self.assertEqual(signals["Streak Project"]["streak_days"], 5)
+        self.assertFalse(signals["Streak Project"]["possible_stall"])
+        self.assertEqual(
+            signals["Streak Project"]["evidence"]["streak_dates"],
+            ["2026-07-05", "2026-07-04", "2026-07-03", "2026-07-02", "2026-07-01"],
+        )
+
+        stall = signals["Stall Project"]
+        self.assertEqual(stall["streak_days"], 0)
+        self.assertTrue(stall["possible_stall"])
+        self.assertEqual(stall["evidence"]["yesterday_date"], "2026-07-04")
+        self.assertEqual(len(stall["evidence"]["yesterday_rows"]), 1)
+        self.assertEqual(stall["evidence"]["open_items"][0]["number"], 42)
+        self.assertEqual(stall["evidence"]["open_items"][0]["title"], "Still open follow-up")
+
+        quiet = signals["Quiet Project"]
+        self.assertEqual(quiet["streak_days"], 0)
+        self.assertFalse(quiet["possible_stall"])
+        self.assertEqual(quiet["evidence"]["today_rows"], [])
+        self.assertEqual(quiet["evidence"]["open_items"], [])
 
 
 # ---------------------------------------------------------------------------

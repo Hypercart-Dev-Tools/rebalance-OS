@@ -93,6 +93,9 @@ struct OffRosterWarning: Codable, Identifiable {
     // was already on the wire for every off-roster row (GH-81) but unmodeled
     // here; needed now to render "last commit Xh ago" on the dirty banner.
     let myLocalCommitTs: Int?
+    // GH-104: server-computed off-roster reason ("uncommitted changes",
+    // "N ahead of origin", fallback) from focus5_scan.off_roster_reason().
+    let warningReason: String?
 }
 
 struct Focus5GoalsResponse: Codable {
