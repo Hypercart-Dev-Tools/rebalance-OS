@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-05.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
 ROUND: 1 / 4
 
@@ -52,5 +52,14 @@ If `warning_reason` is NOT already on the wire (only computed for the HTML strin
 6. The relay ends on **Approved** (Reviewer only). End each turn by committing just this file; no push.
 
 ## Log
+
+### Producer — codex — r1
+Basis: behaviorally proven for the Swift package build; textual code-path verification for the existing `/focus-5.json` `warning_reason` field.
+- Implemented: confirmed the server already puts `warning_reason` on the `/focus-5.json` wire shape (`summarize_focus5()` sets it on each `off_roster_warnings` row; `focus5_json()` returns `JSONResponse(data)` unchanged), so no Python change was needed for this lane.
+- Implemented: added `warningReason` to `OffRosterWarning` in `Models.swift` so the desktop client decodes the existing JSON field via `.convertFromSnakeCase`.
+- Implemented: updated `OffRosterFooter` so each expanded off-roster row shows the specific server-computed reason, falling back to the old `↑N · XM YU` counts string only when `warningReason` is absent.
+- Verification: `env CLANG_MODULE_CACHE_PATH=/private/tmp/focus5float-clang-module-cache SWIFTPM_MODULECACHE_OVERRIDE=/private/tmp/focus5float-swiftpm-module-cache swift build --disable-sandbox --scratch-path /private/tmp/focus5float-build` from `macOS/Apps/Focus5Float` passed.
+- Note: the GH-104 project doc checkbox was not updated in this turn because the relay lane was explicitly file-scoped to the Swift files plus this relay file.
+VERDICT: PASS
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

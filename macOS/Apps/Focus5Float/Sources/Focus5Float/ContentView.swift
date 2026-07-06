@@ -863,6 +863,13 @@ struct OffRosterFooter: View {
     let warnings: [OffRosterWarning]
     @State private var expanded = false
 
+    private func detail(for warning: OffRosterWarning) -> String {
+        if let reason = warning.warningReason, !reason.isEmpty {
+            return reason
+        }
+        return "↑\(warning.ahead) · \(warning.modifiedCount)M \(warning.untrackedCount)U"
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: Theme.Space.xs) {
             HStack(spacing: 6) {
@@ -879,10 +886,17 @@ struct OffRosterFooter: View {
                 ForEach(warnings) { w in
                     HStack(spacing: Theme.Space.s) {
                         StatusDot(isDirty: w.isDirty, healthAvailable: true)
-                        Text(w.repoName).font(Theme.body).foregroundStyle(Theme.text).lineLimit(1)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(w.repoName)
+                                .font(Theme.body)
+                                .foregroundStyle(Theme.text)
+                                .lineLimit(1)
+                            Text(detail(for: w))
+                                .font(Theme.caption)
+                                .foregroundStyle(Theme.text3)
+                                .lineLimit(1)
+                        }
                         Spacer(minLength: 0)
-                        Text("↑\(w.ahead) · \(w.modifiedCount)M \(w.untrackedCount)U")
-                            .font(Theme.monoSmall).foregroundStyle(Theme.text3)
                     }
                 }
             }
