@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-05.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: None
+STATUS: Approved
 ROUND: 1 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -59,5 +59,19 @@ Part of the 2026-07-06 marathon, Lane B (see [MARATHON-2026-07-06.md](../../PROJ
 - Added placeholder Phase 1 stubs in `src/rebalance/ingest/zapier_email.py` and `src/rebalance/ingest/zapier_calendar.py`.
 - Added `tests/test_zapier_webhook.py` covering Basic Auth accept/reject, query fallback, routing, dry-run, health, unknown source, and DB-lock error mapping.
 - Verification: `PYTHONPATH=src python -m pytest tests/test_zapier_webhook.py -q` → `8 passed`.
+
+### Reviewer — agy — r1
+VERDICT: PASS
+Basis: Verified POST /api/zapier/ingest and GET /api/zapier/health in web.py, rate limiting, and database error mapping. All tests pass cleanly.
+- Findings:
+  - `[Pass]` **Authentication:** Basic Auth implementation in `_verify_zapier_auth` is correct and securely uses constant-time comparison (`secrets.compare_digest`) for both headers and query param fallback. Verification occurs before payload parsing.
+  - `[Pass]` **Secret Management:** Secret is read using `resolve_secret_path` and starts up/fails open cleanly (logs errors but does not crash startup, returning 503 on ingestion if secret is unconfigured/missing).
+  - `[Pass]` **Routing & Stubs:** Request routing by `source` maps `"email"` and `"calendar"` to the correct placeholder stubs (`zapier_email.handle_email_event` and `zapier_calendar.handle_calendar_event`), catching `NotImplementedError` and properly converting to a `501` response. Unknown sources map to `400`.
+  - `[Pass]` **Dry Run:** `?dry_run=true` correctly validates the authentication and source without executing the handler logic or performing any database writes, returning `ok: true`.
+  - `[Pass]` **Rate Limiting:** IP-based in-memory token bucket rate limiting implemented correctly and protects against local dashboard spam.
+  - `[Pass]` **Error & Database Lock Handling:** Correctly captures `sqlite3.OperationalError` with "database is locked" in its description and returns a `503` status.
+  - `[Pass]` **Health Check:** `/api/zapier/health` returns expected JSON showing config status without leaking the secret value.
+  - `[Pass]` **Structured Logging:** Structured log lines match expected request metadata.
+  - `[Pass]` **Tests:** Comprehensive tests in `tests/test_zapier_webhook.py` covering all required paths, and they all pass cleanly.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
