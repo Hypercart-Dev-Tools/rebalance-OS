@@ -3,7 +3,7 @@ gh_issue: 104
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/104
 title: "Focus 5: off-roster warning gives no signal that a repo is uncommitted, not stale/broken"
 owner: Noel
-status: "Done 2026-07-06 — web slice (2026-07-03) + macOS Focus5Float desktop parity (2026-07-06, MARATHON-2026-07-06 Lane C) both shipped."
+status: "Active (2-WORKING) — web slice (2026-07-03) + macOS Focus5Float desktop parity (2026-07-06, MARATHON-2026-07-06 Lane C) both shipped, pending operator visual verification + closing #104."
 created: 2026-07-03
 updated: 2026-07-06
 branch: marathon/2026-07-06
