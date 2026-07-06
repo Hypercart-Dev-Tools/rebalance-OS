@@ -5,7 +5,7 @@ gh_issue: 102
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/102"
 status: "Active (2-WORKING) — promoted 2026-07-03 on branch `gh-102-xyz-rebalance-integration`. Phase 0 (pre-scope discovery) run against XYZ's GH-75 doc + code; findings written back below. Both consult blockers resolved: `XYZ.json` confirmed completion-only (→ #1 reframed to 'recently-completed'), harness-root enumeration source located. Phase 1 (seam #2) is next and needs no GH-101."
 created: 2026-07-02
-updated: 2026-07-03
+updated: 2026-07-05
 branch: gh-102-xyz-rebalance-integration
 doc_type: project
 goal: >
@@ -20,6 +20,7 @@ non_goals: >
 related:
   - relay-system/2026-07-02/xyz-rebalance-integration.md
   - PROJECT/2-WORKING/GH-101-SIGNAL-QUALITY-CONTRACT.md
+  - PROJECT/2-WORKING/GH-116-VELOCITY-SIGNAL.md
 effort: 3
 complexity: 3
 risk: 2
@@ -126,6 +127,14 @@ These map to Phases 1–3 respectively.
 - **Owner split:** Reb owns the emitter / XYZ owns the tick-lane consumer.
 - **Cost:** medium — net-new `roadmap_signals` table (Phase-2).
 - **Reversibility:** opt-in — drop the emitter.
+- **Related upstream signal, no plan change (2026-07-05):** [GH-116](GH-116-VELOCITY-SIGNAL.md) proposes
+  a cross-day velocity/possible-stall signal, computed from the same `collect_pulse_snapshot()`
+  substrate the now-daily [GH-112](GH-112-OBSIDIAN-DAILY-SYNC.md) (18:00 job) and GH-114 (Git Pulse
+  daily synthesis) jobs already run every day. GH-116 is Reb-internal and observe-first, gated by its
+  own independent kill-gate — it is **not a dependency of this seam and does not change Phase 3's
+  mechanism, cost, or gating.** Seam #3 already exports whatever `rank_next_actions` produces, so if
+  GH-116 ever lands as a ranking candidate, this seam inherits it for free with zero net-new code here.
+  Noted for traceability only.
 
 ### Adjacent (deliberately NOT in the shared Top-3)
 - **GH-88 cross-install run pane** — XYZ-internal viewer over `registry.tsv` + `.relay-driver.lock`. Reb renders marathon state natively from #1 and does not depend on it. Kept out of the *shared* Top-3 because Reb never consumes it.
