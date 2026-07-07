@@ -3,9 +3,9 @@ title: "XYZ ⇄ Rebalance Integration — duel-converged Top-3 seams"
 owner: Noel
 gh_issue: 102
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/102"
-status: "Active (2-WORKING) — promoted 2026-07-03 on branch `gh-102-xyz-rebalance-integration`. Phase 0 (pre-scope discovery) run against XYZ's GH-75 doc + code; findings written back below. Both consult blockers resolved: `XYZ.json` confirmed completion-only (→ #1 reframed to 'recently-completed'), harness-root enumeration source located. Phase 1 (seam #2) is next and needs no GH-101."
+status: "Active (2-WORKING) — promoted 2026-07-03 on branch `gh-102-xyz-rebalance-integration`. Phase 0 (pre-scope discovery) run against XYZ's GH-75 doc + code; findings written back below. Both consult blockers resolved: `XYZ.json` confirmed completion-only (→ #1 reframed to 'recently-completed'), harness-root enumeration source located. Phase 1 (seam #2) is next and needs no GH-101. Phase 5 (seam #4 — per-issue disposition overlay) added 2026-07-06, opening with a 5.0 contract-lock spike; held un-fired in MARATHON-2026-07-06-B."
 created: 2026-07-02
-updated: 2026-07-05
+updated: 2026-07-06
 branch: gh-102-xyz-rebalance-integration
 doc_type: project
 goal: >
@@ -24,14 +24,14 @@ related:
 effort: 3
 complexity: 3
 risk: 2
-phases: 5
+phases: 6
 ---
 
 ## Status
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 1 Reb-side landed (2026-07-03).** Promoted to `2-WORKING`; Phase 0 discovery written back (see [§Phase 0 Findings](#phase-0--findings-2026-07-03)). **Reb half of seam #2 built:** committed `.xyz-pin` at repo root (pins XYZ harness `c829000`, the commit Phase 0 was verified against), a `read_pin()` reader ([xyz_pin.py](../../src/rebalance/xyz_pin.py)), and a `doctor` check that surfaces it — an absent pin is a clean OK (invariant 1, mutual independence), a pin missing `commit=` warns. Gates green: `pytest tests/` **1264 passed**; `rebalance doctor` shows `xyz pin — xyz harness pinned @ c829000bad5e`; new `tests/test_xyz_pin.py` (6 cases). | **XYZ-side `xyz-sync check` (deferred to the `xyz-3-agents-swarm` repo)** — extends the existing `xyz-sync.sh` / `find-harness.sh` drift surface to diff the machine-local install's `source_commit` against Reb's committed `.xyz-pin`. Then **lock the one open Phase 0 sub-decision** (harness-root opt-in/dedup rule). **Phase 2 (seam #1) stays gated on GH-101** landing `recent_row_count_7d` + `status`/`reason`. |
+| **Phase 1 Reb-side landed (2026-07-03).** Promoted to `2-WORKING`; Phase 0 discovery written back (see [§Phase 0 Findings](#phase-0--findings-2026-07-03)). **Reb half of seam #2 built:** committed `.xyz-pin` at repo root (pins XYZ harness `c829000`, the commit Phase 0 was verified against), a `read_pin()` reader ([xyz_pin.py](../../src/rebalance/xyz_pin.py)), and a `doctor` check that surfaces it — an absent pin is a clean OK (invariant 1, mutual independence), a pin missing `commit=` warns. Gates green: `pytest tests/` **1264 passed**; `rebalance doctor` shows `xyz pin — xyz harness pinned @ c829000bad5e`; new `tests/test_xyz_pin.py` (6 cases). | **XYZ-side `xyz-sync check` (deferred to the `xyz-3-agents-swarm` repo)** — extends the existing `xyz-sync.sh` / `find-harness.sh` drift surface to diff the machine-local install's `source_commit` against Reb's committed `.xyz-pin`. Then **lock the one open Phase 0 sub-decision** (harness-root opt-in/dedup rule). **Phase 2 (seam #1) stays gated on GH-101** landing `recent_row_count_7d` + `status`/`reason`. **Newly added: Phase 5 (seam #4 — per-issue disposition overlay)** — opens with a 5.0 contract-lock spike, held un-fired in [MARATHON-2026-07-06-B](MARATHON-2026-07-06-B.md) pending operator go + confirmation XYZ can emit a deterministic (non-Gemini) disposition export. |
 
 ---
 
@@ -45,6 +45,7 @@ phases: 5
 - [Phase 2 — Seam #1: `xyz` collector → Rebalance signal plane](#phase-2--seam-1-xyz-collector--rebalance-signal-plane) _(blocked on Phase 1 + GH-101)_
 - [Phase 3 — Seam #3: Reb → XYZ lane seeding (return path)](#phase-3--seam-3-reb--xyz-lane-seeding-return-path) _(kill-gated on Phase 2 proving value)_
 - [Phase 4 — Outcome-attribution loop (signal sharpening)](#phase-4--outcome-attribution-loop-signal-sharpening) _(kill-gated on Phase 3; observe-first, log-don't-act)_
+- [Phase 5 — Seam #4: XYZ disposition overlay (`github_items` enrichment)](#phase-5--seam-4-xyz-disposition-overlay-github_items-enrichment) _(observe-first; opens with a 5.0 contract-lock spike)_
 - [Open questions — what's after Phase 4](#open-questions--whats-after-phase-4)
 - [Anti-goals](#anti-goals)
 - [Dependencies & provenance](#dependencies--provenance)
@@ -135,6 +136,14 @@ These map to Phases 1–3 respectively.
   mechanism, cost, or gating.** Seam #3 already exports whatever `rank_next_actions` produces, so if
   GH-116 ever lands as a ranking candidate, this seam inherits it for free with zero net-new code here.
   Noted for traceability only.
+
+### #4 · `xyz` disposition overlay → Rebalance `github_items` enrichment  *(added 2026-07-06, post-duel)* → **Phase 5**
+- **Mechanism:** XYZ already parses each repo's `ROADMAP.md` per-issue work-state (`1-INBOX`/`2-WORKING`/`3-COMPLETED`, parked / paused / decision-gated + reason) via `utils/hq/rollup.sh`. XYZ emits that as a **deterministic per-issue disposition export** (keyed by `repo` + `gh_issue`); Rebalance joins it onto `github_items` as an overlay so `get_next_actions` / DASHBOARD can read *disposition*, not just open/closed. **Distinct from #1** — #1 is session-*health* completion telemetry (not issue-keyed); #4 is per-*issue* disposition.
+- **⚠ Not the Gemini render.** Consume the deterministic ROADMAP parse, **never** the `agy`/Gemini Obsidian rollup prose — that is synthesis-of-a-synthesis and double-counts GitHub. The 5.0 spike locks this.
+- **Owner split:** XYZ owns emitting the disposition export / Reb owns the join + overlay semantics + the (observe-only) priority inference.
+- **Cost:** one projection collector + a join; the XYZ-side export is the prerequisite (may not exist yet — 5.0 confirms or scopes it).
+- **Reversibility:** trivial — drop the overlay column/table and stop reading the export.
+- **Payoff note:** disposition is a priority-inference source for the `priority_tier` that XYZ's own `hq next` found nearly flat (14/15 projects at tier 3 — "a data-entry gap, not a tool gap"). Observe-only: it *surfaces* an inferred tier, it never auto-writes `project_registry`.
 
 ### Adjacent (deliberately NOT in the shared Top-3)
 - **GH-88 cross-install run pane** — XYZ-internal viewer over `registry.tsv` + `.relay-driver.lock`. Reb renders marathon state natively from #1 and does not depend on it. Kept out of the *shared* Top-3 because Reb never consumes it.
@@ -460,6 +469,124 @@ eyeball "enough". If the bar isn't met, do not build Phase 4 — there is nothin
 
 ---
 
+## Phase 5 — Seam #4: XYZ disposition overlay (`github_items` enrichment)
+
+*(observe-first; opens with a 5.0 contract-lock spike — the second, distinct XYZ→Reb forward signal)*
+
+Surfaced 2026-07-06 while mapping the XYZ harness against Reb's signal plane. Seam #1 (Phase 2) ingests
+`XYZ.json` **session health** — green/orange/red per completed run, *not* keyed to issues. This seam
+ingests the **per-issue disposition** XYZ already computes when `utils/hq/rollup.sh` parses each repo's
+`ROADMAP.md` (`1-INBOX` / `2-WORKING` / `3-COMPLETED`, parked / paused / decision-gated + reason). Reb
+joins it onto `github_items` so the read surfaces distinguish "issue open" from "issue open,
+deliberately parked, no fix direction chosen" — the decision layer GitHub's open/closed bit
+structurally cannot carry.
+
+**Why it earns a place (three payoffs GitHub alone can't give):**
+1. **Disposition-with-reason** — `parked` / `decision_gated` + *why*, not just `open`.
+2. **Dropped-ball detection** — the *disagreement* between XYZ disposition and GitHub truth (XYZ says
+   `completed` while the issue is still `open`, or the inverse) is itself a high-value next-action.
+3. **Priority inference** — disposition can derive/correct the `priority_tier` that XYZ's own `hq next`
+   found nearly flat (14/15 at tier 3, "a data-entry gap, not a tool gap"). Observe-only.
+
+### Phase 5.0 — Contract-lock spike (1–2h; discovery, no Reb code)
+
+**A discovery phase — findings MUST be written back here before its QA gate can pass (PDDA discovery
+contract).** No Rebalance code is written in 5.0. This is the "Phase 0 for Seam #4": unlike Seam #1,
+the emit does **not** demonstrably exist yet — today XYZ ships session-health `XYZ.json` (GH-75) and a
+*Gemini-rendered* Obsidian rollup, neither of which is a deterministic per-issue disposition export.
+
+**Observable checklist:**
+
+- [ ] **Confirm-or-deny the export exists.** Does XYZ emit a machine-readable per-issue disposition
+      artifact, or only the `agy`/Gemini Obsidian render + session-health `XYZ.json`? Inspect
+      `utils/hq/rollup.sh` — it *parses* ROADMAP deterministically but renders *out* via `agy`. If no
+      structured emit exists, the export is an **XYZ-side prerequisite** (as GH-75 was for #1), not a
+      free read — record it and scope the XYZ-side work as a follow-on; do not fake it Reb-side.
+- [ ] **Lock the emit schema.** Per-issue record: `repo`, `gh_issue`, `disposition`
+      (`inbox|working|next_up|parked|paused|decision_gated|completed`), `reason`, `updatedAt`; a
+      newest-first array or per-repo file, written atomically (temp + rename, the GH-72 pattern `XYZ.json` uses).
+- [ ] **Fix the consume source = deterministic ROADMAP parse, NOT the Gemini render.** Record the
+      decision explicitly (invariant 5 + the anti-goal): Reb consumes the structured export; ingesting
+      the Obsidian prose would double-count GitHub and launder LLM categorization error in as fact.
+- [ ] **Lock the join key.** `(repo, issue_number)` onto `github_items` — confirm both columns exist
+      and the export supplies `owner/repo` identity (not a collision-prone basename).
+- [ ] **Confirm the collector seam.** A projection `Collector("xyz_disposition", …)` reading the export
+      and joining onto `github_items` is the extension point — **not** a raw source in `all` (it is a
+      derived/projection stage per the COLLECTOR taxonomy). No new Reb observability plumbing.
+- [ ] **Name the GH-101 dependency (if any).** Decide whether freshness/degraded for a stale export
+      reuses GH-101's fields (as #1 does) or is a simpler `updatedAt`-only staleness read.
+
+**Exit criteria:**
+
+- The export's existence is settled: a confirmed structured artifact (record filename + schema), or a
+  written-down XYZ-side prerequisite with the Reb work explicitly gated behind it.
+- Emit schema, cadence, join key, and consume-source (deterministic, not Gemini) recorded here as a
+  locked contract.
+- The `xyz_disposition` projection collector is confirmed as the Reb-side extension point — if not,
+  pause and escalate; do not start the Reb-side checklist.
+
+#### Phase 5.0 — QA checklist
+
+- [ ] **Discovery written back.** Each finding grounded with `file:line` (XYZ `rollup.sh` / ROADMAP) or
+      an example payload; CONFIRMED / OPEN per item.
+- [ ] **No code changed.** 5.0 is read/decide only — the only change is this doc.
+- [ ] **DRY / reuse.** Reuses `register_collector`, `github_items`, and (if applicable) GH-101 health
+      fields — no net-new table without justification; no second issue store.
+- [ ] **Owner split honored.** XYZ owns the disposition export; Reb owns the join + overlay — no shared
+      mutable state, no Reb write into XYZ's tree.
+- [ ] **Doc hygiene.** `utils/pdda/pdda.sh run` clean.
+
+### Phase 5 — Seam #4 build (Reb-side; gated on 5.0 locking the contract)
+
+**Observable checklist:**
+
+- [ ] **Default-off toggle (build the capability, keep it dark).** Gate the whole seam behind
+      `REBALANCE_XYZ_DISPOSITION=1` (unset / `0` = off, the default). When off, the `xyz_disposition`
+      collector is **not registered** — zero cost, fully invisible (invariants 1 & 3). Operator flips
+      it on to try the signal, flips off to revert with no residue. This is the reversible carry for a
+      speculative signal (ponytail 2026-07-06: largely redundant with GitHub state today — open/closed,
+      labels, comments Reb already ingests — kept opt-in in case the parked/decision-gated cut earns rank later).
+- [ ] **XYZ emits the disposition export** per the 5.0-locked schema, atomically (temp + rename).
+      *(XYZ-repo work if 5.0 finds no existing emit.)*
+- [ ] **`register_collector("xyz_disposition", _xyz_disposition_adapter, requires=(…))`** on the Reb
+      side (projection stage, not `all`-eligible), reading the export and joining disposition + reason
+      onto `github_items`.
+- [ ] **Decision-gated / next-up surface in `get_next_actions`** as operator-action-required — the
+      highest-value cut of the overlay.
+- [ ] **Disagreement detector.** XYZ `completed` ∧ GitHub `open` (or GitHub `closed` ∧ XYZ `working`)
+      flags as a dropped-ball next-action; agreement raises confidence silently.
+- [ ] **Priority inference (observe-only).** Disposition surfaces an *inferred* `priority_tier` in
+      `doctor` / the report to fill the flat-tier gap — it never writes `project_registry`.
+- [ ] **Diagram.** Add an `xyz` collector node to
+      [ARCHITECTURE/system-diagram.html](../../ARCHITECTURE/system-diagram.html) (dispatched by
+      `refresh_index`, upserts an overlay onto `github_items`) so the architecture render reflects the source.
+- [ ] **Absent-export behavior.** No export = no overlay = normal (invariant 3) — never a crash or a
+      degraded-health false positive.
+- [ ] **Reversibility proven.** Dropping the overlay column/table + not reading the export returns Reb
+      to baseline; `github_items` is unmodified in shape.
+
+### Phase 5 — QA checklist
+
+- [ ] **Litmus (real signal, not noise):** on a fixture disposition export, a `decision_gated` issue
+      appears in `get_next_actions`; an XYZ-`completed` / GitHub-`open` pair flags as a dropped ball; an
+      absent export yields no overlay and no error. All three recorded.
+- [ ] **DRY / reuse.** Uses `register_collector` + a join onto `github_items` — no parallel issue
+      store, no second copy of GitHub state; consumes the deterministic export, not the Gemini render.
+- [ ] **SOLID / owner split.** The adapter only *reads* the export; XYZ owns writing it. No Reb code
+      writes into the XYZ tree, and the priority inference does not mutate `project_registry`.
+- [ ] **Single-authority + feedback-loop guard.** Reb owns ranking; XYZ owns disposition; the overlay
+      copies intent. Confirm no path lets disposition → `priority_tier` → #3 → XYZ queue close a
+      circular amplifier — the inference is read-only.
+- [ ] **Untrusted-input boundary.** The export is parsed defensively against the 5.0 schema; unknown /
+      missing fields tolerated; no `eval`/exec (invariant 5).
+- [ ] **Observability.** A stale / absent / malformed export is legible in `rebalance doctor`, not only
+      inside the ranking internals.
+- [ ] **Gate discipline.** New unit test asserts the collector joins a seeded export onto `github_items`
+      incl. a disagreement and a stale case; `pytest tests/` green; `rebalance doctor` clean;
+      `utils/pdda/pdda.sh run` clean. Lands via self-mergeable PR (main is protected).
+
+---
+
 ## Open questions — what's after Phase 4
 
 - **Cross the relevance fence?** If Phase 4's attribution shows a *separable, repeatable* signal
@@ -500,6 +627,12 @@ eyeball "enough". If the bar isn't met, do not build Phase 4 — there is nothin
   not built here.
 - **GH-88 cross-install pane stays XYZ-internal** and out of scope — Reb renders marathon state
   natively from #1 and never consumes the pane.
+- **Not a re-synthesis of XYZ's rollup prose (Seam #4).** Reb consumes the deterministic per-issue
+  ROADMAP export, never the `agy`/Gemini Obsidian render — ingesting a summary of a summary
+  double-counts GitHub and launders LLM categorization error in as fact.
+- **Not an auto-writer of priorities (Seam #4).** The disposition→`priority_tier` inference is
+  observe-only; it surfaces an inferred tier for the operator, it never mutates `project_registry`.
+  Acting on it circularly (disposition → Reb priority → #3 → XYZ queue → disposition) is out of scope.
 
 ---
 
@@ -512,6 +645,8 @@ eyeball "enough". If the bar isn't met, do not build Phase 4 — there is nothin
   and the ROADMAP Phase-5 `roadmap_signals` note ([ROADMAP.md:34-35](../../ROADMAP.md#L34), for #3).
 - **XYZ-side prerequisites:** the emitted state file + per-phase `updatedAt` heartbeat (GH-75), the
   `registry.tsv` `source_commit` + `tick_version` columns (#2), and the tick-lane consumer (#3).
+  **Seam #4 adds one more:** a deterministic per-issue disposition export from `hq` / `rollup.sh`
+  (not the Gemini render) — confirmed or scoped by the Phase 5.0 spike.
 - **Provenance:** [duel thread](../../relay-system/2026-07-02/xyz-rebalance-integration.md) —
   `claude-xyz` ⇄ `claude-reb`, 4 rounds, closed 2026-07-02.
 - **QA:** cross-model consult (Codex + agy, 2026-07-03) against the Guiding Principles. Both ran inside

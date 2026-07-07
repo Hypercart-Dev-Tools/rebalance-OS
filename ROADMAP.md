@@ -2,7 +2,7 @@
 title: Project Roadmap Ledger
 status: Active
 created: 2026-06-21
-updated: 2026-07-05
+updated: 2026-07-06
 branch: main
 supersedes: []
 synthesizes: []
@@ -30,6 +30,8 @@ goal: >
 ## Ledger
 
 ### Queued / parked
+- `HiQS marketing label` ([#119](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/119)) — captured 2026-07-06, queued into [MARATHON-2026-07-07](PROJECT/2-WORKING/MARATHON-2026-07-07.md). Brand the computed/ranked work signal as HiQS ("High Quality Signals"; https://beta.hiqs.ai — this repo is the HiQS *Rebalance* component); mostly code comments + README + 1–2 user-facing surfaces, no behavior/rename. → [GH-119-HIQS-LABEL.md](PROJECT/1-INBOX/GH-119-HIQS-LABEL.md)
+- `Architecture diagram: show incoming (not-yet-active) XYZ HQ data` ([#120](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/120)) — captured 2026-07-06, queued into [MARATHON-2026-07-07](PROJECT/2-WORKING/MARATHON-2026-07-07.md). Add a staged `xyz_hq` source node to `ARCHITECTURE/system-diagram.json` (+ the inlined spec in `system-diagram.html`), marked not-yet-active per GH-102's default-off toggle. → [GH-120-DIAGRAM-XYZ-INCOMING.md](PROJECT/1-INBOX/GH-120-DIAGRAM-XYZ-INCOMING.md)
 - `ROADMAP→dashboard collector` — 1-INBOX draft, not yet promoted. A new `roadmap` source scanning PDDA `ROADMAP.md` ledgers into the dashboard. Sequenced **behind** the now-promoted signal-quality contract so it is born observable (inherits the health fields) instead of shipping ungraded. Draft pending 5 operator decisions (§6) and partial cross-device registry rollout (1 of 3 devices). **Also captured (2026-06-30), unscoped:** a speculative Phase 5 — once the collector ships, its cross-repo `roadmap_signals` table is a second potential consumer beside the dashboard plane, seeding XYZ/tick task lanes *across repos*. Not designed; revisit after Phase 2. → [ROADMAP-SIGNAL-SCAN.md](PROJECT/1-INBOX/PDDA-INTEGRATION/ROADMAP-SIGNAL-SCAN.md)
 ### In progress
 
