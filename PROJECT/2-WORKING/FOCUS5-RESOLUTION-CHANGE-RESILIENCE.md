@@ -8,9 +8,9 @@ doc_type: bugfix
 related:
   - PROJECT/2-WORKING/P2-MACOS-FOCUS5-FLOAT.md
   - PROJECT/2-WORKING/P3-FOCUS5-FLOAT-OFFLINE-RESILIENCE.md
-effort: S
-complexity: M
-risk: M
+effort: 2
+complexity: 3
+risk: 3
 phases: 2
 goal: >
   When the macOS display resolution (or display arrangement) changes while
