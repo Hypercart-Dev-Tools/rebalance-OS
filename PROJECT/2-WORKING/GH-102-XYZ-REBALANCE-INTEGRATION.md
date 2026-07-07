@@ -473,6 +473,8 @@ eyeball "enough". If the bar isn't met, do not build Phase 4 — there is nothin
 
 *(observe-first; opens with a 5.0 contract-lock spike — the second, distinct XYZ→Reb forward signal)*
 
+> **Tracking issue:** [#122](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/122) — Seam #4 is tracked independently of this phase list (mirroring Seams #1–#3); plan detail stays here.
+
 Surfaced 2026-07-06 while mapping the XYZ harness against Reb's signal plane. Seam #1 (Phase 2) ingests
 `XYZ.json` **session health** — green/orange/red per completed run, *not* keyed to issues. This seam
 ingests the **per-issue disposition** XYZ already computes when `utils/hq/rollup.sh` parses each repo's
