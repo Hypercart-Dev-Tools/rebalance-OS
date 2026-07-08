@@ -3,9 +3,9 @@ title: "Show incoming (not-yet-activated) XYZ HQ data in the architecture diagra
 owner: noel@neochro.me
 gh_issue: 120
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/120"
-status: "Proposed (1-INBOX — not yet active). Captured 2026-07-06; queued into MARATHON-2026-07-07. Diagram/spec only — no collector activation."
+status: "Active (2-WORKING) — promoted 2026-07-07; queued in MARATHON-2026-07-07 Lane B, ready to fire (not yet fired). Diagram/spec only — no collector activation."
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 doc_type: project
 goal: >
   Update ARCHITECTURE/system-diagram.json (and the inlined spec in system-diagram.html that renders it)
@@ -27,7 +27,7 @@ phases: 1
 
 | What was just completed | What's next |
 |---|---|
-| **Captured 2026-07-06** from issue #120. Confirmed the render path: `system-diagram.html` inlines the spec via `renderDiagram({...})`, and `system-diagram.json` is the standalone spec — **both** must carry the new node to stay in sync. | **Phase 1** — add an `xyz_hq` source + staged-collector node, marked not-yet-active (dashed/"planned" edge convention), to both files. Queued into [MARATHON-2026-07-07.md](../2-WORKING/MARATHON-2026-07-07.md). |
+| **Captured 2026-07-06** from issue #120. Confirmed the render path: `system-diagram.html` inlines the spec via `renderDiagram({...})`, and `system-diagram.json` is the standalone spec — **both** must carry the new node to stay in sync. | **Phase 1** — add an `xyz_hq` source + staged-collector node, marked not-yet-active (dashed/"planned" edge convention), to both files. Queued in [MARATHON-2026-07-07.md](MARATHON-2026-07-07.md) Lane B. |
 
 ---
 

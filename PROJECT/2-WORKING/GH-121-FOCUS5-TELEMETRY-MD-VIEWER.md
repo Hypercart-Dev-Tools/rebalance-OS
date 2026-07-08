@@ -3,9 +3,9 @@ title: "Focus5Float telemetry viewer: support .md (text viewer) alongside JSON (
 owner: noel@neochro.me
 gh_issue: 121
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/121"
-status: "Proposed (1-INBOX — not yet active). Captured 2026-07-06; QA'd via relay-xyz (reviewer=agy, 2026-07-06): Changes requested → 3 [Should] findings accepted + folded into Phase 1 (safe UTType, symmetric state clear, .md read size ceiling); seam/folder-scope/collision all [Pass]. Queued into MARATHON-2026-07-07 as Lane D; shares the Focus5Float write surface with the resolution-change lane, so it serializes after it."
+status: "Active (2-WORKING) — promoted 2026-07-07; queued in MARATHON-2026-07-07 Lane D, ready to fire (not yet fired, serializes after Lane C). QA'd via relay-xyz (reviewer=agy, 2026-07-06): Changes requested → 3 [Should] findings accepted + folded into Phase 1 (safe UTType, symmetric state clear, .md read size ceiling); seam/folder-scope/collision all [Pass]."
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 doc_type: project
 goal: >
   Let the Focus5Float telemetry tab open Markdown (.md) files in addition to structured JSON: when the
@@ -28,7 +28,7 @@ phases: 2
 
 | What was just completed | What's next |
 |---|---|
-| **Captured 2026-07-06** from issue #121, grounded in the current code. Confirmed the seam: `openFilePicker()` restricts `NSOpenPanel` to `UTType.json` ([Focus5Model.swift:141](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift#L141)); `refreshTelemetry()` JSON-decodes into `telemetryEntries` ([Focus5Model.swift:154](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift#L154)); `telemetryContent` renders structured rows ([ContentView.swift:265](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift#L265)). The app already renders markdown for the bottom `focus5.md` note — reuse that path for the .md viewer. | **Phase 1** — allow `.md` in the picker, branch load + render on `pathExtension`. Queued as [MARATHON-2026-07-07 Lane D](../2-WORKING/MARATHON-2026-07-07.md). ⚠ Shares `ContentView.swift`/`SelfTest.swift` with the resolution-change lane — must serialize after it. |
+| **Captured 2026-07-06** from issue #121, grounded in the current code. Confirmed the seam: `openFilePicker()` restricts `NSOpenPanel` to `UTType.json` ([Focus5Model.swift:141](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift#L141)); `refreshTelemetry()` JSON-decodes into `telemetryEntries` ([Focus5Model.swift:154](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift#L154)); `telemetryContent` renders structured rows ([ContentView.swift:265](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift#L265)). The app already renders markdown for the bottom `focus5.md` note — reuse that path for the .md viewer. | **Phase 1** — allow `.md` in the picker, branch load + render on `pathExtension`. Queued as [MARATHON-2026-07-07 Lane D](MARATHON-2026-07-07.md). ⚠ Shares `ContentView.swift`/`SelfTest.swift` with the resolution-change lane — must serialize after it. |
 
 ---
 

@@ -3,9 +3,9 @@ title: "HiQS marketing label — brand the computed work signal as High Quality 
 owner: noel@neochro.me
 gh_issue: 119
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/119"
-status: "Proposed (1-INBOX — not yet active). Captured 2026-07-06; queued into MARATHON-2026-07-07. Marketing/label change only — no behavior, package, table, or CLI rename."
+status: "Active (2-WORKING) — promoted 2026-07-07; queued in MARATHON-2026-07-07 Lane A, ready to fire (not yet fired). Marketing/label change only — no behavior, package, table, or CLI rename."
 created: 2026-07-06
-updated: 2026-07-06
+updated: 2026-07-07
 doc_type: project
 goal: >
   Adopt the HiQS ("High Quality Signals") brand for rebalance-OS's computed / ranked work signal —
@@ -29,7 +29,7 @@ phases: 3
 
 | What was just completed | What's next |
 |---|---|
-| **Captured 2026-07-06** from issue #119. Scope agreed: HiQS = "High Quality Signals"; rebalance-OS is the HiQS **Rebalance (prioritize)** product; tagline *"Turn workplace noise into high-quality signal."* Mostly code comments + README + 1–2 user-facing surfaces. | **Phase 0 (label-lock decision spike)** — lock the canonical wording and the exact surface inventory before editing, so the brand lands consistently. Then Phase 1 (comments) ‖ Phase 2 (user-facing). Queued into [MARATHON-2026-07-07.md](../2-WORKING/MARATHON-2026-07-07.md). |
+| **Captured 2026-07-06** from issue #119. Scope agreed: HiQS = "High Quality Signals"; rebalance-OS is the HiQS **Rebalance (prioritize)** product; tagline *"Turn workplace noise into high-quality signal."* Mostly code comments + README + 1–2 user-facing surfaces. | **Phase 0 (label-lock decision spike)** — lock the canonical wording and the exact surface inventory before editing, so the brand lands consistently. Then Phase 1 (comments) ‖ Phase 2 (user-facing). Queued in [MARATHON-2026-07-07.md](MARATHON-2026-07-07.md) Lane A. |
 
 ---
 
