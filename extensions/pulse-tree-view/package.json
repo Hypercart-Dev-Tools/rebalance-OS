@@ -1,0 +1,71 @@
+{
+  "name": "pulse-tree-view",
+  "displayName": "Git Pulse Tree View",
+  "description": "Native Tree View sidebar showing this device's git-pulse/rebalance-OS activity — no browser tab, no localhost server dependency.",
+  "version": "0.0.1",
+  "publisher": "noelsaw",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "pulseTreeView",
+          "title": "Git Pulse",
+          "icon": "media/pulse-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "pulseTreeView": [
+        {
+          "id": "pulseTreeView.mainView",
+          "name": "Git Pulse",
+          "contextualTitle": "Git Pulse"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "pulseTreeView.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "pulseTreeView.refresh",
+          "when": "view == pulseTreeView.mainView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Git Pulse Tree View",
+      "properties": {
+        "pulseTreeView.pulseFilePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path to the pulse markdown file to display, e.g. ~/git-pulse-sync/live-pulse.md. Empty = not configured."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "typescript": "^5.4.0"
+  }
+}
