@@ -1199,6 +1199,14 @@ def get_pulse_config() -> dict[str, Any]:
       - sleuth_ignored_workspaces: list of Slack workspace_name values to
         suppress from pulse Sleuth surfacing (e.g. ["neochrome-dev"] hides
         test-bot reminders so only Sleuth AI v2 in `neochrome` appears).
+      - git_pulse_clio_enabled: opt-in flag for the GH-114 git-pulse daily
+        synthesis to ALSO (not instead of) upsert into a growing log file
+        inside pulse_target_path, independent of whether the Obsidian vault
+        is configured. Default: False. See utils/git_pulse_daily_synthesis.py.
+      - git_pulse_clio_subdir: subfolder within pulse_target_path for that
+        log file (default: "CLIO").
+      - git_pulse_clio_filename: filename of that log file within the
+        subdir (default: "git-pulse-daily-log.md").
     """
     config = _read_config()
     return {
@@ -1208,12 +1216,18 @@ def get_pulse_config() -> dict[str, Any]:
         "pulse_filename": config.get("pulse_filename", "live-pulse.md"),
         "pulse_timezone": config.get("pulse_timezone"),
         "sleuth_ignored_workspaces": config.get("sleuth_ignored_workspaces") or [],
+        "git_pulse_clio_enabled": bool(config.get("git_pulse_clio_enabled", False)),
+        "git_pulse_clio_subdir": config.get("git_pulse_clio_subdir", "CLIO"),
+        "git_pulse_clio_filename": config.get("git_pulse_clio_filename", "git-pulse-daily-log.md"),
     }
 
 
 def set_pulse_config(**values: Any) -> None:
     """Update one or more pulse config keys. Pass None to leave a key unchanged."""
-    allowed = {"github_login", "slack_user_id", "pulse_target_path", "pulse_filename", "pulse_timezone"}
+    allowed = {
+        "github_login", "slack_user_id", "pulse_target_path", "pulse_filename", "pulse_timezone",
+        "git_pulse_clio_enabled", "git_pulse_clio_subdir", "git_pulse_clio_filename",
+    }
     config = _read_config()
     for key, value in values.items():
         if key not in allowed:
