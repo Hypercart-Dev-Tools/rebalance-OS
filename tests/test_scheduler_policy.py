@@ -171,6 +171,17 @@ POLICY = {
         "wrapper_must_contain": ["obsidian_daily_sync.py"],
         "doc_tokens": ["daily 18:00", "obsidian_daily_sync.sh"],
     },
+    "git-pulse-daily-synthesis": {
+        # 5 minutes after obsidian-daily-sync (18:00) so, when both destinations
+        # are configured, this block lands after the GH-112 AI Daily Summary block.
+        "calendar": [{"Hour": 18, "Minute": 5}],
+        # Loading should not fire an off-schedule summary write.
+        "run_at_load": False,
+        "keep_alive": False,
+        "wrapper": "utils/git_pulse_daily_synthesis.sh",
+        "wrapper_must_contain": ["git_pulse_daily_synthesis.py"],
+        "doc_tokens": ["daily 18:05", "git_pulse_daily_synthesis.sh"],
+    },
 }
 
 INSTALLERS = {
@@ -185,6 +196,7 @@ INSTALLERS = {
     "health-check-triage": "install_health_check_triage_scheduler.sh",
     "obsidian-rollover": "install_obsidian_rollover_scheduler.sh",
     "obsidian-daily-sync": "install_obsidian_daily_sync_scheduler.sh",
+    "git-pulse-daily-synthesis": "install_git_pulse_daily_synthesis_scheduler.sh",
 }
 
 
