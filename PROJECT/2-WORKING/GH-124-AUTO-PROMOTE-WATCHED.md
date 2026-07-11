@@ -29,7 +29,7 @@ phases: 3
 
 | What was just completed | What's next |
 |---|---|
-| Plan drafted — problem, reference pointers, and 3-phase design captured; not yet reviewed. | Codex review of this plan, then Phase 1 (detection + write path). |
+| Plan Codex-reviewed via relay-xyz (3 rounds, `relay-system/2026-07-10/gh-124-plan-review.md`) — Approved. Every finding was real and implemented: exact commit-counting contract, single owning path (`_refresh_github`), inline identity-resolution rule, row shape/provenance. | Phase 1 (detection + write path). |
 
 ## Table of contents
 
