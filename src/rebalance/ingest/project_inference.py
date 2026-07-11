@@ -61,6 +61,14 @@ _CLIENT_GAPFILL_UNCERTAIN = {"", "n/a", "na", "none", "null", "unclear", "unknow
 # write_semantics="machine_owned") — curated registry rows always win.
 INFERENCE_GENERATED_BY = "activity_inference_v1"
 
+# GH-124: a second machine-owned marker for commit-threshold auto-promotion
+# (sync_commit_threshold_promotions below). Kept distinct from
+# INFERENCE_GENERATED_BY so a promoted row's provenance is self-describing,
+# but recognized by _is_inference_owned alongside it — both markers share the
+# same machine_owned contract (curated rows never touched, safe to recreate).
+COMMIT_THRESHOLD_GENERATED_BY = "commit_threshold_v1"
+_MACHINE_OWNED_MARKERS = {INFERENCE_GENERATED_BY, COMMIT_THRESHOLD_GENERATED_BY}
+
 
 def _is_inference_owned(custom_fields_json: str | None) -> bool:
     try:
@@ -68,7 +76,7 @@ def _is_inference_owned(custom_fields_json: str | None) -> bool:
     except json.JSONDecodeError:
         custom_fields = {}
     generated_by = ((custom_fields or {}).get("inference") or {}).get("generated_by")
-    return generated_by == INFERENCE_GENERATED_BY
+    return generated_by in _MACHINE_OWNED_MARKERS
 
 
 @dataclass
@@ -759,5 +767,134 @@ def sync_inferred_project_registry(
         deleted_stale_inferred_count=deleted_count,
         project_names=summary.project_names,
         skipped_curated_count=len(skipped_curated),
+        skipped_curated_names=skipped_curated,
+    )
+
+
+# ---------------------------------------------------------------------------
+# GH-124: commit-threshold auto-promotion
+# ---------------------------------------------------------------------------
+
+
+def _count_operator_commits(conn: Any, repo_full_name: str, github_login: str) -> int:
+    """Count distinct full-SHA commits authored by the operator (or a known
+    cloud-agent bot acting on their behalf) in ``repo_full_name``.
+
+    Reuses ``pulse._author_filter_sql`` against ``github_commits.author_login``
+    rather than a raw git-email match — this is GitHub's own resolved identity
+    per commit, populated for every synced repo regardless of whether it has a
+    local clone. Cumulative all-time count, not a rolling window: this answers
+    "has the operator meaningfully started this repo," not "recently active."
+    """
+    from rebalance.ingest.pulse import CLOUD_AGENT_AUTHORS, _author_filter_sql
+
+    author_filter = _author_filter_sql("author_login")
+    row = conn.execute(
+        f"""
+        SELECT COUNT(DISTINCT sha) AS n
+        FROM github_commits
+        WHERE repo_full_name = ? AND {author_filter}
+        """,
+        (repo_full_name, github_login, *CLOUD_AGENT_AUTHORS),
+    ).fetchone()
+    return int(row["n"] or 0) if row else 0
+
+
+def _repo_to_promoted_row(repo_full_name: str, *, commit_count: int, threshold: int) -> dict[str, Any]:
+    """Build a machine-owned project_registry row for one auto-promoted repo.
+
+    Shape mirrors ``_seed_to_project_row`` (same table, same optional fields
+    left ``None`` for the operator to fill in later) but with a distinct
+    provenance marker so an auto-promoted row is self-describing.
+    """
+    name = repo_full_name.split("/", 1)[-1] or repo_full_name
+    return {
+        "name": name,
+        "status": "active",
+        "summary": f"Auto-promoted after {commit_count} operator commit(s) to {repo_full_name}.",
+        "value_level": None,
+        "priority_tier": None,
+        "risk_level": None,
+        "repos": [repo_full_name],
+        "tags": ["auto-promoted", "source:github"],
+        "custom_fields": {
+            "provenance": "auto_promoted",
+            "inference": {
+                "generated_by": COMMIT_THRESHOLD_GENERATED_BY,
+                "repo_full_name": repo_full_name,
+                "commit_count": commit_count,
+                "threshold": threshold,
+                "promoted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            },
+        },
+    }
+
+
+@dataclass
+class AutoPromoteSummary:
+    """Result of one ``sync_commit_threshold_promotions`` pass."""
+
+    enabled: bool
+    threshold: int
+    candidates_evaluated: int = 0
+    promoted: list[dict[str, Any]] = field(default_factory=list)
+    skipped_curated_names: list[str] = field(default_factory=list)
+
+    @property
+    def promoted_count(self) -> int:
+        return len(self.promoted)
+
+
+def sync_commit_threshold_promotions(database_path: Path) -> AutoPromoteSummary:
+    """GH-124: auto-promote a watched repo into ``project_registry`` once the
+    operator has authored enough commits to it.
+
+    Candidate pool = ``get_watched_repos()["auto_discovered"]`` — repos with
+    GitHub activity/push signal that are not already in ANY active project's
+    ``repos`` (curated or machine-owned), and ``github_ignored_repos`` already
+    excluded upstream by ``get_watched_repos``. A candidate promotes once its
+    operator-authored commit count (see ``_count_operator_commits``) reaches
+    ``auto_promote_commit_threshold``. A fork or starred-only repo with zero
+    operator commits never reaches the threshold, so no separate fork
+    detection is needed — the commit count IS the filter.
+
+    Writes only via the existing machine_owned partition/write path
+    (``_partition_writable_rows`` / ``sync_db``) — a curated row sharing the
+    derived name is skipped, never clobbered, exactly like
+    ``sync_inferred_project_registry``.
+    """
+    from rebalance.ingest.config import get_auto_promote_config, get_pulse_config
+    from rebalance.ingest.index_ops import get_watched_repos
+
+    auto_promote_config = get_auto_promote_config()
+    threshold = auto_promote_config["auto_promote_commit_threshold"]
+    if not auto_promote_config["auto_promote_enabled"]:
+        return AutoPromoteSummary(enabled=False, threshold=threshold)
+
+    github_login = get_pulse_config().get("github_login")
+    if not github_login:
+        # No identity to match commits against — nothing is promotable.
+        return AutoPromoteSummary(enabled=True, threshold=threshold)
+
+    candidates = get_watched_repos(database_path)["auto_discovered"]
+
+    promoted_rows: list[dict[str, Any]] = []
+    with db_connection(database_path, ensure_github_schema) as conn:
+        for repo_full_name in candidates:
+            commit_count = _count_operator_commits(conn, repo_full_name, github_login)
+            if commit_count >= threshold:
+                promoted_rows.append(
+                    _repo_to_promoted_row(repo_full_name, commit_count=commit_count, threshold=threshold)
+                )
+
+    writable, skipped_curated = _partition_writable_rows(database_path, promoted_rows)
+    if writable:
+        sync_db(database_path, {"projects": writable})
+
+    return AutoPromoteSummary(
+        enabled=True,
+        threshold=threshold,
+        candidates_evaluated=len(candidates),
+        promoted=writable,
         skipped_curated_names=skipped_curated,
     )

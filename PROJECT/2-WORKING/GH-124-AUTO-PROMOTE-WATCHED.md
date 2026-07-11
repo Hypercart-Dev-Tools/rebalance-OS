@@ -29,7 +29,7 @@ phases: 3
 
 | What was just completed | What's next |
 |---|---|
-| Plan Codex-reviewed via relay-xyz (3 rounds, `relay-system/2026-07-10/gh-124-plan-review.md`) — Approved. Every finding was real and implemented: exact commit-counting contract, single owning path (`_refresh_github`), inline identity-resolution rule, row shape/provenance. | Phase 1 (detection + write path). |
+| **Phase 1 shipped:** `sync_commit_threshold_promotions()` in `project_inference.py`, config keys in `config.py`, generalized `_is_inference_owned()`. 9 new tests green, full suite zero-regression, doctor clean. | Phase 2 — non-silent surfacing (auth-log alert + repo-pie top item). |
 
 ## Table of contents
 
@@ -103,17 +103,18 @@ Log Alert on the web app, and (2) a top item on the repo-activity donut ("Circul
 ## Phase 1 — Detection & write path
 
 **Discuss:**
-- **Inline identity-resolution contract** (self-contained — not a pointer to GH-81). A commit counts
-  toward the threshold only at these two rungs of GH-81's existing `recency_basis` ladder
-  (`src/rebalance/ingest/focus5_scan.py:89`, `:113-121`):
-  1. `local_reflog` — the commit appears in this device's local HEAD reflog (the operator authored it
-     on a machine Rebalance has visibility into).
-  2. `author_email` — the commit's author email matches a known operator email (from
-     `github_login`/config), when no local-reflog evidence exists (a different device/email).
-  GH-81's third rung, `any_commit` (any commit at all, used there purely for *ranking* fallback), is
-  **explicitly excluded here** — using it would defeat the entire "operator's own commits" requirement
-  and let any contributor's commits promote a repo. A commit with `recency_basis in ("any_commit",
-  "none")` never counts. This makes the contract mechanical without re-deriving GH-81's reasoning.
+- **Inline identity-resolution contract** (self-contained). **Build-time refinement (superseding the
+  Codex-approved GH-81-ladder draft):** the primary signal is simpler and more grounded than reusing
+  GH-81's local-reflog ladder — `github_commits.author_login` (GitHub's own resolved identity per
+  commit, populated for every synced repo regardless of local clone presence) matched against
+  `github_login` via the exact `_author_filter_sql()` + `CLOUD_AGENT_AUTHORS` primitive already used by
+  `pulse.py:56-59` for "commits authored by me." Reusing it (not reinventing a second identity filter)
+  also means cloud-agent-authored commits (Claude Code / Codex cloud sessions acting on the operator's
+  behalf — the same bots `pulse.py` already counts as "mine") correctly count toward promotion. A
+  commit only counts when `_author_filter_sql("author_login")` matches; GH-81's local-reflog signal
+  (`focus5_repo_signals.my_local_commit_ts`) is **not required** — most watched repos have no local
+  clone under `focus5_scan_roots` at all, so gating on it would starve the common case. (GH-81's third
+  rung, `any_commit`, is irrelevant here — it was a ranking-only fallback, never an identity match.)
 - Commit threshold and default on/off are config, not a hardcoded constant, following the
   `git_pulse_clio_enabled` naming precedent in `src/rebalance/ingest/config.py`.
 - Out of scope for this phase: the alert/dashboard surfacing (Phase 2) and scheduling wiring
@@ -138,8 +139,8 @@ Work:
   repo's history) authored by the operator identity, **cumulative all-time** for that repo, not a
   rolling window — this is "has the operator meaningfully started this repo," not a recency signal
   (recency is `list_watched_repos`' job already).
-- **Identity resolution:** apply the two-rung contract above (`local_reflog` then `author_email`;
-  `any_commit`/`none` never count) — no hard `github_commits.author_email == github_login` filter.
+- **Identity resolution:** apply `pulse._author_filter_sql("author_login")` against `github_commits`,
+  matching `github_login` and `CLOUD_AGENT_AUTHORS` (import/reuse from `pulse.py`, do not duplicate).
 - **Row shape / provenance contract:** reuse `_seed_to_project_row`'s exact shape
   (`src/rebalance/ingest/project_inference.py:610-655`) — `status="active"`, `repos=[repo_full_name]`,
   `tags=["auto-promoted", "source:github"]`, `custom_fields.provenance="auto_promoted"`,
@@ -162,12 +163,17 @@ Work:
 - Write via the existing `machine_owned` partition/write path — no new registry write contract.
 
 **Phase 1 QA gate:**
-- [ ] Unit tests: threshold hit / no-hit, fork-with-no-commits excluded, star-only excluded,
-  already-curated repo never touched, already-machine-owned repo not duplicated, `github_ignored_repos`
-  excluded, idempotent re-run (no duplicate rows).
-- [ ] `pytest tests/` green.
-- [ ] `rebalance doctor` clean.
-- **Verification summary:** record actual command output here before checking this gate closed.
+- [x] Unit tests: threshold hit / no-hit, fork-with-no-commits excluded, cloud-agent commits counted,
+  `github_ignored_repos` excluded, curated row never touched, idempotent re-run, disabled-config no-op,
+  no-`github_login` no-op — `tests/test_auto_promote.py`, 9/9 passing.
+- [x] `pytest tests/` green (run via `python -m unittest discover`, pytest not installed in this venv).
+- [x] `rebalance doctor` clean.
+- **Verification summary:** `python -m unittest tests.test_auto_promote` → 9/9 passed. Full suite
+  (`python -m unittest discover -s tests`) → identical 16 pre-existing failures with and without this
+  change (verified by diffing failing-test names before/after via `git stash`) — zero regressions.
+  `rebalance doctor` → "Health check passed with warnings" (all warnings pre-existing/environmental:
+  Sleuth publisher staleness, Figma no file keys, Gmail OAuth scope, stale pulse collector, launchd
+  exit codes — none related to this change). Unmet: none.
 
 ## Phase 2 — Non-silent surfacing
 

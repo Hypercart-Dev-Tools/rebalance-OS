@@ -947,6 +947,25 @@ def is_github_repo_ignored(repo: str) -> bool:
     return normalized in set(get_github_ignored_repos())
 
 
+def get_auto_promote_config() -> dict[str, Any]:
+    """Return the auto-promotion config block (GH-124).
+
+    Keys:
+      - auto_promote_enabled: opt-in flag gating commit-threshold auto-promotion of a
+        watched repo into project_registry as a machine_owned row (generated_by
+        "commit_threshold_v1"). github_ignored_repos always wins regardless of this
+        flag. Default: True.
+      - auto_promote_commit_threshold: minimum distinct-SHA operator commits (all-time,
+        cumulative — not a rolling window) before a watched repo auto-promotes.
+        Default: 3.
+    """
+    config = _read_config()
+    return {
+        "auto_promote_enabled": bool(config.get("auto_promote_enabled", True)),
+        "auto_promote_commit_threshold": int(config.get("auto_promote_commit_threshold", 3)),
+    }
+
+
 def get_calendar_ignored_summaries() -> list[str]:
     """Return operator-local calendar event summaries to suppress.
 
