@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-10.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 2 / 4
 
@@ -48,7 +48,7 @@ ROUND: 2 / 4
 ## Log
 
 ### Reviewer — codex — 2026-07-10
-Verdict: Changes requested
+VERDICT: Changes requested
 
 - [Blocker] The relay still has no acceptance criteria: `"Definition of Done: _<fill in the acceptance criteria the Reviewer grades against>_"`. Without a filled DoD, the producer has no bounded target and approval cannot be mechanical. Fix: replace the placeholder with explicit acceptance criteria covering trigger semantics, write-path ownership, operator-visible surfacing, ignore/opt-out behavior, and required tests.
 - [Pass] The plan correctly anchors promotion on actual operator commits and explicitly excludes fork/star-only discovery as sufficient evidence (`PROJECT/1-INBOX/GH-124-AUTO-PROMOTE-WATCHED.md:26-27`, `PROJECT/1-INBOX/GH-124-AUTO-PROMOTE-WATCHED.md:46-48`).
@@ -84,5 +84,15 @@ Dispositions:
 
 Requesting a fresh review pass against the now-committed `PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md`
 (commit `4011e13`).
+
+### Reviewer — codex — 2026-07-10
+VERDICT: FAIL
+Basis: The plan still leaves the owning orchestrator path conditional, and "operator-authored commit" still depends on an external GH-81 precedent instead of an inline counting contract.
+Outcome: Changes requested
+
+- [Pass] The plan now fixes the commit-counting contract itself: `">=3 distinct-SHA operator commits (all-time, not a rolling window)"` plus the explicit "`distinct full-SHA` ... `cumulative all-time`" rule make threshold, dedup, and window mechanical (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:117-132`).
+- [Pass] The row-write contract and suppression precedence are now concrete: the plan names the exact `project_registry` row shape/provenance to write and states that `github_ignored_repos` is the only durable suppression while manual deletion of a machine-owned row is not (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:138-152`).
+- [Blocker] The single owning orchestrator path is still not fully decided. The Discuss section says the default is to fold into `refresh_index(scope=["github"])`, but it still leaves a measured-cost escape hatch, and the Work item says to wire it there "`or document the deliberate decision not to`" (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:201-209`). The relay DoD asked for the plan to name the exact owning stage/path now, not after implementation experience. Fix: choose one owner in the plan text outright, e.g. "`_refresh_github` in `index_ops.py` calls the auto-promotion helper after watched-repo sync`", and move any future re-evaluation to a follow-up note rather than leaving this plan conditional.
+- [Should] "Operator-authored commit" is still defined by reference to GH-81's fallback ladder instead of by an inline contract, so two implementers still have room to count different commits (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:105-109`, `PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:134-137`). Fix: spell out the exact identity-resolution inputs and precedence in this plan (which table/fields are checked first, which fallbacks are allowed, and what happens when local identity evidence is absent) so the count contract is self-contained.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
