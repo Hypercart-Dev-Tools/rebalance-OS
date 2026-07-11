@@ -427,7 +427,12 @@ _SLEUTH_HEARTBEAT_STALE_HOURS = 3
 def _check_sleuth(db_path: Path | None = None) -> Check:
     """Sleuth/Slack reminders — credentials resolved keyring → config → env file,
     plus a published-file freshness check via the publisher heartbeat."""
-    from rebalance.ingest.config import SLEUTH_KEYRING_KEY, _keyring_get, get_sleuth_credentials
+    from rebalance.ingest.config import (
+        SLEUTH_KEYRING_KEY,
+        _keyring_get,
+        get_sleuth_credentials,
+        get_sleuth_sync_repo_path,
+    )
 
     try:
         get_sleuth_credentials()
@@ -464,11 +469,12 @@ def _check_sleuth(db_path: Path | None = None) -> Check:
             age_h = (datetime.now(timezone.utc) - beat).total_seconds() / 3600
             stamp = beat.isoformat()
             if age_h > _SLEUTH_HEARTBEAT_STALE_HOURS:
+                sync_repo = get_sleuth_sync_repo_path() or "~/git-pulse-sync"
                 return Check(
                     "sleuth", WARN,
                     f"published export is stale — heartbeat {stamp} ({age_h:.1f}h ago)",
                     "the Sleuth publisher (sleuth-reminders-export.timer on the box) or the "
-                    "local export clone may be stuck; check the timer and `git -C ~/git-pulse-sync pull`",
+                    f"local export clone may be stuck; check the timer and `git -C {sync_repo} pull`",
                 )
             return Check("sleuth", OK, f"configured (via {where}) · export {age_h:.1f}h old")
     return Check("sleuth", OK, f"configured (via {where})")

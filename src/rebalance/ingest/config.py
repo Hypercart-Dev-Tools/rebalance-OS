@@ -1529,6 +1529,19 @@ def _sleuth_creds_complete(values: object) -> dict[str, str] | None:
     return out if all(out.values()) else None
 
 
+def _derive_git_repo_root(path_str: str) -> str | None:
+    """Walk up from *path_str* looking for the nearest ``.git`` — the local
+    working-tree root, if *path_str* is a local file path inside a git clone.
+    Returns None for URLs (http/https) or paths with no enclosing git repo."""
+    if path_str.startswith(("http://", "https://")):
+        return None
+    candidate = Path(path_str).expanduser()
+    for parent in (candidate, *candidate.parents):
+        if (parent / ".git").exists():
+            return str(parent)
+    return None
+
+
 def set_sleuth_credentials(
     base_url: str, token: str, workspace: str, *, source: str = "manual"
 ) -> None:
@@ -1540,6 +1553,11 @@ def set_sleuth_credentials(
     unattended and cannot reach the keychain). Phase 2: creds are **no longer
     written to rbos.config**. Logs a `token_set` auth-log event + sidecar
     first-added metadata.
+
+    If ``base_url`` is a local file path (the file-source method — see
+    UPGRADE.md), auto-derives the enclosing git working tree and records it as
+    ``sleuth_sync_repo_path`` (plain, non-secret) so doctor's "stale export"
+    remediation can name the real clone instead of assuming a default path.
     """
     import json as _json
 
@@ -1557,6 +1575,9 @@ def set_sleuth_credentials(
         store_ok = False
     if not (keyring_ok or store_ok):
         raise RuntimeError("could not persist Sleuth credentials to keyring or secret store")
+    repo_root = _derive_git_repo_root(creds["SLEUTH_WEB_API_BASE_URL"])
+    if repo_root:
+        set_sleuth_sync_repo_path(repo_root)
     try:  # never let logging break a credential write
         from rebalance.ingest import auth_log, token_meta  # noqa: PLC0415
         auth_log.log_sleuth_credentials_set(source=source, workspace=creds["SLEUTH_WORKSPACE_NAME"])
@@ -1565,6 +1586,27 @@ def set_sleuth_credentials(
         )
     except Exception:  # noqa: BLE001
         pass
+
+
+def get_sleuth_sync_repo_path() -> str:
+    """Return the configured local clone of the Sleuth/git-pulse sync repo, or
+    '' if unset. This is the ``~/git-pulse-sync`` checkout UPGRADE.md has
+    operators create for the file-source sync method — a separate clone from
+    ``pulse_target_path`` (the push target for ``publish_pulse()``). Doctor's
+    "stale Sleuth export" remediation reads this instead of assuming a fixed
+    default path. Auto-populated by ``set_sleuth_credentials()`` when
+    ``base_url`` is a local path inside a git working tree; can also be set
+    directly via ``set_sleuth_sync_repo_path()`` or in temp/rbos.config under
+    ``sleuth_sync_repo_path``.
+    """
+    return str(_read_config().get("sleuth_sync_repo_path", ""))
+
+
+def set_sleuth_sync_repo_path(path: str) -> None:
+    """Store the local clone path of the Sleuth/git-pulse sync repo in rbos.config."""
+    config = _read_config()
+    config["sleuth_sync_repo_path"] = path
+    _write_config(config)
 
 
 def clear_sleuth_credentials() -> None:
