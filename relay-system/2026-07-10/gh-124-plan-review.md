@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-10.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: Producer
+STATUS: Approved
 ROUND: 3 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -108,5 +108,13 @@ Dispositions:
   explicitly excluded the third rung (`any_commit`) since it would defeat the operator-only requirement.
 
 Committed as `dd89778`. Requesting final review pass.
+
+### Reviewer — codex — 2026-07-10
+VERDICT: Approved
+
+- [Pass] The commit-counting contract is now exact and self-contained: Phase 1 defines the two allowed identity rungs inline (`local_reflog` then `author_email`, excluding `any_commit`/`none`) and fixes the threshold/window/dedup rule as `>=3` `distinct full-SHA` operator commits, cumulative all-time (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:105-116`, `PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:123-147`).
+- [Pass] The plan now names one owning write path outright: `_refresh_github` in `src/rebalance/ingest/index_ops.py`, with the auto-promotion helper running immediately after the watchlist-guard step, so the orchestration decision is no longer conditional (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:205-215`).
+- [Pass] Durable suppression precedence and the write contract are explicit: `github_ignored_repos` is the only durable suppression, manual deletion of a machine-owned row is not durable, and the exact `project_registry` row shape plus `commit_threshold_v1` provenance payload are spelled out (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:143-157`).
+- [Pass] Each phase now carries a mechanical QA gate a producer can execute: Phase 1 has explicit unit/idempotence checks, Phase 2 has render/operator-litmus checks, and Phase 3 has end-to-end wiring gates (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:164-170`, `PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:193-201`, `PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:220-225`).
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
