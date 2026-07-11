@@ -890,6 +890,16 @@ def sync_commit_threshold_promotions(database_path: Path) -> AutoPromoteSummary:
     writable, skipped_curated = _partition_writable_rows(database_path, promoted_rows)
     if writable:
         sync_db(database_path, {"projects": writable})
+        from rebalance.ingest.auth_log import log_project_auto_promoted
+
+        for row in writable:
+            inference = row["custom_fields"]["inference"]
+            log_project_auto_promoted(
+                inference["repo_full_name"],
+                project_name=row["name"],
+                commit_count=inference["commit_count"],
+                threshold=inference["threshold"],
+            )
 
     return AutoPromoteSummary(
         enabled=True,

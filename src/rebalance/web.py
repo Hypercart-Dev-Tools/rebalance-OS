@@ -222,6 +222,8 @@ _EVENT_BADGE = {
     "job_failed":           ("danger",  "✗ failed"),
     # watch-list coverage guard (only emitted on a concerning drop)
     "watched_repos_reduced": ("warn",   "⚠ watched repos reduced"),
+    # GH-124: commit-threshold auto-promotion
+    "project_auto_promoted": ("ok",     "✓ project auto-added"),
 }
 
 _SOURCE_BADGE = {
@@ -230,6 +232,7 @@ _SOURCE_BADGE = {
     "gmail":    ("neutral", "gmail"),
     "sleuth":   ("neutral", "sleuth"),
     "launchd":  ("neutral", "launchd"),
+    "registry": ("neutral", "registry"),
 }
 
 # Page-local CSS for the FastAPI surfaces (Focus 5 / Auth Log / Home). The base

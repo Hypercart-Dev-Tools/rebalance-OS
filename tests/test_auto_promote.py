@@ -6,6 +6,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from rebalance.ingest import config as config_module
 from rebalance.ingest.config import set_github_ignored_repos, set_pulse_config
@@ -179,6 +180,34 @@ class AutoPromoteTests(unittest.TestCase):
 
         self.assertFalse(summary.enabled)
         self.assertEqual(summary.promoted_count, 0)
+
+    def test_promotion_fires_auth_log_alert(self) -> None:
+        repo = "Acme/widget"
+        _insert_activity(self.db_path, repo=repo)
+        for i in range(3):
+            _insert_commit(self.db_path, repo=repo, sha=f"sha{i}", author_login="tester")
+
+        with mock.patch(
+            "rebalance.ingest.auth_log.log_project_auto_promoted"
+        ) as mocked:
+            sync_commit_threshold_promotions(self.db_path)
+
+        mocked.assert_called_once_with(
+            repo, project_name="widget", commit_count=3, threshold=3
+        )
+
+    def test_no_promotion_does_not_fire_auth_log_alert(self) -> None:
+        repo = "Acme/widget"
+        _insert_activity(self.db_path, repo=repo)
+        for i in range(2):
+            _insert_commit(self.db_path, repo=repo, sha=f"sha{i}", author_login="tester")
+
+        with mock.patch(
+            "rebalance.ingest.auth_log.log_project_auto_promoted"
+        ) as mocked:
+            sync_commit_threshold_promotions(self.db_path)
+
+        mocked.assert_not_called()
 
     def test_no_github_login_configured_is_a_no_op(self) -> None:
         # set_pulse_config(github_login=None) is a no-op (None means "leave

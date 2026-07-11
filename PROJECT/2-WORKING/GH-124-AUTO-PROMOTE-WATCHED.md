@@ -29,7 +29,7 @@ phases: 3
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 1 shipped:** `sync_commit_threshold_promotions()` in `project_inference.py`, config keys in `config.py`, generalized `_is_inference_owned()`. 9 new tests green, full suite zero-regression, doctor clean. | Phase 2 — non-silent surfacing (auth-log alert + repo-pie top item). |
+| **Phase 2 shipped:** `log_project_auto_promoted()` + `project_auto_promoted` auth-log badge; `render_repo_pie()` "New repo added" top-item annotation backed by `fetch_recent_auto_promotion()`. 6 new tests green, full suite zero-regression, doctor clean, markup-level litmus confirmed (no browser available on this machine for a visual screenshot). | Phase 3 — wire into `_refresh_github` + docs. |
 
 ## Table of contents
 
@@ -197,14 +197,25 @@ Work:
   (if any) and render a header banner line, styled like the operator's screenshot mock.
 
 **Phase 2 QA gate:**
-- [ ] Render test asserting the `project_auto_promoted` badge renders on `/auth-log`.
-- [ ] Render/unit test asserting the repo-pie banner appears when a fresh promotion exists in-window,
-  and is absent otherwise.
-- [ ] `pytest tests/` green.
-- [ ] `rebalance doctor` clean.
-- [ ] Operator litmus: trigger a real promotion, confirm both surfaces render live (screenshot check,
-  matching the litmus bar other dashboard-facing docs in this repo use).
-- **Verification summary:** record actual command output + litmus result here before closing.
+- [x] Render test asserting the `project_auto_promoted` badge renders on `/auth-log`
+  (`tests/test_web_auth_log.py::test_project_auto_promoted_renders_ok_badge`, calls the real
+  `auth_log_page()` route function).
+- [x] Render/unit test asserting the repo-pie banner appears when a fresh promotion exists in-window,
+  and is absent otherwise (`tests/test_repo_pie_auto_promote.py`, 3 tests).
+- [x] `pytest tests/` green.
+- [x] `rebalance doctor` clean.
+- [x] Operator litmus (markup-level, not visual — see note): copied the production DB to a scratch
+  path, seeded a synthetic `commit_threshold_v1` row, ran the real `scripts/pulse_web.py` page
+  generator against it, and grepped the output for the badge — confirmed `New repo added:
+  litmus-demo-repo` rendered with the correct CSS class in the real full-page HTML (not just the
+  isolated unit test). Scratch DB/HTML deleted after.
+- **Verification summary:** `python -m unittest tests.test_repo_pie_auto_promote
+  tests.test_web_auth_log` → 6/6 passed. Full suite → identical 16 pre-existing failures (zero
+  regressions, verified by diff). `rebalance doctor` → clean, no ERROR/FAIL lines. **Unmet: no visual
+  browser screenshot** — this machine has no Chrome/Chromium/headless-browser binary installed, so the
+  litmus above is markup-level (real render function, real seeded DB row, grepped output) rather than
+  a rendered screenshot. If a visual check matters before shipping, it needs a machine with a browser
+  installed.
 
 ## Phase 3 — Wiring, config, docs
 

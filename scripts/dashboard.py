@@ -29,7 +29,7 @@ import sys
 import termios
 import threading
 import tty
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -427,6 +427,51 @@ def fetch_repo_activity_counts(days: int = 7, limit: int = 12) -> list[dict[str,
         return [dict(r) for r in rows]
     except Exception:  # noqa: BLE001 — empty DB before first sync
         return []
+
+
+def fetch_recent_auto_promotion(days: int = 7) -> dict[str, Any] | None:
+    """GH-124: most recent commit-threshold auto-promotion within the window, if any.
+
+    Read-only over ``project_registry`` — the repo-pie's "New repo added" top-item
+    annotation is this function's only consumer. Returns None when nothing promoted
+    in the window (the common case), or a dict with ``repo``/``project_name``/
+    ``promoted_at`` for the single most recent promotion.
+    """
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                "SELECT name, custom_fields_json FROM project_registry "
+                "WHERE custom_fields_json IS NOT NULL"
+            ).fetchall()
+    except Exception:  # noqa: BLE001 — empty DB before first sync
+        return None
+
+    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    best: tuple[datetime, dict[str, Any]] | None = None
+    for row in rows:
+        try:
+            custom_fields = json.loads(row["custom_fields_json"])
+        except (TypeError, ValueError):
+            continue
+        inference = (custom_fields or {}).get("inference") or {}
+        if inference.get("generated_by") != "commit_threshold_v1":
+            continue
+        promoted_at = inference.get("promoted_at")
+        if not promoted_at:
+            continue
+        try:
+            promoted_dt = datetime.fromisoformat(promoted_at)
+        except ValueError:
+            continue
+        if promoted_dt < cutoff:
+            continue
+        if best is None or promoted_dt > best[0]:
+            best = (promoted_dt, {
+                "repo": inference.get("repo_full_name"),
+                "project_name": row["name"],
+                "promoted_at": promoted_at,
+            })
+    return best[1] if best else None
 
 
 def fetch_org_activity(days: int = 14, limit: int = 100) -> dict[str, list[dict[str, Any]]]:

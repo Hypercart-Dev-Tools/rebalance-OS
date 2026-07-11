@@ -44,6 +44,7 @@ from dashboard import (  # type: ignore  # noqa: E402
     fetch_calendar_upcoming,
     fetch_open_prs,
     fetch_org_activity,
+    fetch_recent_auto_promotion,
     fetch_recent_emails,
     fetch_recent_figma,
     fetch_recent_github,
@@ -881,12 +882,32 @@ PIE_PALETTE = [
 ]
 
 
-def render_repo_pie(rows: list[dict[str, Any]], *, days: int) -> str:
+def _render_repo_pie_new_badge(recent_promotion: dict[str, Any] | None) -> str:
+    """GH-124: 'New repo added: X' banner when a commit-threshold auto-promotion
+    landed within the repo-pie's own display window. Absent otherwise — this is
+    an additive annotation, not a permanent chart feature."""
+    if not recent_promotion:
+        return ""
+    project_name = recent_promotion.get("project_name") or recent_promotion.get("repo") or ""
+    if not project_name:
+        return ""
+    return (
+        '<div class="repo-pie-new-badge">New repo added: '
+        f"{_esc(project_name)}</div>"
+    )
+
+
+def render_repo_pie(
+    rows: list[dict[str, Any]], *, days: int, recent_promotion: dict[str, Any] | None = None
+) -> str:
     """Doughnut chart of per-repo event counts over the last N days."""
+    new_badge = _render_repo_pie_new_badge(recent_promotion)
+
     if not rows:
         return f"""
     <section class="card repo-pie">
       <header class="card-head"><h2>Repo activity ({_esc(days)}d)</h2></header>
+      {new_badge}
       <div class="empty" style="padding:18px 4px;">No GitHub activity in the last {_esc(days)} days.</div>
     </section>
     """
@@ -904,6 +925,7 @@ def render_repo_pie(rows: list[dict[str, Any]], *, days: int) -> str:
         <h2>Repo activity ({_esc(days)}d)</h2>
         <span class="card-head-meta">{total} events · {len(rows)} repos</span>
       </header>
+      {new_badge}
       <div class="repo-pie-wrap">
         <canvas id="repo-pie-canvas" height="320"></canvas>
       </div>
@@ -1745,6 +1767,8 @@ PAGE_CSS = """
 .repo-pie .card-head-meta { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .repo-pie-wrap { padding: 8px 14px 16px; }
 .repo-pie-wrap canvas { max-width: 100%; }
+/* GH-124: commit-threshold auto-promotion top-item annotation */
+.repo-pie-new-badge { margin: 4px 14px 0; padding: 6px 10px; border-radius: 8px; background: color-mix(in srgb, var(--ok) 14%, transparent); color: var(--ok); font-size: 12px; font-weight: 600; }
 
 /* Activity */
 .activity-list { list-style: none; padding: 0 4px 14px; margin: 0; }
@@ -2697,6 +2721,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     figma_rows = fetch_recent_figma(limit=12)
     repo_pie_days = 7
     repo_pie_rows = fetch_repo_activity_counts(days=repo_pie_days, limit=12)
+    repo_pie_recent_promotion = fetch_recent_auto_promotion(days=repo_pie_days)
     status = get_index_status(DB_PATH)
 
     # "What should we work on next" — READ the precomputed ranking only. This
@@ -2823,7 +2848,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
                 configured_keys=figma_keys,
                 last_synced_at=figma_source.get("last_synced_at"),
             )}
-            {render_repo_pie(repo_pie_rows, days=repo_pie_days)}
+            {render_repo_pie(repo_pie_rows, days=repo_pie_days, recent_promotion=repo_pie_recent_promotion)}
           </div>
         </div>
         <div class="full-row">

@@ -323,6 +323,29 @@ def log_watched_repos_reduced(
 
 
 # ---------------------------------------------------------------------------
+# GH-124: commit-threshold auto-promotion
+# ---------------------------------------------------------------------------
+
+def log_project_auto_promoted(
+    repo_full_name: str,
+    *,
+    project_name: str,
+    commit_count: int,
+    threshold: int,
+) -> None:
+    """A watched repo crossed the commit threshold and auto-promoted into
+    ``project_registry`` as a machine-owned row. Emitted by
+    ``project_inference.sync_commit_threshold_promotions``.
+    """
+    _append("registry", "project_auto_promoted", {
+        "repo": repo_full_name,
+        "project_name": project_name,
+        "commit_count": commit_count,
+        "threshold": threshold,
+    })
+
+
+# ---------------------------------------------------------------------------
 # Readers
 # ---------------------------------------------------------------------------
 

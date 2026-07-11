@@ -46,6 +46,26 @@ class WebAuthLogTests(unittest.TestCase):
         self.assertIn("⚠ watched repos reduced", html)  # the warn badge label
         self.assertIn("BinoidCBD/LTVera-Pandas", html)   # the dropped repo surfaces
 
+    def test_project_auto_promoted_renders_ok_badge(self) -> None:
+        entries = [{
+            "ts": "2026-07-10T12:00:00+00:00",
+            "device": "noels-Mac-Studio.local",
+            "source": "registry",
+            "event": "project_auto_promoted",
+            "detail": {
+                "repo": "Claude-AI-Tools-Ventura-County/clio",
+                "project_name": "clio",
+                "commit_count": 3,
+                "threshold": 3,
+            },
+        }]
+        with patch("rebalance.web.read_log", return_value=entries):
+            response = auth_log_page()
+
+        html = response.body.decode("utf-8")
+        self.assertIn("✓ project auto-added", html)  # the ok badge label
+        self.assertIn("Claude-AI-Tools-Ventura-County/clio", html)
+
 
 if __name__ == "__main__":
     unittest.main()
