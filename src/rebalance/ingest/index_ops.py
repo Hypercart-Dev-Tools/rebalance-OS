@@ -831,10 +831,32 @@ def _refresh_github(
     except Exception as e:  # noqa: BLE001
         watchlist_guard = {"error": str(e)}
 
+    # GH-124: commit-threshold auto-promotion. Immediately after the coverage
+    # guard (same "clean sync only, never break a sync" posture) so a repo that
+    # just crossed the operator-commit threshold graduates into project_registry
+    # on this same refresh rather than waiting for a future one.
+    try:
+        from rebalance.ingest.project_inference import sync_commit_threshold_promotions
+
+        auto_promote_summary = sync_commit_threshold_promotions(database_path)
+        auto_promote_result: dict[str, Any] = {
+            "enabled": auto_promote_summary.enabled,
+            "threshold": auto_promote_summary.threshold,
+            "candidates_evaluated": auto_promote_summary.candidates_evaluated,
+            "promoted_count": auto_promote_summary.promoted_count,
+            "promoted_repos": [
+                row["custom_fields"]["inference"]["repo_full_name"]
+                for row in auto_promote_summary.promoted
+            ],
+        }
+    except Exception as e:  # noqa: BLE001
+        auto_promote_result = {"error": str(e)}
+
     return {
         "scope": "github",
         "dry_run": False,
         "watchlist_guard": watchlist_guard,
+        "auto_promote": auto_promote_result,
         "pushed_repos_sync": {
             "fetched": pushed_result.fetched,
             "inserted": pushed_result.inserted,

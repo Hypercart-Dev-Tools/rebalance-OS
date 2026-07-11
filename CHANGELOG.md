@@ -6,6 +6,11 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.56.0] - 2026-07-11
+
+### Added
+- **Commit-threshold auto-promotion of watched repos** ([GH-124](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/124)) — a watched-but-unconfirmed repo now auto-promotes into `project_registry` once the operator (or a known cloud-agent bot acting on their behalf) has authored `auto_promote_commit_threshold` commits to it (default 3, config `auto_promote_enabled`/`auto_promote_commit_threshold`). Reuses the existing `machine_owned` write contract from activity/calendar inference (never overwrites a curated row), reuses `pulse.py`'s existing author-identity filter against `github_commits` rather than inventing a second one, and wires into `_refresh_github()` immediately after the watchlist coverage guard — no new scheduling surface. Forks/starred repos with zero operator commits never promote; the commit-count gate is the fork filter, no separate detection needed. Every promotion surfaces non-silently: a `project_auto_promoted` badge on `/auth-log` and a "New repo added" banner on the pulse dashboard's repo-activity chart. Plan Codex-reviewed to approval via `relay-xyz` (3 rounds) before build. 20 new tests across detection, surfacing, and orchestrator wiring; full suite verified zero-regression against a pre-change baseline; `rebalance doctor` clean.
+
 ## [0.55.0] - 2026-07-06
 
 ### Added

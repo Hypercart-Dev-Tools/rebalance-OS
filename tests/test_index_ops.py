@@ -27,6 +27,71 @@ class IndexOpsTests(unittest.TestCase):
         self.assertNotIn("semantic_backfill(source=['github'])", result["steps"])
         self.assertNotIn("semantic_embed(source=['github'])", result["steps"])
 
+    def test_github_refresh_wires_auto_promote_after_watchlist_guard(self) -> None:
+        # GH-124: a real (non-dry-run) github refresh must call
+        # sync_commit_threshold_promotions after the watchlist guard and fold
+        # its summary into the result under "auto_promote".
+        from rebalance.ingest.project_inference import AutoPromoteSummary
+
+        fake_promoted_row = {
+            "name": "widget",
+            "custom_fields": {"inference": {"repo_full_name": "Acme/widget"}},
+        }
+        fake_summary = AutoPromoteSummary(
+            enabled=True, threshold=3, candidates_evaluated=2, promoted=[fake_promoted_row]
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with (
+                patch(
+                    "rebalance.ingest.index_ops._resolve_repos_for_refresh",
+                    return_value=[],
+                ),
+                patch(
+                    "rebalance.ingest.github_scan.sync_pushed_repos"
+                ) as mock_pushed,
+                patch("rebalance.ingest.github_scan.scan_github") as mock_scan,
+                patch(
+                    "rebalance.ingest.github_scan.filter_ignored_repo_activity",
+                    return_value=[],
+                ),
+                patch("rebalance.ingest.github_scan.upsert_github_activity"),
+                patch(
+                    "rebalance.ingest.github_knowledge.embed_github_documents"
+                ) as mock_embed,
+                patch(
+                    "rebalance.ingest.watchlist_guard.snapshot_and_detect",
+                    return_value={"ok": True},
+                ),
+                patch(
+                    "rebalance.ingest.project_inference.sync_commit_threshold_promotions",
+                    return_value=fake_summary,
+                ) as mock_auto_promote,
+            ):
+                mock_pushed.return_value.fetched = 0
+                mock_pushed.return_value.inserted = 0
+                mock_pushed.return_value.updated = 0
+                mock_pushed.return_value.unchanged = 0
+                mock_pushed.return_value.skipped_archived = 0
+                mock_pushed.return_value.error = None
+                mock_scan.return_value.login = "tester"
+                mock_scan.return_value.total_events = 0
+                mock_scan.return_value.repo_activity = []
+                mock_embed.return_value.total_docs = 0
+                mock_embed.return_value.embedded_docs = 0
+                mock_embed.return_value.skipped_unchanged = 0
+                mock_embed.return_value.elapsed_seconds = 0.0
+
+                result = _refresh_github(
+                    db_path, token="test-token", since_days=14, repos=[], dry_run=False
+                )
+
+        mock_auto_promote.assert_called_once_with(db_path)
+        self.assertEqual(result["auto_promote"]["promoted_count"], 1)
+        self.assertEqual(result["auto_promote"]["promoted_repos"], ["Acme/widget"])
+        self.assertEqual(result["auto_promote"]["candidates_evaluated"], 2)
+
     def test_full_refresh_dry_run_plans_dashboard_note_update(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)

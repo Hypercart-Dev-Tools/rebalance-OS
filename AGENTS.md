@@ -71,6 +71,8 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 
 **Repo coverage.** `refresh_index(scope=["github"])` no longer requires every monitored repo to be in the active project registry. It auto-merges `project_repos ∪ activity_repos` (from `github_activity`, last 14 days) and skips `github_ignored_repos`. Use `list_watched_repos()` for the canonical view. The `refresh_index` orchestration and the `pulse` renderer both consume the same set, so a repo only has to appear once for everything downstream to see it.
 
+**Auto-promotion (GH-124).** `refresh_index(scope=["github"])` also auto-promotes a watched-but-unconfirmed repo into `project_registry` (as a `machine_owned` row, never overwriting a curated one) once the operator has authored `auto_promote_commit_threshold` commits to it (default 3; config in `config.py::get_auto_promote_config()`). So `list_projects()` can grow entries you never explicitly confirmed — check `custom_fields.provenance == "auto_promoted"` before assuming a project was hand-curated. Each promotion is surfaced non-silently: a `project_auto_promoted` event on `/auth-log` and a "New repo added" banner on the pulse dashboard's repo-activity chart.
+
 ## Communication & Documentation
 
 - Precise, concise chat replies/updates: Short as possible, detailed enough.

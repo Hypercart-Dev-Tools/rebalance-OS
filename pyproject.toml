@@ -35,6 +35,9 @@ server = [
 gcp = [
   "google-cloud-secret-manager>=2.0.0",
 ]
+dev = [
+  "pytest>=8.0.0",
+]
 
 [project.scripts]
 rebalance = "rebalance.cli:app"

@@ -269,8 +269,19 @@ The single most important invariant for a new maintainer to preserve:
 ### Tables by Domain
 
 ```
-Project Registry (writer: registry.py)
-  project_registry          — canonical project metadata
+Project Registry (writer: registry.py::sync_db(), the single low-level upsert)
+  project_registry          — canonical project metadata. Rows are either curated
+                               (write_semantics="confirmation_gated", written only
+                               via the onboarding confirm_projects()/confirm_and_write()
+                               path — see lifecycle.py) or machine_owned (never
+                               clobbers a curated row of the same name). Two
+                               machine_owned producers currently call sync_db():
+                               project_inference.py's activity/calendar inference
+                               (generated_by "activity_inference_v1") and GH-124's
+                               commit-threshold auto-promotion (generated_by
+                               "commit_threshold_v1", wired into _refresh_github()
+                               in index_ops.py, immediately after the watchlist
+                               guard). _is_inference_owned() recognizes both markers.
 
 GitHub activity (writer: github_scan.py)
   github_activity            — per-repo event counts, keyed by (login, repo, scan_date)

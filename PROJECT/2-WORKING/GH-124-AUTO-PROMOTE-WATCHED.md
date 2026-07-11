@@ -29,7 +29,7 @@ phases: 3
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 2 shipped:** `log_project_auto_promoted()` + `project_auto_promoted` auth-log badge; `render_repo_pie()` "New repo added" top-item annotation backed by `fetch_recent_auto_promotion()`. 6 new tests green, full suite zero-regression, doctor clean, markup-level litmus confirmed (no browser available on this machine for a visual screenshot). | Phase 3 — wire into `_refresh_github` + docs. |
+| **Phase 3 shipped — feature complete.** Wired into `_refresh_github()`; `ARCHITECTURE.md`/`AGENTS.md`/`CHANGELOG.md` updated; `pytest` added as a real dev dependency (was silently missing, causing a real auth-log pollution incident this phase — see QA gate). **Confirmed live in production**, not just tests: the real hourly github-sync job auto-promoted 8 real repos mid-build; operator reviewed and kept them. | Cross-model QA pass (consult: Agy + Codex), then final PDDA sweep. |
 
 ## Table of contents
 
@@ -235,12 +235,30 @@ Work:
 - `CHANGELOG.md` entry.
 
 **Phase 3 QA gate:**
-- [ ] Full `pytest tests/` green.
-- [ ] `rebalance doctor` clean.
-- [ ] `utils/pdda/pdda.sh run` clean.
-- [ ] Live end-to-end litmus: a real watched repo crosses the threshold, gets promoted, shows up in
-  `list_projects()`, and both Phase 2 surfaces fire — on the live dashboard, not just tests.
-- **Verification summary:** record actual command output + litmus result here before closing.
+- [x] `_refresh_github` wiring test (`tests/test_index_ops.py::test_github_refresh_wires_auto_promote_after_watchlist_guard`).
+- [x] Full `pytest tests/` — 2 pre-existing unrelated failures (`test_pulse_self_repair.py`, a git-push
+  race, confirmed pre-existing via `git stash`), zero regressions from this work.
+- [x] `rebalance doctor` clean.
+- [x] `utils/pdda/pdda.sh run` clean.
+- [x] Live end-to-end litmus — **happened for real, not as a deliberate step.** Mid-build, this
+  machine's real `com.rebalance-os.github-sync` launchd job picked up the Phase 1-3 commits already
+  on `development` and executed the feature against the real production DB: **8 real repos
+  auto-promoted** (`facebook-for-woocommerce-plugin-fork`, `shipstation-fork`, `xyz-3-agents-swarm`,
+  `WP-Code-Check`, `pdda`, `woo-orders-analytics-plugin`, `deckme`, `KISS-woo-fast-search`),
+  `promoted_at: 2026-07-11T14:33:31Z`, correctly `machine_owned`, correctly non-clobbering curated
+  rows, correctly firing the `project_auto_promoted` auth-log event. Operator reviewed and chose to
+  keep them (real data, matches intended behavior). **Process learning, not a code bug:** any commit
+  to `development` is live within the hour via the existing hourly github-sync job — there is no
+  staging gate. Worth a follow-up decision (separate from this issue) on whether risky ingest-writing
+  features need a feature flag before landing on `development`, not just before `main`.
+- **Verification summary:** `pytest tests/` → 1350 passed, 10 skipped, 2 pre-existing failures
+  (unrelated). `rebalance doctor` → clean. `pdda.sh run` → clean. Unmet: none for this phase's own
+  scope; the live-promotion timing gap above is flagged as a process follow-up, not blocking.
+  **Also found and fixed during this phase:** test runs via plain `python -m unittest` (pytest wasn't
+  installed in this venv) bypass `tests/conftest.py`'s auth-log sandboxing fixture, writing real
+  entries into the real `temp/logs/auth_activity.jsonl`. Installed `pytest` (now the real, correct
+  verification tool per ROUTER.md) and cleaned up the 17 resulting test-pollution log lines (operator
+  reviewed and approved; kept the 8 real entries from the live promotion above).
 
 ## Open questions
 
