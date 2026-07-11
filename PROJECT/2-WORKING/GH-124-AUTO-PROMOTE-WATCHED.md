@@ -5,7 +5,7 @@ title: Auto-promote watched repos to active projects
 status: "Active (2-WORKING)"
 owner: Noel
 created: 2026-07-10
-updated: 2026-07-10
+updated: 2026-07-11
 doc_type: project
 goal: >
   A repo the operator has actually committed to should become a confirmed active project
@@ -29,7 +29,7 @@ phases: 3
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 3 shipped — feature complete.** Wired into `_refresh_github()`; `ARCHITECTURE.md`/`AGENTS.md`/`CHANGELOG.md` updated; `pytest` added as a real dev dependency (was silently missing, causing a real auth-log pollution incident this phase — see QA gate). **Confirmed live in production**, not just tests: the real hourly github-sync job auto-promoted 8 real repos mid-build; operator reviewed and kept them. | Cross-model QA pass (consult: Agy + Codex), then final PDDA sweep. |
+| **Cross-model QA pass complete.** Codex + agy independently converged on 2 real blockers (stale-row cleanup would delete auto-promoted rows; commit counting missed direct pushes) — both fixed, both regression-tested, both verified harmless against live production data. 3 new tests. | Final PDDA sweep, then commit + push. |
 
 ## Table of contents
 
@@ -40,6 +40,7 @@ phases: 3
 - [Phase 1 — Detection & write path](#phase-1--detection--write-path)
 - [Phase 2 — Non-silent surfacing](#phase-2--non-silent-surfacing)
 - [Phase 3 — Wiring, config, docs](#phase-3--wiring-config-docs)
+- [Cross-model QA pass (consult: Codex + agy)](#cross-model-qa-pass-consult-codex--agy)
 - [Open questions](#open-questions)
 
 ## Problem
@@ -259,6 +260,22 @@ Work:
   entries into the real `temp/logs/auth_activity.jsonl`. Installed `pytest` (now the real, correct
   verification tool per ROUTER.md) and cleaned up the 17 resulting test-pollution log lines (operator
   reviewed and approved; kept the 8 real entries from the live promotion above).
+
+## Cross-model QA pass (consult: Codex + agy)
+
+Ran after Phase 3 shipped, adversarial correctness pass over the full diff (`relay-system/2026-07-11/gh124-qa-100555/`). Both models independently converged on the same two blockers — high-confidence, cross-model agreement, not a single model's guess.
+
+**[Blocker] `_delete_stale_inferred_rows` would silently delete auto-promoted rows** — generalizing `_is_inference_owned()` to recognize both markers meant the *activity/calendar* inference pass's stale-row cleanup (`sync_inferred_project_registry` → `_delete_stale_inferred_rows`) treated a `commit_threshold_v1` row as its own stale candidate, since that row's name never appears in the activity pass's own generated-names set. **Fixed:** scoped the deletion check to `INFERENCE_GENERATED_BY` specifically (`_generated_by()` helper), not "any machine-owned marker." Verified real production data (the 8 live-promoted rows) was never actually hit by this — `sync_inferred_project_registry` is CLI-only, never scheduled, so the window never fired. Regression test: `test_auto_promoted_row_survives_activity_inference_sync`.
+
+**[Blocker] Commit counting only saw PR commits, missing direct pushes** — `_count_operator_commits` queried `github_commits`, which `github_knowledge.py` populates only from `GET /pulls/{n}/commits`. A repo the operator pushes to directly (no PR) would show 0 commits and never promote — silently defeating the feature for a common workflow. **Fixed:** primary signal is now `SUM(github_activity.commits)` for `login=github_login` (PushEvent-sourced, comprehensive, and inherently operator-scoped since the events feed is per-authenticated-user) + `github_commits` still covers cloud-agent bot commits (the only place bot authorship is recorded). Regression tests: `test_direct_push_commits_count_not_just_pr_commits`, `test_activity_commits_sum_across_scan_dates`, `test_operator_push_and_bot_commits_combine`.
+
+**[Should, both models] Name derivation could collide across repos** — `owner/widget` and `other/widget` both derived the bare name `widget`; `sync_db`'s `ON CONFLICT(name) DO UPDATE` would silently overwrite the first promotion's `repos_json`. **Fixed:** `_promoted_row_name()` now reuses the same `_choose_display_name()` title-casing standard inference uses (not a raw lowercase slug) and disambiguates against every name already in the registry (curated or machine-owned) plus every other repo promoted in the same run, falling back to an `Owner Widget` form on collision. This also changes the curated-collision case: a candidate that would have matched a curated name by coincidence now gets its own distinct row instead of being silently dropped — judged more correct, since a shared display name between unrelated repos was never actually "the same project." Regression tests: `test_name_collision_disambiguates_instead_of_overwriting`, `test_curated_row_never_touched` (updated to assert curated content survives, not that the candidate vanishes).
+
+**[Should, agy only, adjudicated as informational] Fail-soft swallows exceptions without a logger call** — true, but it's the exact same pattern `watchlist_guard`'s own try/except already uses (`{"error": str(e)}`, no `logger.exception`), so this isn't a regression introduced here — it's existing repo convention. Not fixed; noted for a possible separate follow-up covering both call sites, out of scope for GH-124.
+
+**[Nit, agy only, adjudicated as out of scope] Case-sensitive `IN` match for `CLOUD_AGENT_AUTHORS`** — real, but inherited from `pulse.py`'s pre-existing `_author_filter_sql`, not introduced by this work. Not fixed here.
+
+**Verification after fixes:** `pytest tests/` → 1355 passed, 10 skipped, same 2 pre-existing unrelated failures. `rebalance doctor` clean. `pdda.sh run` clean. Confirmed against real production data: the 8 already-live-promoted rows survived unaffected by these fixes (verified directly against `rebalance.db`).
 
 ## Open questions
 

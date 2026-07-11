@@ -70,13 +70,16 @@ COMMIT_THRESHOLD_GENERATED_BY = "commit_threshold_v1"
 _MACHINE_OWNED_MARKERS = {INFERENCE_GENERATED_BY, COMMIT_THRESHOLD_GENERATED_BY}
 
 
-def _is_inference_owned(custom_fields_json: str | None) -> bool:
+def _generated_by(custom_fields_json: str | None) -> str | None:
     try:
         custom_fields = json.loads(custom_fields_json) if custom_fields_json else {}
     except json.JSONDecodeError:
         custom_fields = {}
-    generated_by = ((custom_fields or {}).get("inference") or {}).get("generated_by")
-    return generated_by in _MACHINE_OWNED_MARKERS
+    return ((custom_fields or {}).get("inference") or {}).get("generated_by")
+
+
+def _is_inference_owned(custom_fields_json: str | None) -> bool:
+    return _generated_by(custom_fields_json) in _MACHINE_OWNED_MARKERS
 
 
 @dataclass
@@ -664,6 +667,16 @@ def _seed_to_project_row(seed: _ProjectSeed) -> dict[str, Any]:
 
 
 def _delete_stale_inferred_rows(database_path: Path, project_names: set[str]) -> int:
+    """Delete rows this specific pass (activity/calendar inference) owns and no
+    longer generates.
+
+    Bug found in cross-model QA (GH-124): scoping this to _is_inference_owned()
+    (any machine_owned marker) instead of INFERENCE_GENERATED_BY specifically
+    would delete GH-124 auto-promoted rows on every inference sync, since
+    project_names here only ever contains this pass's own generated names —
+    an auto-promoted row is never "stale" from this pass's perspective, it's
+    simply not this pass's row to judge.
+    """
     with db_connection(database_path, ensure_project_schema) as conn:
         rows = conn.execute(
             "SELECT name, custom_fields_json FROM project_registry"
@@ -671,7 +684,8 @@ def _delete_stale_inferred_rows(database_path: Path, project_names: set[str]) ->
         stale_names: list[str] = [
             row["name"]
             for row in rows
-            if _is_inference_owned(row["custom_fields_json"]) and row["name"] not in project_names
+            if _generated_by(row["custom_fields_json"]) == INFERENCE_GENERATED_BY
+            and row["name"] not in project_names
         ]
 
         if stale_names:
@@ -777,37 +791,86 @@ def sync_inferred_project_registry(
 
 
 def _count_operator_commits(conn: Any, repo_full_name: str, github_login: str) -> int:
-    """Count distinct full-SHA commits authored by the operator (or a known
-    cloud-agent bot acting on their behalf) in ``repo_full_name``.
+    """Count the operator's (or a known cloud-agent bot's) commits to
+    ``repo_full_name``, combining two signals that each cover a gap the other
+    has:
 
-    Reuses ``pulse._author_filter_sql`` against ``github_commits.author_login``
-    rather than a raw git-email match — this is GitHub's own resolved identity
-    per commit, populated for every synced repo regardless of whether it has a
-    local clone. Cumulative all-time count, not a rolling window: this answers
-    "has the operator meaningfully started this repo," not "recently active."
+    - ``github_activity.commits`` (summed across every ``scan_date`` row for
+      ``login=github_login``) — sourced from GitHub's PushEvent feed, so it
+      covers direct-to-branch pushes with no PR. It is inherently
+      operator-scoped (the events feed is `/users/{login}/events`), so it can
+      never see a bot's commits.
+    - ``github_commits`` (distinct SHA, ``author_login`` matched via
+      ``pulse._author_filter_sql``) — populated only from PR commit listings,
+      so it misses direct pushes, but it is the only table carrying a
+      per-commit author, which is what lets a known cloud-agent bot count.
+
+    Found and fixed in cross-model QA (GH-124): the original PR-commits-only
+    version silently undercounted (often to zero) any repo the operator
+    pushes to directly without opening a PR — the common case.
+
+    Each ``scan_date`` row is preserved across rescans (only *today's* row is
+    overwritten — see the "GitHub activity — window refetch" sync semantics
+    in ARCHITECTURE.md), so summing across all of them is a genuine cumulative
+    count since Rebalance started watching the repo, not a rolling window.
     """
     from rebalance.ingest.pulse import CLOUD_AGENT_AUTHORS, _author_filter_sql
 
-    author_filter = _author_filter_sql("author_login")
-    row = conn.execute(
+    activity_row = conn.execute(
+        "SELECT COALESCE(SUM(commits), 0) AS n FROM github_activity "
+        "WHERE repo_full_name = ? AND login = ?",
+        (repo_full_name, github_login),
+    ).fetchone()
+    operator_push_count = int(activity_row["n"] or 0) if activity_row else 0
+
+    bot_placeholders = ", ".join("?" for _ in CLOUD_AGENT_AUTHORS)
+    bot_row = conn.execute(
         f"""
         SELECT COUNT(DISTINCT sha) AS n
         FROM github_commits
-        WHERE repo_full_name = ? AND {author_filter}
+        WHERE repo_full_name = ? AND author_login IN ({bot_placeholders})
         """,
-        (repo_full_name, github_login, *CLOUD_AGENT_AUTHORS),
+        (repo_full_name, *CLOUD_AGENT_AUTHORS),
     ).fetchone()
-    return int(row["n"] or 0) if row else 0
+    bot_commit_count = int(bot_row["n"] or 0) if bot_row else 0
+
+    return operator_push_count + bot_commit_count
 
 
-def _repo_to_promoted_row(repo_full_name: str, *, commit_count: int, threshold: int) -> dict[str, Any]:
+def _promoted_row_name(repo_full_name: str, *, taken_names: set[str]) -> str:
+    """Derive a display name for an auto-promoted row, disambiguated against
+    every name already in use (existing registry rows in this DB, plus any
+    other repo already promoted in this same run).
+
+    Found in cross-model QA (GH-124): a bare repo-slug name (``owner/widget``
+    -> ``widget``) collides silently when two different repos share a slug —
+    ``sync_db`` upserts by name, so the second promotion would overwrite the
+    first's ``repos_json``. Falls back to an ``Owner Widget`` form on
+    collision; reuses ``_choose_display_name`` for the base form so an
+    auto-promoted name matches the same formatting standard inference uses
+    (title-cased, not a raw lowercase slug).
+    """
+    base = _choose_display_name(repo_full_name)
+    if base not in taken_names:
+        return base
+    owner = repo_full_name.split("/", 1)[0]
+    disambiguated = f"{_repo_slug_to_title(owner)} {base}"
+    if disambiguated not in taken_names:
+        return disambiguated
+    # Extremely unlikely third collision: fall back to the exact repo slug.
+    return repo_full_name
+
+
+def _repo_to_promoted_row(
+    repo_full_name: str, *, commit_count: int, threshold: int, taken_names: set[str]
+) -> dict[str, Any]:
     """Build a machine-owned project_registry row for one auto-promoted repo.
 
     Shape mirrors ``_seed_to_project_row`` (same table, same optional fields
     left ``None`` for the operator to fill in later) but with a distinct
     provenance marker so an auto-promoted row is self-describing.
     """
-    name = repo_full_name.split("/", 1)[-1] or repo_full_name
+    name = _promoted_row_name(repo_full_name, taken_names=taken_names)
     return {
         "name": name,
         "status": "active",
@@ -878,14 +941,22 @@ def sync_commit_threshold_promotions(database_path: Path) -> AutoPromoteSummary:
 
     candidates = get_watched_repos(database_path)["auto_discovered"]
 
+    with db_connection(database_path, ensure_project_schema) as conn:
+        taken_names = {
+            row["name"] for row in conn.execute("SELECT name FROM project_registry").fetchall()
+        }
+
     promoted_rows: list[dict[str, Any]] = []
     with db_connection(database_path, ensure_github_schema) as conn:
         for repo_full_name in candidates:
             commit_count = _count_operator_commits(conn, repo_full_name, github_login)
             if commit_count >= threshold:
-                promoted_rows.append(
-                    _repo_to_promoted_row(repo_full_name, commit_count=commit_count, threshold=threshold)
+                row = _repo_to_promoted_row(
+                    repo_full_name, commit_count=commit_count, threshold=threshold,
+                    taken_names=taken_names,
                 )
+                taken_names.add(row["name"])
+                promoted_rows.append(row)
 
     writable, skipped_curated = _partition_writable_rows(database_path, promoted_rows)
     if writable:
