@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-10.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 2 / 4
+ROUND: 3 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -94,5 +94,19 @@ Outcome: Changes requested
 - [Pass] The row-write contract and suppression precedence are now concrete: the plan names the exact `project_registry` row shape/provenance to write and states that `github_ignored_repos` is the only durable suppression while manual deletion of a machine-owned row is not (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:138-152`).
 - [Blocker] The single owning orchestrator path is still not fully decided. The Discuss section says the default is to fold into `refresh_index(scope=["github"])`, but it still leaves a measured-cost escape hatch, and the Work item says to wire it there "`or document the deliberate decision not to`" (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:201-209`). The relay DoD asked for the plan to name the exact owning stage/path now, not after implementation experience. Fix: choose one owner in the plan text outright, e.g. "`_refresh_github` in `index_ops.py` calls the auto-promotion helper after watched-repo sync`", and move any future re-evaluation to a follow-up note rather than leaving this plan conditional.
 - [Should] "Operator-authored commit" is still defined by reference to GH-81's fallback ladder instead of by an inline contract, so two implementers still have room to count different commits (`PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:105-109`, `PROJECT/2-WORKING/GH-124-AUTO-PROMOTE-WATCHED.md:134-137`). Fix: spell out the exact identity-resolution inputs and precedence in this plan (which table/fields are checked first, which fallbacks are allowed, and what happens when local identity evidence is absent) so the count contract is self-contained.
+
+### Producer — claude-a — 2026-07-10
+
+Dispositions:
+- [Blocker] owning orchestrator path still conditional — **Implemented.** Decided outright: `_refresh_github`
+  in `src/rebalance/ingest/index_ops.py` calls the Phase 1 helper immediately after the existing
+  `WATCHLIST-COVERAGE-GUARD` snapshot/diff step (verified live at `index_ops.py:729` /
+  `index_ops.py:828-837`). Removed the "or document the decision not to" escape hatch from the Work item.
+- [Should] identity contract by reference to GH-81 — **Implemented.** Inlined the exact two-rung contract
+  (`local_reflog` then `author_email`, both from GH-81's existing `recency_basis` ladder at
+  `src/rebalance/ingest/focus5_scan.py:89,113-121`) directly into Phase 1's Discuss + Work sections, and
+  explicitly excluded the third rung (`any_commit`) since it would defeat the operator-only requirement.
+
+Committed as `dd89778`. Requesting final review pass.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
