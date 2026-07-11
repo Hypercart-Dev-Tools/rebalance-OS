@@ -103,10 +103,17 @@ Log Alert on the web app, and (2) a top item on the repo-activity donut ("Circul
 ## Phase 1 — Detection & write path
 
 **Discuss:**
-- Identity match must not repeat GH-81's email-filtering bug. Resolve "operator's own commits" the
-  same way GH-81 resolved ranking: prefer local-commit-derived signal (`my_local_commit_ts` /
-  `recency_basis` fallback ladder) over a strict `github_commits.author_email == github_login` join,
-  or at minimum fall back gracefully across recorded identities instead of hard-filtering on one.
+- **Inline identity-resolution contract** (self-contained — not a pointer to GH-81). A commit counts
+  toward the threshold only at these two rungs of GH-81's existing `recency_basis` ladder
+  (`src/rebalance/ingest/focus5_scan.py:89`, `:113-121`):
+  1. `local_reflog` — the commit appears in this device's local HEAD reflog (the operator authored it
+     on a machine Rebalance has visibility into).
+  2. `author_email` — the commit's author email matches a known operator email (from
+     `github_login`/config), when no local-reflog evidence exists (a different device/email).
+  GH-81's third rung, `any_commit` (any commit at all, used there purely for *ranking* fallback), is
+  **explicitly excluded here** — using it would defeat the entire "operator's own commits" requirement
+  and let any contributor's commits promote a repo. A commit with `recency_basis in ("any_commit",
+  "none")` never counts. This makes the contract mechanical without re-deriving GH-81's reasoning.
 - Commit threshold and default on/off are config, not a hardcoded constant, following the
   `git_pulse_clio_enabled` naming precedent in `src/rebalance/ingest/config.py`.
 - Out of scope for this phase: the alert/dashboard surfacing (Phase 2) and scheduling wiring
@@ -131,10 +138,8 @@ Work:
   repo's history) authored by the operator identity, **cumulative all-time** for that repo, not a
   rolling window — this is "has the operator meaningfully started this repo," not a recency signal
   (recency is `list_watched_repos`' job already).
-- **Identity resolution:** per the GH-81 caution above, do not hard-filter on
-  `github_commits.author_email == github_login`. Resolve local-commit authorship the same
-  fallback-ladder way GH-81 resolved ranking identity, so a commit pushed from a second device/email
-  still counts.
+- **Identity resolution:** apply the two-rung contract above (`local_reflog` then `author_email`;
+  `any_commit`/`none` never count) — no hard `github_commits.author_email == github_login` filter.
 - **Row shape / provenance contract:** reuse `_seed_to_project_row`'s exact shape
   (`src/rebalance/ingest/project_inference.py:610-655`) — `status="active"`, `repos=[repo_full_name]`,
   `tags=["auto-promoted", "source:github"]`, `custom_fields.provenance="auto_promoted"`,
@@ -198,15 +203,16 @@ Work:
 ## Phase 3 — Wiring, config, docs
 
 **Discuss:**
-- Decide whether this rides the existing `refresh_index(scope=["github"])` path (consistent with
-  `WATCHLIST-COVERAGE-GUARD` running at the end of `_refresh_github`) or stays a separate opt-in pass
-  like `infer_project_registry` is today. Default recommendation: fold into the github scope so it
-  runs on the same cadence as `daily_sync.sh` with zero new scheduling surface — revisit only if
-  measured cost says otherwise.
+- **Decided:** the owning path is `_refresh_github` in `src/rebalance/ingest/index_ops.py` — it calls
+  the Phase 1 auto-promotion helper immediately after the existing `WATCHLIST-COVERAGE-GUARD`
+  snapshot/diff step, so it rides `refresh_index(scope=["github"])` and `daily_sync.sh`'s existing
+  cadence with zero new scheduling surface. Not left open for later re-evaluation; if operating
+  experience later shows this cadence is wrong, that is a new issue against the shipped behavior, not
+  a re-open of this plan.
 
 Work:
-- Wire Phase 1's detection+write into `refresh_index(scope=["github"])` (or document the deliberate
-  decision not to, with why, if the Discuss note above lands differently after Phase 1/2 experience).
+- Wire Phase 1's detection+write into `_refresh_github` (`index_ops.py`), immediately after the
+  watchlist-guard step, per the Discuss decision above.
 - Update `ARCHITECTURE.md` (new config keys, the extended `machine_owned` trigger).
 - Update `AGENTS.md` if a new MCP-visible behavior needs documenting for future agents.
 - `CHANGELOG.md` entry.
