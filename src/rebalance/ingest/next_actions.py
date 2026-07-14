@@ -528,6 +528,7 @@ def sleuth_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
 
 def email_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
+    dropped = 0
     for m in bundle.email_activity:
         subject = (m.get("subject") or "").strip()
         sender = (m.get("from_name") or m.get("from_address") or "").strip()
@@ -539,6 +540,7 @@ def email_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
         # unknown sender" to the top of the list. That is the bare verdict the
         # Attested pillar forbids. A row needs a subject OR a sender to earn a rank.
         if not subject and not sender:
+            dropped += 1
             continue
         out.append({
             "rank_key": (1, m.get("received_at") or ""),
@@ -547,6 +549,16 @@ def email_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
             "evidence": [f"from {sender or 'unknown sender'}", m.get("received_at") or ""],
             "why": "email received in the day window",
         })
+    if dropped:
+        # NON-SILENT: a dropped row is an INGEST defect, not noise to swallow. Source
+        # freshness reports "ok" whenever rows exist, so a collector writing header-less
+        # rows would otherwise look healthy while contributing nothing. Say it out loud.
+        logger.warning(
+            "email_candidates: dropped %d contentless email row(s) (no sender, no subject) "
+            "— the Gmail collector is landing rows without headers; ranking is starved, "
+            "not empty",
+            dropped,
+        )
     return out
 
 

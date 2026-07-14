@@ -48,7 +48,7 @@ phases: 5
 
 | What was just completed | What's next |
 |---|---|
-| **Phases 1–3 shipped and locally verified 2026-07-14.** All six sources now reach one bundle → one ranked verdict → read by every surface. `ask()` exposes it as a first-class `hiqs` field read from the persisted cache ([D1](#d1--phase-2-attaches-hiqs-as-a-first-class-field-not-a-sidecar-decided-2026-07-14)/[D3-read](#phase-2--one-ranked-verdict)), so `/whats-next` and `ask()` are structurally incapable of drifting. The dispatch chain is collapsed into a `candidates=` registry walk — **Principle 3 discharged**, pinned by a fake-collector test ([D3](#d3--the-dispatch-chain-gets-collapsed-not-grown)). Built in Claude Code Cloud (no DB/credentials); **reviewed, corrected, and run against real signal data locally** — which surfaced an upstream Gmail-ingest defect and a signal-quality hole, both now fixed//recorded (see [Local verification](#local-verification-against-real-signal-data-2026-07-14)). `pytest` 1362 passed, 2 pre-existing failures unchanged. | **Phase 4 — HiQS surface & brand.** Also: open a follow-up issue for the [Gmail-ingest header defect](#local-verification-against-real-signal-data-2026-07-14) (119 of 124 rows are contentless shells — out of scope here: GH-125 *consumes* email, it does not ingest it). |
+| **Phases 1–3 shipped and locally verified 2026-07-14.** All six sources now reach one bundle → one ranked verdict → read by every surface. `ask()` exposes it as a first-class `hiqs` field read from the persisted cache ([D1](#d1--phase-2-attaches-hiqs-as-a-first-class-field-not-a-sidecar-decided-2026-07-14)), so no surface computes its own ranking and `/whats-next` and `ask()` cannot show *different* rankings ([precise invariant](#phase-2--one-ranked-verdict) — tightened after QA; "single writer" was an overclaim). The dispatch chain is collapsed into a `candidates=` registry walk — **Principle 3 discharged**, pinned by a fake-collector test ([D3](#d3--the-dispatch-chain-gets-collapsed-not-grown)). Built in Claude Code Cloud (no DB/credentials); **reviewed, corrected, and run against real signal data locally** — which surfaced an upstream Gmail-ingest defect and a signal-quality hole, both now fixed//recorded (see [Local verification](#local-verification-against-real-signal-data-2026-07-14)). `pytest` 1362 passed, 2 pre-existing failures unchanged. | **Phase 4 — HiQS surface & brand.** Also: open a follow-up issue for the [Gmail-ingest header defect](#local-verification-against-real-signal-data-2026-07-14) (119 of 124 rows are contentless shells — out of scope here: GH-125 *consumes* email, it does not ingest it). |
 
 ---
 
@@ -94,7 +94,7 @@ phases: 5
   Gmail ───┤   (OperatorBundle,      (Gemini, unchanged)         │
   Figma ───┘    +2 arms)                                         ├──▶ /whats-next
                                                                  └──▶ ask()
-                                                    one verdict — cannot drift
+                                        one ranking — no surface computes its own
 ```
 
 ---
@@ -351,11 +351,30 @@ not a HiQS defect. The figma arm is correct-and-idle as designed (0 rows, no all
       in this environment; the deterministic path is proven).
 - [ ] `rebalance doctor` clean — **PENDING** (deferred to the Phase 4 close).
 
-**Verification summary (2026-07-14).** The drift is now structurally impossible, not merely fixed:
-there is one writer (the refresh path) and one cache, and every reader reads it. The `team=` parameter
-is gone from both `ask()` and the MCP tool — the ranking is now **always** returned, not opt-in.
-A stale `ask(team=True)` reference in the `get_next_actions` MCP docstring was caught at local review
-and corrected (it would have instructed an agent to pass a removed kwarg).
+**Verification summary (2026-07-14).** The `team=` parameter is gone from both `ask()` and the MCP
+tool — the ranking is now **always** returned, not opt-in. A stale `ask(team=True)` reference in the
+`get_next_actions` MCP docstring was caught at local review and corrected (it would have instructed an
+agent to pass a removed kwarg).
+
+**Precise invariant — tightened after agy's QA round; the first draft overclaimed.** The drift-proofing
+claim is **not** "there is a single writer." agy correctly found **two** writers — the `/whats-next`
+route ([web.py:1470](../../src/rebalance/web.py#L1470)) and the scheduled `refresh_index()`
+([index_ops.py:1420](../../src/rebalance/ingest/index_ops.py#L1420)) — so any "single writer" phrasing
+is simply false. Two writers into one cache is harmless. The invariant that actually buys the
+drift-proofing is:
+
+> **No surface computes its own ranking.** There is exactly ONE ranking in the system; every surface
+> reads it.
+
+That is what makes two surfaces unable to show *different* rankings. The old failure mode — each
+surface deriving its own answer from its own subset of sources — is structurally gone.
+
+What remains, also found by agy, is a **cold-start absence — not a disagreement.** On a never-ranked DB,
+`ask()` returns an **empty** ranking while `/whats-next` **bootstraps** the cache by computing one
+(`if refresh or not meta.get("row_count")`). This asymmetry is deliberate and is **kept**: `ask()` must
+never trigger a network synthesis ([D3](#d3--the-dispatch-chain-gets-collapsed-not-grown)). An empty
+answer and a computed answer are not two rankings — they are one ranking and no ranking. Once the first
+rank persists, every surface is reading the same rows.
 
 ---
 
@@ -549,13 +568,30 @@ live `/whats-next` render, and a real Gemini ranking call. Deferred to the Phase
 
 ---
 
+## QA review — agy, 1 round (2026-07-14)
+
+Driven headless via `relay-xyz` (Path A, `--review-once`). Thread:
+`.xyz/relay-system/2026-07-14/gh-125-hiqs-unified-signal-pipeline-qa-review.md`.
+**Verdict: PASS**, with four `[Should]` findings. All four were acted on — two were hits on
+overclaiming, which is exactly what the review was asked to hunt:
+
+| # | agy's finding | Disposition |
+|---|---|---|
+| 1 | **"Single writer" is false** — `refresh_index()` also persists the ranked cache, not just the `/whats-next` route. | **ACCEPTED — claim corrected, code unchanged.** Two writers into one cache is harmless; the invariant that buys drift-proofing is *"no surface computes its own ranking"*, not *"one writer"*. Rewritten in [Phase 2](#phase-2--one-ranked-verdict) and in `CHANGELOG.md`. |
+| 2 | **Cold-start divergence** — on a never-ranked DB `ask()` returns empty while `/whats-next` recomputes and persists. | **ACCEPTED — documented, behaviour kept.** It is an *absence*, not a disagreement: one ranking and no ranking, never two rankings. `ask()` must never trigger a network synthesis ([D3](#d3--the-dispatch-chain-gets-collapsed-not-grown)), so the asymmetry stays. The "structurally incapable of drifting" phrasing is retired. |
+| 3 | **The shell-drop is silent** — freshness reports `ok` whenever rows exist, so a collector writing header-less rows looks healthy while contributing nothing. | **ACCEPTED — code changed.** `email_candidates()` now emits a `logger.warning` naming the dropped count and the cause. A dropped row is an ingest defect, not noise to swallow. This is the review's most valuable finding. |
+| 4 | **Email at tier 1 (above open GitHub items) may be notification spam.** | **ACCEPTED as an OPEN QUESTION — deliberately not tuned now.** See follow-up 3. |
+
+---
+
 ## Follow-ups this issue creates (do not lose)
 
 | # | What | Why it is not done here |
 |---|---|---|
-| 1 | **Gmail ingest writes contentless rows** — 119/124 rows have no sender/subject/timestamp. | GH-125 consumes email; it does not ingest it. Needs its own issue. **This is what currently starves the email arm.** |
+| 1 | **Gmail ingest writes contentless rows** — 119/124 rows have no sender/subject/timestamp. | GH-125 consumes email; it does not ingest it. Needs its own issue. **This is what currently starves the email arm**, and the new `logger.warning` (QA finding 3) is what will make it audible. |
 | 2 | **`audit_modules` doc debt** — 23 modules missing from ARCHITECTURE.md, 13 from CHANGELOG.md. | Pre-existing on `development`, unrelated to signal unification. Silencing it here would be laundering. |
-| 3 | **Net-LOC ≤ 0 was missed (+519).** | Recorded as a failed criterion above, not restated. Worth a retro on whether the proxy was the right one. |
+| 3 | **Is email the right tier-1 signal?** (agy QA finding 4.) Email currently outranks your own open GitHub items. That may be right (an inbound ask from a human *is* usually more urgent than your own backlog) or it may fill the top of the list with newsletters. | **Cannot be answered yet, and tuning it now would be speculation.** The arm is *starved* — 5 usable rows, newest 7 weeks old — so there is no live email volume to tune a rank tier against. **Revisit trigger: once follow-up 1 lands and real mail flows, look at the top of `/whats-next` for a week.** If newsletters dominate, the fix is a relevance filter on the arm (or a tier demotion), not a re-ranker. |
+| 4 | **Net-LOC ≤ 0 was missed (+519).** | Recorded as a failed criterion above, not restated. Worth a retro on whether the proxy was the right one. |
 
 ---
 
