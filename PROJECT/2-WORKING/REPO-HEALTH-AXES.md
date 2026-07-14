@@ -18,9 +18,11 @@ phases: 3
 
 # PROJECT HEALTH AXES — CONCRETE SPEC
 
-| Most recently completed phase | What's next |
+## Status
+
+| What was just completed | What's next |
 |---|---|
-| N/A - Project initialized | Phase 1: Spec, Schema, and Collector |
+| Project initialized 2026-07-07 (spec drafted; no phase fired). Not yet issue-tracked — `gh_issue: TBA`. | **Open the GitHub issue** to satisfy the issue-first SOP, then Phase 1 (Spec, Schema, and Collector). Sequencing question to settle first: a per-repo health score is a candidate *signal*, so it should register against the `candidates=` collector provider built in [GH-125 HiQS](GH-125-HIQS-PIPELINE.md) Phase 3 rather than opening a parallel path into the ranking. |
 
 ## Table of Contents
 - [Purpose](#purpose)

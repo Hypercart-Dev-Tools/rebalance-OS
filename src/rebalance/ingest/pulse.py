@@ -330,10 +330,14 @@ def _query_day_activity(
 
     # Email — Gmail-synced messages received in the window. Mirrors the sleuth
     # block: SQL prefilter on the UTC floor, then a tz-aware [start, end) refine.
+    # ponytail: `snippet` (message body preview) is deliberately NOT selected. The
+    # candidate arm ranks on subject + sender, so the body would be dead weight —
+    # and it is the one field here that carries message CONTENT, which the ranker
+    # forwards to a cloud model. Not collected until a consumer actually needs it.
     if _table_exists(conn, "email_messages"):
         rows = conn.execute(
             """
-            SELECT message_id, from_name, from_address, subject, snippet, received_at
+            SELECT message_id, from_name, from_address, subject, received_at
             FROM email_messages
             WHERE received_at >= ?
             ORDER BY received_at DESC
@@ -347,7 +351,6 @@ def _query_day_activity(
                     "from_name": r["from_name"] or "",
                     "from_address": r["from_address"] or "",
                     "subject": (r["subject"] or "").replace("\r", " ").strip()[:200],
-                    "snippet": (r["snippet"] or "").replace("\r", " ").strip()[:200],
                     "received_at": r["received_at"],
                 })
 

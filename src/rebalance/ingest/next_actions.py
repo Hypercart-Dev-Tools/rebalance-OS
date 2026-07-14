@@ -529,12 +529,22 @@ def sleuth_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
 def email_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for m in bundle.email_activity:
-        sender = m.get("from_name") or m.get("from_address") or "unknown sender"
+        subject = (m.get("subject") or "").strip()
+        sender = (m.get("from_name") or m.get("from_address") or "").strip()
+        # Signal-quality guard: drop CONTENTLESS rows. The Gmail collector can land
+        # a message_id + labels while failing to populate the headers — on the live
+        # DB (2026-07-14) 119 of 124 rows are exactly that: no sender, no subject.
+        # Such a row has nothing to attest with, and email ranks at tier 1 — ABOVE
+        # your open GitHub items — so admitting it would push "(no subject) from
+        # unknown sender" to the top of the list. That is the bare verdict the
+        # Attested pillar forbids. A row needs a subject OR a sender to earn a rank.
+        if not subject and not sender:
+            continue
         out.append({
             "rank_key": (1, m.get("received_at") or ""),
-            "title": m.get("subject") or "(no subject)",
+            "title": subject or "(no subject)",
             "source": "email",
-            "evidence": [f"from {sender}", m.get("received_at") or ""],
+            "evidence": [f"from {sender or 'unknown sender'}", m.get("received_at") or ""],
             "why": "email received in the day window",
         })
     return out
