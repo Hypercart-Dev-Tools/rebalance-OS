@@ -30,7 +30,7 @@ phases: 3
 
 | What was just completed | What's next |
 |---|---|
-| Phases 1–3 implemented in a sandbox with NO real signal data / credentials. Verified with `pytest` against seeded temporary SQLite DBs. | Operator local verification (see PENDING LOCAL VERIFICATION). |
+| Phases 1–3 shipped. Verified with `pytest` (1356 passed, 3 pre-existing failures unchanged) + `audit_modules` green, all against seeded temporary SQLite DBs in a sandbox with NO real signal data / credentials. | Operator local verification (see PENDING LOCAL VERIFICATION), then move doc to 3-COMPLETED. |
 
 ## North star (LOCKED — do not relitigate)
 
@@ -164,6 +164,17 @@ backfill + CHANGELOG entry + disclosed baseline refresh. `rebalance doctor` and 
   re-baseline is disclosed in the CHANGELOG Maintenance note, not silently hidden;
   documenting those unrelated modules is out of scope for this issue.
 
+## Governance notes
+
+- `PDDA_MODE=full PDDA_ISSUE_SYNC_SOURCE=cache bash utils/pdda/pdda.sh run`: the
+  GH-125 doc passes every check (status table, roadmap coverage via the new
+  ROADMAP.md ledger pointer, changelog, staleness). The run still reports two
+  errors for `PROJECT/2-WORKING/REPO-HEALTH-AXES.md` (missing status table + no
+  ROADMAP pointer) — a PRE-EXISTING failure on `development`, unrelated to GH-125
+  and left untouched (fixing an unrelated working doc is out of scope).
+- `pytest issue-doc-sync` reports issue #125 state "unavailable" because `gh` is
+  offline in the sandbox — expected, not a failure.
+
 ## PENDING LOCAL VERIFICATION (gates the sandbox cannot run)
 
 The sandbox has NO populated DB, NO OAuth/PAT/Gemini/Sleuth/Figma credentials, and
@@ -178,4 +189,14 @@ above stay UNCHECKED:
 
 ## Net LOC
 
-Reported in the PR body via `git diff --stat` against the branch point.
+`git diff --stat development HEAD`: **+801 / −282 = +519 net** (source-only, `src/`
+minus tests: **+175 net**). This is POSITIVE.
+
+**One-line justification (not hidden):** the anticipated LOC payback did not
+materialize — the two expected deletions were, on inspection, unsafe: the Zapier
+stubs are the live dispatch targets of a shipped, tested receiver (kept, not
+deleted), and `compute_deep_work_signals()` is retained for its `doctor` line
+(killed as a ranker arm, not removed) — so the genuinely-additive six-source
+wiring (email/figma SELECTs, the `hiqs` field + gatherer + prompt section, the
+`candidates=` seam) and the LOC-neutral dispatch→registry-walk refactor (inline
+loops re-homed as documented provider functions) are not offset by deletion.
