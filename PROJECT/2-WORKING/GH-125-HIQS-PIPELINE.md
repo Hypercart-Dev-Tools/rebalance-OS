@@ -97,12 +97,17 @@ Gmail and Figma reached NO synthesis at all.
 
 ### QA gate — Phase 2
 
-- [ ] `ask()` does NOT recompute the ranking on the default path (pytest)
-- [ ] `ask()` on a never-ranked / empty DB degrades to an empty ranking, no raise (pytest)
-- [ ] `QueryResult.hiqs` carries the persisted ranked verdict (pytest)
+- [x] `ask()` does NOT recompute the ranking on the default path (pytest)
+- [x] `ask()` on a never-ranked / empty DB degrades to an empty ranking, no raise (pytest)
+- [x] `QueryResult.hiqs` carries the persisted ranked verdict (pytest)
 - [ ] Live `ask()` renders the HiQS section with real Gemini synthesis — PENDING LOCAL
 
-**Verification summary:** _to be filled when Phase 2 lands._
+**Verification summary:** ran `pytest tests/test_querier.py tests/test_next_actions_parity.py
+tests/test_retrieval_contracts.py tests/test_mcp_probe.py` → 52 passed. The querier
+byte-identical pin was updated (EXPECTED_KEYS now includes `hiqs`); the sidecar test class
+was rewritten to the first-class-field contract; the parity test was rewritten to the
+structural shared-cache parity (route writes, ask reads). `NEXT_ACTIONS_ATTR` deleted from
+querier + retrieval. Live Gemini render is PENDING LOCAL (no key).
 
 ## Phase 3 — Collapse the dispatch chain (the Principle 3 fix — headline)
 
