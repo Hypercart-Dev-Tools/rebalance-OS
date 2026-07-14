@@ -588,10 +588,37 @@ overclaiming, which is exactly what the review was asked to hunt:
 
 | # | What | Why it is not done here |
 |---|---|---|
-| 1 | **Gmail ingest writes contentless rows** — 119/124 rows have no sender/subject/timestamp. | GH-125 consumes email; it does not ingest it. Needs its own issue. **This is what currently starves the email arm**, and the new `logger.warning` (QA finding 3) is what will make it audible. |
+| 1 | ~~**Gmail ingest writes contentless rows**~~ — **RESOLVED 2026-07-14. RCA below.** | Fixed at the write boundary + the 119 shells purged from the live DB. No issue needed. |
 | 2 | **`audit_modules` doc debt** — 23 modules missing from ARCHITECTURE.md, 13 from CHANGELOG.md. | Pre-existing on `development`, unrelated to signal unification. Silencing it here would be laundering. |
 | 3 | **Is email the right tier-1 signal?** (agy QA finding 4.) Email currently outranks your own open GitHub items. That may be right (an inbound ask from a human *is* usually more urgent than your own backlog) or it may fill the top of the list with newsletters. | **Cannot be answered yet, and tuning it now would be speculation.** The arm is *starved* — 5 usable rows, newest 7 weeks old — so there is no live email volume to tune a rank tier against. **Revisit trigger: once follow-up 1 lands and real mail flows, look at the top of `/whats-next` for a week.** If newsletters dominate, the fix is a relevance filter on the arm (or a tier demotion), not a re-ranker. |
 | 4 | **Net-LOC ≤ 0 was missed (+519).** | Recorded as a failed criterion above, not restated. Worth a retro on whether the proxy was the right one. |
+| 5 | **⚠️ NEW — source health measures row COUNT, not row QUALITY.** This is the generalizable defect the email RCA exposed, and it is **not** email-specific: freshness reports a source `ok` whenever rows exist. A collector writing *structurally valid but semantically empty* rows therefore looks perfectly healthy forever. That is exactly how 119 dead rows — 96% of a table — hid for three weeks. **Deserves its own GH issue.** | Applies to all eight sources, not to signal unification. Fixing it means teaching the freshness contract (the shipped GH-101 Ph1–2 work) to assert *content*, not just presence. Out of scope here. |
+
+---
+
+## RCA — the email shell corruption (closed 2026-07-14)
+
+**The Gmail OAuth collector was never at fault.** `sync_gmail()` calls the API with `format="metadata"`
+and the correct `metadataHeaders`, parses the `Date` header, and falls back to `internalDate`. It is
+correct and always was.
+
+| | |
+|---|---|
+| **What** | 119 of 124 `email_messages` rows (96% of the table) carried a `message_id`, a `snippet` and `labels_json` — but no sender, no subject, no `received_at`. 118 of them were also embedded into `semantic_documents`, polluting semantic search. |
+| **When** | A single bulk push on **2026-06-25**. All 119 rows share one identical `synced_at`, which is what proves it was one call and not a slow leak. |
+| **How** | `ingest_email_messages()` — the agent-facing MCP push path behind `ingest_gmail_messages`, **not** the OAuth collector — wrote `str(m.get(k) or "")` for every field. A caller whose payload used **different key names** had every unmatched field silently coerced to `""`, and the row was **stored anyway**. Only `message_id`, `snippet` and `labels` matched the expected vocabulary; the three that define a message did not. |
+| **Why it hid for 3 weeks** | Source freshness checks whether rows **exist**, not whether they **mean anything**. 124 rows → `ok`. Nothing was ever going to report this. It surfaced only because GH-125 taught the ranker to *read* email and it found nothing rankable. |
+| **Fix** | Reject at the write boundary: no sender **and** no subject **and** no timestamp → not a message, not stored. Count returned as `messages_skipped`; the MCP response carries an explicit `warning` naming the expected keys (the caller is an *agent*, so a log line alone would have been just as silent as the original bug). 3 regression tests, including the exact corrupting payload shape. |
+| **Cleanup** | The 119 shells and their 118 embeddings purged from the live DB via the existing `delete_semantic_documents()` helper (embeddings + docs + FTS trigger). Verified: 0 shells, 0 orphans, `PRAGMA integrity_check` = ok, 5 real messages intact, all other sources untouched. DB backed up first. |
+
+**Is the RCA complete? Yes — causally.** The one thing not known is *which* caller sent the malformed
+payload and what exact key vocabulary it used (the rows are now deleted; a pre-purge backup retains them
+if anyone wants forensics). **That does not matter**, because the guard rejects *any* wrong-shape payload
+regardless of which one it was — identifying the specific caller would not change a line of the fix. The
+email RCA is therefore **closed with no follow-up issue**.
+
+**What DOES warrant an issue is follow-up 5** — the detector gap. The bug was findable in one query at any
+point in those three weeks. Nothing looked, because nothing was watching for *empty* rather than *absent*.
 
 ---
 
