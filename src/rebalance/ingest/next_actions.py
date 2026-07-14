@@ -499,27 +499,35 @@ Ranked next actions:"""
 # ---------------------------------------------------------------------------
 
 
-def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
-    """Deterministic operator candidates with a stable ``rank_key`` each.
+# ---------------------------------------------------------------------------
+# Per-source candidate providers (registry-driven — Principle 3).
+#
+# Each provider owns ONE source's candidate shape and is registered on that
+# source's Collector via the ``candidates=`` seam (mirroring ``semantic_docs=``)
+# in index_ops.py. ``_operator_candidates`` walks the registry and calls them —
+# a new work signal reaches the ranked verdict by REGISTERING a collector, never
+# by editing this dispatch. ``rank_key`` sorts higher-signal first:
+#   sleuth 0 · email 1 · gh_items 2 · calendar 3 · gh_commits 4 · gh_comments 5
+#   · figma 6 · vault 7.
+# ATTESTED (D2): every candidate carries source, non-empty evidence, and why.
+# ---------------------------------------------------------------------------
 
-    The ordering here is the degraded-but-ranked fallback used verbatim when
-    synthesis is skipped or fails. ``rank_key`` sorts higher-signal first:
-    sleuth 0 · email 1 · gh_items 2 · calendar 3 · gh_commits 4 · gh_comments 5
-    · figma 6 · vault 7.
 
-    ATTESTED (D2): every candidate carries ``source``, non-empty ``evidence``,
-    and ``why`` — a bare title is a failed signal.
-    """
-    out: list[dict[str, Any]] = []
-
-    for s in bundle.sleuth_activity:
-        out.append({
+def sleuth_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    return [
+        {
             "rank_key": (0, s.get("last_seen_at") or ""),
             "title": s.get("message_preview") or "Sleuth reminder",
             "source": "sleuth",
             "evidence": [f"sleuth/{s.get('state', '')}"],
             "why": "open reminder assigned to/by you",
-        })
+        }
+        for s in bundle.sleuth_activity
+    ]
+
+
+def email_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for m in bundle.email_activity:
         sender = m.get("from_name") or m.get("from_address") or "unknown sender"
         out.append({
@@ -529,6 +537,12 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
             "evidence": [f"from {sender}", m.get("received_at") or ""],
             "why": "email received in the day window",
         })
+    return out
+
+
+def github_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    """Three candidate classes from the one GitHub source: items, commits, comments."""
+    out: list[dict[str, Any]] = []
     for it in bundle.gh_items:
         out.append({
             "rank_key": (2, it.get("updated_at") or it.get("created_at") or ""),
@@ -537,14 +551,6 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
             "project": it.get("repo"),
             "evidence": [it.get("html_url") or it.get("repo") or ""],
             "why": "open GitHub item you authored/own",
-        })
-    for b in bundle.calendar_blocks:
-        out.append({
-            "rank_key": (3, b.get("time") or ""),
-            "title": b.get("summary") or "Calendar block",
-            "source": "calendar",
-            "evidence": [f"{b.get('time', '')} ({b.get('duration_minutes', 0)}m)"],
-            "why": "scheduled block on your calendar",
         })
     for c in bundle.gh_commits:
         out.append({
@@ -564,9 +570,27 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
             "evidence": [cm.get("html_url") or ""],
             "why": "thread you engaged on",
         })
+    return out
+
+
+def calendar_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    return [
+        {
+            "rank_key": (3, b.get("time") or ""),
+            "title": b.get("summary") or "Calendar block",
+            "source": "calendar",
+            "evidence": [f"{b.get('time', '')} ({b.get('duration_minutes', 0)}m)"],
+            "why": "scheduled block on your calendar",
+        }
+        for b in bundle.calendar_blocks
+    ]
+
+
+def figma_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
     # ponytail: this arm ships DORMANT — figma_activity is empty until a
     # configured `figma_file_keys` allow-list turns the opt-in collector on.
     # It is correct-and-idle, not dead: Figma is an explicit product signal.
+    out: list[dict[str, Any]] = []
     for fc in bundle.figma_activity:
         handle = fc.get("user_handle") or "someone"
         out.append({
@@ -577,6 +601,11 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
             "evidence": [f"{handle} on figma/{fc.get('file_key', '')}"],
             "why": "unresolved Figma comment on a watched file",
         })
+    return out
+
+
+def vault_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for v in bundle.vault_edits:
         # Skip rebalance's OWN generated next-actions file: it is rewritten every
         # refresh, so it would otherwise always show up as a "recent edit" and
@@ -590,6 +619,26 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
             "evidence": [v.get("rel_path") or ""],
             "why": "recently edited note",
         })
+    return out
+
+
+def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    """Deterministic operator candidates — a WALK over the collector registry.
+
+    Each registered :class:`Collector` with a ``candidates=`` provider owns its
+    own candidate shape; this walks them all and sorts by ``rank_key`` (higher
+    signal class first, most-recent first within a class). There is NO per-source
+    dispatch here: a source reaches the ranked verdict by registering a collector,
+    not by editing this function (GUIDING-PRINCIPLES Principle 3). The import is
+    local so the ranker never hard-depends on the registry module at import time.
+    """
+    from rebalance.ingest.index_ops import COLLECTORS
+
+    out: list[dict[str, Any]] = []
+    for collector in COLLECTORS.values():
+        if collector.candidates is None:
+            continue
+        out.extend(collector.candidates(bundle))
 
     # Higher signal class first; within a class, most-recent first.
     out.sort(key=lambda c: (c["rank_key"][0], _neg_iso(c["rank_key"][1])))

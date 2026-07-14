@@ -6,6 +6,18 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.57.0] - 2026-07-14
+
+### Added
+- **HiQS — all six signals unified into one ranked pipeline** ([GH-125](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/125), supersedes the remaining scope of #101/#115/#116/#119) — GitHub, Obsidian vault, Google Calendar, Sleuth/Slack reminders, Gmail, and Figma comments now feed a single bundle that reaches a single ranked verdict, read by every synthesis surface. Previously two surfaces disagreed: the `querier.ask()` surface saw no Sleuth/Gmail/Figma, and the what's-next ranker saw no Gmail/Figma, while Gmail and Figma reached no synthesis at all. Now the `pulse` day-activity assembler collects email (received in the window) and unresolved Figma comments alongside the existing sources; the `rank_next_actions` bundle carries all six; and each candidate is Attested (source, evidence, why). The Figma arm ships dormant-and-correct — it stays empty until a `figma_file_keys` allow-list turns the opt-in collector on. This is wiring and deletion, not new machinery.
+
+### Changed
+- **One ranked verdict, structurally drift-proof** ([GH-125](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/125)) — the `querier.ask()` result now carries the ranked "what to do next" verdict as a first-class `hiqs` field, read from the persisted cache via a cheap cached read. `ask()` never recomputes the ranking (no extra model call). The dashboard's what's-next route is the single writer of that cache; `ask()` is a reader; the two surfaces are now structurally incapable of showing a different ranking. The MCP ask retrieval tool returns the same verdict under a top-level `hiqs` key (replacing the previous opt-in `team` sidecar). The prompt gains a labelled HiQS section carrying each action's receipts.
+- **A source reaches the ranking by registering a collector, not by editing a dispatch chain** ([GH-125](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/125)) — the hand-written per-source candidate dispatch in the ranker is replaced by a walk over the collector registry, using a new `candidates=` provider on the collector descriptor (the same registry seam as the existing `semantic_docs=` provider). Each source now owns its candidate shape at registration time; adding a work signal to the ranked verdict no longer touches the ranker or the query layer (GUIDING-PRINCIPLES Principle 3). The cross-day deep-work/velocity signal (#116) stays observe-only for now — folding it into the ranking is explicitly deferred (it is a cross-day derived scan, not a single-day source arm, and its provider would need a lookback context the day bundle does not carry). The speculative second Zapier email/calendar ingest path is kept as-is because the shipped `POST /api/zapier/ingest` receiver and its tests depend on those handler stubs.
+
+### Maintenance
+- Refreshed the `audit_modules` baseline lockfile, which had drifted since 2026-05-08. Pre-existing, GH-125-unrelated modules that were added since then without being documented in `ARCHITECTURE.md`/`CHANGELOG.md` are re-baselined by this refresh — disclosed here rather than silently hidden; documenting them is tracked separately.
+
 ## [0.56.0] - 2026-07-11
 
 ### Added

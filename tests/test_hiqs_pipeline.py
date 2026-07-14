@@ -132,5 +132,75 @@ class Phase1BundleTests(unittest.TestCase):
             )
 
 
+class Phase3RegistryWalkTests(unittest.TestCase):
+    """Phase 3 — Principle 3 is discharged (THE keystone proof).
+
+    A source reaches the ranked verdict by REGISTERING a collector with a
+    ``candidates=`` provider — with ZERO edits to next_actions.py / querier.py.
+    This test registers a brand-new fake collector at runtime and asserts its
+    rows appear in the ranked output. The only "edit" is a register_collector
+    call; the ranker walks the registry, so it needs no per-source dispatch.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._db = _fresh_db(self._tmp.name)
+
+    def test_fake_collector_candidates_reach_ranked_output(self) -> None:
+        from rebalance.ingest.index_ops import COLLECTORS, Collector, register_collector
+
+        def _fake_provider(bundle):
+            # Ignores the bundle entirely — a truly external source whose data is
+            # NOT one of the six built-in bundle fields. Proves the walk is
+            # source-agnostic: any registered provider's rows are ranked.
+            return [{
+                "rank_key": (3, IN_WINDOW),
+                "title": "FAKE EXTERNAL SIGNAL",
+                "source": "faketest",
+                "evidence": ["fake://evidence/42"],
+                "why": "registered via candidates= provider, no ranker edit",
+            }]
+
+        register_collector(
+            Collector(
+                "faketest",
+                refresh=lambda db_path, **opts: {"scope": "faketest"},
+                candidates=_fake_provider,
+                included_in_all=False,
+            )
+        )
+        self.addCleanup(lambda: COLLECTORS.pop("faketest", None))
+
+        result = rank_next_actions(
+            self._db, blend_team=False, synthesize=False, now=NOW
+        )
+        fake = [a for a in result.ranked if a.source == "faketest"]
+        self.assertEqual(len(fake), 1, msg=f"ranked={[a.as_dict() for a in result.ranked]}")
+        self.assertEqual(fake[0].title, "FAKE EXTERNAL SIGNAL")
+        self.assertEqual(fake[0].evidence, ["fake://evidence/42"])
+
+    def test_removing_the_collector_removes_its_candidates(self) -> None:
+        """Symmetry: unregister → the source no longer reaches the ranked output."""
+        from rebalance.ingest.index_ops import COLLECTORS, Collector, register_collector
+
+        register_collector(
+            Collector(
+                "faketest2",
+                refresh=lambda db_path, **opts: {"scope": "faketest2"},
+                candidates=lambda bundle: [{
+                    "rank_key": (3, IN_WINDOW), "title": "X", "source": "faketest2",
+                    "evidence": ["e"], "why": "w",
+                }],
+                included_in_all=False,
+            )
+        )
+        COLLECTORS.pop("faketest2", None)  # immediately unregister
+        result = rank_next_actions(
+            self._db, blend_team=False, synthesize=False, now=NOW
+        )
+        self.assertEqual([a for a in result.ranked if a.source == "faketest2"], [])
+
+
 if __name__ == "__main__":
     unittest.main()
