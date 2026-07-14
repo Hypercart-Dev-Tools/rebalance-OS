@@ -241,10 +241,10 @@ Env-file paths resolve via [src/rebalance/paths.py](src/rebalance/paths.py)::`re
 
 1. **Collector** — write `src/rebalance/ingest/<source>.py` following the `sleuth_reminders.py` or `github_scan.py` shape: a dataclass for one record, a `sync_*()` function that fetches → normalizes → upserts, and a module-local `ensure_<source>_schema(conn)`. Use `db_connection(path, ensure_fn)` from the `ingest/db/` package.
 2. **Schema** — keep the `CREATE TABLE` inside `ensure_<source>_schema`. Only promote to the shared `ingest/db/` package if more than one module needs it. Use existing tables for unstructured text that should be embedded.
-3. **Registry** — register the source in `index_ops.py` with `register_collector(Collector(...))`. Add `requires=...` and `semantic_docs=...` metadata if the source needs preconditions or participates in the unified semantic index.
+3. **Registry** — register the source in `index_ops.py` with `register_collector(Collector(...))`. Add `requires=...`, `semantic_docs=...`, and/or `candidates=...` metadata if the source needs preconditions, participates in the unified semantic index, or contributes next-action candidates to the HiQS ranking. The `candidates=` provider is how a source reaches the ranked "what to do next" verdict — no edit to the ranker's dispatch.
 4. **Credentials** — if the source uses env-style secret files, resolve them through `resolve_secret_path()` and a small domain loader (see `cli/calendar.py` / `cli/sleuth.py`). Never hardcode secrets in repo files.
-5. **Context gatherer** — add a `_gather_<source>_context()` function in `querier.py` only if the source should participate in `ask()`.
-6. **Prompt section** — add a block in `_build_prompt()` to format the new context for the LLM only if the source participates in synthesis.
+5. **Next-action candidates** — to feed the HiQS ranking, supply a `candidates=` provider on the `Collector` (a function `bundle → list[candidate dict]`, each Attested with `source`/`evidence`/`why`). `_operator_candidates()` walks the registry, so no ranker edit is needed. A source participates in `ask()` automatically once it is in the ranked bundle — `ask()` reads the whole ranking via `_gather_hiqs_context()`.
+6. **Prompt section** — the HiQS section in `_build_prompt()` already renders every ranked source; add a bespoke `_build_prompt()` block only for context that is NOT a ranked next-action.
 7. **CLI + MCP** — add thin wrappers in `src/rebalance/cli/*` and `src/rebalance/mcp/tools/*` if the source needs direct user-facing operations beyond `refresh_index()`.
 8. **Scheduled refresh** — ensure `included_in_all` and any explicit scheduler usage match the source's intended unattended behavior.
 9. **Tests** — add `tests/test_<source>.py` that stubs the outbound call (patch `urlopen` for HTTP, filesystem for local sources). Verify insert / unchanged / update semantics.
@@ -417,23 +417,28 @@ SQLite @ $REBALANCE_DB
    - `_gather_vault_activity()` — recently modified files
    - `_gather_calendar_context()` — upcoming + recent events from `calendar_events`
    - `_gather_temporal_context()` — day-of-week / weekend / holiday framing for the prompt
-   - *(future: `_gather_sleuth_context()`, etc. — `sleuth_reminders` is mirrored but not yet gathered)*
+   - `_gather_hiqs_context()` — the persisted **HiQS** ranked verdict (see below). A cheap
+     cached read (`load_ranked_next_actions()`); it never recomputes. This is how Sleuth,
+     Gmail, and Figma reach `ask()`: they are already in the one ranked bundle, so `ask()`
+     surfaces them via the shared ranking rather than a per-source gatherer.
 
-2. **Assembles a prompt** with all context formatted into labeled sections.
+2. **Assembles a prompt** with all context formatted into labeled sections — including a
+   `## HiQS — ranked next actions` section carrying each action's receipts. The ranking is
+   also returned first-class on `QueryResult.hiqs`.
 
 3. **Synthesizes** via local Qwen3 LLM (mlx-lm). Returns both synthesis and raw context.
 
 ### The Next Actions engine ("what to do next")
 
-A distinct read-side subsystem in [src/rebalance/ingest/next_actions.py](src/rebalance/ingest/next_actions.py) — structurally one of the larger clusters in the codebase, and separate from `ask()`. It answers the single ranked question *"what should I work on next?"* and is the engine behind the dashboard's what's-next view and the fixed vault file `Dashboards/What To Do Next.md`.
+A distinct read-side subsystem in [src/rebalance/ingest/next_actions.py](src/rebalance/ingest/next_actions.py) — structurally one of the larger clusters in the codebase. It is **HiQS**: the single, unified work-signal pipeline — **one bundle spanning all six sources (GitHub, vault, Calendar, Sleuth/Slack, Gmail, Figma), one ranked verdict, read by every surface**. `ask()` and the dashboard's what's-next view read the *same* persisted ranking, so they cannot drift. It also drives the fixed vault file `Dashboards/What To Do Next.md`.
 
 Pipeline (real symbols):
 
-1. **`assemble_day_bundle()`** gathers the operator's own day signal (`_operator_candidates()`) plus teammate deltas (`_gather_teammate_delta()`) from calendar / GitHub / registry — an `OperatorBundle`.
+1. **`assemble_day_bundle()`** gathers the operator's own day signal across all six sources into an `OperatorBundle`, plus teammate deltas (`_gather_teammate_delta()`). Candidates are built by **`_operator_candidates()`, which WALKS the collector registry** — each source owns its candidate shape via the `candidates=` provider on its `Collector` (the same registry seam as `semantic_docs=`). A new work signal reaches the ranked verdict by registering a collector, never by editing this dispatch (GUIDING-PRINCIPLES Principle 3).
 2. **`build_rank_prompt()`** formats the candidates; **`rank_next_actions()`** synthesizes the ranking. **Primary path = Gemini** (`get_gemini_api_key()` → `gemini-2.5-flash`); a deterministic local fallback (Qwen) keeps it working offline. `_parse_ranked_synthesis()` rejects placeholder echoes.
 3. Output is a **`RankedNextActions`** (list of `RankedAction`), **persisted** to a cache table via `persist_ranked_next_actions()` and read back by `load_ranked_next_actions()`.
 4. **`render_next_actions_markdown()`** writes the ranked list to the fixed vault file (single-writer, generated).
-5. **Consumers:** the `web.py` what's-next route (`whatsnext_page()`) and `ask()` both read the persisted ranking — they never re-rank inline.
+5. **Consumers:** the `web.py` what's-next route (`whatsnext_page()`) is the single WRITER (its `?refresh` path ranks + persists); `ask()` is a READER that exposes the persisted ranking as the first-class `QueryResult.hiqs` field. Neither re-ranks inline, so the two surfaces are structurally incapable of drifting.
 
 ### Two-Layer LLM Architecture
 

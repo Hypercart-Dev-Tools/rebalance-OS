@@ -22,12 +22,15 @@ cannot — so this path works for public cloners where ADC did not.
 from __future__ import annotations
 
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
 
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
@@ -58,6 +61,9 @@ class GmailSyncResult:
     messages_updated: int
     query_filter: str
     elapsed_seconds: float
+    # Rows REJECTED at the write boundary for carrying no signal (no sender, no
+    # subject, no timestamp). Defaulted so existing constructors are unaffected.
+    messages_skipped: int = 0
 
 
 # ---------------------------------------------------------------------------
@@ -339,17 +345,41 @@ def ingest_email_messages(
     ``from_address``, ``from_name``, ``subject``, ``snippet``, ``received_at``,
     and ``labels`` (list of label strings). Missing keys default to empty.
     Messages without a ``message_id`` are skipped.
+
+    CONTENTLESS rows are REJECTED, not stored. A message carrying no sender, no
+    subject AND no ``received_at`` is not a message — it is a shell. This path
+    takes caller-supplied dicts, so a caller whose payload uses DIFFERENT key
+    names (a raw Gmail API resource, another connector's shape) would otherwise
+    have every unmatched field silently coerced to ``""`` by the ``or ""``
+    defaulting below, and the table would fill with rows that look ingested and
+    are unusable. That is not hypothetical: on 2026-06-25 a single push landed
+    119 such rows on the primary device — 96% of the table — and they were
+    invisible until GH-125 tried to rank email and found nothing to rank. Reject
+    at the boundary and TELL the caller (``messages_skipped``), so a wrong payload
+    shape surfaces as a number instead of as silent data loss.
     """
     from rebalance.ingest.db import db_connection, ensure_email_schema
 
     start = time.monotonic()
     synced_at = datetime.now(timezone.utc).isoformat()
-    inserted = updated = stored = 0
+    inserted = updated = stored = skipped = 0
 
     with db_connection(database_path, ensure_email_schema) as conn:
         for m in messages:
             msg_id = str(m.get("message_id") or "").strip()
             if not msg_id:
+                skipped += 1
+                continue
+            # A row needs at least ONE of sender / subject / timestamp to be a
+            # message at all. None of the three → nothing to attest with, nothing
+            # to rank, nothing to show. Refuse it.
+            if not (
+                str(m.get("from_address") or "").strip()
+                or str(m.get("from_name") or "").strip()
+                or str(m.get("subject") or "").strip()
+                or str(m.get("received_at") or "").strip()
+            ):
+                skipped += 1
                 continue
             existed = conn.execute(
                 "SELECT 1 FROM email_messages WHERE message_id = ?", (msg_id,)
@@ -378,6 +408,18 @@ def ingest_email_messages(
             stored += 1
         conn.commit()
 
+    if skipped:
+        # NON-SILENT: a skipped row almost always means the caller's payload uses
+        # different key names, not that the mail was empty. Name the likely cause.
+        logger.warning(
+            "ingest_email_messages: REJECTED %d of %d message(s) carrying no sender, "
+            "no subject and no received_at. Expected keys: message_id, thread_id, "
+            "from_address, from_name, subject, snippet, received_at, labels — check "
+            "the payload's key names.",
+            skipped,
+            len(messages),
+        )
+
     return GmailSyncResult(
         messages_listed=len(messages),
         messages_stored=stored,
@@ -385,4 +427,5 @@ def ingest_email_messages(
         messages_updated=updated,
         query_filter="mcp",
         elapsed_seconds=round(time.monotonic() - start, 2),
+        messages_skipped=skipped,
     )

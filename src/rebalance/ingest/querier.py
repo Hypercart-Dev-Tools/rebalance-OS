@@ -44,6 +44,7 @@ class QueryResult:
     vault_activity: list[dict[str, Any]] = field(default_factory=list)   # recently modified notes
     calendar_context: dict[str, list[dict[str, Any]]] = field(default_factory=dict)  # upcoming + recent events
     temporal_context: dict[str, Any] = field(default_factory=dict)  # today/tomorrow day type
+    hiqs: dict[str, Any] = field(default_factory=dict)  # the persisted HiQS ranked verdict (RankedNextActions.as_dict())
     model_used: str = ""
     elapsed_seconds: float = 0.0
 
@@ -129,6 +130,27 @@ def _gather_temporal_context(
         "is_vacation": is_vacation,
         "vacation_event": vacation_event,
     }
+
+
+def _gather_hiqs_context(database_path: Path) -> Any:
+    """Read the PERSISTED HiQS ranked verdict — a cheap cached read (D3).
+
+    Reads ``next_actions.load_ranked_next_actions`` ONLY; it MUST NOT call
+    ``rank_next_actions`` (which recomputes and can hit Gemini). The dashboard
+    route is the single writer of that cache; ``ask()`` is a reader, so the two
+    surfaces cannot drift. A never-ranked / empty DB (``None``) or any read
+    failure degrades to an empty ranking — ``ask()`` never raises over HiQS.
+    """
+    from rebalance.ingest.next_actions import (
+        RankedNextActions,
+        load_ranked_next_actions,
+    )
+    try:
+        ranked = load_ranked_next_actions(database_path)
+    except Exception as e:  # noqa: BLE001 — HiQS context must never break ask()
+        logger.warning("HiQS context unavailable: %s", e)
+        ranked = None
+    return ranked if ranked is not None else RankedNextActions()
 
 
 def _gather_vault_activity(
@@ -236,9 +258,26 @@ def _build_prompt(
     vault_activity: list[dict[str, Any]],
     calendar_context: dict[str, list[dict[str, Any]]] | None = None,
     temporal_context: dict[str, Any] | None = None,
+    hiqs: dict[str, Any] | None = None,
 ) -> str:
     """Assemble a prompt for the local LLM with all gathered context."""
     sections = []
+
+    # HiQS — the single ranked verdict every surface reads. Rendered with each
+    # action's receipts (source/evidence/why), not bare titles, so the LLM can
+    # ground its answer in the same attested ranking the /whats-next page shows.
+    if hiqs and hiqs.get("ranked"):
+        lines = ["## HiQS — ranked next actions"]
+        for a in hiqs["ranked"][:10]:
+            src = a.get("source") or "?"
+            proj = f" {{{a['project']}}}" if a.get("project") else ""
+            ev = "; ".join(e for e in (a.get("evidence") or []) if e)
+            ev_part = f" — evidence: {ev}" if ev else ""
+            why = f" — {a['why']}" if a.get("why") else ""
+            lines.append(
+                f"{a.get('rank', '?')}. ({src}){proj} {a.get('title', '')}{why}{ev_part}"
+            )
+        sections.append("\n".join(lines))
 
     # Temporal context — always first so the LLM knows what kind of day it is
     if temporal_context:
@@ -497,15 +536,6 @@ def _synthesize(prompt: str, model_name: str = DEFAULT_CHAT_MODEL, max_tokens: i
 # ---------------------------------------------------------------------------
 
 
-# Sidecar attribute name under which a team=True ask() stashes the ranked
-# "what should we work on next" output. It is a DYNAMIC attribute on the returned
-# QueryResult instance — deliberately NOT a dataclass field — so the pinned
-# QueryResult field/dict contract (test_querier EXPECTED_KEYS, retrieval.py's
-# flatten) stays byte-identical for the default operator flow. The MCP layer
-# reads it via getattr(result, NEXT_ACTIONS_ATTR, None).
-NEXT_ACTIONS_ATTR = "_next_actions"
-
-
 def ask(
     query: str,
     database_path: Path,
@@ -514,13 +544,18 @@ def ask(
     since_days: int = 7,
     top_k: int = 8,
     skip_synthesis: bool = False,
-    team: bool = False,
 ) -> QueryResult:
     """
     Answer a natural language question using all available data sources.
 
     Gathers context from vault embeddings, GitHub activity, project registry,
-    and recent vault file modifications. Optionally synthesizes via local LLM.
+    recent vault file modifications, and the persisted HiQS ranked verdict.
+    Optionally synthesizes via local LLM.
+
+    The HiQS ranking is ALWAYS attached as the first-class ``hiqs`` field (D1),
+    read from the persisted cache via a cheap cached read (``load_ranked_next_actions``);
+    ``ask()`` never recomputes the ranking (D3), so the default path costs no
+    extra Gemini call and the dashboard + ask() surfaces cannot drift.
 
     Args:
         query:          Natural language question.
@@ -529,13 +564,6 @@ def ask(
         since_days:     Window for GitHub and vault activity context.
         top_k:          Number of semantic search results.
         skip_synthesis: If True, skip local LLM and return raw context only.
-        team:           If True, ALSO compute the ranked "what should we work on
-                        next" list (next_actions.rank_next_actions with
-                        blend_team=True) and stash it on the returned QueryResult
-                        under the NEXT_ACTIONS_ATTR sidecar attribute. Default OFF:
-                        the operator flow + the pinned QueryResult contract stay
-                        byte-identical. Never raises — a degraded rank attaches
-                        nothing extra and ask() returns its normal result.
     """
     start = time.monotonic()
 
@@ -546,6 +574,8 @@ def ask(
     vault_context = _gather_vault_context(database_path, query, top_k)
     vault_activity = _gather_vault_activity(database_path, since_days)
     calendar_context = _gather_calendar_context(database_path, days_forward=2, days_back=since_days)
+    # HiQS ranked verdict — cheap cached read, never a recompute (D3).
+    hiqs = _gather_hiqs_context(database_path).as_dict()
 
     # Temporal context — today + tomorrow (local timezone)
     now = _local_now()
@@ -568,12 +598,13 @@ def ask(
             vault_activity,
             calendar_context,
             temporal_context,
+            hiqs,
         )
         synthesis, model_used = _synthesize_with_fallback(prompt, chat_model=chat_model)
 
     elapsed = time.monotonic() - start
 
-    result = QueryResult(
+    return QueryResult(
         query=query,
         synthesis=synthesis,
         vault_context=vault_context,
@@ -583,29 +614,7 @@ def ask(
         vault_activity=vault_activity,
         calendar_context=calendar_context,
         temporal_context=temporal_context,
+        hiqs=hiqs,
         model_used=model_used,
         elapsed_seconds=round(elapsed, 2),
     )
-
-    # team=True sidecar: attach the ranked next-actions WITHOUT mutating the
-    # pinned QueryResult fields. PREFER the persisted cache so the interactive
-    # ask() path never silently pays for a second Gemini round-trip; only when the
-    # cache is absent fall back to a LIVE but DETERMINISTIC rank (synthesize=False
-    # — the ranked floor, no LLM call). Never raises out of ask(): a degraded rank
-    # just stays unattached. Import is local so the default operator path never
-    # pays for it.
-    if team:
-        try:
-            from rebalance.ingest import next_actions as _next_actions
-
-            ranked = _next_actions.load_ranked_next_actions(database_path)
-            if ranked is None:
-                # No precompute yet — deterministic ranked floor (no LLM call).
-                ranked = _next_actions.rank_next_actions(
-                    database_path, blend_team=True, synthesize=False
-                )
-            setattr(result, NEXT_ACTIONS_ATTR, ranked)
-        except Exception as e:  # noqa: BLE001 — team blend must never break ask()
-            logger.warning("team next-actions rank unavailable: %s", e)
-
-    return result

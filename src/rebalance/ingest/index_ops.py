@@ -70,6 +70,16 @@ class Collector:
         ``backfill_semantic_documents`` iterates it instead of an if-ladder
         branch. ``None`` (default) preserves the legacy vault/github/email/code
         ladder unchanged.
+    candidates:
+        Optional registry-driven provider that yields deterministic
+        next-action candidate dicts (each carrying ``rank_key``, ``source``,
+        non-empty ``evidence``, and ``why``) from a day bundle. This is the
+        SECOND use of the same registry seam as ``semantic_docs``:
+        ``next_actions._operator_candidates`` walks the registry and calls each
+        provider instead of hand-dispatching per source, so a new work signal
+        reaches the ranked verdict by registering a collector — never by editing
+        the ranker's dispatch chain (GUIDING-PRINCIPLES Principle 3). ``None``
+        (default) means the source contributes no next-action candidates.
     """
 
     name: str
@@ -78,6 +88,7 @@ class Collector:
     included_in_all: bool = True
     kind: str = "raw_source"
     semantic_docs: Callable[[Any], Iterable["SemanticDoc"]] | None = None
+    candidates: Callable[[Any], Iterable[dict[str, Any]]] | None = None
 
 
 # A Collector that also exposes a ``semantic_docs`` provider is the spine of a
@@ -1655,15 +1666,33 @@ def _refresh_focus5(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
 _focus5_adapter = _dry_run_adapter(_refresh_focus5)
 
 
-register_collector(Collector("vault", _vault_adapter, requires=("vault_path",)))
-register_collector(Collector("github", _github_adapter, requires=("github_token",)))
-register_collector(Collector("calendar", _calendar_adapter))
-register_collector(Collector("sleuth", _sleuth_adapter))
+# Next-action candidate providers — the SECOND use of the registry seam
+# (mirroring semantic_docs). Each source owns its candidate shape here, so
+# next_actions._operator_candidates is a registry walk, not a dispatch chain.
+# Imported at registration time (not module top): next_actions does not import
+# index_ops at its top, so this one-directional import is cycle-free.
+from rebalance.ingest.next_actions import (  # noqa: E402
+    calendar_candidates,
+    email_candidates,
+    figma_candidates,
+    github_candidates,
+    sleuth_candidates,
+    vault_candidates,
+)
+
+register_collector(Collector(
+    "vault", _vault_adapter, requires=("vault_path",), candidates=vault_candidates,
+))
+register_collector(Collector(
+    "github", _github_adapter, requires=("github_token",), candidates=github_candidates,
+))
+register_collector(Collector("calendar", _calendar_adapter, candidates=calendar_candidates))
+register_collector(Collector("sleuth", _sleuth_adapter, candidates=sleuth_candidates))
 # Apple Reminders — local macOS read-only source. Opt-in (included_in_all=False):
 # it requires Full Disk Access for the host process and is macOS-only, so it must
 # never be part of a default/launchd `all` run on machines that can't read it.
 register_collector(Collector("apple_reminders", _apple_reminders_adapter, included_in_all=False))
-register_collector(Collector("email", _email_adapter))
+register_collector(Collector("email", _email_adapter, candidates=email_candidates))
 register_collector(Collector("code", _code_adapter, kind="derived_scan"))
 register_collector(Collector("semantic", _semantic_adapter, kind="projection"))
 register_collector(Collector("sync", _sync_adapter, kind="export"))
@@ -1674,7 +1703,9 @@ register_collector(Collector("ask_self", _ask_self_adapter, included_in_all=Fals
 # top) so figma.py — and its later, optional dependencies — only load when the
 # registry is constructed; figma.py's own top imports stay limited to
 # rebalance.ingest.db, so no mlx/embedder is pulled in. included_in_all=False
-# keeps it opt-in (requires a PAT + an explicit file-key allow-list).
+# keeps it opt-in (requires a PAT + an explicit file-key allow-list). The figma
+# arm ships DORMANT — figma_candidates yields nothing until a figma_file_keys
+# allow-list turns the collector on.
 from rebalance.ingest.figma import figma_semantic_docs  # noqa: E402
 
 register_collector(
@@ -1683,6 +1714,7 @@ register_collector(
         _figma_adapter,
         requires=("figma_token",),
         semantic_docs=figma_semantic_docs,
+        candidates=figma_candidates,
         included_in_all=False,
     )
 )

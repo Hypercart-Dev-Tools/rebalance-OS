@@ -243,10 +243,12 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         Read the latest persisted "what should we work on next" ranking — the
         synthesized headline the dashboard shows — WITHOUT recomputing it.
 
-        This is the cheap read of the cached result (no model load). Use ask(team=True)
-        instead only when you need a fresh recompute. Returns the ranked list plus
-        its freshness metadata (computed_at, model_used, blended, cached row count),
-        or an empty ranking with a note on a brand-new / never-computed DB.
+        This is the cheap read of the cached result (no model load). `ask()` reads
+        the SAME persisted ranking under its `hiqs` key, so the two can never
+        disagree; neither recomputes. A fresh rank is produced by the refresh path
+        that writes the cache. Returns the ranked list plus its freshness metadata
+        (computed_at, model_used, blended, cached row count), or an empty ranking
+        with a note on a brand-new / never-computed DB.
         """
         from rebalance.ingest.next_actions import (
             get_ranked_meta,

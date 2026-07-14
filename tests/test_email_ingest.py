@@ -407,3 +407,72 @@ class RefreshEmailDryRunTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PushIngestContentlessRejectionTests(unittest.TestCase):
+    """The MCP push path must REJECT contentless shells at the write boundary.
+
+    Regression guard for the real corruption found while shipping GH-125: a single
+    push on 2026-06-25 landed 119 rows (96% of the table) carrying a message_id, a
+    snippet and labels but NO sender, NO subject and NO received_at. The caller's
+    payload had used different key names, and ``str(m.get(k) or "")`` coerced every
+    unmatched field to "". The rows looked ingested and were unusable, and nothing
+    said so until the ranker went looking for email and found nothing to rank.
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._tmp.cleanup)
+        self._db = Path(self._tmp.name) / "rebalance.db"
+        with db_connection(self._db, ensure_email_schema) as conn:
+            conn.commit()
+
+    def _stored(self) -> list[sqlite3.Row]:
+        conn = sqlite3.connect(self._db)
+        conn.row_factory = sqlite3.Row
+        rows = conn.execute("SELECT * FROM email_messages").fetchall()
+        conn.close()
+        return rows
+
+    def test_contentless_shell_is_rejected_and_counted(self) -> None:
+        from rebalance.ingest.gmail import ingest_email_messages
+
+        # EXACTLY the shape that caused the real corruption: the caller used a
+        # foreign key vocabulary, so only message_id/snippet/labels landed.
+        result = ingest_email_messages(self._db, [
+            {"message_id": "shell1", "snippet": "hi there", "labels": ["INBOX"]},
+            {"message_id": "shell2", "snippet": "another", "labels": ["INBOX"]},
+        ])
+
+        self.assertEqual(result.messages_skipped, 2)
+        self.assertEqual(result.messages_stored, 0)
+        self.assertEqual(self._stored(), [], "a contentless shell must never be written")
+
+    def test_a_single_real_field_is_enough_to_be_stored(self) -> None:
+        """The guard rejects only TOTAL emptiness — one real field earns a row."""
+        from rebalance.ingest.gmail import ingest_email_messages
+
+        result = ingest_email_messages(self._db, [
+            {"message_id": "subj-only", "subject": "Deploy checklist"},
+            {"message_id": "from-only", "from_address": "boss@acme.test"},
+            {"message_id": "date-only", "received_at": "2026-07-14T12:00:00+00:00"},
+        ])
+
+        self.assertEqual(result.messages_skipped, 0)
+        self.assertEqual(result.messages_stored, 3)
+        self.assertEqual(len(self._stored()), 3)
+
+    def test_good_and_bad_rows_in_one_push_partition_correctly(self) -> None:
+        from rebalance.ingest.gmail import ingest_email_messages
+
+        result = ingest_email_messages(self._db, [
+            {"message_id": "shell", "snippet": "no headers", "labels": ["INBOX"]},
+            {"message_id": "real", "subject": "Rental reports",
+             "from_address": "taiwo@example.test",
+             "received_at": "2026-07-14T12:00:00+00:00"},
+        ])
+
+        self.assertEqual(result.messages_skipped, 1)
+        self.assertEqual(result.messages_stored, 1)
+        rows = self._stored()
+        self.assertEqual([r["message_id"] for r in rows], ["real"])

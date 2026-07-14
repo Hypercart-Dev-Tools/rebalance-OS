@@ -2,8 +2,8 @@
 
 This is the keystone the dashboard route AND the ``ask`` surface both call, so
 the two never drift: a flat, ranked "next actions" list assembled from the
-operator's own signals (calendar + GitHub + vault + sleuth + email) blended with
-a strictly-additive, de-duplicated delta of teammate calendar signal.
+operator's own signals (calendar + GitHub + vault + sleuth + email + figma)
+blended with a strictly-additive, de-duplicated delta of teammate calendar signal.
 
 Design (SOLID — distinct, testable functions):
 
@@ -205,6 +205,8 @@ class OperatorBundle:
     gh_comments: list[dict[str, Any]] = field(default_factory=list)
     vault_edits: list[dict[str, Any]] = field(default_factory=list)
     sleuth_activity: list[dict[str, Any]] = field(default_factory=list)
+    email_activity: list[dict[str, Any]] = field(default_factory=list)
+    figma_activity: list[dict[str, Any]] = field(default_factory=list)
 
 
 def assemble_day_bundle(
@@ -255,6 +257,8 @@ def assemble_day_bundle(
         gh_comments=[c for c in activity.gh_comments if _not_noise(c.get("repo"))],
         vault_edits=list(activity.vault_edits),
         sleuth_activity=list(activity.sleuth_activity),
+        email_activity=list(activity.email_activity),
+        figma_activity=list(activity.figma_activity),
     )
 
 
@@ -495,43 +499,84 @@ Ranked next actions:"""
 # ---------------------------------------------------------------------------
 
 
-def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
-    """Deterministic operator candidates with a stable ``rank_key`` each.
+# ---------------------------------------------------------------------------
+# Per-source candidate providers (registry-driven — Principle 3).
+#
+# Each provider owns ONE source's candidate shape and is registered on that
+# source's Collector via the ``candidates=`` seam (mirroring ``semantic_docs=``)
+# in index_ops.py. ``_operator_candidates`` walks the registry and calls them —
+# a new work signal reaches the ranked verdict by REGISTERING a collector, never
+# by editing this dispatch. ``rank_key`` sorts higher-signal first:
+#   sleuth 0 · email 1 · gh_items 2 · calendar 3 · gh_commits 4 · gh_comments 5
+#   · figma 6 · vault 7.
+# ATTESTED (D2): every candidate carries source, non-empty evidence, and why.
+# ---------------------------------------------------------------------------
 
-    The ordering here is the degraded-but-ranked fallback used verbatim when
-    synthesis is skipped or fails. ``rank_key`` sorts higher-signal first:
-    sleuth/assigned > github items > calendar > commits > comments > vault.
-    """
-    out: list[dict[str, Any]] = []
 
-    for s in bundle.sleuth_activity:
-        out.append({
+def sleuth_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    return [
+        {
             "rank_key": (0, s.get("last_seen_at") or ""),
             "title": s.get("message_preview") or "Sleuth reminder",
             "source": "sleuth",
             "evidence": [f"sleuth/{s.get('state', '')}"],
             "why": "open reminder assigned to/by you",
+        }
+        for s in bundle.sleuth_activity
+    ]
+
+
+def email_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    dropped = 0
+    for m in bundle.email_activity:
+        subject = (m.get("subject") or "").strip()
+        sender = (m.get("from_name") or m.get("from_address") or "").strip()
+        # Signal-quality guard: drop CONTENTLESS rows. The Gmail collector can land
+        # a message_id + labels while failing to populate the headers — on the live
+        # DB (2026-07-14) 119 of 124 rows are exactly that: no sender, no subject.
+        # Such a row has nothing to attest with, and email ranks at tier 1 — ABOVE
+        # your open GitHub items — so admitting it would push "(no subject) from
+        # unknown sender" to the top of the list. That is the bare verdict the
+        # Attested pillar forbids. A row needs a subject OR a sender to earn a rank.
+        if not subject and not sender:
+            dropped += 1
+            continue
+        out.append({
+            "rank_key": (1, m.get("received_at") or ""),
+            "title": subject or "(no subject)",
+            "source": "email",
+            "evidence": [f"from {sender or 'unknown sender'}", m.get("received_at") or ""],
+            "why": "email received in the day window",
         })
+    if dropped:
+        # NON-SILENT: a dropped row is an INGEST defect, not noise to swallow. Source
+        # freshness reports "ok" whenever rows exist, so a collector writing header-less
+        # rows would otherwise look healthy while contributing nothing. Say it out loud.
+        logger.warning(
+            "email_candidates: dropped %d contentless email row(s) (no sender, no subject) "
+            "— the Gmail collector is landing rows without headers; ranking is starved, "
+            "not empty",
+            dropped,
+        )
+    return out
+
+
+def github_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    """Three candidate classes from the one GitHub source: items, commits, comments."""
+    out: list[dict[str, Any]] = []
     for it in bundle.gh_items:
         out.append({
-            "rank_key": (1, it.get("updated_at") or it.get("created_at") or ""),
+            "rank_key": (2, it.get("updated_at") or it.get("created_at") or ""),
             "title": f"{it.get('item_type', 'item')} #{it.get('number')}: {it.get('title', '')}",
             "source": "github",
             "project": it.get("repo"),
             "evidence": [it.get("html_url") or it.get("repo") or ""],
             "why": "open GitHub item you authored/own",
         })
-    for b in bundle.calendar_blocks:
-        out.append({
-            "rank_key": (2, b.get("time") or ""),
-            "title": b.get("summary") or "Calendar block",
-            "source": "calendar",
-            "evidence": [f"{b.get('time', '')} ({b.get('duration_minutes', 0)}m)"],
-            "why": "scheduled block on your calendar",
-        })
     for c in bundle.gh_commits:
         out.append({
-            "rank_key": (3, c.get("committed_at") or ""),
+            "rank_key": (4, c.get("committed_at") or ""),
             "title": c.get("subject") or "commit",
             "source": "github",
             "project": c.get("repo"),
@@ -540,13 +585,49 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
         })
     for cm in bundle.gh_comments:
         out.append({
-            "rank_key": (4, cm.get("created_at") or ""),
+            "rank_key": (5, cm.get("created_at") or ""),
             "title": cm.get("preview") or "comment",
             "source": "github",
             "project": cm.get("repo"),
             "evidence": [cm.get("html_url") or ""],
             "why": "thread you engaged on",
         })
+    return out
+
+
+def calendar_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    return [
+        {
+            "rank_key": (3, b.get("time") or ""),
+            "title": b.get("summary") or "Calendar block",
+            "source": "calendar",
+            "evidence": [f"{b.get('time', '')} ({b.get('duration_minutes', 0)}m)"],
+            "why": "scheduled block on your calendar",
+        }
+        for b in bundle.calendar_blocks
+    ]
+
+
+def figma_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    # ponytail: this arm ships DORMANT — figma_activity is empty until a
+    # configured `figma_file_keys` allow-list turns the opt-in collector on.
+    # It is correct-and-idle, not dead: Figma is an explicit product signal.
+    out: list[dict[str, Any]] = []
+    for fc in bundle.figma_activity:
+        handle = fc.get("user_handle") or "someone"
+        out.append({
+            "rank_key": (6, fc.get("created_at") or ""),
+            "title": fc.get("message") or "Figma comment",
+            "source": "figma",
+            "project": fc.get("file_key"),
+            "evidence": [f"{handle} on figma/{fc.get('file_key', '')}"],
+            "why": "unresolved Figma comment on a watched file",
+        })
+    return out
+
+
+def vault_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
     for v in bundle.vault_edits:
         # Skip rebalance's OWN generated next-actions file: it is rewritten every
         # refresh, so it would otherwise always show up as a "recent edit" and
@@ -554,12 +635,32 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
         if _is_generated_next_actions_file(v.get("rel_path") or "", v.get("title") or ""):
             continue
         out.append({
-            "rank_key": (5, v.get("last_modified") or ""),
+            "rank_key": (7, v.get("last_modified") or ""),
             "title": v.get("title") or v.get("rel_path") or "vault note",
             "source": "vault",
             "evidence": [v.get("rel_path") or ""],
             "why": "recently edited note",
         })
+    return out
+
+
+def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
+    """Deterministic operator candidates — a WALK over the collector registry.
+
+    Each registered :class:`Collector` with a ``candidates=`` provider owns its
+    own candidate shape; this walks them all and sorts by ``rank_key`` (higher
+    signal class first, most-recent first within a class). There is NO per-source
+    dispatch here: a source reaches the ranked verdict by registering a collector,
+    not by editing this function (GUIDING-PRINCIPLES Principle 3). The import is
+    local so the ranker never hard-depends on the registry module at import time.
+    """
+    from rebalance.ingest.index_ops import COLLECTORS
+
+    out: list[dict[str, Any]] = []
+    for collector in COLLECTORS.values():
+        if collector.candidates is None:
+            continue
+        out.extend(collector.candidates(bundle))
 
     # Higher signal class first; within a class, most-recent first.
     out.sort(key=lambda c: (c["rank_key"][0], _neg_iso(c["rank_key"][1])))
@@ -592,7 +693,7 @@ def _teammate_candidate(blk: dict[str, Any]) -> dict[str, Any]:
     who = blk.get("person") or "teammate"
     dur = blk.get("duration_minutes") or 0
     return {
-        "rank_key": (1, blk.get("time") or ""),  # teammate calendar ~ github tier
+        "rank_key": (2, blk.get("time") or ""),  # teammate calendar ~ gh_items tier
         "title": blk.get("summary") or "Teammate block",
         "person": who,
         "source": "calendar",

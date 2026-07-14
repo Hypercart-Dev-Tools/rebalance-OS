@@ -4,10 +4,10 @@ codename: HiQS
 owner: noel@neochro.me
 gh_issue: 125
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/125"
-status: "Active (2-WORKING) — created 2026-07-14. Phase 0 (discovery) complete, findings written back below. Phase 2 contract decision locked against GUIDING-PRINCIPLES.md. Phase 1 next."
+status: "Active (2-WORKING) — created 2026-07-14. Phases 0–3 complete (Phases 1–3 built in Claude Code Cloud, reviewed + corrected + verified against real signal data locally 2026-07-14). Phase 4 (HiQS surface & brand) next."
 created: 2026-07-14
 updated: 2026-07-14
-branch: development
+branch: claude/gh-125-hiqs-pipeline-eo7rzf
 doc_type: project
 goal: >
   Make HiQS (High Quality Signals) the single, named, unified work-signal pipeline: all six
@@ -48,7 +48,7 @@ phases: 5
 
 | What was just completed | What's next |
 |---|---|
-| **Phase 0 (discovery) complete 2026-07-14** — reverse-engineered both synthesis surfaces and confirmed the split: `ask()` sees no Sleuth/Gmail/Figma; `rank_next_actions()` sees no Gmail/Figma; Gmail + Figma reach **no** synthesis at all. Live DB counts taken (`email_messages` 124, `figma_comments` **0**). Findings written back in [Phase 0](#phase-0--discovery-complete). **Three decisions locked against GUIDING-PRINCIPLES.md** ([D1](#d1--phase-2-attaches-hiqs-as-a-first-class-field-not-a-sidecar-decided-2026-07-14) first-class `hiqs` field, not a sidecar · [D2](#d2--the-ranking-must-arrive-attested-decided-2026-07-14) rankings arrive Attested · [D3](#d3--the-dispatch-chain-gets-collapsed-not-grown) Phase 3 collapses the dispatch chain into a `candidates=` registry provider). | **Phase 1 — Complete the bundle.** Add the `email` + `figma` arms to `DayActivity` → `OperatorBundle` → `_operator_candidates()` so all six sources reach the ranker. ~40 lines, no new files. Knowingly grows the dispatch chain 6→8 arms; Phase 3 collapses it. |
+| **Phases 1–3 shipped and locally verified 2026-07-14.** All six sources now reach one bundle → one ranked verdict → read by every surface. `ask()` exposes it as a first-class `hiqs` field read from the persisted cache ([D1](#d1--phase-2-attaches-hiqs-as-a-first-class-field-not-a-sidecar-decided-2026-07-14)), so no surface computes its own ranking and `/whats-next` and `ask()` cannot show *different* rankings ([precise invariant](#phase-2--one-ranked-verdict) — tightened after QA; "single writer" was an overclaim). The dispatch chain is collapsed into a `candidates=` registry walk — **Principle 3 discharged**, pinned by a fake-collector test ([D3](#d3--the-dispatch-chain-gets-collapsed-not-grown)). Built in Claude Code Cloud (no DB/credentials); **reviewed, corrected, and run against real signal data locally** — which surfaced an upstream Gmail-ingest defect and a signal-quality hole, both now fixed//recorded (see [Local verification](#local-verification-against-real-signal-data-2026-07-14)). `pytest` 1362 passed, 2 pre-existing failures unchanged. | **Phase 4 — HiQS surface & brand.** Also: open a follow-up issue for the [Gmail-ingest header defect](#local-verification-against-real-signal-data-2026-07-14) (119 of 124 rows are contentless shells — out of scope here: GH-125 *consumes* email, it does not ingest it). |
 
 ---
 
@@ -60,6 +60,9 @@ phases: 5
 - [Phase 2 — One ranked verdict](#phase-2--one-ranked-verdict)
 - [Phase 3 — Ponytail simplification & optimization pass](#phase-3--ponytail-simplification--optimization-pass)
 - [Phase 4 — HiQS surface & brand](#phase-4--hiqs-surface--brand)
+- [Local verification against real signal data](#local-verification-against-real-signal-data-2026-07-14)
+- [Decisions recorded during build](#decisions-recorded-during-build)
+- [Follow-ups this issue creates](#follow-ups-this-issue-creates-do-not-lose)
 - [What this supersedes](#what-this-supersedes)
 
 ---
@@ -91,7 +94,7 @@ phases: 5
   Gmail ───┤   (OperatorBundle,      (Gemini, unchanged)         │
   Figma ───┘    +2 arms)                                         ├──▶ /whats-next
                                                                  └──▶ ask()
-                                                    one verdict — cannot drift
+                                        one ranking — no surface computes its own
 ```
 
 ---
@@ -208,7 +211,7 @@ rather than deleting the claim.
 |---|---|---|
 | `calendar_events` | 1573 | live |
 | `github_items` | 1011 | live |
-| `email_messages` | **124** | live — a real signal, currently reaching nothing |
+| `email_messages` | **124** | live — a real signal, currently reaching nothing. ⚠️ **Corrected 2026-07-14 after local verification: only 5 of these 124 rows carry content.** See [Local verification](#local-verification-against-real-signal-data-2026-07-14). |
 | `sleuth_reminders` | 87 | live |
 | `vault_files` | 60 | live |
 | `figma_comments` | **0** | **dormant** — opt-in collector, no `figma_file_keys` allow-list configured |
@@ -280,15 +283,23 @@ rather than deleting the claim.
    claims email; make it true and add figma.
 
 **QA gate — Phase 1:**
-- [ ] `pytest tests/` green (no regression against the current 1300+ suite).
-- [ ] One new test asserting an `email_messages` row in the day window produces a candidate with
-      `source == "email"` (the smallest thing that fails if the wiring breaks).
-- [ ] One new test asserting an empty `figma_comments` table yields **zero** figma candidates and does
-      not raise — the dormant path is exercised, not assumed.
-- [ ] `rebalance doctor` clean.
-- [ ] Live check: `/whats-next?refresh=1` renders at least one `source=email` candidate on a device with
-      inbox data, OR the absence is explained (no mail in the day window).
-- [ ] **Verification summary** recorded here before close.
+- [x] `pytest tests/` green — 1362 passed, 2 pre-existing failures (`test_pulse_self_repair` ×2)
+      confirmed unchanged on `development`, so zero regression.
+- [x] Test: an `email_messages` row in the day window produces a `source == "email"` candidate.
+- [x] Test: an empty `figma_comments` table yields **zero** figma candidates and does not raise;
+      a present **unresolved** comment DOES surface, a **resolved** one does not.
+- [x] Test: every ranked action carries `source` + non-empty `evidence` — Attested ([D2](#d2--the-ranking-must-arrive-attested-decided-2026-07-14)).
+- [x] **Test (added at local review): a contentless email row is never ranked.** See
+      [Local verification](#local-verification-against-real-signal-data-2026-07-14).
+- [x] Live check: run against the **real DB**. `_query_day_activity` executes cleanly on the real
+      schema (all six guessed column names correct). **Zero `source=email` candidates today, and the
+      absence is explained**: the newest content-bearing email in the DB is 2026-05-22 — the Gmail
+      collector has landed no usable row in 7 weeks. Not a wiring failure; see below.
+- [ ] `rebalance doctor` clean — **PENDING** (deferred to the Phase 4 close).
+
+**Verification summary (2026-07-14).** The two new arms are correct against the real schema and the
+real ranker. The email arm is *correctly wired and currently starved* — an upstream ingest defect,
+not a HiQS defect. The figma arm is correct-and-idle as designed (0 rows, no allow-list).
 
 ---
 
@@ -326,16 +337,44 @@ rather than deleting the claim.
    `CHANGELOG.md` (it is a visible contract change for MCP callers).
 
 **QA gate — Phase 2:**
-- [ ] A test asserts the ranking `ask()` returns is **the same object** the `/whats-next` route reads
-      (same persisted rows) — the anti-drift invariant, expressed as a test.
-- [ ] A test asserts `ask()` does **not** call `rank_next_actions()` (no recompute, no network) on the
-      default path.
-- [ ] A test asserts every returned action carries `source` **and** non-empty `evidence` — the
-      **Attested** pillar as an executable check, not a promise.
-- [ ] `ask()` on a brand-new/never-ranked DB degrades to an empty ranking without raising.
-- [ ] The pinned-`QueryResult` test is **updated, not deleted** — it must assert the new shape.
-- [ ] `pytest tests/` green · `rebalance doctor` clean.
-- [ ] **Verification summary** recorded here before close.
+- [x] A test asserts `ask()` reads the **same persisted rows** the `/whats-next` route writes — the
+      anti-drift invariant, expressed as a test (`test_next_actions_parity`, rewritten to the
+      structural shared-cache parity: the route writes, `ask()` reads).
+- [x] A test asserts `ask()` does **not** call `rank_next_actions()` on the default path — no
+      recompute, no network.
+- [x] A test asserts every returned action carries `source` **and** non-empty `evidence` — Attested.
+- [x] `ask()` on a brand-new / never-ranked DB degrades to an empty ranking without raising.
+- [x] The pinned-`QueryResult` test is **updated, not deleted** — `EXPECTED_KEYS` now includes `hiqs`.
+      The `NEXT_ACTIONS_ATTR` sidecar is deleted from `querier.py` and `retrieval.py`, as [D1](#d1--phase-2-attaches-hiqs-as-a-first-class-field-not-a-sidecar-decided-2026-07-14) requires.
+- [x] `pytest tests/` green.
+- [ ] Live `ask()` renders the HiQS section with real Gemini synthesis — **PENDING** (no key configured
+      in this environment; the deterministic path is proven).
+- [ ] `rebalance doctor` clean — **PENDING** (deferred to the Phase 4 close).
+
+**Verification summary (2026-07-14).** The `team=` parameter is gone from both `ask()` and the MCP
+tool — the ranking is now **always** returned, not opt-in. A stale `ask(team=True)` reference in the
+`get_next_actions` MCP docstring was caught at local review and corrected (it would have instructed an
+agent to pass a removed kwarg).
+
+**Precise invariant — tightened after agy's QA round; the first draft overclaimed.** The drift-proofing
+claim is **not** "there is a single writer." agy correctly found **two** writers — the `/whats-next`
+route ([web.py:1470](../../src/rebalance/web.py#L1470)) and the scheduled `refresh_index()`
+([index_ops.py:1420](../../src/rebalance/ingest/index_ops.py#L1420)) — so any "single writer" phrasing
+is simply false. Two writers into one cache is harmless. The invariant that actually buys the
+drift-proofing is:
+
+> **No surface computes its own ranking.** There is exactly ONE ranking in the system; every surface
+> reads it.
+
+That is what makes two surfaces unable to show *different* rankings. The old failure mode — each
+surface deriving its own answer from its own subset of sources — is structurally gone.
+
+What remains, also found by agy, is a **cold-start absence — not a disagreement.** On a never-ranked DB,
+`ask()` returns an **empty** ranking while `/whats-next` **bootstraps** the cache by computing one
+(`if refresh or not meta.get("row_count")`). This asymmetry is deliberate and is **kept**: `ask()` must
+never trigger a network synthesis ([D3](#d3--the-dispatch-chain-gets-collapsed-not-grown)). An empty
+answer and a computed answer are not two rankings — they are one ranking and no ranking. Once the first
+rank persists, every surface is reading the same rows.
 
 ---
 
@@ -392,16 +431,32 @@ gated/stalled scope inherited from the superseded issues instead of letting it r
 6. **Measure.** Report `git diff --stat` net lines across Phases 1–3.
 
 **QA gate — Phase 3:**
-- [ ] **Principle 3 discharged:** a test registers a *fake* collector with a `candidates=` provider and
-      asserts its rows reach the ranked output — with **zero** edits to `next_actions.py` / `querier.py`.
-      This is the executable form of "extend by addition, not by editing a dispatch chain."
-- [ ] **Net LOC across Phases 1–3 is ≤ 0** (deletion pays for the wiring), or the overage is explicitly
-      justified in one line here. Report `git diff --stat` against the Phase-0 baseline.
-- [ ] Every inherited gate (GH-101 Ph3, GH-115 Ph2–3, GH-116 Ph2) has a recorded verdict —
-      **build / defer / kill** — with a revisit trigger. No item left "gated".
-- [ ] No behavior regression: `pytest tests/` green · `rebalance doctor` clean · `/whats-next` renders.
-- [ ] `audit_modules` clean (ARCHITECTURE.md in sync) · `pdda.sh run` clean.
-- [ ] **Verification summary** recorded here before close.
+- [x] **Principle 3 discharged:** `Phase3RegistryWalkTests` registers a *fake* collector with a
+      `candidates=` provider and asserts its rows reach the ranked output — with **zero** edits to
+      `next_actions.py` / `querier.py`. This is the keystone artifact of the whole issue.
+- [ ] ~~**Net LOC across Phases 1–3 is ≤ 0**~~ — **MISSED. Actual: +519 net (+175 in `src/`).** The
+      target assumed two deletions that turned out to be unsafe on inspection; see
+      [Decisions recorded during build](#decisions-recorded-during-build). The acceptance criterion is
+      recorded as **failed**, not quietly restated — the honest reading is that the *seam* (Principle 3)
+      was the real prize and the LOC target was a proxy that mispriced it. Ponytail's own rule is that
+      it minimizes the implementation, not the requirements: six sources genuinely needed wiring.
+- [x] Every inherited gate has a recorded verdict — **no item left "gated"**:
+      GH-101 Ph3 → **resolved** (Ph1–2 shipped; the freshness contract caught the figma/email starvation
+      this very phase, which is the evidence its kill-gate asked for) · GH-115 Ph2–3 → **killed**
+      (native OAuth already supplies email + calendar; the stubs are KEPT — see below) ·
+      GH-116 Ph2 → **killed as a ranker arm** (cross-day scan, incompatible with the single-day
+      provider contract; stays observe-only in `doctor`).
+- [x] No behavior regression: `pytest tests/` green (1362 passed; the 2 failures are pre-existing on
+      `development` and were confirmed by checking out `development` in a worktree and re-running).
+- [x] Import-cycle check: `index_ops` ⇄ `next_actions` imports cleanly in **both** orders (the registry
+      imports the providers at registration time; the ranker imports `COLLECTORS` lazily inside the walk).
+- [ ] `audit_modules` clean — **left RED, deliberately.** See
+      [Decisions recorded during build](#decisions-recorded-during-build).
+- [ ] `rebalance doctor` clean · `/whats-next` renders — **PENDING** (Phase 4 close).
+
+**Verification summary (2026-07-14).** The headline landed: a seventh source now reaches the ranked
+verdict by registering a collector, proven by a test that adds one without touching the ranker. The
+net-LOC criterion did **not** land, and is recorded as a miss.
 
 ---
 
@@ -442,6 +497,128 @@ packages, modules, DB tables, MCP tools, or the `rebalance ...` CLI — that chu
 - [ ] `audit_modules` clean (ARCHITECTURE.md stays in sync — it is load-bearing, PDDA-gated).
 - [ ] `pytest tests/` green · `pdda.sh run` clean.
 - [ ] **Verification summary** recorded here before close.
+
+---
+
+## Local verification against real signal data (2026-07-14)
+
+Phases 1–3 were built in Claude Code Cloud, which had **no populated DB and no credentials** — so
+every SELECT against `email_messages` / `figma_comments` was written blind. The branch was then pulled
+down and run against the real database. Three things came out of it that the sandbox could not have found.
+
+**1. The blind schema guesses were right.** All six columns the email arm selects and all six the figma
+arm selects exist on the real tables. `_query_day_activity` executes cleanly against the live schema —
+no `OperationalError`, which was the single largest risk of building this without a DB.
+
+**2. ⚠️ The Gmail collector is writing contentless rows — an upstream defect that falsifies this doc's
+own Phase 0 premise.** Of the 124 `email_messages` rows, **119 carry no sender, no subject, and no
+`received_at`** — only a `message_id`, a `labels_json`, and a `snippet`. Just **5** rows have content,
+the newest received **2026-05-22**, seven weeks ago.
+
+| | rows |
+|---|---|
+| `email_messages` total | 124 |
+| …with a usable `received_at` | **5** |
+| …contentless shells (no sender, no subject, no timestamp) | **119** |
+
+So Phase 0's headline — *"124 real email rows feeding nothing"* — was **wrong**, and the corrected
+claim is weaker: *5 real email rows feeding nothing, plus 119 broken rows*. The consolidation bet
+recorded in `CHANGELOG.md` leaned on that number; it is corrected there too. The email arm is
+**correctly wired and currently starved**. Wiring it was still right — but the payoff is gated on an
+ingest fix, not on this issue.
+
+**This is out of scope here and needs its own issue: GH-125 *consumes* email, it does not ingest it.**
+
+**3. That defect exposed a signal-quality hole in the new email arm — fixed.** The shells are invisible
+today *only because* their `received_at` is empty, so the window filter drops them. The day someone
+fixes the ingest to populate the timestamp but not the headers, all 119 would land at **tier 1 — above
+your open GitHub items** — as *"(no subject) — from unknown sender"*. `email_candidates()` now drops any
+row with neither a subject nor a sender, and `test_contentless_email_shell_is_never_ranked` pins it.
+A rank with nothing to attest with is precisely the bare verdict [D2](#d2--the-ranking-must-arrive-attested-decided-2026-07-14) forbids.
+
+**Still pending** (needs credentials / a live model): `rebalance doctor`, live `refresh_index()`, the
+live `/whats-next` render, and a real Gemini ranking call. Deferred to the Phase 4 close.
+
+---
+
+## Decisions recorded during build
+
+- **Zapier stubs — KEPT (the planned deletion is rejected, with reason).** Phase 3 above proposed
+  deleting `zapier_email.py` / `zapier_calendar.py` "unless they carry logic." They carry none — they
+  are pure `NotImplementedError` placeholders — **but they are the live dispatch targets of the shipped
+  `POST /api/zapier/ingest` receiver**, and `tests/test_zapier_webhook.py` pins the
+  `NotImplementedError → 501` contract by patching those exact module functions. Deleting them breaks a
+  shipped, tested endpoint that the same phase says to keep. The plan was wrong; the code stays.
+- **`compute_deep_work_signals()` (GH-116 Ph2) — KILLED as a ranker arm (explicit, no third state).**
+  It remains observe-only behind its `rebalance doctor` line. Reason: it is a **cross-day derived scan**
+  (it re-reads `collect_pulse_snapshot` over a lookback window), whereas the `candidates=` provider
+  contract is `bundle → rows` over a **single local day**. The bundle carries no lookback context, so
+  folding it in would either break the provider contract for every other source or double-count projects
+  the GitHub arms already surface. Revisit trigger: if it is ever folded in, it needs its own provider
+  contract (`database_path` + lookback) — a deliberate follow-up, not a squeeze into this one.
+- **`audit_modules` lockfile — left RED (the Cloud run's re-baseline is REVERTED).** The gate is failing
+  on `development` with 23 modules missing from `ARCHITECTURE.md` and 13 from `CHANGELOG.md`. **None of
+  them are from GH-125** — this issue adds no new module. The Cloud run made the gate green by running
+  `--init` to re-baseline the lockfile, which is the tool's sanctioned reset and *was* disclosed. It is
+  still the wrong call here: re-baselining permanently **silences 36 real doc gaps** created by other
+  issues, converting a loud red gate into permanent quiet, and it launders unrelated debt through this
+  PR. GH-125 does not need that gate green to be correct. The lockfile is reverted to its
+  `development` state; the gate stays red exactly as it was; documenting those 36 modules is its own
+  piece of work.
+
+---
+
+## QA review — agy, 1 round (2026-07-14)
+
+Driven headless via `relay-xyz` (Path A, `--review-once`). Thread:
+`.xyz/relay-system/2026-07-14/gh-125-hiqs-unified-signal-pipeline-qa-review.md`.
+**Verdict: PASS**, with four `[Should]` findings. All four were acted on — two were hits on
+overclaiming, which is exactly what the review was asked to hunt:
+
+| # | agy's finding | Disposition |
+|---|---|---|
+| 1 | **"Single writer" is false** — `refresh_index()` also persists the ranked cache, not just the `/whats-next` route. | **ACCEPTED — claim corrected, code unchanged.** Two writers into one cache is harmless; the invariant that buys drift-proofing is *"no surface computes its own ranking"*, not *"one writer"*. Rewritten in [Phase 2](#phase-2--one-ranked-verdict) and in `CHANGELOG.md`. |
+| 2 | **Cold-start divergence** — on a never-ranked DB `ask()` returns empty while `/whats-next` recomputes and persists. | **ACCEPTED — documented, behaviour kept.** It is an *absence*, not a disagreement: one ranking and no ranking, never two rankings. `ask()` must never trigger a network synthesis ([D3](#d3--the-dispatch-chain-gets-collapsed-not-grown)), so the asymmetry stays. The "structurally incapable of drifting" phrasing is retired. |
+| 3 | **The shell-drop is silent** — freshness reports `ok` whenever rows exist, so a collector writing header-less rows looks healthy while contributing nothing. | **ACCEPTED — code changed.** `email_candidates()` now emits a `logger.warning` naming the dropped count and the cause. A dropped row is an ingest defect, not noise to swallow. This is the review's most valuable finding. |
+| 4 | **Email at tier 1 (above open GitHub items) may be notification spam.** | **ACCEPTED as an OPEN QUESTION — deliberately not tuned now.** See follow-up 3. |
+
+---
+
+## Follow-ups this issue creates (do not lose)
+
+| # | What | Why it is not done here |
+|---|---|---|
+| 1 | ~~**Gmail ingest writes contentless rows**~~ — **RESOLVED 2026-07-14. RCA below.** | Fixed at the write boundary + the 119 shells purged from the live DB. No issue needed. |
+| 2 | **`audit_modules` doc debt** — 23 modules missing from ARCHITECTURE.md, 13 from CHANGELOG.md. | Pre-existing on `development`, unrelated to signal unification. Silencing it here would be laundering. |
+| 3 | **Is email the right tier-1 signal?** (agy QA finding 4.) Email currently outranks your own open GitHub items. That may be right (an inbound ask from a human *is* usually more urgent than your own backlog) or it may fill the top of the list with newsletters. | **Cannot be answered yet, and tuning it now would be speculation.** The arm is *starved* — 5 usable rows, newest 7 weeks old — so there is no live email volume to tune a rank tier against. **Revisit trigger: once follow-up 1 lands and real mail flows, look at the top of `/whats-next` for a week.** If newsletters dominate, the fix is a relevance filter on the arm (or a tier demotion), not a re-ranker. |
+| 4 | **Net-LOC ≤ 0 was missed (+519).** | Recorded as a failed criterion above, not restated. Worth a retro on whether the proxy was the right one. |
+| 5 | **⚠️ NEW — source health measures row COUNT, not row QUALITY.** This is the generalizable defect the email RCA exposed, and it is **not** email-specific: freshness reports a source `ok` whenever rows exist. A collector writing *structurally valid but semantically empty* rows therefore looks perfectly healthy forever. That is exactly how 119 dead rows — 96% of a table — hid for three weeks. **Deserves its own GH issue.** | Applies to all eight sources, not to signal unification. Fixing it means teaching the freshness contract (the shipped GH-101 Ph1–2 work) to assert *content*, not just presence. Out of scope here. |
+
+---
+
+## RCA — the email shell corruption (closed 2026-07-14)
+
+**The Gmail OAuth collector was never at fault.** `sync_gmail()` calls the API with `format="metadata"`
+and the correct `metadataHeaders`, parses the `Date` header, and falls back to `internalDate`. It is
+correct and always was.
+
+| | |
+|---|---|
+| **What** | 119 of 124 `email_messages` rows (96% of the table) carried a `message_id`, a `snippet` and `labels_json` — but no sender, no subject, no `received_at`. 118 of them were also embedded into `semantic_documents`, polluting semantic search. |
+| **When** | A single bulk push on **2026-06-25**. All 119 rows share one identical `synced_at`, which is what proves it was one call and not a slow leak. |
+| **How** | `ingest_email_messages()` — the agent-facing MCP push path behind `ingest_gmail_messages`, **not** the OAuth collector — wrote `str(m.get(k) or "")` for every field. A caller whose payload used **different key names** had every unmatched field silently coerced to `""`, and the row was **stored anyway**. Only `message_id`, `snippet` and `labels` matched the expected vocabulary; the three that define a message did not. |
+| **Why it hid for 3 weeks** | Source freshness checks whether rows **exist**, not whether they **mean anything**. 124 rows → `ok`. Nothing was ever going to report this. It surfaced only because GH-125 taught the ranker to *read* email and it found nothing rankable. |
+| **Fix** | Reject at the write boundary: no sender **and** no subject **and** no timestamp → not a message, not stored. Count returned as `messages_skipped`; the MCP response carries an explicit `warning` naming the expected keys (the caller is an *agent*, so a log line alone would have been just as silent as the original bug). 3 regression tests, including the exact corrupting payload shape. |
+| **Cleanup** | The 119 shells and their 118 embeddings purged from the live DB via the existing `delete_semantic_documents()` helper (embeddings + docs + FTS trigger). Verified: 0 shells, 0 orphans, `PRAGMA integrity_check` = ok, 5 real messages intact, all other sources untouched. DB backed up first. |
+
+**Is the RCA complete? Yes — causally.** The one thing not known is *which* caller sent the malformed
+payload and what exact key vocabulary it used (the rows are now deleted; a pre-purge backup retains them
+if anyone wants forensics). **That does not matter**, because the guard rejects *any* wrong-shape payload
+regardless of which one it was — identifying the specific caller would not change a line of the fix. The
+email RCA is therefore **closed with no follow-up issue**.
+
+**What DOES warrant an issue is follow-up 5** — the detector gap. The bug was findable in one query at any
+point in those three weeks. Nothing looked, because nothing was watching for *empty* rather than *absent*.
 
 ---
 

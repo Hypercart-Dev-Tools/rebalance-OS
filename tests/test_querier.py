@@ -13,7 +13,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from rebalance.ingest.db import db_connection, ensure_schema, ensure_calendar_schema
-from rebalance.ingest.querier import ask, QueryResult, NEXT_ACTIONS_ATTR
+from rebalance.ingest.querier import ask, QueryResult
 
 
 _FAKE_GITHUB_ROW = {
@@ -151,6 +151,9 @@ class GithubContextRowShapeTests(unittest.TestCase):
 class McpSerializationContractTests(unittest.TestCase):
     """The MCP ask tool re-serializes QueryResult by field name — all keys must survive."""
 
+    # GH-125 (D1): the QueryResult contract was DELIBERATELY BUMPED to carry the
+    # first-class `hiqs` field — the persisted HiQS ranked verdict. This replaces
+    # the rejected NEXT_ACTIONS_ATTR sidecar.
     EXPECTED_KEYS = {
         "query",
         "synthesis",
@@ -161,6 +164,7 @@ class McpSerializationContractTests(unittest.TestCase):
         "vault_activity",
         "calendar_context",
         "temporal_context",
+        "hiqs",
         "model_used",
         "elapsed_seconds",
     }
@@ -183,6 +187,7 @@ class McpSerializationContractTests(unittest.TestCase):
             "vault_activity": result.vault_activity,
             "calendar_context": result.calendar_context,
             "temporal_context": result.temporal_context,
+            "hiqs": result.hiqs,
             "model_used": result.model_used,
             "elapsed_seconds": result.elapsed_seconds,
         }
@@ -195,125 +200,63 @@ class McpSerializationContractTests(unittest.TestCase):
             self.assertIsInstance(result, QueryResult)
 
 
-class TeamNextActionsSidecarTests(unittest.TestCase):
-    """ask(team=...) — Stage C parity.
+class HiqsFieldContractTests(unittest.TestCase):
+    """GH-125 (D1/D3): `hiqs` is a first-class QueryResult field.
 
-    team=False must leave the pinned QueryResult contract byte-identical (no
-    sidecar, no rank_next_actions call). team=True must additionally expose the
-    ranked next_actions via the sidecar attribute, produced by rank_next_actions
-    with the SAME args a dashboard call would use (database_path + blend_team=True).
-    rank_next_actions is monkeypatched to avoid network and capture its call args.
+    ``ask()`` reads the PERSISTED ranking via ``load_ranked_next_actions`` (a
+    cheap cached read) and exposes it as ``result.hiqs``. It NEVER calls
+    ``rank_next_actions`` (no recompute, no Gemini) — the dashboard route is the
+    single writer of that cache, so the two surfaces cannot drift.
     """
-
-    EXPECTED_KEYS = McpSerializationContractTests.EXPECTED_KEYS
 
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._tmp.cleanup)
         self._db = _minimal_db(self._tmp.name)
 
-    def test_team_false_does_not_call_rank_and_has_no_sidecar(self) -> None:
-        """Default flow: rank_next_actions is never called; no sidecar attached."""
+    def test_default_path_never_recomputes_the_ranking(self) -> None:
+        """Acceptance #5: ask() does NOT recompute the ranking on the default path."""
         with patch("rebalance.ingest.next_actions.rank_next_actions") as mock_rank:
-            result = ask("status", self._db, skip_synthesis=True)
+            ask("status", self._db, skip_synthesis=True)
         mock_rank.assert_not_called()
-        self.assertIsNone(getattr(result, NEXT_ACTIONS_ATTR, None))
 
-    def test_team_false_pinned_keys_unchanged(self) -> None:
-        """Regression: team=False re-serializes to exactly the pinned key set."""
-        result = ask("status", self._db, skip_synthesis=True, team=False)
-        serialized = {
-            "query": result.query,
-            "synthesis": result.synthesis,
-            "vault_context": result.vault_context,
-            "github_context": result.github_context,
-            "github_semantic_context": result.github_semantic_context,
-            "project_context": result.project_context,
-            "vault_activity": result.vault_activity,
-            "calendar_context": result.calendar_context,
-            "temporal_context": result.temporal_context,
-            "model_used": result.model_used,
-            "elapsed_seconds": result.elapsed_seconds,
-        }
-        self.assertEqual(set(serialized.keys()), self.EXPECTED_KEYS)
+    def test_empty_db_degrades_to_empty_ranking_without_raising(self) -> None:
+        """A never-ranked / empty DB → hiqs is an empty ranking, ask() does not raise."""
+        result = ask("status", self._db, skip_synthesis=True)
+        self.assertIsInstance(result.hiqs, dict)
+        self.assertEqual(result.hiqs.get("ranked"), [])
 
-    def test_team_true_attaches_ranked_sidecar(self) -> None:
-        """team=True exposes the ranked next_actions via the sidecar attribute."""
+    def test_hiqs_field_carries_the_persisted_verdict(self) -> None:
+        """hiqs reflects the persisted ranking read via load_ranked_next_actions."""
         from rebalance.ingest.next_actions import RankedNextActions, RankedAction
 
-        sentinel = RankedNextActions(
+        cached = RankedNextActions(
             ranked=[RankedAction(rank=1, title="ship it", person=None, source="github")],
             blended=True,
-            note="ok",
+            note="from-cache",
         )
-        with patch(
-            "rebalance.ingest.next_actions.rank_next_actions",
-            return_value=sentinel,
-        ):
-            result = ask("status", self._db, skip_synthesis=True, team=True)
-
-        # Pinned QueryResult contract is still intact (sidecar is NOT a field).
-        self.assertIsInstance(result, QueryResult)
-        attached = getattr(result, NEXT_ACTIONS_ATTR, None)
-        self.assertIs(attached, sentinel)
-        self.assertEqual(attached.ranked[0].title, "ship it")
-
-    def test_team_true_fallback_uses_deterministic_rank_no_synthesis(self) -> None:
-        """No precompute → fall back to a LIVE but DETERMINISTIC rank.
-
-        The interactive ask() path must NOT trigger a second Gemini call: when the
-        cache is absent the fallback is ``rank_next_actions(blend_team=True,
-        synthesize=False)`` — the ranked floor, no LLM round-trip (C4/FIX 5).
-        """
-        from rebalance.ingest.next_actions import RankedNextActions
-
-        with patch(
-            "rebalance.ingest.next_actions.rank_next_actions",
-            return_value=RankedNextActions(),
-        ) as mock_rank:
-            ask("status", self._db, skip_synthesis=True, team=True)
-
-        mock_rank.assert_called_once()
-        call = mock_rank.call_args
-        # database_path passed (positionally or by keyword) and blend_team=True.
-        passed_db = call.kwargs.get("database_path")
-        if passed_db is None and call.args:
-            passed_db = call.args[0]
-        self.assertEqual(passed_db, self._db)
-        self.assertTrue(call.kwargs.get("blend_team"))
-        # The interactive path must request the DETERMINISTIC floor (no synthesis).
-        self.assertFalse(call.kwargs.get("synthesize", True))
-
-    def test_team_true_prefers_cache_and_skips_rank(self) -> None:
-        """A persisted cache row is PREFERRED; rank_next_actions is NOT called.
-
-        Interactive ask(team=True) must never silently pay for a synthesis when a
-        precomputed ranked result already exists (C4/FIX 5)."""
-        from rebalance.ingest.next_actions import RankedNextActions
-
-        cached = RankedNextActions(note="from-cache", blended=True)
         with patch(
             "rebalance.ingest.next_actions.load_ranked_next_actions",
             return_value=cached,
         ) as mock_load, patch(
             "rebalance.ingest.next_actions.rank_next_actions",
         ) as mock_rank:
-            result = ask("status", self._db, skip_synthesis=True, team=True)
+            result = ask("status", self._db, skip_synthesis=True)
 
         mock_load.assert_called_once()
-        mock_rank.assert_not_called()  # no second synthesis, no deterministic rerun
-        attached = getattr(result, NEXT_ACTIONS_ATTR, None)
-        self.assertIs(attached, cached)
+        mock_rank.assert_not_called()  # cached read only — never a recompute
+        self.assertEqual(result.hiqs, cached.as_dict())
+        self.assertEqual(result.hiqs["ranked"][0]["title"], "ship it")
 
-    def test_team_true_never_raises_when_rank_degrades(self) -> None:
-        """A failing rank_next_actions must not break ask(); no sidecar attaches."""
+    def test_hiqs_read_failure_never_breaks_ask(self) -> None:
+        """A failing cached read degrades to an empty ranking; ask() still returns."""
         with patch(
-            "rebalance.ingest.next_actions.rank_next_actions",
+            "rebalance.ingest.next_actions.load_ranked_next_actions",
             side_effect=RuntimeError("boom"),
         ):
-            result = ask("status", self._db, skip_synthesis=True, team=True)
+            result = ask("status", self._db, skip_synthesis=True)
         self.assertIsInstance(result, QueryResult)
-        self.assertIsNone(getattr(result, NEXT_ACTIONS_ATTR, None))
+        self.assertEqual(result.hiqs.get("ranked"), [])
 
 
 if __name__ == "__main__":
