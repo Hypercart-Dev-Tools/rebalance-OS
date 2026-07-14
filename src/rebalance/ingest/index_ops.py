@@ -30,6 +30,45 @@ logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
+class HealthPredicate:
+    """Declarative content-quality assertion for a source's raw table (GH-127).
+
+    Freshness that only counts rows reports a source ``ok`` the moment any rows
+    exist — even when those rows are *structurally valid but semantically empty*
+    (a ``message_id`` with no sender, no subject; the "husk" that a half-succeeded
+    collector writes when auth partially expires or an upstream payload key is
+    renamed). This predicate lets a source declare what a *meaningful* row looks
+    like so health can assert content, not merely presence.
+
+    A row is meaningful when it satisfies ``meaningful_where`` — a SQL boolean
+    expression over ``table``. When rows exist but the share satisfying the
+    predicate drops below ``min_healthy_ratio``, the source reports ``degraded``
+    instead of ``ok``. Declarative (not a callable) so it needs no DB handle at
+    registration time and stays trivially testable.
+
+    Fields
+    ------
+    table:
+        The source's own raw table to inspect.
+    meaningful_where:
+        SQL boolean expression (a ``WHERE`` clause body) that a meaningful row
+        satisfies, e.g. ``"TRIM(COALESCE(subject,'')) != ''"``.
+    min_healthy_ratio:
+        Minimum share of rows (0..1) that must be meaningful before the source is
+        reported ``degraded``. Default 0.5 — a majority of husks is unambiguous
+        corruption; a conservative threshold avoids flapping on a stray blank row.
+    label:
+        Human phrase naming the missing content, rendered into the operator-facing
+        reason (e.g. ``"sender or subject"`` → "… carry no sender or subject").
+    """
+
+    table: str
+    meaningful_where: str
+    min_healthy_ratio: float = 0.5
+    label: str = "meaningful content"
+
+
+@dataclass(frozen=True)
 class Collector:
     """A single data-source ingest pipeline registered with :data:`COLLECTORS`.
 
@@ -80,6 +119,15 @@ class Collector:
         reaches the ranked verdict by registering a collector — never by editing
         the ranker's dispatch chain (GUIDING-PRINCIPLES Principle 3). ``None``
         (default) means the source contributes no next-action candidates.
+    health_predicate:
+        Optional :class:`HealthPredicate` declaring what a *meaningful* row looks
+        like for this source. This is the THIRD use of the same registry seam as
+        ``semantic_docs`` and ``candidates`` (GH-127): ``get_index_status`` walks
+        the registry and scores each source's content quality, and
+        ``_derive_signal_health`` reports ``degraded`` when rows exist but a
+        material share are husks — so teaching a source to assert content is one
+        ``health_predicate=`` on its Collector, never an edit to the health module
+        (Principle 3). ``None`` (default) preserves presence-only freshness.
     """
 
     name: str
@@ -89,6 +137,7 @@ class Collector:
     kind: str = "raw_source"
     semantic_docs: Callable[[Any], Iterable["SemanticDoc"]] | None = None
     candidates: Callable[[Any], Iterable[dict[str, Any]]] | None = None
+    health_predicate: HealthPredicate | None = None
 
 
 # A Collector that also exposes a ``semantic_docs`` provider is the spine of a
@@ -190,6 +239,60 @@ def _safe_count_where(conn: Any, table: str, where: str) -> int | None:
         return None
 
 
+def _content_health(conn: Any, predicate: "HealthPredicate") -> dict[str, Any] | None:
+    """Score a source's rows against its :class:`HealthPredicate` (GH-127).
+
+    Returns a ``content_health`` block — total rows, how many are *meaningful*
+    (satisfy the predicate), the contentless remainder, and the meaningful ratio
+    vs the source's declared floor. ``None`` if the probe itself fails (missing
+    table, bad predicate) — content quality is observability and must never crash
+    the read-only status snapshot. An empty table is reported as fully meaningful
+    (ratio 1.0): "no rows yet" is a freshness concern, not a husk concern.
+    """
+    total = _safe_count(conn, predicate.table)
+    if total is None:
+        return None
+    if total == 0:
+        return {
+            "table": predicate.table,
+            "total": 0,
+            "meaningful": 0,
+            "contentless": 0,
+            "meaningful_ratio": 1.0,
+            "min_healthy_ratio": predicate.min_healthy_ratio,
+            "label": predicate.label,
+        }
+    meaningful = _safe_count_where(conn, predicate.table, predicate.meaningful_where)
+    if meaningful is None:
+        return None
+    meaningful = max(0, min(meaningful, total))
+    return {
+        "table": predicate.table,
+        "total": total,
+        "meaningful": meaningful,
+        "contentless": total - meaningful,
+        "meaningful_ratio": meaningful / total,
+        "min_healthy_ratio": predicate.min_healthy_ratio,
+        "label": predicate.label,
+    }
+
+
+def _attach_content_health(conn: Any, sources: dict[str, dict[str, Any]]) -> None:
+    """Walk the registry and attach a ``content_health`` block to every source
+    that declares a :class:`HealthPredicate`. Registry-driven: adding a source's
+    quality predicate needs no edit here (GH-127, Principle 3)."""
+    for name, collector in COLLECTORS.items():
+        predicate = collector.health_predicate
+        if predicate is None:
+            continue
+        payload = sources.get(name)
+        if payload is None:
+            continue
+        block = _content_health(conn, predicate)
+        if block is not None:
+            payload["content_health"] = block
+
+
 _SIGNAL_HEALTH_RULES: dict[str, dict[str, Any]] = {
     "vault": {"freshness_key": "last_ingested_at", "window_days": 7, "zero_status": "degraded"},
     "github": {
@@ -244,6 +347,37 @@ def _source_total_rows(source_name: str, source_payload: dict[str, Any]) -> int:
     return 0
 
 
+def _content_health_status(source_payload: dict[str, Any]) -> dict[str, str] | None:
+    """Return a ``degraded`` entry when a source's rows exist but a material share
+    fail its :class:`HealthPredicate` — the "husk" failure mode (GH-127).
+
+    Generic: reads the ``content_health`` block attached by the registry walk in
+    :func:`_attach_content_health` and makes no per-source assumptions, so a new
+    source's predicate flows through here untouched (Principle 3). ``None`` when
+    there is nothing to assert (no block, no rows) or the source is healthy.
+    """
+    block = source_payload.get("content_health")
+    if not isinstance(block, dict):
+        return None
+    total = int(block.get("total") or 0)
+    if total == 0:
+        return None
+    ratio = float(block.get("meaningful_ratio") or 0.0)
+    floor = float(block.get("min_healthy_ratio") or 0.0)
+    if ratio >= floor:
+        return None
+    contentless = int(block.get("contentless") or 0)
+    label = str(block.get("label") or "meaningful content")
+    pct = round((1.0 - ratio) * 100)
+    return {
+        "status": "degraded",
+        "reason": (
+            f"{contentless} of {total} rows ({pct}%) carry no {label} — rows exist "
+            f"but are contentless"
+        ),
+    }
+
+
 def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]]:
     now = datetime.now(timezone.utc)
     signal_health: dict[str, dict[str, str]] = {}
@@ -292,7 +426,28 @@ def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[
                         "reason": "freshness timestamp is current but 0 rows landed in the last 7d",
                     }
 
+        # Content-quality escalation (GH-127): a source can be perfectly fresh and
+        # full of rows yet report ``ok`` while those rows are husks. When a material
+        # share fail the source's declared HealthPredicate, escalate ok/warn to
+        # degraded. A base status already ``degraded`` (stale / missing freshness)
+        # is the more fundamental failure and keeps its own reason.
+        if status_entry.get("status") != "degraded":
+            content_entry = _content_health_status(source_payload)
+            if content_entry is not None:
+                status_entry = content_entry
+
         signal_health[source_name] = status_entry
+
+    # Sources that declare a content predicate but have no freshness rule still
+    # get a content-quality verdict here — so a brand-new source becomes husk-aware
+    # with only a ``health_predicate=`` on its Collector, no edit to this module
+    # (GH-127, Principle 3).
+    for source_name, source_payload in sources.items():
+        if source_name in signal_health:
+            continue
+        content_entry = _content_health_status(source_payload)
+        if content_entry is not None:
+            signal_health[source_name] = content_entry
 
     return signal_health
 
@@ -523,6 +678,11 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             drift["semantic_documents_pending_embed"] = int(pending_embed)
         except Exception:
             drift["semantic_documents_pending_embed"] = None
+
+        # Registry-driven content-quality scoring (GH-127): attach a
+        # ``content_health`` block to every source that declares a HealthPredicate
+        # so signal_health can assert content, not merely presence.
+        _attach_content_health(conn, payload["sources"])
 
         payload["freshness"] = {**drift, "signal_health": _derive_signal_health(payload["sources"])}
 
@@ -1692,7 +1852,25 @@ register_collector(Collector("sleuth", _sleuth_adapter, candidates=sleuth_candid
 # it requires Full Disk Access for the host process and is macOS-only, so it must
 # never be part of a default/launchd `all` run on machines that can't read it.
 register_collector(Collector("apple_reminders", _apple_reminders_adapter, included_in_all=False))
-register_collector(Collector("email", _email_adapter, candidates=email_candidates))
+# Email carries a proven husk shape (GH-125/GH-127): the write-boundary bug wrote
+# 119 rows with a message_id, a snippet and labels but no sender, subject or
+# received_at — freshness reported ``ok`` for three weeks because 124 > 0. A
+# meaningful email is one you can attribute or read: it has a sender or a subject.
+# When a material share lack both, the source reports ``degraded`` instead.
+register_collector(Collector(
+    "email",
+    _email_adapter,
+    candidates=email_candidates,
+    health_predicate=HealthPredicate(
+        table="email_messages",
+        meaningful_where=(
+            "TRIM(COALESCE(from_address, '')) != '' "
+            "OR TRIM(COALESCE(from_name, '')) != '' "
+            "OR TRIM(COALESCE(subject, '')) != ''"
+        ),
+        label="sender or subject",
+    ),
+))
 register_collector(Collector("code", _code_adapter, kind="derived_scan"))
 register_collector(Collector("semantic", _semantic_adapter, kind="projection"))
 register_collector(Collector("sync", _sync_adapter, kind="export"))

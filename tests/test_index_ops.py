@@ -258,6 +258,109 @@ class IndexOpsTests(unittest.TestCase):
             self.assertEqual(health["status"], "warn")
             self.assertTrue(health["reason"])
 
+    def test_signal_health_flags_contentless_email_rows_as_degraded(self) -> None:
+        # GH-127 regression: seed email_messages full of husks — the exact
+        # GH-125 shape: a message_id + snippet but NO sender and NO subject —
+        # with a RECENT received_at so presence-only freshness (row count + last
+        # sync) reads perfectly ``ok``. The content predicate must still flag it.
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+                for i in range(10):
+                    conn.execute(
+                        "INSERT INTO email_messages "
+                        "(message_id, snippet, received_at, synced_at, labels_json) "
+                        "VALUES (?, 'x', datetime('now'), datetime('now'), '[]')",
+                        (f"husk-{i}",),
+                    )
+                conn.commit()
+
+            status = get_index_status(db_path)
+
+            # The source is NOT reported healthy.
+            health = status["freshness"]["signal_health"]["email"]
+            self.assertEqual(health["status"], "degraded")
+            self.assertIn("contentless", health["reason"])
+
+            # The content_health block is attached to the source payload.
+            content = status["sources"]["email"]["content_health"]
+            self.assertEqual(content["total"], 10)
+            self.assertEqual(content["meaningful"], 0)
+            self.assertEqual(content["contentless"], 10)
+
+    def test_signal_health_ok_when_email_rows_carry_content(self) -> None:
+        # Guard against false positives: meaningful rows (sender + subject) keep
+        # the source ``ok`` — the predicate flags husks, not legitimate email.
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+                for i in range(10):
+                    conn.execute(
+                        "INSERT INTO email_messages "
+                        "(message_id, from_address, subject, received_at, synced_at, labels_json) "
+                        "VALUES (?, 'a@example.com', 'Hello', datetime('now'), datetime('now'), '[]')",
+                        (f"msg-{i}",),
+                    )
+                conn.commit()
+
+            health = get_index_status(db_path)["freshness"]["signal_health"]["email"]
+            self.assertEqual(health["status"], "ok")
+            self.assertNotIn("reason", health)
+
+    def test_content_predicate_is_registry_driven(self) -> None:
+        # GH-127 Principle 3: a source becomes husk-aware with ONLY a
+        # ``health_predicate=`` on its Collector — no edit to the health module.
+        # Register a throwaway collector (absent from _SIGNAL_HEALTH_RULES),
+        # seed a husk table, and drive the two generic health functions.
+        from rebalance.ingest.db import db_connection
+        from rebalance.ingest.index_ops import (
+            COLLECTORS,
+            Collector,
+            HealthPredicate,
+            _attach_content_health,
+            _derive_signal_health,
+            register_collector,
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            register_collector(Collector(
+                "husktest",
+                lambda db, **o: {"scope": "husktest"},
+                health_predicate=HealthPredicate(
+                    table="husk_probe",
+                    meaningful_where="TRIM(COALESCE(title, '')) != ''",
+                    label="title",
+                ),
+            ))
+            try:
+                with db_connection(db_path) as conn:
+                    conn.execute(
+                        "CREATE TABLE husk_probe (id INTEGER PRIMARY KEY, title TEXT)"
+                    )
+                    conn.executemany(
+                        "INSERT INTO husk_probe (title) VALUES (?)",
+                        [("",), ("",), ("",), ("",), (None,)],
+                    )
+                    conn.commit()
+                    sources = {"husktest": {"recent_row_count_7d": 5}}
+                    _attach_content_health(conn, sources)
+                health = _derive_signal_health(sources)
+            finally:
+                COLLECTORS.pop("husktest", None)
+
+        self.assertIn("husktest", health)
+        self.assertEqual(health["husktest"]["status"], "degraded")
+        self.assertIn("contentless", health["husktest"]["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

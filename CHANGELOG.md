@@ -6,6 +6,11 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.57.1] - 2026-07-14
+
+### Fixed
+- **Source health now asserts row *content*, not merely row *count*** ([GH-127](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/127), refs #125) — a collector that half-succeeds — auth partially expired, an upstream payload key renamed — can fill its table with structurally valid but semantically empty rows and still report healthy, because freshness only ever asked whether rows *existed*. That is exactly how 96% of one source's table sat dead for three weeks while health said `ok`: the rows were there, they just meant nothing. Health now scores each source against a declared quality predicate — a *meaningful* row is one you can attribute or read — and reports `degraded` instead of `ok` when rows exist but a material share are husks. The verdict surfaces where the row-count metric already flows: the status snapshot and the doctor's signal-health line, so an operator sees "N of M rows carry no sender or subject — rows exist but are contentless" rather than a false green. The check is registry-driven: a source teaches its predicate with one field on its collector registration, and neither the health module nor any dispatch chain changes — the same registration seam the semantic-document and next-action providers already use, now used a third time. This closes the detector gap left open when the write-boundary bug itself was fixed under #125; the fix there stopped one write path, this watches all of them.
+
 ## [0.57.0] - 2026-07-14
 
 ### Added
