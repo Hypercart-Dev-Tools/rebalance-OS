@@ -2,8 +2,8 @@
 
 This is the keystone the dashboard route AND the ``ask`` surface both call, so
 the two never drift: a flat, ranked "next actions" list assembled from the
-operator's own signals (calendar + GitHub + vault + sleuth + email) blended with
-a strictly-additive, de-duplicated delta of teammate calendar signal.
+operator's own signals (calendar + GitHub + vault + sleuth + email + figma)
+blended with a strictly-additive, de-duplicated delta of teammate calendar signal.
 
 Design (SOLID — distinct, testable functions):
 
@@ -205,6 +205,8 @@ class OperatorBundle:
     gh_comments: list[dict[str, Any]] = field(default_factory=list)
     vault_edits: list[dict[str, Any]] = field(default_factory=list)
     sleuth_activity: list[dict[str, Any]] = field(default_factory=list)
+    email_activity: list[dict[str, Any]] = field(default_factory=list)
+    figma_activity: list[dict[str, Any]] = field(default_factory=list)
 
 
 def assemble_day_bundle(
@@ -255,6 +257,8 @@ def assemble_day_bundle(
         gh_comments=[c for c in activity.gh_comments if _not_noise(c.get("repo"))],
         vault_edits=list(activity.vault_edits),
         sleuth_activity=list(activity.sleuth_activity),
+        email_activity=list(activity.email_activity),
+        figma_activity=list(activity.figma_activity),
     )
 
 
@@ -500,7 +504,11 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
 
     The ordering here is the degraded-but-ranked fallback used verbatim when
     synthesis is skipped or fails. ``rank_key`` sorts higher-signal first:
-    sleuth/assigned > github items > calendar > commits > comments > vault.
+    sleuth 0 · email 1 · gh_items 2 · calendar 3 · gh_commits 4 · gh_comments 5
+    · figma 6 · vault 7.
+
+    ATTESTED (D2): every candidate carries ``source``, non-empty ``evidence``,
+    and ``why`` — a bare title is a failed signal.
     """
     out: list[dict[str, Any]] = []
 
@@ -512,9 +520,18 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
             "evidence": [f"sleuth/{s.get('state', '')}"],
             "why": "open reminder assigned to/by you",
         })
+    for m in bundle.email_activity:
+        sender = m.get("from_name") or m.get("from_address") or "unknown sender"
+        out.append({
+            "rank_key": (1, m.get("received_at") or ""),
+            "title": m.get("subject") or "(no subject)",
+            "source": "email",
+            "evidence": [f"from {sender}", m.get("received_at") or ""],
+            "why": "email received in the day window",
+        })
     for it in bundle.gh_items:
         out.append({
-            "rank_key": (1, it.get("updated_at") or it.get("created_at") or ""),
+            "rank_key": (2, it.get("updated_at") or it.get("created_at") or ""),
             "title": f"{it.get('item_type', 'item')} #{it.get('number')}: {it.get('title', '')}",
             "source": "github",
             "project": it.get("repo"),
@@ -523,7 +540,7 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
         })
     for b in bundle.calendar_blocks:
         out.append({
-            "rank_key": (2, b.get("time") or ""),
+            "rank_key": (3, b.get("time") or ""),
             "title": b.get("summary") or "Calendar block",
             "source": "calendar",
             "evidence": [f"{b.get('time', '')} ({b.get('duration_minutes', 0)}m)"],
@@ -531,7 +548,7 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
         })
     for c in bundle.gh_commits:
         out.append({
-            "rank_key": (3, c.get("committed_at") or ""),
+            "rank_key": (4, c.get("committed_at") or ""),
             "title": c.get("subject") or "commit",
             "source": "github",
             "project": c.get("repo"),
@@ -540,12 +557,25 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
         })
     for cm in bundle.gh_comments:
         out.append({
-            "rank_key": (4, cm.get("created_at") or ""),
+            "rank_key": (5, cm.get("created_at") or ""),
             "title": cm.get("preview") or "comment",
             "source": "github",
             "project": cm.get("repo"),
             "evidence": [cm.get("html_url") or ""],
             "why": "thread you engaged on",
+        })
+    # ponytail: this arm ships DORMANT — figma_activity is empty until a
+    # configured `figma_file_keys` allow-list turns the opt-in collector on.
+    # It is correct-and-idle, not dead: Figma is an explicit product signal.
+    for fc in bundle.figma_activity:
+        handle = fc.get("user_handle") or "someone"
+        out.append({
+            "rank_key": (6, fc.get("created_at") or ""),
+            "title": fc.get("message") or "Figma comment",
+            "source": "figma",
+            "project": fc.get("file_key"),
+            "evidence": [f"{handle} on figma/{fc.get('file_key', '')}"],
+            "why": "unresolved Figma comment on a watched file",
         })
     for v in bundle.vault_edits:
         # Skip rebalance's OWN generated next-actions file: it is rewritten every
@@ -554,7 +584,7 @@ def _operator_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
         if _is_generated_next_actions_file(v.get("rel_path") or "", v.get("title") or ""):
             continue
         out.append({
-            "rank_key": (5, v.get("last_modified") or ""),
+            "rank_key": (7, v.get("last_modified") or ""),
             "title": v.get("title") or v.get("rel_path") or "vault note",
             "source": "vault",
             "evidence": [v.get("rel_path") or ""],
@@ -592,7 +622,7 @@ def _teammate_candidate(blk: dict[str, Any]) -> dict[str, Any]:
     who = blk.get("person") or "teammate"
     dur = blk.get("duration_minutes") or 0
     return {
-        "rank_key": (1, blk.get("time") or ""),  # teammate calendar ~ github tier
+        "rank_key": (2, blk.get("time") or ""),  # teammate calendar ~ gh_items tier
         "title": blk.get("summary") or "Teammate block",
         "person": who,
         "source": "calendar",

@@ -86,6 +86,21 @@ def _parse_iso(value: str | None) -> datetime | None:
     return parse_utc_iso(value)
 
 
+def _table_exists(conn: Any, name: str) -> bool:
+    """True if *name* is a table in the connected DB.
+
+    ``_query_day_activity`` runs on a plain connection whose schema is not
+    guaranteed migrated (e.g. a partial-schema fixture, or a DB predating a
+    source's table). Optional sources gate their SELECT on this so an absent
+    table degrades to "no rows" instead of raising and aborting the whole snapshot.
+    """
+    row = conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1",
+        (name,),
+    ).fetchone()
+    return row is not None
+
+
 def _in_window(value: str | None, start: datetime, end: datetime) -> bool:
     """True if *value* (ISO string with TZ) falls in [start, end)."""
     parsed = parse_utc_iso(value)
@@ -112,6 +127,8 @@ class DayActivity:
     gh_items: list[dict[str, Any]] = field(default_factory=list)
     gh_comments: list[dict[str, Any]] = field(default_factory=list)
     sleuth_activity: list[dict[str, Any]] = field(default_factory=list)
+    email_activity: list[dict[str, Any]] = field(default_factory=list)
+    figma_activity: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -309,6 +326,52 @@ def _query_day_activity(
                         if r["assignee_id"] == slack_user_id
                         else "assigned_by_me"
                     ),
+                })
+
+    # Email — Gmail-synced messages received in the window. Mirrors the sleuth
+    # block: SQL prefilter on the UTC floor, then a tz-aware [start, end) refine.
+    if _table_exists(conn, "email_messages"):
+        rows = conn.execute(
+            """
+            SELECT message_id, from_name, from_address, subject, snippet, received_at
+            FROM email_messages
+            WHERE received_at >= ?
+            ORDER BY received_at DESC
+            """,
+            (sql_floor,),
+        ).fetchall()
+        for r in rows:
+            if _in_window(r["received_at"], start, end):
+                activity.email_activity.append({
+                    "message_id": r["message_id"],
+                    "from_name": r["from_name"] or "",
+                    "from_address": r["from_address"] or "",
+                    "subject": (r["subject"] or "").replace("\r", " ").strip()[:200],
+                    "snippet": (r["snippet"] or "").replace("\r", " ").strip()[:200],
+                    "received_at": r["received_at"],
+                })
+
+    # Figma — UNRESOLVED comments created in the window (resolved_at IS NULL).
+    # Legitimately empty on the operator's machine until a figma_file_keys
+    # allow-list is configured; the collector is opt-in.
+    if _table_exists(conn, "figma_comments"):
+        rows = conn.execute(
+            """
+            SELECT comment_key, file_key, message, user_handle, created_at
+            FROM figma_comments
+            WHERE created_at >= ? AND resolved_at IS NULL
+            ORDER BY created_at DESC
+            """,
+            (sql_floor,),
+        ).fetchall()
+        for r in rows:
+            if _in_window(r["created_at"], start, end):
+                activity.figma_activity.append({
+                    "comment_key": r["comment_key"],
+                    "file_key": r["file_key"],
+                    "message": (r["message"] or "").replace("\r", " ").strip()[:200],
+                    "user_handle": r["user_handle"] or "",
+                    "created_at": r["created_at"],
                 })
 
     return activity

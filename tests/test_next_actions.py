@@ -226,6 +226,8 @@ class TestAssembleDayBundle(unittest.TestCase):
             gh_comments = []
             vault_edits = []
             sleuth_activity = []
+            email_activity = []
+            figma_activity = []
 
         # Stub _query_day_activity so the bundle uses our crafted activity.
         orig = na._query_day_activity
@@ -264,6 +266,7 @@ class TestAssembleDayBundle(unittest.TestCase):
 
         class _Empty:
             gh_commits = gh_items = gh_comments = vault_edits = sleuth_activity = []
+            email_activity = figma_activity = []
 
         na._query_day_activity = lambda *a, **k: _Empty()
         try:
