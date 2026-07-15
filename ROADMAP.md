@@ -2,7 +2,7 @@
 title: Project Roadmap Ledger
 status: Active
 created: 2026-06-21
-updated: 2026-07-06
+updated: 2026-07-14
 branch: main
 supersedes: []
 synthesizes: []
@@ -30,6 +30,7 @@ goal: >
 ## Ledger
 
 ### Queued / parked
+- `Ingest Claude Code Cloud jobs (web sessions) + status` ([#128](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/128)) — captured 2026-07-14. **Phase 0 done:** discovered the surface behind the VS Code "Web" sessions tab — `GET api.anthropic.com/v1/code/sessions` (subscription OAuth bearer, no beta header, no API key); mapped the status fields (`status_bucket`/`worker_status`/`post_turn_summary`); proved Managed Agents (`/v1/deployment_runs`) is API-key-only (`401` on a subscription token) and triggers ride the `RemoteTrigger` tool. Standalone two-pass POC ships at `scripts/cc_cloud_jobs.py`, live-verified (4 sessions on 2026-07-14, all `review_ready`). **Phase 1 (promote to a `claude_cloud` collector wired into HiQS) is gated on a classify + kill-check — not yet built.** → [GH-128-CC-CLOUD-JOBS-INGEST.md](PROJECT/1-INBOX/GH-128-CC-CLOUD-JOBS-INGEST.md)
 - `Focus5Float telemetry viewer: .md support` ([#121](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/121)) — captured 2026-07-06, queued into [MARATHON-2026-07-07](PROJECT/2-WORKING/MARATHON-2026-07-07.md) as Lane D. Telemetry tab opens `.md` (read-only text/markdown viewer) in addition to structured `.json`; branch on file extension. Swift client-only; shares the Focus5Float write surface with the resolution-change lane, so it serializes after it. **Promoted to 2-WORKING 2026-07-07; ready to fire (not yet fired).** → [GH-121-FOCUS5-TELEMETRY-MD-VIEWER.md](PROJECT/2-WORKING/GH-121-FOCUS5-TELEMETRY-MD-VIEWER.md)
 - `Architecture diagram: show incoming (not-yet-active) XYZ HQ data` ([#120](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/120)) — captured 2026-07-06, queued into [MARATHON-2026-07-07](PROJECT/2-WORKING/MARATHON-2026-07-07.md). Add a staged `xyz_hq` source node to `ARCHITECTURE/system-diagram.json` (+ the inlined spec in `system-diagram.html`), marked not-yet-active per GH-102's default-off toggle. **Promoted to 2-WORKING 2026-07-07; ready to fire (not yet fired).** → [GH-120-DIAGRAM-XYZ-INCOMING.md](PROJECT/2-WORKING/GH-120-DIAGRAM-XYZ-INCOMING.md)
 - `ROADMAP→dashboard collector` — 1-INBOX draft, not yet promoted. A new `roadmap` source scanning PDDA `ROADMAP.md` ledgers into the dashboard. Sequenced **behind** the now-promoted signal-quality contract so it is born observable (inherits the health fields) instead of shipping ungraded. Draft pending 5 operator decisions (§6) and partial cross-device registry rollout (1 of 3 devices). **Also captured (2026-06-30), unscoped:** a speculative Phase 5 — once the collector ships, its cross-repo `roadmap_signals` table is a second potential consumer beside the dashboard plane, seeding XYZ/tick task lanes *across repos*. Not designed; revisit after Phase 2. → [ROADMAP-SIGNAL-SCAN.md](PROJECT/1-INBOX/PDDA-INTEGRATION/ROADMAP-SIGNAL-SCAN.md)
