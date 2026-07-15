@@ -1666,6 +1666,28 @@ def _refresh_focus5(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
 _focus5_adapter = _dry_run_adapter(_refresh_focus5)
 
 
+def _refresh_claude_cloud(database_path: Path, *, dry_run: bool) -> dict[str, Any]:
+    """Observation-phase refresh for the Claude Code Cloud signal (GH-128).
+
+    DORMANT source: it does not persist a raw table yet — first-class promotion
+    adds one (see PROJECT/1-INBOX/GH-128-CC-CLOUD-JOBS-INGEST.md). A live run
+    fetches today's cloud sessions and returns their data-quality grade, so
+    ``refresh_index(scope=["claude_cloud"])`` doubles as a health probe for the
+    signal while it is being watched.
+    """
+    if dry_run:
+        return {"scope": "claude_cloud", "dry_run": True,
+                "note": "would fetch today's Claude Code Cloud sessions"}
+    from rebalance.ingest.claude_cloud import grade, sessions_for_day
+
+    g = grade(sessions_for_day())
+    return {"scope": "claude_cloud", "dry_run": False, "sessions": g["n"],
+            "grade": g["letter"], "overall": g["overall"], "counts": g.get("counts", {})}
+
+
+_claude_cloud_adapter = _dry_run_adapter(_refresh_claude_cloud)
+
+
 # Next-action candidate providers — the SECOND use of the registry seam
 # (mirroring semantic_docs). Each source owns its candidate shape here, so
 # next_actions._operator_candidates is a registry walk, not a dispatch chain.
@@ -1716,5 +1738,23 @@ register_collector(
         semantic_docs=figma_semantic_docs,
         candidates=figma_candidates,
         included_in_all=False,
+    )
+)
+
+# Claude Code Cloud (web) sessions — GH-128. Opt-in derived scan; imported here (not
+# at module top) so its stdlib-only fetch loads only when the registry is built. The
+# arm ships DORMANT: claude_cloud_candidates yields nothing until the config flag
+# `claude_cloud_signal_enabled` is set true — the signal is wired into the ranker's
+# candidates= seam but is watched via the Obsidian daily-note grade before it is
+# promoted to influence the live verdict.
+from rebalance.ingest.claude_cloud import claude_cloud_candidates  # noqa: E402
+
+register_collector(
+    Collector(
+        "claude_cloud",
+        _claude_cloud_adapter,
+        candidates=claude_cloud_candidates,
+        included_in_all=False,
+        kind="derived_scan",
     )
 )

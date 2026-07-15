@@ -1241,6 +1241,22 @@ def get_pulse_config() -> dict[str, Any]:
     }
 
 
+def get_claude_cloud_config() -> dict[str, Any]:
+    """Return the Claude Code Cloud signal config block (GH-128).
+
+    Keys:
+      - claude_cloud_signal_enabled: opt-in flag gating whether the cloud-jobs
+        signal contributes candidates to the HiQS ranked verdict. Default False —
+        the provider ships DORMANT so the signal can be watched via the Obsidian
+        daily-note quality grade before it is promoted to influence ranking.
+        See src/rebalance/ingest/claude_cloud.py.
+    """
+    config = _read_config()
+    return {
+        "claude_cloud_signal_enabled": bool(config.get("claude_cloud_signal_enabled", False)),
+    }
+
+
 def set_pulse_config(**values: Any) -> None:
     """Update one or more pulse config keys. Pass None to leave a key unchanged."""
     allowed = {

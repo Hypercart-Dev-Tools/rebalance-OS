@@ -6,6 +6,19 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.58.0] - 2026-07-14
+
+### Added
+- Claude Code Cloud web sessions as a work signal: read the day's cloud coding
+  jobs and their status (finished / running / failed), enriched with each head
+  branch's pull-request merge state (merged / open / none). Wired into the
+  ranked next-action pipeline through the collector candidate seam, shipping
+  dormant behind an opt-in flag so the signal is watched via a daily-note data-
+  quality grade before it is allowed to influence the ranked verdict.
+- A daily Obsidian note block grading that signal's data quality — attribution
+  (repo+branch resolved), attestation (per-job summary), outcome coverage, and
+  pull-request linkage — as the observation surface before promotion.
+
 ## [0.57.0] - 2026-07-14
 
 ### Added

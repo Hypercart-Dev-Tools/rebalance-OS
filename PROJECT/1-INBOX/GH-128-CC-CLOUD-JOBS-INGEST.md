@@ -1,6 +1,6 @@
 ---
 title: Claude Code Cloud jobs — ingest path
-status: Inbox (Phase 0 done, not promoted)
+status: Inbox (Phase 0-1 done; wired DORMANT, observing before first-class)
 gh_issue: 128
 created: 2026-07-14
 updated: 2026-07-14
@@ -57,22 +57,37 @@ Per-session fields worth ingesting: `title`, `status_bucket` (`review_ready`/`wo
 Token source: macOS keychain `Claude Code-credentials` → `claudeAiOauth.accessToken`
 (fallback `~/.claude/.credentials.json`). Refresh by running any `claude` command.
 
-## Phase 1 — promote to collector (DEFERRED)
-Gate before building: decide via a **classify + kill-check**, not by default.
-- [ ] **Classify** the scope per AGENTS.md taxonomy — a `claude_cloud` source is a **derived
-      scan** (external API read, not a raw vault/github/etc. source), so it attaches as a named
-      stage, not an `all`-peer.
-- [ ] Register one `register_collector(...)` in `src/rebalance/ingest/index_ops.py`; one writer
-      to its own raw table; route all writes through `refresh_index` (no leaf ingest).
-- [ ] Use the shared secret/token resolver — no `Path.home()` token paths baked in.
-- [ ] Wire as a HiQS candidate via the GH-125 `candidates=` provider (register a collector →
-      reach the ranking; do not fork a parallel path).
-- [ ] Observability + ≥1 test (mock the sessions endpoint: happy path, `401`, empty, timeout)
-      before any merge to main.
-- [ ] **Kill-check:** if cloud-session volume is trivial or fully redundant with the existing
-      `github_activity` / `claude-cloud` agent tags (`agent_tags.py`), ship dormant or drop it.
+## Phase 1 — wire DORMANT + observe (DONE 2026-07-14)
+Wired into the ranker's registry seam but ships **dormant** so quality is watched before it
+influences the verdict — mirrors the figma / GH-124 dormant-ship precedent.
+- [x] **Classified** as a `derived_scan` (external API read; `included_in_all=False`).
+- [x] New canonical module `src/rebalance/ingest/claude_cloud.py` — fetch + normalize + PR
+      enrichment (`gh`, fail-soft) + `grade()` + the `claude_cloud_candidates` provider.
+- [x] Registered `Collector("claude_cloud", …, candidates=claude_cloud_candidates)` in
+      `index_ops.py` (figma pattern). A `refresh_index(scope=["claude_cloud"])` run returns the
+      quality grade as a health probe; no raw table yet (that is Phase 2).
+- [x] **Signal enriched with PR merge status** — each session's head branch → PR state
+      (merged / open / none) via `gh`; the verdict candidate becomes "Review PR #N" (open),
+      "Cloud job FAILED" (failed), or "Triage" (done, no PR); merged = done, no candidate.
+- [x] **Gated dormant** behind `claude_cloud_signal_enabled` (default False,
+      `get_claude_cloud_config()`) — provider yields `[]` until the operator promotes it.
+- [x] **Observation surface:** `utils/claude_cloud_daily_grade.py` upserts a data-quality grade
+      block into `0. Today's Notes.md` (attribution / attestation / outcome / PR-linkage).
+- [x] Observability + tests — 8 tests in `tests/test_claude_cloud.py` (normalize, grade, dormant
+      vs enabled, fail-soft-never-raises).
 
-## Phase 2 — run-level detail (OPTIONAL)
+## Phase 2 — promote to first-class (DEFERRED — gated on observation + kill-check)
+- [ ] After watching the daily-note grade, run the **kill-check:** is cloud-session volume
+      material and NOT redundant with `github_activity` / `claude-cloud` agent tags
+      (`agent_tags.py`)? If trivial/redundant, keep dormant or drop.
+- [ ] If it earns promotion: add a raw `claude_cloud_sessions` table (single writer), an
+      `OperatorBundle.claude_cloud_activity` field populated in `assemble_day_bundle`, and switch
+      the provider to read the bundle (no live network in the ranking path). Use the shared
+      secret/token resolver. Then flip `claude_cloud_signal_enabled` true.
+- [ ] Schedule the daily grader (launchd, like `git-pulse-daily-synthesis`) so the observation
+      block refreshes without a manual run.
+
+## Phase 3 — run-level detail (OPTIONAL)
 - [ ] `/v1/code/sessions/{id}/teleport-events` gives per-turn events (N+1 — one call per
       session; paginate `cursor`/`next_cursor`, cap pages). Only build if the headline
       `post_turn_summary` proves insufficient for the signal.
