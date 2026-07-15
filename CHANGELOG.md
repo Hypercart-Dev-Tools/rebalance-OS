@@ -6,6 +6,16 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.58.1] - 2026-07-14
+
+### Fixed
+- Git Pulse daily summary no longer falsely reports "no git activity" on active
+  days. The day-boundary was derived from the ambient timezone, so a scheduled
+  run under UTC (or after local-evening, once UTC has rolled to the next day)
+  filtered out the whole day's commits. The day boundary is now pinned to the
+  machine's real local timezone (or an explicit override) regardless of the
+  runtime environment.
+
 ## [0.58.0] - 2026-07-14
 
 ### Added
