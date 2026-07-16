@@ -11,6 +11,7 @@ This file is the first entry point for an AI agent working in this repo: it tell
 - `README.md` = human-facing repo/product overview and install path
 - `ROADMAP.md` = pointer ledger of in-progress, completed, attempted, and deferred work
 - `CHANGELOG.md` = the end-of-iteration running log
+- `RELEASES.md` = forward-looking release-planning ledger (governed by `PROJECT/PDDA.md`)
 - `PROJECT/**` docs = canonical execution detail for a specific effort
 - `PROJECT/PDDA.md` = document contract and PDDA automation rules
 
@@ -65,6 +66,8 @@ utils/pdda/pdda.sh roadmap
 utils/pdda/pdda.sh roadmap-coverage
 utils/pdda/pdda.sh changelog
 utils/pdda/pdda.sh stale
+utils/pdda/pdda.sh releases    # validate RELEASES.md, the release-planning ledger (warn-only nudge)
+utils/pdda/pdda.sh releases-current  # read-only roll-up: RELEASES.md entries whose Status isn't "Shipped"
 utils/pdda/pdda.sh doc-ready   # LLM readiness review — set PDDA_LLM_BIN (codex/claude/agy) for recommendations, else it self-skips
 utils/pdda/pdda.sh help
 ```

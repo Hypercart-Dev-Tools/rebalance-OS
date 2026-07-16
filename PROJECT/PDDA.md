@@ -302,7 +302,7 @@ Implementation note:
   `utils/pdda/pdda-lib.sh`
 - every deterministic check is a subcommand: `pdda.sh frontmatter`, `pdda.sh status-table`,
   `pdda.sh hardcoded-paths`, `pdda.sh roadmap`, `pdda.sh roadmap-coverage`, `pdda.sh changelog`,
-  `pdda.sh stale`, `pdda.sh issue-doc-sync`
+  `pdda.sh stale`, `pdda.sh issue-doc-sync`, `pdda.sh releases`
 - the aggregate runner is `pdda.sh run` (it runs the deterministic checks in order, then the LLM
   review)
 - each finding still carries a stable `check` id (e.g. `pdda-check-frontmatter`) in stdout and the
@@ -449,6 +449,74 @@ Why warn-only + flag-only:
 - every drift class here is mechanical, so the check carries zero false-judgment risk; a false flag is
   one ignorable warn line and a missed flag just leaves today's manual reconciliation — both cheap, so
   warn-only never-blocks is the right calibration (same stance as `pdda.sh stale` and `pdda.sh changelog`)
+
+#### I. `pdda.sh releases`
+
+Purpose:
+- validate `RELEASES.md`, the single forward-looking release-planning ledger — deliberately light.
+  This replaced an earlier per-tag-doc lifecycle (status enum, linked marathons/issues, a GitHub
+  release-tag cache) that was too much data to keep current for an initial release. Fields and
+  checks grow only as real need shows up — see "RELEASES.md — release ledger" below.
+
+Scope: every `Release:` block in `RELEASES.md`.
+
+Minimum behavior:
+- parse `RELEASES.md` into blocks (one per `Release:` line; see format below)
+- **release-value check**: `error` if a block's `Release:` value is empty (a malformed-doc guard,
+  not a readiness gate)
+- **target-date check** (optional field): `warn` if `Target Date` is set but is not a valid
+  `YYYY-MM-DD` calendar date
+- **overdue check**: `warn` if `Target Date` has passed and `Status` doesn't read exactly `Shipped`
+  (case-insensitive) — `Status: Shipped` is the sole "already shipped" signal; a populated `GH_URL`
+  alone does not silence this (it means a Release object exists, not that it shipped)
+- **never blocks, even in `full` mode** — this check does not gate its exit code at all, regardless
+  of findings. The one `error` above (empty `Release:` value) is a malformed-doc guard, surfaced
+  loudly so it isn't missed, but deliberately cannot fail a build
+
+gh-degrade: none. The check is purely file-driven (no GitHub calls).
+
+#### RELEASES.md — release ledger
+
+`RELEASES.md` is a first-class root file, like `ROADMAP.md`/`CHANGELOG.md` — a single
+forward-looking planning ledger for major releases. Marathon plans and other forward planning
+cross-reference it for target release names/dates. It is not a history of what shipped — that's
+`CHANGELOG.md`; lessons learned belong there at ship time, not duplicated here.
+
+Format — one flat `Label: value` block per release, blank line between blocks:
+
+```text
+Release: 1.0.0
+Status: Draft
+Target Date: 2026-07-31
+Codename: n/a
+Description:
+GH_URL:
+```
+
+Fields:
+- `Release:` (required) — the version being planned
+- `Status:` (optional) — free-text, unvalidated by design. **`Status: Shipped` is the sole "already
+  shipped" signal** — both `pdda.sh releases`'s overdue nudge and `pdda.sh releases-current`'s "in
+  progress" filter key off it exclusively.
+- `Target Date:` (optional) — `YYYY-MM-DD`; `pdda.sh releases` warns once this passes and `Status`
+  doesn't read `Shipped`
+- `Codename:` (optional) — `n/a` is fine
+- `Description:` (optional) — one line for now
+- `GH_URL:` (optional) — populated once a GitHub Release object exists, including a draft (see the
+  `/release` skill). This means "a Release object exists," not "shipped" — flip `Status: Shipped`
+  yourself (or let `/release` do it on an actual publish) when it's really out.
+
+Two skills operate on this file: `/release-plan` **authors** entries (interviews the operator,
+proposes a canonical version by cross-referencing `CHANGELOG.md`, previews, appends on confirmation
+— this skill is globally available on this machine via `~/.claude/skills/release-plan`, no per-repo
+copy needed) and `/release` **publishes** an existing entry to GitHub once its `Status` is ready to
+ship.
+
+#### `pdda.sh releases-current`
+
+Read-only roll-up (not part of `PDDA_DETERMINISTIC_CHECKS` — emits no findings, never gates): lists
+every `RELEASES.md` entry whose `Status` is empty or not exactly `Shipped`. A rough,
+non-authoritative answer to "what's currently in progress."
 
 ### 2. LLM-assisted doc readiness review
 
@@ -650,10 +718,11 @@ Run the deterministic checks every hour in this order:
 6. `pdda.sh changelog`
 7. `pdda.sh stale`
 8. `pdda.sh issue-doc-sync`
+9. `pdda.sh releases`
 
 Then run:
 
-9. `pdda.sh doc-ready`
+10. `pdda.sh doc-ready`
 
 (`pdda.sh run` runs exactly this sequence and applies the active `PDDA_MODE` gate. Scheduling the
 single aggregate command is the recommended hourly cron entry.)
