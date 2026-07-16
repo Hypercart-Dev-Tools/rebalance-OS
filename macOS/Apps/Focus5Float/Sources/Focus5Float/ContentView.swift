@@ -100,7 +100,7 @@ struct ContentView: View {
                 .foregroundStyle(Theme.text2)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            if !model.telemetryEntries.isEmpty {
+            if !model.telemetryIsMarkdown, !model.telemetryEntries.isEmpty {
                 Text("· \(model.telemetryEntries.count)")
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.text3)
@@ -269,7 +269,7 @@ struct ContentView: View {
                     .font(.system(size: 22)).foregroundStyle(Theme.text3)
                 Text("No file selected")
                     .font(Theme.bodyMed).foregroundStyle(Theme.text)
-                Text("Choose a .json file to display health signals.")
+                Text("Choose a .json file for health signals, or a .md file for notes.")
                     .font(Theme.monoSmall).foregroundStyle(Theme.text3)
                     .multilineTextAlignment(.center)
                 Button("Select Telemetry File…") { model.openFilePicker() }
@@ -282,6 +282,21 @@ struct ContentView: View {
             emptyState(icon: "exclamationmark.triangle",
                        title: "Can't read telemetry file",
                        detail: err)
+        } else if model.telemetryIsMarkdown {
+            if let text = model.telemetryMarkdownContent,
+               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: Theme.Space.xs) {
+                        MarkdownBody(content: text)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Theme.Space.m)
+                }
+            } else {
+                emptyState(icon: "doc.text",
+                           title: "Empty file",
+                           detail: "The selected file has no content.")
+            }
         } else if model.telemetryEntries.isEmpty {
             emptyState(icon: "waveform.path.ecg",
                        title: "No signals",
@@ -882,10 +897,7 @@ struct Focus5NoteView: View {
             Text("NOTE")
                 .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
             if exists && hasText {
-                let lines = content.split(separator: "\n", omittingEmptySubsequences: false)
-                ForEach(Array(lines.enumerated()), id: \.offset) { _, line in
-                    MarkdownLine(raw: line)
-                }
+                MarkdownBody(content: content)
             } else {
                 Text("To show a text file here, add a doc called focus5.md into your Obsidian vault.")
                     .font(Theme.body)
@@ -902,6 +914,78 @@ struct Focus5NoteView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                 .strokeBorder(Theme.separator, lineWidth: 1)
         )
+    }
+}
+
+/// Shared markdown renderer — used by both the vault focus5.md note
+/// (`Focus5NoteView`) and the telemetry tab's `.md` viewer so there's a single
+/// rendering path for freeform notes in the panel. GFM pipe tables render as a
+/// real `MarkdownTableView` grid; everything else falls through to `MarkdownLine`.
+private struct MarkdownBody: View {
+    let content: String
+
+    var body: some View {
+        let blocks = MarkdownTableParser.parse(content)
+        ForEach(Array(blocks.enumerated()), id: \.offset) { _, block in
+            switch block {
+            case .table(let table):
+                MarkdownTableView(table: table)
+            case .line(let raw):
+                MarkdownLine(raw: Substring(raw))
+            }
+        }
+    }
+}
+
+/// Renders a parsed GFM table as a scrollable grid — a real table instead of
+/// literal `|` text — matching the panel's card styling (elevated background,
+/// hairline border). Column count comes from the header; ragged data rows are
+/// already padded/truncated to match by `MarkdownTableParser`.
+private struct MarkdownTableView: View {
+    let table: MarkdownTable
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            Grid(alignment: .leading, horizontalSpacing: Theme.Space.s, verticalSpacing: 4) {
+                GridRow {
+                    ForEach(Array(table.header.enumerated()), id: \.offset) { i, cell in
+                        Text(cell)
+                            .font(.system(size: 12.5, weight: .semibold))
+                            .foregroundStyle(Theme.text)
+                            .lineLimit(1)
+                            .gridColumnAlignment(horizontalAlignment(for: i))
+                    }
+                }
+                Divider().gridCellColumns(max(table.header.count, 1)).overlay(Theme.separator)
+                ForEach(Array(table.rows.enumerated()), id: \.offset) { _, row in
+                    GridRow {
+                        ForEach(Array(row.enumerated()), id: \.offset) { _, cell in
+                            Text(cell)
+                                .font(Theme.body)
+                                .foregroundStyle(Theme.text2)
+                                .lineLimit(3)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                }
+            }
+            .padding(Theme.Space.s)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 1)
+        )
+    }
+
+    private func horizontalAlignment(for column: Int) -> HorizontalAlignment {
+        guard column < table.alignments.count else { return .leading }
+        switch table.alignments[column] {
+        case .leading:  return .leading
+        case .center:   return .center
+        case .trailing: return .trailing
+        }
     }
 }
 

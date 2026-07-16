@@ -47,6 +47,10 @@ final class Focus5Model {
         }
     }
     var telemetryLoadError: String?
+    // Raw text of the selected file when it's a .md note rather than JSON telemetry
+    // rows — rendered via the same MarkdownLine path as the vault focus5.md note.
+    var telemetryMarkdownContent: String?
+    var telemetryIsMarkdown: Bool { telemetryFileURL?.pathExtension.lowercased() == "md" }
 
     // Bottom note — the operator's vault `focus5.md`, projected by GET /focus-5/note.
     var noteContent = ""              // raw markdown (empty until first load / when absent)
@@ -136,12 +140,15 @@ final class Focus5Model {
         noteLoaded = true
     }
 
-    /// Open an NSOpenPanel to pick a telemetry .json file, persist it, and refresh.
-    /// Called from both the in-panel button and the F5 menu bar action.
+    /// Open an NSOpenPanel to pick a .json telemetry file or a .md note, persist
+    /// it, and refresh. Called from both the in-panel button and the F5 menu bar
+    /// action. Selection persists across relaunches/reboots via UserDefaults
+    /// (see `telemetryFileURL.didSet` + `init()`).
     func openFilePicker() {
         let panel = NSOpenPanel()
-        panel.title = "Select Telemetry JSON File"
-        panel.allowedContentTypes = [UTType.json]
+        panel.title = "Select Telemetry or Markdown File"
+        let markdownType = UTType(filenameExtension: "md") ?? .plainText
+        panel.allowedContentTypes = [UTType.json, markdownType]
         panel.allowsMultipleSelection = false
         panel.canChooseDirectories = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
@@ -149,14 +156,29 @@ final class Focus5Model {
         viewMode = .telemetry
     }
 
-    /// Re-read the selected telemetry file into telemetryEntries.
-    /// No-op (clears entries) when no file is selected.
+    /// Re-read the selected telemetry-tab file. A `.md` file is read as raw text
+    /// into `telemetryMarkdownContent` (rendered via the shared MarkdownLine path,
+    /// same as the vault focus5.md note); anything else decodes as telemetry JSON
+    /// into `telemetryEntries`. No-op (clears both) when no file is selected.
     func refreshTelemetry() {
         guard let url = telemetryFileURL else {
             telemetryEntries = []
+            telemetryMarkdownContent = nil
             telemetryLoadError = nil
             return
         }
+        if url.pathExtension.lowercased() == "md" {
+            telemetryEntries = []
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else {
+                telemetryMarkdownContent = nil
+                telemetryLoadError = "Could not read \"\(url.lastPathComponent)\"."
+                return
+            }
+            telemetryMarkdownContent = text
+            telemetryLoadError = nil
+            return
+        }
+        telemetryMarkdownContent = nil
         guard let data = try? Data(contentsOf: url) else {
             telemetryLoadError = "Could not read \"\(url.lastPathComponent)\"."
             return
