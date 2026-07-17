@@ -60,7 +60,7 @@ from rebalance.ingest.calendar_helpers import (
 from rebalance.ingest.config import get_pulse_config, get_vault_path
 from rebalance.ingest.db import db_connection, run_migrations
 from rebalance.ingest.pulse import _query_day_activity, collect_pulse_snapshot
-from rebalance.tz_utils import local_tz
+from rebalance.tz_utils import format_local, local_tz
 
 logger = logging.getLogger(__name__)
 
@@ -1618,13 +1618,7 @@ VAULT_NEXT_ACTIONS_RELPATH = "Dashboards/What To Do Next.md"
 
 def _fmt_local_stamp(iso_utc: str, tz: Any) -> str:
     """Format an ISO-8601 (UTC) timestamp as a local human stamp for the banner."""
-    try:
-        dt = datetime.fromisoformat(iso_utc)
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt.astimezone(tz).strftime("%Y-%m-%d %H:%M %Z")
-    except (ValueError, TypeError):
-        return iso_utc or "unknown"
+    return format_local(iso_utc, "%Y-%m-%d %H:%M %Z", tz=tz) or (iso_utc or "unknown")
 
 
 def render_next_actions_markdown(

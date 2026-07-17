@@ -11,6 +11,7 @@ import typer
 
 from rebalance.cli._core import app
 from rebalance.paths import DatabaseNotFoundError, DBOption, resolve_database_path
+from rebalance.tz_utils import format_local, local_tz
 
 
 def _normalize_semantic_sources_option(values: list[str]) -> list[str]:
@@ -163,13 +164,13 @@ def semantic_query_cmd(
         heading = f" > {metadata.get('heading')}" if metadata.get("heading") else ""
         repo_label = f" {metadata.get('repo_full_name')}" if metadata.get("repo_full_name") else ""
         html_url = metadata.get("html_url") or ""
-        updated_at = (result.get("updated_at") or "")[:19].replace("T", " ")
+        updated_local = format_local(result.get("updated_at"), "%Y-%m-%d %H:%M %Z", tz=local_tz())
         typer.echo(
             f"{i}. [{result['similarity_score']:.3f}] {result['source_type']}:{result['doc_kind']}{repo_label}"
         )
         typer.echo(f"   {result['title']}{heading}")
-        if updated_at:
-            typer.echo(f"   updated: {updated_at}")
+        if updated_local:
+            typer.echo(f"   Local Time: {updated_local}")
         if metadata.get("file_path"):
             typer.echo(f"   {metadata['file_path']}")
         if html_url:

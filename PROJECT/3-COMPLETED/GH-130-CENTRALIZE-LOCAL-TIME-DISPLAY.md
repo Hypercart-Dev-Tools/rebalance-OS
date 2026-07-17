@@ -3,7 +3,7 @@ title: "Centralize UTC→local time display: shared helper + replace raw-UTC use
 owner: noel@neochro.me
 gh_issue: 130
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/130"
-status: "Active (2-WORKING) — captured and promoted 2026-07-16, starting build same session."
+status: "Completed — all 3 phases built, relay-xyz (Codex) QA'd Approved 2026-07-16, merged to development via PR #132 (2026-07-16)."
 created: 2026-07-16
 updated: 2026-07-16
 doc_type: project
@@ -29,7 +29,7 @@ phases: 3
 
 | What was just completed | What's next |
 |---|---|
-| **Captured 2026-07-16** from issue #130. Full-repo audit (Python CLI/dashboard, web templates, Focus5Float Swift) found no Jinja templates and no additional raw-UTC display hits beyond the two below; confirmed `src/rebalance/tz_utils.py` already exists as the tz-*resolution* single source of truth (`local_tz()`, `to_local()`, `parse_utc_iso()`) but is missing a shared *display*-formatting layer — that gap is what the 5 ad-hoc implementations independently reinvented. | **Phase 1** — add `format_local()` / `format_relative()` to `tz_utils.py` + tests (the module currently has zero test coverage). |
+| **All 3 phases built + QA'd 2026-07-16** on branch `feat/gh-130-local-time-display`. Phase 1: `format_local()`/`format_relative()` added to `tz_utils.py`. Phase 2: all 5 ad-hoc sites migrated as behavior-preserving thin wrappers — full suite 1386 passed (15 pre-existing, unrelated failures). Phase 3: `cli/semantic.py` now prints `Local Time: 2026-07-16 08:27 PDT` instead of a bare unlabeled UTC string — live-verified. `relay-xyz` (Codex) round 1: Changes requested — 1 [Should] (missing DST-boundary regression test). Fixed same session (3 new DST tests, 2026 America/Los_Angeles spring-forward + fall-back on `format_local()`, straddling case on `format_relative()`); suite now 29/29 in `test_tz_utils.py`. Round 2: **Approved**, all-[Pass]. `rebalance doctor` clean; `CHANGELOG.md` 0.59.0. **Merged to `development` via PR #132 (2026-07-16).** | **Done.** One non-blocking open question remains (`web/pulse.html` debug tooltip, see Open Questions) — not scheduled, revisit only if the operator wants to chase it. |
 
 ---
 
@@ -75,7 +75,7 @@ string with no conversion and no label at all.
 6. [`web.py:473`](../../src/rebalance/web.py#L473) `_rel_time(iso)` — `"{d/h/m}{unit} ago"` compact relative age. Byte-for-byte portable to a shared helper (no tz needed for a delta) — the only **zero-behavior-change** migration in this set.
 
 **The one confirmed raw-UTC display bug** (the actual "replace" target from the issue):
-- [`cli/semantic.py:166,171-172`](../../src/rebalance/cli/semantic.py#L166) — `rebalance semantic-search` prints `updated: 2026-07-16 08:04:21` (UTC, `T`→space swapped, **no conversion, no timezone label at all** — ambiguous to a human reading it).
+- [`cli/semantic.py:166,171-172`](../../src/rebalance/cli/semantic.py#L166) — `rebalance semantic-query` prints `updated: 2026-07-16 08:04:21` (UTC, `T`→space swapped, **no conversion, no timezone label at all** — ambiguous to a human reading it).
 
 ## Phase 1 — Add display formatters to tz_utils.py
 
@@ -100,42 +100,42 @@ def format_relative(value: str | datetime | None, *, now: datetime | None = None
   4 already-correct absolute-time call sites — only the boilerplate (parse/guard/convert) is shared.
 
 **Checklist:**
-- [ ] Add `format_local()` and `format_relative()` to `src/rebalance/tz_utils.py`.
-- [ ] New `tests/test_tz_utils.py` — cover the 3 *existing* untested functions (`local_tz()` env override + fallback, `to_local()` naive/aware, `parse_utc_iso()` Z-suffix/offset/malformed) **and** the 2 new ones (string input, datetime input, malformed → `""`, DST-boundary case for `format_relative`).
+- [x] Add `format_local()` and `format_relative()` to `src/rebalance/tz_utils.py`.
+- [x] New `tests/test_tz_utils.py` — cover the 3 *existing* untested functions (`local_tz()` env override + fallback, `to_local()` naive/aware, `parse_utc_iso()` Z-suffix/offset/malformed) **and** the 2 new ones (string input, datetime input, malformed → `""`, DST-boundary case for `format_relative`).
 
 ### Phase 1 — QA gate
-- [ ] `pytest tests/test_tz_utils.py -v` green.
-- [ ] `rebalance doctor` clean (no regression from the new module surface).
+- [x] `pytest tests/test_tz_utils.py -v` green.
+- [x] `rebalance doctor` clean (no regression from the new module surface).
 
 ## Phase 2 — Migrate the 5 ad-hoc implementations
 
 **Scope:** each of the 5 sites becomes a thin wrapper preserving its exact current fallback + format string. This is a **behavior-preserving refactor**, not a rewrite — the QA gate is "output is byte-identical to before."
 
 **Checklist:**
-- [ ] `pulse.py` `_fmt_local` body → `format_local(dt_value, "%-I:%M %p" if time_only else "%b %-d %-I:%M %p", tz=tz)`.
-- [ ] `pulse.py:819,824` inline calendar formatting → call `format_local(...)` directly (same pattern, one fewer duplicate).
-- [ ] `next_actions.py` `_fmt_local_stamp` → `format_local(iso_utc, "%Y-%m-%d %H:%M %Z", tz=tz) or (iso_utc or "unknown")` (preserves its distinct fallback).
-- [ ] `daily_report.py` `_event_local_time` → `format_local(start_dt, "%I:%M %p", tz=ZoneInfo(config.timezone)).lstrip("0") or "—"` (preserves its distinct fallback; passes the already-parsed `datetime`, not re-parsing).
-- [ ] `note_builder.py` `_format_generated_at` → `format_local(value, "%Y-%m-%d %H:%M:%S %Z", tz=local_tz()) or value` (preserves its distinct fallback).
-- [ ] `web.py` `_rel_time` → delegates to `format_relative()` (exact same algorithm — zero-behavior-change migration).
+- [x] `pulse.py` `_fmt_local` body → `format_local(dt_value, "%-I:%M %p" if time_only else "%b %-d %-I:%M %p", tz=tz)`.
+- [x] `pulse.py:819,824` inline calendar formatting → call `format_local(...)` directly (same pattern, one fewer duplicate).
+- [x] `next_actions.py` `_fmt_local_stamp` → `format_local(iso_utc, "%Y-%m-%d %H:%M %Z", tz=tz) or (iso_utc or "unknown")` (preserves its distinct fallback).
+- [x] `daily_report.py` `_event_local_time` → `format_local(start_dt, "%I:%M %p", tz=ZoneInfo(config.timezone)).lstrip("0") or "—"` (preserves its distinct fallback; passes the already-parsed `datetime`, not re-parsing).
+- [x] `note_builder.py` `_format_generated_at` → `format_local(value, "%Y-%m-%d %H:%M:%S %Z", tz=local_tz()) or value` (preserves its distinct fallback).
+- [x] `web.py` `_rel_time` → delegates to `format_relative()` (exact same algorithm — zero-behavior-change migration).
 
 ### Phase 2 — QA gate
-- [ ] Full suite green: `pytest tests/`.
-- [ ] Targeted diff-read of each migrated function against its pre-migration body to confirm the fallback string is preserved exactly (no silent behavior change on an already-working screen).
-- [ ] `rebalance doctor` clean.
+- [x] Full suite green: `pytest tests/`.
+- [x] Targeted diff-read of each migrated function against its pre-migration body to confirm the fallback string is preserved exactly (no silent behavior change on an already-working screen).
+- [x] `rebalance doctor` clean.
 
 ## Phase 3 — Fix the confirmed raw-UTC display bug
 
-**Scope:** `cli/semantic.py`'s `rebalance semantic-search` output currently prints a bare, unlabeled,
+**Scope:** `cli/semantic.py`'s `rebalance semantic-query` output currently prints a bare, unlabeled,
 unconverted UTC string. Replace with an explicit "Local Time" label + the converted local timestamp.
 
 **Checklist:**
-- [ ] `cli/semantic.py:166,171-172` — replace `updated_at = (result.get("updated_at") or "")[:19].replace("T", " ")` / `typer.echo(f"   updated: {updated_at}")` with `format_local(result.get("updated_at"), "%Y-%m-%d %H:%M %Z", tz=local_tz())`, echoed as `typer.echo(f"   Local Time: {local_str}")` (only when non-empty — no change to the empty-input no-op behavior).
+- [x] `cli/semantic.py:166,171-172` — replace `updated_at = (result.get("updated_at") or "")[:19].replace("T", " ")` / `typer.echo(f"   updated: {updated_at}")` with `format_local(result.get("updated_at"), "%Y-%m-%d %H:%M %Z", tz=local_tz())`, echoed as `typer.echo(f"   Local Time: {local_str}")` (only when non-empty — no change to the empty-input no-op behavior).
 
 ### Phase 3 — QA gate
-- [ ] Manual: `rebalance semantic-search <query>` against real data — confirm output reads "Local Time: 2026-07-16 08:04 PDT" (or the operator's actual tz), not a bare UTC string.
-- [ ] `pytest tests/` still green; `rebalance doctor` clean.
-- [ ] `CHANGELOG.md` end-of-iteration entry (PDDA flagged the changelog as 1 day stale at capture time).
+- [x] Manual: `rebalance semantic-query <query>` against real data — confirm output reads "Local Time: 2026-07-16 08:04 PDT" (or the operator's actual tz), not a bare UTC string.
+- [x] `pytest tests/` still green; `rebalance doctor` clean.
+- [x] `CHANGELOG.md` end-of-iteration entry (PDDA flagged the changelog as 1 day stale at capture time).
 
 ---
 

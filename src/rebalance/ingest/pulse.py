@@ -38,7 +38,7 @@ from rebalance.ingest.calendar_helpers import calendar_dt_utc, normalize_aware_u
 from rebalance.ingest.config import get_github_token, get_pulse_config
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.slack_users import compact_sleuth_reminder
-from rebalance.tz_utils import local_tz, parse_utc_iso
+from rebalance.tz_utils import format_local, local_tz, parse_utc_iso
 
 
 # Author logins of known cloud-agent bots. Mirrors agent_tags.py — kept here
@@ -708,15 +708,8 @@ def _tag_summary(counts: dict[str, int]) -> str:
 
 
 def _fmt_local(dt_value: str | None, tz: ZoneInfo, *, time_only: bool = False) -> str:
-    parsed = _parse_iso(dt_value)
-    if parsed is None:
-        return ""
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    local = parsed.astimezone(tz)
-    if time_only:
-        return local.strftime("%-I:%M %p")
-    return local.strftime("%b %-d %-I:%M %p")
+    fmt = "%-I:%M %p" if time_only else "%b %-d %-I:%M %p"
+    return format_local(dt_value, fmt, tz=tz)
 
 
 def _render_section_today_work(today: DayActivity, tz: ZoneInfo) -> str:
@@ -816,12 +809,13 @@ def _render_section_calendar(events: list[dict[str, Any]], tz: ZoneInfo) -> str:
         return "_No upcoming meetings today._"
     lines: list[str] = []
     for e in events[:15]:
-        when = e["_start_dt"].astimezone(tz).strftime("%-I:%M %p")
+        when = format_local(e["_start_dt"], "%-I:%M %p", tz=tz)
         end_dt = e.get("_end_dt")
         end_part = ""
         if end_dt:
             try:
-                end_part = f"–{end_dt.astimezone(tz).strftime('%-I:%M %p')}"
+                end_str = format_local(end_dt, "%-I:%M %p", tz=tz)
+                end_part = f"–{end_str}" if end_str else ""
             except Exception:
                 end_part = ""
         loc = f" @ {e['location']}" if e.get("location") else ""

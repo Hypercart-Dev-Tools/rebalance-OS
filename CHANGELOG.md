@@ -6,7 +6,7 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
-## [0.58.2] - 2026-07-16
+## [0.59.1] - 2026-07-16
 
 ### Fixed
 - `daily-sync` no longer fails with `"database is locked"` when it collides with
@@ -17,6 +17,21 @@
   synchronously on the main thread. The read is now capped at 1MB with a
   byte-safe truncation (never mid-codepoint) and a visible truncation note;
   files under the cap are unaffected. (GH-121)
+
+## [0.59.0] - 2026-07-16
+
+### Added
+- Shared UTC→local display formatters (`format_local()`, `format_relative()`)
+  in `tz_utils.py`, which already owned local-timezone *resolution* but had no
+  shared *display*-formatting layer. Five independent ad-hoc implementations
+  across `pulse.py`, `next_actions.py`, `daily_report.py`, `note_builder.py`,
+  and `web.py` now share one tested core (behavior-preserving — each keeps its
+  own format string and fallback text).
+
+### Fixed
+- `rebalance semantic-query` printed a bare, unconverted, unlabeled UTC
+  timestamp (`updated: 2026-07-16 15:27:...`). Now shows the converted local
+  time with an explicit label (`Local Time: 2026-07-16 08:27 PDT`).
 
 ## [0.58.1] - 2026-07-14
 
