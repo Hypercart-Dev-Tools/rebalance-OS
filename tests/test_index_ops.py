@@ -353,6 +353,93 @@ class IndexOpsTests(unittest.TestCase):
             self.assertEqual(health["status"], "warn")
             self.assertTrue(health["reason"])
 
+    def test_get_index_status_signal_health_email_content_predicate_degrades_empty_rows(
+        self,
+    ) -> None:
+        """GH-127: the exact #125 scenario — fresh timestamps and a healthy
+        row count, but the rows are husks with no sender or subject. Before
+        GH-127 this reported `ok` for 3 weeks; the content predicate must now
+        catch it and report `degraded`."""
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+                for i in range(5):
+                    conn.execute(
+                        "INSERT INTO email_messages "
+                        "(message_id, thread_id, from_address, from_name, subject, "
+                        " snippet, received_at, synced_at) "
+                        "VALUES (?, NULL, NULL, NULL, NULL, NULL, datetime('now'), datetime('now'))",
+                        (f"husk-{i}",),
+                    )
+                conn.commit()
+
+            health = get_index_status(db_path)["freshness"]["signal_health"]["email"]
+            self.assertEqual(health["status"], "degraded")
+            self.assertIn("sender or subject", health["reason"])
+
+    def test_get_index_status_signal_health_email_with_real_content_stays_ok(self) -> None:
+        """A source with a content_predicate but rows that actually carry
+        content (sender + subject present) must still report `ok` — the
+        predicate only escalates, it never demotes a genuinely healthy row."""
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+                for i in range(5):
+                    conn.execute(
+                        "INSERT INTO email_messages "
+                        "(message_id, thread_id, from_address, from_name, subject, "
+                        " snippet, received_at, synced_at) "
+                        "VALUES (?, NULL, ?, ?, ?, NULL, datetime('now'), datetime('now'))",
+                        (f"real-{i}", f"sender{i}@example.com", f"Sender {i}", f"Subject {i}"),
+                    )
+                conn.commit()
+
+            health = get_index_status(db_path)["freshness"]["signal_health"]["email"]
+            self.assertEqual(health["status"], "ok")
+            self.assertNotIn("reason", health)
+
+    def test_get_index_status_signal_health_github_content_predicate_degrades_empty_titles(
+        self,
+    ) -> None:
+        """GH-127 second registered source: github_items with fresh
+        fetched_at but empty titles must degrade github's signal_health, even
+        though github_activity (the table behind recent_row_count_7d/
+        freshness) has no content field at all."""
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+                # Recent activity so the freshness/zero-rows checks pass and
+                # execution reaches the content-predicate override.
+                conn.execute(
+                    "INSERT INTO github_activity "
+                    "(login, repo_full_name, scan_date, commits, scanned_at) "
+                    "VALUES ('me', 'org/repo', date('now'), 1, datetime('now'))"
+                )
+                for i in range(5):
+                    conn.execute(
+                        "INSERT INTO github_items "
+                        "(repo_full_name, item_type, number, title, fetched_at) "
+                        "VALUES ('org/repo', 'issue', ?, '', datetime('now'))",
+                        (i + 1,),
+                    )
+                conn.commit()
+
+            health = get_index_status(db_path)["freshness"]["signal_health"]["github"]
+            self.assertEqual(health["status"], "degraded")
+            self.assertIn("title", health["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()
