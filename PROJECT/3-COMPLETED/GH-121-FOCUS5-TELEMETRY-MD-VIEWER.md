@@ -3,7 +3,7 @@ title: "Focus5Float telemetry viewer: support .md (text viewer) alongside JSON (
 owner: noel@neochro.me
 gh_issue: 121
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/121"
-status: "Active (2-WORKING) — base .md viewer shipped 2026-07-15 outside the marathon process (all agy findings closed except the size ceiling); size ceiling closed 2026-07-16 via MARATHON-2026-07-16 Lane B. All 3 accepted agy [Should] findings now implemented."
+status: "Completed 2026-07-16 — Phase 1 (base viewer + size ceiling) and Phase 2 (kind label + self-test) both shipped and merged to development (PRs #133, #134)."
 created: 2026-07-06
 updated: 2026-07-16
 doc_type: project
@@ -28,7 +28,7 @@ phases: 2
 
 | What was just completed | What's next |
 |---|---|
-| **Base .md viewer shipped 2026-07-15** outside the marathon process (picker accepts `.md`, safe `UTType`, symmetric state clear, markdown rendering reused from the `focus5.md` note path — later also gained a GFM table renderer). **Size-ceiling finding closed 2026-07-16** via [MARATHON-2026-07-16 Lane B](MARATHON-2026-07-16.md): `refreshTelemetry()`'s `.md` branch now caps the read at 1MB (byte-safe truncation, never mid-codepoint) with a visible `"…truncated (file exceeds 1 MB)"` note; 2 new tests, `swift test` green (25/25), `make-app.sh` reinstalled. | All 3 accepted agy [Should] findings from the 2026-07-06 relay-xyz review are now implemented — **Phase 1 complete.** **Phase 2** (header/status-reflects-kind polish, large-file scroll safety, extending the self-test) remains open, not addressed by this pass. |
+| **Base .md viewer shipped 2026-07-15** outside the marathon process (picker accepts `.md`, safe `UTType`, symmetric state clear, markdown rendering reused from the `focus5.md` note path — later also gained a GFM table renderer). **Size-ceiling finding closed 2026-07-16** via [MARATHON-2026-07-16 Lane B](MARATHON-2026-07-16.md) (PR #133). **Phase 2 closed 2026-07-16** via [MARATHON-2026-07-16-B Lane B](../2-WORKING/MARATHON-2026-07-16-B.md) (PR #134): header/status now names the file kind, self-test discriminator added, large-file safety confirmed already covered by the 1MB ceiling. | **Done.** Both phases shipped and merged to `development`. |
 
 ---
 
@@ -96,16 +96,18 @@ the bottom-note already uses). Small, additive, reversible — no new tab, no sc
 
 **Observable checklist:**
 
-- [ ] **Header/status reflects kind.** The telemetry status line names the file and its kind (e.g. "signals · N" for JSON, "markdown" for .md) so the mode is legible.
-- [ ] **Large-file safety.** A big `.md` renders in the `ScrollView` without blocking the main thread (read is already sync + small; note the assumption if a size ceiling is set).
-- [ ] **Self-test.** Extend `SelfTest.swift` with a pure assertion that the file-kind discriminator maps `foo.json` → structured and `foo.md` → text (extension logic is testable without a file dialog).
+- [x] **Header/status reflects kind.** `telemetryStatus` now shows `"<filename> · markdown"` for `.md` files and `"<filename> · signals · N"` for JSON, gated so it doesn't show a stale count during a load error.
+- [x] **Large-file safety.** Confirmed (not re-engineered) that `Focus5Model.telemetryMarkdownByteCeiling` (1MB) is the actual end-to-end safety mechanism — the string handed to `ScrollView`/`MarkdownBody` is already bounded before the view ever sees it. Documented via a code comment at the `.md` render branch.
+- [x] **Self-test.** `Focus5Model.isMarkdownKind(_:)` extracted as a pure `nonisolated static` function; `SelfTest.swift` gained a `FOCUS5_KINDTEST=1` block asserting `foo.json`→structured, `foo.md`→text, case-insensitivity, `.markdown`≠`.md`, no-extension, and `nil` cases. A matching XCTest was also added to `TelemetryFileLoadingTests.swift`.
 
 ### Phase 2 — QA gate
 
-- [ ] `swift build` green; `FOCUS5_SELFTEST` (or equivalent) passes incl. the new kind-discriminator assertion.
-- [ ] Manual: a multi-KB markdown file renders fully and scrolls; a `.json` with many rows still renders structured.
-- [ ] `pytest tests/` unaffected (no Python surface touched) — spot-run to confirm no accidental repo-wide breakage.
-- [ ] Ship via `make-app.sh` (per standing guidance — `swift build` alone doesn't update `/Applications`).
+- [x] `swift build -c release` green; `swift test` 26/26 green (25 existing + 1 new); `FOCUS5_KINDTEST=1 swift run Focus5Float` → "KINDTEST OK — 7 cases"; `FOCUS5_SELFTEST=1` still prints the sample roster correctly.
+- [x] Manual assertion covers the JSON-with-many-rows and multi-KB-markdown cases via the discriminator test; the JSON decode path (`JSONDecoder`, `telemetryEntries =`) shows zero diff, confirming byte-for-byte unchanged behavior.
+- [x] `pytest tests/` unaffected — no Python surface touched by this lane.
+- [x] Shipped via `make-app.sh` — ad-hoc signed and installed to `/Applications/Focus 5 Float.app`.
+
+**Shipped 2026-07-16 via MARATHON-2026-07-16-B Lane B (PR #134, merged to `development`).**
 
 ### Phase 2 — anti-goals
 

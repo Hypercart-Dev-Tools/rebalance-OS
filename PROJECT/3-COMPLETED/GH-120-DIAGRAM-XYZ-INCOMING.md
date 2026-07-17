@@ -3,7 +3,7 @@ title: "Show incoming (not-yet-activated) XYZ HQ data in the architecture diagra
 owner: noel@neochro.me
 gh_issue: 120
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/120"
-status: "Active (2-WORKING) — promoted 2026-07-07; queued in MARATHON-2026-07-07 Lane B, ready to fire (not yet fired). Diagram/spec only — no collector activation."
+status: "Completed 2026-07-16 via MARATHON-2026-07-16-B Lane A (PR #134, merged to development). Diagram/spec only — no collector activation."
 created: 2026-07-06
 updated: 2026-07-07
 doc_type: project
@@ -27,7 +27,7 @@ phases: 1
 
 | What was just completed | What's next |
 |---|---|
-| **Captured 2026-07-06** from issue #120. Confirmed the render path: `system-diagram.html` inlines the spec via `renderDiagram({...})`, and `system-diagram.json` is the standalone spec — **both** must carry the new node to stay in sync. | **Phase 1** — add an `xyz_hq` source + staged-collector node, marked not-yet-active (dashed/"planned" edge convention), to both files. Queued in [MARATHON-2026-07-07.md](MARATHON-2026-07-07.md) Lane B. |
+| **Captured 2026-07-06** from issue #120. Confirmed the render path: `system-diagram.html` inlines the spec via `renderDiagram({...})`, and `system-diagram.json` is the standalone spec — **both** must carry the new node to stay in sync. **Shipped 2026-07-16** via [MARATHON-2026-07-16-B](../2-WORKING/MARATHON-2026-07-16-B.md) Lane A (PR #134) — the original MARATHON-2026-07-07 Lane B queueing was superseded by the 2026-07-16 GH-issue triage sweep, which re-picked this issue up fresh. | **Done.** |
 
 ---
 
@@ -53,27 +53,26 @@ active vs. planned. Spec-only, no code.
 
 **Observable checklist:**
 
-- [ ] **Add an `xyz_hq` external source node** ("XYZ HQ", description: cross-repo marathon/session state
+- [x] **Add an `xyz_hq` external source node** ("XYZ HQ", description: cross-repo marathon/session state
       + per-issue disposition) to `ARCHITECTURE/system-diagram.json`.
-- [ ] **Add a staged collector/overlay node** feeding the signal plane (`github_items` overlay per
-      GH-102 Seam #4), so the fanout shape matches the other sources.
-- [ ] **Mark it not-yet-active.** Use a visible convention the renderer already supports — e.g. a
-      `kind` on its edges that renders dashed (the renderer has `async`/`data` dashes), plus a label
-      like "planned / toggle-off" — so it reads as staged, not live.
-- [ ] **Mirror the change into `system-diagram.html`'s inlined `renderDiagram({...})` spec** so the
-      rendered page and the standalone JSON stay identical (they drift otherwise).
-- [ ] **Render check:** open `system-diagram.html`, confirm the XYZ HQ node appears and is visually
-      distinguishable from the five live sources.
+- [x] **Add a staged collector/overlay node** feeding the signal plane (`xyz_disposition_collector`,
+      matching the real GH-102 Seam #4 naming), so the fanout shape matches the other sources.
+- [x] **Mark it not-yet-active.** Used the renderer's existing `async` edge `kind` (renders dashed) on
+      all three new edges, plus `(planned)` appended to every new node/edge label.
+- [x] **Mirror the change into `system-diagram.html`'s inlined `renderDiagram({...})` spec** — verified
+      programmatically byte-identical to the standalone JSON, no drift.
+- [x] **Render check:** confirmed the XYZ HQ node is visually distinguishable (dashed + "(planned)")
+      from the five live sources.
 
 ### Phase 1 — QA checklist
 
-- [ ] **Litmus:** the rendered diagram shows XYZ HQ as incoming-but-staged, distinct from live sources.
-- [ ] **Sync:** `system-diagram.json` and the inlined spec in `system-diagram.html` carry the same node
-      set (no drift between the two).
-- [ ] **Truthful:** the node is clearly marked not-active — it must not imply the collector is live
+- [x] **Litmus:** the rendered diagram shows XYZ HQ as incoming-but-staged, distinct from live sources.
+- [x] **Sync:** `system-diagram.json` and the inlined spec in `system-diagram.html` carry the same node
+      set (verified identical via JSON comparison, not eyeballed).
+- [x] **Truthful:** the node is clearly marked not-active — it must not imply the collector is live
       (it isn't; GH-102 toggle is default-off).
-- [ ] **No code/behavior change:** only the two diagram files touched; `utils/pdda/pdda.sh run` clean.
-      Lands via self-mergeable PR (main is protected).
+- [x] **No code/behavior change:** only the two diagram files touched; `utils/pdda/pdda.sh run` clean.
+      Landed via PR #134 (MARATHON-2026-07-16-B Lane A), merged to `development` 2026-07-16.
 
 ---
 

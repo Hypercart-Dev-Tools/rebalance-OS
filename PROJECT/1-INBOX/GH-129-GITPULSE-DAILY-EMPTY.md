@@ -1,6 +1,6 @@
 ---
 title: Git Pulse Daily Summary falsely reports "No git activity found today"
-status: Inbox (root-caused + primary fix shipped; 2 follow-ups open)
+status: Inbox (root-caused + primary fix shipped; follow-up "no self-heal/clobber" shipped 2026-07-16; 2 follow-ups open: pull-before-read, tz-invariance coverage test)
 gh_issue: 129
 created: 2026-07-14
 updated: 2026-07-14
@@ -49,15 +49,18 @@ environment couldn't be inspected — but the failure MODE above is device-indep
 - [x] **Healed the live note:** re-ran the synthesis; the stale "No git activity" block was
       replaced by the real summary.
 
-## Follow-ups (DEFERRED — defense-in-depth)
-- [ ] **Pull-before-read:** `collect_today_activity` shells `view.sh` with no `git pull`, so
+## Follow-ups
+- [ ] **Pull-before-read (DEFERRED):** `collect_today_activity` shells `view.sh` with no `git pull`, so
       freshness depends on external sync cadence. Add a bounded `git pull` (fail-soft) before read.
-- [ ] **No self-heal / clobber:** the synthesis runs once/day, so any transient empty persists
-      24h and the bare "no activity" fallback overwrites a good block. Consider re-running through
-      the evening (upsert already replaces the block) and/or not writing the empty fallback over a
-      non-empty block.
-- [ ] **Coverage:** a test asserting `view.sh --today` is tz-invariant (same rows under `TZ=UTC`
-      and local) would pin this regression.
+      **Deliberately not built** as part of the 2026-07-16 marathon sweep — needs an operator design
+      call on git-pull failure handling in a scheduled script, not something to assume unilaterally.
+- [x] **No self-heal / clobber (SHIPPED 2026-07-16):** via [MARATHON-2026-07-16-B](../2-WORKING/MARATHON-2026-07-16-B.md)
+      Lane E (PR #134). `synthesize()`'s zero-row fallback no longer overwrites an existing non-empty
+      block — guarded on both `upsert_block` (vault) and `upsert_clio_block` (CLIO log) paths, with a
+      logged SKIP when a rerun would clobber a real summary. 12 new tests in
+      `tests/test_git_pulse_daily_synthesis.py`.
+- [ ] **Coverage (DEFERRED):** a test asserting `view.sh --today` is tz-invariant (same rows under
+      `TZ=UTC` and local) would pin this regression at the source rather than only downstream.
 
 ## Debug ledger
 - H1 data-not-in-repo — ✗ (macbook pushed 13:23).
