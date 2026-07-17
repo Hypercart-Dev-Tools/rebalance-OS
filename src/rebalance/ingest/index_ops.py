@@ -197,6 +197,18 @@ _SIGNAL_HEALTH_RULES: dict[str, dict[str, Any]] = {
         "freshness_key": "activity_last_scanned_at",
         "window_days": 7,
         "zero_status": "degraded",
+        # GH-127 content-quality check. github_activity (the table
+        # recent_row_count_7d windows above) is a pure per-day counters
+        # rollup with no per-item content, so the predicate targets
+        # github_items instead — windowed on fetched_at (the collector's own
+        # sync timestamp, mirroring how recent_row_count_7d windows
+        # github_activity on scanned_at) rather than the item's own
+        # created_at/updated_at, so a burst of newly-synced-but-empty items
+        # is caught the same run they land.
+        "content_predicate": "title IS NOT NULL AND TRIM(title) != ''",
+        "content_table": "github_items",
+        "content_window_column": "fetched_at",
+        "content_label": "a title",
     },
     "calendar": {"freshness_key": "last_fetched_at", "window_days": 7, "zero_status": "degraded"},
     "sleuth": {"freshness_key": "last_synced_at", "window_days": 7, "zero_status": "warn"},
@@ -205,7 +217,21 @@ _SIGNAL_HEALTH_RULES: dict[str, dict[str, Any]] = {
         "window_days": 7,
         "zero_status": "warn",
     },
-    "email": {"freshness_key": "last_synced_at", "window_days": 7, "zero_status": "degraded"},
+    "email": {
+        "freshness_key": "last_synced_at",
+        "window_days": 7,
+        "zero_status": "degraded",
+        # GH-127 content-quality check — the exact defect that hid 119/124
+        # dead rows for 3 weeks (#125). Same table + window email already
+        # uses for recent_row_count_7d (email_messages / received_at).
+        "content_predicate": (
+            "(from_address IS NOT NULL AND TRIM(from_address) != '') "
+            "OR (subject IS NOT NULL AND TRIM(subject) != '')"
+        ),
+        "content_table": "email_messages",
+        "content_window_column": "received_at",
+        "content_label": "a sender or subject",
+    },
     "figma": {"freshness_key": "last_synced_at", "window_days": 7, "zero_status": "warn"},
     "ask_self": {"freshness_key": "last_scanned_at", "window_days": 7, "zero_status": "warn"},
 }
@@ -291,6 +317,28 @@ def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[
                     status_entry = {
                         "status": zero_status,
                         "reason": "freshness timestamp is current but 0 rows landed in the last 7d",
+                    }
+
+        # GH-127 content-quality override: rows can be structurally valid
+        # (present, on-time) but semantically empty — no sender/subject on an
+        # email, no title on a github item. This is what let 119/124 dead
+        # email rows sit "ok" for 3 weeks (#125). Only sources with a
+        # content_predicate in the rule are checked (currently email +
+        # github); every other source's verdict is untouched by this block.
+        # Only overrides an otherwise-`ok` verdict — a source already flagged
+        # warn/degraded by freshness keeps that verdict and reason.
+        content_predicate = rule.get("content_predicate")
+        if content_predicate and status_entry["status"] == "ok":
+            content_total = int(source_payload.get("content_total_count_7d") or 0)
+            content_fail = int(source_payload.get("content_fail_count_7d") or 0)
+            if content_total > 0:
+                fail_fraction = content_fail / content_total
+                if fail_fraction > 0.5:
+                    pct = round(fail_fraction * 100)
+                    label = rule.get("content_label", "meaningful content")
+                    status_entry = {
+                        "status": "degraded",
+                        "reason": f"{pct}% of recent rows lack {label}",
                     }
 
         signal_health[source_name] = status_entry
@@ -443,6 +491,29 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
                 conn, "ask_self_indexes", "julianday(scanned_at) >= julianday('now', '-7 days')"
             ) or 0,
         }
+
+        # GH-127 content-quality check. Registry-driven off
+        # _SIGNAL_HEALTH_RULES: sources that declare a content_predicate get a
+        # materialized content_total_count_7d / content_fail_count_7d pair
+        # that _derive_signal_health reads generically. Adding a source's
+        # predicate is a dict-entry addition to the rules above — no new
+        # branch is needed here or in _derive_signal_health.
+        for source_name, rule in _SIGNAL_HEALTH_RULES.items():
+            predicate = rule.get("content_predicate")
+            content_table = rule.get("content_table")
+            window_column = rule.get("content_window_column")
+            if not predicate or not content_table or not window_column:
+                continue
+            source_payload = payload["sources"].get(source_name)
+            if source_payload is None:
+                continue
+            window_clause = f"julianday({window_column}) >= julianday('now', '-7 days')"
+            source_payload["content_total_count_7d"] = _safe_count_where(
+                conn, content_table, window_clause
+            ) or 0
+            source_payload["content_fail_count_7d"] = _safe_count_where(
+                conn, content_table, f"{window_clause} AND NOT ({predicate})"
+            ) or 0
 
         # Semantic index
         sem_total = _safe_count(conn, "semantic_documents")
