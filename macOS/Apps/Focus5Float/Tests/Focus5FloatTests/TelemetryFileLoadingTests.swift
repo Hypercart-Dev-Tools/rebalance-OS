@@ -116,6 +116,22 @@ final class TelemetryFileLoadingTests: XCTestCase {
         XCTAssertTrue(model.telemetryEntries.isEmpty)
     }
 
+    /// GH-121 Phase 2: pure assertion on the extension-string discriminator —
+    /// `foo.json` → structured (JSON) viewer, `foo.md` → text (markdown) viewer.
+    /// No temp file / disk I/O needed: `isMarkdownKind` only inspects
+    /// `URL.pathExtension`, so a non-existent path is sufficient. Mirrors the
+    /// FOCUS5_KINDTEST headless self-test in SelfTest.swift, which exercises the
+    /// same production function outside XCTest.
+    func testFileKindDiscriminatorMapsExtensionToViewerKind() {
+        XCTAssertFalse(Focus5Model.isMarkdownKind(URL(fileURLWithPath: "/tmp/foo.json")))
+        XCTAssertTrue(Focus5Model.isMarkdownKind(URL(fileURLWithPath: "/tmp/foo.md")))
+        XCTAssertTrue(Focus5Model.isMarkdownKind(URL(fileURLWithPath: "/tmp/FOO.MD")))
+        XCTAssertFalse(Focus5Model.isMarkdownKind(URL(fileURLWithPath: "/tmp/signals.JSON")))
+        XCTAssertFalse(Focus5Model.isMarkdownKind(URL(fileURLWithPath: "/tmp/notes.markdown")))
+        XCTAssertFalse(Focus5Model.isMarkdownKind(URL(fileURLWithPath: "/tmp/no-extension")))
+        XCTAssertFalse(Focus5Model.isMarkdownKind(nil))
+    }
+
     func testMissingFileReportsLoadErrorForBothKinds() {
         let goneJSON = FileManager.default.temporaryDirectory.appendingPathComponent("gone-\(UUID().uuidString).json")
         let jsonModel = Focus5Model()
