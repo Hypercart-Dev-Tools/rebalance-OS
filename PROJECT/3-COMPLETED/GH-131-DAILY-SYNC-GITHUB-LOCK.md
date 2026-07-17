@@ -1,6 +1,6 @@
 ---
 title: daily-sync fails daily — github scope hits "database is locked" from collision with hourly github-sync
-status: Inbox (root-caused; queued into MARATHON-2026-07-16 Lane A)
+status: "Fixed — MARATHON-2026-07-16 Lane A, fired and shipped 2026-07-16 on branch marathon/2026-07-16"
 gh_issue: 131
 created: 2026-07-16
 updated: 2026-07-16
@@ -21,6 +21,7 @@ goal: >
 - [Symptom](#symptom)
 - [Root cause (proven)](#root-cause-proven)
 - [Fix — proposed](#fix--proposed)
+- [Fix — implemented](#fix--implemented)
 - [Secondary finding (out of scope)](#secondary-finding-out-of-scope)
 - [Debug ledger](#debug-ledger)
 
@@ -52,6 +53,31 @@ whichever loses the race (daily-sync's github scope, consistently, across every 
 3. Verify: re-run `daily_sync.sh` across a day boundary where the 06:45 hourly overlap occurs;
    confirm the JSON `errors` list no longer contains a `github` / `"database is locked"` entry
    and the `dashboard` scope stops being skipped.
+
+## Fix — implemented
+**Correction to the proposed fix:** `db_connection()`/`get_connection()` in
+`src/rebalance/ingest/db/connection.py` already sets `PRAGMA journal_mode=WAL` and
+`PRAGMA busy_timeout=30000` (30s) for every connection — including every github-scope
+writer call (`github_scan.py`, `github_knowledge.py`, `github_watch.py` all already go
+through it). So the lock isn't from a *missing* busy_timeout; it's that the hourly
+`github-sync` job can hold rebalance.db's github-table write lock for **longer than 30
+continuous seconds** at some point during its own multi-repo sync run, which exhausts
+even the existing busy_timeout.
+
+**Shipped fix** (`src/rebalance/ingest/index_ops.py`): a new `_retry_on_db_locked()`
+helper wraps `_github_adapter`'s call to `_refresh_github` — on a `sqlite3.OperationalError`
+containing "database is locked", it retries the *whole* github-scope refresh up to 3 times
+with linear backoff (5s, 10s), re-raising (surfacing a real `errors` entry, never silently
+swallowed) if the lock still hasn't cleared on the final attempt. Safe because
+`_refresh_github` is idempotent (upserts) — a retry just re-syncs, it can't double-write.
+Scoped to the github adapter only; no change to `refresh_index()`'s generic dispatch loop
+or any other scope's behavior. 6 new tests (`tests/test_index_ops.py`); full suite green;
+`rebalance doctor` clean; `pdda.sh run` clean.
+
+The optional Phase 2 (moving `github-sync`'s launchd offset off `:45`) was **not** taken —
+the retry is a complete, root-cause-adjacent fix on its own (survives the collision
+regardless of scheduling), so the schedule-offset change is unnecessary defense-in-depth,
+left as a future option if the collision frequency ever becomes a real cost.
 
 ## Secondary finding (out of scope)
 `github-sync`'s own log (`temp/logs/github_stderr.log`) also shows two outright crashes
