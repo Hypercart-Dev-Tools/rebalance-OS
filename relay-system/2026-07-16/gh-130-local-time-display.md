@@ -271,10 +271,10 @@ index 660a4c5..1694782 100644
  def _f5_health(card: dict[str, Any]) -> str:
 diff --git a/tests/test_tz_utils.py b/tests/test_tz_utils.py
 new file mode 100644
-index 0000000..74adc2a
+index 0000000..b7d3a7a
 --- /dev/null
 +++ b/tests/test_tz_utils.py
-@@ -0,0 +1,144 @@
+@@ -0,0 +1,174 @@
 +"""Tests for the timezone display/resolution helpers.
 +
 +Covers `local_tz()` resolution order (env override, /etc/localtime, UTC
@@ -380,6 +380,25 @@ index 0000000..74adc2a
 +            result = format_local("2026-01-01T12:00:00Z", "%H:%M")
 +            self.assertEqual(result, "12:00")
 +
++    def test_dst_spring_forward_boundary(self) -> None:
++        # 2026 US spring-forward is 2026-03-08 02:00 local (America/Los_Angeles):
++        # 09:30 UTC lands just before it (PST, UTC-8); 10:30 UTC just after (PDT, UTC-7).
++        tz = ZoneInfo("America/Los_Angeles")
++        before = format_local("2026-03-08T09:30:00Z", "%Y-%m-%d %H:%M %Z", tz=tz)
++        after = format_local("2026-03-08T10:30:00Z", "%Y-%m-%d %H:%M %Z", tz=tz)
++        self.assertEqual(before, "2026-03-08 01:30 PST")
++        self.assertEqual(after, "2026-03-08 03:30 PDT")
++
++    def test_dst_fall_back_boundary(self) -> None:
++        # 2026 US fall-back is 2026-11-01 02:00 local (America/Los_Angeles):
++        # 08:30 UTC lands just before it (PDT, UTC-7); 09:30 UTC just after (PST, UTC-8) —
++        # both render "01:30" wall-clock but with the correct, different zone abbreviation.
++        tz = ZoneInfo("America/Los_Angeles")
++        before = format_local("2026-11-01T08:30:00Z", "%Y-%m-%d %H:%M %Z", tz=tz)
++        after = format_local("2026-11-01T09:30:00Z", "%Y-%m-%d %H:%M %Z", tz=tz)
++        self.assertEqual(before, "2026-11-01 01:30 PDT")
++        self.assertEqual(after, "2026-11-01 01:30 PST")
++
 +
 +class FormatRelativeTests(unittest.TestCase):
 +    def setUp(self) -> None:
@@ -415,6 +434,17 @@ index 0000000..74adc2a
 +        future = self.now.replace(year=2027)
 +        result = format_relative(future, now=self.now)
 +        self.assertEqual(result, "just now")
++
++    def test_correct_across_dst_boundary(self) -> None:
++        # format_relative() deliberately never converts to local tz — it only
++        # diffs two UTC instants — so it is DST-agnostic by construction (see
++        # its docstring). This straddles the 2026 US spring-forward instant to
++        # prove that holds: the wall-clock offset changing underneath doesn't
++        # perturb the instant-based delta.
++        before_transition = datetime(2026, 3, 8, 9, 30, 0, tzinfo=timezone.utc)
++        after_transition = datetime(2026, 3, 8, 10, 30, 0, tzinfo=timezone.utc)
++        result = format_relative(after_transition, now=before_transition.replace(hour=11))
++        self.assertEqual(result, "1h ago")
 +
 +
 +if __name__ == "__main__":
