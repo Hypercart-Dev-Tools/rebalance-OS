@@ -39,6 +39,11 @@ MARKER_START = "<!-- Git Pulse Daily Summary Start -->"
 MARKER_END = "<!-- Git Pulse Daily Summary End -->"
 BLOCK_HEADING = "## 📊 Git Pulse Daily Summary"
 
+# The zero-row fallback synthesize() returns. Named so the no-clobber guard
+# below can recognize "the summary about to be written is itself a fallback"
+# without string-literal duplication.
+FALLBACK_SUMMARY = "No git activity found today."
+
 # CLIO log: one block per calendar day, so the markers are date-scoped — this is
 # what lets today's rerun replace only today's block while every prior day's
 # block in the same growing file stays untouched.
@@ -143,6 +148,37 @@ def upsert_clio_block(content: str, summary: str, generated_at: datetime) -> str
     return body + block
 
 
+# --- No-clobber guard (GH-129 follow-up #3) -----------------------------
+# A later, transient zero-row rerun on the same day must not overwrite an
+# earlier successful run's real summary with the empty-activity fallback.
+# A first-write-of-the-day (no block yet, or a block that's already the
+# fallback) is unaffected — the guard only fires for "real content already
+# there -> don't overwrite with empty."
+def _extract_block_text(content: str, start_marker: str, end_marker: str) -> str | None:
+    """Return the text between start/end markers in content, or None if either
+    marker is absent (i.e. no block exists yet at this location)."""
+    if start_marker not in content or end_marker not in content:
+        return None
+    return content.split(start_marker, 1)[1].split(end_marker, 1)[0]
+
+
+def _would_clobber_real_summary(existing_block_text: str | None, new_summary: str) -> bool:
+    """True only when writing new_summary would replace an earlier real summary
+    with the zero-row fallback: new_summary IS the fallback, a block already
+    exists, and that existing block is non-empty and is not itself the
+    fallback."""
+    if new_summary != FALLBACK_SUMMARY:
+        return False
+    if existing_block_text is None:
+        return False
+    stripped = existing_block_text.strip()
+    if not stripped:
+        return False
+    if FALLBACK_SUMMARY in stripped:
+        return False
+    return True
+
+
 # --- Signal + synthesis ---------------------------------
 PROMPT_TEMPLATE = """You are an AI assistant summarizing the git commit activity of a software engineer for the day.
 Based on the following structured snapshot of today's git pulse activity, write a concise daily summary.
@@ -185,7 +221,7 @@ def synthesize(activity_tsv: str) -> str | None:
     lines = activity_tsv.splitlines()
     if len(lines) <= 1:
         # Zero-row case (only headers or empty)
-        return "No git activity found today."
+        return FALLBACK_SUMMARY
         
     key = get_gemini_api_key()
     if not key:
@@ -233,6 +269,13 @@ def sync_to_clio(summary: str, now: datetime, dry_run: bool = False) -> dict:
 
     target_file = target_repo / file_rel
     existing = target_file.read_text(encoding="utf-8") if target_file.exists() else ""
+
+    clio_start, clio_end = _clio_markers(now.strftime("%Y-%m-%d"))
+    existing_clio_block = _extract_block_text(existing, clio_start, clio_end)
+    if _would_clobber_real_summary(existing_clio_block, summary):
+        log(f"SKIP: zero-row rerun would clobber an existing non-empty summary ({file_rel})")
+        return {"enabled": True, "ok": True, "skipped": "would_clobber"}
+
     new_content = upsert_clio_block(existing, summary, now)
 
     if dry_run:
@@ -292,6 +335,11 @@ def run(dry_run: bool = False, now: datetime | None = None, force: bool = False)
         return 0
 
     content = TODAY_FILE.read_text(encoding="utf-8")
+    existing_block = _extract_block_text(content, MARKER_START, MARKER_END)
+    if _would_clobber_real_summary(existing_block, summary):
+        log("SKIP: zero-row rerun would clobber an existing non-empty summary")
+        return 0
+
     new_content = upsert_block(content, summary, now)
 
     if dry_run:
