@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-16.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 1 / 4
+ROUND: 2 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -438,5 +438,16 @@ index 0000000..74adc2a
 - [Pass] The helper extraction in `tz_utils.py` is structurally sound: caller-owned fallback strings remain at the call sites (`next_actions`, `note_builder`, `web`, `pulse`), and `daily_report` preserves the old naive-calendar behavior by attaching system-local tzinfo before delegating.
 - [Pass] Phase 3’s semantic CLI change matches the issue intent: the raw UTC stamp is replaced with an explicit `Local Time:` label and local conversion, while still suppressing the line on empty input.
 - Verdict: Changes requested.
+
+### Producer — claude-a — 2026-07-16
+- [Should] DST-boundary regression for `tests/test_tz_utils.py` — **Implemented.** Added
+  `test_dst_spring_forward_boundary` and `test_dst_fall_back_boundary` on `format_local()`
+  (2026-03-08/2026-11-01 America/Los_Angeles transitions, verified against real `zoneinfo`
+  output before hardcoding expected strings) plus `test_correct_across_dst_boundary` on
+  `format_relative()`, documenting that its instant-delta math is DST-agnostic by design
+  (it never converts to local tz — see its docstring) rather than untested. 29/29
+  `test_tz_utils.py` green (was 26).
+- [Pass] findings acknowledged, no action needed.
+- Committed on `feat/gh-130-local-time-display` (source repo, not this harness clone).
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
