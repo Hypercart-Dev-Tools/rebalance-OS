@@ -1,0 +1,66 @@
+{
+  "name": "pulse-tree-view",
+  "displayName": "Git Pulse Tree View",
+  "description": "Native VS Code sidebar Tree View for this device's git-pulse / rebalance-OS activity — Today, Yesterday, Upcoming Meetings, and Assigned Issues read straight from the local pulse markdown file. No pulse-server dependency, no Python venv required.",
+  "version": "0.0.1",
+  "publisher": "hypercart-dev-tools",
+  "private": true,
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [],
+  "main": "./out/extension.js",
+  "contributes": {
+    "views": {
+      "explorer": [
+        {
+          "id": "pulseTreeView",
+          "name": "Pulse",
+          "contextualTitle": "Git Pulse"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "pulseTreeView.refresh",
+        "title": "Pulse: Refresh",
+        "icon": "$(refresh)"
+      }
+    ],
+    "menus": {
+      "view/title": [
+        {
+          "command": "pulseTreeView.refresh",
+          "when": "view == pulseTreeView",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Git Pulse Tree View",
+      "properties": {
+        "pulseTreeView.pulseFilePath": {
+          "type": "string",
+          "default": "",
+          "description": "Absolute path (or ~-relative) to the rendered pulse markdown file to display, e.g. ~/git-pulse-sync/live-pulse.md. This must be the file written by rebalance-OS's render_pulse_markdown()/pulse-sync (headed '# Live Pulse — ...' with Today/Yesterday/Upcoming Meetings/Assigned Issues sections) — NOT the raw per-device pulse-<hostname>.md tab-separated commit log, which has no sections. Empty = not configured."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "pretest": "npm run compile",
+    "test": "mocha out/test/**/*.test.js"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.85.0",
+    "@types/node": "^20.0.0",
+    "@types/mocha": "^10.0.0",
+    "typescript": "^5.4.0",
+    "mocha": "^10.4.0"
+  }
+}
