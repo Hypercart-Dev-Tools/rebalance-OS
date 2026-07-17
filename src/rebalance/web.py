@@ -38,6 +38,7 @@ from rebalance.ingest.auth_log import read_log, _log_path
 from rebalance.ingest import zapier_calendar, zapier_email
 from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
 from rebalance.paths import resolve_db, resolve_secret_path
+from rebalance.tz_utils import format_relative
 from rebalance.web_components import badge_html, button_link, render_shell
 
 logger = logging.getLogger(__name__)
@@ -472,17 +473,7 @@ def index() -> RedirectResponse:
 
 def _rel_time(iso: str | None) -> str:
     """Render an ISO-8601 timestamp as a compact relative age (e.g. '3h ago')."""
-    if not iso:
-        return ""
-    try:
-        ts = datetime.fromisoformat(iso.replace("Z", "+00:00"))
-    except ValueError:
-        return ""
-    secs = max(0, int((datetime.now(timezone.utc) - ts).total_seconds()))
-    for label, unit in (("d", 86400), ("h", 3600), ("m", 60)):
-        if secs >= unit:
-            return f"{secs // unit}{label} ago"
-    return "just now"
+    return format_relative(iso)
 
 
 def _f5_health(card: dict[str, Any]) -> str:

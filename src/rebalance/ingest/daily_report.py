@@ -30,6 +30,7 @@ from rebalance.ingest.project_classifier import (
     annotate_events_with_projects,
     load_project_matchers,
 )
+from rebalance.tz_utils import format_local
 
 DEFAULT_AGGREGATOR_SKIP_WORDS = frozenset(
     {
@@ -303,8 +304,12 @@ def _event_local_time(event: dict[str, Any], config: CalendarConfig) -> str:
     """Format an event's start time in the configured local timezone."""
     try:
         start_dt = parse_calendar_dt(event["start_time"])
-        local_time = start_dt.astimezone(ZoneInfo(config.timezone))
-        return local_time.strftime("%I:%M %p").lstrip("0")
+        if start_dt.tzinfo is None:
+            # All-day events parse naive; interpret as system-local wall time
+            # (matches bare .astimezone() semantics) before converting, since
+            # format_local()/to_local() would otherwise assume UTC instead.
+            start_dt = start_dt.astimezone()
+        return format_local(start_dt, "%I:%M %p", tz=ZoneInfo(config.timezone)).lstrip("0")
     except Exception:
         return "—"
 
