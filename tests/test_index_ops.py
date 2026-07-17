@@ -2,12 +2,107 @@
 
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from rebalance.ingest.index_ops import _refresh_dashboard_note, _refresh_github, refresh_index
+from rebalance.ingest.index_ops import (
+    _github_adapter,
+    _refresh_dashboard_note,
+    _refresh_github,
+    _retry_on_db_locked,
+    refresh_index,
+)
+
+
+class RetryOnDbLockedTests(unittest.TestCase):
+    """GH-131: the github-scope writer retries a transient SQLite lock (the
+    hourly github-sync job colliding with daily-sync's window) instead of
+    failing the whole scope on the first busy_timeout expiry."""
+
+    def test_succeeds_immediately_when_fn_does_not_raise(self) -> None:
+        calls = []
+        result = _retry_on_db_locked(lambda: calls.append(1) or "ok", sleep_fn=lambda s: None)
+        self.assertEqual(result, "ok")
+        self.assertEqual(len(calls), 1)
+
+    def test_retries_on_locked_then_succeeds(self) -> None:
+        attempts = {"n": 0}
+
+        def flaky():
+            attempts["n"] += 1
+            if attempts["n"] < 3:
+                raise sqlite3.OperationalError("database is locked")
+            return "recovered"
+
+        sleeps: list[float] = []
+        result = _retry_on_db_locked(flaky, attempts=3, base_delay_seconds=5.0, sleep_fn=sleeps.append)
+
+        self.assertEqual(result, "recovered")
+        self.assertEqual(attempts["n"], 3)
+        self.assertEqual(sleeps, [5.0, 10.0])  # linear backoff before attempts 2 and 3
+
+    def test_bounded_ceiling_reraises_after_final_attempt(self) -> None:
+        # Hard invariant: a persistent lock is never silently swallowed.
+        def always_locked():
+            raise sqlite3.OperationalError("database is locked")
+
+        with self.assertRaises(sqlite3.OperationalError):
+            _retry_on_db_locked(always_locked, attempts=3, sleep_fn=lambda s: None)
+
+    def test_non_lock_operational_error_is_not_retried(self) -> None:
+        calls = {"n": 0}
+
+        def other_error():
+            calls["n"] += 1
+            raise sqlite3.OperationalError("no such table: foo")
+
+        with self.assertRaises(sqlite3.OperationalError):
+            _retry_on_db_locked(other_error, attempts=3, sleep_fn=lambda s: None)
+        self.assertEqual(calls["n"], 1)  # no retry — not a lock error
+
+    def test_non_operational_exception_propagates_immediately(self) -> None:
+        def boom():
+            raise ValueError("unrelated")
+
+        with self.assertRaises(ValueError):
+            _retry_on_db_locked(boom, attempts=3, sleep_fn=lambda s: None)
+
+
+class GithubAdapterRetryTests(unittest.TestCase):
+    """_github_adapter wires _refresh_github through the GH-131 retry wrapper."""
+
+    def test_github_adapter_retries_transient_lock(self) -> None:
+        attempts = {"n": 0}
+
+        def flaky_refresh(db_path, **kwargs):
+            attempts["n"] += 1
+            if attempts["n"] < 2:
+                raise sqlite3.OperationalError("database is locked")
+            return {"scope": "github", "recovered": True}
+
+        with patch("rebalance.ingest.index_ops._refresh_github", side_effect=flaky_refresh), \
+             patch("rebalance.ingest.index_ops.time.sleep") as mock_sleep:
+            result = _github_adapter(
+                Path("/tmp/fake.db"),
+                token="t", since_days=7, repos=[], dry_run=False,
+            )
+
+        self.assertEqual(result, {"scope": "github", "recovered": True})
+        self.assertEqual(attempts["n"], 2)
+        mock_sleep.assert_called_once()
+
+    def test_github_adapter_dry_run_never_touches_retry_sleep(self) -> None:
+        with patch("rebalance.ingest.index_ops._refresh_github", return_value={"scope": "github", "dry_run": True}), \
+             patch("rebalance.ingest.index_ops.time.sleep") as mock_sleep:
+            result = _github_adapter(
+                Path("/tmp/fake.db"),
+                token="t", since_days=7, repos=[], dry_run=True,
+            )
+        self.assertEqual(result, {"scope": "github", "dry_run": True})
+        mock_sleep.assert_not_called()
 
 
 class IndexOpsTests(unittest.TestCase):

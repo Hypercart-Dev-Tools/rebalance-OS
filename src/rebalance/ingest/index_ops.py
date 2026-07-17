@@ -10,6 +10,7 @@ underlying ingest pipelines so callers do not have to know the order of
 from __future__ import annotations
 
 import logging
+import sqlite3
 import time
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta, timezone
@@ -1514,14 +1515,44 @@ def _vault_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     return _refresh_vault(db_path, vault_path, dry_run=opts["dry_run"])
 
 
+def _retry_on_db_locked(
+    fn: Callable[[], Any],
+    *,
+    attempts: int = 3,
+    base_delay_seconds: float = 5.0,
+    sleep_fn: Callable[[float], None] | None = None,
+) -> Any:
+    """Retry ``fn()`` on a SQLite "database is locked" error, with linear
+    backoff (``base_delay_seconds``, 2x, 3x, ...), bounded to ``attempts``
+    tries (GH-131). Any other exception, or a lock still present after the
+    final attempt, propagates immediately — a persistent lock is never
+    silently swallowed, it surfaces as a real scope error.
+    """
+    sleep = sleep_fn if sleep_fn is not None else time.sleep
+    for attempt in range(1, attempts + 1):
+        try:
+            return fn()
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower() or attempt == attempts:
+                raise
+            sleep(base_delay_seconds * attempt)
+
+
 def _github_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
-    return _refresh_github(
+    # GH-131: db_connection() already sets a 30s busy_timeout, but the hourly
+    # github-sync launchd job (fires :45 past the hour) can hold rebalance.db's
+    # github-table write lock longer than that when it collides with
+    # daily-sync's ~30min 06:30 window — busy_timeout alone then still raises
+    # "database is locked". _refresh_github is idempotent (upserts), so
+    # retrying the whole scope survives the transient collision instead of
+    # failing the run and cascading into a skipped dashboard note.
+    return _retry_on_db_locked(lambda: _refresh_github(
         db_path,
         token=opts["token"],
         since_days=opts["since_days"],
         repos=opts.get("repos") or [],
         dry_run=opts["dry_run"],
-    )
+    ))
 
 
 def _calendar_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
