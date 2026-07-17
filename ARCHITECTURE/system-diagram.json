@@ -80,6 +80,12 @@
       "description": "Email Inbox"
     },
     {
+      "id": "xyz_hq",
+      "label": "XYZ HQ (planned)",
+      "type": "external",
+      "description": "Cross-repo marathon/session state + per-issue disposition export (staged, not yet active - GH-102 Seam #4, toggle REBALANCE_XYZ_DISPOSITION default-off)"
+    },
+    {
       "id": "github_collector",
       "label": "GitHub Collector",
       "type": "component",
@@ -108,6 +114,12 @@
       "label": "Gmail Collector",
       "type": "component",
       "description": "gmail.py"
+    },
+    {
+      "id": "xyz_disposition_collector",
+      "label": "XYZ Disposition Collector (planned)",
+      "type": "component",
+      "description": "Staged github_items disposition overlay (GH-102 Seam #4) - not registered while REBALANCE_XYZ_DISPOSITION is unset/0"
     },
     {
       "id": "semantic_stage",
@@ -191,6 +203,12 @@
     },
     {
       "source": "refresh_index",
+      "target": "xyz_disposition_collector",
+      "label": "dispatches (planned)",
+      "kind": "async"
+    },
+    {
+      "source": "refresh_index",
       "target": "semantic_stage",
       "label": "dispatches"
     },
@@ -220,6 +238,12 @@
       "label": "fetch latest 100"
     },
     {
+      "source": "xyz_hq",
+      "target": "xyz_disposition_collector",
+      "label": "fetch disposition export (planned)",
+      "kind": "async"
+    },
+    {
       "source": "github_collector",
       "target": "sqlite",
       "label": "upserts"
@@ -243,6 +267,12 @@
       "source": "gmail_collector",
       "target": "sqlite",
       "label": "upserts"
+    },
+    {
+      "source": "xyz_disposition_collector",
+      "target": "sqlite",
+      "label": "would overlay github_items (planned)",
+      "kind": "async"
     },
     {
       "source": "semantic_stage",
