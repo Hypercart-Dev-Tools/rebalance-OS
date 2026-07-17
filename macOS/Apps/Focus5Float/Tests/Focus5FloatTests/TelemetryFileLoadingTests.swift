@@ -76,6 +76,34 @@ final class TelemetryFileLoadingTests: XCTestCase {
         XCTAssertTrue(model.telemetryIsMarkdown)
     }
 
+    /// GH-121 agy [Should] #2: the .md read is synchronous on @MainActor, so a
+    /// giant file must not load unbounded — verifies the byte ceiling, the
+    /// visible truncation note, and that a file under the ceiling is untouched.
+    func testSmallMarkdownFileUnderCeilingLoadsFullyWithoutTruncation() {
+        let note = String(repeating: "a", count: 100)
+        let model = Focus5Model()
+        model.telemetryFileURL = makeTempFile(named: "small.md", contents: note)
+
+        XCTAssertEqual(model.telemetryMarkdownContent, note)
+        XCTAssertNil(model.telemetryLoadError)
+    }
+
+    func testLargeMarkdownFileIsTruncatedAtByteCeilingWithVisibleNote() throws {
+        let oversized = String(repeating: "a", count: Focus5Model.telemetryMarkdownByteCeiling + 500)
+        let model = Focus5Model()
+        model.telemetryFileURL = makeTempFile(named: "huge.md", contents: oversized)
+
+        XCTAssertNil(model.telemetryLoadError)
+        let content = try XCTUnwrap(model.telemetryMarkdownContent)
+
+        let noteSuffix = "\n\n…truncated (file exceeds 1 MB)"
+        XCTAssertTrue(content.hasSuffix(noteSuffix))
+
+        // Body before the note is exactly the byte ceiling — no more, no less.
+        let body = String(content.dropLast(noteSuffix.count))
+        XCTAssertEqual(body.utf8.count, Focus5Model.telemetryMarkdownByteCeiling)
+    }
+
     func testClearingSelectionResetsAllTelemetryState() {
         let model = Focus5Model()
         model.telemetryFileURL = makeTempFile(named: "notes.md", contents: "hi")
