@@ -3,7 +3,7 @@ title: "Centralize UTC→local time display: shared helper + replace raw-UTC use
 owner: noel@neochro.me
 gh_issue: 130
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/130"
-status: "Active (2-WORKING) — all 3 phases built same session 2026-07-16; awaiting relay-xyz (Codex) QA before merge."
+status: "Active (2-WORKING) — all 3 phases built + relay-xyz (Codex) QA'd Approved 2026-07-16; ready for operator review/merge to development."
 created: 2026-07-16
 updated: 2026-07-16
 doc_type: project
@@ -29,7 +29,7 @@ phases: 3
 
 | What was just completed | What's next |
 |---|---|
-| **All 3 phases built 2026-07-16** on branch `feat/gh-130-local-time-display`. Phase 1: `format_local()`/`format_relative()` added to `tz_utils.py`, 26 new tests (closing the module's pre-existing zero-coverage gap). Phase 2: all 5 ad-hoc sites (`pulse.py` ×2, `next_actions.py`, `daily_report.py`, `note_builder.py`, `web.py`) migrated as thin wrappers, each fallback string preserved exactly — full suite 1386 passed (15 pre-existing failures in `test_auto_promote.py`/`test_hiqs_pipeline.py`, unrelated, confirmed present on unmodified `development` too). Phase 3: `cli/semantic.py` now prints `Local Time: 2026-07-16 08:27 PDT` instead of a bare unlabeled UTC string — live-verified against real data. `rebalance doctor` clean; `CHANGELOG.md` 0.59.0. | **QA** — `/relay-xyz` with Codex before merge to `development`. |
+| **All 3 phases built + QA'd 2026-07-16** on branch `feat/gh-130-local-time-display`. Phase 1: `format_local()`/`format_relative()` added to `tz_utils.py`. Phase 2: all 5 ad-hoc sites migrated as behavior-preserving thin wrappers — full suite 1386 passed (15 pre-existing, unrelated failures). Phase 3: `cli/semantic.py` now prints `Local Time: 2026-07-16 08:27 PDT` instead of a bare unlabeled UTC string — live-verified. `relay-xyz` (Codex) round 1: Changes requested — 1 [Should] (missing DST-boundary regression test). Fixed same session (3 new DST tests, 2026 America/Los_Angeles spring-forward + fall-back on `format_local()`, straddling case on `format_relative()`); suite now 29/29 in `test_tz_utils.py`. Round 2: **Approved**, all-[Pass]. `rebalance doctor` clean; `CHANGELOG.md` 0.59.0. | **Operator** — review branch `feat/gh-130-local-time-display` and merge to `development` (not pushed; no PR opened — awaiting explicit go-ahead). |
 
 ---
 
