@@ -3,9 +3,9 @@ title: "Focus5Float telemetry viewer: support .md (text viewer) alongside JSON (
 owner: noel@neochro.me
 gh_issue: 121
 source: "https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/121"
-status: "Active (2-WORKING) — promoted 2026-07-07; queued in MARATHON-2026-07-07 Lane D, ready to fire (not yet fired, serializes after Lane C). QA'd via relay-xyz (reviewer=agy, 2026-07-06): Changes requested → 3 [Should] findings accepted + folded into Phase 1 (safe UTType, symmetric state clear, .md read size ceiling); seam/folder-scope/collision all [Pass]."
+status: "Active (2-WORKING) — base .md viewer shipped 2026-07-15 outside the marathon process (all agy findings closed except the size ceiling); size ceiling closed 2026-07-16 via MARATHON-2026-07-16 Lane B. All 3 accepted agy [Should] findings now implemented."
 created: 2026-07-06
-updated: 2026-07-07
+updated: 2026-07-16
 doc_type: project
 goal: >
   Let the Focus5Float telemetry tab open Markdown (.md) files in addition to structured JSON: when the
@@ -28,7 +28,7 @@ phases: 2
 
 | What was just completed | What's next |
 |---|---|
-| **Captured 2026-07-06** from issue #121, grounded in the current code. Confirmed the seam: `openFilePicker()` restricts `NSOpenPanel` to `UTType.json` ([Focus5Model.swift:141](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift#L141)); `refreshTelemetry()` JSON-decodes into `telemetryEntries` ([Focus5Model.swift:154](../../macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5Model.swift#L154)); `telemetryContent` renders structured rows ([ContentView.swift:265](../../macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift#L265)). The app already renders markdown for the bottom `focus5.md` note — reuse that path for the .md viewer. | **Phase 1** — allow `.md` in the picker, branch load + render on `pathExtension`. Queued as [MARATHON-2026-07-07 Lane D](MARATHON-2026-07-07.md). ⚠ Shares `ContentView.swift`/`SelfTest.swift` with the resolution-change lane — must serialize after it. |
+| **Base .md viewer shipped 2026-07-15** outside the marathon process (picker accepts `.md`, safe `UTType`, symmetric state clear, markdown rendering reused from the `focus5.md` note path — later also gained a GFM table renderer). **Size-ceiling finding closed 2026-07-16** via [MARATHON-2026-07-16 Lane B](MARATHON-2026-07-16.md): `refreshTelemetry()`'s `.md` branch now caps the read at 1MB (byte-safe truncation, never mid-codepoint) with a visible `"…truncated (file exceeds 1 MB)"` note; 2 new tests, `swift test` green (25/25), `make-app.sh` reinstalled. | All 3 accepted agy [Should] findings from the 2026-07-06 relay-xyz review are now implemented — **Phase 1 complete.** **Phase 2** (header/status-reflects-kind polish, large-file scroll safety, extending the self-test) remains open, not addressed by this pass. |
 
 ---
 
@@ -68,20 +68,20 @@ the bottom-note already uses). Small, additive, reversible — no new tab, no sc
 
 **Observable checklist:**
 
-- [ ] **Picker accepts .md.** `openFilePicker()` `allowedContentTypes` = `[.json, UTType(filenameExtension: "md") ?? .plainText]` — **no force-unwrap** (`UTType(filenameExtension:"md")` returns `nil` if MD isn't registered; a `!` would crash). Title/label generalized to "Select Telemetry File (.json or .md)". _(agy [Should] #1, 2026-07-06.)_
-- [ ] **A file-kind discriminator.** Derive kind from `telemetryFileURL.pathExtension` (`json` → structured, `md` → text) — a small enum or computed property, single source of truth used by both load and render.
-- [ ] **Branch the load, clearing the *other* mode's state both ways.** `refreshTelemetry()`: for `.json` keep the existing decode into `telemetryEntries` **and set `telemetryText = nil`**; for `.md` read the text into a new `telemetryText: String?` **and set `telemetryEntries = []`**; anything else sets `telemetryLoadError`. Symmetric clearing prevents a stale viewer from a prior selection. _(agy [Should] #3, 2026-07-06.)_
-- [ ] **Size ceiling on the `.md` read.** The read is synchronous on `@MainActor` (`Focus5Model`), so cap it (e.g. read the first ~1 MB / N chars, append a "…truncated" note) to avoid freezing the UI on a huge file. `// ponytail: assumes telemetry .md < 1MB; truncate above that`. _(agy [Should] #2, 2026-07-06.)_
-- [ ] **Branch the render.** `telemetryContent`: when the selected file is `.md`, show a scrollable read-only text viewer (reuse the note markdown renderer); when `.json`, the existing structured list. No-file / error states shared.
-- [ ] **Unreadable file → existing error state**, not a crash (parity with today's JSON error path).
+- [x] **Picker accepts .md.** `openFilePicker()` `allowedContentTypes` = `[.json, UTType(filenameExtension: "md") ?? .plainText]` — **no force-unwrap**. Title generalized to "Select Telemetry or Markdown File". _(agy [Should] #1, 2026-07-06 — shipped 2026-07-15.)_
+- [x] **A file-kind discriminator.** `telemetryIsMarkdown: Bool` computed property on `Focus5Model`, single source of truth used by both load and render. _(Shipped 2026-07-15.)_
+- [x] **Branch the load, clearing the *other* mode's state both ways.** `refreshTelemetry()`: `.json` decode sets `telemetryMarkdownContent = nil`; `.md` read sets `telemetryEntries = []`. Symmetric clearing confirmed. _(agy [Should] #3, 2026-07-06 — shipped 2026-07-15.)_
+- [x] **Size ceiling on the `.md` read.** `refreshTelemetry()`'s `.md` branch now caps the read at `Focus5Model.telemetryMarkdownByteCeiling` (1MB): reads raw `Data`, and above the ceiling truncates the **bytes** first (`data.prefix(ceiling)`) then lossy-decodes with `String(decoding:as: UTF8.self)` (never fails — a boundary-split multi-byte character becomes one U+FFFD instead of corrupting output), appending a visible `"…truncated (file exceeds 1 MB)"` note. Files under the ceiling are byte-identical to before. _(agy [Should] #2, 2026-07-06 — closed 2026-07-16 via MARATHON-2026-07-16 Lane B.)_
+- [x] **Branch the render.** `telemetryContent` shows a scrollable read-only markdown viewer (reusing the shared `MarkdownBody`/note renderer, later extended with GFM table support) for `.md`; the existing structured list for `.json`. No-file / error states shared. _(Shipped 2026-07-15.)_
+- [x] **Unreadable file → existing error state**, not a crash (parity with the JSON error path) — confirmed by `testMissingFileReportsLoadErrorForBothKinds`.
 
 ### Phase 1 — QA gate
 
-- [ ] `swift build` green (release).
-- [ ] **Litmus (both paths):** selecting a `.json` telemetry file still shows the structured health rows; selecting a `.md` file shows its rendered text; switching between them updates the view. Screenshot both.
-- [ ] **Error parity:** an unreadable/garbage `.md` and a malformed `.json` both land in the visible error state, no crash.
-- [ ] **Persistence:** the selected file (either kind) persists across relaunch (existing `telemetryFilePath` UserDefaults path still works for .md).
-- [ ] `rebalance doctor` clean (no repo-level regression from the build).
+- [x] `swift build` green (release) — confirmed 2026-07-16 (`make-app.sh`).
+- [x] **Litmus (both paths):** covered by `TelemetryFileLoadingTests` (`testJSONFileDecodesIntoTelemetryEntries`, `testMarkdownFileLoadsAsRawTextNotTelemetryEntries`) plus a live `make-app.sh` reinstall.
+- [x] **Error parity:** `testMalformedJSONReportsLoadError` + `testMissingFileReportsLoadErrorForBothKinds`, both kinds land in the visible error state, no crash.
+- [x] **Persistence:** `testSelectionPersistsAcrossModelRelaunchForBothKinds` — the selected file (either kind) persists across relaunch via `telemetryFilePath` UserDefaults.
+- [x] `rebalance doctor` clean (no repo-level regression from the build).
 
 ### Phase 1 — anti-goals
 
