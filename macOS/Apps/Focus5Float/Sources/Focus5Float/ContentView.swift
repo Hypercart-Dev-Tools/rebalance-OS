@@ -93,6 +93,11 @@ struct ContentView: View {
         .padding(.bottom, Theme.Space.m)
     }
 
+    // GH-121 Phase 2: names both the file AND its kind, so which viewer mode is
+    // active ("markdown" text vs. "signals" structured) is legible at a glance —
+    // not just the filename, which doesn't reliably signal kind at small sizes /
+    // truncation. `telemetryIsMarkdown` is the same single-source-of-truth
+    // discriminator the load/render branches use, so this can't drift from them.
     @ViewBuilder private var telemetryStatus: some View {
         if let url = model.telemetryFileURL {
             Text(url.lastPathComponent)
@@ -100,8 +105,14 @@ struct ContentView: View {
                 .foregroundStyle(Theme.text2)
                 .lineLimit(1)
                 .truncationMode(.middle)
-            if !model.telemetryIsMarkdown, !model.telemetryEntries.isEmpty {
-                Text("· \(model.telemetryEntries.count)")
+            if model.telemetryIsMarkdown {
+                Text("· markdown")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+            } else if model.telemetryLoadError == nil {
+                Text(model.telemetryEntries.isEmpty
+                     ? "· signals"
+                     : "· signals · \(model.telemetryEntries.count)")
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.text3)
             }
@@ -283,6 +294,16 @@ struct ContentView: View {
                        title: "Can't read telemetry file",
                        detail: err)
         } else if model.telemetryIsMarkdown {
+            // GH-121 Phase 2 large-file safety: `Focus5Model.telemetryMarkdownByteCeiling`
+            // (1MB, in `refreshTelemetry()`) is the actual bound here — `text` below
+            // is never larger than that ceiling, since the synchronous
+            // `Data(contentsOf:)` read is already truncated (byte-safe, never
+            // mid-codepoint) BEFORE this view ever sees the string. So this
+            // ScrollView + MarkdownBody render is bounded by the same 1MB cap that
+            // already bounds the read: at most a few thousand short lines, which is
+            // the exact rendering path already shipped (unbounded) for the vault
+            // focus5.md note. No additional chunking/pagination/lazy-loading is
+            // needed for Phase 2 — the ceiling IS the safety mechanism end-to-end.
             if let text = model.telemetryMarkdownContent,
                !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 ScrollView {
