@@ -1,6 +1,6 @@
 ---
 title: daily-sync fails daily — github scope hits "database is locked" from collision with hourly github-sync
-status: "Fixed — MARATHON-2026-07-16 Lane A, fired and shipped 2026-07-16 on branch marathon/2026-07-16"
+status: "Fixed — MARATHON-2026-07-16 Lane A, fired and shipped 2026-07-16, merged to development via PR #133"
 gh_issue: 131
 created: 2026-07-16
 updated: 2026-07-16
