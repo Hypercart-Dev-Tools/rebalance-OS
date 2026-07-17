@@ -50,7 +50,18 @@ final class Focus5Model {
     // Raw text of the selected file when it's a .md note rather than JSON telemetry
     // rows — rendered via the same MarkdownLine path as the vault focus5.md note.
     var telemetryMarkdownContent: String?
-    var telemetryIsMarkdown: Bool { telemetryFileURL?.pathExtension.lowercased() == "md" }
+    var telemetryIsMarkdown: Bool { Self.isMarkdownKind(telemetryFileURL) }
+
+    /// Pure extension-string discriminator: `.md` (any case) → markdown/text
+    /// viewer, everything else (incl. `.json`, no extension, or `nil`) →
+    /// structured signals viewer. `nonisolated` (despite living on this
+    /// `@MainActor` class) so GH-121 Phase 2's headless self-test can call the
+    /// real production logic — same single source of truth `telemetryIsMarkdown`
+    /// uses — with no MainActor context, no `Focus5Model` instance, and no file
+    /// dialog or disk I/O required.
+    nonisolated static func isMarkdownKind(_ url: URL?) -> Bool {
+        url?.pathExtension.lowercased() == "md"
+    }
 
     // Bottom note — the operator's vault `focus5.md`, projected by GET /focus-5/note.
     var noteContent = ""              // raw markdown (empty until first load / when absent)

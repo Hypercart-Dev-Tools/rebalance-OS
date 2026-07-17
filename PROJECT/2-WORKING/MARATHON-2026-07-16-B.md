@@ -1,6 +1,6 @@
 ---
 title: MARATHON — 2026-07-16-B (5 lanes — GH issue triage sweep, last 10 days)
-status: "Captured 2026-07-16, ready to fire — NOT yet fired, awaiting operator go."
+status: "All 5 lanes fired and shipped 2026-07-16 on branch marathon/2026-07-16-b — ready for operator review/merge to development."
 created: 2026-07-16
 updated: 2026-07-16
 owner: noel@neochro.me
@@ -37,7 +37,7 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| **Triage complete 2026-07-16.** Reviewed all 11 GH issues opened in the last 10 days against the live codebase (grep'd exact functions/files for each, not just the issue text) to confirm each included lane is real, reproducible, and not already done. 5 lanes captured below, all path-disjoint. Nothing fired yet. | **Operator — fire when ready:** cut `marathon/2026-07-16-b` from `development`, seed via the block below, drive through `relay-xyz` / `marathon-drive` in an isolated worktree. |
+| **All 5 lanes fired and shipped 2026-07-16** on branch `marathon/2026-07-16-b` (5 parallel isolated worktrees, merged back with zero conflicts — path-disjointness held exactly as designed). **Lane A (GH-120):** staged `xyz_hq` + `xyz_disposition_collector` nodes added to both diagram specs, verified byte-identical, PDDA clean. **Lane B (GH-121 Phase 2):** telemetry header now labels file kind, kind-discriminator self-test added, 26/26 `swift test` green, `make-app.sh` reinstalled. **Lane C (GH-123):** new `vscode-extension/pulse-tree-view/` — TypeScript compiles clean, 9/9 mocha tests pass (corrected the lane brief's own wrong pulse-file-format assumption using the real generator source). **Lane D (GH-127):** `content_predicate` added for `email`/`github` in `_SIGNAL_HEALTH_RULES`, 3 new regression tests including the exact #125 dead-row scenario. **Lane E (GH-129):** no-clobber guard added to both `upsert_block`/`upsert_clio_block` paths, 12 new tests. Post-merge full verification on the actual merged branch (not individual lane self-reports): `pytest tests/` 1411 passed / 15 failed (pre-existing, unrelated — same `test_auto_promote.py`/`test_hiqs_pipeline.py` baseline as this morning) / 10 skipped; `rebalance doctor` clean; `pdda.sh run` clean; `swift build`+`swift test` (26/26) green; `npm run compile`+`npm test` (9/9) green. One minor housekeeping note: the VS Code extension's `mocha` dev-dependency carries a transitive high-severity advisory (`serialize-javascript`) — dev/test-tooling only, not shipped in the extension bundle, worth a `mocha` version bump later. | **Operator** — review branch `marathon/2026-07-16-b` and merge to `development` (not pushed; no PR opened — awaiting explicit go-ahead, per prior session convention). |
 
 ## Why these 5 lanes
 
@@ -128,10 +128,10 @@ tick project
 
 ## Hard invariants (carry into the session prompt)
 
-- [ ] **Lane A** — no `src/`, no `macOS/*` — diagram files only; the XYZ HQ node renders as **not-active**.
-- [ ] **Lane B** — no change to the `.json` structured telemetry path; Phase 1's byte-ceiling behavior stays byte-for-byte unchanged.
-- [ ] **Lane C** — new directory only, no edits anywhere else in the repo; no dependency on `pulse-server` being up or the Python venv.
-- [ ] **Lane D** — `content_predicate` is additive; a source with no predicate behaves identically to today; only email + github get one in this pass.
-- [ ] **Lane E** — only guards the zero-row-clobbers-real-summary case; does not touch the day-boundary tz fix already shipped, does not add a `git pull` call.
-- [ ] All 5 lanes are path-disjoint — safe to claim and run fully concurrently, no sequencing needed.
-- [ ] On finish: update this file's Status table + `updated:`, tick each lane's issue-doc pointer in `ROADMAP.md`, and for any lane whose GH issue is now fully closed by its scope, note that in the lane's doc (issue closure itself stays an operator action, per this repo's convention).
+- [x] **Lane A** — no `src/`, no `macOS/*` — diagram files only (confirmed, only `system-diagram.{json,html}` touched); the XYZ HQ node renders as **not-active** (dashed `async` edge convention + `(planned)` labels).
+- [x] **Lane B** — no change to the `.json` structured telemetry path (`JSONDecoder`/`telemetryEntries` diff-free); Phase 1's byte-ceiling behavior stays byte-for-byte unchanged.
+- [x] **Lane C** — new directory only (`vscode-extension/pulse-tree-view/**`), no edits anywhere else; no dependency on `pulse-server` being up or the Python venv (reads the local rendered pulse file directly).
+- [x] **Lane D** — `content_predicate` is additive (sources without one verified unaffected by 3 new tests); only `email` + `github` get one in this pass.
+- [x] **Lane E** — only guards the zero-row-clobbers-real-summary case (both `upsert_block` and `upsert_clio_block` paths); does not touch the day-boundary tz fix already shipped, does not add a `git pull` call.
+- [x] All 5 lanes were path-disjoint — merged back into `marathon/2026-07-16-b` from 5 isolated worktrees with **zero conflicts**.
+- [x] On finish: this file's Status table + `updated:` updated. **Not yet done:** ROADMAP.md pointers for #120/#121/#123/#127/#129 (left for the operator's merge-to-development pass, matching how GH-130/GH-131's ROADMAP entries were only finalized after their own merge, to avoid re-litigating the same doc twice); GH issue closure stays an operator action per this repo's convention.

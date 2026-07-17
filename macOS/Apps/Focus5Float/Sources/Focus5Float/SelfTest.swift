@@ -87,6 +87,34 @@ enum Focus5SelfTest {
             exit(argvOK && orderOK ? 0 : 1)
         }
 
+        // GH-121 Phase 2 kind-discriminator test: FOCUS5_KINDTEST=1 swift run
+        // Focus5Float — pure extension-string assertion, no file dialog, no disk
+        // I/O, no MainActor context needed. Exercises the real production
+        // discriminator `Focus5Model.isMarkdownKind(_:)` (the same one
+        // `telemetryIsMarkdown` calls) rather than a re-implementation, so this
+        // can't silently drift from the live load/render branching.
+        if ProcessInfo.processInfo.environment["FOCUS5_KINDTEST"] != nil {
+            let cases: [(url: URL?, wantMarkdown: Bool, label: String)] = [
+                (URL(fileURLWithPath: "/tmp/foo.json"), false, "foo.json → structured"),
+                (URL(fileURLWithPath: "/tmp/foo.md"), true, "foo.md → text"),
+                (URL(fileURLWithPath: "/tmp/FOO.MD"), true, "FOO.MD → text (case-insensitive)"),
+                (URL(fileURLWithPath: "/tmp/signals.JSON"), false, "signals.JSON → structured (case-insensitive)"),
+                (URL(fileURLWithPath: "/tmp/notes.markdown"), false, "notes.markdown → structured (only \"md\" counts)"),
+                (URL(fileURLWithPath: "/tmp/no-extension"), false, "no-extension → structured"),
+                (nil, false, "nil (no file selected) → structured"),
+            ]
+            var ok = true
+            for c in cases {
+                let got = Focus5Model.isMarkdownKind(c.url)
+                if got != c.wantMarkdown {
+                    ok = false
+                    print("  MISMATCH \(c.label): got markdown=\(got) want markdown=\(c.wantMarkdown)")
+                }
+            }
+            print("KINDTEST \(ok ? "OK" : "FAIL") — \(cases.count) cases: foo.json→structured, foo.md→text")
+            exit(ok ? 0 : 1)
+        }
+
         guard ProcessInfo.processInfo.environment["FOCUS5_SELFTEST"] != nil else { return }
         do {
             let resp = try SampleData.load()
