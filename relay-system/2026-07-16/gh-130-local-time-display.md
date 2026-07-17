@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-16.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 1 / 4
 
@@ -431,5 +431,12 @@ index 0000000..74adc2a
 6. The relay ends on **Approved** (Reviewer only). End each turn by committing just this file; no push.
 
 ## Log
+
+### Reviewer — codex — 2026-07-17
+- Definition of Done used for grading: [PROJECT/2-WORKING/GH-130-CENTRALIZE-LOCAL-TIME-DISPLAY.md] checklist and QA gates.
+- [Should] `tests/test_tz_utils.py` is still missing the DST-boundary regression that GH-130 explicitly calls for in Phase 1. The new suite covers happy-path relative ages plus future clamping, but nothing proves `format_relative()` stays correct when the wall clock crosses a spring/fall offset change. Concrete fix: add one deterministic `format_relative(..., now=...)` case that straddles a real DST transition using aware UTC datetimes/ISO strings and asserts the expected compact age.
+- [Pass] The helper extraction in `tz_utils.py` is structurally sound: caller-owned fallback strings remain at the call sites (`next_actions`, `note_builder`, `web`, `pulse`), and `daily_report` preserves the old naive-calendar behavior by attaching system-local tzinfo before delegating.
+- [Pass] Phase 3’s semantic CLI change matches the issue intent: the raw UTC stamp is replaced with an explicit `Local Time:` label and local conversion, while still suppressing the line on empty input.
+- Verdict: Changes requested.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
