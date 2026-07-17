@@ -6,6 +6,18 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.59.1] - 2026-07-16
+
+### Fixed
+- `daily-sync` no longer fails with `"database is locked"` when it collides with
+  the hourly `github-sync` job. The github-scope refresh now retries (linear
+  backoff, bounded, never silently swallowed) instead of failing the whole run
+  and cascading into a skipped dashboard note. (GH-131)
+- Focus5Float's telemetry-tab `.md` viewer no longer reads an unbounded file
+  synchronously on the main thread. The read is now capped at 1MB with a
+  byte-safe truncation (never mid-codepoint) and a visible truncation note;
+  files under the cap are unaffected. (GH-121)
+
 ## [0.59.0] - 2026-07-16
 
 ### Added
