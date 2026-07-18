@@ -11,7 +11,7 @@ import Observation
 /// Which panel the user has selected. Separate from `rankingMode` (server-side
 /// sort order) so switching to Telemetry and back preserves the last ranking.
 enum ViewMode: String {
-    case focus5, dirtyFive, telemetry
+    case focus5, dirtyFive, telemetry, promptLog
 }
 
 enum LoadState: Equatable {
@@ -52,6 +52,35 @@ final class Focus5Model {
     var telemetryMarkdownContent: String?
     var telemetryIsMarkdown: Bool { Self.isMarkdownKind(telemetryFileURL) }
 
+    // Prompt Log tab (CLIO) — reads the CLIO-rendered Markdown export (the same
+    // file the operator's Obsidian vault shows) as source of truth, so the tab
+    // is a 1:1 mirror rather than a second rendering of the raw JSONL.
+    var promptLogEntries: [PromptLogEntry] = []
+    var promptLogFileURL: URL? {
+        didSet {
+            UserDefaults.standard.set(promptLogFileURL?.path, forKey: "promptLogFilePath")
+            refreshPromptLog()
+        }
+    }
+    var promptLogLoadError: String?
+    // FIFO pin queue, max 5, newest pin at index 0 (rendered top), oldest pin at
+    // the end (rendered bottom, and the one released when a 6th is pinned).
+    var pinnedPromptLogIDs: [String] = [] {
+        didSet {
+            UserDefaults.standard.set(pinnedPromptLogIDs, forKey: "pinnedPromptLogIDs")
+        }
+    }
+    static let maxPinnedPromptLogEntries = 5
+
+    var pinnedPromptLogEntries: [PromptLogEntry] {
+        let byID = Dictionary(uniqueKeysWithValues: promptLogEntries.map { ($0.id, $0) })
+        return pinnedPromptLogIDs.compactMap { byID[$0] }
+    }
+    var unpinnedPromptLogEntries: [PromptLogEntry] {
+        let pinned = Set(pinnedPromptLogIDs)
+        return promptLogEntries.filter { !pinned.contains($0.id) }
+    }
+
     /// Pure extension-string discriminator: `.md` (any case) → markdown/text
     /// viewer, everything else (incl. `.json`, no extension, or `nil`) →
     /// structured signals viewer. `nonisolated` (despite living on this
@@ -90,6 +119,10 @@ final class Focus5Model {
         if let path = UserDefaults.standard.string(forKey: "telemetryFilePath") {
             telemetryFileURL = URL(fileURLWithPath: path)
         }
+        pinnedPromptLogIDs = UserDefaults.standard.stringArray(forKey: "pinnedPromptLogIDs") ?? []
+        if let path = UserDefaults.standard.string(forKey: "promptLogFilePath") {
+            promptLogFileURL = URL(fileURLWithPath: path)
+        }
     }
 
     var isDirtyView: Bool { rankingMode == "dirty_first" }
@@ -119,6 +152,8 @@ final class Focus5Model {
     func refresh() async {
         if viewMode == .telemetry {
             refreshTelemetry()
+        } else if viewMode == .promptLog {
+            refreshPromptLog()
         } else {
             _ = await fetchAndApply(dirty: isDirtyView)
             await refreshNote()
@@ -226,6 +261,58 @@ final class Focus5Model {
         // Cap at the newest 10k rows so decode/render stay bounded even if the
         // source file grows unbounded. Sort is newest-first, so prefix == newest.
         telemetryEntries = Array(sorted.prefix(Self.telemetryRowCap))
+    }
+
+    /// Open an NSOpenPanel to pick the CLIO-rendered prompt log .md file, persist
+    /// it, and refresh. Mirrors `openFilePicker()`'s telemetry-file selection.
+    func openPromptLogFilePicker() {
+        let panel = NSOpenPanel()
+        panel.title = "Select Prompt Log Markdown File"
+        let markdownType = UTType(filenameExtension: "md") ?? .plainText
+        panel.allowedContentTypes = [markdownType]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        promptLogFileURL = url   // didSet persists + refreshes
+        viewMode = .promptLog
+    }
+
+    /// Re-read and re-parse the selected prompt log file. No-op (clears state)
+    /// when no file is selected.
+    func refreshPromptLog() {
+        guard let url = promptLogFileURL else {
+            promptLogEntries = []
+            promptLogLoadError = nil
+            return
+        }
+        guard let entries = PromptLogReader.load(from: url) else {
+            promptLogLoadError = "Could not read \"\(url.lastPathComponent)\"."
+            return
+        }
+        promptLogLoadError = nil
+        promptLogEntries = entries
+    }
+
+    /// Pin/unpin an entry. Pinning a 6th evicts the oldest pin (index `count-1`,
+    /// the one rendered at the bottom of the pinned section) — a FIFO queue, not
+    /// an arbitrary eviction.
+    func togglePin(_ entry: PromptLogEntry) {
+        if let idx = pinnedPromptLogIDs.firstIndex(of: entry.id) {
+            pinnedPromptLogIDs.remove(at: idx)
+        } else {
+            pinnedPromptLogIDs.insert(entry.id, at: 0)
+            if pinnedPromptLogIDs.count > Self.maxPinnedPromptLogEntries {
+                pinnedPromptLogIDs.removeLast()
+            }
+        }
+    }
+
+    func isPinned(_ entry: PromptLogEntry) -> Bool {
+        pinnedPromptLogIDs.contains(entry.id)
+    }
+
+    func resetAllPromptLogPins() {
+        pinnedPromptLogIDs = []
     }
 
     /// Max telemetry rows held in memory / rendered (newest-first after sort).

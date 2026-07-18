@@ -48,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var dirtyFiveItem: NSMenuItem!
     private var launchAtLoginItem: NSMenuItem!
     private var selectTelemetryItem: NSMenuItem!
+    private var selectPromptLogItem: NSMenuItem!
     private let model = Focus5Model()
     private var pollTimer: Timer?
     private let pollInterval: TimeInterval = 90   // re-pull cadence
@@ -79,6 +80,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // Show the cached roster instantly (if any), then pull live and poll.
         model.loadCache()
         model.refreshTelemetry()   // restore previously-selected telemetry file on cold-start
+        model.refreshPromptLog()   // restore previously-selected prompt log file on cold-start
         Task { await model.refresh(); updateModeMenuState() }
         startPolling()
     }
@@ -111,6 +113,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         selectTelemetryItem = NSMenuItem(title: "Select Telemetry File…", action: #selector(selectTelemetryFile), keyEquivalent: "t")
         menu.addItem(selectTelemetryItem)
+        selectPromptLogItem = NSMenuItem(title: "Select Prompt Log File…", action: #selector(selectPromptLogFile), keyEquivalent: "p")
+        menu.addItem(selectPromptLogItem)
 
         launchAtLoginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         menu.addItem(launchAtLoginItem)
@@ -128,6 +132,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         updateModeMenuState()
         updateLaunchAtLoginState()
         updateTelemetryMenuItem()
+        updatePromptLogMenuItem()
     }
 
     private func updateTelemetryMenuItem() {
@@ -135,6 +140,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             selectTelemetryItem.title = "Telemetry: \(url.lastPathComponent)"
         } else {
             selectTelemetryItem.title = "Select Telemetry File…"
+        }
+    }
+
+    private func updatePromptLogMenuItem() {
+        if let url = model.promptLogFileURL {
+            selectPromptLogItem.title = "Prompt Log: \(url.lastPathComponent)"
+        } else {
+            selectPromptLogItem.title = "Select Prompt Log File…"
         }
     }
 
@@ -244,6 +257,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func selectTelemetryFile() {
         model.openFilePicker()
+    }
+
+    @objc private func selectPromptLogFile() {
+        model.openPromptLogFilePicker()
     }
 
     @objc private func setFocus5Mode() {

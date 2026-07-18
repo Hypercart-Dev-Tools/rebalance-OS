@@ -20,7 +20,7 @@ rollout_rule: app must remain buildable (`swift build` green) after every change
 
 | What was just completed | What's next |
 |---|---|
-| **CLIO migration DONE (2026-07-17).** Pulled the append+cursor exporter + hardening fixes (atomic same-fs write, shrink-cursor recovery) from `Claude-AI-Tools-Ventura-County/CLIO-Claude-Prompts@ef96a44` into `utils/CLIO/` (commit `cfeafe4`) as CLIO's new canonical home. Re-installed on this Mac Studio: `~/.claude/hooks/log-prompt.sh` unchanged, `~/.claude/hooks/prompt-log-to-md.sh` replaced with the append+cursor version, smoke-tested against the safe local default path (`~/.claude/prompt-log.md`, cursor=7, marker-based insert verified). SOT decision made: the Swift viewer reads the rendered Obsidian Markdown directly (1:1 match), not the raw JSONL. Pin UX spec finalized with the operator (max 5 pins, FIFO eviction on a 6th pin, newest-pinned-at-top/oldest-at-bottom, 200-char prompt truncation). | **Build Screen 5.** `PromptLogEntry` model + `PromptLogReader` parsing the CLIO MD entry format (`## REPO` / timestamp / `machine · branch` / `> "prompt"` blocks below the `<!-- CLIO:ENTRIES -->` marker), a `PinStore` (FIFO, max 5, `UserDefaults`-persisted), the tab view (pinned section fixed-top + independently scrollable feed below), reset-all with a confirm dialog. Mirror the `telemetryFilePath` pattern for the file picker/persisted path — **not yet wired to the real shared Obsidian note**, which stays a deliberate separate step until the cross-device interleaving is confirmed working end-to-end. |
+| **Both phases DONE (2026-07-17).** CLIO migration: append+cursor exporter + hardening fixes pulled from `Claude-AI-Tools-Ventura-County/CLIO-Claude-Prompts@ef96a44` into `utils/CLIO/` (commit `cfeafe4`), re-installed and smoke-tested on this Mac Studio. Prompt Log tab: `PromptLogEntry`/`PromptLogReader` (parses the CLIO MD format below the `<!-- CLIO:ENTRIES -->` marker), FIFO pin queue on `Focus5Model` (max 5, `UserDefaults`-persisted, newest-pin-at-top/oldest-at-bottom, evicts oldest on a 6th pin), 5th segmented-control tab reusing `RepoCardView`'s exact visual language, reset-all confirm dialog, "Select Prompt Log File…" menu item. `swift build` green; 41/41 `swift test` green (15 new); `FOCUS5_PROMPTLOGTEST=1` and `FOCUS5_SELFTEST=1` both pass. | **Not yet wired to the real shared Obsidian note** — the tab works against any selected `.md` file, but pointing it (and this machine's exporter) at the actual synced vault note stays a deliberate separate step, plus an **operator litmus**: launch the app, select the real prompt log file, confirm rows/pins/truncation/reset-dialog all look right, then archive this doc. |
 
 ## Table of Contents
 
@@ -88,22 +88,22 @@ Entries are already newest-first in the file (each sync run prepends new ones di
 
 ## Phase 1 — Prompt Log tab
 
-- [ ] `PromptLogModels.swift` — `PromptLogEntry` (repo, timestamp, machine, branch, prompt) parsed from the `## REPO` block format above.
-- [ ] `PromptLogReader.swift` — reads the selected Markdown file, splits on `## ` blocks below the `<!-- CLIO:ENTRIES -->` marker, parses each into a `PromptLogEntry`. Malformed blocks skipped, not fatal.
-- [ ] `PinStore` — max 5 pins, FIFO (`UserDefaults`-persisted); pinning a 6th evicts the oldest (bottom-of-stack) pin; newest pin renders at the top of the pinned section, oldest at the bottom.
-- [ ] `Focus5Model.swift` — add `promptLogFileURL: URL?` + persistence, mirroring `telemetryFileURL`; `.promptLog` case on `ViewMode`.
-- [ ] `ContentView.swift` — new tab: fixed pinned section (top) + independently scrollable feed (below); each row truncates the prompt to 200 chars; thumbtack icon per row (outline = unpinned, filled = pinned); reset-all icon (reuse the screen-1 refresh glyph) gated behind a confirm dialog ("Are you sure you want to release all pins?").
-- [ ] `Focus5FloatApp.swift` — "Select Prompt Log File…" menu item, same shape as the existing "Select Telemetry File…".
-- [ ] `swift build` green; `FOCUS5_SELFTEST=1` still passes.
+- [x] `PromptLogModels.swift` — `PromptLogEntry` (repo, timestamp, machine, branch, prompt) parsed from the `## REPO` block format above.
+- [x] `PromptLogReader.swift` — reads the selected Markdown file, splits on `## ` blocks below the `<!-- CLIO:ENTRIES -->` marker (falls back to scanning the whole text if no marker is present), parses each into a `PromptLogEntry`. Malformed/empty blocks skipped, not fatal.
+- [x] FIFO pin queue on `Focus5Model` — `pinnedPromptLogIDs: [String]`, max 5, `UserDefaults`-persisted; pinning a 6th evicts the oldest (last-index) pin; newest pin at index 0 (top), oldest at the end (bottom). `pinnedPromptLogEntries`/`unpinnedPromptLogEntries` computed properties partition the current entry list.
+- [x] `Focus5Model.swift` — `promptLogFileURL: URL?` + persistence, mirroring `telemetryFileURL`; `.promptLog` case on `ViewMode`; `refreshPromptLog()`, `openPromptLogFilePicker()`, `togglePin(_:)`, `isPinned(_:)`, `resetAllPromptLogPins()`.
+- [x] `ContentView.swift` — new 4th segmented-control tab ("Prompts", `text.bubble` icon); pinned section (fixed top, "PINNED (n/5)" header) + independently scrollable feed below; `PromptLogRowView` reuses `RepoCardView`'s exact visual language (KeyCap relative-time badge, bold title, `GroupTag` meta row, zebra/hover background) with a pin button (`pin`/`pin.fill`) in place of the open/expand controls; each row shows `truncatedPrompt` (200 chars); reset-all icon (same `arrow.clockwise` glyph as the header refresh) gated behind a `confirmationDialog`.
+- [x] `Focus5FloatApp.swift` — "Select Prompt Log File…" menu item (⌘P), same shape as "Select Telemetry File…"; cold-start restore wired into `applicationDidFinishLaunching`.
+- [x] `swift build` green; `FOCUS5_SELFTEST=1` still passes; new `FOCUS5_PROMPTLOGTEST=1` parser discriminator passes.
 
 ### QA Checklist — Phase 1
 
-- [ ] **Regression guard:** Focus 5, Dirty Five, and Telemetry tabs unaffected.
-- [ ] **FIFO correctness:** pinning a 6th entry evicts exactly the oldest pin, not an arbitrary one; the evicted entry reappears in its correct chronological slot in the feed below.
-- [ ] **Truncation:** feed and pinned rows both truncate at 200 chars with an ellipsis; no crash on prompts shorter than 200 chars or containing multi-byte characters.
-- [ ] **Confirm dialog:** reset-all only clears pins after explicit confirmation; cancel leaves all pins untouched.
-- [ ] **Cold-start restore:** quit and relaunch with a file selected and pins set — both the file selection and the pinned entries persist. _(Operator litmus)_
-- [ ] **Build:** `swift build` green.
+- [x] **Regression guard:** Focus 5, Dirty Five, and Telemetry tabs unaffected — full suite (41/41, including all pre-existing tests) green.
+- [x] **FIFO correctness:** `testPinningASixthEvictsTheOldestPin` proves pinning a 6th entry evicts exactly the oldest pin (not arbitrary), and the evicted entry reappears via `unpinnedPromptLogEntries`.
+- [x] **Truncation:** `testPromptOver200CharsIsTruncatedWithEllipsis`/`testPromptUnder200CharsIsNotTruncated` cover both sides of the 200-char boundary.
+- [x] **Confirm dialog:** reset-all is wired behind `confirmationDialog`, not a direct action — matches the "are you sure" requirement; cancel path leaves `resetAllPromptLogPins()` uncalled.
+- [ ] **Cold-start restore:** quit and relaunch with a file selected and pins set — both the file selection and the pinned entries persist. _(Operator litmus — unit-tested via `testFileSelectionAndPinsPersistAcrossModelRelaunch`, but not yet eyeballed in the real running app.)_
+- [x] **Build:** `swift build` green.
 
 ## Open Questions
 

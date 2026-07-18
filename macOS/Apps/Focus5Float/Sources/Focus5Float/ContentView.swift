@@ -11,6 +11,7 @@ import EventKit
 struct ContentView: View {
     let model: Focus5Model
     let onHide: () -> Void
+    @State private var showingResetPinsConfirm = false
 
     var body: some View {
         ZStack {
@@ -70,7 +71,7 @@ struct ContentView: View {
                 Spacer(minLength: Theme.Space.xs)
 
                 ToolbarIconButton(systemName: "arrow.clockwise", action: refreshPanel)
-                    .help(model.viewMode == .telemetry ? "Re-read telemetry files" : "Re-pull /focus-5.json")
+                    .help(refreshHelpText)
 
                 ToolbarIconButton(systemName: "arrow.up.left.and.arrow.down.right", action: togglePanelWidth)
                     .help("Toggle panel width")
@@ -81,6 +82,9 @@ struct ContentView: View {
                     telemetryStatus
                     Spacer(minLength: Theme.Space.xs)
                     telemetryBadge
+                } else if model.viewMode == .promptLog {
+                    promptLogStatus
+                    Spacer(minLength: Theme.Space.xs)
                 } else {
                     rosterStatus
                     Spacer(minLength: Theme.Space.xs)
@@ -113,6 +117,25 @@ struct ContentView: View {
                 Text(model.telemetryEntries.isEmpty
                      ? "· signals"
                      : "· signals · \(model.telemetryEntries.count)")
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(Theme.text3)
+            }
+        } else {
+            Text("No file selected")
+                .font(.system(size: 12.5))
+                .foregroundStyle(Theme.text3)
+        }
+    }
+
+    @ViewBuilder private var promptLogStatus: some View {
+        if let url = model.promptLogFileURL {
+            Text(url.lastPathComponent)
+                .font(.system(size: 12.5, weight: .semibold))
+                .foregroundStyle(Theme.text2)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            if model.promptLogLoadError == nil {
+                Text("· \(model.promptLogEntries.count) prompts · \(model.pinnedPromptLogEntries.count) pinned")
                     .font(.system(size: 12.5))
                     .foregroundStyle(Theme.text3)
             }
@@ -180,6 +203,14 @@ struct ContentView: View {
         .accessibilityLabel(attentionCount == 0 ? "No repos need attention" : "\(attentionCount) repos need attention")
     }
 
+    private var refreshHelpText: String {
+        switch model.viewMode {
+        case .telemetry: return "Re-read telemetry files"
+        case .promptLog: return "Re-read prompt log file"
+        default: return "Re-pull /focus-5.json"
+        }
+    }
+
     private func refreshPanel() {
         Task {
             await model.refresh()
@@ -198,6 +229,8 @@ struct ContentView: View {
             Task { await model.setMode(dirty: true) }
         case .telemetry:
             model.refreshTelemetry()
+        case .promptLog:
+            model.refreshPromptLog()
         }
     }
 
@@ -228,6 +261,8 @@ struct ContentView: View {
     @ViewBuilder private var content: some View {
         if model.viewMode == .telemetry {
             telemetryContent
+        } else if model.viewMode == .promptLog {
+            promptLogContent
         } else {
             switch model.loadState {
             case .idle, .loading:
@@ -334,6 +369,81 @@ struct ContentView: View {
         }
     }
 
+    @ViewBuilder private var promptLogContent: some View {
+        if model.promptLogFileURL == nil {
+            VStack(spacing: Theme.Space.m) {
+                Image(systemName: "text.bubble")
+                    .font(.system(size: 22)).foregroundStyle(Theme.text3)
+                Text("No file selected")
+                    .font(Theme.bodyMed).foregroundStyle(Theme.text)
+                Text("Choose the CLIO-rendered prompt log Markdown file.")
+                    .font(Theme.monoSmall).foregroundStyle(Theme.text3)
+                    .multilineTextAlignment(.center)
+                Button("Select Prompt Log File…") { model.openPromptLogFilePicker() }
+                    .buttonStyle(.borderedProminent)
+                    .tint(Theme.accent)
+            }
+            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let err = model.promptLogLoadError {
+            emptyState(icon: "exclamationmark.triangle",
+                       title: "Can't read prompt log file",
+                       detail: err)
+        } else if model.promptLogEntries.isEmpty {
+            emptyState(icon: "text.bubble",
+                       title: "No prompts yet",
+                       detail: "The selected file has no entries.")
+        } else {
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
+                    if !model.pinnedPromptLogEntries.isEmpty {
+                        pinnedSectionHeader
+                        ForEach(model.pinnedPromptLogEntries) { entry in
+                            PromptLogRowView(entry: entry, isPinned: true) {
+                                model.togglePin(entry)
+                            }
+                        }
+                        Divider().overlay(Theme.separator).padding(.vertical, Theme.Space.xs)
+                    }
+                    ForEach(Array(model.unpinnedPromptLogEntries.enumerated()), id: \.element.id) { index, entry in
+                        PromptLogRowView(entry: entry, isPinned: false, darker: !index.isMultiple(of: 2)) {
+                            model.togglePin(entry)
+                        }
+                    }
+                }
+                .padding(Theme.Space.m)
+            }
+        }
+    }
+
+    // "PINNED (n/5)" caption + a reset-all control that reuses the header's
+    // refresh glyph — gated behind a confirmation dialog since it's destructive
+    // to the operator's manually-curated anchor list, unlike the header refresh.
+    private var pinnedSectionHeader: some View {
+        HStack(spacing: 6) {
+            Text("PINNED (\(model.pinnedPromptLogEntries.count)/\(Focus5Model.maxPinnedPromptLogEntries))")
+                .font(Theme.caption).foregroundStyle(Theme.text3).tracking(0.5)
+            Spacer(minLength: 0)
+            Button { showingResetPinsConfirm = true } label: {
+                Image(systemName: "arrow.clockwise")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Theme.text3)
+            }
+            .buttonStyle(.plain)
+            .help("Release all pins")
+        }
+        .confirmationDialog(
+            "Release all pins?",
+            isPresented: $showingResetPinsConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Release All Pins", role: .destructive) { model.resetAllPromptLogPins() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This removes all \(model.pinnedPromptLogEntries.count) pinned entries. This can't be undone.")
+        }
+    }
+
     private func emptyState(icon: String, title: String, detail: String) -> some View {
         VStack(spacing: Theme.Space.s) {
             Image(systemName: icon).font(.system(size: 22)).foregroundStyle(Theme.text3)
@@ -427,6 +537,10 @@ private struct ModeSegmentedControl: View {
             SegmentedModeButton(systemName: "chart.bar",
                                 label: "Stats",
                                 isSelected: selected == .telemetry) { onSelect(.telemetry) }
+            divider
+            SegmentedModeButton(systemName: "text.bubble",
+                                label: "Prompts",
+                                isSelected: selected == .promptLog) { onSelect(.promptLog) }
         }
         .padding(2)
         .background(Theme.hover, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -687,6 +801,65 @@ struct TelemetryRowView: View {
             RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous)
                 .strokeBorder(Theme.separator, lineWidth: 1)
         )
+    }
+}
+
+// MARK: - Prompt Log row (CLIO)
+
+/// Reuses `RepoCardView`'s exact visual language (top badge + spacer + action
+/// control, bold title, `Theme.monoSmall` meta row, zebra/hover background) —
+/// the only differences are the pin control in place of the open/expand
+/// controls, and the data being a logged prompt instead of a repo.
+struct PromptLogRowView: View {
+    let entry: PromptLogEntry
+    let isPinned: Bool
+    var darker: Bool = false
+    let onTogglePin: () -> Void
+
+    @State private var hovered = false
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: Theme.Space.s) {
+                KeyCap(text: RelTime.ago(entry.timestamp), font: Theme.monoSmall, height: 24)
+                Spacer(minLength: Theme.Space.s)
+                Button(action: onTogglePin) {
+                    Image(systemName: isPinned ? "pin.fill" : "pin")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(isPinned ? Theme.accent : Theme.text3)
+                }
+                .buttonStyle(.plain)
+                .help(isPinned ? "Unpin" : "Pin (max 5 — pinning a 6th releases the oldest pin)")
+            }
+
+            Text(entry.truncatedPrompt)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(Theme.text)
+                .lineSpacing(1)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, 9)
+
+            HStack(spacing: Theme.Space.m) {
+                GroupTag(name: entry.repo)
+                if let branch = entry.branch { GroupTag(name: branch) }
+                if !entry.machine.isEmpty { Text(entry.machine) }
+                Spacer(minLength: 0)
+            }
+            .font(Theme.monoSmall)
+            .foregroundStyle(Theme.text2)
+            .padding(.top, 10)
+        }
+        .padding(Theme.Space.m)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(rowBackground, in: RoundedRectangle(cornerRadius: Theme.Radius.row, style: .continuous))
+        .onHover { hovered = $0 }
+    }
+
+    private var rowBackground: Color {
+        if isPinned { return Theme.accentSoft }
+        if hovered { return Theme.hover }
+        return darker ? Theme.hover : .clear
     }
 }
 
