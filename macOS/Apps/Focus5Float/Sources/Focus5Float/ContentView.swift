@@ -394,24 +394,34 @@ struct ContentView: View {
                        title: "No prompts yet",
                        detail: "The selected file has no entries.")
         } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
-                    if !model.pinnedPromptLogEntries.isEmpty {
+            // Pinned section lives OUTSIDE the ScrollView so it's a true fixed
+            // header (like a sticky nav bar) — only the feed below it scrolls.
+            // Putting it inside the same LazyVStack/ScrollView (the original
+            // bug) just made it scroll away with everything else.
+            VStack(alignment: .leading, spacing: 0) {
+                if !model.pinnedPromptLogEntries.isEmpty {
+                    VStack(alignment: .leading, spacing: Theme.Space.s) {
                         pinnedSectionHeader
                         ForEach(model.pinnedPromptLogEntries) { entry in
                             PromptLogRowView(entry: entry, isPinned: true) {
                                 model.togglePin(entry)
                             }
                         }
-                        Divider().overlay(Theme.separator).padding(.vertical, Theme.Space.xs)
                     }
-                    ForEach(Array(model.unpinnedPromptLogEntries.enumerated()), id: \.element.id) { index, entry in
-                        PromptLogRowView(entry: entry, isPinned: false, darker: !index.isMultiple(of: 2)) {
-                            model.togglePin(entry)
+                    .padding(Theme.Space.m)
+                    .padding(.bottom, Theme.Space.xs)
+                    Divider().overlay(Theme.separator)
+                }
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
+                        ForEach(Array(model.unpinnedPromptLogEntries.enumerated()), id: \.element.id) { index, entry in
+                            PromptLogRowView(entry: entry, isPinned: false, darker: !index.isMultiple(of: 2)) {
+                                model.togglePin(entry)
+                            }
                         }
                     }
+                    .padding(Theme.Space.m)
                 }
-                .padding(Theme.Space.m)
             }
         }
     }
