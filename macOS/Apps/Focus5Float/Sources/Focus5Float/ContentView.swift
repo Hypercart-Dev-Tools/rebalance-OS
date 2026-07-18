@@ -410,7 +410,7 @@ struct ContentView: View {
                     VStack(alignment: .leading, spacing: Theme.Space.s) {
                         pinnedSectionHeader
                         ForEach(filteredPinnedEntries) { entry in
-                            PromptLogRowView(entry: entry, isPinned: true) {
+                            PromptLogRowView(entry: entry, isPinned: true, openInfo: model.vscodeOpenInfo(forRepoName: entry.repo)) {
                                 model.togglePin(entry)
                             }
                         }
@@ -428,7 +428,7 @@ struct ContentView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
                             ForEach(Array(filteredUnpinnedEntries.enumerated()), id: \.element.id) { index, entry in
-                                PromptLogRowView(entry: entry, isPinned: false, darker: !index.isMultiple(of: 2)) {
+                                PromptLogRowView(entry: entry, isPinned: false, darker: !index.isMultiple(of: 2), openInfo: model.vscodeOpenInfo(forRepoName: entry.repo)) {
                                     model.togglePin(entry)
                                 }
                             }
@@ -880,6 +880,10 @@ struct PromptLogRowView: View {
     let entry: PromptLogEntry
     let isPinned: Bool
     var darker: Bool = false
+    // Resolved via Focus5Model.vscodeOpenInfo(forRepoName:) — nil when the
+    // repo isn't in the current roster/off-roster payload, in which case the
+    // "Open ↗" button just doesn't render (best-effort, not a dead button).
+    var openInfo: (localPath: String, vscodeURL: String)? = nil
     let onTogglePin: () -> Void
 
     @State private var hovered = false
@@ -889,6 +893,9 @@ struct PromptLogRowView: View {
             HStack(spacing: Theme.Space.s) {
                 KeyCap(text: RelTime.ago(entry.timestamp), font: Theme.monoSmall, height: 24)
                 Spacer(minLength: Theme.Space.s)
+                if let openInfo {
+                    OpenRepoButton(repoName: entry.repo, localPath: openInfo.localPath, vscodeURL: openInfo.vscodeURL)
+                }
                 Button(action: onTogglePin) {
                     Image(systemName: isPinned ? "pin.fill" : "pin")
                         .font(.system(size: 13, weight: .semibold))

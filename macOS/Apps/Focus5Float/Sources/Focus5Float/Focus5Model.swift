@@ -315,6 +315,24 @@ final class Focus5Model {
         pinnedPromptLogIDs = []
     }
 
+    /// Resolves a Prompt Log entry's repo NAME (CLIO only ever logs the name,
+    /// never a path) back to a real local path + vscode:// URL, by matching
+    /// against the roster/off-roster repos the live Focus 5 payload already
+    /// knows about — the same "Open ↗" data `RepoCardView` uses, reused as-is
+    /// rather than a second path-resolution mechanism. Best-effort: a repo
+    /// that's fully clean, not in the top 5, and never off-roster-flagged
+    /// isn't resolvable from here — same ceiling the rest of the app has.
+    func vscodeOpenInfo(forRepoName repoName: String) -> (localPath: String, vscodeURL: String)? {
+        let key = repoName.lowercased()
+        if let card = roster.first(where: { $0.repoName.lowercased() == key }) {
+            return (card.localPath, card.vscodeUrl)
+        }
+        if let w = offRoster.first(where: { $0.repoName.lowercased() == key }) {
+            return (w.localPath, VSCodeLauncher.fileURL(forLocalPath: w.localPath))
+        }
+        return nil
+    }
+
     /// Max telemetry rows held in memory / rendered (newest-first after sort).
     static let telemetryRowCap = 10_000
 

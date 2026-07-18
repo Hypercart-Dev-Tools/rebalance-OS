@@ -25,6 +25,19 @@ final class PureLogicTests: XCTestCase {
         ])
     }
 
+    /// Mirrors focus5_scan.vscode_url()'s `f"vscode://file{quote(local_path, safe='/')}"`
+    /// — same safe-char set (alnum + `_.-~/`), everything else percent-encoded.
+    func testVSCodeLauncherFileURLMatchesServerEncoding() {
+        XCTAssertEqual(
+            VSCodeLauncher.fileURL(forLocalPath: "/Users/noelsaw/Documents/rebalance-OS"),
+            "vscode://file/Users/noelsaw/Documents/rebalance-OS"
+        )
+        XCTAssertEqual(
+            VSCodeLauncher.fileURL(forLocalPath: "/repos/demo repo"),
+            "vscode://file/repos/demo%20repo"
+        )
+    }
+
     func testRelTimeAgoBuckets() {
         let now = Date()
         XCTAssertEqual(RelTime.ago(now.addingTimeInterval(-30), now: now), "just now")

@@ -39,6 +39,24 @@ final class PromptLogTests: XCTestCase {
         return url
     }
 
+    private func makeRepoCard(repoName: String, localPath: String, vscodeUrl: String) -> RepoCard {
+        let json = """
+        {"position":1,"repo_name":"\(repoName)","local_path":"\(localPath)","vscode_url":"\(vscodeUrl)",
+         "rank_reason":"r","ranking_mode":"recent_activity","computed_at":"2026-01-01T00:00:00Z",
+         "ahead":0,"behind":0,"modified_count":0,"untracked_count":0,"is_dirty":false,
+         "health_available":true,"recent_activity":[]}
+        """
+        return try! Focus5JSON.decoder().decode(RepoCard.self, from: Data(json.utf8))
+    }
+
+    private func makeOffRosterWarning(repoName: String, localPath: String) -> OffRosterWarning {
+        let json = """
+        {"repo_name":"\(repoName)","local_path":"\(localPath)",
+         "ahead":0,"modified_count":0,"untracked_count":0,"is_dirty":false}
+        """
+        return try! Focus5JSON.decoder().decode(OffRosterWarning.self, from: Data(json.utf8))
+    }
+
     // MARK: - Parser
 
     private let twoEntryFixture = """
@@ -262,5 +280,32 @@ final class PromptLogTests: XCTestCase {
         model.promptLogFileURL = nil
         XCTAssertTrue(model.promptLogEntries.isEmpty)
         XCTAssertNil(model.promptLogLoadError)
+    }
+
+    // MARK: - "Open in VS Code" resolution
+
+    func testVscodeOpenInfoResolvesFromRoster() {
+        let model = Focus5Model()
+        model.roster = [makeRepoCard(repoName: "rebalance-OS", localPath: "/repos/rebalance-OS", vscodeUrl: "vscode://file/repos/rebalance-OS")]
+
+        let info = model.vscodeOpenInfo(forRepoName: "REBALANCE-OS")   // CLIO logs repo names upper-cased
+        XCTAssertEqual(info?.localPath, "/repos/rebalance-OS")
+        XCTAssertEqual(info?.vscodeURL, "vscode://file/repos/rebalance-OS")
+    }
+
+    func testVscodeOpenInfoFallsBackToOffRosterAndDerivesURL() {
+        let model = Focus5Model()
+        model.offRoster = [makeOffRosterWarning(repoName: "hypercart", localPath: "/repos/hypercart")]
+
+        let info = model.vscodeOpenInfo(forRepoName: "HYPERCART")
+        XCTAssertEqual(info?.localPath, "/repos/hypercart")
+        XCTAssertEqual(info?.vscodeURL, "vscode://file/repos/hypercart")   // derived, OffRosterWarning has no vscodeUrl field
+    }
+
+    func testVscodeOpenInfoIsNilForAnUnknownRepo() {
+        let model = Focus5Model()
+        model.roster = [makeRepoCard(repoName: "rebalance-OS", localPath: "/repos/rebalance-OS", vscodeUrl: "vscode://file/repos/rebalance-OS")]
+
+        XCTAssertNil(model.vscodeOpenInfo(forRepoName: "SOME-OTHER-REPO"))
     }
 }

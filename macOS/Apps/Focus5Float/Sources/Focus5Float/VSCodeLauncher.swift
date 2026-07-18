@@ -26,6 +26,18 @@ enum VSCodeLauncher {
     /// A pure function so the self-test can assert the shape never regresses.
     static func arguments(forRepoPath repoPath: String) -> [String] { [repoPath] }
 
+    /// Builds the same `vscode://file/...` fallback URL the server computes in
+    /// `focus5_scan.vscode_url()` (`f"vscode://file{quote(local_path, safe='/')}"`)
+    /// — used when a repo's `vscodeUrl` isn't already on the wire (e.g. the
+    /// Prompt Log tab, which only ever gets a repo NAME from CLIO and has to
+    /// derive the open action itself from a resolved local path).
+    static func fileURL(forLocalPath path: String) -> String {
+        var allowed = CharacterSet.alphanumerics
+        allowed.insert(charactersIn: "_.-~/")
+        let encoded = path.addingPercentEncoding(withAllowedCharacters: allowed) ?? path
+        return "vscode://file\(encoded)"
+    }
+
     /// Resolve the `code` executable, or nil. Override → known locations → login shell.
     static func resolveBinary() -> String? {
         let fm = FileManager.default
