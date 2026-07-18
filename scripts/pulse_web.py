@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import html
-import importlib.util
 import json
 import os
 import re
@@ -38,15 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_JSON_PATH = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
 import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
 
-_TZ_UTILS_SPEC = importlib.util.spec_from_file_location(
-    "pulse_web_tz_utils",
-    PROJECT_ROOT / "src" / "rebalance" / "tz_utils.py",
-)
-if _TZ_UTILS_SPEC is None or _TZ_UTILS_SPEC.loader is None:
-    raise ImportError("Could not load local tz_utils.py")
-_TZ_UTILS = importlib.util.module_from_spec(_TZ_UTILS_SPEC)
-_TZ_UTILS_SPEC.loader.exec_module(_TZ_UTILS)
-format_timestamp = _TZ_UTILS.format_timestamp
+from rebalance.tz_utils import format_timestamp  # noqa: E402
 
 # Reuse the TUI's data layer so both views move in lockstep.
 from dashboard import (  # type: ignore  # noqa: E402

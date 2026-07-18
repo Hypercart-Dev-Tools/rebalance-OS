@@ -1,3 +1,11 @@
+# Marathon Phase gh135-p2
+STATUS: Open
+NEXT: codex
+
+<!-- marathon-drive: task=MARATHON-GH135-P2-TURN builder=codex reviewer=agy round-cap=7 -->
+
+## Phase Brief
+
 # Phase 2 — one shared row component
 
 Part of GH-135. Full contract: `PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY.md`.
@@ -8,15 +16,6 @@ Depends on Phase 1 (`format_timestamp` in `src/rebalance/tz_utils.py`).
 Phase 1 added `format_timestamp()` to the **existing** `src/rebalance/tz_utils.py`
 (from GH-130). Consume it. Do not add a second time helper, and do not re-implement
 timestamp formatting inside the row component — the row calls `format_timestamp`.
-
-**No import workarounds.** Import normally: `from rebalance.tz_utils import ...`.
-`scripts/pulse_web.py` already imports `_bootstrap`, which puts `src/` on `sys.path`.
-If an import appears to resolve to the wrong copy of a module, that is an artifact of
-running inside a throwaway git worktree — **not** a code defect, and **not** something to
-fix in the source. Do not add `sys.path` manipulation, `importlib.util.spec_from_file_location`,
-or any other loader shim to production code or tests. Phase 1 did exactly this and it had
-to be reverted: it loaded `tz_utils` as a second, separately-named module object, splitting
-module identity. Report the import problem in your relay block instead of coding around it.
 
 ## Context
 
@@ -99,3 +98,27 @@ the row, and it is genuinely reused already.
 - [ ] Focus 5 / What's Next / Auth Log pages verified visually unchanged.
 - [ ] `pytest tests/` green; page regenerated through `pulse_web.py`;
       `rebalance doctor` and `utils/pdda/pdda.sh run` clean.
+
+---
+
+▶ TAKE YOUR TURN (codex — BUILDER role)
+
+You are the BUILDER for this phase. Read the phase brief above and implement it.
+1. Implement the brief by creating/editing the artifact file(s): scripts/pulse_web.py,src/rebalance/web_components.py
+2. Append a build block to this relay file: `### Round N · Builder · codex` summarizing what you did (files touched, key decisions).
+3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-GH135-P2-TURN --agent codex --paths "phases/gh-135-pulse-dashboard-consistency--gh135-p2/RELAY.md,scripts/pulse_web.py,src/rebalance/web_components.py"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-GH135-P2-TURN --agent codex
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH135-P2-TURN --agent codex --to agy
+4. Edit ONLY these paths: phases/gh-135-pulse-dashboard-consistency--gh135-p2/RELAY.md and scripts/pulse_web.py,src/rebalance/web_components.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
+
+---
+
+▶ TAKE YOUR TURN (agy — REVIEWER role)
+
+You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: scripts/pulse_web.py,src/rebalance/web_components.py.
+1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH135-P2-TURN --agent agy --to codex
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH135-P2-TURN --agent agy
+4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
+   Edit ONLY phases/gh-135-pulse-dashboard-consistency--gh135-p2/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.

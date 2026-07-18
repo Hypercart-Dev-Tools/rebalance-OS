@@ -9,29 +9,19 @@ PROJECT/2-WORKING/GH-130-CENTRALIZE-LOCAL-TIME-DISPLAY.md.
 """
 
 from __future__ import annotations
-import importlib.util
 import unittest
 from datetime import datetime, timezone
-from pathlib import Path
 from unittest import mock
 from zoneinfo import ZoneInfo
 
-ROOT = Path(__file__).resolve().parents[1]
-_TZ_UTILS_SPEC = importlib.util.spec_from_file_location(
-    "test_tz_utils_local",
-    ROOT / "src" / "rebalance" / "tz_utils.py",
+from rebalance.tz_utils import (
+    format_local,
+    format_relative,
+    format_timestamp,
+    local_tz,
+    parse_utc_iso,
+    to_local,
 )
-if _TZ_UTILS_SPEC is None or _TZ_UTILS_SPEC.loader is None:
-    raise ImportError("Could not load local tz_utils.py")
-_TZ_UTILS = importlib.util.module_from_spec(_TZ_UTILS_SPEC)
-_TZ_UTILS_SPEC.loader.exec_module(_TZ_UTILS)
-
-format_local = _TZ_UTILS.format_local
-format_relative = _TZ_UTILS.format_relative
-format_timestamp = _TZ_UTILS.format_timestamp
-local_tz = _TZ_UTILS.local_tz
-parse_utc_iso = _TZ_UTILS.parse_utc_iso
-to_local = _TZ_UTILS.to_local
 
 
 class LocalTzTests(unittest.TestCase):
@@ -198,7 +188,7 @@ class FormatTimestampTests(unittest.TestCase):
             def now(cls, tz=None):  # type: ignore[override]
                 return cls(2026, 1, 1, 12, 0, 0, tzinfo=tz or timezone.utc)
 
-        with mock.patch.object(_TZ_UTILS, "datetime", FrozenDateTime):
+        with mock.patch("rebalance.tz_utils.datetime", FrozenDateTime):
             result = format_timestamp("2026-01-01T10:00:00Z", relative=True, tz=ZoneInfo("UTC"))
 
         self.assertEqual(result, "2026-01-01 10:00 AM · 2h ago")

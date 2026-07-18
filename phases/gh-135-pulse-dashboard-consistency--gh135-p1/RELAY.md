@@ -1,5 +1,5 @@
 # Marathon Phase gh135-p1
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-GH135-P1-TURN-2 builder=codex reviewer=agy round-cap=7 -->
@@ -134,3 +134,13 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Verification:
   - `pytest tests/test_tz_utils.py tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py tests/test_pulse_server_figma.py tests/test_pulse_server_apple_reminders.py` → 55 passed
   - `rg -n "_format_dt|_format_dt_short" scripts/pulse_web.py` → zero hits
+
+### Round 2 · Reviewer · agy
+
+- Verified `format_timestamp` implementation in `src/rebalance/tz_utils.py` correctly delegates to `format_local` and `format_relative`.
+- Verified `_format_dt` and `_format_dt_short` are completely removed from `scripts/pulse_web.py` and call sites migrated to `format_timestamp`.
+- Verified `.timestamp-block` CSS class is used appropriately.
+- Executed the isolated test suite which passed entirely (55 passed).
+- All acceptance criteria are successfully met.
+
+**Verdict:** Approved

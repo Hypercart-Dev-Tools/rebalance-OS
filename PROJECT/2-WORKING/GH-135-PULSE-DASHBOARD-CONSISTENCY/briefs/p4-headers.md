@@ -8,6 +8,10 @@ Depends on Phase 3. This is the smallest phase — a consistency sweep, not new 
 - **Presentation only.** No data-source, collector, route, or API-handler changes.
 - **Never hand-edit `web/pulse.html`** — build artifact, regenerated from `pulse_web.py`.
 - Do not add a new time helper or new row markup — Phases 1 and 2 own those.
+- **No import workarounds** — no `sys.path` manipulation, no
+  `importlib.util.spec_from_file_location` shims. Import normally. An import resolving to
+  the wrong module copy is a worktree artifact, not a code defect; report it, don't code
+  around it. Phase 1 did and it was reverted.
 
 ## Task
 
