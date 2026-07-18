@@ -91,3 +91,14 @@ Verification:
 - `pytest tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py tests/test_repo_pie_auto_promote.py tests/test_web_surface.py` ✅ (`28 passed, 4 skipped`)
 - Direct renderer probes confirmed the new strings/count markup in hero, notices, activity, work-next, and Figma HTML fragments.
 - `python scripts/pulse_web.py --out /tmp/gh135-pulse-preview.html` could not complete in this workspace because `temp/rbos.config` does not provide a vault/goals path (`no --goals path and vault_path not set in temp/rbos.config`), so I did not produce a full-page screenshot in this turn.
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Changes requested
+
+The updates look great overall, but a few things were missed:
+1. In `build_nav_data`, the `_SUBSECTION_LI` for `sleuth_sections` (around line 1448) still contains inline typography styling (`style='font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;...'`). This needs to use the single shared `.section-label` class instead.
+2. The `sleuth_sections` headers should also include the consistent `· N` count for the items in that section (`len(section.get("reminders") or [])`).
+3. (Optional) There is an unused `.strip-label` CSS class (around line 2166) with duplicated typography styling that can be safely removed to keep the file perfectly clean.
+
+Please apply these fixes.
