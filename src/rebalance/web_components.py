@@ -245,7 +245,34 @@ h2 { font-size: 14px; color: var(--fg); }
 .side-row.empty .side-row-meta { font-style: italic; }
 
 /* Shared data rows */
-.rb-data-list { list-style: none; margin: 0; padding: 0; }
+.rb-data-list { list-style: none; margin: 0; padding: 0; container-type: inline-size; }
+
+/* The 3-column anatomy (marker | body | right-aligned time) only works while the
+   container is wide. `.rb-data-row-time` is nowrap, so an absolute+relative stamp
+   like "2026-06-07 9:20 PM · 40d ago" claims ~215px no matter how narrow the list
+   gets — and `minmax(0, 1fr)` obligingly collapses the BODY to 0px. Titles then
+   render zero-width, and meta/chips overflow into very tall stacks. Measured in a
+   307px Figma card: grid-template-columns resolved to "28px 0px 215.344px".
+
+   So stack below a width where all three columns can coexist: marker + title on
+   the first line, meta and timestamp beneath, left-aligned. A container query (not
+   a viewport media query) is what's correct here — the trigger is how wide the
+   LIST is, which varies per card at a single viewport width. */
+@container (max-width: 500px) {
+  .rb-data-list > [data-rb-row],
+  .rb-data-list .rb-data-row-link {
+    grid-template-columns: 28px minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 3px;
+  }
+  .rb-data-list .rb-data-row-trailing {
+    grid-column: 2;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 2px;
+  }
+  .rb-data-list .rb-data-row-time { text-align: left; }
+}
 .rb-data-list > [data-rb-row] {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto;
@@ -257,7 +284,11 @@ h2 { font-size: 14px; color: var(--fg); }
 .rb-data-list > [data-rb-row]:first-child { border-top: 0; }
 .rb-data-list > [data-rb-row][data-rb-stripe="even"],
 .rb-data-list > [data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: rgba(29,32,36,.03); }
-.rb-data-list > [data-rb-row].has-link { padding: 0; }
+/* A linked row delegates the whole grid to its <a>. The wrapper must therefore
+   STOP being a grid itself — otherwise its single <a> child is placed into the
+   28px marker track, and the <a>'s own `minmax(0, 1fr)` body column collapses to
+   zero width (titles render 0px wide, meta and chips overflow into tall stacks). */
+.rb-data-list > [data-rb-row].has-link { display: block; padding: 0; }
 .rb-data-row-link {
   display: grid;
   grid-template-columns: 28px minmax(0, 1fr) auto;
@@ -348,27 +379,8 @@ h2 { font-size: 14px; color: var(--fg); }
 .side-list.rb-data-list > .side-row[data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: rgba(0,0,0,.03); }
 .side-list .rb-data-row-link { padding: 7px 8px; border-radius: 6px; }
 
-/* The 3-column row anatomy (marker | body | right-aligned time) assumes a WIDE
-   card. The sidebar is narrow, and `.rb-data-row-time` is nowrap — an absolute
-   timestamp like "2026-07-18 12:00 PM" claims ~135px of a ~250px content box,
-   starving `minmax(0, 1fr)` down to almost nothing. Symptoms: titles clipped to
-   a few characters ("Walki"), meta wrapping one word per line, the age chip
-   balling up into a circle, and the marker visually colliding with the time.
-   So in the sidebar only, STACK the row: marker + title on the first line,
-   meta and timestamp beneath it, both left-aligned. */
-.side-list.rb-data-list > .side-row[data-rb-row],
-.side-list .rb-data-row-link {
-  grid-template-columns: 28px minmax(0, 1fr);
-  column-gap: 10px;
-  row-gap: 3px;
-}
-.side-list .rb-data-row-trailing {
-  grid-column: 2;
-  min-width: 0;
-  align-items: flex-start;
-  gap: 2px;
-}
-.side-list .rb-data-row-time { text-align: left; }
+/* The sidebar is always narrow, so it always resolves to the stacked form above
+   via the container query — no sidebar-specific grid override is needed here. */
 
 /* Streams: compact connector list */
 .streams { list-style: none; margin: 0; padding: 0; }
