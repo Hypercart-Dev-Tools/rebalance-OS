@@ -12,6 +12,7 @@ struct ContentView: View {
     let model: Focus5Model
     let onHide: () -> Void
     @State private var showingResetPinsConfirm = false
+    @State private var promptLogFilter = ""
 
     var body: some View {
         ZStack {
@@ -394,36 +395,91 @@ struct ContentView: View {
                        title: "No prompts yet",
                        detail: "The selected file has no entries.")
         } else {
-            // Pinned section lives OUTSIDE the ScrollView so it's a true fixed
-            // header (like a sticky nav bar) — only the feed below it scrolls.
-            // Putting it inside the same LazyVStack/ScrollView (the original
-            // bug) just made it scroll away with everything else.
+            // Filter field + pinned section both live OUTSIDE the ScrollView so
+            // they're a true fixed header (like a sticky nav bar) — only the
+            // feed below scrolls. Putting the pinned section inside the same
+            // LazyVStack/ScrollView (the original bug) just made it scroll away
+            // with everything else.
             VStack(alignment: .leading, spacing: 0) {
-                if !model.pinnedPromptLogEntries.isEmpty {
+                promptLogFilterField
+                    .padding(.horizontal, Theme.Space.m)
+                    .padding(.top, Theme.Space.m)
+                    .padding(.bottom, Theme.Space.s)
+
+                if !filteredPinnedEntries.isEmpty {
                     VStack(alignment: .leading, spacing: Theme.Space.s) {
                         pinnedSectionHeader
-                        ForEach(model.pinnedPromptLogEntries) { entry in
+                        ForEach(filteredPinnedEntries) { entry in
                             PromptLogRowView(entry: entry, isPinned: true) {
                                 model.togglePin(entry)
                             }
                         }
                     }
-                    .padding(Theme.Space.m)
-                    .padding(.bottom, Theme.Space.xs)
+                    .padding(.horizontal, Theme.Space.m)
+                    .padding(.bottom, Theme.Space.m)
                     Divider().overlay(Theme.separator)
                 }
-                ScrollView {
-                    LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
-                        ForEach(Array(model.unpinnedPromptLogEntries.enumerated()), id: \.element.id) { index, entry in
-                            PromptLogRowView(entry: entry, isPinned: false, darker: !index.isMultiple(of: 2)) {
-                                model.togglePin(entry)
+
+                if filteredPinnedEntries.isEmpty && filteredUnpinnedEntries.isEmpty {
+                    emptyState(icon: "magnifyingglass",
+                               title: "No matches",
+                               detail: "No prompts from a repo matching \"\(promptLogFilter)\".")
+                } else {
+                    ScrollView {
+                        LazyVStack(alignment: .leading, spacing: Theme.Space.s) {
+                            ForEach(Array(filteredUnpinnedEntries.enumerated()), id: \.element.id) { index, entry in
+                                PromptLogRowView(entry: entry, isPinned: false, darker: !index.isMultiple(of: 2)) {
+                                    model.togglePin(entry)
+                                }
                             }
                         }
+                        .padding(Theme.Space.m)
                     }
-                    .padding(Theme.Space.m)
                 }
             }
         }
+    }
+
+    // Text field filtering the prompt log feed (both pinned and unpinned) by
+    // repo name — case-insensitive substring match, empty string shows all.
+    private var promptLogFilterField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.text3)
+            TextField("Filter by repo…", text: $promptLogFilter)
+                .textFieldStyle(.plain)
+                .font(Theme.body)
+                .foregroundStyle(Theme.text)
+            if !promptLogFilter.isEmpty {
+                Button { promptLogFilter = "" } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.text3)
+                }
+                .buttonStyle(.plain)
+                .help("Clear filter")
+            }
+        }
+        .padding(.horizontal, Theme.Space.s)
+        .padding(.vertical, 6)
+        .background(Theme.elevated, in: RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: Theme.Radius.control, style: .continuous)
+                .strokeBorder(Theme.separator, lineWidth: 0.5)
+        )
+    }
+
+    private var filteredPinnedEntries: [PromptLogEntry] {
+        filterByRepo(model.pinnedPromptLogEntries)
+    }
+    private var filteredUnpinnedEntries: [PromptLogEntry] {
+        filterByRepo(model.unpinnedPromptLogEntries)
+    }
+    private func filterByRepo(_ entries: [PromptLogEntry]) -> [PromptLogEntry] {
+        let needle = promptLogFilter.trimmingCharacters(in: .whitespaces)
+        guard !needle.isEmpty else { return entries }
+        return entries.filter { $0.repo.localizedCaseInsensitiveContains(needle) }
     }
 
     // "PINNED (n/5)" caption + a reset-all control that reuses the header's
