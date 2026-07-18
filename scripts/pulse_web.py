@@ -1445,15 +1445,15 @@ def build_nav_data(
     sleuth_items = []
     if sleuth_sections:
         # Published-file path: section headers + canonical "show reminders" format.
-        _SUBSECTION_LI = (
-            "style='font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;"
-            "color:var(--fg-dim);padding:10px 8px 3px;pointer-events:none;'"
-        )
         reminder_idx = 0
         for section in sleuth_sections:
             section_label = section.get("sectionLabel", "")
+            reminder_count = len(section.get("reminders") or [])
             sleuth_items.append(
-                f"<li {_SUBSECTION_LI}>{_esc(section_label)}</li>"
+                f'<li class="section-label nav-list-section-label">'
+                f'{_esc(section_label)}'
+                f'<span class="section-label-count"> · {_esc(reminder_count)}</span>'
+                f'</li>'
             )
             for r in section.get("reminders") or []:
                 label    = r.get("label", "")
@@ -1774,6 +1774,11 @@ PAGE_CSS = """
   color: var(--fg-dim);
 }
 .section-label-count { font-variant-numeric: tabular-nums; }
+.nav-list-section-label {
+  list-style: none;
+  padding: 10px 8px 3px;
+  pointer-events: none;
+}
 
 /* What should we work on next */
 .badge {
@@ -2163,7 +2168,6 @@ PAGE_CSS = """
 
 /* Strip */
 .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; padding: 4px 4px 24px; }
-.strip-label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); margin-bottom: 4px; }
 .strip-title { font-weight: 500; }
 .empty { color: var(--fg-dim); padding: 14px 18px; }
 

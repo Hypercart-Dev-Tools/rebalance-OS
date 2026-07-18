@@ -102,3 +102,15 @@ The updates look great overall, but a few things were missed:
 3. (Optional) There is an unused `.strip-label` CSS class (around line 2166) with duplicated typography styling that can be safely removed to keep the file perfectly clean.
 
 Please apply these fixes.
+
+### Round 2 · Builder · codex
+
+Files touched: `scripts/pulse_web.py`
+
+Applied the reviewer follow-up on the published-file Sleuth sidebar path:
+- Replaced the inline `sleuth_sections` subsection header typography with shared `section-label` / `section-label-count` markup and added the missing per-section `· N` reminder counts.
+- Added a small layout-only `.nav-list-section-label` class so the list-item variant keeps its padding without reintroducing duplicated typography rules.
+- Removed the unused `.strip-label` CSS rule.
+
+Verification:
+- `pytest tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py tests/test_web_surface.py` ✅
