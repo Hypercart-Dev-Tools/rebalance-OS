@@ -1,5 +1,5 @@
 # Marathon Phase gh135-p4
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-GH135-P4-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -114,3 +114,9 @@ Applied the reviewer follow-up on the published-file Sleuth sidebar path:
 
 Verification:
 - `pytest tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py tests/test_web_surface.py` ✅
+
+### Round 2 · Reviewer · agy
+
+**Verdict:** Approved
+
+The requested fixes were applied perfectly. The `sleuth_sections` subsection label typography now correctly uses the shared classes, `· N` reminder counts have been added, and the unused `.strip-label` class was removed. Tests are passing. Great work!
