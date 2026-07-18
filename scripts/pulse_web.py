@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import html
+import importlib.util
 import json
 import os
 import re
@@ -37,6 +38,16 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_JSON_PATH = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
 import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
 
+_TZ_UTILS_SPEC = importlib.util.spec_from_file_location(
+    "pulse_web_tz_utils",
+    PROJECT_ROOT / "src" / "rebalance" / "tz_utils.py",
+)
+if _TZ_UTILS_SPEC is None or _TZ_UTILS_SPEC.loader is None:
+    raise ImportError("Could not load local tz_utils.py")
+_TZ_UTILS = importlib.util.module_from_spec(_TZ_UTILS_SPEC)
+_TZ_UTILS_SPEC.loader.exec_module(_TZ_UTILS)
+format_timestamp = _TZ_UTILS.format_timestamp
+
 # Reuse the TUI's data layer so both views move in lockstep.
 from dashboard import (  # type: ignore  # noqa: E402
     DB_PATH,
@@ -53,7 +64,6 @@ from dashboard import (  # type: ignore  # noqa: E402
     fetch_sleuth_due,
     fetch_vault_recent,
     fetch_watched_summary,
-    _ago,
     _parse_iso,
     _truncate,
 )
@@ -327,18 +337,18 @@ def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
-def _format_dt(value: str | datetime | None, *, tz: ZoneInfo) -> str:
-    dt = _parse_iso(value) if isinstance(value, str) else value
-    if dt is None:
-        return "—"
-    return dt.astimezone(tz).strftime("%a %b %d · %H:%M %Z")
-
-
-def _format_dt_short(value: str | datetime | None, *, tz: ZoneInfo) -> str:
-    dt = _parse_iso(value) if isinstance(value, str) else value
-    if dt is None:
-        return ""
-    return dt.astimezone(tz).strftime("%a %-I:%M %p").lower().replace("am", "am").replace("pm", "pm")
+def _timestamp_html(
+    value: str | datetime | None,
+    *,
+    tz: ZoneInfo,
+    relative: bool = False,
+    fallback: str = "",
+    cls: str = "timestamp-block",
+) -> str:
+    text = format_timestamp(value, relative=relative, tz=tz)
+    if not text:
+        return _esc(fallback)
+    return f'<span class="{_esc(cls)}">{_esc(text)}</span>'
 
 
 def _normalize_html_text(value: str | None) -> str:
@@ -418,7 +428,8 @@ def render_health_banner(
 
     tone = "danger" if health.failures else "warn"
     status_text = health.status_text
-    activity_text = _ago(last_activity, now=now) if last_activity else "never"
+    activity_text = format_timestamp(last_activity, relative=True, tz=TZ) or "never"
+    activity_html = _timestamp_html(last_activity, tz=TZ, relative=True, fallback="never")
     copy_text = _health_banner_copy_text(
         problems,
         status_text=status_text,
@@ -449,7 +460,7 @@ def render_health_banner(
       <div class="health-banner-lead">
         <span class="health-banner-badge">{_esc(status_text)}</span>
         <span class="health-banner-summary">Collector attention needed</span>
-        <span class="health-banner-activity">Last collector activity {_esc(activity_text)}</span>
+        <span class="health-banner-activity">Last collector activity {activity_html}</span>
         <button
           type="button"
           class="health-banner-copy-btn"
@@ -468,7 +479,7 @@ def render_sync_chip(
     last_activity: str | None,
     now: datetime,
 ) -> str:
-    activity_text = _ago(last_activity, now=now) if last_activity else "—"
+    activity_text = format_timestamp(last_activity, relative=True, tz=TZ) or "—"
     if health.verdict == FAIL:
         tone = "danger"
         label = f"Collector degraded · {activity_text}"
@@ -589,9 +600,10 @@ def _render_reminder_rows(
         rid = r.get("reminder_id") or ""
         title = r.get("title") or ""
         due = r.get("due_at")
+        due_text = format_timestamp(due, tz=tz) if due else ""
         due_html = (
-            f'<div class="goal-desc">{_esc(_format_dt_short(due, tz=tz))}</div>'
-            if due else ""
+            f'<div class="goal-desc timestamp-block">{_esc(due_text)}</div>'
+            if due_text else ""
         )
         if rid:
             check = (
@@ -659,13 +671,14 @@ def render_hero(
         for item in recent_completions[:MAX_GOAL_HISTORY]:
             title = str(item.get("title") or "").strip() or "completed task"
             completed_at = item.get("completed_at")
-            ago = _ago(completed_at, now=now) if completed_at else "just now"
+            completed_text = format_timestamp(completed_at, relative=True, tz=TZ) or "just now"
+            completed_cls = "goal-undo-meta timestamp-block" if completed_at and completed_text != "just now" else "goal-undo-meta"
             item_id = str(item.get("id") or "")
             undo_rows.append(f"""
             <li class="goal-undo-item">
               <div class="goal-undo-copy">
                 <span class="goal-undo-title">{_esc(title)}</span>
-                <span class="goal-undo-meta">{_esc(ago)}</span>
+                <span class="{completed_cls}">{_esc(completed_text)}</span>
               </div>
               <button class="goal-undo-btn" type="button" data-goal-undo-id="{_esc(item_id)}">Undo</button>
             </li>
@@ -728,7 +741,7 @@ def render_recent_activity(
         num = r.get("num")
         detail = _truncate(r.get("detail") or "", 80)
         who = r.get("who") or ""
-        ago = _ago(r.get("ts"), now=now)
+        ago = format_timestamp(r.get("ts"), relative=True, tz=TZ) or "—"
         if kind == "commit":
             ref = (str(num)[:7] if num else "")
             label = f"commit {ref}" if ref else "commit"
@@ -746,7 +759,7 @@ def render_recent_activity(
             label_html = f'<span class="label {color}">{_esc(label)}</span>'
         items.append(f"""
         <li class="activity-row">
-          <span class="ts">{_esc(ago)}</span>
+          <span class="ts timestamp-block">{_esc(ago)}</span>
           <span class="glyph {color}">{glyph}</span>
           {label_html}
           <span class="repo">{_esc(repo)}</span>
@@ -758,10 +771,10 @@ def render_recent_activity(
     foot = ""
     if last_vault:
         title = _esc(last_vault.get("title") or last_vault.get("rel_path") or "vault note")
-        ago = _ago(last_vault.get("last_modified"), now=now)
+        ago = _timestamp_html(last_vault.get("last_modified"), tz=TZ, relative=True, fallback="—")
         foot = (
             f'<footer class="card-foot subtle">'
-            f'Last vault edit · <span class="strong">{title}</span> · {_esc(ago)}'
+            f'Last vault edit · <span class="strong">{title}</span> · {ago}'
             f'{f" · {vault_recent_count} recent" if vault_recent_count else ""}'
             f'</footer>'
         )
@@ -806,7 +819,8 @@ def render_work_next(
         f' · <span class="wn-auto">&#9881; {auto} automation-ready</span>'
         if auto else ""
     )
-    when = f"computed {_esc(_ago(computed_at, now=now))}" if computed_at else "not computed yet"
+    computed_html = _timestamp_html(computed_at, tz=TZ, relative=True) if computed_at else ""
+    when_html = f"computed {computed_html}" if computed_html else "not computed yet"
     blend_html = " · team-blended" if blended else ""
 
     top = ranked_rows[0]
@@ -823,7 +837,7 @@ def render_work_next(
     <section class="card work-next work-next-teaser">
       <header class="card-head">
         <h2>What&#39;s next</h2>
-        <span class="card-head-meta">{total} ranked{auto_html}{blend_html} · {when}</span>
+        <span class="card-head-meta">{total} ranked{auto_html}{blend_html} · {when_html}</span>
       </header>
       <div class="wn-teaser-top">
         <span class="wn-rank">1</span>
@@ -991,7 +1005,7 @@ def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
             <div class="pr-repo">{_esc(pr["repo_full_name"])}</div>
           </div>
           <span class="pr-meta">{author}</span>
-          <span class="pr-meta">{_esc(_ago(pr["updated_at"], now=now))}</span>
+          <span class="pr-meta timestamp-block">{_esc(format_timestamp(pr["updated_at"], relative=True, tz=TZ) or "—")}</span>
         </li>
         """)
 
@@ -1019,7 +1033,7 @@ def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
 
 
 def render_watched(summary: dict[str, Any], now: datetime) -> str:
-    last = _ago(summary.get("last_synced"), now=now) if summary.get("last_synced") else "—"
+    last_html = _timestamp_html(summary.get("last_synced"), tz=TZ, relative=True, fallback="—")
     rows = [
         ("Watched",          summary.get("total", 0),         "neutral"),
         ("Fresh",            summary.get("fresh", 0),         "ok"),
@@ -1035,7 +1049,7 @@ def render_watched(summary: dict[str, Any], now: datetime) -> str:
     <section class="card watched">
       <header class="card-head"><h2>Watched repos</h2></header>
       <ul class="kv-list">{''.join(items)}</ul>
-      <footer class="card-foot subtle">Last sync activity · {_esc(last)}</footer>
+      <footer class="card-foot subtle">Last sync activity · {last_html}</footer>
     </section>
     """
 
@@ -1057,12 +1071,17 @@ def render_index_health(status: dict[str, Any], now: datetime) -> str:
     ]
     items = []
     for label, count, last, tone in rows:
-        ago = _ago(last, now=now) if last else "—"
+        ago = format_timestamp(last, relative=True, tz=TZ) if last else ""
+        ago_html = (
+            f'<span class="row-meta subtle timestamp-block">{_esc(ago)}</span>'
+            if ago
+            else '<span class="row-meta subtle">—</span>'
+        )
         items.append(f"""
         <li>
           <span class="row-label">{_esc(label)}</span>
           <span class="row-value {tone}">{_esc(count if count is not None else '—')}</span>
-          <span class="row-meta subtle">{_esc(ago)}</span>
+          {ago_html}
         </li>
         """)
     drift_tone = "ok" if drift_total == 0 else "warn"
@@ -1106,7 +1125,8 @@ def render_recent_emails(
         sender = _normalize_html_text(row.get("from_name") or "") or _normalize_html_text(row.get("from_address") or "") or "unknown sender"
         subject = _normalize_html_text(row.get("subject") or "") or "(no subject)"
         snippet = _truncate(_normalize_html_text(row.get("snippet") or ""), 180)
-        when = _ago(row.get("received_at"), now=now)
+        when = format_timestamp(row.get("received_at"), relative=True, tz=tz) or "—"
+        when_abs = format_timestamp(row.get("received_at"), tz=tz)
         gmail_url = build_gmail_thread_url(row)
         labels_raw = row.get("labels_json") or "[]"
         try:
@@ -1137,13 +1157,13 @@ def render_recent_emails(
             <div class="email-row-meta">
               <span class="email-row-from">{_esc(sender)}</span>
               <span class="email-row-dot">·</span>
-              <span class="email-row-when">{_esc(when)}</span>
+              <span class="email-row-when timestamp-block">{_esc(when)}</span>
               {f'<span class="email-row-dot">·</span>{"".join(label_bits)}' if label_bits else ""}
             </div>
             <div class="email-row-snippet">{_esc(snippet)}</div>
           </div>
           <div class="email-row-side">
-            <div class="email-row-time">{_esc(_format_dt_short(row.get("received_at"), tz=tz))}</div>
+            <div class="email-row-time timestamp-block">{_esc(when_abs)}</div>
             {reply_html}
           </div>
         </li>
@@ -1171,7 +1191,7 @@ def render_recent_figma(
     last_synced_at: str | None,
 ) -> str:
     configured_total = len(configured_keys)
-    sync_text = _ago(last_synced_at, now=now) if last_synced_at else "never synced"
+    sync_html = _timestamp_html(last_synced_at, tz=tz, relative=True, fallback="never synced")
     chips = "".join(
         f'<span class="figma-key-chip" title="{_esc(key)}">{_esc(key)}</span>'
         for key in configured_keys
@@ -1193,7 +1213,7 @@ def render_recent_figma(
           <button id="figma-project-submit" class="figma-project-btn" type="submit">Add + sync</button>
         </div>
         <div id="figma-project-status" class="figma-project-status subtle">
-          Tracking {configured_total} project ID{'s' if configured_total != 1 else ''} · last sync { _esc(sync_text) }
+          Tracking {configured_total} project ID{'s' if configured_total != 1 else ''} · last sync {sync_html}
         </div>
         <div class="figma-key-list">{chips}</div>
       </form>
@@ -1215,7 +1235,9 @@ def render_recent_figma(
     for row in rows:
         author = _normalize_html_text(row.get("user_handle") or "") or _normalize_html_text(row.get("user_id") or "") or "Figma user"
         message = _truncate(_normalize_html_text(row.get("message") or ""), 220) or "(empty comment)"
-        when = _ago(row.get("created_at") or row.get("synced_at"), now=now)
+        stamp_value = row.get("created_at") or row.get("synced_at")
+        when = format_timestamp(stamp_value, relative=True, tz=tz) or "—"
+        when_abs = format_timestamp(stamp_value, tz=tz)
         resolved = bool(row.get("resolved_at"))
         resolved_badge = '<span class="figma-badge resolved">resolved</span>' if resolved else ""
         file_key = _normalize_html_text(row.get("file_key") or "")
@@ -1228,12 +1250,12 @@ def render_recent_figma(
               <span class="figma-row-dot">·</span>
               <span class="figma-row-file" title="{_esc(file_key)}">{_esc(file_key)}</span>
               <span class="figma-row-dot">·</span>
-              <span class="figma-row-when">{_esc(when)}</span>
+              <span class="figma-row-when timestamp-block">{_esc(when)}</span>
               {f'<span class="figma-row-dot">·</span>{resolved_badge}' if resolved_badge else ''}
             </div>
           </div>
           <div class="figma-row-side">
-            <div class="figma-row-time">{_esc(_format_dt_short(row.get("created_at") or row.get("synced_at"), tz=tz))}</div>
+            <div class="figma-row-time timestamp-block">{_esc(when_abs)}</div>
           </div>
         </li>
         """)
@@ -1279,13 +1301,16 @@ def build_nav_data(
     """
     cal_items = []
     for ev in cal_rows:
-        when = _format_dt_short(ev.get("start_time"), tz=tz)
+        when = _timestamp_html(ev.get("start_time"), tz=tz)
         loc = _esc(ev.get("location") or "")
         title = _esc(ev.get("summary") or "event")
+        meta = when
+        if loc:
+            meta = f"{meta}{' · ' if meta else ''}{loc}"
         cal_items.append(f"""
           <li class="side-row">
             <div class="side-row-title">{title}</div>
-            <div class="side-row-meta">{_esc(when)}{(" · " + loc) if loc else ""}</div>
+            <div class="side-row-meta">{meta}</div>
           </li>
         """)
     if not cal_items:
@@ -1309,14 +1334,14 @@ def build_nav_data(
                 age_days = int(r.get("ageDays") or 0)
                 assignee = r.get("assigneeName", "")
                 permalink = r.get("permalink", "")
-                due_str  = _format_dt_short(r.get("shouldPostOn"), tz=tz) if r.get("shouldPostOn") else ""
+                due_str = _timestamp_html(r.get("shouldPostOn"), tz=tz) if r.get("shouldPostOn") else ""
 
                 age_part  = f" ({age_days}d old)" if age_days else ""
                 title_txt = f"{label}.) {summary}{age_part}" if label else f"{summary}{age_part}"
-                meta_bits = [b for b in [due_str, assignee] if b]
+                meta_bits = [b for b in [due_str, _esc(assignee)] if b]
                 body = (
                     f"<div class='side-row-title'>{_esc(title_txt)}</div>"
-                    f"<div class='side-row-meta'>{_esc(' · '.join(meta_bits))}</div>"
+                    f"<div class='side-row-meta'>{' · '.join(meta_bits)}</div>"
                 )
                 if permalink:
                     sleuth_items.append(
@@ -1332,13 +1357,13 @@ def build_nav_data(
         for s in sleuth_rows:
             msg = compact_sleuth_reminder(s.get("reminder_message_text") or "")
             msg = _truncate(msg, 90)
-            when = _format_dt_short(s.get("should_post_on"), tz=tz) if s.get("should_post_on") else ""
+            when = _timestamp_html(s.get("should_post_on"), tz=tz) if s.get("should_post_on") else ""
             role = "from me" if s.get("sleuth_role") == "assigned_by_me" else "for me"
-            meta_bits = [b for b in [when, role] if b]
+            meta_bits = [b for b in [when, _esc(role)] if b]
             slack_url = build_slack_url(s)
             body = f"""
                 <div class="side-row-title">{_esc(msg)}</div>
-                <div class="side-row-meta">{_esc(' · '.join(meta_bits))}</div>
+                <div class="side-row-meta">{' · '.join(meta_bits)}</div>
             """
             if slack_url:
                 sleuth_items.append(f"""
@@ -1463,6 +1488,11 @@ PAGE_CSS = """
 .chat-cite-score { font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
 .chat-cite-preview { font-size: 12px; color: var(--fg-muted); margin-top: 4px; line-height: 1.4; }
 .is-hidden-by-filter { display: none !important; }
+.timestamp-block {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+}
 .health-banner {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1772,9 +1802,9 @@ PAGE_CSS = """
 
 /* Activity */
 .activity-list { list-style: none; padding: 0 4px 14px; margin: 0; }
-.activity-row { display: grid; grid-template-columns: 56px 18px auto auto 1fr; column-gap: 8px; row-gap: 2px; padding: 10px 14px; border-top: 1px solid var(--border); align-items: baseline; }
+.activity-row { display: grid; grid-template-columns: minmax(180px, 220px) 18px auto auto 1fr; column-gap: 8px; row-gap: 2px; padding: 10px 14px; border-top: 1px solid var(--border); align-items: baseline; }
 .activity-row:first-child { border-top: 0; }
-.activity-row .ts { color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
+.activity-row .ts { font-size: 12px; line-height: 1.35; }
 .activity-row .glyph { font-size: 13px; }
 .activity-row .label { font-weight: 500; }
 .activity-row a.label { text-decoration: none; }
@@ -2071,7 +2101,7 @@ PAGE_CSS = """
 .open-prs-list { list-style: none; margin: 0; padding: 0; }
 .pr-row {
   display: grid;
-  grid-template-columns: 48px minmax(0,1fr) 80px 90px;
+  grid-template-columns: 48px minmax(0,1fr) 80px minmax(180px, 220px);
   gap: 10px;
   padding: 10px 18px;
   border-top: 1px solid var(--border);
@@ -2086,7 +2116,7 @@ PAGE_CSS = """
 .pr-title a { color: var(--fg); text-decoration: none; }
 .pr-title a:hover { color: var(--accent); text-decoration: underline; }
 .pr-repo { font-size: 11.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pr-meta { font-size: 11.5px; color: var(--fg-dim); text-align: right; }
+.pr-meta { font-size: 11.5px; text-align: right; line-height: 1.35; }
 .pr-badge {
   display: inline-block; padding: 1px 6px; border-radius: 999px;
   font-size: 10.5px; font-weight: 600; border: 1px solid var(--border);
@@ -2177,7 +2207,7 @@ PULSE_JS = r"""
         <li class="goal-undo-item">
           <div class="goal-undo-copy">
             <span class="goal-undo-title">${title}</span>
-            <span class="goal-undo-meta">${ago}</span>
+            <span class="goal-undo-meta timestamp-block">${ago}</span>
           </div>
           <button class="goal-undo-btn" type="button" data-goal-undo-id="${entryId}">Undo</button>
         </li>
@@ -2703,7 +2733,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     recent_completions = load_goal_history(goals_path=goals_path)
     for item in recent_completions:
         completed_at = item.get("completed_at")
-        item["completed_ago"] = _ago(completed_at, now=now) if completed_at else "just now"
+        item["completed_ago"] = format_timestamp(completed_at, relative=True, tz=TZ) or "just now"
     pulled_from = goals_path.name if goals_path.exists() else f"missing: {goals_path}"
     obsidian_url = build_obsidian_url(vault_path, goals_path) if goals_path.exists() else None
 

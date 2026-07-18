@@ -122,3 +122,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH135-P1-TURN-2 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh-135-pulse-dashboard-consistency--gh135-p1/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Touched `src/rebalance/tz_utils.py`, `tests/test_tz_utils.py`, and `scripts/pulse_web.py`.
+- Added `format_timestamp(value, *, relative=False, tz=None)` in `tz_utils.py`, delegating to `format_local()` for the absolute anchor and `format_relative()` only as a suffix.
+- Removed `_format_dt` / `_format_dt_short` from `pulse_web.py` and migrated the listed Today-page timestamp surfaces to `format_timestamp`, with bare relatives replaced by absolute-plus-relative output.
+- Added one shared `.timestamp-block` CSS class and applied it to the web timestamp renderers that now carry the wider absolute strings; widened the activity / PR timestamp columns accordingly.
+- Added `format_timestamp` coverage in `tests/test_tz_utils.py`: absolute shape, relative suffix composition, empty-on-invalid/None, and DST spring-forward regression.
+- Reproduced a real fail path before the final green run: the first targeted `pytest` collection imported `rebalance.tz_utils` from `/Users/noelsaw/Documents/rebalance-OS/src` instead of this worktree, so the new helper was invisible. Fixed that breadcrumb by loading the local `tz_utils.py` explicitly in the changed files/tests that need this turn’s code.
+- Verification:
+  - `pytest tests/test_tz_utils.py tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py tests/test_pulse_server_figma.py tests/test_pulse_server_apple_reminders.py` → 55 passed
+  - `rg -n "_format_dt|_format_dt_short" scripts/pulse_web.py` → zero hits
