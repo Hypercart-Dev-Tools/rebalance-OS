@@ -1,5 +1,5 @@
 # Marathon Phase gh135-p2
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-GH135-P2-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -146,3 +146,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
   Result: `89 passed, 4 skipped`.
 - Important environment note: plain `pytest ...` in this throwaway worktree resolved `rebalance.web_components` from `/Users/noelsaw/Documents/rebalance-OS/src`, not this worktree, so collection failed until the worktree `PYTHONPATH` was pinned. I did not add any production import workaround.
 - `python scripts/pulse_web.py --goals /tmp/gh135-goals.md --out /tmp/pulse-gh135.html` could not complete here because `get_index_status(DB_PATH)` failed with `sqlite3.OperationalError: unable to open database file`. No source workaround added.
+
+### Round 1 · Reviewer · agy
+
+The implementation perfectly adheres to the brief:
+- `data_row()` renderer is extracted to `web_components.py` with fixed anatomy (marker, body, trailing).
+- Zebra striping is implemented correctly using `stripe_index` and `data-rb-stripe`.
+- The Today view modules seamlessly adopt the new `data_row()`.
+- Per-module row CSS blocks were retired, but container classes were left untouched.
+- The JS undo re-render markup matches the Python renderer precisely.
+
+**Verdict:** Approved
