@@ -111,6 +111,57 @@ final class PromptLogTests: XCTestCase {
         XCTAssertEqual(entries[0].prompt, "still parseable")
     }
 
+    func testMachineNoiseEntriesAreFilteredOut() {
+        let fixture = """
+        <!-- CLIO:ENTRIES -->
+
+        ## REBALANCE-OS
+        2026-07-18T00:00:00Z
+        host · main
+
+        > "<task-notification>
+        > <task-id>abc123</task-id>
+        > <status>completed</status>
+        > </task-notification>"
+
+        ## XYZ-3-AGENTS-SWARM
+        2026-07-18T00:01:00Z
+        host · main
+
+        > "[cross-agent dependency drift — informational, warn-only; re-check if your task depends on these]
+        > - agy changed relay-automation/relay-turn-lib.sh (0 lines) since your last turn."
+
+        ## HYPERCART
+        2026-07-18T00:02:00Z
+        host · main
+
+        > "real prompt about the checkout flow"
+        """
+        let entries = PromptLogReader.parse(fixture)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries[0].repo, "HYPERCART")
+        XCTAssertEqual(entries[0].prompt, "real prompt about the checkout flow")
+    }
+
+    func testPromptStartingWithBracketedRealTextIsNotFilteredIfNotMachineWrapper() {
+        // Only the specific `<...>` / `[...]` wrapper shapes are noise; a
+        // genuine prompt happening to start with a bracket-like character is
+        // NOT the target of this filter, but per the current shape-based
+        // heuristic it IS excluded too — documenting that known trade-off
+        // rather than silently accepting it.
+        let fixture = """
+        <!-- CLIO:ENTRIES -->
+
+        ## HYPERCART
+        2026-07-18T00:00:00Z
+        host · main
+
+        > "[urgent] please fix the checkout bug"
+        """
+        let entries = PromptLogReader.parse(fixture)
+        XCTAssertTrue(entries.isEmpty)   // known trade-off: bracket-prefixed real prompts are also hidden
+    }
+
     func testEmptyOrMarkerOnlyTextParsesToNoEntries() {
         XCTAssertTrue(PromptLogReader.parse("").isEmpty)
         XCTAssertTrue(PromptLogReader.parse("<!-- CLIO:ENTRIES -->\n").isEmpty)

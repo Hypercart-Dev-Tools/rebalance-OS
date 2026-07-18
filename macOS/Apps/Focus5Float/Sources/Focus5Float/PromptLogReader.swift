@@ -69,13 +69,24 @@ enum PromptLogReader {
             if prompt.hasPrefix("\"") { prompt.removeFirst() }
             if prompt.hasSuffix("\"") { prompt.removeLast() }
 
-            if !timestamp.isEmpty {
+            if !timestamp.isEmpty, !isMachineNoise(prompt) {
                 entries.append(PromptLogEntry(repo: repo, timestamp: timestamp, machine: machine, branch: branch, prompt: prompt))
             }
             i = j
         }
 
         return entries
+    }
+
+    /// Harness/agent-injected noise — `<task-notification>` dumps, relay's
+    /// bracketed "[cross-agent dependency drift — informational, ...]" notes,
+    /// `<ide_opened_file>`, `<system-reminder>`, etc. — never something typed
+    /// by hand. CLIO's own hook-side `PROMPT_LOG_EXCLUDE` only catches a
+    /// couple of relay-specific phrases; this catches the whole class by
+    /// shape (starts with `<` or `[`) rather than chasing every new wrapper.
+    private static func isMachineNoise(_ prompt: String) -> Bool {
+        let trimmed = prompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.hasPrefix("<") || trimmed.hasPrefix("[")
     }
 
     /// Reads and parses the file at `url`. Returns nil (does not throw) on a
