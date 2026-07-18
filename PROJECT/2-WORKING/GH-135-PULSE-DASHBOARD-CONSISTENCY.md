@@ -1,6 +1,6 @@
 ---
 title: Pulse dashboard consistency refactor — one timestamp helper, one shared row component
-status: Inbox (captured 2026-07-17; reference design complete, not started; queued as MARATHON-2026-07-17 Lane A)
+status: "Working — all 4 phases built, reviewed, and committed on branch marathon/2026-07-17 (2026-07-18). Verified independently: 1415 passed / 15 failed (pre-existing baseline, unrelated files) / 10 skipped; page regenerates; doctor + pdda clean. 2 residual acceptance gaps remain, both OUT of the phases' declared scope — see Acceptance results. Not yet merged; screenshots not yet taken."
 gh_issue: 135
 created: 2026-07-17
 updated: 2026-07-17
@@ -172,6 +172,44 @@ Per-module duplicated row CSS: `.activity-row :1773`, `.email-row :1786`,
 - [ ] Page regenerated through `pulse_web.py` (not hand-edited `web/pulse.html`) and
       verified live in the browser.
 
+## Acceptance results (verified 2026-07-18, independently of the reviewer)
+
+Measured against the **generated** `web/pulse.html`, not the renderer source.
+
+| Criterion | Result |
+|---|---|
+| Zero `_format_dt` / `_format_dt_short` call sites | ✅ 0 |
+| No import shims (`sys.path`, `spec_from_file_location`) | ✅ 0 |
+| Every list renders through the shared row | ✅ 434 `rb-data-row` occurrences, 73 zebra attrs |
+| Timestamps via `format_timestamp` | ✅ 139 absolute timestamps, 139 `timestamp-block` |
+| No `(Nd old)` age strings in titles | ✅ 0 |
+| `pytest tests/` | ✅ 1415 passed / 15 failed / 10 skipped — all 15 in `test_auto_promote.py` + `test_hiqs_pipeline.py`, the documented pre-existing baseline (was 1411 passed / 15 failed) |
+| Page regenerates through `pulse_web.py` | ✅ |
+| `rebalance doctor` / `pdda.sh run` | ✅ clean |
+| No bare relative time anywhere in the DOM | ⚠️ **2 remain** — see below |
+| No org path prefixes anywhere in the DOM | ⚠️ **4 remain** — see below |
+| Before/after screenshots per module | ❌ **not done** |
+
+### Residual gaps — both outside the phases' declared scope
+
+1. **2 bare relatives in the health banner.** `ALERT — last scan 1.3d ago`, with no absolute
+   anchor. Source is `src/rebalance/doctor.py:751-753`, which *builds the string itself*
+   (`f"last scan {age_hours/24:.1f}d ago"`) and hands it to the banner pre-formatted. The
+   dashboard renders it verbatim. `doctor.py` was in **no** phase's artifact list and the
+   anti-goals bar collector/data-layer changes, so no phase could have fixed this. Fixing it
+   means moving the formatting decision out of `doctor.py` and into the render layer —
+   a real change to a non-dashboard module, worth its own scoped pass.
+2. **4 visible org prefixes, none in GitHub activity rows.** The p3 brief scoped
+   org-stripping to `render_recent_activity`, and that is clean. The remainder are: 2 inside
+   **Sleuth reminder body text** (the org path is part of the reminder's own content, i.e.
+   data, not a rendered repo label) and 2 in the **repo-pie chart's** `repo-pie-data` JSON
+   labels (`render_repo_pie:900`, never in scope). The pie legend does display them.
+
+Neither is a regression, and neither is a phase failing its contract — they are places the
+original design prompt's page-wide acceptance language reaches further than the per-module
+briefs it was translated into. Recommend tracking both as a small follow-up rather than
+re-opening this project.
+
 ## Anti-goals
 
 - No data-source, collector, route, or API-handler changes. If a fix appears to need
@@ -216,3 +254,28 @@ Per-module duplicated row CSS: `.activity-row :1773`, `.email-row :1786`,
   Dry-run clean. Confirmed against git history that `tz_utils.py` (GH-130, 2026-07-16) is
   the newest time helper — nothing newer exists — and restated "extend it, do not replace
   it" as a ⛔ invariant at the top of all four briefs. Fired on `marathon/2026-07-17`.
+- **2026-07-18** — **All 4 phases built, reviewed, and committed.** Phase-by-phase:
+  p1 (timestamp helper) built + approved, but shipped `importlib.spec_from_file_location`
+  shims to work around worktree import shadowing; stripped in `c0d8053` and a "no import
+  workarounds" invariant added to the p2–p4 briefs — after which **no further shims
+  appeared**. p2 (shared row) landed clean, 649 lines. p3 (per-module fixes) landed, and the
+  pre-advance gate caught a real conflict the reviewer had approved: the What's Next teaser
+  test asserted top-1 while the design specifies top-3 — test updated in `083dab1` to guard
+  the *cap* (4-row fixture, ranks 1-3 shown, rank 4 excluded) rather than a hard-coded count.
+  p4 (header casing) approved, gate passed, marathon reported complete.
+
+  **Seven harness failures, six environmental**, none about the refactor itself: (1) tick
+  task-name collision on generic phase ids `p1`/`p2` → scoped to `gh135-p*`; (2) codex
+  refuses to run in a `/tmp`-rooted worktree → `TMPDIR` repointed at
+  `~/Documents/rebalance-worktrees`, preserving isolation rather than disabling it;
+  (3) containment violation on an incidental `uv.lock` touch, *after* approval;
+  (4) lane attempt cap re-running an already-finished phase; (5) pre-advance gate defaults
+  to a `validate.sh` this repo lacks → explicit `--pre-advance-cmd`, scoped to the
+  dashboard test modules because the full suite carries 15 pre-existing failures;
+  (6) dangling `depends_on` after removing a completed phase from the runnable plan (twice).
+  Filed as [xyz-3-agents-swarm#236](https://github.com/Claude-AI-Tools-Ventura-County/xyz-3-agents-swarm/issues/236)
+  (covers #2 plus the false `turn-timeout-or-hang` mislabelling); the rest warrant a
+  follow-up comment.
+
+  **The reviewer (agy) approved both defects the gate/verification later caught** — the p1
+  import shim and the p3 test conflict. Treat its approval as necessary, not sufficient.
