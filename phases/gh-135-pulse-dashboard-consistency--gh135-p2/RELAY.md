@@ -17,6 +17,15 @@ Phase 1 added `format_timestamp()` to the **existing** `src/rebalance/tz_utils.p
 (from GH-130). Consume it. Do not add a second time helper, and do not re-implement
 timestamp formatting inside the row component — the row calls `format_timestamp`.
 
+**No import workarounds.** Import normally: `from rebalance.tz_utils import ...`.
+`scripts/pulse_web.py` already imports `_bootstrap`, which puts `src/` on `sys.path`.
+If an import appears to resolve to the wrong copy of a module, that is an artifact of
+running inside a throwaway git worktree — **not** a code defect, and **not** something to
+fix in the source. Do not add `sys.path` manipulation, `importlib.util.spec_from_file_location`,
+or any other loader shim to production code or tests. Phase 1 did exactly this and it had
+to be reverted: it loaded `tz_utils` as a second, separately-named module object, splitting
+module identity. Report the import problem in your relay block instead of coding around it.
+
 ## Context
 
 There is no shared row abstraction today. `src/rebalance/web_components.py` provides a

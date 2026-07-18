@@ -19,6 +19,12 @@ Depends on Phase 1 (`format_timestamp` in `tz_utils.py`) and Phase 2 (shared row
 - **Presentation only** — no data-source, collector, route, or API-handler changes. If a
   fix appears to require one, stop and flag it rather than widening scope.
 - **Never hand-edit `web/pulse.html`** — build artifact, regenerated from `pulse_web.py`.
+- **No import workarounds.** Import normally (`from rebalance.tz_utils import ...`);
+  `scripts/pulse_web.py` already imports `_bootstrap`, which puts `src/` on `sys.path`.
+  An import that seems to resolve to the wrong copy of a module is an artifact of the
+  throwaway git worktree, not a code defect. Do not add `sys.path` manipulation or
+  `importlib.util.spec_from_file_location` shims — Phase 1 did and it was reverted.
+  Report it in your relay block instead.
 
 ## Fixes
 

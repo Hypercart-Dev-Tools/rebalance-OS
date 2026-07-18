@@ -13,22 +13,19 @@
 # Issue:    https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/135
 
 name: gh-135-pulse-dashboard-consistency
+#
+# Phase gh135-p1 (shared timestamp helper) is COMPLETE — built by codex, approved by agy,
+# cleaned up in c0d8053, and committed. Its brief is kept at briefs/p1-timestamp.md for the
+# record. It is deliberately NOT in the runnable phase list: its lane is parked at the
+# attempt cap, and every re-fire re-renders its RELAY.md and tries to rebuild finished work.
+# This plan describes the REMAINING work. See the project doc's progress log for the history.
 phases:
-  - id: gh135-p1
-    name: Shared timestamp helper (extends existing tz_utils)
-    reviewer: agy
-    brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p1-timestamp.md
-    artifact: src/rebalance/tz_utils.py,tests/test_tz_utils.py,scripts/pulse_web.py
-    turn_timeout_s: 1200
-    max_review_rounds: 3
-
   - id: gh135-p2
     name: Shared row component + zebra striping
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p2-datarow.md
     artifact: scripts/pulse_web.py,src/rebalance/web_components.py
     turn_timeout_s: 1500
-    depends_on: gh135-p1
     max_review_rounds: 3
 
   - id: gh135-p3
