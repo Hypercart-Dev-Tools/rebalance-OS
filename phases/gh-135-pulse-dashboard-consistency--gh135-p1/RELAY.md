@@ -2,7 +2,7 @@
 STATUS: Open
 NEXT: codex
 
-<!-- marathon-drive: task=MARATHON-GH135-P1-TURN builder=codex reviewer=agy round-cap=7 -->
+<!-- marathon-drive: task=MARATHON-GH135-P1-TURN-2 builder=codex reviewer=agy round-cap=7 -->
 
 ## Phase Brief
 
@@ -95,6 +95,10 @@ Add to `tests/test_tz_utils.py` (create if absent):
 - [ ] Page regenerated through `pulse_web.py`; `rebalance doctor` and
       `utils/pdda/pdda.sh run` clean.
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/gh-135-pulse-dashboard-consistency--gh135-p1/ESCALATION.md): `turn-timeout-or-hang`. Read it before re-guessing.
 ---
 
 ▶ TAKE YOUR TURN (codex — BUILDER role)
@@ -103,9 +107,9 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 1. Implement the brief by creating/editing the artifact file(s): src/rebalance/tz_utils.py,tests/test_tz_utils.py,scripts/pulse_web.py
 2. Append a build block to this relay file: `### Round N · Builder · codex` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-GH135-P1-TURN --agent codex --paths "phases/gh-135-pulse-dashboard-consistency--gh135-p1/RELAY.md,src/rebalance/tz_utils.py,tests/test_tz_utils.py,scripts/pulse_web.py"
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-GH135-P1-TURN --agent codex
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH135-P1-TURN --agent codex --to agy
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-GH135-P1-TURN-2 --agent codex --paths "phases/gh-135-pulse-dashboard-consistency--gh135-p1/RELAY.md,src/rebalance/tz_utils.py,tests/test_tz_utils.py,scripts/pulse_web.py"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-GH135-P1-TURN-2 --agent codex
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH135-P1-TURN-2 --agent codex --to agy
 4. Edit ONLY these paths: phases/gh-135-pulse-dashboard-consistency--gh135-p1/RELAY.md and src/rebalance/tz_utils.py,tests/test_tz_utils.py,scripts/pulse_web.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
 ---
@@ -114,7 +118,7 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/tz_utils.py,tests/test_tz_utils.py,scripts/pulse_web.py.
 1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH135-P1-TURN --agent agy --to codex
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH135-P1-TURN --agent agy
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH135-P1-TURN-2 --agent agy --to codex
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH135-P1-TURN-2 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh-135-pulse-dashboard-consistency--gh135-p1/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
