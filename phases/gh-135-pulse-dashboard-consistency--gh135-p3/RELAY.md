@@ -114,3 +114,16 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH135-P3-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh-135-pulse-dashboard-consistency--gh135-p3/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+- Files touched: `scripts/pulse_web.py` and this relay file only.
+- Sidebar reminders: removed age text from titles, moved age into a structured chip on the meta line, and normalized `A.)`-style labels into single-character marker badges.
+- Recent GitHub activity: replaced glyph markers with shared `badge_html(...)` type pills, stripped org prefixes from visible repo names, and kept the full repo path on hover via `title`.
+- Recent Figma comments: sorted newest-first in render, changed row anatomy to author / timestamp / comment / file link, and stopped rendering raw file keys in the row body.
+- What’s Next: now renders up to 3 rows, moves the ranked count into the open link, and adjusts the rank marker alignment through the shared row layout.
+- Goals / Recently Completed / header: aligned all three goal columns onto the same row treatment, removed the extra column dividers, converted the undo tray to shared rows + `button_link`, and switched the progress bar math to `done / (done + in_progress)` while dropping the redundant percent label. Updated the client-side undo tray renderer and in-page progress-bar update path to match.
+- Verification:
+  - `python -m py_compile scripts/pulse_web.py` ✅
+  - `pytest tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py tests/test_pulse_server_figma.py tests/test_pulse_server_apple_reminders.py -q` → 21 passed, 1 failed.
+  - Remaining failure is `tests/test_pulse_web_worknext.py::test_teaser_shows_top_item_count_link_and_automation`, which still asserts the old “top item only” teaser. The phase brief for GH-135 P3 explicitly changes that module to show the top 3 ranked items.
+  - I did not run `pytest tests/`, `rebalance doctor`, `utils/pdda/pdda.sh run`, or regenerate screenshots because the relay instructions restrict verification to the specific changed-file tests and forbid the full gate suite in-turn.

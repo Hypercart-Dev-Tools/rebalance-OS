@@ -73,11 +73,10 @@ from rebalance.ingest.index_ops import COLLECTORS, get_index_status  # noqa: E40
 from rebalance.ingest import next_actions  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 from rebalance.web_components import (  # noqa: E402
-    ITEM_SUB_GLYPHS,
-    KIND_GLYPHS,
     RB_BUTTON_CSS,
     RB_CHROME_CSS,
     RB_TOKENS_CSS,
+    badge_html,
     button_link,
     data_row,
     render_shell,
@@ -312,18 +311,6 @@ def fetch_health_filed_count(days: int = 30) -> int:
 # ---------------------------------------------------------------------------
 # Render helpers
 # ---------------------------------------------------------------------------
-
-KIND_GLYPH = {
-    "commit":  (KIND_GLYPHS["commit"],  "ok"),
-    "item":    (KIND_GLYPHS["item"],    "info"),
-    "comment": (KIND_GLYPHS["comment"], "muted"),
-}
-
-ITEM_SUB_GLYPH = {
-    "issue":        (ITEM_SUB_GLYPHS["issue"],        "warn"),
-    "pull_request": (ITEM_SUB_GLYPHS["pull_request"], "info"),
-}
-
 
 def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
@@ -561,6 +548,45 @@ def _join_row_bits(bits: Iterable[str]) -> str:
     return f' <span class="rb-data-row-sep">·</span> '.join(parts)
 
 
+def _reminder_marker_text(label: str | None) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", label or "").upper()
+    return cleaned[:1] or "R"
+
+
+def _age_chip(days: int) -> str:
+    if days <= 0:
+        return ""
+    suffix = "day" if days == 1 else "days"
+    return f'<span class="side-age-chip">{days} {suffix} old</span>'
+
+
+def _repo_short_name(repo: str) -> str:
+    if "/" not in repo:
+        return repo
+    return repo.split("/", 1)[1]
+
+
+def _activity_kind_meta(kind: str, sub: str) -> tuple[str, str]:
+    if kind == "commit":
+        return ("ok", "Commit")
+    if kind == "item" and sub == "pull_request":
+        return ("info", "PR")
+    if kind == "item":
+        return ("warn", "Issue")
+    return ("danger", "Comment")
+
+
+def _figma_file_link(file_key: str) -> str:
+    key = _normalize_html_text(file_key)
+    if not key:
+        return ""
+    href = f"https://www.figma.com/design/{urllib.parse.quote(key)}"
+    return (
+        f'<a class="figma-row-link" href="{_esc(href)}" target="_blank" '
+        'rel="noopener noreferrer" title="Open Figma file">Open file</a>'
+    )
+
+
 def _badge_marker(label: str, *, tone: str = "") -> str:
     cls = f"rb-data-marker-badge {tone}".strip()
     return f'<span class="{cls}">{_esc(label)}</span>'
@@ -586,9 +612,15 @@ def _render_recent_completion_row(item: dict[str, Any], *, stripe_index: int = 0
         body_class="goal-undo-copy",
         title_class="goal-undo-title",
         stripe_index=stripe_index,
-        trailing_html=(
-            f'<button class="goal-undo-btn" type="button" '
-            f'data-goal-undo-id="{_esc(item_id)}">Undo</button>'
+        trailing_html=button_link(
+            "Undo",
+            "#",
+            arrow=False,
+            cls="goal-undo-btn",
+            attrs=(
+                f'data-goal-undo-id="{_esc(item_id)}" '
+                'role="button"'
+            ),
         ),
     )
 
@@ -680,9 +712,10 @@ def render_hero(
     secondary_todos = secondary_todos or []
     apple_reminders = apple_reminders or []
     visible_goals = [*goals, *secondary_todos]
-    done = sum(1 for g in visible_goals if g["done"])
-    in_progress = len(visible_goals) - done
-    pct = int((done / len(visible_goals)) * 100) if visible_goals else 0
+    done = len(recent_completions)
+    in_progress = len(visible_goals)
+    total = done + in_progress
+    pct = int((done / total) * 100) if total else 0
     primary_rows = _render_goal_rows(
         goals,
         empty_html='<li class="goal empty"><div class="goal-body"><div class="goal-title">No goals found</div><div class="goal-desc">Add checklist items to your Goals file.</div></div></li>',
@@ -727,7 +760,6 @@ def render_hero(
           <div><b>{done}</b> done</div>
           <div><b>{in_progress}</b> in progress</div>
           <div class="bar"><span style="width:{pct}%"></span></div>
-          <div class="pct">{pct}%</div>
         </div>
       </header>
       <div class="hero-goal-board">
@@ -759,10 +791,9 @@ def render_recent_activity(
     for idx, r in enumerate(rows):
         kind = r.get("kind") or "item"
         sub = r.get("sub") or ""
-        glyph, color = KIND_GLYPH.get(kind, ("·", "muted"))
-        if kind == "item" and sub in ITEM_SUB_GLYPH:
-            glyph, color = ITEM_SUB_GLYPH[sub]
+        badge_variant, badge_label = _activity_kind_meta(kind, sub)
         repo = r.get("repo_full_name") or ""
+        repo_short = _repo_short_name(repo)
         num = r.get("num")
         detail = _truncate(r.get("detail") or "", 80)
         who = r.get("who") or ""
@@ -777,21 +808,24 @@ def render_recent_activity(
         html_url = r.get("html_url") or ""
         if html_url:
             label_html = (
-                f'<a class="label {color}" href="{_esc(html_url)}" '
+                f'<a class="label" href="{_esc(html_url)}" '
                 f'target="_blank" rel="noopener noreferrer">{_esc(label)}</a>'
             )
         else:
-            label_html = f'<span class="label {color}">{_esc(label)}</span>'
+            label_html = f'<span class="label">{_esc(label)}</span>'
         meta_html = _join_row_bits(
             [
-                f'<span class="repo">{_esc(repo)}</span>' if repo else "",
+                (
+                    f'<span class="repo" title="{_esc(repo)}">{_esc(repo_short)}</span>'
+                    if repo else ""
+                ),
                 f'<span class="who">{("@" + _esc(who)) if who else ""}</span>' if who else "",
                 f'<span class="detail">{_esc(detail)}</span>' if detail else "",
             ]
         )
         items.append(
             data_row(
-                marker_html=f'<span class="rb-data-marker-glyph {color}">{glyph}</span>',
+                marker_html=badge_html(badge_variant, badge_label),
                 title_html=label_html,
                 meta_html=meta_html,
                 timestamp=r.get("ts"),
@@ -799,6 +833,7 @@ def render_recent_activity(
                 relative=True,
                 fallback_timestamp=ago,
                 row_class="activity-row",
+                marker_class="activity-type-marker",
                 title_class="activity-label",
                 meta_class="activity-meta",
                 stripe_index=idx,
@@ -835,13 +870,18 @@ def render_work_next(
     """Render a SLIM teaser pointing at the dedicated "What's Next" page.
 
     The full ranked list lives on its OWN page — the FastAPI ``/whats-next`` route,
-    served by pulse_server — so this static dashboard shows only a compact pointer
-    (count + automation-ready count + the top item + a link) and does not crowd the
-    main view. PURE: takes PRE-FETCHED rows (each ``RankedAction.as_dict()``) —
-    never fetches. ``person`` labels are LOCAL-DISPLAY-ONLY (local dashboard, never
-    the pushed pulse); all untrusted text is ``_esc``-ed.
+    served by pulse_server — so this static dashboard shows only a compact teaser
+    (up to three rows + summary metadata + link) and does not crowd the main view.
+    PURE: takes PRE-FETCHED rows (each ``RankedAction.as_dict()``) — never fetches.
+    ``person`` labels are LOCAL-DISPLAY-ONLY (local dashboard, never the pushed
+    pulse); all untrusted text is ``_esc``-ed.
     """
-    link = '<a class="wn-open" href="/whats-next">Open What&#39;s Next &rarr;</a>'
+    link = button_link(
+        f"Open What's Next → {len(ranked_rows)} ranked",
+        "/whats-next",
+        arrow=False,
+        cls="wn-open",
+    ) if ranked_rows else button_link("Open What's Next", "/whats-next", arrow=False, cls="wn-open")
     if not ranked_rows:
         return f"""
     <section class="card work-next work-next-teaser">
@@ -850,51 +890,54 @@ def render_work_next(
     </section>
     """
 
-    total = len(ranked_rows)
     auto = sum(1 for r in ranked_rows if r.get("automation"))
-    auto_html = (
-        f' · <span class="wn-auto">&#9881; {auto} automation-ready</span>'
-        if auto else ""
-    )
     computed_html = _timestamp_html(computed_at, tz=TZ, relative=True) if computed_at else ""
     when_html = f"computed {computed_html}" if computed_html else "not computed yet"
-    blend_html = " · team-blended" if blended else ""
-
-    top = ranked_rows[0]
-    top_title = _esc(top.get("title") or "")
-    top_person = top.get("person")
-    person_html = (
-        f'<span class="wn-person">{_esc(top_person)}</span>' if top_person else ""
-    )
-    top_auto = (
-        '<span class="wn-auto">&#9881;</span>' if top.get("automation") else ""
-    )
-    meta_html = _join_row_bits(
-        [
-            f'<span class="wn-source">{_esc((top.get("source") or "").upper())}</span>' if top.get("source") else "",
-            f'<span class="wn-project">{_esc(top.get("project") or "")}</span>' if top.get("project") else "",
-        ]
-    )
-    top_row = data_row(
-        marker_html='<span class="rb-data-marker-rank">1</span>',
-        title_html=f'{top_title} {person_html} {top_auto}'.strip(),
-        meta_html=meta_html,
-        timestamp=computed_at,
-        tz=TZ,
-        relative=True,
-        row_class="wn-row",
-        title_class="wn-title",
-        meta_class="wn-meta",
-        stripe_index=0,
-    )
+    meta_bits = []
+    if auto:
+        meta_bits.append(f'<span class="wn-auto">&#9881; {auto} automation-ready</span>')
+    if blended:
+        meta_bits.append("team-blended")
+    meta_bits.append(when_html)
+    teaser_rows = []
+    for idx, top in enumerate(ranked_rows[:3]):
+        top_title = _esc(top.get("title") or "")
+        top_person = top.get("person")
+        person_html = (
+            f'<span class="wn-person">{_esc(top_person)}</span>' if top_person else ""
+        )
+        top_auto = (
+            '<span class="wn-auto" aria-label="automation ready">&#9881;</span>'
+            if top.get("automation") else ""
+        )
+        meta_html = _join_row_bits(
+            [
+                f'<span class="wn-source">{_esc((top.get("source") or "").upper())}</span>' if top.get("source") else "",
+                f'<span class="wn-project">{_esc(top.get("project") or "")}</span>' if top.get("project") else "",
+            ]
+        )
+        teaser_rows.append(
+            data_row(
+                marker_html=f'<span class="rb-data-marker-rank">{idx + 1}</span>',
+                title_html=f'{top_title} {person_html} {top_auto}'.strip(),
+                meta_html=meta_html,
+                timestamp=computed_at,
+                tz=TZ,
+                relative=True,
+                row_class="wn-row",
+                title_class="wn-title",
+                meta_class="wn-meta",
+                stripe_index=idx,
+            )
+        )
 
     return f"""
     <section class="card work-next work-next-teaser">
       <header class="card-head">
         <h2>What&#39;s next</h2>
-        <span class="card-head-meta">{total} ranked{auto_html}{blend_html} · {when_html}</span>
+        <span class="card-head-meta">{' · '.join(meta_bits)}</span>
       </header>
-      <ol class="wn-list rb-data-list">{top_row}</ol>
+      <ol class="wn-list rb-data-list">{''.join(teaser_rows)}</ol>
       <div class="wn-teaser-foot">{link}</div>
     </section>
     """
@@ -1283,34 +1326,45 @@ def render_recent_figma(
     </section>
     """
 
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: _parse_iso(row.get("created_at") or row.get("synced_at"))
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+
     items = []
-    for idx, row in enumerate(rows):
+    for idx, row in enumerate(sorted_rows):
         author = _normalize_html_text(row.get("user_handle") or "") or _normalize_html_text(row.get("user_id") or "") or "Figma user"
         message = _truncate(_normalize_html_text(row.get("message") or ""), 220) or "(empty comment)"
         stamp_value = row.get("created_at") or row.get("synced_at")
-        when = format_timestamp(stamp_value, relative=True, tz=tz) or "—"
-        when_abs = format_timestamp(stamp_value, tz=tz)
         resolved = bool(row.get("resolved_at"))
         resolved_badge = '<span class="figma-badge resolved">resolved</span>' if resolved else ""
         file_key = _normalize_html_text(row.get("file_key") or "")
-        meta_html = _join_row_bits(
+        file_link = _figma_file_link(file_key)
+        title_html = _join_row_bits(
             [
                 f'<span class="figma-row-author">{_esc(author)}</span>',
-                f'<span class="figma-row-file" title="{_esc(file_key)}">{_esc(file_key)}</span>' if file_key else "",
                 resolved_badge,
+            ]
+        )
+        meta_html = "".join(
+            [
+                f'<div class="figma-row-body">{_linkify(message)}</div>',
+                f'<div class="figma-row-footer">{file_link}</div>' if file_link else "",
             ]
         )
         items.append(
             data_row(
                 marker_html=_avatar_marker(author),
-                title_html=_esc(message),
+                title_html=title_html,
                 meta_html=meta_html,
                 timestamp=stamp_value,
                 tz=tz,
                 relative=True,
-                fallback_timestamp=when or when_abs,
+                fallback_timestamp="—",
                 row_class="figma-row",
-                title_class="figma-row-message",
+                title_class="figma-row-head",
                 meta_class="figma-row-meta",
                 stripe_index=idx,
             )
@@ -1394,13 +1448,16 @@ def build_nav_data(
                 age_days = int(r.get("ageDays") or 0)
                 assignee = r.get("assigneeName", "")
                 permalink = r.get("permalink", "")
-                age_part  = f" ({age_days}d old)" if age_days else ""
-                title_txt = f"{summary}{age_part}"
-                meta_html = _join_row_bits([_esc(assignee)] if assignee else [])
+                meta_html = _join_row_bits(
+                    [
+                        _esc(assignee) if assignee else "",
+                        _age_chip(age_days),
+                    ]
+                )
                 sleuth_items.append(
                     data_row(
-                        marker_html=_badge_marker(str(label or "R")[:2]),
-                        title_html=_esc(title_txt),
+                        marker_html=_badge_marker(_reminder_marker_text(str(label))),
+                        title_html=_esc(summary),
                         meta_html=meta_html,
                         timestamp=r.get("shouldPostOn"),
                         tz=tz,
@@ -1703,8 +1760,26 @@ PAGE_CSS = """
 .card-foot { padding: 10px 18px 14px; border-top: 1px solid var(--border); }
 
 /* What should we work on next */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+.badge-ok      { background: rgba(47,116,55,.12); color: var(--ok); }
+.badge-warn    { background: rgba(166,95,0,.12); color: var(--warn); }
+.badge-danger  { background: rgba(192,57,43,.12); color: var(--danger); }
+.badge-info    { background: rgba(29,111,168,.12); color: var(--info); }
+.badge-neutral { background: rgba(138,133,124,.14); color: var(--fg-muted); }
+
 .work-next .wn-list { margin: 0; padding: 4px 0 10px; }
 .wn-row[data-rb-row] { padding: 10px 18px; }
+.wn-row .rb-data-row-marker { padding-top: 0; align-items: center; }
 .wn-row .rb-data-row-trailing { min-width: 72px; }
 .wn-title { color: var(--fg); font-weight: 600; }
 .wn-person {
@@ -1730,11 +1805,6 @@ PAGE_CSS = """
 
 .hero-goal-board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 1fr) minmax(240px, 1fr); gap: 14px; align-items: stretch; }
 .hero-goal-column { min-width: 0; }
-.hero-goal-column-secondary,
-.hero-goal-column-reminders {
-  border-left: 1px solid var(--border);
-  padding-left: 14px;
-}
 .goal-readonly { padding-left: 6px; }
 .hero-column-label {
   font-size: 11px;
@@ -1758,11 +1828,11 @@ PAGE_CSS = """
 .goal-title a:hover, .goal-desc a:hover { text-decoration: underline; }
 .goal.done .goal-title { text-decoration: line-through; color: var(--fg-dim); }
 .goal.done .goal-desc { color: var(--fg-dim); }
-.goal-compact[data-rb-row] { padding: 8px 6px; gap: 10px; }
-.goal-compact .check { width: 16px; height: 16px; border-radius: 4px; }
-.goal-compact .check.checked::after { left: 4px; top: 1px; width: 4px; height: 8px; }
-.goal-compact .goal-title { font-size: 13px; line-height: 1.3; }
-.goal-compact .goal-desc { font-size: 11.5px; }
+.goal-compact[data-rb-row] { padding: 12px 6px; gap: 14px; }
+.goal-compact .check { width: 18px; height: 18px; border-radius: 5px; }
+.goal-compact .check.checked::after { left: 4px; top: 1px; width: 5px; height: 9px; }
+.goal-compact .goal-title { font-size: 13px; line-height: 1.35; }
+.goal-compact .goal-desc { font-size: 12.5px; }
 .goal-readonly .rb-data-row-marker { padding-top: 0; }
 .goal-readonly .rb-data-marker-badge { width: 18px; height: 18px; font-size: 10px; }
 .goal-undo-tray {
@@ -1782,48 +1852,40 @@ PAGE_CSS = """
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 .goal-undo-item {
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: rgba(0,0,0,.015);
+  padding: 10px 6px;
 }
 .goal-undo-item .rb-data-row-trailing { min-width: 74px; gap: 8px; }
 .goal-undo-title {
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--fg);
+  color: var(--fg-dim);
+  text-decoration: line-through;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.goal-undo-meta {
-  font-size: 11.5px;
-  color: var(--fg-dim);
-}
 .goal-undo-btn {
-  font: inherit;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: #fff;
   color: var(--accent);
   padding: 5px 11px;
-  cursor: pointer;
   font-size: 11.5px;
   font-weight: 600;
   flex-shrink: 0;
+  text-decoration: none;
 }
 .goal-undo-btn:hover {
   border-color: rgba(31,111,235,.28);
   background: rgba(31,111,235,.07);
+  text-decoration: none;
 }
-.goal-undo-btn:disabled {
+.goal-undo-btn[aria-disabled="true"] {
   opacity: .55;
   cursor: progress;
+  pointer-events: none;
 }
 
 /* Two-column body */
@@ -1842,6 +1904,12 @@ PAGE_CSS = """
 /* Activity */
 .activity-list { list-style: none; padding: 0 4px 14px; margin: 0; }
 .activity-row[data-rb-row] { padding: 10px 14px; }
+.activity-row .rb-data-row-marker.activity-type-marker {
+  width: auto;
+  min-width: 56px;
+  justify-content: flex-start;
+  padding-top: 0;
+}
 .activity-row .rb-data-row-trailing { min-width: 72px; }
 .activity-row .label { font-weight: 500; }
 .activity-row a.label { text-decoration: none; }
@@ -1967,18 +2035,21 @@ PAGE_CSS = """
 }
 .figma-row[data-rb-row] { gap: 14px; padding: 12px 18px; }
 .figma-row .rb-data-row-trailing { min-width: 72px; }
-.figma-row-message {
+.figma-row-head {
+  color: var(--fg-muted);
+  font-size: 11.75px;
+  font-weight: 600;
+}
+.figma-row-meta { color: var(--fg-dim); font-size: 11.5px; }
+.figma-row-body {
   color: var(--fg);
   font-size: 12.75px;
   line-height: 1.45;
-  margin-bottom: 4px;
 }
-.figma-row-meta { color: var(--fg-dim); font-size: 11.5px; }
+.figma-row-footer { margin-top: 6px; }
 .figma-row-author { color: var(--fg-muted); font-weight: 600; }
-.figma-row-file {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: var(--fg-dim);
-}
+.figma-row-link { color: var(--accent); font-size: 11.5px; text-decoration: none; }
+.figma-row-link:hover { text-decoration: underline; }
 .figma-badge {
   display: inline-flex;
   align-items: center;
@@ -1993,6 +2064,17 @@ PAGE_CSS = """
   color: var(--ok);
   border-color: rgba(47,116,55,.22);
   background: rgba(47,116,55,.08);
+}
+.side-age-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(138,133,124,.24);
+  background: rgba(138,133,124,.08);
+  color: var(--fg-dim);
+  font-size: 10.5px;
+  font-weight: 600;
 }
 .figma-config-form {
   display: flex;
@@ -2219,7 +2301,7 @@ PULSE_JS = r"""
           </div>
           <div class="rb-data-row-trailing">
             <div class="rb-data-row-time timestamp-block">${ago}</div>
-            <button class="goal-undo-btn" type="button" data-goal-undo-id="${entryId}">Undo</button>
+            <a class="rb-btn goal-undo-btn" href="#" data-goal-undo-id="${entryId}" role="button">Undo</a>
           </div>
         </li>
       `;
@@ -2356,6 +2438,9 @@ PULSE_JS = r"""
     if (!title) return;
     li.classList.add('is-busy');
     const check = li.querySelector('.check');
+    const doneEl = document.querySelector('.hero-stats div:nth-child(1) b');
+    const ipEl = document.querySelector('.hero-stats div:nth-child(2) b');
+    const barEl = document.querySelector('.hero-stats .bar span');
     try {
       const res = await fetch('/api/goals/complete', {
         method: 'POST',
@@ -2370,12 +2455,20 @@ PULSE_JS = r"""
         li.classList.add('is-completing');
         setTimeout(() => { li.style.display = 'none'; }, 220);
       }, 140);
-      // Decrement the "in progress" counter (the "done" counter excludes
-      // completed items in the server render too, so leave it at 0).
-      const ipEl = document.querySelector('.hero-stats div:nth-child(2) b');
       if (ipEl) {
         const n = parseInt(ipEl.textContent || '0', 10);
         if (!Number.isNaN(n) && n > 0) ipEl.textContent = String(n - 1);
+      }
+      if (doneEl) {
+        const n = parseInt(doneEl.textContent || '0', 10);
+        if (!Number.isNaN(n)) doneEl.textContent = String(n + 1);
+      }
+      if (barEl && doneEl && ipEl) {
+        const doneCount = parseInt(doneEl.textContent || '0', 10);
+        const progressCount = parseInt(ipEl.textContent || '0', 10);
+        const total = doneCount + progressCount;
+        const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+        barEl.style.width = `${pct}%`;
       }
       renderUndoTray(data.history || []);
     } catch (err) {
@@ -2388,7 +2481,7 @@ PULSE_JS = r"""
   const undoGoal = async (button) => {
     const undoId = button?.dataset?.goalUndoId || '';
     if (!undoId) return;
-    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
     try {
       const res = await fetch('/api/goals/undo', {
         method: 'POST',
@@ -2399,7 +2492,7 @@ PULSE_JS = r"""
       location.reload();
     } catch (err) {
       console.warn('goal undo failed:', err);
-      button.disabled = false;
+      button.removeAttribute('aria-disabled');
       alert('Could not undo completion — check the server log.');
     }
   };
@@ -2408,7 +2501,11 @@ PULSE_JS = r"""
     document.querySelectorAll('.goal-undo-btn[data-goal-undo-id]').forEach((button) => {
       if (button.dataset.undoBound === '1') return;
       button.dataset.undoBound = '1';
-      button.addEventListener('click', () => undoGoal(button));
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (button.getAttribute('aria-disabled') === 'true') return;
+        undoGoal(button);
+      });
     });
   }
 
