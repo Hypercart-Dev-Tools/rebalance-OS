@@ -348,6 +348,28 @@ h2 { font-size: 14px; color: var(--fg); }
 .side-list.rb-data-list > .side-row[data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: rgba(0,0,0,.03); }
 .side-list .rb-data-row-link { padding: 7px 8px; border-radius: 6px; }
 
+/* The 3-column row anatomy (marker | body | right-aligned time) assumes a WIDE
+   card. The sidebar is narrow, and `.rb-data-row-time` is nowrap — an absolute
+   timestamp like "2026-07-18 12:00 PM" claims ~135px of a ~250px content box,
+   starving `minmax(0, 1fr)` down to almost nothing. Symptoms: titles clipped to
+   a few characters ("Walki"), meta wrapping one word per line, the age chip
+   balling up into a circle, and the marker visually colliding with the time.
+   So in the sidebar only, STACK the row: marker + title on the first line,
+   meta and timestamp beneath it, both left-aligned. */
+.side-list.rb-data-list > .side-row[data-rb-row],
+.side-list .rb-data-row-link {
+  grid-template-columns: 28px minmax(0, 1fr);
+  column-gap: 10px;
+  row-gap: 3px;
+}
+.side-list .rb-data-row-trailing {
+  grid-column: 2;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 2px;
+}
+.side-list .rb-data-row-time { text-align: left; }
+
 /* Streams: compact connector list */
 .streams { list-style: none; margin: 0; padding: 0; }
 .streams li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }

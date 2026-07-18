@@ -1424,7 +1424,15 @@ def build_nav_data(
     """
     cal_items = []
     for idx, ev in enumerate(cal_rows):
-        loc = _esc(ev.get("location") or "")
+        # Calendar locations are frequently full postal addresses ("Philz Coffee,
+        # 33 N Moorpark Rd Unit E, Thousand Oaks, CA 91360, USA"). Untruncated,
+        # one row swamps the whole sidebar; the full value stays in the title attr.
+        loc_raw = ev.get("location") or ""
+        loc = (
+            f'<span title="{_esc(loc_raw)}">{_esc(_truncate(loc_raw, 48))}</span>'
+            if loc_raw
+            else ""
+        )
         title = _esc(ev.get("summary") or "event")
         cal_items.append(
             data_row(
