@@ -29,14 +29,6 @@ name: gh-135-pulse-dashboard-consistency
 # so a full-suite gate would fail on unrelated debt and block every phase.
 phases:
 
-  - id: gh135-p3
-    name: Per-module presentation fixes
-    reviewer: agy
-    brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p3-modules.md
-    artifact: scripts/pulse_web.py
-    turn_timeout_s: 1800
-    max_review_rounds: 3
-
   - id: gh135-p4
     name: Section header casing system
     reviewer: agy
