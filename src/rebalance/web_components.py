@@ -1,13 +1,15 @@
 """Shared HTML building blocks for the rebalance-OS web surfaces.
 
-Kept dependency-light (stdlib only) so both the FastAPI app (:mod:`rebalance.web`)
-and the static pulse mirror (``scripts/pulse_web.py``) can render identical
-chrome from one place. Import the helper and include :data:`RB_BUTTON_CSS` once
-inside each page's ``<style>``.
+Kept dependency-light so both the FastAPI app (:mod:`rebalance.web`) and the
+static pulse mirror (``scripts/pulse_web.py``) can render identical chrome from
+one place. Import the helper and include :data:`RB_BUTTON_CSS` once inside each
+page's ``<style>``.
 """
 from __future__ import annotations
 
 import html
+
+from rebalance.tz_utils import format_timestamp
 
 # The one design-token set every web page shares — the single source of truth for
 # the palette. Lifted verbatim from the pulse dashboard (the only fully-tokenized
@@ -94,6 +96,87 @@ def button_link(
     )
 
 
+def data_row(
+    *,
+    marker_html: str,
+    title_html: str,
+    meta_html: str = "",
+    timestamp: object | None = None,
+    tz: object | None = None,
+    relative: bool = False,
+    fallback_timestamp: str = "",
+    row_class: str = "",
+    body_class: str = "",
+    marker_class: str = "",
+    title_class: str = "",
+    meta_class: str = "",
+    trailing_class: str = "",
+    time_class: str = "",
+    stripe_index: int | None = None,
+    attrs: str = "",
+    href: str | None = None,
+    link_title: str | None = None,
+    external: bool = False,
+    link_class: str = "",
+    trailing_html: str = "",
+) -> str:
+    """Render the shared dashboard/sidebar row primitive.
+
+    Caller-supplied ``*_html`` fragments are inserted verbatim and must already
+    be escaped/sanitised. When ``timestamp`` is provided this helper formats it
+    through :func:`rebalance.tz_utils.format_timestamp`, so every adopting row
+    shares one timestamp contract.
+    """
+
+    def _classes(*parts: str) -> str:
+        return " ".join(part for part in parts if part)
+
+    ts_text = ""
+    if timestamp is not None:
+        ts_text = format_timestamp(timestamp, relative=relative, tz=tz) or fallback_timestamp
+
+    title_cls = _classes("rb-data-row-title", title_class)
+    meta_cls = _classes("rb-data-row-meta", meta_class)
+    marker_cls = _classes("rb-data-row-marker", marker_class)
+    body_cls = _classes("rb-data-row-body", body_class)
+    trailing_cls = _classes("rb-data-row-trailing", trailing_class)
+    time_cls = _classes("rb-data-row-time", "timestamp-block", time_class)
+
+    meta_block = f'<div class="{html.escape(meta_cls, quote=True)}">{meta_html}</div>' if meta_html else ""
+    time_block = f'<div class="{html.escape(time_cls, quote=True)}">{html.escape(ts_text)}</div>' if ts_text else ""
+    trailing_bits = "".join(bit for bit in (time_block, trailing_html) if bit)
+    trailing_block = (
+        f'<div class="{html.escape(trailing_cls, quote=True)}">{trailing_bits}</div>'
+        if trailing_bits else ""
+    )
+    content = (
+        f'<span class="{html.escape(marker_cls, quote=True)}">{marker_html}</span>'
+        f'<div class="{html.escape(body_cls, quote=True)}">'
+        f'<div class="{html.escape(title_cls, quote=True)}">{title_html}</div>'
+        f"{meta_block}</div>{trailing_block}"
+    )
+
+    if href:
+        target = ' target="_blank" rel="noopener noreferrer"' if external else ""
+        title_attr = f' title="{html.escape(link_title, quote=True)}"' if link_title else ""
+        link_cls = _classes("rb-data-row-link", link_class)
+        content = (
+            f'<a class="{html.escape(link_cls, quote=True)}" '
+            f'href="{html.escape(href, quote=True)}"{target}{title_attr}>{content}</a>'
+        )
+
+    klass = row_class or "rb-data-row-item"
+    extra_attrs = f" {attrs}" if attrs else ""
+    stripe_attr = ""
+    if stripe_index is not None:
+        stripe = "even" if stripe_index % 2 == 1 else "odd"
+        stripe_attr = f' data-rb-stripe="{stripe}"'
+    return (
+        f'<li class="{html.escape(klass, quote=True)}" data-rb-row="1"{stripe_attr}{extra_attrs}>'
+        f"{content}</li>"
+    )
+
+
 # The reusable chrome shared by every full-page surface: the global base resets
 # (box-sizing / body font / headings) + the sidebar/nav/footer shell that frames
 # the page. Lifted from the pulse dashboard's <style> so the static mirror and the
@@ -160,6 +243,110 @@ h2 { font-size: 14px; color: var(--fg); }
 .side-row-title { font-size: 12.5px; line-height: 1.35; color: var(--fg); font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .side-row-meta { font-size: 11.5px; color: var(--fg-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .side-row.empty .side-row-meta { font-style: italic; }
+
+/* Shared data rows */
+.rb-data-list { list-style: none; margin: 0; padding: 0; }
+.rb-data-list > [data-rb-row] {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+.rb-data-list > [data-rb-row]:first-child { border-top: 0; }
+.rb-data-list > [data-rb-row][data-rb-stripe="even"],
+.rb-data-list > [data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: rgba(29,32,36,.03); }
+.rb-data-list > [data-rb-row].has-link { padding: 0; }
+.rb-data-row-link {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  width: 100%;
+  padding: inherit;
+  color: inherit;
+  text-decoration: none;
+}
+.rb-data-row-marker {
+  width: 28px;
+  min-width: 28px;
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 2px;
+}
+.rb-data-row-body { min-width: 0; }
+.rb-data-row-title {
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+.rb-data-row-title a {
+  color: inherit;
+  text-decoration: none;
+}
+.rb-data-row-title a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.rb-data-row-meta {
+  color: var(--fg-muted);
+  font-size: 11.75px;
+  line-height: 1.4;
+  margin-top: 3px;
+}
+.rb-data-row-sep { color: var(--fg-dim); }
+.rb-data-row-trailing {
+  min-width: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 6px;
+}
+.rb-data-row-time { text-align: right; white-space: nowrap; }
+.rb-data-marker-badge,
+.rb-data-marker-rank,
+.rb-data-marker-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--fg-muted);
+}
+.rb-data-marker-rank {
+  border-color: rgba(31,111,235,.18);
+  background: rgba(31,111,235,.08);
+  color: var(--accent);
+}
+.rb-data-marker-avatar {
+  border-color: rgba(29,111,168,.18);
+  background: rgba(29,111,168,.08);
+  color: var(--info);
+}
+.rb-data-marker-glyph {
+  font-size: 14px;
+  line-height: 1;
+}
+.side-list.rb-data-list > .side-row[data-rb-row] {
+  padding: 7px 8px;
+  gap: 10px;
+  border-top: 0;
+  border-radius: 6px;
+}
+.side-list.rb-data-list > .side-row[data-rb-row].has-link { padding: 0; }
+.side-list.rb-data-list > .side-row[data-rb-row][data-rb-stripe="even"],
+.side-list.rb-data-list > .side-row[data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: rgba(0,0,0,.03); }
+.side-list .rb-data-row-link { padding: 7px 8px; border-radius: 6px; }
 
 /* Streams: compact connector list */
 .streams { list-style: none; margin: 0; padding: 0; }
@@ -274,10 +461,10 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
            target="_blank" rel="noopener noreferrer" title="Open Google Calendar">
           <span>Calendar</span><span class="section-link-arrow" aria-hidden="true">↗</span>
         </a>
-        <ul class="side-list">{cal_html}</ul>
+        <ul class="side-list rb-data-list">{cal_html}</ul>
 
         <div class="nav-section-label">Reminders</div>
-        <ul class="side-list">{sleuth_html}</ul>
+        <ul class="side-list rb-data-list">{sleuth_html}</ul>
         {notices_html}
         <div class="nav-section-label">Streams</div>
         <ul class="streams">{''.join(stream_items)}</ul>

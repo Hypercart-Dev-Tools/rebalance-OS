@@ -131,3 +131,18 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH135-P2-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh-135-pulse-dashboard-consistency--gh135-p2/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Touched `src/rebalance/web_components.py` and `scripts/pulse_web.py`.
+- Added shared `data_row(...)` in `web_components.py` plus shared row CSS in `RB_CHROME_CSS`. The helper owns the fixed marker/body/trailing anatomy and calls `format_timestamp(...)` itself.
+- Shared zebra striping now lives in the shared row contract. I used explicit `stripe_index` -> `data-rb-stripe` so mixed lists with non-row children (the Sleuth section headers) still alternate correctly.
+- Swapped the Today-view adopters onto the shared row: goals, next-open todos, Apple reminders, recently completed, recent GitHub activity, recent Figma comments, What’s Next teaser, calendar sidebar rows, and Sleuth reminder rows. Existing interaction hooks (`.goal`, `.goal-reminder`, undo button ids, sidebar link affordances) were preserved.
+- Kept the JS undo rerender in sync with the Python renderer by emitting the same shared row structure and stripe metadata.
+- Removed the old row-layout dependence for the adopted modules and left non-adopted list/card CSS in place.
+
+- Verification on July 18, 2026:
+  `PYTHONPATH="/Users/noelsaw/Documents/rebalance-worktrees/rtl-wt.PyI3Si/src:/Users/noelsaw/Documents/rebalance-worktrees/rtl-wt.PyI3Si/scripts" python -m pytest tests/test_web_components.py tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py tests/test_web_surface.py tests/test_web_focus5.py`
+  Result: `89 passed, 4 skipped`.
+- Important environment note: plain `pytest ...` in this throwaway worktree resolved `rebalance.web_components` from `/Users/noelsaw/Documents/rebalance-OS/src`, not this worktree, so collection failed until the worktree `PYTHONPATH` was pinned. I did not add any production import workaround.
+- `python scripts/pulse_web.py --goals /tmp/gh135-goals.md --out /tmp/pulse-gh135.html` could not complete here because `get_index_status(DB_PATH)` failed with `sqlite3.OperationalError: unable to open database file`. No source workaround added.

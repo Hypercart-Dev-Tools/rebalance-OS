@@ -79,6 +79,7 @@ from rebalance.web_components import (  # noqa: E402
     RB_CHROME_CSS,
     RB_TOKENS_CSS,
     button_link,
+    data_row,
     render_shell,
 )
 
@@ -555,24 +556,68 @@ def _linkify(text: str) -> str:
     return url_pattern.sub(replace_url, _esc(text))
 
 
+def _join_row_bits(bits: Iterable[str]) -> str:
+    parts = [str(bit) for bit in bits if bit]
+    return f' <span class="rb-data-row-sep">·</span> '.join(parts)
+
+
+def _badge_marker(label: str, *, tone: str = "") -> str:
+    cls = f"rb-data-marker-badge {tone}".strip()
+    return f'<span class="{cls}">{_esc(label)}</span>'
+
+
+def _avatar_marker(label: str) -> str:
+    alnum = re.sub(r"[^A-Za-z0-9]", "", label or "")
+    initial = (alnum[:1] or "?").upper()
+    return f'<span class="rb-data-marker-avatar">{_esc(initial)}</span>'
+
+
+def _render_recent_completion_row(item: dict[str, Any], *, stripe_index: int = 0) -> str:
+    title = str(item.get("title") or "").strip() or "completed task"
+    item_id = str(item.get("id") or "")
+    return data_row(
+        marker_html='<span class="rb-data-marker-badge ok">✓</span>',
+        title_html=_esc(title),
+        timestamp=item.get("completed_at"),
+        tz=TZ,
+        relative=True,
+        fallback_timestamp="just now",
+        row_class="goal-undo-item",
+        body_class="goal-undo-copy",
+        title_class="goal-undo-title",
+        stripe_index=stripe_index,
+        trailing_html=(
+            f'<button class="goal-undo-btn" type="button" '
+            f'data-goal-undo-id="{_esc(item_id)}">Undo</button>'
+        ),
+    )
+
+
 def _render_goal_rows(goals: list[dict[str, Any]], *, empty_html: str, compact: bool = False) -> str:
     rows = []
-    for g in goals:
+    for idx, g in enumerate(goals):
         cls = "done" if g["done"] else ""
         if compact:
             cls = f"{cls} goal-compact".strip()
         check = "checked" if g["done"] else ""
         title_html = _linkify(g['title'])
         desc_html = _linkify(g['description'])
-        rows.append(f"""
-        <li class="goal {cls}" data-goal-title="{_esc(g['title'])}">
-          <span class="check {check}" role="checkbox" tabindex="0" aria-label="Complete: {_esc(g['title'])}"></span>
-          <div class="goal-body">
-            <div class="goal-title">{title_html}</div>
-            <div class="goal-desc">{desc_html}</div>
-          </div>
-        </li>
-        """)
+        rows.append(
+            data_row(
+                marker_html=(
+                    f'<span class="check {check}" role="checkbox" tabindex="0" '
+                    f'aria-label="Complete: {_esc(g["title"])}"></span>'
+                ),
+                title_html=title_html,
+                meta_html=desc_html,
+                row_class=f"goal {cls}".strip(),
+                body_class="goal-body",
+                title_class="goal-title",
+                meta_class="goal-desc",
+                stripe_index=idx,
+                attrs=f'data-goal-title="{_esc(g["title"])}"',
+            )
+        )
     if not rows:
         rows.append(empty_html)
     return "".join(rows)
@@ -587,36 +632,37 @@ def _render_reminder_rows(
     orchestrator (single writer + audit); this layer only renders the affordance
     and carries the id. A row missing an id degrades to read-only."""
     rows = []
-    for r in reminders:
+    for idx, r in enumerate(reminders):
         rid = r.get("reminder_id") or ""
         title = r.get("title") or ""
         due = r.get("due_at")
-        due_text = format_timestamp(due, tz=tz) if due else ""
-        due_html = (
-            f'<div class="goal-desc timestamp-block">{_esc(due_text)}</div>'
-            if due_text else ""
-        )
         if rid:
-            check = (
+            marker_html = (
                 f'<span class="check" role="checkbox" tabindex="0" '
                 f'aria-label="Complete: {_esc(title)}"></span>'
             )
-            li_open = (
-                f'<li class="goal goal-compact goal-reminder" '
-                f'data-reminder-id="{_esc(rid)}" data-reminder-title="{_esc(title)}">'
+            row_class = "goal goal-compact goal-reminder"
+            attrs = (
+                f'data-reminder-id="{_esc(rid)}" '
+                f'data-reminder-title="{_esc(title)}"'
             )
         else:
-            check = ""
-            li_open = '<li class="goal goal-compact goal-readonly">'
-        rows.append(f"""
-        {li_open}
-          {check}
-          <div class="goal-body">
-            <div class="goal-title">{_linkify(title)}</div>
-            {due_html}
-          </div>
-        </li>
-        """)
+            marker_html = _badge_marker("R")
+            row_class = "goal goal-compact goal-readonly"
+            attrs = ""
+        rows.append(
+            data_row(
+                marker_html=marker_html,
+                title_html=_linkify(title),
+                timestamp=due,
+                tz=tz,
+                row_class=row_class,
+                body_class="goal-body",
+                title_class="goal-title",
+                stripe_index=idx,
+                attrs=attrs,
+            )
+        )
     if not rows:
         rows.append(empty_html)
     return "".join(rows)
@@ -658,26 +704,14 @@ def render_hero(
     )
     undo_html = ""
     if recent_completions:
-        undo_rows = []
-        for item in recent_completions[:MAX_GOAL_HISTORY]:
-            title = str(item.get("title") or "").strip() or "completed task"
-            completed_at = item.get("completed_at")
-            completed_text = format_timestamp(completed_at, relative=True, tz=TZ) or "just now"
-            completed_cls = "goal-undo-meta timestamp-block" if completed_at and completed_text != "just now" else "goal-undo-meta"
-            item_id = str(item.get("id") or "")
-            undo_rows.append(f"""
-            <li class="goal-undo-item">
-              <div class="goal-undo-copy">
-                <span class="goal-undo-title">{_esc(title)}</span>
-                <span class="{completed_cls}">{_esc(completed_text)}</span>
-              </div>
-              <button class="goal-undo-btn" type="button" data-goal-undo-id="{_esc(item_id)}">Undo</button>
-            </li>
-            """)
+        undo_rows = [
+            _render_recent_completion_row(item, stripe_index=idx)
+            for idx, item in enumerate(recent_completions[:MAX_GOAL_HISTORY])
+        ]
         undo_html = f"""
         <div id="goal-undo-tray" class="goal-undo-tray">
           <div class="goal-undo-label">Recently completed</div>
-          <ul class="goal-undo-list">{''.join(undo_rows)}</ul>
+          <ul class="goal-undo-list rb-data-list">{''.join(undo_rows)}</ul>
         </div>
         """
     else:
@@ -698,15 +732,15 @@ def render_hero(
       </header>
       <div class="hero-goal-board">
         <div class="hero-goal-column">
-          <ul class="goals">{primary_rows}</ul>
+          <ul class="goals rb-data-list">{primary_rows}</ul>
         </div>
         <div class="hero-goal-column hero-goal-column-secondary">
           <div class="hero-column-label">Next open todos</div>
-          <ul class="goals goals-secondary">{secondary_rows}</ul>
+          <ul class="goals goals-secondary rb-data-list">{secondary_rows}</ul>
         </div>
         <div class="hero-goal-column hero-goal-column-reminders">
           <div class="hero-column-label">Apple Reminders</div>
-          <ul class="goals goals-secondary">{reminder_rows}</ul>
+          <ul class="goals goals-secondary rb-data-list">{reminder_rows}</ul>
         </div>
       </div>
       {undo_html}
@@ -722,7 +756,7 @@ def render_recent_activity(
     vault_recent_count: int = 0,
 ) -> str:
     items = []
-    for r in rows:
+    for idx, r in enumerate(rows):
         kind = r.get("kind") or "item"
         sub = r.get("sub") or ""
         glyph, color = KIND_GLYPH.get(kind, ("·", "muted"))
@@ -748,16 +782,28 @@ def render_recent_activity(
             )
         else:
             label_html = f'<span class="label {color}">{_esc(label)}</span>'
-        items.append(f"""
-        <li class="activity-row">
-          <span class="ts timestamp-block">{_esc(ago)}</span>
-          <span class="glyph {color}">{glyph}</span>
-          {label_html}
-          <span class="repo">{_esc(repo)}</span>
-          <span class="who">{('@' + _esc(who)) if who else ''}</span>
-          <div class="detail">{_esc(detail)}</div>
-        </li>
-        """)
+        meta_html = _join_row_bits(
+            [
+                f'<span class="repo">{_esc(repo)}</span>' if repo else "",
+                f'<span class="who">{("@" + _esc(who)) if who else ""}</span>' if who else "",
+                f'<span class="detail">{_esc(detail)}</span>' if detail else "",
+            ]
+        )
+        items.append(
+            data_row(
+                marker_html=f'<span class="rb-data-marker-glyph {color}">{glyph}</span>',
+                title_html=label_html,
+                meta_html=meta_html,
+                timestamp=r.get("ts"),
+                tz=TZ,
+                relative=True,
+                fallback_timestamp=ago,
+                row_class="activity-row",
+                title_class="activity-label",
+                meta_class="activity-meta",
+                stripe_index=idx,
+            )
+        )
     body = "".join(items) if items else '<li class="empty">No recent activity.</li>'
     foot = ""
     if last_vault:
@@ -772,7 +818,7 @@ def render_recent_activity(
     return f"""
     <section class="card activity">
       <header class="card-head"><h2>Recent GitHub activity</h2></header>
-      <ol class="activity-list">{body}</ol>
+      <ol class="activity-list rb-data-list">{body}</ol>
       {foot}
     </section>
     """
@@ -823,6 +869,24 @@ def render_work_next(
     top_auto = (
         '<span class="wn-auto">&#9881;</span>' if top.get("automation") else ""
     )
+    meta_html = _join_row_bits(
+        [
+            f'<span class="wn-source">{_esc((top.get("source") or "").upper())}</span>' if top.get("source") else "",
+            f'<span class="wn-project">{_esc(top.get("project") or "")}</span>' if top.get("project") else "",
+        ]
+    )
+    top_row = data_row(
+        marker_html='<span class="rb-data-marker-rank">1</span>',
+        title_html=f'{top_title} {person_html} {top_auto}'.strip(),
+        meta_html=meta_html,
+        timestamp=computed_at,
+        tz=TZ,
+        relative=True,
+        row_class="wn-row",
+        title_class="wn-title",
+        meta_class="wn-meta",
+        stripe_index=0,
+    )
 
     return f"""
     <section class="card work-next work-next-teaser">
@@ -830,10 +894,7 @@ def render_work_next(
         <h2>What&#39;s next</h2>
         <span class="card-head-meta">{total} ranked{auto_html}{blend_html} · {when_html}</span>
       </header>
-      <div class="wn-teaser-top">
-        <span class="wn-rank">1</span>
-        <span class="wn-title">{top_title} {person_html} {top_auto}</span>
-      </div>
+      <ol class="wn-list rb-data-list">{top_row}</ol>
       <div class="wn-teaser-foot">{link}</div>
     </section>
     """
@@ -1112,7 +1173,7 @@ def render_recent_emails(
     """
 
     items = []
-    for row in rows:
+    for idx, row in enumerate(rows):
         sender = _normalize_html_text(row.get("from_name") or "") or _normalize_html_text(row.get("from_address") or "") or "unknown sender"
         subject = _normalize_html_text(row.get("subject") or "") or "(no subject)"
         snippet = _truncate(_normalize_html_text(row.get("snippet") or ""), 180)
@@ -1223,7 +1284,7 @@ def render_recent_figma(
     """
 
     items = []
-    for row in rows:
+    for idx, row in enumerate(rows):
         author = _normalize_html_text(row.get("user_handle") or "") or _normalize_html_text(row.get("user_id") or "") or "Figma user"
         message = _truncate(_normalize_html_text(row.get("message") or ""), 220) or "(empty comment)"
         stamp_value = row.get("created_at") or row.get("synced_at")
@@ -1232,24 +1293,28 @@ def render_recent_figma(
         resolved = bool(row.get("resolved_at"))
         resolved_badge = '<span class="figma-badge resolved">resolved</span>' if resolved else ""
         file_key = _normalize_html_text(row.get("file_key") or "")
-        items.append(f"""
-        <li class="figma-row">
-          <div class="figma-row-main">
-            <div class="figma-row-message">{_esc(message)}</div>
-            <div class="figma-row-meta">
-              <span class="figma-row-author">{_esc(author)}</span>
-              <span class="figma-row-dot">·</span>
-              <span class="figma-row-file" title="{_esc(file_key)}">{_esc(file_key)}</span>
-              <span class="figma-row-dot">·</span>
-              <span class="figma-row-when timestamp-block">{_esc(when)}</span>
-              {f'<span class="figma-row-dot">·</span>{resolved_badge}' if resolved_badge else ''}
-            </div>
-          </div>
-          <div class="figma-row-side">
-            <div class="figma-row-time timestamp-block">{_esc(when_abs)}</div>
-          </div>
-        </li>
-        """)
+        meta_html = _join_row_bits(
+            [
+                f'<span class="figma-row-author">{_esc(author)}</span>',
+                f'<span class="figma-row-file" title="{_esc(file_key)}">{_esc(file_key)}</span>' if file_key else "",
+                resolved_badge,
+            ]
+        )
+        items.append(
+            data_row(
+                marker_html=_avatar_marker(author),
+                title_html=_esc(message),
+                meta_html=meta_html,
+                timestamp=stamp_value,
+                tz=tz,
+                relative=True,
+                fallback_timestamp=when or when_abs,
+                row_class="figma-row",
+                title_class="figma-row-message",
+                meta_class="figma-row-meta",
+                stripe_index=idx,
+            )
+        )
 
     return f"""
     <section class="card figma-comments">
@@ -1257,7 +1322,7 @@ def render_recent_figma(
         <h2>Recent Figma comments</h2>
         <span class="card-head-meta">latest {min(len(rows), limit)} shown · {stored_total} stored</span>
       </header>
-      <ol class="figma-list">{''.join(items)}</ol>
+      <ol class="figma-list rb-data-list">{''.join(items)}</ol>
       <footer class="card-foot">{form}</footer>
     </section>
     """
@@ -1283,7 +1348,7 @@ def build_nav_data(
     This is the data/I-O-aware half that lives in pulse_web (it uses the Slack /
     Sleuth helpers and the DB-derived rows). The pure shell that frames these
     strings lives in :func:`rebalance.web_components.render_sidebar`, which keeps
-    that module stdlib-only.
+    that module free of I/O.
 
     When ``sleuth_sections`` is provided (from ``fetch_sleuth_display_sections``),
     reminders are rendered with the same section/label/assignee format as the
@@ -1291,19 +1356,22 @@ def build_nav_data(
     when the published file is unavailable.
     """
     cal_items = []
-    for ev in cal_rows:
-        when = _timestamp_html(ev.get("start_time"), tz=tz)
+    for idx, ev in enumerate(cal_rows):
         loc = _esc(ev.get("location") or "")
         title = _esc(ev.get("summary") or "event")
-        meta = when
-        if loc:
-            meta = f"{meta}{' · ' if meta else ''}{loc}"
-        cal_items.append(f"""
-          <li class="side-row">
-            <div class="side-row-title">{title}</div>
-            <div class="side-row-meta">{meta}</div>
-          </li>
-        """)
+        cal_items.append(
+            data_row(
+                marker_html=_badge_marker("C", tone="info"),
+                title_html=title,
+                meta_html=loc,
+                timestamp=ev.get("start_time"),
+                tz=tz,
+                row_class="side-row",
+                title_class="side-row-title",
+                meta_class="side-row-meta",
+                stripe_index=idx,
+            )
+        )
     if not cal_items:
         cal_items.append('<li class="side-row empty"><div class="side-row-meta">No upcoming events.</div></li>')
 
@@ -1314,6 +1382,7 @@ def build_nav_data(
             "style='font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;"
             "color:var(--fg-dim);padding:10px 8px 3px;pointer-events:none;'"
         )
+        reminder_idx = 0
         for section in sleuth_sections:
             section_label = section.get("sectionLabel", "")
             sleuth_items.append(
@@ -1325,49 +1394,51 @@ def build_nav_data(
                 age_days = int(r.get("ageDays") or 0)
                 assignee = r.get("assigneeName", "")
                 permalink = r.get("permalink", "")
-                due_str = _timestamp_html(r.get("shouldPostOn"), tz=tz) if r.get("shouldPostOn") else ""
-
                 age_part  = f" ({age_days}d old)" if age_days else ""
-                title_txt = f"{label}.) {summary}{age_part}" if label else f"{summary}{age_part}"
-                meta_bits = [b for b in [due_str, _esc(assignee)] if b]
-                body = (
-                    f"<div class='side-row-title'>{_esc(title_txt)}</div>"
-                    f"<div class='side-row-meta'>{' · '.join(meta_bits)}</div>"
-                )
-                if permalink:
-                    sleuth_items.append(
-                        f"<li class='side-row has-link'>"
-                        f"<a class='side-row-link' href='{_esc(permalink)}' "
-                        f"target='_blank' rel='noopener noreferrer' title='Open in Slack'>"
-                        f"{body}</a></li>"
+                title_txt = f"{summary}{age_part}"
+                meta_html = _join_row_bits([_esc(assignee)] if assignee else [])
+                sleuth_items.append(
+                    data_row(
+                        marker_html=_badge_marker(str(label or "R")[:2]),
+                        title_html=_esc(title_txt),
+                        meta_html=meta_html,
+                        timestamp=r.get("shouldPostOn"),
+                        tz=tz,
+                        row_class="side-row has-link" if permalink else "side-row",
+                        title_class="side-row-title",
+                        meta_class="side-row-meta",
+                        stripe_index=reminder_idx,
+                        href=permalink or None,
+                        link_title="Open in Slack",
+                        external=bool(permalink),
+                        link_class="side-row-link",
                     )
-                else:
-                    sleuth_items.append(f"<li class='side-row'>{body}</li>")
+                )
+                reminder_idx += 1
     else:
         # Fallback: flat list from SQLite (no display fields available).
-        for s in sleuth_rows:
+        for idx, s in enumerate(sleuth_rows):
             msg = compact_sleuth_reminder(s.get("reminder_message_text") or "")
             msg = _truncate(msg, 90)
-            when = _timestamp_html(s.get("should_post_on"), tz=tz) if s.get("should_post_on") else ""
             role = "from me" if s.get("sleuth_role") == "assigned_by_me" else "for me"
-            meta_bits = [b for b in [when, _esc(role)] if b]
             slack_url = build_slack_url(s)
-            body = f"""
-                <div class="side-row-title">{_esc(msg)}</div>
-                <div class="side-row-meta">{' · '.join(meta_bits)}</div>
-            """
-            if slack_url:
-                sleuth_items.append(f"""
-          <li class="side-row has-link">
-            <a class="side-row-link" href="{_esc(slack_url)}" target="_blank" rel="noopener noreferrer" title="Open in Slack">
-              {body}
-            </a>
-          </li>
-                """)
-            else:
-                sleuth_items.append(f"""
-          <li class="side-row">{body}</li>
-                """)
+            sleuth_items.append(
+                data_row(
+                    marker_html=_badge_marker("R"),
+                    title_html=_esc(msg),
+                    meta_html=_esc(role),
+                    timestamp=s.get("should_post_on"),
+                    tz=tz,
+                    row_class="side-row has-link" if slack_url else "side-row",
+                    title_class="side-row-title",
+                    meta_class="side-row-meta",
+                    stripe_index=idx,
+                    href=slack_url,
+                    link_title="Open in Slack",
+                    external=bool(slack_url),
+                    link_class="side-row-link",
+                )
+            )
     if not sleuth_items:
         if sleuth_synced:
             # Genuinely empty — Sleuth synced and there is nothing pending.
@@ -1632,14 +1703,9 @@ PAGE_CSS = """
 .card-foot { padding: 10px 18px 14px; border-top: 1px solid var(--border); }
 
 /* What should we work on next */
-.work-next .wn-list { list-style: none; margin: 0; padding: 4px 0 10px; }
-.wn-row { display: flex; gap: 12px; padding: 10px 18px; border-top: 1px solid var(--border); }
-.wn-row:first-child { border-top: none; }
-.wn-rank {
-  flex: 0 0 auto; min-width: 22px; text-align: right;
-  color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums;
-}
-.wn-body { min-width: 0; }
+.work-next .wn-list { margin: 0; padding: 4px 0 10px; }
+.wn-row[data-rb-row] { padding: 10px 18px; }
+.wn-row .rb-data-row-trailing { min-width: 72px; }
 .wn-title { color: var(--fg); font-weight: 600; }
 .wn-person {
   margin-left: 6px; padding: 1px 7px; border-radius: 999px;
@@ -1648,17 +1714,7 @@ PAGE_CSS = """
 }
 .wn-meta { color: var(--fg-dim); font-size: 12px; margin-top: 2px; }
 .wn-source { text-transform: uppercase; letter-spacing: 0.04em; }
-.wn-project { margin-left: 6px; }
-.wn-why { color: var(--fg-muted); font-size: 13px; margin-top: 3px; }
-/* What's-next teaser (slim pointer to the dedicated /whats-next page) */
-.work-next-teaser .wn-teaser-top { display: flex; align-items: baseline; gap: 8px; padding: 6px 0 2px; }
-.work-next-teaser .wn-teaser-top .wn-rank {
-  flex: none; min-width: 20px; height: 20px; line-height: 20px; text-align: center;
-  border-radius: 999px; background: var(--border); color: var(--fg-muted);
-  font-size: 11px; font-weight: 700;
-}
-.work-next-teaser .wn-teaser-top .wn-title { color: var(--fg); font-size: 14px; }
-.work-next-teaser .wn-teaser-foot { margin-top: 6px; }
+.work-next-teaser .wn-teaser-foot { margin-top: 6px; padding: 0 18px 14px; }
 .wn-open { color: var(--accent); font-weight: 600; font-size: 13px; text-decoration: none; }
 .wn-open:hover { text-decoration: underline; }
 .wn-auto { color: var(--warn, #b58900); font-weight: 600; }
@@ -1687,9 +1743,8 @@ PAGE_CSS = """
   color: var(--fg-dim);
   margin: 0 6px 4px;
 }
-.goals { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
-.goal { display: flex; align-items: flex-start; gap: 14px; padding: 12px 6px; border-top: 1px solid var(--border); }
-.goal:first-child { border-top: 0; }
+.goals { padding: 0; margin: 0; }
+.goal[data-rb-row] { padding: 12px 6px; gap: 14px; }
 .goal .check { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #c8c2b3; margin-top: 2px; flex-shrink: 0; background: #fff; cursor: pointer; transition: border-color .12s, background .12s; }
 .goal .check[role="checkbox"]:hover { border-color: var(--accent); }
 .goal .check[role="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -1703,11 +1758,13 @@ PAGE_CSS = """
 .goal-title a:hover, .goal-desc a:hover { text-decoration: underline; }
 .goal.done .goal-title { text-decoration: line-through; color: var(--fg-dim); }
 .goal.done .goal-desc { color: var(--fg-dim); }
-.goal-compact { padding: 8px 6px; gap: 10px; }
+.goal-compact[data-rb-row] { padding: 8px 6px; gap: 10px; }
 .goal-compact .check { width: 16px; height: 16px; border-radius: 4px; }
 .goal-compact .check.checked::after { left: 4px; top: 1px; width: 4px; height: 8px; }
 .goal-compact .goal-title { font-size: 13px; line-height: 1.3; }
 .goal-compact .goal-desc { font-size: 11.5px; }
+.goal-readonly .rb-data-row-marker { padding-top: 0; }
+.goal-readonly .rb-data-marker-badge { width: 18px; height: 18px; font-size: 10px; }
 .goal-undo-tray {
   border-top: 1px solid var(--border);
   margin-top: 8px;
@@ -1730,21 +1787,12 @@ PAGE_CSS = """
   gap: 8px;
 }
 .goal-undo-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
   padding: 8px 10px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: rgba(0,0,0,.015);
 }
-.goal-undo-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
+.goal-undo-item .rb-data-row-trailing { min-width: 74px; gap: 8px; }
 .goal-undo-title {
   font-size: 12.5px;
   font-weight: 600;
@@ -1793,16 +1841,15 @@ PAGE_CSS = """
 
 /* Activity */
 .activity-list { list-style: none; padding: 0 4px 14px; margin: 0; }
-.activity-row { display: grid; grid-template-columns: minmax(180px, 220px) 18px auto auto 1fr; column-gap: 8px; row-gap: 2px; padding: 10px 14px; border-top: 1px solid var(--border); align-items: baseline; }
-.activity-row:first-child { border-top: 0; }
-.activity-row .ts { font-size: 12px; line-height: 1.35; }
-.activity-row .glyph { font-size: 13px; }
+.activity-row[data-rb-row] { padding: 10px 14px; }
+.activity-row .rb-data-row-trailing { min-width: 72px; }
 .activity-row .label { font-weight: 500; }
 .activity-row a.label { text-decoration: none; }
 .activity-row a.label:hover { text-decoration: underline; }
+.activity-meta { font-size: 12px; }
 .activity-row .repo { color: var(--fg-muted); }
 .activity-row .who { color: var(--fg-dim); }
-.activity-row .detail { grid-column: 3 / -1; color: var(--fg-muted); font-size: 12.5px; }
+.activity-row .detail { color: var(--fg-muted); font-size: 12.5px; }
 
 /* Recent email */
 .recent-emails .card-head { align-items: center; }
@@ -1918,47 +1965,19 @@ PAGE_CSS = """
   max-height: 540px;
   overflow-y: auto;
 }
-.figma-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  padding: 12px 18px;
-  border-top: 1px solid var(--border);
-  align-items: start;
-}
-.figma-row:first-child { border-top: 0; }
-.figma-row-main { min-width: 0; }
+.figma-row[data-rb-row] { gap: 14px; padding: 12px 18px; }
+.figma-row .rb-data-row-trailing { min-width: 72px; }
 .figma-row-message {
   color: var(--fg);
   font-size: 12.75px;
   line-height: 1.45;
   margin-bottom: 4px;
 }
-.figma-row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  color: var(--fg-dim);
-  font-size: 11.5px;
-}
+.figma-row-meta { color: var(--fg-dim); font-size: 11.5px; }
 .figma-row-author { color: var(--fg-muted); font-weight: 600; }
 .figma-row-file {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   color: var(--fg-dim);
-}
-.figma-row-dot { color: var(--fg-dim); }
-.figma-row-side {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-}
-.figma-row-time {
-  color: var(--fg-dim);
-  font-size: 11.5px;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
 }
 .figma-badge {
   display: inline-flex;
@@ -2078,9 +2097,6 @@ PAGE_CSS = """
   .email-row { grid-template-columns: 1fr; }
   .email-row-side { align-items: flex-start; }
   .email-row-time { white-space: normal; }
-  .figma-row { grid-template-columns: 1fr; }
-  .figma-row-side { align-items: flex-start; }
-  .figma-row-time { white-space: normal; }
   .figma-config-row { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; align-items: stretch; gap: 12px; }
   .topbar > div:last-child { flex-wrap: wrap; }
@@ -2167,7 +2183,7 @@ CSS = RB_TOKENS_CSS + RB_CHROME_CSS + PAGE_CSS
 
 PULSE_JS = r"""
 (() => {
-  const FILTER_TARGETS = '.activity-row, .email-row, .goal, .side-row, .strip > div, .kv-list li';
+  const FILTER_TARGETS = '.rb-data-row, [data-rb-row], .email-row, .strip > div, .kv-list li, .pr-row';
   const input = document.getElementById('pulse-filter');
   const btn = document.getElementById('pulse-refresh');
   const undoTray = document.getElementById('goal-undo-tray');
@@ -2190,23 +2206,27 @@ PULSE_JS = r"""
       undoTray.classList.add('is-empty');
       return;
     }
-    const items = entries.slice(0, 3).map((entry) => {
+    const items = entries.slice(0, 3).map((entry, index) => {
       const title = escapeHtml(entry.title || 'completed task');
       const ago = escapeHtml(entry.completed_ago || 'just now');
       const entryId = escapeHtml(entry.id || '');
+      const stripe = (index % 2 === 1) ? 'even' : 'odd';
       return `
-        <li class="goal-undo-item">
-          <div class="goal-undo-copy">
-            <span class="goal-undo-title">${title}</span>
-            <span class="goal-undo-meta timestamp-block">${ago}</span>
+        <li class="goal-undo-item" data-rb-row="1" data-rb-stripe="${stripe}">
+          <span class="rb-data-row-marker"><span class="rb-data-marker-badge ok">✓</span></span>
+          <div class="rb-data-row-body goal-undo-copy">
+            <div class="rb-data-row-title goal-undo-title">${title}</div>
           </div>
-          <button class="goal-undo-btn" type="button" data-goal-undo-id="${entryId}">Undo</button>
+          <div class="rb-data-row-trailing">
+            <div class="rb-data-row-time timestamp-block">${ago}</div>
+            <button class="goal-undo-btn" type="button" data-goal-undo-id="${entryId}">Undo</button>
+          </div>
         </li>
       `;
     });
     undoTray.innerHTML = `
       <div class="goal-undo-label">Recently completed</div>
-      <ul class="goal-undo-list">${items.join('')}</ul>
+      <ul class="goal-undo-list rb-data-list">${items.join('')}</ul>
     `;
     undoTray.hidden = false;
     undoTray.classList.remove('is-empty');
