@@ -1,13 +1,15 @@
 """Shared HTML building blocks for the rebalance-OS web surfaces.
 
-Kept dependency-light (stdlib only) so both the FastAPI app (:mod:`rebalance.web`)
-and the static pulse mirror (``scripts/pulse_web.py``) can render identical
-chrome from one place. Import the helper and include :data:`RB_BUTTON_CSS` once
-inside each page's ``<style>``.
+Kept dependency-light so both the FastAPI app (:mod:`rebalance.web`) and the
+static pulse mirror (``scripts/pulse_web.py``) can render identical chrome from
+one place. Import the helper and include :data:`RB_BUTTON_CSS` once inside each
+page's ``<style>``.
 """
 from __future__ import annotations
 
 import html
+
+from rebalance.tz_utils import format_timestamp
 
 # The one design-token set every web page shares — the single source of truth for
 # the palette. Lifted verbatim from the pulse dashboard (the only fully-tokenized
@@ -94,6 +96,87 @@ def button_link(
     )
 
 
+def data_row(
+    *,
+    marker_html: str,
+    title_html: str,
+    meta_html: str = "",
+    timestamp: object | None = None,
+    tz: object | None = None,
+    relative: bool = False,
+    fallback_timestamp: str = "",
+    row_class: str = "",
+    body_class: str = "",
+    marker_class: str = "",
+    title_class: str = "",
+    meta_class: str = "",
+    trailing_class: str = "",
+    time_class: str = "",
+    stripe_index: int | None = None,
+    attrs: str = "",
+    href: str | None = None,
+    link_title: str | None = None,
+    external: bool = False,
+    link_class: str = "",
+    trailing_html: str = "",
+) -> str:
+    """Render the shared dashboard/sidebar row primitive.
+
+    Caller-supplied ``*_html`` fragments are inserted verbatim and must already
+    be escaped/sanitised. When ``timestamp`` is provided this helper formats it
+    through :func:`rebalance.tz_utils.format_timestamp`, so every adopting row
+    shares one timestamp contract.
+    """
+
+    def _classes(*parts: str) -> str:
+        return " ".join(part for part in parts if part)
+
+    ts_text = ""
+    if timestamp is not None:
+        ts_text = format_timestamp(timestamp, relative=relative, tz=tz) or fallback_timestamp
+
+    title_cls = _classes("rb-data-row-title", title_class)
+    meta_cls = _classes("rb-data-row-meta", meta_class)
+    marker_cls = _classes("rb-data-row-marker", marker_class)
+    body_cls = _classes("rb-data-row-body", body_class)
+    trailing_cls = _classes("rb-data-row-trailing", trailing_class)
+    time_cls = _classes("rb-data-row-time", "timestamp-block", time_class)
+
+    meta_block = f'<div class="{html.escape(meta_cls, quote=True)}">{meta_html}</div>' if meta_html else ""
+    time_block = f'<div class="{html.escape(time_cls, quote=True)}">{html.escape(ts_text)}</div>' if ts_text else ""
+    trailing_bits = "".join(bit for bit in (time_block, trailing_html) if bit)
+    trailing_block = (
+        f'<div class="{html.escape(trailing_cls, quote=True)}">{trailing_bits}</div>'
+        if trailing_bits else ""
+    )
+    content = (
+        f'<span class="{html.escape(marker_cls, quote=True)}">{marker_html}</span>'
+        f'<div class="{html.escape(body_cls, quote=True)}">'
+        f'<div class="{html.escape(title_cls, quote=True)}">{title_html}</div>'
+        f"{meta_block}</div>{trailing_block}"
+    )
+
+    if href:
+        target = ' target="_blank" rel="noopener noreferrer"' if external else ""
+        title_attr = f' title="{html.escape(link_title, quote=True)}"' if link_title else ""
+        link_cls = _classes("rb-data-row-link", link_class)
+        content = (
+            f'<a class="{html.escape(link_cls, quote=True)}" '
+            f'href="{html.escape(href, quote=True)}"{target}{title_attr}>{content}</a>'
+        )
+
+    klass = row_class or "rb-data-row-item"
+    extra_attrs = f" {attrs}" if attrs else ""
+    stripe_attr = ""
+    if stripe_index is not None:
+        stripe = "even" if stripe_index % 2 == 1 else "odd"
+        stripe_attr = f' data-rb-stripe="{stripe}"'
+    return (
+        f'<li class="{html.escape(klass, quote=True)}" data-rb-row="1"{stripe_attr}{extra_attrs}>'
+        f"{content}</li>"
+    )
+
+
 # The reusable chrome shared by every full-page surface: the global base resets
 # (box-sizing / body font / headings) + the sidebar/nav/footer shell that frames
 # the page. Lifted from the pulse dashboard's <style> so the static mirror and the
@@ -161,6 +244,212 @@ h2 { font-size: 14px; color: var(--fg); }
 .side-row-meta { font-size: 11.5px; color: var(--fg-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .side-row.empty .side-row-meta { font-style: italic; }
 
+/* Shared data rows */
+.rb-data-list { list-style: none; margin: 0; padding: 0; container-type: inline-size; }
+
+/* The 3-column anatomy (marker | body | right-aligned time) only works while the
+   container is wide. `.rb-data-row-time` is nowrap, so an absolute+relative stamp
+   like "2026-06-07 9:20 PM · 40d ago" claims ~215px no matter how narrow the list
+   gets — and `minmax(0, 1fr)` obligingly collapses the BODY to 0px. Titles then
+   render zero-width, and meta/chips overflow into very tall stacks. Measured in a
+   307px Figma card: grid-template-columns resolved to "28px 0px 215.344px".
+
+   So stack below a width where all three columns can coexist: marker + title on
+   the first line, meta and timestamp beneath, left-aligned. A container query (not
+   a viewport media query) is what's correct here — the trigger is how wide the
+   LIST is, which varies per card at a single viewport width. */
+@container (max-width: 500px) {
+  .rb-data-list > [data-rb-row],
+  .rb-data-list .rb-data-row-link {
+    grid-template-columns: 28px minmax(0, 1fr);
+    column-gap: 10px;
+    row-gap: 3px;
+  }
+  .rb-data-list .rb-data-row-trailing {
+    grid-column: 2;
+    min-width: 0;
+    align-items: flex-start;
+    gap: 2px;
+  }
+  .rb-data-list .rb-data-row-time { text-align: left; }
+}
+.rb-data-list > [data-rb-row] {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+}
+.rb-data-list > [data-rb-row]:first-child { border-top: 0; }
+.rb-data-list > [data-rb-row][data-rb-stripe="even"],
+.rb-data-list > [data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: rgba(29,32,36,.03); }
+/* A linked row delegates the whole grid to its <a>. The wrapper must therefore
+   STOP being a grid itself — otherwise its single <a> child is placed into the
+   28px marker track, and the <a>'s own `minmax(0, 1fr)` body column collapses to
+   zero width (titles render 0px wide, meta and chips overflow into tall stacks). */
+.rb-data-list > [data-rb-row].has-link { display: block; padding: 0; }
+.rb-data-row-link {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: start;
+  width: 100%;
+  padding: inherit;
+  color: inherit;
+  text-decoration: none;
+}
+.rb-data-row-marker {
+  width: 28px;
+  min-width: 28px;
+  display: inline-flex;
+  align-items: flex-start;
+  justify-content: center;
+  padding-top: 2px;
+}
+.rb-data-row-body { min-width: 0; }
+.rb-data-row-title {
+  color: var(--fg);
+  font-size: 13px;
+  line-height: 1.35;
+  font-weight: 500;
+}
+.rb-data-row-title a {
+  color: inherit;
+  text-decoration: none;
+}
+.rb-data-row-title a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+.rb-data-row-meta {
+  color: var(--fg-muted);
+  font-size: 11.75px;
+  line-height: 1.4;
+  margin-top: 3px;
+}
+.rb-data-row-sep { color: var(--fg-dim); }
+.rb-data-row-trailing {
+  min-width: 92px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  justify-content: flex-start;
+  gap: 6px;
+}
+.rb-data-row-time { text-align: right; white-space: nowrap; }
+.rb-data-marker-badge,
+.rb-data-marker-rank,
+.rb-data-marker-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid var(--border);
+  background: #fff;
+  color: var(--fg-muted);
+}
+.rb-data-marker-rank {
+  border-color: rgba(31,111,235,.18);
+  background: rgba(31,111,235,.08);
+  color: var(--accent);
+}
+.rb-data-marker-avatar {
+  border-color: rgba(29,111,168,.18);
+  background: rgba(29,111,168,.08);
+  color: var(--info);
+}
+.rb-data-marker-glyph {
+  font-size: 14px;
+  line-height: 1;
+}
+.side-list.rb-data-list > .side-row[data-rb-row] {
+  padding: 7px 8px;
+  gap: 10px;
+  border-top: 0;
+  border-radius: 6px;
+}
+.side-list.rb-data-list > .side-row[data-rb-row].has-link { padding: 0; }
+.side-list.rb-data-list > .side-row[data-rb-row][data-rb-stripe="even"],
+.side-list.rb-data-list > .side-row[data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: rgba(0,0,0,.03); }
+.side-list .rb-data-row-link { padding: 7px 8px; border-radius: 6px; }
+
+/* The sidebar is always narrow, so it always resolves to the stacked form above
+   via the container query — no sidebar-specific grid override is needed here. */
+
+/* Calendar module — a day grid for today + an Upcoming list. Geometry constants
+   live in pulse_web (CAL_HOUR_PX etc.); positions arrive as inline `top`/`height`
+   so the layout math has exactly one home. Reuses the existing tokens, the
+   `.timestamp-block` monospace treatment, and the shared zebra tint. */
+.cal-module { margin: 2px 0 4px; }
+.cal-date { font-size: 11px; color: var(--fg-dim); padding: 0 8px 8px; }
+.cal-grid { position: relative; margin: 0 4px 0 0; }
+.cal-hour { position: absolute; left: 0; right: 0; display: flex; align-items: flex-start; }
+.cal-hour-label {
+  width: 44px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: 8px;
+  font-size: 10px;
+  color: var(--fg-dim);
+  transform: translateY(-6px);
+  font-variant-numeric: tabular-nums;
+}
+.cal-hour-rule { flex: 1; border-top: 1px solid var(--border); }
+.cal-gutter-rule { position: absolute; left: 44px; top: 0; bottom: 0; border-left: 1px solid var(--border); }
+.cal-event {
+  position: absolute;
+  left: 50px;
+  right: 2px;
+  border-radius: 6px;
+  padding: 2px 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  z-index: 2;
+}
+.cal-event-title {
+  font-weight: 600;
+  font-size: 11.5px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cal-event-time { font-size: 10px; opacity: .75; font-variant-numeric: tabular-nums; }
+/* Upcoming reads as live/actionable; past recedes without disappearing. */
+.cal-event.upcoming { background: #e8b93a; color: #3d3006; }
+.cal-event.past { background: #f5edd8; color: #a49a76; }
+.cal-now { position: absolute; left: 44px; right: 0; z-index: 3; display: flex; align-items: center; }
+.cal-now-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--danger, #d43d2a); margin-left: -4px; flex-shrink: 0; }
+.cal-now-line { flex: 1; height: 2px; background: var(--danger, #d43d2a); }
+.cal-upcoming { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+.cal-up-list { display: flex; flex-direction: column; margin-top: 4px; }
+.cal-up-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+.cal-up-row[data-rb-stripe="even"] { background: rgba(0,0,0,.03); }
+.cal-up-time { font-size: 10.5px; color: var(--fg-dim); white-space: nowrap; }
+.cal-up-title {
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Streams: compact connector list */
 .streams { list-style: none; margin: 0; padding: 0; }
 .streams li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
@@ -203,7 +492,8 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
     module stays stdlib-only. Recognised keys (all pre-escaped HTML strings or
     plain values):
         badge          – the active item's trailing badge (in-progress count)
-        cal_html       – the calendar <li> rows
+        cal_html       – the calendar module block (day grid + Upcoming), already
+                         wrapped in its own container by the caller
         sleuth_html    – the reminders <li> rows
         notices_html   – the optional Notices section block
         streams        – [{name, label, kbd, count}, ...] stream rows
@@ -274,10 +564,10 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
            target="_blank" rel="noopener noreferrer" title="Open Google Calendar">
           <span>Calendar</span><span class="section-link-arrow" aria-hidden="true">↗</span>
         </a>
-        <ul class="side-list">{cal_html}</ul>
+        {cal_html}
 
         <div class="nav-section-label">Reminders</div>
-        <ul class="side-list">{sleuth_html}</ul>
+        <ul class="side-list rb-data-list">{sleuth_html}</ul>
         {notices_html}
         <div class="nav-section-label">Streams</div>
         <ul class="streams">{''.join(stream_items)}</ul>

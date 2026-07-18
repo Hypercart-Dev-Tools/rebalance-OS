@@ -27,7 +27,7 @@ import sys
 import time
 import urllib.parse
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -37,10 +37,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_JSON_PATH = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
 import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
 
+from rebalance.tz_utils import format_timestamp, parse_utc_iso  # noqa: E402
+
 # Reuse the TUI's data layer so both views move in lockstep.
 from dashboard import (  # type: ignore  # noqa: E402
     DB_PATH,
     TZ,
+    fetch_calendar_today,
     fetch_calendar_upcoming,
     fetch_open_prs,
     fetch_org_activity,
@@ -53,7 +56,6 @@ from dashboard import (  # type: ignore  # noqa: E402
     fetch_sleuth_due,
     fetch_vault_recent,
     fetch_watched_summary,
-    _ago,
     _parse_iso,
     _truncate,
 )
@@ -72,12 +74,12 @@ from rebalance.ingest.index_ops import COLLECTORS, get_index_status  # noqa: E40
 from rebalance.ingest import next_actions  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 from rebalance.web_components import (  # noqa: E402
-    ITEM_SUB_GLYPHS,
-    KIND_GLYPHS,
     RB_BUTTON_CSS,
     RB_CHROME_CSS,
     RB_TOKENS_CSS,
+    badge_html,
     button_link,
+    data_row,
     render_shell,
 )
 
@@ -311,34 +313,22 @@ def fetch_health_filed_count(days: int = 30) -> int:
 # Render helpers
 # ---------------------------------------------------------------------------
 
-KIND_GLYPH = {
-    "commit":  (KIND_GLYPHS["commit"],  "ok"),
-    "item":    (KIND_GLYPHS["item"],    "info"),
-    "comment": (KIND_GLYPHS["comment"], "muted"),
-}
-
-ITEM_SUB_GLYPH = {
-    "issue":        (ITEM_SUB_GLYPHS["issue"],        "warn"),
-    "pull_request": (ITEM_SUB_GLYPHS["pull_request"], "info"),
-}
-
-
 def _esc(value: Any) -> str:
     return html.escape("" if value is None else str(value))
 
 
-def _format_dt(value: str | datetime | None, *, tz: ZoneInfo) -> str:
-    dt = _parse_iso(value) if isinstance(value, str) else value
-    if dt is None:
-        return "—"
-    return dt.astimezone(tz).strftime("%a %b %d · %H:%M %Z")
-
-
-def _format_dt_short(value: str | datetime | None, *, tz: ZoneInfo) -> str:
-    dt = _parse_iso(value) if isinstance(value, str) else value
-    if dt is None:
-        return ""
-    return dt.astimezone(tz).strftime("%a %-I:%M %p").lower().replace("am", "am").replace("pm", "pm")
+def _timestamp_html(
+    value: str | datetime | None,
+    *,
+    tz: ZoneInfo,
+    relative: bool = False,
+    fallback: str = "",
+    cls: str = "timestamp-block",
+) -> str:
+    text = format_timestamp(value, relative=relative, tz=tz)
+    if not text:
+        return _esc(fallback)
+    return f'<span class="{_esc(cls)}">{_esc(text)}</span>'
 
 
 def _normalize_html_text(value: str | None) -> str:
@@ -418,7 +408,8 @@ def render_health_banner(
 
     tone = "danger" if health.failures else "warn"
     status_text = health.status_text
-    activity_text = _ago(last_activity, now=now) if last_activity else "never"
+    activity_text = format_timestamp(last_activity, relative=True, tz=TZ) or "never"
+    activity_html = _timestamp_html(last_activity, tz=TZ, relative=True, fallback="never")
     copy_text = _health_banner_copy_text(
         problems,
         status_text=status_text,
@@ -449,7 +440,7 @@ def render_health_banner(
       <div class="health-banner-lead">
         <span class="health-banner-badge">{_esc(status_text)}</span>
         <span class="health-banner-summary">Collector attention needed</span>
-        <span class="health-banner-activity">Last collector activity {_esc(activity_text)}</span>
+        <span class="health-banner-activity">Last collector activity {activity_html}</span>
         <button
           type="button"
           class="health-banner-copy-btn"
@@ -468,7 +459,7 @@ def render_sync_chip(
     last_activity: str | None,
     now: datetime,
 ) -> str:
-    activity_text = _ago(last_activity, now=now) if last_activity else "—"
+    activity_text = format_timestamp(last_activity, relative=True, tz=TZ) or "—"
     if health.verdict == FAIL:
         tone = "danger"
         label = f"Collector degraded · {activity_text}"
@@ -553,24 +544,125 @@ def _linkify(text: str) -> str:
     return url_pattern.sub(replace_url, _esc(text))
 
 
+def _join_row_bits(bits: Iterable[str]) -> str:
+    parts = [str(bit) for bit in bits if bit]
+    return f' <span class="rb-data-row-sep">·</span> '.join(parts)
+
+
+def _subsection_label(label: str, *, count: int | None = None, extra_class: str = "") -> str:
+    count_html = (
+        f'<span class="section-label-count"> · {_esc(count)}</span>'
+        if count is not None
+        else ""
+    )
+    cls = "section-label"
+    if extra_class:
+        cls += f" {extra_class}"
+    return f'<div class="{cls}">{_esc(label)}{count_html}</div>'
+
+
+def _reminder_marker_text(label: str | None) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9]", "", label or "").upper()
+    return cleaned[:1] or "R"
+
+
+def _age_chip(days: int) -> str:
+    if days <= 0:
+        return ""
+    suffix = "day" if days == 1 else "days"
+    return f'<span class="side-age-chip">{days} {suffix} old</span>'
+
+
+def _repo_short_name(repo: str) -> str:
+    if "/" not in repo:
+        return repo
+    return repo.split("/", 1)[1]
+
+
+def _activity_kind_meta(kind: str, sub: str) -> tuple[str, str]:
+    if kind == "commit":
+        return ("ok", "Commit")
+    if kind == "item" and sub == "pull_request":
+        return ("info", "PR")
+    if kind == "item":
+        return ("warn", "Issue")
+    return ("danger", "Comment")
+
+
+def _figma_file_link(file_key: str) -> str:
+    key = _normalize_html_text(file_key)
+    if not key:
+        return ""
+    href = f"https://www.figma.com/design/{urllib.parse.quote(key)}"
+    return (
+        f'<a class="figma-row-link" href="{_esc(href)}" target="_blank" '
+        'rel="noopener noreferrer" title="Open Figma file">Open file</a>'
+    )
+
+
+def _badge_marker(label: str, *, tone: str = "") -> str:
+    cls = f"rb-data-marker-badge {tone}".strip()
+    return f'<span class="{cls}">{_esc(label)}</span>'
+
+
+def _avatar_marker(label: str) -> str:
+    alnum = re.sub(r"[^A-Za-z0-9]", "", label or "")
+    initial = (alnum[:1] or "?").upper()
+    return f'<span class="rb-data-marker-avatar">{_esc(initial)}</span>'
+
+
+def _render_recent_completion_row(item: dict[str, Any], *, stripe_index: int = 0) -> str:
+    title = str(item.get("title") or "").strip() or "completed task"
+    item_id = str(item.get("id") or "")
+    return data_row(
+        marker_html='<span class="rb-data-marker-badge ok">✓</span>',
+        title_html=_esc(title),
+        timestamp=item.get("completed_at"),
+        tz=TZ,
+        relative=True,
+        fallback_timestamp="just now",
+        row_class="goal-undo-item",
+        body_class="goal-undo-copy",
+        title_class="goal-undo-title",
+        stripe_index=stripe_index,
+        trailing_html=button_link(
+            "Undo",
+            "#",
+            arrow=False,
+            cls="goal-undo-btn",
+            attrs=(
+                f'data-goal-undo-id="{_esc(item_id)}" '
+                'role="button"'
+            ),
+        ),
+    )
+
+
 def _render_goal_rows(goals: list[dict[str, Any]], *, empty_html: str, compact: bool = False) -> str:
     rows = []
-    for g in goals:
+    for idx, g in enumerate(goals):
         cls = "done" if g["done"] else ""
         if compact:
             cls = f"{cls} goal-compact".strip()
         check = "checked" if g["done"] else ""
         title_html = _linkify(g['title'])
         desc_html = _linkify(g['description'])
-        rows.append(f"""
-        <li class="goal {cls}" data-goal-title="{_esc(g['title'])}">
-          <span class="check {check}" role="checkbox" tabindex="0" aria-label="Complete: {_esc(g['title'])}"></span>
-          <div class="goal-body">
-            <div class="goal-title">{title_html}</div>
-            <div class="goal-desc">{desc_html}</div>
-          </div>
-        </li>
-        """)
+        rows.append(
+            data_row(
+                marker_html=(
+                    f'<span class="check {check}" role="checkbox" tabindex="0" '
+                    f'aria-label="Complete: {_esc(g["title"])}"></span>'
+                ),
+                title_html=title_html,
+                meta_html=desc_html,
+                row_class=f"goal {cls}".strip(),
+                body_class="goal-body",
+                title_class="goal-title",
+                meta_class="goal-desc",
+                stripe_index=idx,
+                attrs=f'data-goal-title="{_esc(g["title"])}"',
+            )
+        )
     if not rows:
         rows.append(empty_html)
     return "".join(rows)
@@ -585,35 +677,37 @@ def _render_reminder_rows(
     orchestrator (single writer + audit); this layer only renders the affordance
     and carries the id. A row missing an id degrades to read-only."""
     rows = []
-    for r in reminders:
+    for idx, r in enumerate(reminders):
         rid = r.get("reminder_id") or ""
         title = r.get("title") or ""
         due = r.get("due_at")
-        due_html = (
-            f'<div class="goal-desc">{_esc(_format_dt_short(due, tz=tz))}</div>'
-            if due else ""
-        )
         if rid:
-            check = (
+            marker_html = (
                 f'<span class="check" role="checkbox" tabindex="0" '
                 f'aria-label="Complete: {_esc(title)}"></span>'
             )
-            li_open = (
-                f'<li class="goal goal-compact goal-reminder" '
-                f'data-reminder-id="{_esc(rid)}" data-reminder-title="{_esc(title)}">'
+            row_class = "goal goal-compact goal-reminder"
+            attrs = (
+                f'data-reminder-id="{_esc(rid)}" '
+                f'data-reminder-title="{_esc(title)}"'
             )
         else:
-            check = ""
-            li_open = '<li class="goal goal-compact goal-readonly">'
-        rows.append(f"""
-        {li_open}
-          {check}
-          <div class="goal-body">
-            <div class="goal-title">{_linkify(title)}</div>
-            {due_html}
-          </div>
-        </li>
-        """)
+            marker_html = _badge_marker("R")
+            row_class = "goal goal-compact goal-readonly"
+            attrs = ""
+        rows.append(
+            data_row(
+                marker_html=marker_html,
+                title_html=_linkify(title),
+                timestamp=due,
+                tz=tz,
+                row_class=row_class,
+                body_class="goal-body",
+                title_class="goal-title",
+                stripe_index=idx,
+                attrs=attrs,
+            )
+        )
     if not rows:
         rows.append(empty_html)
     return "".join(rows)
@@ -631,9 +725,10 @@ def render_hero(
     secondary_todos = secondary_todos or []
     apple_reminders = apple_reminders or []
     visible_goals = [*goals, *secondary_todos]
-    done = sum(1 for g in visible_goals if g["done"])
-    in_progress = len(visible_goals) - done
-    pct = int((done / len(visible_goals)) * 100) if visible_goals else 0
+    done = len(recent_completions)
+    in_progress = len(visible_goals)
+    total = done + in_progress
+    pct = int((done / total) * 100) if total else 0
     primary_rows = _render_goal_rows(
         goals,
         empty_html='<li class="goal empty"><div class="goal-body"><div class="goal-title">No goals found</div><div class="goal-desc">Add checklist items to your Goals file.</div></div></li>',
@@ -655,25 +750,14 @@ def render_hero(
     )
     undo_html = ""
     if recent_completions:
-        undo_rows = []
-        for item in recent_completions[:MAX_GOAL_HISTORY]:
-            title = str(item.get("title") or "").strip() or "completed task"
-            completed_at = item.get("completed_at")
-            ago = _ago(completed_at, now=now) if completed_at else "just now"
-            item_id = str(item.get("id") or "")
-            undo_rows.append(f"""
-            <li class="goal-undo-item">
-              <div class="goal-undo-copy">
-                <span class="goal-undo-title">{_esc(title)}</span>
-                <span class="goal-undo-meta">{_esc(ago)}</span>
-              </div>
-              <button class="goal-undo-btn" type="button" data-goal-undo-id="{_esc(item_id)}">Undo</button>
-            </li>
-            """)
+        undo_rows = [
+            _render_recent_completion_row(item, stripe_index=idx)
+            for idx, item in enumerate(recent_completions[:MAX_GOAL_HISTORY])
+        ]
         undo_html = f"""
         <div id="goal-undo-tray" class="goal-undo-tray">
-          <div class="goal-undo-label">Recently completed</div>
-          <ul class="goal-undo-list">{''.join(undo_rows)}</ul>
+          {_subsection_label("Recently completed", count=len(undo_rows), extra_class="goal-undo-label")}
+          <ul class="goal-undo-list rb-data-list">{''.join(undo_rows)}</ul>
         </div>
         """
     else:
@@ -682,27 +766,27 @@ def render_hero(
     <section class="hero card">
       <header class="hero-head">
         <div>
-          <h1>Today's Goals</h1>
+          <h1>Today's goals</h1>
           <div class="subtle">{date_str} · pulled from <code>{_esc(pulled_from)}</code> {open_link}</div>
         </div>
         <div class="hero-stats">
           <div><b>{done}</b> done</div>
           <div><b>{in_progress}</b> in progress</div>
           <div class="bar"><span style="width:{pct}%"></span></div>
-          <div class="pct">{pct}%</div>
         </div>
       </header>
       <div class="hero-goal-board">
         <div class="hero-goal-column">
-          <ul class="goals">{primary_rows}</ul>
+          {_subsection_label("Goals", count=len(goals), extra_class="hero-column-label")}
+          <ul class="goals rb-data-list">{primary_rows}</ul>
         </div>
         <div class="hero-goal-column hero-goal-column-secondary">
-          <div class="hero-column-label">Next open todos</div>
-          <ul class="goals goals-secondary">{secondary_rows}</ul>
+          {_subsection_label("Next open todos", count=len(secondary_todos), extra_class="hero-column-label")}
+          <ul class="goals goals-secondary rb-data-list">{secondary_rows}</ul>
         </div>
         <div class="hero-goal-column hero-goal-column-reminders">
-          <div class="hero-column-label">Apple Reminders</div>
-          <ul class="goals goals-secondary">{reminder_rows}</ul>
+          {_subsection_label("Apple reminders", count=len(apple_reminders), extra_class="hero-column-label")}
+          <ul class="goals goals-secondary rb-data-list">{reminder_rows}</ul>
         </div>
       </div>
       {undo_html}
@@ -718,17 +802,16 @@ def render_recent_activity(
     vault_recent_count: int = 0,
 ) -> str:
     items = []
-    for r in rows:
+    for idx, r in enumerate(rows):
         kind = r.get("kind") or "item"
         sub = r.get("sub") or ""
-        glyph, color = KIND_GLYPH.get(kind, ("·", "muted"))
-        if kind == "item" and sub in ITEM_SUB_GLYPH:
-            glyph, color = ITEM_SUB_GLYPH[sub]
+        badge_variant, badge_label = _activity_kind_meta(kind, sub)
         repo = r.get("repo_full_name") or ""
+        repo_short = _repo_short_name(repo)
         num = r.get("num")
         detail = _truncate(r.get("detail") or "", 80)
         who = r.get("who") or ""
-        ago = _ago(r.get("ts"), now=now)
+        ago = format_timestamp(r.get("ts"), relative=True, tz=TZ) or "—"
         if kind == "commit":
             ref = (str(num)[:7] if num else "")
             label = f"commit {ref}" if ref else "commit"
@@ -739,36 +822,52 @@ def render_recent_activity(
         html_url = r.get("html_url") or ""
         if html_url:
             label_html = (
-                f'<a class="label {color}" href="{_esc(html_url)}" '
+                f'<a class="label" href="{_esc(html_url)}" '
                 f'target="_blank" rel="noopener noreferrer">{_esc(label)}</a>'
             )
         else:
-            label_html = f'<span class="label {color}">{_esc(label)}</span>'
-        items.append(f"""
-        <li class="activity-row">
-          <span class="ts">{_esc(ago)}</span>
-          <span class="glyph {color}">{glyph}</span>
-          {label_html}
-          <span class="repo">{_esc(repo)}</span>
-          <span class="who">{('@' + _esc(who)) if who else ''}</span>
-          <div class="detail">{_esc(detail)}</div>
-        </li>
-        """)
+            label_html = f'<span class="label">{_esc(label)}</span>'
+        meta_html = _join_row_bits(
+            [
+                (
+                    f'<span class="repo" title="{_esc(repo)}">{_esc(repo_short)}</span>'
+                    if repo else ""
+                ),
+                f'<span class="who">{("@" + _esc(who)) if who else ""}</span>' if who else "",
+                f'<span class="detail">{_esc(detail)}</span>' if detail else "",
+            ]
+        )
+        items.append(
+            data_row(
+                marker_html=badge_html(badge_variant, badge_label),
+                title_html=label_html,
+                meta_html=meta_html,
+                timestamp=r.get("ts"),
+                tz=TZ,
+                relative=True,
+                fallback_timestamp=ago,
+                row_class="activity-row",
+                marker_class="activity-type-marker",
+                title_class="activity-label",
+                meta_class="activity-meta",
+                stripe_index=idx,
+            )
+        )
     body = "".join(items) if items else '<li class="empty">No recent activity.</li>'
     foot = ""
     if last_vault:
         title = _esc(last_vault.get("title") or last_vault.get("rel_path") or "vault note")
-        ago = _ago(last_vault.get("last_modified"), now=now)
+        ago = _timestamp_html(last_vault.get("last_modified"), tz=TZ, relative=True, fallback="—")
         foot = (
             f'<footer class="card-foot subtle">'
-            f'Last vault edit · <span class="strong">{title}</span> · {_esc(ago)}'
+            f'Last vault edit · <span class="strong">{title}</span> · {ago}'
             f'{f" · {vault_recent_count} recent" if vault_recent_count else ""}'
             f'</footer>'
         )
     return f"""
     <section class="card activity">
       <header class="card-head"><h2>Recent GitHub activity</h2></header>
-      <ol class="activity-list">{body}</ol>
+      <ol class="activity-list rb-data-list">{body}</ol>
       {foot}
     </section>
     """
@@ -785,13 +884,18 @@ def render_work_next(
     """Render a SLIM teaser pointing at the dedicated "What's Next" page.
 
     The full ranked list lives on its OWN page — the FastAPI ``/whats-next`` route,
-    served by pulse_server — so this static dashboard shows only a compact pointer
-    (count + automation-ready count + the top item + a link) and does not crowd the
-    main view. PURE: takes PRE-FETCHED rows (each ``RankedAction.as_dict()``) —
-    never fetches. ``person`` labels are LOCAL-DISPLAY-ONLY (local dashboard, never
-    the pushed pulse); all untrusted text is ``_esc``-ed.
+    served by pulse_server — so this static dashboard shows only a compact teaser
+    (up to three rows + summary metadata + link) and does not crowd the main view.
+    PURE: takes PRE-FETCHED rows (each ``RankedAction.as_dict()``) — never fetches.
+    ``person`` labels are LOCAL-DISPLAY-ONLY (local dashboard, never the pushed
+    pulse); all untrusted text is ``_esc``-ed.
     """
-    link = '<a class="wn-open" href="/whats-next">Open What&#39;s Next &rarr;</a>'
+    link = button_link(
+        f"Open What's Next → {len(ranked_rows)} ranked",
+        "/whats-next",
+        arrow=False,
+        cls="wn-open",
+    ) if ranked_rows else button_link("Open What's Next", "/whats-next", arrow=False, cls="wn-open")
     if not ranked_rows:
         return f"""
     <section class="card work-next work-next-teaser">
@@ -800,35 +904,54 @@ def render_work_next(
     </section>
     """
 
-    total = len(ranked_rows)
     auto = sum(1 for r in ranked_rows if r.get("automation"))
-    auto_html = (
-        f' · <span class="wn-auto">&#9881; {auto} automation-ready</span>'
-        if auto else ""
-    )
-    when = f"computed {_esc(_ago(computed_at, now=now))}" if computed_at else "not computed yet"
-    blend_html = " · team-blended" if blended else ""
-
-    top = ranked_rows[0]
-    top_title = _esc(top.get("title") or "")
-    top_person = top.get("person")
-    person_html = (
-        f'<span class="wn-person">{_esc(top_person)}</span>' if top_person else ""
-    )
-    top_auto = (
-        '<span class="wn-auto">&#9881;</span>' if top.get("automation") else ""
-    )
+    computed_html = _timestamp_html(computed_at, tz=TZ, relative=True) if computed_at else ""
+    when_html = f"computed {computed_html}" if computed_html else "not computed yet"
+    meta_bits = []
+    if auto:
+        meta_bits.append(f'<span class="wn-auto">&#9881; {auto} automation-ready</span>')
+    if blended:
+        meta_bits.append("team-blended")
+    meta_bits.append(when_html)
+    teaser_rows = []
+    for idx, top in enumerate(ranked_rows[:3]):
+        top_title = _esc(top.get("title") or "")
+        top_person = top.get("person")
+        person_html = (
+            f'<span class="wn-person">{_esc(top_person)}</span>' if top_person else ""
+        )
+        top_auto = (
+            '<span class="wn-auto" aria-label="automation ready">&#9881;</span>'
+            if top.get("automation") else ""
+        )
+        meta_html = _join_row_bits(
+            [
+                f'<span class="wn-source">{_esc((top.get("source") or "").upper())}</span>' if top.get("source") else "",
+                f'<span class="wn-project">{_esc(top.get("project") or "")}</span>' if top.get("project") else "",
+            ]
+        )
+        teaser_rows.append(
+            data_row(
+                marker_html=f'<span class="rb-data-marker-rank">{idx + 1}</span>',
+                title_html=f'{top_title} {person_html} {top_auto}'.strip(),
+                meta_html=meta_html,
+                timestamp=computed_at,
+                tz=TZ,
+                relative=True,
+                row_class="wn-row",
+                title_class="wn-title",
+                meta_class="wn-meta",
+                stripe_index=idx,
+            )
+        )
 
     return f"""
     <section class="card work-next work-next-teaser">
       <header class="card-head">
         <h2>What&#39;s next</h2>
-        <span class="card-head-meta">{total} ranked{auto_html}{blend_html} · {when}</span>
+        <span class="card-head-meta">{' · '.join(meta_bits)}</span>
       </header>
-      <div class="wn-teaser-top">
-        <span class="wn-rank">1</span>
-        <span class="wn-title">{top_title} {person_html} {top_auto}</span>
-      </div>
+      <ol class="wn-list rb-data-list">{''.join(teaser_rows)}</ol>
       <div class="wn-teaser-foot">{link}</div>
     </section>
     """
@@ -991,7 +1114,7 @@ def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
             <div class="pr-repo">{_esc(pr["repo_full_name"])}</div>
           </div>
           <span class="pr-meta">{author}</span>
-          <span class="pr-meta">{_esc(_ago(pr["updated_at"], now=now))}</span>
+          <span class="pr-meta timestamp-block">{_esc(format_timestamp(pr["updated_at"], relative=True, tz=TZ) or "—")}</span>
         </li>
         """)
 
@@ -1019,7 +1142,7 @@ def render_open_prs(rows: list[dict[str, Any]], now: datetime) -> str:
 
 
 def render_watched(summary: dict[str, Any], now: datetime) -> str:
-    last = _ago(summary.get("last_synced"), now=now) if summary.get("last_synced") else "—"
+    last_html = _timestamp_html(summary.get("last_synced"), tz=TZ, relative=True, fallback="—")
     rows = [
         ("Watched",          summary.get("total", 0),         "neutral"),
         ("Fresh",            summary.get("fresh", 0),         "ok"),
@@ -1035,7 +1158,7 @@ def render_watched(summary: dict[str, Any], now: datetime) -> str:
     <section class="card watched">
       <header class="card-head"><h2>Watched repos</h2></header>
       <ul class="kv-list">{''.join(items)}</ul>
-      <footer class="card-foot subtle">Last sync activity · {_esc(last)}</footer>
+      <footer class="card-foot subtle">Last sync activity · {last_html}</footer>
     </section>
     """
 
@@ -1057,12 +1180,17 @@ def render_index_health(status: dict[str, Any], now: datetime) -> str:
     ]
     items = []
     for label, count, last, tone in rows:
-        ago = _ago(last, now=now) if last else "—"
+        ago = format_timestamp(last, relative=True, tz=TZ) if last else ""
+        ago_html = (
+            f'<span class="row-meta subtle timestamp-block">{_esc(ago)}</span>'
+            if ago
+            else '<span class="row-meta subtle">—</span>'
+        )
         items.append(f"""
         <li>
           <span class="row-label">{_esc(label)}</span>
           <span class="row-value {tone}">{_esc(count if count is not None else '—')}</span>
-          <span class="row-meta subtle">{_esc(ago)}</span>
+          {ago_html}
         </li>
         """)
     drift_tone = "ok" if drift_total == 0 else "warn"
@@ -1102,11 +1230,12 @@ def render_recent_emails(
     """
 
     items = []
-    for row in rows:
+    for idx, row in enumerate(rows):
         sender = _normalize_html_text(row.get("from_name") or "") or _normalize_html_text(row.get("from_address") or "") or "unknown sender"
         subject = _normalize_html_text(row.get("subject") or "") or "(no subject)"
         snippet = _truncate(_normalize_html_text(row.get("snippet") or ""), 180)
-        when = _ago(row.get("received_at"), now=now)
+        when = format_timestamp(row.get("received_at"), relative=True, tz=tz) or "—"
+        when_abs = format_timestamp(row.get("received_at"), tz=tz)
         gmail_url = build_gmail_thread_url(row)
         labels_raw = row.get("labels_json") or "[]"
         try:
@@ -1137,13 +1266,13 @@ def render_recent_emails(
             <div class="email-row-meta">
               <span class="email-row-from">{_esc(sender)}</span>
               <span class="email-row-dot">·</span>
-              <span class="email-row-when">{_esc(when)}</span>
+              <span class="email-row-when timestamp-block">{_esc(when)}</span>
               {f'<span class="email-row-dot">·</span>{"".join(label_bits)}' if label_bits else ""}
             </div>
             <div class="email-row-snippet">{_esc(snippet)}</div>
           </div>
           <div class="email-row-side">
-            <div class="email-row-time">{_esc(_format_dt_short(row.get("received_at"), tz=tz))}</div>
+            <div class="email-row-time timestamp-block">{_esc(when_abs)}</div>
             {reply_html}
           </div>
         </li>
@@ -1171,7 +1300,7 @@ def render_recent_figma(
     last_synced_at: str | None,
 ) -> str:
     configured_total = len(configured_keys)
-    sync_text = _ago(last_synced_at, now=now) if last_synced_at else "never synced"
+    sync_html = _timestamp_html(last_synced_at, tz=tz, relative=True, fallback="never synced")
     chips = "".join(
         f'<span class="figma-key-chip" title="{_esc(key)}">{_esc(key)}</span>'
         for key in configured_keys
@@ -1179,7 +1308,7 @@ def render_recent_figma(
 
     form = f"""
       <form id="figma-project-form" class="figma-config-form">
-        <div class="figma-config-label">Add Figma project ID</div>
+        {_subsection_label("Add Figma project ID", extra_class="figma-config-label")}
         <div class="figma-config-help">Paste a Figma file key or full design URL. rebalance adds it to <code>figma_file_keys</code> and syncs comments.</div>
         <div class="figma-config-row">
           <input
@@ -1193,7 +1322,7 @@ def render_recent_figma(
           <button id="figma-project-submit" class="figma-project-btn" type="submit">Add + sync</button>
         </div>
         <div id="figma-project-status" class="figma-project-status subtle">
-          Tracking {configured_total} project ID{'s' if configured_total != 1 else ''} · last sync { _esc(sync_text) }
+          Tracking {configured_total} project ID{'s' if configured_total != 1 else ''} · last sync {sync_html}
         </div>
         <div class="figma-key-list">{chips}</div>
       </form>
@@ -1211,32 +1340,49 @@ def render_recent_figma(
     </section>
     """
 
+    sorted_rows = sorted(
+        rows,
+        key=lambda row: _parse_iso(row.get("created_at") or row.get("synced_at"))
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+
     items = []
-    for row in rows:
+    for idx, row in enumerate(sorted_rows):
         author = _normalize_html_text(row.get("user_handle") or "") or _normalize_html_text(row.get("user_id") or "") or "Figma user"
         message = _truncate(_normalize_html_text(row.get("message") or ""), 220) or "(empty comment)"
-        when = _ago(row.get("created_at") or row.get("synced_at"), now=now)
+        stamp_value = row.get("created_at") or row.get("synced_at")
         resolved = bool(row.get("resolved_at"))
         resolved_badge = '<span class="figma-badge resolved">resolved</span>' if resolved else ""
         file_key = _normalize_html_text(row.get("file_key") or "")
-        items.append(f"""
-        <li class="figma-row">
-          <div class="figma-row-main">
-            <div class="figma-row-message">{_esc(message)}</div>
-            <div class="figma-row-meta">
-              <span class="figma-row-author">{_esc(author)}</span>
-              <span class="figma-row-dot">·</span>
-              <span class="figma-row-file" title="{_esc(file_key)}">{_esc(file_key)}</span>
-              <span class="figma-row-dot">·</span>
-              <span class="figma-row-when">{_esc(when)}</span>
-              {f'<span class="figma-row-dot">·</span>{resolved_badge}' if resolved_badge else ''}
-            </div>
-          </div>
-          <div class="figma-row-side">
-            <div class="figma-row-time">{_esc(_format_dt_short(row.get("created_at") or row.get("synced_at"), tz=tz))}</div>
-          </div>
-        </li>
-        """)
+        file_link = _figma_file_link(file_key)
+        title_html = _join_row_bits(
+            [
+                f'<span class="figma-row-author">{_esc(author)}</span>',
+                resolved_badge,
+            ]
+        )
+        meta_html = "".join(
+            [
+                f'<div class="figma-row-body">{_linkify(message)}</div>',
+                f'<div class="figma-row-footer">{file_link}</div>' if file_link else "",
+            ]
+        )
+        items.append(
+            data_row(
+                marker_html=_avatar_marker(author),
+                title_html=title_html,
+                meta_html=meta_html,
+                timestamp=stamp_value,
+                tz=tz,
+                relative=True,
+                fallback_timestamp="—",
+                row_class="figma-row",
+                title_class="figma-row-head",
+                meta_class="figma-row-meta",
+                stripe_index=idx,
+            )
+        )
 
     return f"""
     <section class="card figma-comments">
@@ -1244,16 +1390,163 @@ def render_recent_figma(
         <h2>Recent Figma comments</h2>
         <span class="card-head-meta">latest {min(len(rows), limit)} shown · {stored_total} stored</span>
       </header>
-      <ol class="figma-list">{''.join(items)}</ol>
+      <ol class="figma-list rb-data-list">{''.join(items)}</ol>
       <footer class="card-foot">{form}</footer>
     </section>
     """
+
+
+# Calendar day-grid geometry. Constants, not literals sprinkled through the
+# markup, so the grid can be retuned in one place (the design brief asks for
+# 44px/hour by default). CAL_END_HOUR is inclusive — the 9 PM rule is drawn.
+CAL_START_HOUR = 8
+CAL_END_HOUR = 21
+CAL_HOUR_PX = 44
+CAL_GUTTER_PX = 44
+CAL_MIN_EVENT_PX = 20
+CAL_SHOW_TIME_PX = 36
+CAL_UPCOMING_LIMIT = 5
+
+
+def _cal_y(hour: float) -> float:
+    """Vertical offset in px for a decimal hour, relative to the grid top."""
+    return (hour - CAL_START_HOUR) * CAL_HOUR_PX
+
+
+def _cal_clock(dt: datetime) -> str:
+    """`1:45 PM` / `2 PM` — the compact in-block time label."""
+    return dt.strftime("%-I:%M %p") if dt.minute else dt.strftime("%-I %p")
+
+
+def render_calendar_module(
+    today_rows: list[dict[str, Any]],
+    upcoming_rows: list[dict[str, Any]],
+    now: datetime,
+    *,
+    tz: ZoneInfo,
+) -> str:
+    """Render the sidebar Calendar module: a day grid plus an Upcoming list.
+
+    Replaces the old flat text list with a Google-Calendar-style day view for
+    TODAY (``CAL_START_HOUR``–``CAL_END_HOUR``), followed by the next
+    ``CAL_UPCOMING_LIMIT`` events on later days.
+
+    PURE: takes pre-fetched rows (``summary``/``start_time``/``end_time``/
+    ``location``) and never queries. All time math is done in ``tz``; events
+    outside the grid's hour range deliberately do not render as blocks — they
+    surface in Upcoming instead, so nothing is silently dropped.
+    """
+    local_now = now.astimezone(tz)
+    today = local_now.date()
+
+    def _hydrate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = []
+        for ev in rows:
+            start = parse_utc_iso(ev.get("start_time"))
+            if start is None:
+                continue
+            start = start.astimezone(tz)
+            end = parse_utc_iso(ev.get("end_time"))
+            # A missing end is assumed to be a 30-minute block — enough to render
+            # a visible, correctly-placed block rather than dropping the event.
+            end = end.astimezone(tz) if end else start + timedelta(minutes=30)
+            out.append({**ev, "_start": start, "_end": end})
+        return out
+
+    # The grid needs today's WHOLE day (including finished events, which the
+    # upcoming fetch cannot return); Upcoming needs strictly later days.
+    todays = [e for e in _hydrate(today_rows) if e["_start"].date() == today]
+    later = [e for e in _hydrate(upcoming_rows) if e["_start"].date() > today]
+
+    # --- hour gutter + rules -------------------------------------------------
+    hour_rows = []
+    for hour in range(CAL_START_HOUR, CAL_END_HOUR + 1):
+        ap = "PM" if hour >= 12 else "AM"
+        h12 = hour % 12 or 12
+        hour_rows.append(
+            f'<div class="cal-hour" style="top:{_cal_y(hour):.0f}px">'
+            f'<span class="cal-hour-label">{h12} {ap}</span>'
+            f'<span class="cal-hour-rule"></span>'
+            f"</div>"
+        )
+
+    # --- positioned event blocks --------------------------------------------
+    blocks = []
+    for ev in todays:
+        start, end = ev["_start"], ev["_end"]
+        start_h = start.hour + start.minute / 60
+        end_h = end.hour + end.minute / 60
+        # Outside the rendered window: skip the block, Upcoming/other surfaces cover it.
+        if end_h <= CAL_START_HOUR or start_h >= CAL_END_HOUR:
+            continue
+        top = _cal_y(max(start_h, CAL_START_HOUR))
+        height = max(_cal_y(min(end_h, CAL_END_HOUR)) - top, CAL_MIN_EVENT_PX)
+        state = "past" if end < local_now else "upcoming"
+        title = _esc(ev.get("summary") or "event")
+        time_line = (
+            f'<span class="cal-event-time">{_cal_clock(start)} – {_cal_clock(end)}</span>'
+            if height >= CAL_SHOW_TIME_PX
+            else ""
+        )
+        blocks.append(
+            f'<div class="cal-event {state}" style="top:{top:.0f}px;height:{height:.0f}px"'
+            f' data-cal-end-min="{end.hour * 60 + end.minute}" title="{title}">'
+            f'<span class="cal-event-title">{title}</span>{time_line}'
+            f"</div>"
+        )
+
+    # --- now indicator -------------------------------------------------------
+    now_h = local_now.hour + local_now.minute / 60
+    now_html = ""
+    if CAL_START_HOUR <= now_h <= CAL_END_HOUR:
+        now_html = (
+            f'<div class="cal-now" id="cal-now" style="top:{_cal_y(now_h):.0f}px">'
+            f'<span class="cal-now-dot"></span><span class="cal-now-line"></span>'
+            f"</div>"
+        )
+
+    # --- upcoming ------------------------------------------------------------
+    up_rows = []
+    for idx, ev in enumerate(later[:CAL_UPCOMING_LIMIT]):
+        title = ev.get("summary") or "event"
+        loc = ev.get("location") or ""
+        label = f"{title} · {_truncate(loc, 28)}" if loc else title
+        stamp = format_timestamp(ev["_start"], month_day=True, tz=tz)
+        stripe = "even" if idx % 2 else "odd"
+        up_rows.append(
+            f'<div class="cal-up-row" data-rb-stripe="{stripe}">'
+            f'<span class="cal-up-time timestamp-block">{_esc(stamp)}</span>'
+            f'<span class="cal-up-title" title="{_esc(label)}">{_esc(label)}</span>'
+            f"</div>"
+        )
+    upcoming_html = (
+        f'<div class="cal-upcoming">'
+        f'{_subsection_label("Upcoming", count=len(later[:CAL_UPCOMING_LIMIT]))}'
+        f'<div class="cal-up-list">{"".join(up_rows)}</div></div>'
+        if up_rows
+        else ""
+    )
+
+    grid_height = _cal_y(CAL_END_HOUR) + 1
+    date_line = local_now.strftime("%A · %Y-%m-%d")
+    return (
+        f'<div class="cal-module">'
+        f'<div class="cal-date timestamp-block">{_esc(date_line)}</div>'
+        f'<div class="cal-grid" style="height:{grid_height:.0f}px"'
+        f' data-cal-start="{CAL_START_HOUR}" data-cal-end="{CAL_END_HOUR}"'
+        f' data-cal-hour-px="{CAL_HOUR_PX}">'
+        f'{"".join(hour_rows)}'
+        f'<div class="cal-gutter-rule"></div>'
+        f'{"".join(blocks)}{now_html}'
+        f"</div>{upcoming_html}</div>"
+    )
 
 
 def build_nav_data(
     *,
     in_progress: int,
     cal_rows: list[dict[str, Any]],
+    cal_today_rows: list[dict[str, Any]],
     sleuth_rows: list[dict[str, Any]],
     sleuth_synced: bool,
     sleuth_sections: list[dict[str, Any]] | None = None,
@@ -1270,38 +1563,27 @@ def build_nav_data(
     This is the data/I-O-aware half that lives in pulse_web (it uses the Slack /
     Sleuth helpers and the DB-derived rows). The pure shell that frames these
     strings lives in :func:`rebalance.web_components.render_sidebar`, which keeps
-    that module stdlib-only.
+    that module free of I/O.
 
     When ``sleuth_sections`` is provided (from ``fetch_sleuth_display_sections``),
     reminders are rendered with the same section/label/assignee format as the
     Slack "show reminders" command. Falls back to the flat ``sleuth_rows`` path
     when the published file is unavailable.
     """
-    cal_items = []
-    for ev in cal_rows:
-        when = _format_dt_short(ev.get("start_time"), tz=tz)
-        loc = _esc(ev.get("location") or "")
-        title = _esc(ev.get("summary") or "event")
-        cal_items.append(f"""
-          <li class="side-row">
-            <div class="side-row-title">{title}</div>
-            <div class="side-row-meta">{_esc(when)}{(" · " + loc) if loc else ""}</div>
-          </li>
-        """)
-    if not cal_items:
-        cal_items.append('<li class="side-row empty"><div class="side-row-meta">No upcoming events.</div></li>')
+    cal_html = render_calendar_module(cal_today_rows, cal_rows, now, tz=tz)
 
     sleuth_items = []
     if sleuth_sections:
         # Published-file path: section headers + canonical "show reminders" format.
-        _SUBSECTION_LI = (
-            "style='font-size:10.5px;text-transform:uppercase;letter-spacing:.06em;"
-            "color:var(--fg-dim);padding:10px 8px 3px;pointer-events:none;'"
-        )
+        reminder_idx = 0
         for section in sleuth_sections:
             section_label = section.get("sectionLabel", "")
+            reminder_count = len(section.get("reminders") or [])
             sleuth_items.append(
-                f"<li {_SUBSECTION_LI}>{_esc(section_label)}</li>"
+                f'<li class="section-label nav-list-section-label">'
+                f'{_esc(section_label)}'
+                f'<span class="section-label-count"> · {_esc(reminder_count)}</span>'
+                f'</li>'
             )
             for r in section.get("reminders") or []:
                 label    = r.get("label", "")
@@ -1309,49 +1591,54 @@ def build_nav_data(
                 age_days = int(r.get("ageDays") or 0)
                 assignee = r.get("assigneeName", "")
                 permalink = r.get("permalink", "")
-                due_str  = _format_dt_short(r.get("shouldPostOn"), tz=tz) if r.get("shouldPostOn") else ""
-
-                age_part  = f" ({age_days}d old)" if age_days else ""
-                title_txt = f"{label}.) {summary}{age_part}" if label else f"{summary}{age_part}"
-                meta_bits = [b for b in [due_str, assignee] if b]
-                body = (
-                    f"<div class='side-row-title'>{_esc(title_txt)}</div>"
-                    f"<div class='side-row-meta'>{_esc(' · '.join(meta_bits))}</div>"
+                meta_html = _join_row_bits(
+                    [
+                        _esc(assignee) if assignee else "",
+                        _age_chip(age_days),
+                    ]
                 )
-                if permalink:
-                    sleuth_items.append(
-                        f"<li class='side-row has-link'>"
-                        f"<a class='side-row-link' href='{_esc(permalink)}' "
-                        f"target='_blank' rel='noopener noreferrer' title='Open in Slack'>"
-                        f"{body}</a></li>"
+                sleuth_items.append(
+                    data_row(
+                        marker_html=_badge_marker(_reminder_marker_text(str(label))),
+                        title_html=_esc(summary),
+                        meta_html=meta_html,
+                        timestamp=r.get("shouldPostOn"),
+                        tz=tz,
+                        row_class="side-row has-link" if permalink else "side-row",
+                        title_class="side-row-title",
+                        meta_class="side-row-meta",
+                        stripe_index=reminder_idx,
+                        href=permalink or None,
+                        link_title="Open in Slack",
+                        external=bool(permalink),
+                        link_class="side-row-link",
                     )
-                else:
-                    sleuth_items.append(f"<li class='side-row'>{body}</li>")
+                )
+                reminder_idx += 1
     else:
         # Fallback: flat list from SQLite (no display fields available).
-        for s in sleuth_rows:
+        for idx, s in enumerate(sleuth_rows):
             msg = compact_sleuth_reminder(s.get("reminder_message_text") or "")
             msg = _truncate(msg, 90)
-            when = _format_dt_short(s.get("should_post_on"), tz=tz) if s.get("should_post_on") else ""
             role = "from me" if s.get("sleuth_role") == "assigned_by_me" else "for me"
-            meta_bits = [b for b in [when, role] if b]
             slack_url = build_slack_url(s)
-            body = f"""
-                <div class="side-row-title">{_esc(msg)}</div>
-                <div class="side-row-meta">{_esc(' · '.join(meta_bits))}</div>
-            """
-            if slack_url:
-                sleuth_items.append(f"""
-          <li class="side-row has-link">
-            <a class="side-row-link" href="{_esc(slack_url)}" target="_blank" rel="noopener noreferrer" title="Open in Slack">
-              {body}
-            </a>
-          </li>
-                """)
-            else:
-                sleuth_items.append(f"""
-          <li class="side-row">{body}</li>
-                """)
+            sleuth_items.append(
+                data_row(
+                    marker_html=_badge_marker("R"),
+                    title_html=_esc(msg),
+                    meta_html=_esc(role),
+                    timestamp=s.get("should_post_on"),
+                    tz=tz,
+                    row_class="side-row has-link" if slack_url else "side-row",
+                    title_class="side-row-title",
+                    meta_class="side-row-meta",
+                    stripe_index=idx,
+                    href=slack_url,
+                    link_title="Open in Slack",
+                    external=bool(slack_url),
+                    link_class="side-row-link",
+                )
+            )
     if not sleuth_items:
         if sleuth_synced:
             # Genuinely empty — Sleuth synced and there is nothing pending.
@@ -1383,13 +1670,13 @@ def build_nav_data(
     notices_section = ""
     if notice_items:
         notices_section = f"""
-        <div class="nav-section-label">Notices <span class="side-count">{len(notice_items)}</span></div>
+        {_subsection_label("Notices", count=len(notice_items), extra_class="nav-section-label")}
         <ul class="side-list notices-scroll">{''.join(notice_items)}</ul>
         """
 
     return {
         "badge": in_progress,
-        "cal_html": "".join(cal_items),
+        "cal_html": cal_html,
         "sleuth_html": "".join(sleuth_items),
         "notices_html": notices_section,
         "streams": streams,
@@ -1463,6 +1750,11 @@ PAGE_CSS = """
 .chat-cite-score { font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
 .chat-cite-preview { font-size: 12px; color: var(--fg-muted); margin-top: 4px; line-height: 1.4; }
 .is-hidden-by-filter { display: none !important; }
+.timestamp-block {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+}
 .health-banner {
   display: grid;
   grid-template-columns: auto 1fr;
@@ -1483,11 +1775,6 @@ PAGE_CSS = """
   background: linear-gradient(90deg, rgba(192,57,43,.11), rgba(255,255,255,.96));
 }
 /* Sidebar Notices module — scrollable viewer for demoted WARNs */
-.side-count {
-  display: inline-block; margin-left: 6px; padding: 0 6px;
-  font-size: 10px; font-weight: 600; line-height: 16px; border-radius: 999px;
-  background: rgba(120,120,128,.16); color: var(--fg-dim);
-}
 .notices-scroll {
   max-height: 168px;
   overflow-y: auto;
@@ -1609,16 +1896,42 @@ PAGE_CSS = """
 .card-head { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 18px 10px; }
 .card-head-meta { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .card-foot { padding: 10px 18px 14px; border-top: 1px solid var(--border); }
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--fg-dim);
+}
+.section-label-count { font-variant-numeric: tabular-nums; }
+.nav-list-section-label {
+  list-style: none;
+  padding: 10px 8px 3px;
+  pointer-events: none;
+}
 
 /* What should we work on next */
-.work-next .wn-list { list-style: none; margin: 0; padding: 4px 0 10px; }
-.wn-row { display: flex; gap: 12px; padding: 10px 18px; border-top: 1px solid var(--border); }
-.wn-row:first-child { border-top: none; }
-.wn-rank {
-  flex: 0 0 auto; min-width: 22px; text-align: right;
-  color: var(--accent); font-weight: 700; font-variant-numeric: tabular-nums;
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10.5px;
+  font-weight: 700;
+  line-height: 1.2;
+  white-space: nowrap;
 }
-.wn-body { min-width: 0; }
+.badge-ok      { background: rgba(47,116,55,.12); color: var(--ok); }
+.badge-warn    { background: rgba(166,95,0,.12); color: var(--warn); }
+.badge-danger  { background: rgba(192,57,43,.12); color: var(--danger); }
+.badge-info    { background: rgba(29,111,168,.12); color: var(--info); }
+.badge-neutral { background: rgba(138,133,124,.14); color: var(--fg-muted); }
+
+.work-next .wn-list { margin: 0; padding: 4px 0 10px; }
+.wn-row[data-rb-row] { padding: 10px 18px; }
+.wn-row .rb-data-row-marker { padding-top: 0; align-items: center; }
+.wn-row .rb-data-row-trailing { min-width: 72px; }
 .wn-title { color: var(--fg); font-weight: 600; }
 .wn-person {
   margin-left: 6px; padding: 1px 7px; border-radius: 999px;
@@ -1627,17 +1940,7 @@ PAGE_CSS = """
 }
 .wn-meta { color: var(--fg-dim); font-size: 12px; margin-top: 2px; }
 .wn-source { text-transform: uppercase; letter-spacing: 0.04em; }
-.wn-project { margin-left: 6px; }
-.wn-why { color: var(--fg-muted); font-size: 13px; margin-top: 3px; }
-/* What's-next teaser (slim pointer to the dedicated /whats-next page) */
-.work-next-teaser .wn-teaser-top { display: flex; align-items: baseline; gap: 8px; padding: 6px 0 2px; }
-.work-next-teaser .wn-teaser-top .wn-rank {
-  flex: none; min-width: 20px; height: 20px; line-height: 20px; text-align: center;
-  border-radius: 999px; background: var(--border); color: var(--fg-muted);
-  font-size: 11px; font-weight: 700;
-}
-.work-next-teaser .wn-teaser-top .wn-title { color: var(--fg); font-size: 14px; }
-.work-next-teaser .wn-teaser-foot { margin-top: 6px; }
+.work-next-teaser .wn-teaser-foot { margin-top: 6px; padding: 0 18px 14px; }
 .wn-open { color: var(--accent); font-weight: 600; font-size: 13px; text-decoration: none; }
 .wn-open:hover { text-decoration: underline; }
 .wn-auto { color: var(--warn, #b58900); font-weight: 600; }
@@ -1653,22 +1956,10 @@ PAGE_CSS = """
 
 .hero-goal-board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 1fr) minmax(240px, 1fr); gap: 14px; align-items: stretch; }
 .hero-goal-column { min-width: 0; }
-.hero-goal-column-secondary,
-.hero-goal-column-reminders {
-  border-left: 1px solid var(--border);
-  padding-left: 14px;
-}
 .goal-readonly { padding-left: 6px; }
-.hero-column-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--fg-dim);
-  margin: 0 6px 4px;
-}
-.goals { list-style: none; padding: 0; margin: 0; display: flex; flex-direction: column; gap: 2px; }
-.goal { display: flex; align-items: flex-start; gap: 14px; padding: 12px 6px; border-top: 1px solid var(--border); }
-.goal:first-child { border-top: 0; }
+.hero-column-label { margin: 0 6px 4px; }
+.goals { padding: 0; margin: 0; }
+.goal[data-rb-row] { padding: 12px 6px; gap: 14px; }
 .goal .check { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #c8c2b3; margin-top: 2px; flex-shrink: 0; background: #fff; cursor: pointer; transition: border-color .12s, background .12s; }
 .goal .check[role="checkbox"]:hover { border-color: var(--accent); }
 .goal .check[role="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -1682,79 +1973,58 @@ PAGE_CSS = """
 .goal-title a:hover, .goal-desc a:hover { text-decoration: underline; }
 .goal.done .goal-title { text-decoration: line-through; color: var(--fg-dim); }
 .goal.done .goal-desc { color: var(--fg-dim); }
-.goal-compact { padding: 8px 6px; gap: 10px; }
-.goal-compact .check { width: 16px; height: 16px; border-radius: 4px; }
-.goal-compact .check.checked::after { left: 4px; top: 1px; width: 4px; height: 8px; }
-.goal-compact .goal-title { font-size: 13px; line-height: 1.3; }
-.goal-compact .goal-desc { font-size: 11.5px; }
+.goal-compact[data-rb-row] { padding: 12px 6px; gap: 14px; }
+.goal-compact .check { width: 18px; height: 18px; border-radius: 5px; }
+.goal-compact .check.checked::after { left: 4px; top: 1px; width: 5px; height: 9px; }
+.goal-compact .goal-title { font-size: 13px; line-height: 1.35; }
+.goal-compact .goal-desc { font-size: 12.5px; }
+.goal-readonly .rb-data-row-marker { padding-top: 0; }
+.goal-readonly .rb-data-marker-badge { width: 18px; height: 18px; font-size: 10px; }
 .goal-undo-tray {
   border-top: 1px solid var(--border);
   margin-top: 8px;
   padding: 14px 6px 4px;
 }
 .goal-undo-tray.is-empty { display: none; }
-.goal-undo-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--fg-dim);
-  margin-bottom: 10px;
-}
+.goal-undo-label { margin-bottom: 10px; }
 .goal-undo-list {
   list-style: none;
   margin: 0;
   padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
 }
 .goal-undo-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  background: rgba(0,0,0,.015);
+  padding: 10px 6px;
 }
-.goal-undo-copy {
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
+.goal-undo-item .rb-data-row-trailing { min-width: 74px; gap: 8px; }
 .goal-undo-title {
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--fg);
+  color: var(--fg-dim);
+  text-decoration: line-through;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.goal-undo-meta {
-  font-size: 11.5px;
-  color: var(--fg-dim);
-}
 .goal-undo-btn {
-  font: inherit;
   border: 1px solid var(--border);
   border-radius: 999px;
   background: #fff;
   color: var(--accent);
   padding: 5px 11px;
-  cursor: pointer;
   font-size: 11.5px;
   font-weight: 600;
   flex-shrink: 0;
+  text-decoration: none;
 }
 .goal-undo-btn:hover {
   border-color: rgba(31,111,235,.28);
   background: rgba(31,111,235,.07);
+  text-decoration: none;
 }
-.goal-undo-btn:disabled {
+.goal-undo-btn[aria-disabled="true"] {
   opacity: .55;
   cursor: progress;
+  pointer-events: none;
 }
 
 /* Two-column body */
@@ -1772,16 +2042,21 @@ PAGE_CSS = """
 
 /* Activity */
 .activity-list { list-style: none; padding: 0 4px 14px; margin: 0; }
-.activity-row { display: grid; grid-template-columns: 56px 18px auto auto 1fr; column-gap: 8px; row-gap: 2px; padding: 10px 14px; border-top: 1px solid var(--border); align-items: baseline; }
-.activity-row:first-child { border-top: 0; }
-.activity-row .ts { color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
-.activity-row .glyph { font-size: 13px; }
+.activity-row[data-rb-row] { padding: 10px 14px; }
+.activity-row .rb-data-row-marker.activity-type-marker {
+  width: auto;
+  min-width: 56px;
+  justify-content: flex-start;
+  padding-top: 0;
+}
+.activity-row .rb-data-row-trailing { min-width: 72px; }
 .activity-row .label { font-weight: 500; }
 .activity-row a.label { text-decoration: none; }
 .activity-row a.label:hover { text-decoration: underline; }
+.activity-meta { font-size: 12px; }
 .activity-row .repo { color: var(--fg-muted); }
 .activity-row .who { color: var(--fg-dim); }
-.activity-row .detail { grid-column: 3 / -1; color: var(--fg-muted); font-size: 12.5px; }
+.activity-row .detail { color: var(--fg-muted); font-size: 12.5px; }
 
 /* Recent email */
 .recent-emails .card-head { align-items: center; }
@@ -1897,48 +2172,23 @@ PAGE_CSS = """
   max-height: 540px;
   overflow-y: auto;
 }
-.figma-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 14px;
-  padding: 12px 18px;
-  border-top: 1px solid var(--border);
-  align-items: start;
+.figma-row[data-rb-row] { gap: 14px; padding: 12px 18px; }
+.figma-row .rb-data-row-trailing { min-width: 72px; }
+.figma-row-head {
+  color: var(--fg-muted);
+  font-size: 11.75px;
+  font-weight: 600;
 }
-.figma-row:first-child { border-top: 0; }
-.figma-row-main { min-width: 0; }
-.figma-row-message {
+.figma-row-meta { color: var(--fg-dim); font-size: 11.5px; }
+.figma-row-body {
   color: var(--fg);
   font-size: 12.75px;
   line-height: 1.45;
-  margin-bottom: 4px;
 }
-.figma-row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  align-items: center;
-  color: var(--fg-dim);
-  font-size: 11.5px;
-}
+.figma-row-footer { margin-top: 6px; }
 .figma-row-author { color: var(--fg-muted); font-weight: 600; }
-.figma-row-file {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  color: var(--fg-dim);
-}
-.figma-row-dot { color: var(--fg-dim); }
-.figma-row-side {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 6px;
-}
-.figma-row-time {
-  color: var(--fg-dim);
-  font-size: 11.5px;
-  white-space: nowrap;
-  font-variant-numeric: tabular-nums;
-}
+.figma-row-link { color: var(--accent); font-size: 11.5px; text-decoration: none; }
+.figma-row-link:hover { text-decoration: underline; }
 .figma-badge {
   display: inline-flex;
   align-items: center;
@@ -1954,16 +2204,21 @@ PAGE_CSS = """
   border-color: rgba(47,116,55,.22);
   background: rgba(47,116,55,.08);
 }
+.side-age-chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid rgba(138,133,124,.24);
+  background: rgba(138,133,124,.08);
+  color: var(--fg-dim);
+  font-size: 10.5px;
+  font-weight: 600;
+}
 .figma-config-form {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.figma-config-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--fg-dim);
 }
 .figma-config-help {
   color: var(--fg-muted);
@@ -2043,7 +2298,6 @@ PAGE_CSS = """
 
 /* Strip */
 .strip { display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; padding: 4px 4px 24px; }
-.strip-label { font-size: 10px; text-transform: uppercase; letter-spacing: .08em; color: var(--fg-dim); margin-bottom: 4px; }
 .strip-title { font-weight: 500; }
 .empty { color: var(--fg-dim); padding: 14px 18px; }
 
@@ -2057,9 +2311,6 @@ PAGE_CSS = """
   .email-row { grid-template-columns: 1fr; }
   .email-row-side { align-items: flex-start; }
   .email-row-time { white-space: normal; }
-  .figma-row { grid-template-columns: 1fr; }
-  .figma-row-side { align-items: flex-start; }
-  .figma-row-time { white-space: normal; }
   .figma-config-row { grid-template-columns: 1fr; }
   .topbar { flex-direction: column; align-items: stretch; gap: 12px; }
   .topbar > div:last-child { flex-wrap: wrap; }
@@ -2071,7 +2322,7 @@ PAGE_CSS = """
 .open-prs-list { list-style: none; margin: 0; padding: 0; }
 .pr-row {
   display: grid;
-  grid-template-columns: 48px minmax(0,1fr) 80px 90px;
+  grid-template-columns: 48px minmax(0,1fr) 80px minmax(180px, 220px);
   gap: 10px;
   padding: 10px 18px;
   border-top: 1px solid var(--border);
@@ -2086,7 +2337,7 @@ PAGE_CSS = """
 .pr-title a { color: var(--fg); text-decoration: none; }
 .pr-title a:hover { color: var(--accent); text-decoration: underline; }
 .pr-repo { font-size: 11.5px; color: var(--fg-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.pr-meta { font-size: 11.5px; color: var(--fg-dim); text-align: right; }
+.pr-meta { font-size: 11.5px; text-align: right; line-height: 1.35; }
 .pr-badge {
   display: inline-block; padding: 1px 6px; border-radius: 999px;
   font-size: 10.5px; font-weight: 600; border: 1px solid var(--border);
@@ -2146,7 +2397,37 @@ CSS = RB_TOKENS_CSS + RB_CHROME_CSS + PAGE_CSS
 
 PULSE_JS = r"""
 (() => {
-  const FILTER_TARGETS = '.activity-row, .email-row, .goal, .side-row, .strip > div, .kv-list li';
+  // Calendar now-indicator. The page is a STATIC generated file that can sit open
+  // for hours, so the red line has to move on its own or it silently lies about
+  // the current time. Geometry constants come from the grid's data-* attributes
+  // so the hour height is defined in exactly one place (pulse_web's CAL_HOUR_PX).
+  const calGrid = document.querySelector('.cal-grid');
+  const calNow = document.getElementById('cal-now');
+  if (calGrid && calNow) {
+    const start = Number(calGrid.dataset.calStart);
+    const end = Number(calGrid.dataset.calEnd);
+    const hourPx = Number(calGrid.dataset.calHourPx);
+    const placeNow = () => {
+      const d = new Date();
+      const h = d.getHours() + d.getMinutes() / 60;
+      // Outside the rendered window the indicator is meaningless — hide it
+      // rather than pinning it to an edge and implying "now" is 8 AM.
+      if (h < start || h > end) { calNow.style.display = 'none'; return; }
+      calNow.style.display = '';
+      calNow.style.top = ((h - start) * hourPx).toFixed(0) + 'px';
+      // Re-age the blocks too, so an event that ends while the page is open fades.
+      const mins = d.getHours() * 60 + d.getMinutes();
+      document.querySelectorAll('.cal-event[data-cal-end-min]').forEach((el) => {
+        const past = Number(el.dataset.calEndMin) <= mins;
+        el.classList.toggle('past', past);
+        el.classList.toggle('upcoming', !past);
+      });
+    };
+    placeNow();
+    setInterval(placeNow, 60000);
+  }
+
+  const FILTER_TARGETS = '.rb-data-row, [data-rb-row], .email-row, .strip > div, .kv-list li, .pr-row';
   const input = document.getElementById('pulse-filter');
   const btn = document.getElementById('pulse-refresh');
   const undoTray = document.getElementById('goal-undo-tray');
@@ -2169,23 +2450,27 @@ PULSE_JS = r"""
       undoTray.classList.add('is-empty');
       return;
     }
-    const items = entries.slice(0, 3).map((entry) => {
+    const items = entries.slice(0, 3).map((entry, index) => {
       const title = escapeHtml(entry.title || 'completed task');
       const ago = escapeHtml(entry.completed_ago || 'just now');
       const entryId = escapeHtml(entry.id || '');
+      const stripe = (index % 2 === 1) ? 'even' : 'odd';
       return `
-        <li class="goal-undo-item">
-          <div class="goal-undo-copy">
-            <span class="goal-undo-title">${title}</span>
-            <span class="goal-undo-meta">${ago}</span>
+        <li class="goal-undo-item" data-rb-row="1" data-rb-stripe="${stripe}">
+          <span class="rb-data-row-marker"><span class="rb-data-marker-badge ok">✓</span></span>
+          <div class="rb-data-row-body goal-undo-copy">
+            <div class="rb-data-row-title goal-undo-title">${title}</div>
           </div>
-          <button class="goal-undo-btn" type="button" data-goal-undo-id="${entryId}">Undo</button>
+          <div class="rb-data-row-trailing">
+            <div class="rb-data-row-time timestamp-block">${ago}</div>
+            <a class="rb-btn goal-undo-btn" href="#" data-goal-undo-id="${entryId}" role="button">Undo</a>
+          </div>
         </li>
       `;
     });
     undoTray.innerHTML = `
-      <div class="goal-undo-label">Recently completed</div>
-      <ul class="goal-undo-list">${items.join('')}</ul>
+      <div class="section-label goal-undo-label">Recently completed<span class="section-label-count"> · ${items.length}</span></div>
+      <ul class="goal-undo-list rb-data-list">${items.join('')}</ul>
     `;
     undoTray.hidden = false;
     undoTray.classList.remove('is-empty');
@@ -2315,6 +2600,9 @@ PULSE_JS = r"""
     if (!title) return;
     li.classList.add('is-busy');
     const check = li.querySelector('.check');
+    const doneEl = document.querySelector('.hero-stats div:nth-child(1) b');
+    const ipEl = document.querySelector('.hero-stats div:nth-child(2) b');
+    const barEl = document.querySelector('.hero-stats .bar span');
     try {
       const res = await fetch('/api/goals/complete', {
         method: 'POST',
@@ -2329,12 +2617,20 @@ PULSE_JS = r"""
         li.classList.add('is-completing');
         setTimeout(() => { li.style.display = 'none'; }, 220);
       }, 140);
-      // Decrement the "in progress" counter (the "done" counter excludes
-      // completed items in the server render too, so leave it at 0).
-      const ipEl = document.querySelector('.hero-stats div:nth-child(2) b');
       if (ipEl) {
         const n = parseInt(ipEl.textContent || '0', 10);
         if (!Number.isNaN(n) && n > 0) ipEl.textContent = String(n - 1);
+      }
+      if (doneEl) {
+        const n = parseInt(doneEl.textContent || '0', 10);
+        if (!Number.isNaN(n)) doneEl.textContent = String(n + 1);
+      }
+      if (barEl && doneEl && ipEl) {
+        const doneCount = parseInt(doneEl.textContent || '0', 10);
+        const progressCount = parseInt(ipEl.textContent || '0', 10);
+        const total = doneCount + progressCount;
+        const pct = total > 0 ? Math.round((doneCount / total) * 100) : 0;
+        barEl.style.width = `${pct}%`;
       }
       renderUndoTray(data.history || []);
     } catch (err) {
@@ -2347,7 +2643,7 @@ PULSE_JS = r"""
   const undoGoal = async (button) => {
     const undoId = button?.dataset?.goalUndoId || '';
     if (!undoId) return;
-    button.disabled = true;
+    button.setAttribute('aria-disabled', 'true');
     try {
       const res = await fetch('/api/goals/undo', {
         method: 'POST',
@@ -2358,7 +2654,7 @@ PULSE_JS = r"""
       location.reload();
     } catch (err) {
       console.warn('goal undo failed:', err);
-      button.disabled = false;
+      button.removeAttribute('aria-disabled');
       alert('Could not undo completion — check the server log.');
     }
   };
@@ -2367,7 +2663,11 @@ PULSE_JS = r"""
     document.querySelectorAll('.goal-undo-btn[data-goal-undo-id]').forEach((button) => {
       if (button.dataset.undoBound === '1') return;
       button.dataset.undoBound = '1';
-      button.addEventListener('click', () => undoGoal(button));
+      button.addEventListener('click', (event) => {
+        event.preventDefault();
+        if (button.getAttribute('aria-disabled') === 'true') return;
+        undoGoal(button);
+      });
     });
   }
 
@@ -2703,7 +3003,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     recent_completions = load_goal_history(goals_path=goals_path)
     for item in recent_completions:
         completed_at = item.get("completed_at")
-        item["completed_ago"] = _ago(completed_at, now=now) if completed_at else "just now"
+        item["completed_ago"] = format_timestamp(completed_at, relative=True, tz=TZ) or "just now"
     pulled_from = goals_path.name if goals_path.exists() else f"missing: {goals_path}"
     obsidian_url = build_obsidian_url(vault_path, goals_path) if goals_path.exists() else None
 
@@ -2713,6 +3013,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     org_activity_days = 14
     org_activity_rows = fetch_org_activity(days=org_activity_days)
     vault_rows = fetch_vault_recent(limit=6)
+    cal_today_rows = fetch_calendar_today(now, TZ)
     cal_rows = fetch_calendar_upcoming(now, limit=6)
     sleuth_sections, sleuth_total = fetch_sleuth_display_sections()
     # Fallback to the DB-backed flat list when the published file is unavailable.
@@ -2791,6 +3092,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     nav_data = build_nav_data(
         in_progress=in_progress,
         cal_rows=cal_rows,
+        cal_today_rows=cal_today_rows,
         sleuth_rows=sleuth_rows,
         sleuth_synced=sleuth_synced,
         sleuth_sections=sleuth_sections or None,

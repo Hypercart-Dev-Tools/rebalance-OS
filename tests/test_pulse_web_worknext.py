@@ -46,6 +46,26 @@ class PulseWebWorkNextTeaserTests(unittest.TestCase):
                 "why": "cross-person signal",
                 "automation": False,
             },
+            {
+                "rank": 3,
+                "title": "Review the ingest backfill",
+                "person": None,
+                "source": "github",
+                "project": "rebalance-OS",
+                "evidence": ["https://example.com/pr/2"],
+                "why": "review requested",
+                "automation": False,
+            },
+            {
+                "rank": 4,
+                "title": "Below the teaser cut line",
+                "person": None,
+                "source": "github",
+                "project": None,
+                "evidence": [],
+                "why": "ranked but not surfaced",
+                "automation": False,
+            },
         ]
 
         html = pulse_web.render_work_next(
@@ -53,17 +73,20 @@ class PulseWebWorkNextTeaserTests(unittest.TestCase):
         )
 
         self.assertIn('class="card work-next work-next-teaser"', html)
-        # Top item shown; the link points at the dedicated page.
+        # Top THREE items shown (GH-135) — was top 1; the link points at the dedicated page.
         self.assertIn("Ship the calendar export fix", html)
+        self.assertIn("Unblock Matt on the migration", html)
+        self.assertIn("Review the ingest backfill", html)
         self.assertIn('href="/whats-next"', html)
         self.assertIn("Open What", html)
         # Count + automation-ready count + blend + freshness in the meta.
-        self.assertIn("2 ranked", html)
+        self.assertIn("4 ranked", html)
         self.assertIn("automation-ready", html)
         self.assertIn("team-blended", html)
         self.assertIn("computed", html)
-        # The teaser is a POINTER — it does NOT dump the full list.
-        self.assertNotIn("Unblock Matt on the migration", html)
+        # The teaser is still a POINTER — it does NOT dump the full list. GH-135 raised the
+        # cut from 1 to 3, so this guards the CAP (4th item excluded), not a specific count.
+        self.assertNotIn("Below the teaser cut line", html)
         self.assertNotIn("No ranked next actions yet", html)
 
     def test_teaser_top_person_badge_and_escaping(self) -> None:

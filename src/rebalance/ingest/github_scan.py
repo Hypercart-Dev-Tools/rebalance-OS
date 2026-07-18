@@ -22,7 +22,7 @@ from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.config import normalize_github_repo_name
-from rebalance.ingest._http import GITHUB_API, GitHubClient
+from rebalance.ingest._http import GITHUB_API, GitHubClient, _is_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -158,9 +158,40 @@ def _extract_commit_title(message: Any) -> str | None:
 
 
 def _get_login(token: str) -> str:
-    status, data = _get(f"{GITHUB_API}/user", token)
+    status, data, headers = _client(token).get_with_headers(f"{GITHUB_API}/user")
     if status == 403 or status == 429:
-        raise GitHubApiError("Rate limited fetching /user", status, is_rate_limit=True)
+        # A 403 is NOT necessarily a rate limit — GitHub also returns it for
+        # SAML/SSO authorization, missing scopes, and IP allowlist blocks.
+        # _is_rate_limit() reads the headers that actually distinguish them
+        # (x-ratelimit-remaining: 0 = primary, retry-after = secondary).
+        # Log the discriminating fields either way so the next failure is
+        # diagnosable from the log rather than re-derived from scratch.
+        rate_limited = _is_rate_limit(status, headers)
+        logger.warning(
+            "GitHub /user -> %s (rate_limit=%s) remaining=%s used=%s "
+            "retry_after=%s reset=%s resource=%s",
+            status,
+            rate_limited,
+            headers.get("x-ratelimit-remaining", "?"),
+            headers.get("x-ratelimit-used", "?"),
+            headers.get("retry-after", "-"),
+            headers.get("x-ratelimit-reset", "?"),
+            headers.get("x-ratelimit-resource", "?"),
+        )
+        if rate_limited:
+            kind = "secondary" if "retry-after" in headers else "primary"
+            raise GitHubApiError(
+                f"Rate limited fetching /user ({kind}; "
+                f"remaining={headers.get('x-ratelimit-remaining', '?')}, "
+                f"retry_after={headers.get('retry-after', '-')})",
+                status,
+                is_rate_limit=True,
+            )
+        raise GitHubApiError(
+            f"Forbidden fetching /user: HTTP {status} — not a rate limit "
+            f"(check SSO authorization, PAT scopes, IP allowlist)",
+            status,
+        )
     if status == 401:
         # Authoritative deauth signal: the PAT was revoked, expired, or lost a
         # required scope. Log it to the unified auth trail before raising.
