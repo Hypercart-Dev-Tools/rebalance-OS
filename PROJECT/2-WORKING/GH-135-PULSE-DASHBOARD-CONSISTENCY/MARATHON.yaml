@@ -14,7 +14,7 @@
 
 name: gh-135-pulse-dashboard-consistency
 phases:
-  - id: p1
+  - id: gh135-p1
     name: Shared timestamp helper (extends existing tz_utils)
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p1-timestamp.md
@@ -22,29 +22,29 @@ phases:
     turn_timeout_s: 1200
     max_review_rounds: 3
 
-  - id: p2
+  - id: gh135-p2
     name: Shared row component + zebra striping
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p2-datarow.md
     artifact: scripts/pulse_web.py,src/rebalance/web_components.py
     turn_timeout_s: 1500
-    depends_on: p1
+    depends_on: gh135-p1
     max_review_rounds: 3
 
-  - id: p3
+  - id: gh135-p3
     name: Per-module presentation fixes
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p3-modules.md
     artifact: scripts/pulse_web.py
     turn_timeout_s: 1800
-    depends_on: p2
+    depends_on: gh135-p2
     max_review_rounds: 3
 
-  - id: p4
+  - id: gh135-p4
     name: Section header casing system
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p4-headers.md
     artifact: scripts/pulse_web.py
     turn_timeout_s: 900
-    depends_on: p3
+    depends_on: gh135-p3
     max_review_rounds: 2
