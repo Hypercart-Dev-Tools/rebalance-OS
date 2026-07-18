@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<style>
+  html, body { margin: 0; padding: 0; background: #f2efe8; }
+  a { color: #2456c7; text-decoration: none; }
+  a:hover { color: #16388a; text-decoration: underline; }
+  * { box-sizing: border-box; }
+</style>
+</helmet>
+<div style="min-height: 100vh; background: #f2efe8; color: #211c14; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; font-size: 13px; display: grid; grid-template-columns: 300px 1fr; align-items: start; min-width: 1400px;">
+
+  <!-- ============ SIDEBAR ============ -->
+  <aside style="background: #ece8de; border-right: 1px solid #ddd7c8; min-height: 100vh; padding: 20px 16px; display: flex; flex-direction: column; gap: 24px;">
+    <div style="display: flex; align-items: center; gap: 8px;">
+      <div style="width: 18px; height: 18px; border-radius: 5px; background: #2456c7;"></div>
+      <div style="font-weight: 600; font-size: 13px;">rebalanceOS Pulse</div>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: #97907d; text-transform: uppercase; padding: 0 8px;">Calendar · next 2 days</div>
+      <sc-for list="{{ calendar }}" as="c" hint-placeholder-count="6">
+        <div style="display: flex; gap: 10px; align-items: baseline; padding: 7px 8px; border-radius: 6px; background: {{ c.bg }};">
+          <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d; white-space: nowrap; width: 136px; flex-shrink: 0;">{{ c.ts }}</span>
+          <span style="font-weight: 500; min-width: 0;">{{ c.t }}</span>
+        </div>
+      </sc-for>
+    </div>
+
+    <div style="display: flex; flex-direction: column; gap: 8px;">
+      <div style="display: flex; align-items: baseline; justify-content: space-between; padding: 0 8px;">
+        <span style="font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: #97907d; text-transform: uppercase;">Reminders · due after today</span>
+      </div>
+      <sc-for list="{{ reminders }}" as="r" hint-placeholder-count="7">
+        <div style="display: flex; gap: 9px; align-items: flex-start; padding: 9px 8px; border-radius: 6px; background: {{ r.bg }};">
+          <span style="flex-shrink: 0; width: 18px; height: 18px; border-radius: 4px; background: #e0dbcc; color: #6d6653; font-size: 10px; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-top: 1px;">{{ r.k }}</span>
+          <div style="min-width: 0; display: flex; flex-direction: column; gap: 3px;">
+            <div style="font-weight: 500; line-height: 1.35;">{{ r.t }}</div>
+            <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
+              <span style="font-size: 11.5px; color: #857e6b;">{{ r.who }}</span>
+              <sc-if value="{{ r.age }}" hint-placeholder-val="{{ false }}">
+                <span style="font-size: 10px; font-weight: 600; color: #a1522d; background: #f3e2d5; border-radius: 99px; padding: 1px 7px;">{{ r.age }}</span>
+              </sc-if>
+            </div>
+            <div style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d;">due {{ r.ts }}</div>
+          </div>
+        </div>
+      </sc-for>
+    </div>
+  </aside>
+
+  <!-- ============ MAIN ============ -->
+  <main style="padding: 20px 28px 48px; display: flex; flex-direction: column; gap: 20px; min-width: 0;">
+
+    <!-- Top bar -->
+    <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap;">
+      <div style="font-size: 13px; color: #857e6b;">Pulse <span style="color: #c4bda9;">/</span> <span style="color: #211c14; font-weight: 600;">Today</span></div>
+      <div style="flex: 1;"></div>
+      <div style="display: flex; align-items: center; gap: 7px; background: #f7ecd8; border: 1px solid #e8d9b8; border-radius: 99px; padding: 4px 12px;">
+        <span style="width: 7px; height: 7px; border-radius: 99px; background: #c77b28;"></span>
+        <span style="font-size: 12px; font-weight: 600; color: #8a5a1c;">3 warnings · collector</span>
+        <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #ab8a55;">{{ collectorTs }}</span>
+      </div>
+      <div style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d; background: #ece8de; border-radius: 99px; padding: 5px 12px;">{{ systemTs }} PDT · America/Los_Angeles</div>
+      <div style="background: #2456c7; color: #fff; font-weight: 600; font-size: 12px; border-radius: 7px; padding: 6px 14px; cursor: pointer;" style-hover="background: #16388a;">Refresh</div>
+    </div>
+
+    <!-- Today's goals -->
+    <section style="background: #fff; border: 1px solid #e3ddcd; border-radius: 12px; padding: 20px 22px; display: flex; flex-direction: column; gap: 16px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Today's goals</h2>
+        <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d;">pulled from 0. Goals.md · <a href="#obsidian">Open in Obsidian ↗</a></span>
+        <div style="flex: 1;"></div>
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 12px; color: #857e6b;"><b style="color: #211c14;">0</b> done · <b style="color: #211c14;">9</b> in progress</span>
+          <div style="width: 90px; height: 5px; border-radius: 99px; background: #ece8de; overflow: hidden;"><div style="width: 4%; height: 100%; background: #2456c7;"></div></div>
+        </div>
+      </div>
+      <div style="display: grid; grid-template-columns: 1fr 1fr 1.2fr; gap: 26px;">
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: #97907d; text-transform: uppercase;">Goals · 3</div>
+          <div style="display: flex; flex-direction: column;">
+            <sc-for list="{{ goals }}" as="g" hint-placeholder-count="3">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; background: {{ g.bg }};">
+                <span style="width: 15px; height: 15px; border: 1.5px solid #c4bda9; border-radius: 4px; flex-shrink: 0;"></span>
+                <span style="font-weight: 500;">{{ g.t }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: #97907d; text-transform: uppercase;">Next open todos · 6</div>
+          <div style="display: flex; flex-direction: column;">
+            <sc-for list="{{ todos }}" as="g" hint-placeholder-count="6">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; background: {{ g.bg }};">
+                <span style="width: 15px; height: 15px; border: 1.5px solid #c4bda9; border-radius: 4px; flex-shrink: 0;"></span>
+                <span style="font-weight: 500;">{{ g.t }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+        <div style="display: flex; flex-direction: column; gap: 8px;">
+          <div style="font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: #97907d; text-transform: uppercase;">Apple reminders · 6</div>
+          <div style="display: flex; flex-direction: column;">
+            <sc-for list="{{ apple }}" as="g" hint-placeholder-count="6">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; background: {{ g.bg }};">
+                <span style="width: 15px; height: 15px; border: 1.5px solid #c4bda9; border-radius: 4px; flex-shrink: 0;"></span>
+                <span style="font-weight: 500; flex: 1; min-width: 0;">{{ g.t }}</span>
+                <sc-if value="{{ g.ts }}" hint-placeholder-val="{{ false }}">
+                  <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d; white-space: nowrap;">{{ g.ts }}</span>
+                </sc-if>
+              </div>
+            </sc-for>
+          </div>
+        </div>
+      </div>
+      <div style="border-top: 1px solid #ece8de; padding-top: 14px; display: flex; flex-direction: column; gap: 8px;">
+        <div style="font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: #97907d; text-transform: uppercase;">Recently completed · 3</div>
+        <div style="display: flex; flex-direction: column;">
+          <sc-for list="{{ completed }}" as="c" hint-placeholder-count="3">
+            <div style="display: flex; align-items: center; gap: 10px; padding: 9px 10px; border-radius: 6px; background: {{ c.bg }};">
+              <span style="width: 15px; height: 15px; border-radius: 4px; background: #2f8a4c; color: #fff; font-size: 10px; display: flex; align-items: center; justify-content: center; flex-shrink: 0;">✓</span>
+              <span style="font-weight: 500; flex: 1; min-width: 0; color: #857e6b; text-decoration: line-through; text-decoration-color: #c4bda9;">{{ c.t }}</span>
+              <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d; white-space: nowrap;">{{ c.ts }}</span>
+              <span style="font-size: 11px; font-weight: 600; color: #2456c7; border: 1px solid #ccd8f2; border-radius: 6px; padding: 3px 10px; cursor: pointer;" style-hover="background: #eef2fb;">Undo</span>
+            </div>
+          </sc-for>
+        </div>
+      </div>
+    </section>
+
+    <!-- What's next -->
+    <section style="background: #fff; border: 1px solid #e3ddcd; border-radius: 12px; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px;">
+      <div style="display: flex; align-items: baseline; gap: 12px;">
+        <h2 style="margin: 0; font-size: 16px; font-weight: 700;">What's next</h2>
+        <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d;">team-blended · computed {{ nextTs }}</span>
+        <div style="flex: 1;"></div>
+        <a href="#next" style="font-size: 12px; font-weight: 600;">Open What's next → 21 ranked</a>
+      </div>
+      <div style="display: flex; flex-direction: column;">
+        <sc-for list="{{ next }}" as="n" hint-placeholder-count="3">
+          <div style="display: flex; align-items: center; gap: 12px; padding: 10px; border-radius: 6px; background: {{ n.bg }};">
+            <span style="flex-shrink: 0; width: 22px; height: 22px; border-radius: 99px; background: #211c14; color: #fff; font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;">{{ n.rank }}</span>
+            <span style="font-weight: 500; flex: 1; min-width: 0;">{{ n.t }}</span>
+            <span style="font-size: 11px; font-weight: 600; color: #6d6653; background: #ece8de; border-radius: 99px; padding: 2px 9px;">{{ n.who }}</span>
+          </div>
+        </sc-for>
+      </div>
+    </section>
+
+    <!-- Bottom grid -->
+    <div style="display: grid; grid-template-columns: 1.6fr 1fr; gap: 20px; align-items: start;">
+
+      <section style="background: #fff; border: 1px solid #e3ddcd; border-radius: 12px; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px;">
+        <div style="display: flex; align-items: baseline; gap: 12px;">
+          <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Recent GitHub activity</h2>
+          <div style="flex: 1;"></div>
+          <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d;">last sync {{ syncTs }}</span>
+        </div>
+        <div style="display: flex; flex-direction: column;">
+          <sc-for list="{{ github }}" as="g" hint-placeholder-count="8">
+            <div style="display: flex; align-items: flex-start; gap: 12px; padding: 10px; border-radius: 6px; background: {{ g.bg }};">
+              <span style="flex-shrink: 0; width: 58px; text-align: center; font-size: 9.5px; font-weight: 700; letter-spacing: 0.05em; text-transform: uppercase; border-radius: 4px; padding: 3px 0; margin-top: 1px; background: {{ g.badgeBg }}; color: {{ g.badgeFg }};">{{ g.badge }}</span>
+              <div style="min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 2px;">
+                <div style="font-weight: 500; line-height: 1.35;"><a href="#gh">{{ g.ref }}</a> {{ g.t }}</div>
+                <div style="font-size: 11.5px; color: #857e6b; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">{{ g.repo }} · @{{ g.who }}</div>
+              </div>
+              <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d; white-space: nowrap; margin-top: 2px;">{{ g.ts }}</span>
+            </div>
+          </sc-for>
+        </div>
+      </section>
+
+      <div style="display: flex; flex-direction: column; gap: 20px;">
+        <section style="background: #fff; border: 1px solid #e3ddcd; border-radius: 12px; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: baseline; gap: 12px;">
+            <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Watched repos</h2>
+            <div style="flex: 1;"></div>
+            <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d;">synced {{ syncTs }}</span>
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <sc-for list="{{ repoStats }}" as="s" hint-placeholder-count="6">
+              <div style="display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 6px; background: {{ s.bg }};">
+                <span style="font-weight: 500; flex: 1;">{{ s.t }}</span>
+                <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 12px; font-weight: 600; color: {{ s.fg }};">{{ s.n }}</span>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+
+        <section style="background: #fff; border: 1px solid #e3ddcd; border-radius: 12px; padding: 20px 22px; display: flex; flex-direction: column; gap: 12px;">
+          <div style="display: flex; align-items: baseline; gap: 12px;">
+            <h2 style="margin: 0; font-size: 16px; font-weight: 700;">Recent Figma comments</h2>
+            <div style="flex: 1;"></div>
+            <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d;">3 of 686</span>
+          </div>
+          <div style="display: flex; flex-direction: column;">
+            <sc-for list="{{ figma }}" as="f" hint-placeholder-count="3">
+              <div style="display: flex; flex-direction: column; gap: 3px; padding: 10px; border-radius: 6px; background: {{ f.bg }};">
+                <div style="display: flex; align-items: baseline; gap: 10px;">
+                  <span style="font-weight: 600; flex: 1;">{{ f.who }}</span>
+                  <span style="font-family: ui-monospace, 'SF Mono', Menlo, monospace; font-size: 11px; color: #97907d; white-space: nowrap;">{{ f.ts }}</span>
+                </div>
+                <div style="color: #4d4738; line-height: 1.45;">{{ f.t }}</div>
+                <div style="font-size: 11.5px; color: #857e6b;">on <a href="#fig">{{ f.file }}</a></div>
+              </div>
+            </sc-for>
+          </div>
+        </section>
+      </div>
+    </div>
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;zebra&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Rows&quot;}, &quot;showRelative&quot;: {&quot;editor&quot;: &quot;boolean&quot;, &quot;default&quot;: true, &quot;tsType&quot;: &quot;boolean&quot;, &quot;section&quot;: &quot;Rows&quot;}}">
+class Component extends DCLogic {
+  renderVals() {
+    const zebra = this.props.zebra ?? true;
+    const showRel = this.props.showRelative ?? true;
+    const ts = (abs, rel) => showRel && rel ? abs + ' · ' + rel : abs;
+    const z = (list) => list.map((r, i) => ({ ...r, bg: zebra && i % 2 === 1 ? '#f6f3ea' : 'transparent' }));
+    const zs = (list) => list.map((r, i) => ({ ...r, bg: zebra && i % 2 === 1 ? '#e4dfd1' : 'transparent' }));
+    return {
+      systemTs: '2026-07-17 8:30 PM',
+      collectorTs: ts('2026-07-17 8:16 PM', '14m ago'),
+      nextTs: ts('2026-07-17 7:30 AM', '13h ago'),
+      syncTs: ts('2026-07-17 8:06 PM', '24m ago'),
+      calendar: zs([
+        { ts: '2026-07-18 12:00 PM', t: 'Walking' },
+        { ts: '2026-07-18 1:45 PM', t: 'Team Call' },
+        { ts: '2026-07-18 3:00 PM', t: 'Walking' },
+        { ts: '2026-07-19 11:00 AM', t: 'Noel/Russ · Philz Coffee, Thousand Oaks' },
+        { ts: '2026-07-19 12:00 PM', t: 'Walking' },
+        { ts: '2026-07-19 1:45 PM', t: 'Team Call' },
+      ]),
+      reminders: zs([
+        { k: 'A', t: 'Get the Woocommerce plugins done', who: 'Mike', age: '3d old', ts: '2026-07-18 9:16 PM' },
+        { k: 'B', t: '@Vishal Kharche can we get the fix to be ready in PR or GH issue…', who: 'Vishal Kharche', age: '3d old', ts: '2026-07-18 11:59 PM' },
+        { k: 'C', t: '@jsumuano please review this "no data" overlay onto the photos…', who: 'jsumuano', age: null, ts: '2026-07-18 7:37 AM' },
+        { k: 'D', t: 'Work on the plugin for binoidcbd (needs tweaks for the 4th rec)', who: 'Samuel Salomon', age: null, ts: '2026-07-18 7:42 AM' },
+        { k: 'E', t: 'Work on PROJECT Credit Connection to completion', who: 'Matthew Taylor', age: '42d old', ts: '2026-07-18 8:00 AM' },
+        { k: 'F', t: '@noel.saw this is the new issues for oldest orders…', who: 'noel.saw', age: '21d old', ts: '2026-07-18 8:00 AM' },
+        { k: 'G', t: '@jsumuano stay on track for LTvera. Can work on this tomorrow…', who: 'jsumuano', age: null, ts: '2026-07-18 8:00 AM' },
+      ]),
+      goals: z([{ t: 'Invoice Taiwo' }, { t: 'Taxes – July 30th' }, { t: 'Bring over Sleuth' }]),
+      todos: z([{ t: 'Rebalance' }, { t: 'PDDA' }, { t: 'XYZ' }, { t: 'Rebalance PRs' }, { t: 'Sleuth PRs' }, { t: 'PDDA PRs' }]),
+      apple: z([
+        { t: 'I have a event with Alex Claude Event', ts: '2026-07-15 7:00 AM' },
+        { t: 'Send 20 hour invoice to Taiwo', ts: null },
+        { t: 'Find Samsung monitor stands', ts: null },
+        { t: 'Sell Canon 6D', ts: null },
+        { t: 'Submit Sleuth to Product Hunt', ts: null },
+        { t: 'Updated UCLA Luskin to UCLA Sonnet', ts: null },
+      ]),
+      completed: z([
+        { t: 'Get ready for Claude skills workshop', ts: ts('2026-06-28 4:12 PM', '19d ago') },
+        { t: 'Show DB modeler to Justin', ts: ts('2026-06-28 11:40 AM', '19d ago') },
+        { t: 'CR Mockups', ts: ts('2026-06-25 3:05 PM', '22d ago') },
+      ]),
+      next: z([
+        { rank: 1, t: 'Shipstation Queue system check status', who: 'matthew' },
+        { rank: 2, t: 'Binoid HPOS switch verification', who: 'matthew' },
+        { rank: 3, t: 'BigQuery sync backfill review', who: 'jsumuano' },
+      ]),
+      github: z([
+        { badge: 'Issue', badgeBg: '#e3f0e6', badgeFg: '#2f8a4c', ref: 'Issue #1', t: 'Concurrency hardening (deferred)', repo: 'CLIO-Claude-Prompts', who: 'noelsaw1', ts: ts('2026-07-17 8:02 PM', '28m ago') },
+        { badge: 'Issue', badgeBg: '#e3f0e6', badgeFg: '#2f8a4c', ref: 'Issue #235', t: 'Consult A4 provenance v0: prompt-classifier for cited claims', repo: 'xyz-3-agents-swarm', who: 'noelsaw1', ts: ts('2026-07-17 7:30 PM', '1h ago') },
+        { badge: 'Comment', badgeBg: '#ece8de', badgeFg: '#6d6653', ref: 'on #235', t: 'v0 shipped to development (built by a Codex↔agy relay)', repo: 'xyz-3-agents-swarm', who: 'noelsaw1', ts: ts('2026-07-17 7:22 PM', '1h ago') },
+        { badge: 'Issue', badgeBg: '#e3f0e6', badgeFg: '#2f8a4c', ref: 'Issue #412', t: 'Direct DMs to Sleuth silently no-op (chat + reminders both gate it out)', repo: 'sleuth-app', who: 'noelsaw1', ts: ts('2026-07-17 6:30 PM', '2h ago') },
+        { badge: 'Issue', badgeBg: '#e3f0e6', badgeFg: '#2f8a4c', ref: 'Issue #407', t: '1 Slack reminder has been scheduled for @U050SAU372L', repo: 'sleuth-app', who: 'noelsaw1', ts: ts('2026-07-17 6:24 PM', '2h ago') },
+        { badge: 'Issue', badgeBg: '#e3f0e6', badgeFg: '#2f8a4c', ref: 'Issue #418', t: "Startup GH Actions follow-up reports 'in_progress' instead of real test results", repo: 'sleuth-app', who: 'noelsaw1', ts: ts('2026-07-17 6:18 PM', '2h ago') },
+        { badge: 'PR', badgeBg: '#ede6f5', badgeFg: '#6d3fa8', ref: 'PR #417', t: 'Release: GH-396 Clients Slack List + startup message changelog-leak fix', repo: 'sleuth-app', who: 'noelsaw1', ts: ts('2026-07-17 6:12 PM', '2h ago') },
+        { badge: 'Commit', badgeBg: '#e2ecf8', badgeFg: '#2456c7', ref: '417', t: 'fix: startup message could leak CHANGELOG.md authoring note (v1.4.238)', repo: 'sleuth-app', who: 'noelsaw1', ts: ts('2026-07-17 6:10 PM', '2h ago') },
+      ]),
+      repoStats: z([
+        { t: 'Watched', n: '59', fg: '#211c14' },
+        { t: 'Fresh', n: '59', fg: '#2f8a4c' },
+        { t: 'Stale', n: '0', fg: '#97907d' },
+        { t: 'Never synced', n: '0', fg: '#97907d' },
+        { t: 'Auto-discovered', n: '17', fg: '#211c14' },
+        { t: 'Ignored', n: '5', fg: '#97907d' },
+      ]),
+      figma: z([
+        { who: 'Noel Saw', t: "Please review the redesign of the hero image. The video's still great but I suggest we 1. make the hero section responsive in both width and height so no black background shows on narrower screens…", file: 'Neochrome — Hero redesign', ts: ts('2026-07-17 12:24 PM', '8h ago') },
+        { who: 'Jinhui Kim', t: 'The design you did looks nothing like this.', file: 'Neochrome — Hero redesign', ts: ts('2026-07-12 9:20 PM', '5d ago') },
+        { who: 'Noel Saw', t: 'Hi Jinhui Kim, I was still collecting information and assets for you — you got started on this too early.', file: 'Neochrome — Hero redesign', ts: ts('2026-07-12 9:18 PM', '5d ago') },
+      ]),
+    };
+  }
+}
+</script>
+</body>
+</html>
