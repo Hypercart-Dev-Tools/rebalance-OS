@@ -14,19 +14,20 @@
 
 name: gh-135-pulse-dashboard-consistency
 #
-# Phase gh135-p1 (shared timestamp helper) is COMPLETE — built by codex, approved by agy,
-# cleaned up in c0d8053, and committed. Its brief is kept at briefs/p1-timestamp.md for the
-# record. It is deliberately NOT in the runnable phase list: its lane is parked at the
-# attempt cap, and every re-fire re-renders its RELAY.md and tries to rebuild finished work.
-# This plan describes the REMAINING work. See the project doc's progress log for the history.
+# Phases gh135-p1 and gh135-p2 are COMPLETE — both built by codex, approved by agy, and
+# committed (p1 cleaned up in c0d8053; p2 landed clean, zero import shims). Their briefs
+# are kept under briefs/ for the record but they are deliberately NOT in the runnable phase
+# list: a completed phase's lane parks at the attempt cap, and re-firing it re-renders its
+# RELAY.md and tries to rebuild finished work, halting the chain before later phases start.
+# This plan describes the REMAINING work. See the project doc's progress log for history.
+#
+# NOTE: marathon-drive's pre-advance gate defaults to `bash <root>/validate.sh`, which does
+# not exist in this repo — that is what halted p2 AFTER it was approved. Always pass an
+# explicit --pre-advance-cmd (see the project doc's "Firing" section). The gate is scoped to
+# the dashboard-relevant tests on purpose: `pytest tests/` has 15 pre-existing failures in
+# test_auto_promote.py + test_hiqs_pipeline.py (documented baseline from MARATHON-2026-07-16-B),
+# so a full-suite gate would fail on unrelated debt and block every phase.
 phases:
-  - id: gh135-p2
-    name: Shared row component + zebra striping
-    reviewer: agy
-    brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p2-datarow.md
-    artifact: scripts/pulse_web.py,src/rebalance/web_components.py
-    turn_timeout_s: 1500
-    max_review_rounds: 3
 
   - id: gh135-p3
     name: Per-module presentation fixes
@@ -34,7 +35,6 @@ phases:
     brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p3-modules.md
     artifact: scripts/pulse_web.py
     turn_timeout_s: 1800
-    depends_on: gh135-p2
     max_review_rounds: 3
 
   - id: gh135-p4
