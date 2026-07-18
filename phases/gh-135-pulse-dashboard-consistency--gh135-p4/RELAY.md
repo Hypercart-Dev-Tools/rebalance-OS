@@ -75,3 +75,19 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH135-P4-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh-135-pulse-dashboard-consistency--gh135-p4/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+Files touched: `scripts/pulse_web.py`
+
+Implemented the presentation-only header consistency sweep on the Today view:
+- Added a shared `_subsection_label(...)` helper plus shared `.section-label` / `.section-label-count` CSS so the 11px uppercase letter-spaced label treatment is declared once.
+- Changed the hero card title to sentence case (`Today's goals`) and kept the existing sentence-case `.card-head` titles aligned across activity, work-next, repo/org charts, PRs, watched repos, index health, email, and Figma cards.
+- Added consistent `· N` counts to subsection labels with meaningful counts: `Goals`, `Next open todos`, `Apple reminders`, `Recently completed`, and sidebar `Notices`.
+- Removed duplicated per-module label typography from `.hero-column-label`, `.goal-undo-label`, and `.figma-config-label`; they now only carry local spacing/layout concerns.
+- Updated the client-side undo tray renderer to emit the same shared subsection label + count markup after in-page goal completion changes.
+
+Verification:
+- `pytest tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py tests/test_repo_pie_auto_promote.py tests/test_web_surface.py` ✅ (`28 passed, 4 skipped`)
+- Direct renderer probes confirmed the new strings/count markup in hero, notices, activity, work-next, and Figma HTML fragments.
+- `python scripts/pulse_web.py --out /tmp/gh135-pulse-preview.html` could not complete in this workspace because `temp/rbos.config` does not provide a vault/goals path (`no --goals path and vault_path not set in temp/rbos.config`), so I did not produce a full-page screenshot in this turn.

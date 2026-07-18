@@ -548,6 +548,18 @@ def _join_row_bits(bits: Iterable[str]) -> str:
     return f' <span class="rb-data-row-sep">·</span> '.join(parts)
 
 
+def _subsection_label(label: str, *, count: int | None = None, extra_class: str = "") -> str:
+    count_html = (
+        f'<span class="section-label-count"> · {_esc(count)}</span>'
+        if count is not None
+        else ""
+    )
+    cls = "section-label"
+    if extra_class:
+        cls += f" {extra_class}"
+    return f'<div class="{cls}">{_esc(label)}{count_html}</div>'
+
+
 def _reminder_marker_text(label: str | None) -> str:
     cleaned = re.sub(r"[^A-Za-z0-9]", "", label or "").upper()
     return cleaned[:1] or "R"
@@ -743,7 +755,7 @@ def render_hero(
         ]
         undo_html = f"""
         <div id="goal-undo-tray" class="goal-undo-tray">
-          <div class="goal-undo-label">Recently completed</div>
+          {_subsection_label("Recently completed", count=len(undo_rows), extra_class="goal-undo-label")}
           <ul class="goal-undo-list rb-data-list">{''.join(undo_rows)}</ul>
         </div>
         """
@@ -753,7 +765,7 @@ def render_hero(
     <section class="hero card">
       <header class="hero-head">
         <div>
-          <h1>Today's Goals</h1>
+          <h1>Today's goals</h1>
           <div class="subtle">{date_str} · pulled from <code>{_esc(pulled_from)}</code> {open_link}</div>
         </div>
         <div class="hero-stats">
@@ -764,14 +776,15 @@ def render_hero(
       </header>
       <div class="hero-goal-board">
         <div class="hero-goal-column">
+          {_subsection_label("Goals", count=len(goals), extra_class="hero-column-label")}
           <ul class="goals rb-data-list">{primary_rows}</ul>
         </div>
         <div class="hero-goal-column hero-goal-column-secondary">
-          <div class="hero-column-label">Next open todos</div>
+          {_subsection_label("Next open todos", count=len(secondary_todos), extra_class="hero-column-label")}
           <ul class="goals goals-secondary rb-data-list">{secondary_rows}</ul>
         </div>
         <div class="hero-goal-column hero-goal-column-reminders">
-          <div class="hero-column-label">Apple Reminders</div>
+          {_subsection_label("Apple reminders", count=len(apple_reminders), extra_class="hero-column-label")}
           <ul class="goals goals-secondary rb-data-list">{reminder_rows}</ul>
         </div>
       </div>
@@ -1294,7 +1307,7 @@ def render_recent_figma(
 
     form = f"""
       <form id="figma-project-form" class="figma-config-form">
-        <div class="figma-config-label">Add Figma project ID</div>
+        {_subsection_label("Add Figma project ID", extra_class="figma-config-label")}
         <div class="figma-config-help">Paste a Figma file key or full design URL. rebalance adds it to <code>figma_file_keys</code> and syncs comments.</div>
         <div class="figma-config-row">
           <input
@@ -1527,7 +1540,7 @@ def build_nav_data(
     notices_section = ""
     if notice_items:
         notices_section = f"""
-        <div class="nav-section-label">Notices <span class="side-count">{len(notice_items)}</span></div>
+        {_subsection_label("Notices", count=len(notice_items), extra_class="nav-section-label")}
         <ul class="side-list notices-scroll">{''.join(notice_items)}</ul>
         """
 
@@ -1632,11 +1645,6 @@ PAGE_CSS = """
   background: linear-gradient(90deg, rgba(192,57,43,.11), rgba(255,255,255,.96));
 }
 /* Sidebar Notices module — scrollable viewer for demoted WARNs */
-.side-count {
-  display: inline-block; margin-left: 6px; padding: 0 6px;
-  font-size: 10px; font-weight: 600; line-height: 16px; border-radius: 999px;
-  background: rgba(120,120,128,.16); color: var(--fg-dim);
-}
 .notices-scroll {
   max-height: 168px;
   overflow-y: auto;
@@ -1758,6 +1766,14 @@ PAGE_CSS = """
 .card-head { display: flex; align-items: baseline; justify-content: space-between; padding: 14px 18px 10px; }
 .card-head-meta { color: var(--fg-dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .card-foot { padding: 10px 18px 14px; border-top: 1px solid var(--border); }
+.section-label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: .08em;
+  color: var(--fg-dim);
+}
+.section-label-count { font-variant-numeric: tabular-nums; }
 
 /* What should we work on next */
 .badge {
@@ -1806,13 +1822,7 @@ PAGE_CSS = """
 .hero-goal-board { display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 1fr) minmax(240px, 1fr); gap: 14px; align-items: stretch; }
 .hero-goal-column { min-width: 0; }
 .goal-readonly { padding-left: 6px; }
-.hero-column-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--fg-dim);
-  margin: 0 6px 4px;
-}
+.hero-column-label { margin: 0 6px 4px; }
 .goals { padding: 0; margin: 0; }
 .goal[data-rb-row] { padding: 12px 6px; gap: 14px; }
 .goal .check { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #c8c2b3; margin-top: 2px; flex-shrink: 0; background: #fff; cursor: pointer; transition: border-color .12s, background .12s; }
@@ -1841,13 +1851,7 @@ PAGE_CSS = """
   padding: 14px 6px 4px;
 }
 .goal-undo-tray.is-empty { display: none; }
-.goal-undo-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--fg-dim);
-  margin-bottom: 10px;
-}
+.goal-undo-label { margin-bottom: 10px; }
 .goal-undo-list {
   list-style: none;
   margin: 0;
@@ -2081,12 +2085,6 @@ PAGE_CSS = """
   flex-direction: column;
   gap: 10px;
 }
-.figma-config-label {
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: .08em;
-  color: var(--fg-dim);
-}
 .figma-config-help {
   color: var(--fg-muted);
   font-size: 12px;
@@ -2307,7 +2305,7 @@ PULSE_JS = r"""
       `;
     });
     undoTray.innerHTML = `
-      <div class="goal-undo-label">Recently completed</div>
+      <div class="section-label goal-undo-label">Recently completed<span class="section-label-count"> · ${items.length}</span></div>
       <ul class="goal-undo-list rb-data-list">${items.join('')}</ul>
     `;
     undoTray.hidden = false;
