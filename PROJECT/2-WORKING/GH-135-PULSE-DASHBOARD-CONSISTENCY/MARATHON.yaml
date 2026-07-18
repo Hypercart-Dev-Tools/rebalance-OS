@@ -35,5 +35,4 @@ phases:
     brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p4-headers.md
     artifact: scripts/pulse_web.py
     turn_timeout_s: 900
-    depends_on: gh135-p3
     max_review_rounds: 2
