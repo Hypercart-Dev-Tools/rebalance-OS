@@ -1,0 +1,41 @@
+# Phase 4 — one section-header casing system
+
+Part of GH-135. Full contract: `PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY.md`.
+Depends on Phase 3. This is the smallest phase — a consistency sweep, not new structure.
+
+## ⛔ Hard invariants
+
+- **Presentation only.** No data-source, collector, route, or API-handler changes.
+- **Never hand-edit `web/pulse.html`** — build artifact, regenerated from `pulse_web.py`.
+- Do not add a new time helper or new row markup — Phases 1 and 2 own those.
+
+## Task
+
+Apply one casing system across every card and sub-section on the Today view
+(`scripts/pulse_web.py`; card container CSS at `:1607-1611`).
+
+### Card titles — sentence case
+`Today's goals` · `What's next` · `Recent GitHub activity` · `Recent Figma comments` ·
+`Recently completed`
+
+Sweep every `render_*` function that emits a `.card-head` — including the cards outside
+the six refactored modules (`render_health_banner:410`, `render_org_activity:837`,
+`render_repo_pie:900`, `render_open_prs:937`, `render_watched:1021`,
+`render_index_health:1043`, `render_recent_emails:1085`) so the page has no leftovers.
+
+### Sub-section labels — 11px uppercase, letter-spaced, with counts
+`GOALS · 3` · `NEXT OPEN TODOS · 6` · `RECENTLY COMPLETED · 3`
+
+Counts applied **consistently** — every sub-section label that has a meaningful count
+shows one in the same `· N` form. Declare the label style once as a shared class; do not
+repeat inline styles per module.
+
+## Acceptance
+
+- [ ] Every card title on the page is sentence case; no Title Case or ALL CAPS card titles remain.
+- [ ] Every sub-section label uses the single shared 11px uppercase letter-spaced class.
+- [ ] Counts are present and consistently formatted (`· N`) on every sub-section that has one.
+- [ ] No inline per-module header styling remains.
+- [ ] `pytest tests/` green; page regenerated through `pulse_web.py`;
+      `rebalance doctor` and `utils/pdda/pdda.sh run` clean.
+- [ ] Full-page before/after screenshot confirming one consistent header language.

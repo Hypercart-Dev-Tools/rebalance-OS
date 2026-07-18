@@ -1,0 +1,50 @@
+# MARATHON.yaml — GH-135 Pulse dashboard consistency refactor
+#
+# Run:
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/MARATHON.yaml
+#
+# Single lane, four sequential phases — the phases are genuinely dependent (the row
+# component consumes the timestamp helper; the per-module fixes consume the row
+# component), so this is a chain, not a fan-out. Builder defaults to `codex`
+# (subscription-billed). Chain HALTS on the first phase that fails review.
+#
+# Contract: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY.md
+# Issue:    https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/135
+
+name: gh-135-pulse-dashboard-consistency
+phases:
+  - id: p1
+    name: Shared timestamp helper (extends existing tz_utils)
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p1-timestamp.md
+    artifact: src/rebalance/tz_utils.py,tests/test_tz_utils.py,scripts/pulse_web.py
+    turn_timeout_s: 1200
+    max_review_rounds: 3
+
+  - id: p2
+    name: Shared row component + zebra striping
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p2-datarow.md
+    artifact: scripts/pulse_web.py,src/rebalance/web_components.py
+    turn_timeout_s: 1500
+    depends_on: p1
+    max_review_rounds: 3
+
+  - id: p3
+    name: Per-module presentation fixes
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p3-modules.md
+    artifact: scripts/pulse_web.py
+    turn_timeout_s: 1800
+    depends_on: p2
+    max_review_rounds: 3
+
+  - id: p4
+    name: Section header casing system
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY/briefs/p4-headers.md
+    artifact: scripts/pulse_web.py
+    turn_timeout_s: 900
+    depends_on: p3
+    max_review_rounds: 2

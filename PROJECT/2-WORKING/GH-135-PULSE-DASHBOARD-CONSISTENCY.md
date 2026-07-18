@@ -183,7 +183,13 @@ Per-module duplicated row CSS: `.activity-row :1773`, `.email-row :1786`,
 
 ## Open design calls
 
-1. **Where the shared row CSS lands.** `web_components.py` is shared with the
+1. **RESOLVED 2026-07-17 (operator: fire the marathon).** The shared row lands in
+   `web_components.py`, but is **adopted only on the Today view in this pass** — the
+   Focus 5 / What's Next / Auth Log pages keep their current rendering and opt in later.
+   This takes the durable seam without paying the full blast radius now. Encoded in the
+   Phase 2 brief as a decision not to re-litigate. Original framing below for the record.
+
+   **Where the shared row CSS lands.** `web_components.py` is shared with the
    live-rendered Focus 5 / What's Next / Auth Log pages (`src/rebalance/web.py:380`),
    which would then inherit the new row styling — arguably correct, since the drift
    this issue fixes will otherwise recur on those surfaces too, but it widens the blast
@@ -202,3 +208,11 @@ Per-module duplicated row CSS: `.activity-row :1773`, `.email-row :1786`,
   (renderer map, time-format inventory, `web/pulse.html`-is-a-build-artifact constraint).
   Operator direction: reuse the existing GH-130 `tz_utils` helper rather than building a
   new one. GH issue #135 filed. Queued as Lane A of MARATHON-2026-07-17. Not started.
+- **2026-07-17** — Promoted 1-INBOX → 2-WORKING. Design call #1 resolved (shared row in
+  `web_components.py`, adopted on Today only this pass). Built the harness plan at
+  `GH-135-PULSE-DASHBOARD-CONSISTENCY/MARATHON.yaml` — 4 sequential phases (the phases are
+  genuinely dependent: the row consumes the timestamp helper, the module fixes consume the
+  row), builder `codex`, reviewer `agy` per phase, with a brief each under `briefs/`.
+  Dry-run clean. Confirmed against git history that `tz_utils.py` (GH-130, 2026-07-16) is
+  the newest time helper — nothing newer exists — and restated "extend it, do not replace
+  it" as a ⛔ invariant at the top of all four briefs. Fired on `marathon/2026-07-17`.
