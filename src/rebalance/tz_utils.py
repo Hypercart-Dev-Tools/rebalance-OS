@@ -109,15 +109,28 @@ def format_relative(value: str | datetime | None, *, now: datetime | None = None
     return "just now"
 
 
-def format_timestamp(value: str | datetime | None, *, relative: bool = False, tz: ZoneInfo | None = None) -> str:
+def format_timestamp(
+    value: str | datetime | None,
+    *,
+    relative: bool = False,
+    month_day: bool = False,
+    tz: ZoneInfo | None = None,
+) -> str:
     """Render an absolute local timestamp, with relative age only ever as a suffix.
 
     Absolute output is the anchor (`YYYY-MM-DD h:mm AM/PM`); when
     ``relative=True`` the existing compact relative helper is appended as
     ``" · <relative>"``. Returns ``""`` when the absolute anchor cannot be
     rendered, so callers never emit a bare relative with no timestamp.
+
+    ``month_day=True`` selects the year-less calendar variant — `July 19 11:00 AM`
+    — for surfaces where the year is implied by context (the calendar module's
+    Upcoming list, which only ever shows the near future). It is a variant of this
+    one helper rather than an inline strftime at the call site, so every timestamp
+    on the dashboard still resolves through a single formatter.
     """
-    absolute = format_local(value, "%Y-%m-%d %-I:%M %p", tz=tz)
+    fmt = "%B %-d %-I:%M %p" if month_day else "%Y-%m-%d %-I:%M %p"
+    absolute = format_local(value, fmt, tz=tz)
     if not absolute:
         return ""
     if not relative:

@@ -546,6 +546,50 @@ def fetch_vault_recent(limit: int = 6) -> list[dict[str, Any]]:
         return []
 
 
+def fetch_calendar_today(now: datetime, tz: Any, limit: int = 40) -> list[dict[str, Any]]:
+    """Today's events from local midnight — INCLUDING ones that already ended.
+
+    Sibling of :func:`fetch_calendar_upcoming`, which filters ``start_time >= now``
+    and therefore cannot serve the dashboard's day-grid view: by mid-afternoon it
+    returns nothing for the morning, leaving the top half of the grid permanently
+    blank and the "past event" styling unreachable.
+
+    Reads the same local ``calendar_events`` table with the same operator scope and
+    the same ignored-summary filter — no Google API call, no schema change, and the
+    upcoming path is left exactly as it was.
+    """
+    ignored = get_calendar_ignored_summaries()
+    local_midnight = now.astimezone(tz).replace(hour=0, minute=0, second=0, microsecond=0)
+    try:
+        with db_connection(DB_PATH) as conn:
+            rows = conn.execute(
+                """
+                SELECT summary, start_time, end_time, location
+                FROM calendar_events
+                WHERE calendar_id = ?
+                  AND julianday(start_time) >= julianday(?)
+                ORDER BY julianday(start_time) ASC
+                LIMIT ?
+                """,
+                (OPERATOR_CALENDAR_ID, local_midnight.isoformat(), limit),
+            ).fetchall()
+    except sqlite3.OperationalError:
+        return []
+    out = []
+    for r in rows:
+        row = dict(r)
+        # Ignore patterns are case-insensitive SUBSTRING matches (see
+        # get_calendar_ignored_summaries), not equality — match that contract.
+        summary = (row.get("summary") or "").casefold()
+        if any(pat.casefold() in summary for pat in ignored):
+            continue
+        start = _parse_iso(row.get("start_time"))
+        if start is None or start.astimezone(tz).date() != local_midnight.date():
+            continue
+        out.append(row)
+    return out
+
+
 def fetch_calendar_upcoming(now: datetime, limit: int = 4) -> list[dict[str, Any]]:
     ignored = get_calendar_ignored_summaries()
     overfetch = max(limit * 5, 50)

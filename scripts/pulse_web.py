@@ -27,7 +27,7 @@ import sys
 import time
 import urllib.parse
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -37,12 +37,13 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_JSON_PATH = PROJECT_ROOT / "temp" / "apple-reminders" / "active.json"
 import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
 
-from rebalance.tz_utils import format_timestamp  # noqa: E402
+from rebalance.tz_utils import format_timestamp, parse_utc_iso  # noqa: E402
 
 # Reuse the TUI's data layer so both views move in lockstep.
 from dashboard import (  # type: ignore  # noqa: E402
     DB_PATH,
     TZ,
+    fetch_calendar_today,
     fetch_calendar_upcoming,
     fetch_open_prs,
     fetch_org_activity,
@@ -1395,10 +1396,157 @@ def render_recent_figma(
     """
 
 
+# Calendar day-grid geometry. Constants, not literals sprinkled through the
+# markup, so the grid can be retuned in one place (the design brief asks for
+# 44px/hour by default). CAL_END_HOUR is inclusive — the 9 PM rule is drawn.
+CAL_START_HOUR = 8
+CAL_END_HOUR = 21
+CAL_HOUR_PX = 44
+CAL_GUTTER_PX = 44
+CAL_MIN_EVENT_PX = 20
+CAL_SHOW_TIME_PX = 36
+CAL_UPCOMING_LIMIT = 5
+
+
+def _cal_y(hour: float) -> float:
+    """Vertical offset in px for a decimal hour, relative to the grid top."""
+    return (hour - CAL_START_HOUR) * CAL_HOUR_PX
+
+
+def _cal_clock(dt: datetime) -> str:
+    """`1:45 PM` / `2 PM` — the compact in-block time label."""
+    return dt.strftime("%-I:%M %p") if dt.minute else dt.strftime("%-I %p")
+
+
+def render_calendar_module(
+    today_rows: list[dict[str, Any]],
+    upcoming_rows: list[dict[str, Any]],
+    now: datetime,
+    *,
+    tz: ZoneInfo,
+) -> str:
+    """Render the sidebar Calendar module: a day grid plus an Upcoming list.
+
+    Replaces the old flat text list with a Google-Calendar-style day view for
+    TODAY (``CAL_START_HOUR``–``CAL_END_HOUR``), followed by the next
+    ``CAL_UPCOMING_LIMIT`` events on later days.
+
+    PURE: takes pre-fetched rows (``summary``/``start_time``/``end_time``/
+    ``location``) and never queries. All time math is done in ``tz``; events
+    outside the grid's hour range deliberately do not render as blocks — they
+    surface in Upcoming instead, so nothing is silently dropped.
+    """
+    local_now = now.astimezone(tz)
+    today = local_now.date()
+
+    def _hydrate(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        out = []
+        for ev in rows:
+            start = parse_utc_iso(ev.get("start_time"))
+            if start is None:
+                continue
+            start = start.astimezone(tz)
+            end = parse_utc_iso(ev.get("end_time"))
+            # A missing end is assumed to be a 30-minute block — enough to render
+            # a visible, correctly-placed block rather than dropping the event.
+            end = end.astimezone(tz) if end else start + timedelta(minutes=30)
+            out.append({**ev, "_start": start, "_end": end})
+        return out
+
+    # The grid needs today's WHOLE day (including finished events, which the
+    # upcoming fetch cannot return); Upcoming needs strictly later days.
+    todays = [e for e in _hydrate(today_rows) if e["_start"].date() == today]
+    later = [e for e in _hydrate(upcoming_rows) if e["_start"].date() > today]
+
+    # --- hour gutter + rules -------------------------------------------------
+    hour_rows = []
+    for hour in range(CAL_START_HOUR, CAL_END_HOUR + 1):
+        ap = "PM" if hour >= 12 else "AM"
+        h12 = hour % 12 or 12
+        hour_rows.append(
+            f'<div class="cal-hour" style="top:{_cal_y(hour):.0f}px">'
+            f'<span class="cal-hour-label">{h12} {ap}</span>'
+            f'<span class="cal-hour-rule"></span>'
+            f"</div>"
+        )
+
+    # --- positioned event blocks --------------------------------------------
+    blocks = []
+    for ev in todays:
+        start, end = ev["_start"], ev["_end"]
+        start_h = start.hour + start.minute / 60
+        end_h = end.hour + end.minute / 60
+        # Outside the rendered window: skip the block, Upcoming/other surfaces cover it.
+        if end_h <= CAL_START_HOUR or start_h >= CAL_END_HOUR:
+            continue
+        top = _cal_y(max(start_h, CAL_START_HOUR))
+        height = max(_cal_y(min(end_h, CAL_END_HOUR)) - top, CAL_MIN_EVENT_PX)
+        state = "past" if end < local_now else "upcoming"
+        title = _esc(ev.get("summary") or "event")
+        time_line = (
+            f'<span class="cal-event-time">{_cal_clock(start)} – {_cal_clock(end)}</span>'
+            if height >= CAL_SHOW_TIME_PX
+            else ""
+        )
+        blocks.append(
+            f'<div class="cal-event {state}" style="top:{top:.0f}px;height:{height:.0f}px"'
+            f' data-cal-end-min="{end.hour * 60 + end.minute}" title="{title}">'
+            f'<span class="cal-event-title">{title}</span>{time_line}'
+            f"</div>"
+        )
+
+    # --- now indicator -------------------------------------------------------
+    now_h = local_now.hour + local_now.minute / 60
+    now_html = ""
+    if CAL_START_HOUR <= now_h <= CAL_END_HOUR:
+        now_html = (
+            f'<div class="cal-now" id="cal-now" style="top:{_cal_y(now_h):.0f}px">'
+            f'<span class="cal-now-dot"></span><span class="cal-now-line"></span>'
+            f"</div>"
+        )
+
+    # --- upcoming ------------------------------------------------------------
+    up_rows = []
+    for idx, ev in enumerate(later[:CAL_UPCOMING_LIMIT]):
+        title = ev.get("summary") or "event"
+        loc = ev.get("location") or ""
+        label = f"{title} · {_truncate(loc, 28)}" if loc else title
+        stamp = format_timestamp(ev["_start"], month_day=True, tz=tz)
+        stripe = "even" if idx % 2 else "odd"
+        up_rows.append(
+            f'<div class="cal-up-row" data-rb-stripe="{stripe}">'
+            f'<span class="cal-up-time timestamp-block">{_esc(stamp)}</span>'
+            f'<span class="cal-up-title" title="{_esc(label)}">{_esc(label)}</span>'
+            f"</div>"
+        )
+    upcoming_html = (
+        f'<div class="cal-upcoming">'
+        f'{_subsection_label("Upcoming", count=len(later[:CAL_UPCOMING_LIMIT]))}'
+        f'<div class="cal-up-list">{"".join(up_rows)}</div></div>'
+        if up_rows
+        else ""
+    )
+
+    grid_height = _cal_y(CAL_END_HOUR) + 1
+    date_line = local_now.strftime("%A · %Y-%m-%d")
+    return (
+        f'<div class="cal-module">'
+        f'<div class="cal-date timestamp-block">{_esc(date_line)}</div>'
+        f'<div class="cal-grid" style="height:{grid_height:.0f}px"'
+        f' data-cal-start="{CAL_START_HOUR}" data-cal-end="{CAL_END_HOUR}"'
+        f' data-cal-hour-px="{CAL_HOUR_PX}">'
+        f'{"".join(hour_rows)}'
+        f'<div class="cal-gutter-rule"></div>'
+        f'{"".join(blocks)}{now_html}'
+        f"</div>{upcoming_html}</div>"
+    )
+
+
 def build_nav_data(
     *,
     in_progress: int,
     cal_rows: list[dict[str, Any]],
+    cal_today_rows: list[dict[str, Any]],
     sleuth_rows: list[dict[str, Any]],
     sleuth_synced: bool,
     sleuth_sections: list[dict[str, Any]] | None = None,
@@ -1422,33 +1570,7 @@ def build_nav_data(
     Slack "show reminders" command. Falls back to the flat ``sleuth_rows`` path
     when the published file is unavailable.
     """
-    cal_items = []
-    for idx, ev in enumerate(cal_rows):
-        # Calendar locations are frequently full postal addresses ("Philz Coffee,
-        # 33 N Moorpark Rd Unit E, Thousand Oaks, CA 91360, USA"). Untruncated,
-        # one row swamps the whole sidebar; the full value stays in the title attr.
-        loc_raw = ev.get("location") or ""
-        loc = (
-            f'<span title="{_esc(loc_raw)}">{_esc(_truncate(loc_raw, 48))}</span>'
-            if loc_raw
-            else ""
-        )
-        title = _esc(ev.get("summary") or "event")
-        cal_items.append(
-            data_row(
-                marker_html=_badge_marker("C", tone="info"),
-                title_html=title,
-                meta_html=loc,
-                timestamp=ev.get("start_time"),
-                tz=tz,
-                row_class="side-row",
-                title_class="side-row-title",
-                meta_class="side-row-meta",
-                stripe_index=idx,
-            )
-        )
-    if not cal_items:
-        cal_items.append('<li class="side-row empty"><div class="side-row-meta">No upcoming events.</div></li>')
+    cal_html = render_calendar_module(cal_today_rows, cal_rows, now, tz=tz)
 
     sleuth_items = []
     if sleuth_sections:
@@ -1554,7 +1676,7 @@ def build_nav_data(
 
     return {
         "badge": in_progress,
-        "cal_html": "".join(cal_items),
+        "cal_html": cal_html,
         "sleuth_html": "".join(sleuth_items),
         "notices_html": notices_section,
         "streams": streams,
@@ -2275,6 +2397,36 @@ CSS = RB_TOKENS_CSS + RB_CHROME_CSS + PAGE_CSS
 
 PULSE_JS = r"""
 (() => {
+  // Calendar now-indicator. The page is a STATIC generated file that can sit open
+  // for hours, so the red line has to move on its own or it silently lies about
+  // the current time. Geometry constants come from the grid's data-* attributes
+  // so the hour height is defined in exactly one place (pulse_web's CAL_HOUR_PX).
+  const calGrid = document.querySelector('.cal-grid');
+  const calNow = document.getElementById('cal-now');
+  if (calGrid && calNow) {
+    const start = Number(calGrid.dataset.calStart);
+    const end = Number(calGrid.dataset.calEnd);
+    const hourPx = Number(calGrid.dataset.calHourPx);
+    const placeNow = () => {
+      const d = new Date();
+      const h = d.getHours() + d.getMinutes() / 60;
+      // Outside the rendered window the indicator is meaningless — hide it
+      // rather than pinning it to an edge and implying "now" is 8 AM.
+      if (h < start || h > end) { calNow.style.display = 'none'; return; }
+      calNow.style.display = '';
+      calNow.style.top = ((h - start) * hourPx).toFixed(0) + 'px';
+      // Re-age the blocks too, so an event that ends while the page is open fades.
+      const mins = d.getHours() * 60 + d.getMinutes();
+      document.querySelectorAll('.cal-event[data-cal-end-min]').forEach((el) => {
+        const past = Number(el.dataset.calEndMin) <= mins;
+        el.classList.toggle('past', past);
+        el.classList.toggle('upcoming', !past);
+      });
+    };
+    placeNow();
+    setInterval(placeNow, 60000);
+  }
+
   const FILTER_TARGETS = '.rb-data-row, [data-rb-row], .email-row, .strip > div, .kv-list li, .pr-row';
   const input = document.getElementById('pulse-filter');
   const btn = document.getElementById('pulse-refresh');
@@ -2861,6 +3013,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     org_activity_days = 14
     org_activity_rows = fetch_org_activity(days=org_activity_days)
     vault_rows = fetch_vault_recent(limit=6)
+    cal_today_rows = fetch_calendar_today(now, TZ)
     cal_rows = fetch_calendar_upcoming(now, limit=6)
     sleuth_sections, sleuth_total = fetch_sleuth_display_sections()
     # Fallback to the DB-backed flat list when the published file is unavailable.
@@ -2939,6 +3092,7 @@ def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: in
     nav_data = build_nav_data(
         in_progress=in_progress,
         cal_rows=cal_rows,
+        cal_today_rows=cal_today_rows,
         sleuth_rows=sleuth_rows,
         sleuth_synced=sleuth_synced,
         sleuth_sections=sleuth_sections or None,

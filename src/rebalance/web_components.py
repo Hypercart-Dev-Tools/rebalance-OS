@@ -382,6 +382,74 @@ h2 { font-size: 14px; color: var(--fg); }
 /* The sidebar is always narrow, so it always resolves to the stacked form above
    via the container query — no sidebar-specific grid override is needed here. */
 
+/* Calendar module — a day grid for today + an Upcoming list. Geometry constants
+   live in pulse_web (CAL_HOUR_PX etc.); positions arrive as inline `top`/`height`
+   so the layout math has exactly one home. Reuses the existing tokens, the
+   `.timestamp-block` monospace treatment, and the shared zebra tint. */
+.cal-module { margin: 2px 0 4px; }
+.cal-date { font-size: 11px; color: var(--fg-dim); padding: 0 8px 8px; }
+.cal-grid { position: relative; margin: 0 4px 0 0; }
+.cal-hour { position: absolute; left: 0; right: 0; display: flex; align-items: flex-start; }
+.cal-hour-label {
+  width: 44px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: 8px;
+  font-size: 10px;
+  color: var(--fg-dim);
+  transform: translateY(-6px);
+  font-variant-numeric: tabular-nums;
+}
+.cal-hour-rule { flex: 1; border-top: 1px solid var(--border); }
+.cal-gutter-rule { position: absolute; left: 44px; top: 0; bottom: 0; border-left: 1px solid var(--border); }
+.cal-event {
+  position: absolute;
+  left: 50px;
+  right: 2px;
+  border-radius: 6px;
+  padding: 2px 8px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 1px;
+  z-index: 2;
+}
+.cal-event-title {
+  font-weight: 600;
+  font-size: 11.5px;
+  line-height: 1.25;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.cal-event-time { font-size: 10px; opacity: .75; font-variant-numeric: tabular-nums; }
+/* Upcoming reads as live/actionable; past recedes without disappearing. */
+.cal-event.upcoming { background: #e8b93a; color: #3d3006; }
+.cal-event.past { background: #f5edd8; color: #a49a76; }
+.cal-now { position: absolute; left: 44px; right: 0; z-index: 3; display: flex; align-items: center; }
+.cal-now-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--danger, #d43d2a); margin-left: -4px; flex-shrink: 0; }
+.cal-now-line { flex: 1; height: 2px; background: var(--danger, #d43d2a); }
+.cal-upcoming { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
+.cal-up-list { display: flex; flex-direction: column; margin-top: 4px; }
+.cal-up-row {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 5px 8px;
+  border-radius: 6px;
+}
+.cal-up-row[data-rb-stripe="even"] { background: rgba(0,0,0,.03); }
+.cal-up-time { font-size: 10.5px; color: var(--fg-dim); white-space: nowrap; }
+.cal-up-title {
+  font-size: 12px;
+  font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* Streams: compact connector list */
 .streams { list-style: none; margin: 0; padding: 0; }
 .streams li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
@@ -424,7 +492,8 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
     module stays stdlib-only. Recognised keys (all pre-escaped HTML strings or
     plain values):
         badge          – the active item's trailing badge (in-progress count)
-        cal_html       – the calendar <li> rows
+        cal_html       – the calendar module block (day grid + Upcoming), already
+                         wrapped in its own container by the caller
         sleuth_html    – the reminders <li> rows
         notices_html   – the optional Notices section block
         streams        – [{name, label, kbd, count}, ...] stream rows
@@ -495,7 +564,7 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
            target="_blank" rel="noopener noreferrer" title="Open Google Calendar">
           <span>Calendar</span><span class="section-link-arrow" aria-hidden="true">↗</span>
         </a>
-        <ul class="side-list rb-data-list">{cal_html}</ul>
+        {cal_html}
 
         <div class="nav-section-label">Reminders</div>
         <ul class="side-list rb-data-list">{sleuth_html}</ul>
