@@ -1,5 +1,5 @@
 # Marathon Phase clio-p2-reconcile
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-CLIO-P2-RECONCILE-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -140,3 +140,14 @@ This correctly resolves both the extraction failure and ensures proper deduplica
 - Fixed conflict ID extraction in `utils/CLIO/INSTALL.md` to return the normalized `clio:id:...` token expected by both canonical deduplication and full-block `awk` matching, instead of retaining the leading HTML-comment delimiter.
 - Verified the embedded exporter with `bash -n` and a focused temporary smoke test: one unique entry was recovered with its full repo/timestamp/machine/prompt block, an already-known-only copy was quarantined with `merged=0`, and dry-run reported its merge while preserving both canonical and conflict files byte-for-byte.
 - No project-wide gate or Git command was run.
+
+---
+
+### Round 2 · Reviewer · agy
+
+I have reviewed the builder's fixes in [INSTALL.md](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/utils/CLIO/INSTALL.md) and verified the corrected behavior:
+
+1. **Normalized ID Extraction & Matching**: The conflict ID extraction now correctly yields the clean `clio:id:...` prefix, making deduplication checks and the full-block `awk` matching function correctly.
+2. **Behavior Verification**: Verified via a temporary smoke test. The script correctly identifies sync conflict files matching the patterns, recovers unique entry blocks fully (retaining prompt, repository, timestamp, and machine/branch metadata), deduplicates existing entries successfully, quarantines all processed files to `.clio-reconciled/`, and preserves the dry-run behavior (reporting actions without modifying files).
+
+**Verdict:** Approved
