@@ -104,4 +104,11 @@ The implementation for the severity taxonomy is still missing. There are no chan
        pass
    ```
 
+### Round 3 · Reviewer · agy
+
+The implementation for the severity taxonomy is still missing. There are no changes on disk in `src/rebalance/doctor.py` and no implementation for the bucket grouping/notices collapsing.
+
+**Verdict:** Changes requested
+
+
 
