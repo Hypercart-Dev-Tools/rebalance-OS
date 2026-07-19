@@ -6,7 +6,7 @@ status: "Active (2-WORKING)"
 owner: Noel
 created: 2026-07-19
 updated: 2026-07-19
-reviewed: 2026-07-19 (agy relay r1 — Changes requested, 5/5 dispositioned)
+reviewed: 2026-07-19 (agy relay r2 — APPROVED, 5 Pass + 1 Nit applied; r1 was Changes requested, 5/5 dispositioned)
 doc_type: project
 branch: worktree-temp-cognee-litmus-test
 goal: >
@@ -37,7 +37,7 @@ phases: 4
 
 | What was just completed | What's next |
 |---|---|
-| RCA complete (4 causes verified against live data, not inferred) and **agy relay review round 1 dispositioned** — verdict *Changes requested*, 2 Blockers + 3 Shoulds, all 5 accepted. The review added **RC5** (the projection step is itself lossy) and caught a self-agreeing completeness check in Phase 3: comparing a *stale local clone* to the local DB would have reported a confident `0` gap while the real gap stayed open — a check that would have passed green through the whole #155→#157 sequence. Phase 3 is now remote-anchored and reports 3 un-netted gaps. Gap measured at **182 of 938 commits (19.4%)** on `development` since 2026-05-01. | Hand round 1 back to agy for re-review. On approval, build Phase 1 — local-git backfill with pre-fetch, explicit `uncoverable` reporting, and a defined conflict policy; verify `cfeafe4` becomes queryable. |
+| RCA complete (5 causes, each verified against live data rather than inferred) and **agy relay review closed APPROVED at round 2** — r1 was *Changes requested* (2 Blockers + 3 Shoulds, all 5 accepted), r2 returned 5 `[Pass]` with citations + 1 `[Nit]`, now applied. The review earned three things the plan did not have: **RC5** (the projection step is itself lossy — `sync_direct_commit_documents()` destroys-then-rebuilds, so a partial failure shortens the corpus while every upstream measure still reads healthy); a fix for a **self-agreeing completeness check** in Phase 3 (local-git vs local-DB would have reported a confident `0` on a stale clone — it would have passed green through the entire #155→#157 sequence); and the r2 Nit that **presence of a row is not coverage** (a row with `path_coverage = 'unavailable'` would have scored as covered). Gap measured at **182 of 938 commits (19.4%)** on `development` since 2026-05-01. | **Plan approved — build Phase 1**: local-git backfill with pre-fetch, explicit `uncoverable` reporting, and the `unavailable → complete` conflict policy; verify `cfeafe4` becomes queryable and the gap reaches 0. |
 
 ## Table of contents
 
@@ -252,7 +252,11 @@ rather than one number:
       A check run against a clone behind the remote reports `stale`, never `0`.
 - [ ] **Three separate gaps, never netted** (closes the RC5 phantom/gap cancellation):
       1. `collection_gap` — SHAs on the remote default branch absent from `github_direct_commits` +
-         `github_commits`.
+         `github_commits`. **Presence of a row is not coverage** (agy r2 Nit): a row whose
+         `path_coverage` is `unavailable` is a captured commit with no file data, and a
+         presence-only check would score it as covered and report a false zero. The gap is therefore
+         computed against rows with `path_coverage = 'complete'`, and `incomplete_count` is reported
+         alongside so a partially-enriched corpus is visible rather than rounded away.
       2. `projection_gap` — captured commits absent from `github_documents` (catches the
          `sync_direct_commit_documents()` full-rebuild failure mode).
       3. `orphan_count` — captured SHAs no longer reachable on the remote (force-push / squash
@@ -271,6 +275,8 @@ rather than one number:
 - [ ] Deleting rows from `github_documents` while leaving `github_direct_commits` intact produces a
       non-zero `projection_gap` (proves the two are measured independently).
 - [ ] A phantom SHA plus an equal-sized real gap reports **both**, not a net zero.
+- [ ] **A row present but with `path_coverage = 'unavailable'` counts as a gap, not as covered**
+      (agy r2 Nit regression test — presence is not coverage).
 - [ ] After backfill on a fresh clone, all three report 0 and health is `ok`.
 - [ ] Cheap enough for every `doctor` run: local git plus one `git ls-remote` per repo, no REST API.
 - [ ] Consistent with the #167 precedent for reporting corpus drift.
