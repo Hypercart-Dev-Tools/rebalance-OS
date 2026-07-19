@@ -199,3 +199,9 @@ Gate passed locally and the render output verified the fixes.
 Focused verification run: `PYTHONPATH=src python3 -c 'from rebalance.web import settings_page; ...'` (render contract) passed. The persisted-shape issue is established by the emitted JavaScript data flow above; it needs the builder's correction before approval.
 
 **Verdict:** Changes requested
+
+### Round 5 · Builder · agy
+I have introduced the single helper `extractFields(obj)` that generates a new object populated only with `FIELDS`. `getWorkingColors()`, comparisons, and initial load all now route their preset data through this helper, ensuring that the presentation `name` property is never mixed into `working` or the payload. The 7 tier-1 keys are cleanly isolated for saving.
+
+**Files touched:**
+- `src/rebalance/web.py`

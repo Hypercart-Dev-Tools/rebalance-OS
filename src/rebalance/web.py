@@ -1986,8 +1986,14 @@ def settings_page() -> HTMLResponse:
   let currentColors = null; // null means using preset unmodified
   let lastPreset = 'default';
   
+  function extractFields(obj) {{
+    const res = {{}};
+    FIELDS.forEach(f => res[f] = obj[f]);
+    return res;
+  }}
+  
   function getWorkingColors() {{
-    return currentColors || {{ ...PRESETS[currentTheme === 'custom' ? 'default' : currentTheme] }};
+    return currentColors || extractFields(PRESETS[currentTheme === 'custom' ? 'default' : currentTheme]);
   }}
   
   function setColors(newColors) {{
@@ -2059,7 +2065,7 @@ def settings_page() -> HTMLResponse:
     }});
     
     let displayName = currentTheme === 'custom' ? 'Custom' : PRESETS[currentTheme].name;
-    if (currentTheme !== 'custom' && JSON.stringify(working) !== JSON.stringify(PRESETS[currentTheme])) {{
+    if (currentTheme !== 'custom' && JSON.stringify(working) !== JSON.stringify(extractFields(PRESETS[currentTheme]))) {{
       displayName += ' (modified)';
     }}
     document.getElementById('lblThemeName').textContent = 'theme: ' + displayName;
@@ -2076,7 +2082,7 @@ def settings_page() -> HTMLResponse:
     if (saved) {{
       isDirty = (saved.preset !== currentTheme) || (JSON.stringify(saved.inputs) !== JSON.stringify(working));
     }} else {{
-      isDirty = (currentTheme !== 'default') || (JSON.stringify(working) !== JSON.stringify(PRESETS.default));
+      isDirty = (currentTheme !== 'default') || (JSON.stringify(working) !== JSON.stringify(extractFields(PRESETS.default)));
     }}
     
     const btnSave = document.getElementById('btnSave');
@@ -2106,7 +2112,7 @@ def settings_page() -> HTMLResponse:
       currentTheme = saved.preset || 'default';
       lastPreset = currentTheme === 'custom' ? 'default' : currentTheme;
       if (currentTheme !== 'custom' && PRESETS[currentTheme]) {{
-         currentColors = (JSON.stringify(parsed) === JSON.stringify(PRESETS[currentTheme])) ? null : parsed;
+         currentColors = (JSON.stringify(parsed) === JSON.stringify(extractFields(PRESETS[currentTheme]))) ? null : parsed;
       }} else {{
          currentColors = parsed;
       }}
