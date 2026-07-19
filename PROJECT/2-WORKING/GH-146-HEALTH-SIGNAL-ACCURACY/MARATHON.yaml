@@ -1,0 +1,38 @@
+# MARATHON.yaml — GH-146 collector health signal accuracy
+#
+# Run:  .xyz/relay-automation/marathon.sh --plan PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/MARATHON.yaml
+# Preflight: add --dry-run (renders each phase's relay file + tick seed, runs nothing).
+#
+# Sequencing note (write-set collision): p2 and p3 BOTH edit src/rebalance/doctor.py, so p3
+# depends_on p2 — they cannot run concurrently. p1 is independent of both in write-set but p2
+# reads the JSON contract p1 establishes, so p2 depends_on p1. The chain is therefore serial by
+# necessity, not by preference.
+
+name: gh-146-health-signal-accuracy
+
+phases:
+  - id: gh146-p1-exit-semantics
+    name: "daily_sync.sh — fatal vs partial/transient exit semantics"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/briefs/p1-exit-semantics.md
+    artifact: scripts/daily_sync.sh,tests/test_daily_sync_exit.py
+    turn_timeout_s: 1200
+    max_review_rounds: 2
+
+  - id: gh146-p2-launchd-json
+    name: "doctor launchd check reads the run JSON, not a stale launchctl status"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/briefs/p2-launchd-json.md
+    artifact: src/rebalance/doctor.py,tests/test_doctor_launchd.py
+    turn_timeout_s: 1200
+    depends_on: gh146-p1-exit-semantics
+    max_review_rounds: 2
+
+  - id: gh146-p3-device-scoping
+    name: "Device-scoped checks stop warning on the wrong device"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/briefs/p3-device-scoping.md
+    artifact: src/rebalance/doctor.py,tests/test_doctor_device_scope.py
+    turn_timeout_s: 1200
+    depends_on: gh146-p2-launchd-json
+    max_review_rounds: 2
