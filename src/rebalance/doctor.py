@@ -553,17 +553,32 @@ def _check_launchd(launchctl_output: str | None = None) -> list[Check]:
             continue
         pid, status, label = parts
         short = label.replace("com.rebalance-os.", "").replace("com.user.", "")
-        if status.strip() not in ("0", "-"):
+        
+        pid_val = pid.strip()
+        status_val = status.strip()
+        has_live_pid = pid_val != "-"
+        
+        is_negative_signal = False
+        try:
+            val = int(status_val)
+            if val < 0:
+                is_negative_signal = True
+        except ValueError:
+            pass
+
+        is_ok_status = status_val in ("0", "-") or is_negative_signal
+
+        if has_live_pid or is_ok_status:
+            running = "running" if has_live_pid else "idle, last run ok"
+            checks.append(Check(f"launchd:{short}", OK, running))
+        else:
             checks.append(
                 Check(
                     f"launchd:{short}", WARN,
-                    f"last run exited with status {status.strip()}",
+                    f"last run exited with status {status_val}",
                     "inspect temp/logs/ for this job's error output",
                 )
             )
-        else:
-            running = "running" if pid.strip() != "-" else "idle, last run ok"
-            checks.append(Check(f"launchd:{short}", OK, running))
     return checks
 
 

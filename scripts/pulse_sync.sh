@@ -36,6 +36,41 @@ print(f"database={db_path}")
 # live-pulse.md when origin advances between runs.
 push = os.environ.get("PULSE_PUSH", "true").strip().lower() not in ("0", "false", "no", "off")
 print(f"push={push} (PULSE_PUSH={os.environ.get('PULSE_PUSH', 'unset')})")
+
+# Reconcile step: fetch origin and integrate its commits (pull --rebase)
+# to keep the local mirror fresh for the dashboard read.
+import subprocess
+from pathlib import Path
+from rebalance.ingest.config import get_pulse_config
+
+cfg = get_pulse_config()
+target_path = Path(cfg.get("pulse_target_path", "")).expanduser().resolve()
+if not (target_path / ".git").exists():
+    print(f"Error: pulse_target_path is not a git repo: {target_path}", file=sys.stderr)
+    sys.exit(3)
+
+# Detect if a rebase is already in progress (e.g. manual operator intervention)
+# to avoid interrupting the operator's active work.
+if (target_path / ".git" / "rebase-merge").exists() or (target_path / ".git" / "rebase-apply").exists():
+    print("Error: A git rebase is already in progress in the target repository. Deferring to operator.", file=sys.stderr)
+    sys.exit(2)
+
+print(f"Reconciling pulse mirror at {target_path}...")
+proc = subprocess.run(
+    ["git", "pull", "--rebase"],
+    cwd=str(target_path),
+    capture_output=True,
+    text=True,
+    check=False
+)
+if proc.returncode != 0:
+    print(f"Git pull --rebase failed (code {proc.returncode}):", file=sys.stderr)
+    print(proc.stderr.strip() or proc.stdout.strip(), file=sys.stderr)
+    # Abort the rebase to restore the repo state and avoid leaving it conflicted
+    subprocess.run(["git", "rebase", "--abort"], cwd=str(target_path), capture_output=True)
+    sys.exit(2)
+print("Reconciliation successful.")
+
 result = publish_pulse(db_path, dry_run=False, push=push)
 # Drop the rendered markdown from the log to keep it readable; the file on
 # disk is the artifact.
