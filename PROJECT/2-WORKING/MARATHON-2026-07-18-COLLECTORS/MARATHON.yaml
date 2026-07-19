@@ -19,9 +19,20 @@
 #   p3 (#138) src/rebalance/doctor.py            <- disjoint from p1/p2
 #   p4 (#127) src/rebalance/doctor.py            <- COLLIDES with p3, must follow it
 #
-# p1..p3 are mutually disjoint and safe to run concurrently. p4 shares doctor.py
-# with p3 and is therefore sequenced after it. This is the honest maximum
-# concurrency for this bundle: 3 lanes, then 1.
+# p1..p3 are mutually disjoint; p4 shares doctor.py with p3 and is sequenced
+# after it via depends_on.
+#
+# CORRECTION (2026-07-18, before first fire): an earlier draft of this header
+# claimed p1..p3 would "run concurrently, 3 lanes then 1". That is not something
+# this harness does. marathon.sh resolves depends_on order and then runs each
+# phase through marathon-drive.sh ONE AT A TIME, halting on the first failure
+# (see its header, and `--dry-run`, which reports "4 phase(s) would run in
+# order"). There is no wave/parallel/worktree machinery anywhere in it.
+#
+# The disjoint write-set analysis is still load-bearing — it is why p4 must
+# declare depends_on and the others need not — but it buys correctness, not
+# wall-clock. Sequential execution is also what makes the run safe to supervise
+# from this working tree: exactly one agent writes at a time.
 #
 # An earlier draft of the triage put all three health lanes on doctor.py and
 # concluded only one pair could run concurrently. That was wrong: #139's fix
@@ -40,7 +51,20 @@
 # (test_auto_promote.py, test_hiqs_pipeline.py, test_project_inference.py and
 # others — baseline confirmed 2026-07-18 by stashing an unrelated change and
 # re-running: identical counts). A full-suite gate fails on unrelated debt and
-# blocks every phase. Each phase below names its own scoped gate.
+# blocks every phase.
+#
+# --pre-advance-cmd is ONE command for the whole run, not per-phase. The
+# `# gate:` notes on each phase below are therefore documentation of intent, not
+# wiring — nothing reads them. The actual gate is the union of all four scoped
+# selectors, verified green at baseline on 2026-07-18 (178 passed, 10 skipped,
+# 0 failed) before the first fire:
+#
+#   .venv/bin/python -m pytest tests/ \
+#     -k "doctor or health or freshness or scheduler_policy or github_scan or http" -q
+#
+# depends_on is a SCALAR, not a list. `depends_on: [phase-id]` parses as the
+# literal string "[phase-id]" and fails with "depends_on unknown phase" — this
+# plan shipped with that bug and was caught by --dry-run before firing.
 #
 # ---------------------------------------------------------------------------
 # BUILDER / COST
@@ -89,7 +113,7 @@ phases:
     reviewer: agy
     brief: PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/briefs/p4-127-health-predicate.md
     artifact: src/rebalance/doctor.py
-    depends_on: [coll-p3-138-job-liveness]
+    depends_on: coll-p3-138-job-liveness
     turn_timeout_s: 1200
     max_review_rounds: 3
     # gate: .venv/bin/python -m pytest tests/ -k "doctor or health or freshness" -q
