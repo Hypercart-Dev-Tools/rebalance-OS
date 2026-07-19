@@ -1,6 +1,6 @@
 ---
 title: "MARATHON — GH-156 CLIO projection reconciliation"
-status: "PLANNED 2026-07-19 — preflight ready (exit 0), dry-run clean (3/3 phases resolve in order), branch cut. NOT FIRED."
+status: "COMPLETE 2026-07-19 — fired and finished; 3/3 phases Approved (agy), gate green each phase. Fixture harness passes on bash and /bin/bash. One acceptance gap remains: no malformed-source-row test."
 created: 2026-07-19
 updated: 2026-07-19
 owner: noel
@@ -18,7 +18,7 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| Doc rescoped to its genuine remainder (its original P1 + most of P2 shipped a day later via `MARATHON-2026-07-19-CLIO-DURABLE`). Swarm Preflight Contract added — **preflight ready, exit 0, all 3 `fix_probes` `unfixed`**. 3 briefs authored. Gate verified green at baseline. **Dry run clean:** 3/3 phases resolve in `depends_on` order, briefs render into relay files. Branch cut off `development@008e582`. | **Operator decision: fire or hold.** Nothing has been executed. Fire with the command below. |
+| **Fired and completed 2026-07-19.** All 3 phases `STATUS: Approved` by agy with the pre-advance gate green each time. P1 extracted the exporter out of the `INSTALL.md` heredoc into `utils/CLIO/prompt-log-to-md.sh` (+ `test/clio-exporter.sh`); P2 shipped non-mutating `--status`; P3 shipped `--backfill` then targeted `--repair`, with the ordering invariant enforced as a **hard refusal** (`Repair refused: N legacy-unlabelled entry(s) remain; run --backfill --apply first.`), not a warning. Harness re-run independently: `PASS: bash`, `PASS: /bin/bash` (9 test functions × 2 shells). `INSTALL.md` remains a valid standalone install doc (455 → 201 lines, now `install -m 0755` from the repo file; uninstall cleans the manifest). | **Operator litmus + one gap.** (a) Repair has never been pointed at the live `0. Claude Prompts.md` — that remains a separate, backed-up, operator-supervised step. (b) **Acceptance gap:** criterion 5's malformed-source-row scenario has no test. The exporter drops bad lines via `fromjson? // empty`, but that behaviour is unasserted. Close before claiming GH-156 fully met. |
 
 ## Plan
 
