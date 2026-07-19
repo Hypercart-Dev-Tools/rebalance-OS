@@ -62,6 +62,16 @@ RB_TOKENS_CSS = """:root {
   --danger: #c0392b;
   --info: #1d6fa8;
 
+  /* Tier 3b — tokenized but NOT exposed in the picker. Values are today's literals, so
+     rendering is unchanged. These encode calendar event STATE (upcoming vs past), which may
+     be semantic (like --ok/--danger) or themeable — that call is deliberately deferred.
+     Tokenizing without exposing keeps all three futures open: promote to tier 1 (settable),
+     demote to tier 2 (derived from --accent/--page), or leave fixed. See GH-154 D7. */
+  --cal-upcoming: #e8b93a;
+  --cal-upcoming-ink: #3d3006;
+  --cal-past: #f5edd8;
+  --cal-past-ink: #a49a76;
+
   /* Legacy aliases for P1/P2/P3 to rewrite. Temporary compatibility bridge. To be removed after P3. */
   --bg: var(--page);
   --panel: var(--card);
@@ -463,8 +473,8 @@ h2 { font-size: 14px; color: var(--ink); }
 }
 .cal-event-time { font-size: 10px; opacity: .75; font-variant-numeric: tabular-nums; }
 /* Upcoming reads as live/actionable; past recedes without disappearing. */
-.cal-event.upcoming { background: #e8b93a; color: #3d3006; }
-.cal-event.past { background: #f5edd8; color: #a49a76; }
+.cal-event.upcoming { background: var(--cal-upcoming); color: var(--cal-upcoming-ink); }
+.cal-event.past { background: var(--cal-past); color: var(--cal-past-ink); }
 .cal-now { position: absolute; left: 44px; right: 0; z-index: 3; display: flex; align-items: center; }
 .cal-now-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--nowline); margin-left: -4px; flex-shrink: 0; }
 .cal-now-line { flex: 1; height: 2px; background: var(--nowline); }

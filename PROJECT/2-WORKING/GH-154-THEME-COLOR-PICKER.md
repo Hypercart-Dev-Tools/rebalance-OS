@@ -308,6 +308,27 @@ The one thing this does require: the drift test in D1 must compare JS derivation
 **mockup's formulas**, not against `RB_TOKENS_CSS`'s tier-2 literals — those are now deliberately
 allowed to differ. Criterion 4 gates the shipped default; the drift test gates the formula.
 
+**D7 — `.cal-event` tones are tokenized but not exposed (tier 3b).**
+The calendar's upcoming/past event colours (`#e8b93a`, `#3d3006`, `#f5edd8`, `#a49a76`) now live in
+`:root` as `--cal-upcoming`, `--cal-upcoming-ink`, `--cal-past`, `--cal-past-ink`, with today's
+literals as their defaults — so rendering is unchanged (verified: `.cal-event.past` still computes
+`rgb(245,237,216)` / `rgb(164,154,118)`).
+
+They are **deliberately not in the picker.** These encode event *state* — upcoming vs past — which
+may be semantic (like `--ok`/`--danger`) or may be themeable; that call needs design input we do
+not have. The point of this decision is that it does not have to be made now.
+
+*Why this shape rather than the two obvious options:* leaving them literal would lock in
+"not themeable" and keep the values buried in a stylesheet; mapping them onto tier-1 tokens would
+lock in "themeable" **and** change the calendar's appearance today. Tokenizing without exposing
+changes nothing visually and keeps all three futures reachable — promote to tier 1 (settable),
+demote to tier 2 (derived from `--accent`/`--page`), or leave fixed. Whichever we pick later is a
+one-line change in `:root`, not a hunt through CSS.
+
+**Exempt from acceptance criterion 11** (every settable token is consumed): tier 3b tokens are not
+settable. They are consumed, by the two `.cal-event` rules.
+
+
 ## Phases
 
 Sequential. Each phase ends green on the [gate](#verification-gate) and is committed separately —
