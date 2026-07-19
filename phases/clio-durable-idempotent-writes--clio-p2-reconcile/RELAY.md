@@ -101,3 +101,36 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick done MARATHON-CLIO-P2-RECONCILE-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/clio-durable-idempotent-writes--clio-p2-reconcile/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Reviewer · agy
+
+I have reviewed the changes in [INSTALL.md](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/utils/CLIO/INSTALL.md) and identified a critical bug in the conflict-copy reconciliation logic:
+
+1. **Grepped conflict_ids format issue**:
+   On line 196:
+   ```bash
+   conflict_ids=$(grep -o '^<!-- clio:id:[^ ]*' "$conflict" 2>/dev/null || true)
+   ```
+   This extracts the IDs with their HTML comment prefix, e.g., `<!-- clio:id:abc123:2026-07-09T18:55:03Z`.
+   This leads to two bugs:
+   - **Awk extraction failure (renders reconciliation broken)**: On line 204, awk expects `wanted` to be without the `<!-- ` prefix:
+     ```awk
+     $0 == "<!-- " wanted " -->" { copying = 1; heading = 0 }
+     ```
+     Since `wanted` contains `<!-- `, this tries to match `<!-- <!-- clio:id:... -->`, which never matches. As a result, the extracted block is always empty and nothing is ever merged.
+   - **Duplicate check match failure**: The duplicate check:
+     ```bash
+     case $'\n'"$existing_ids"$'\n' in
+       *$'\n'"$conflict_id"$'\n'*) continue ;;
+     esac
+     ```
+     and the subsequent `jq` check will fail to match because `existing_ids` are stored as `clio:id:...` (without `<!-- `).
+
+**Fix suggestion**:
+Change line 196 to extract the ID without the leading prefix:
+```bash
+conflict_ids=$(grep -o 'clio:id:[^ ]*' "$conflict" 2>/dev/null || true)
+```
+This correctly resolves both the extraction failure and ensures proper deduplication.
+
+**Verdict:** Changes requested
