@@ -1,0 +1,124 @@
+{
+  "schema": "swarm-preflight/run-candidate@1",
+  "generated_at": "2026-07-19T17:02:35Z",
+  "mode": "project-doc",
+  "candidate": {
+    "slug": "gh-156-critical-clio-projection-reconciliation"
+  },
+  "provenance": {
+    "source_docs": [
+      "/Users/noelsaw/Documents/rebalance-OS/PROJECT/1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md"
+    ],
+    "issues": [],
+    "target_root": "/Users/noelsaw/Documents/rebalance-OS",
+    "branch": "development",
+    "commit": "0970d3fed656789de8506b131fc210ae3088432c",
+    "suggested_branch": "marathon/gh-156-critical-clio-projection-reconciliation-2026-07-19",
+    "branch_ready": false,
+    "skip_branch_prompt": false
+  },
+  "contract": {
+    "target": {
+      "repo": ".",
+      "ref": "development"
+    },
+    "gate": "if [ -x test/clio-exporter.sh ]; then bash test/clio-exporter.sh; else awk \"/prompt-log-to-md.sh << .EOF.$/{f=1;next} f&&/^EOF$/{exit} f\" utils/CLIO/INSTALL.md > \"${TMPDIR:-/tmp}/clio-gate.sh\" && bash -n \"${TMPDIR:-/tmp}/clio-gate.sh\"; fi",
+    "fix_probes": [
+      {
+        "type": "grep_absent",
+        "path": "utils/CLIO/INSTALL.md",
+        "pattern": "manifest"
+      },
+      {
+        "type": "path_absent",
+        "path": "utils/CLIO/prompt-log-to-md.sh"
+      },
+      {
+        "type": "path_absent",
+        "path": "test/clio-exporter.sh"
+      }
+    ],
+    "artifacts": [
+      "utils/CLIO/INSTALL.md",
+      "utils/CLIO/prompt-log-to-md.sh",
+      "test/clio-exporter.sh"
+    ],
+    "artifacts_new": [
+      "utils/CLIO/prompt-log-to-md.sh",
+      "test/clio-exporter.sh"
+    ],
+    "remediation": {
+      "source": "self#phases",
+      "criteria": "Phases 1-3 of GH-156 (rescoped 2026-07-19)"
+    },
+    "lanes": {
+      "agy_safe": [
+        "test/clio-exporter.sh"
+      ],
+      "orchestrator_only": []
+    }
+  },
+  "allow_paths": [
+    "utils/CLIO/INSTALL.md",
+    "utils/CLIO/prompt-log-to-md.sh",
+    "test/clio-exporter.sh"
+  ],
+  "freshness": {
+    "fetch_ok": true,
+    "upstream": "origin/development",
+    "ahead": 0,
+    "behind": 1,
+    "dirty": true,
+    "stale_index_lock": false,
+    "stale_index_lock_path": null,
+    "stale_index_lock_warning": null,
+    "evaluated_ref": "development",
+    "evaluated_ref_commit": "0970d3fed656789de8506b131fc210ae3088432c",
+    "checkout_matches_ref": true,
+    "head_behind_ref": 0,
+    "candidate_state": "ready",
+    "probes": [
+      {
+        "type": "grep_absent",
+        "path": "utils/CLIO/INSTALL.md",
+        "verdict": "unfixed"
+      },
+      {
+        "type": "path_absent",
+        "path": "utils/CLIO/prompt-log-to-md.sh",
+        "verdict": "unfixed"
+      },
+      {
+        "type": "path_absent",
+        "path": "test/clio-exporter.sh",
+        "verdict": "unfixed"
+      }
+    ]
+  },
+  "readiness": {
+    "ready": true,
+    "next_action": null
+  },
+  "lane_plan": {
+    "orchestrator_owned": [],
+    "codex_lane": [
+      "utils/CLIO/INSTALL.md",
+      "utils/CLIO/prompt-log-to-md.sh"
+    ],
+    "agy_lane": [
+      "test/clio-exporter.sh"
+    ],
+    "effective_artifacts": [
+      "utils/CLIO/INSTALL.md",
+      "utils/CLIO/prompt-log-to-md.sh",
+      "test/clio-exporter.sh"
+    ],
+    "inferred_test_artifacts": [],
+    "inferred_test_helpers": [],
+    "fs_touching_tests": [],
+    "agy_review_default": true,
+    "coupling_warning": null,
+    "parallelizable": true,
+    "single_lane_only": false
+  }
+}

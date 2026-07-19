@@ -1,0 +1,127 @@
+# MARATHON.yaml — GH-156 CLIO projection reconciliation (2026-07-19)
+#
+# Run (preflight, then dry-run, then fire):
+#   .xyz/utils/swarm-preflight.sh --project-doc PROJECT/1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/GH-156-CLIO-PROJECTION-MARATHON/MARATHON.yaml \
+#     --pre-advance-cmd 'if [ -x test/clio-exporter.sh ]; then bash test/clio-exporter.sh; else awk "/prompt-log-to-md.sh << .EOF.$/{f=1;next} f&&/^EOF$/{exit} f" utils/CLIO/INSTALL.md > "${TMPDIR:-/tmp}/clio-gate.sh" && bash -n "${TMPDIR:-/tmp}/clio-gate.sh"; fi' \
+#     --dry-run
+#
+# Parent doc:   PROJECT/1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md
+# Predecessor:  PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/ (COMPLETE — shipped clio:id + conflict reconciliation)
+# Branch:       marathon/gh-156-clio-projection (cut from development @ 0970d3f)
+#
+# ---------------------------------------------------------------------------
+# WHY THIS PLAN IS RESCOPED
+# ---------------------------------------------------------------------------
+# GH-156 was captured 2026-07-18, the day BEFORE the CLIO durable-writes marathon
+# landed. Its original Phase 1 (stable entry IDs) and most of Phase 2 (idempotent
+# reconciliation, quarantine, dry-run preview) are ALREADY SHIPPED in
+# utils/CLIO/INSTALL.md. Firing the doc as originally written would re-build them.
+#
+# The genuine remainder, verified against development@0970d3f:
+#   - no source-owned MANIFEST of rendered IDs (zero `manifest` refs in INSTALL.md)
+#   - no detection of target replacement / historical loss across runs
+#   - no targeted repair of specific missing IDs (only lever: delete state → full replay)
+#   - ~330 legacy un-ID'd entries in the live note, invisible to clio:id dedup
+#
+# ---------------------------------------------------------------------------
+# PHASES & ORDER  (write-sets verified against the tree)
+# ---------------------------------------------------------------------------
+#   p1 gh156-p1-manifest  : utils/CLIO/INSTALL.md
+#                           utils/CLIO/prompt-log-to-md.sh   (NEW — extracted from heredoc)
+#                           test/clio-exporter.sh            (NEW — fixture harness)
+#   p2 gh156-p2-detect    : utils/CLIO/prompt-log-to-md.sh, test/clio-exporter.sh  (depends_on p1)
+#   p3 gh156-p3-repair    : utils/CLIO/prompt-log-to-md.sh, test/clio-exporter.sh  (depends_on p2)
+#
+# All three write the same exporter file, so their write-sets OVERLAP COMPLETELY.
+# marathon.sh runs phases STRICTLY ONE AT A TIME, so overlap is safe — but each
+# phase genuinely depends on its predecessor's structures, so depends_on is
+# declared to pin the order rather than rely on file ordering.
+#
+# depends_on is a SCALAR, not a list (`depends_on: [x]` parses as the literal
+# string "[x]" and fails with "depends_on unknown phase").
+#
+# p1 carries the structural work: the exporter currently lives as a HEREDOC inside
+# INSTALL.md with NO test surface. That is why the bash-3.2 empty-array defect
+# (d96439b) reached a live machine — the durable marathon's `swift build` gate
+# never executed a line of it. p2/p3 ship repair logic that MUST NOT be untested.
+#
+# ---------------------------------------------------------------------------
+# ORDERING INVARIANT (do not reorder)
+# ---------------------------------------------------------------------------
+# Legacy BACKFILL must precede targeted RE-EMISSION, both inside p3. Dedup is
+# keyed on clio:id; the ~330 pre-ID entries carry none, so a repair that runs
+# before backfill would re-emit entries that are already present in unlabelled
+# form and DUPLICATE them. This was reproduced live on 2026-07-19 (3 duplicate
+# blocks from a rewound cursor, detected and reverted) — it is a demonstrated
+# failure mode, not a theoretical one.
+#
+# ---------------------------------------------------------------------------
+# GATE (read before firing)
+# ---------------------------------------------------------------------------
+# There is no root-level validate.sh, so an explicit --pre-advance-cmd is REQUIRED.
+#
+# The gate is two-stage by construction and GREEN AT BASELINE (verified
+# 2026-07-19 on development@0970d3f — extracts 209 lines, `bash -n` clean):
+#   - before p1 lands: marker-based extraction of the exporter heredoc + `bash -n`
+#     (marker-based, NOT line numbers — the phases edit this heredoc, so a
+#     line-range extraction would silently drift)
+#   - from p1 onward:  the real fixture harness at test/clio-exporter.sh
+#
+# Do NOT gate on `pytest tests/` — the suite carries ~15 pre-existing failures
+# unrelated to this work and would block every phase. Do NOT reuse the CLIO
+# durable marathon's `swift build` gate: this bundle touches no Swift, so that
+# gate would be green no matter how badly the exporter broke.
+#
+# ---------------------------------------------------------------------------
+# BUILDER / COST
+# ---------------------------------------------------------------------------
+# Reviewer agy (cost-blind). Builder defaults to codex (subscription-billed).
+# Neither bills the Anthropic API per turn.
+
+name: gh-156-clio-projection
+
+phases:
+
+  - id: gh156-p1-manifest
+    name: "GH-156 P1: extract exporter to a testable script + fixture harness + manifest receipt"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-156-CLIO-PROJECTION-MARATHON/briefs/p1-manifest.md
+    artifact: utils/CLIO/INSTALL.md,utils/CLIO/prompt-log-to-md.sh,test/clio-exporter.sh
+    turn_timeout_s: 1500
+    max_review_rounds: 3
+
+  - id: gh156-p2-detect
+    name: "GH-156 P2: non-mutating status — source/manifest/target counts, missing IDs, marker displacement"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-156-CLIO-PROJECTION-MARATHON/briefs/p2-detect.md
+    artifact: utils/CLIO/prompt-log-to-md.sh,test/clio-exporter.sh
+    depends_on: gh156-p1-manifest
+    turn_timeout_s: 1200
+    max_review_rounds: 3
+
+  - id: gh156-p3-repair
+    name: "GH-156 P3: legacy clio:id backfill, then targeted idempotent re-emission"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-156-CLIO-PROJECTION-MARATHON/briefs/p3-repair.md
+    artifact: utils/CLIO/prompt-log-to-md.sh,test/clio-exporter.sh
+    depends_on: gh156-p2-detect
+    turn_timeout_s: 1500
+    max_review_rounds: 3
+
+# ---------------------------------------------------------------------------
+# DELIBERATELY NOT IN THIS PLAN
+# ---------------------------------------------------------------------------
+# Original Phase 0 (spike) — its two questions are already answered by evidence
+# rather than by a spike: the entry-ID scheme is settled (clio:id shipped and is
+# in live use), and target replacement was reproduced live on 2026-07-19 during
+# the Mac Studio reinstall. The remaining spike-shaped risk (does backfill match
+# legacy entries reliably?) is folded into p3 as a dry-run-first requirement.
+#
+# Running backfill against the LIVE note — operator action, not automatable. The
+# marathon ships and tests the capability against fixtures; pointing it at
+# `0. Claude Prompts.md` is a separate, backed-up, operator-supervised step.
+#
+# Per-device regions (deferred Phase 3 of the durable-writes plan) — gated on
+# manifest + repair proving insufficient in practice. Not built speculatively.
