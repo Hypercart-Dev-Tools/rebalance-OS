@@ -1,5 +1,5 @@
 # Marathon Phase clio-p1-idempotent
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-CLIO-P1-IDEMPOTENT-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -109,3 +109,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Preserved the atomic temp-file rename and added post-rename verification of every emitted ID before advancing the cursor. Verification failure exits with the previous state intact so the same range is retried.
 - Updated `PromptLogReader.parse` to remove trimmed HTML-comment lines before positional parsing, preserving legacy entry behavior, and added a mixed legacy/new-format test asserting both entries' complete values and no ID leakage.
 - Verification: exporter heredoc passes `bash -n`; `swift test --disable-sandbox --filter PromptLogTests` passes 21 tests with 0 failures. (`--disable-sandbox` plus a `/private/tmp` module cache was required because the managed environment blocks SwiftPM's home cache and nested `sandbox-exec`.)
+
+### Round 1 · Reviewer · agy
+
+Verified all brief requirements are met:
+- The jq exporter correctly includes a unique, invisible HTML comment ID (`<!-- clio:id:ID -->`) for each prompt entry.
+- The exporter reads existing IDs from the destination markdown file to filter out duplicates during sync, making recovery from corrupt cursor state content-idempotent.
+- The post-rename verification ensures that the cursor is only updated if all expected IDs are present in the final output file.
+- The Swift reader in [PromptLogReader](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/macOS/Apps/Focus5Float/Sources/Focus5Float/PromptLogReader.swift) parses legacy and new entries correctly by pre-filtering HTML comments.
+- Swift tests compile and pass successfully, confirming that the new content-addressable comments do not leak into prompt details.
+
+**Verdict:** Approved
