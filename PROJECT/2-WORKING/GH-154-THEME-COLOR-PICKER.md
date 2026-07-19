@@ -115,7 +115,7 @@ Three tiers. The picker only ever touches tier 1.
 **Tier 2 — derived, never settable.** The first three are the mockup's `themeOf()`; the fourth is
 ours, because the existing `--shadow` is colored and so cannot stay literal:
 
-- `--muted` = `mix(ink, page, 0.45)` (default preset exception: `#5b5750`)
+- `--muted` = `mix(ink, page, 0.45)` (ships as literal `#5b5750`, the pre-P0 value — see D6)
 - `--accent-ink` = `#ffffff` if `isDark(accent)` else `#111111` (default preset: `#ffffff`)
 - `--zebra` = `mix(card, isDark(page) ? #ffffff : #000000, 0.96)` (default preset: `#f5f5f5`)
 - `--shadow` = `0 1px 2px rgba(29, 32, 36, 0.04), 0 8px 24px rgba(29, 32, 36, 0.04)` (derived from `--ink` at each layer's alpha)
@@ -125,9 +125,10 @@ ours, because the existing `--shadow` is colored and so cannot stay literal:
 **The count is resolved to 5 derived tokens.** `--fg-dim` does *not* collapse into
 `--timestamp` because it is used for badges, subtext, nav section labels, and other non-time text.
 It survives as a tier-2 derived token:
-- `--fg-dim` = `mix(ink, page, 0.5)` (uncollapsed legacy token, default preset exception: `#8a857c`)
+- `--fg-dim` = `mix(ink, page, 0.5)` (uncollapsed legacy token, ships as literal `#8a857c` — see D6)
 
-**Deliberate Default-Preset Exception:** The JS mix formulas and the mockup's own default values (e.g. `--page: #f2efe8`) differ subtly from the hand-tuned pre-P0 literals in production today (e.g. `--page: #f3efe7`, `--muted: #5b5750`). To satisfy Acceptance Criterion 4 (pixel-identical to today's dashboard without changing existing aesthetic), we explicitly override the mockup and use the exact pre-P0 legacy literals as the default preset. The JS derivation contract in P4 must implement this exception: if the inputs match the default preset exactly, yield these explicit pre-computed Tier-2 literals rather than calculating them mathematically.
+**Why the tier-2 literals above are the pre-P0 values rather than the mockup's:** see D6 in
+[Design decisions](#design-decisions). It is an operator decision, not an oversight.
 
 **Tier 3 — semantic status colors, theme-invariant for v1.** `--ok`, `--warn`, `--danger`, `--info`.
 These carry meaning independent of taste; a custom theme that recolors "danger" is a footgun. They
@@ -272,6 +273,41 @@ Not part of the static `/`. It goes in `web.py` alongside the other live pages, 
 values" — that distinction is what makes Reset work, so preserve it rather than eagerly
 materializing the preset into `colors`.
 
+**D6 — The `default` preset is today's shipping code, not the mockup's values.**
+
+**Operator decision, 2026-07-18.** The mockup's preset is *labelled* `'Current default'` but is not
+today's palette:
+
+| Token | Mockup `default` | Actually shipping (pre-P0) |
+|---|---|---|
+| `page` | `#f2efe8` | `#f3efe7` |
+| `ink` | `#211c14` | `#1d2024` |
+| `accent` | `#2456c7` | `#1f6feb` |
+| `border` | `#e3ddcd` | `#e3ddd0` |
+| `muted` | `#97907d` | `#5b5750` |
+
+**Today's code wins.** `page` and `border` differ by ~1 per channel — the signature of a colour
+sampled off a screenshot rather than chosen. `accent` and `muted` differ visibly, but a design
+mockup labelling a swatch "Current default" is describing what it *believes* ships, not issuing a
+change request. Adopting the mockup's values would silently restyle the dashboard for every
+operator who never opens Settings, which acceptance criterion 4 exists to prevent.
+
+So: `RB_TOKENS_CSS` ships the **pre-P0 literals** as the default preset. If the redesign genuinely
+intends new base colours, that is a separate, deliberate change with its own before/after — not a
+side effect of adding a picker.
+
+**No derivation exception.** An earlier P0 round proposed that JS return hand-tuned literals when
+inputs match the default preset, and derive mathematically otherwise. That was rejected and is not
+the design: it puts a second, special-cased implementation inside the one place D1 exists to keep
+single. The tier-2 defaults in `:root` are simply the pre-P0 literals, shipped as literals; JS
+derives for *every* input including the default preset's, and where its output differs slightly
+from the shipped literal, that difference is invisible (it appears only once a user has actively
+chosen a theme, at which point nothing is claiming pixel-identity with today).
+
+The one thing this does require: the drift test in D1 must compare JS derivation against the
+**mockup's formulas**, not against `RB_TOKENS_CSS`'s tier-2 literals — those are now deliberately
+allowed to differ. Criterion 4 gates the shipped default; the drift test gates the formula.
+
 ## Phases
 
 Sequential. Each phase ends green on the [gate](#verification-gate) and is committed separately —
@@ -287,7 +323,7 @@ so every token any later phase will reference already exists and resolves.
 Enumerate and record here (not estimate): the true inline `style=` write-set for P2, and the final
 derived-token count.
 
-**Exit:** every page renders byte-identically except for property names; every tier-1 and tier-2
+**Exit:** every page renders byte-identically except for property names and `--shadow` (intentionally re-derived from `--ink`); every tier-1 and tier-2
 token is defined in `:root`.
 
 > **Why `:root` moved here from P1.** P1/P2/P3 are then pure literal→`var()` rewrites against a
@@ -394,6 +430,52 @@ cleared browser — on `/`, which is rebuilt on a 30-minute schedule. **v1 ends 
    blocked, but the picker warns below threshold.
 8. `web/pulse.html` is never hand-edited (invariant #6).
 
+## Baseline and how phases actually verify
+
+**Baseline captured 2026-07-18** at `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER/baseline/*.png` —
+five routes at 1440×900, full-page, from a pre-P0 tree (`c9110ba`), via Playwright against a local
+server on `127.0.0.1:8199`. Captured and **inspected** by the operator, not an agent (invariant #8
+wants someone to actually look; an agent that cannot see the image cannot satisfy it).
+
+### Screenshot byte-diff is NOT a valid gate on three of five routes
+
+Discovered while capturing the baseline, and it invalidates how the phases were originally written.
+Control experiment — two captures **seconds apart from identical code**:
+
+| Route | Stable across identical-code captures? |
+|---|---|
+| `/auth-log` | stable |
+| `/whats-next` | stable |
+| `/` | **non-deterministic** |
+| `/focus-5` | **non-deterministic** |
+| `/sleuth-graph` | **non-deterministic** |
+
+Those three render live data — relative timestamps, commit lists, a graph layout. They will *never*
+byte-match, so "pixel-identical to baseline" is unachievable there and any phase asserting it would
+either fail forever or be quietly waived. **This is the failure mode invariant #8 exists for,
+inverted:** a gate that looks rigorous, cannot pass, and therefore teaches everyone to ignore it.
+
+**The gate each phase actually uses:**
+
+1. **Token resolution diff (primary, all 5 routes).** Load the route, read
+   `getComputedStyle(document.documentElement)` for every token, and compare against the recorded
+   pre-phase values. Deterministic, exact, and it tests the thing tokenization can actually break.
+2. **Screenshot byte-diff (only `/auth-log` and `/whats-next`).** Real signal, since these are stable.
+3. **Screenshot + human look (all 5).** Catches layout damage that computed styles miss — the
+   zero-width-body class of defect. Judgment, not assertion; it does not gate an agent's phase.
+
+### P0's verification result
+
+11 of 12 legacy tokens resolve **byte-identically** to their pre-P0 values (`--bg #f3efe7`,
+`--panel #ffffff`, `--border #e3ddd0`, `--fg #1d2024`, `--fg-muted #5b5750`, `--fg-dim #8a857c`,
+`--accent #1f6feb`, `--ok`, `--warn`, `--danger`, `--info`).
+
+One intended deviation: **`--shadow`** changed from `rgba(0,0,0,.04)` to `rgba(29,32,36,.04)` —
+re-derived from `--ink` per P0's own brief. So P0's exit condition ("byte-identical except property
+names") and P0's task list contradicted each other slightly; the task list wins, since making
+`--shadow` derived is the point. At 4% alpha the difference is imperceptible. **The corrected exit
+condition is: byte-identical except property names and `--shadow`.**
+
 ## Verification gate
 
 Per GH-136 — `pytest tests/` carries 15 pre-existing failures in `test_auto_promote.py` +
@@ -492,3 +574,20 @@ and `utils/pdda/pdda.sh run` clean.
   false positive — the `[Pass]` did carry `file:line`, and all citations checked out.)
 - **2026-07-18** — Relay turn for P0 (Round 2). Addressed codex's feedback: updated Tier 1 defaults to exactly match the mockup's `default` preset rather than keeping the byte-identical legacy literals. Stated derivation formulas and default literals for `--fg-dim` and `--shadow`. Documented legacy aliases as a temporary compatibility bridge (to be removed after P3). Note: `test_theme_tokens.py` and baseline screenshots were NOT created in this turn because the strict harness containment rules prohibit creating new files ("trip containment and DISCARD your whole turn"). They must be added outside the file-scoped token boundaries.
 - **2026-07-18** — Relay turn for P0 (Round 3). Reverted Tier 1 and Tier 2 defaults to the actual pre-P0 legacy literals to maintain pixel-identical rendering (Acceptance Criterion 4). Documented a deliberate default-preset exception in the plan: JS derivation will use mathematical mix formulas for custom inputs, but explicitly output the pre-P0 hand-tuned tier-2 legacy literals if the inputs perfectly match the default preset. Baseline screenshot capture and `test_theme_tokens.py` file creation are explicitly requested to be performed by the operator/harness *outside* this file-scoped turn immediately upon P0 approval.
+- **2026-07-18** — P0 baseline captured and P0 verified by the operator, after an interrupted
+  marathon run. Three findings, one of which changes how every later phase is gated.
+  1. **Screenshot byte-diff is not a valid gate on `/`, `/focus-5`, or `/sleuth-graph`.** A control
+     capture — same code, seconds apart — showed those three differ every time (live timestamps,
+     commit lists, graph layout); only `/auth-log` and `/whats-next` are stable. The phases had
+     been written to require "pixel-identical to baseline", which on three routes cannot pass.
+     Replaced with a **token-resolution diff** as the primary gate, byte-diff on the two stable
+     routes, and a human look on all five. See [Baseline and how phases actually verify].
+  2. **P0's work verified**: 11 of 12 legacy tokens resolve byte-identically to their pre-P0
+     values. `--shadow` intentionally moved from `rgba(0,0,0,.04)` to `rgba(29,32,36,.04)`
+     (re-derived from `--ink`, as its brief required) — so P0's exit condition contradicted P0's
+     task list, and the exit condition was corrected rather than the work.
+  3. **D6 recorded** — the mockup's `default` preset is not today's palette; today's code wins.
+  Process note: the marathon was stopped mid-P0 on a misread of `dependency.drift` log lines
+  (harness self-reporting about its own files, "0 lines" changed) as evidence the builders were
+  editing the wrong repo. They were not — `git diff` showed real, correct work. Three build/review
+  rounds were lost to that. The relay's own output was fine; the reader was wrong.

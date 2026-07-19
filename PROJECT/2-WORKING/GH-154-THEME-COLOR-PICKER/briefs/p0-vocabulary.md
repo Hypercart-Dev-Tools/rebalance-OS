@@ -68,7 +68,7 @@ known path. Every later phase diffs against these. See the plan doc for the Play
 
 ## Exit conditions
 
-- [ ] Every page renders **byte-identically** except for property names (this phase is a rename +
+- [ ] Every page renders **byte-identically** except for property names and `--shadow`, which is intentionally re-derived from `--ink` (this phase is a rename +
       an addition; no color value changes)
 - [ ] Every tier-1 and tier-2 token is defined in `:root` and resolves — no `var()` anywhere
       evaluates to empty
