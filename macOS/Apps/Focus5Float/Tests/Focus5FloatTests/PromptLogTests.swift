@@ -232,6 +232,45 @@ final class PromptLogTests: XCTestCase {
         XCTAssertTrue(PromptLogReader.parse("<!-- CLIO:ENTRIES -->\n").isEmpty)
     }
 
+    // MARK: - Bounded load (large-file safety)
+
+    /// Builds a CLIO note with `count` entries, newest-first, repo names REPO0
+    /// (newest) … REPO<count-1> (oldest) — mirroring how CLIO prepends.
+    private func makeLog(entryCount count: Int) -> String {
+        var s = "<!-- CLIO:ENTRIES -->\n\n"
+        for i in 0..<count {
+            s += "## REPO\(i)\n2026-07-18T00:00:00Z\nmachine · main\n\n> \"prompt \(i)\"\n\n"
+        }
+        return s
+    }
+
+    func testLoadCapsAtRowCapKeepingNewest() {
+        let url = makeTempFile(named: "many.md", contents: makeLog(entryCount: 5))
+        let entries = PromptLogReader.load(from: url, rowCap: 3)
+        XCTAssertEqual(entries?.count, 3)
+        // Newest-first, so the cap keeps REPO0..REPO2 and drops the oldest tail.
+        XCTAssertEqual(entries?.map(\.repo), ["REPO0", "REPO1", "REPO2"])
+    }
+
+    func testLoadTruncatesAtByteCeilingDroppingOldestTail() {
+        let log = makeLog(entryCount: 40)
+        let url = makeTempFile(named: "big.md", contents: log)
+        // Ceiling that lands partway through the file: the newest entries (top)
+        // survive; an entry known to sit beyond the cutoff must be gone.
+        let ceiling = log.utf8.count / 2
+        let entries = PromptLogReader.load(from: url, byteCeiling: ceiling)
+        let repos = entries?.map(\.repo) ?? []
+        XCTAssertTrue(repos.contains("REPO0"), "newest entry (top of file) must survive truncation")
+        XCTAssertFalse(repos.contains("REPO39"), "oldest entry (past the byte ceiling) must be dropped")
+        XCTAssertLessThan(repos.count, 40, "truncation must drop some entries")
+    }
+
+    func testLoadReturnsNilForMissingFile() {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Focus5FloatTests-does-not-exist-\(UUID().uuidString).md")
+        XCTAssertNil(PromptLogReader.load(from: missing))
+    }
+
     // MARK: - Truncation
 
     func testPromptUnder200CharsIsNotTruncated() {

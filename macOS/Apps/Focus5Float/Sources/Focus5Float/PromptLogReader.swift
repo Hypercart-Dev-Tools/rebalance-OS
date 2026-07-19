@@ -91,13 +91,19 @@ enum PromptLogReader {
         return trimmed.hasPrefix("<") || trimmed.hasPrefix("[")
     }
 
-    /// Reads and parses the file at `url`. Returns nil (does not throw) on a
-    /// missing/unreadable file — the caller surfaces that as a load error.
-    static func load(from url: URL) -> [PromptLogEntry]? {
-        guard let data = try? Data(contentsOf: url),
-              let text = String(data: data, encoding: .utf8) else {
+    /// Reads and parses the file at `url`, bounded so a large log can never
+    /// freeze the panel or grow memory without limit. Returns nil (does not
+    /// throw) on a missing/unreadable file — the caller surfaces that as a load
+    /// error. The read is capped at `byteCeiling` bytes and the result at
+    /// `rowCap` entries; since CLIO writes newest-first directly below the marker
+    /// (near the top of the file), both caps keep the *newest* prompts and drop
+    /// the oldest tail. Both bounds are injectable for testing.
+    static func load(from url: URL,
+                     byteCeiling: Int = FileLoad.markdownByteCeiling,
+                     rowCap: Int = FileLoad.feedRowCap) -> [PromptLogEntry]? {
+        guard let (text, _) = FileLoad.boundedText(url, byteCeiling: byteCeiling) else {
             return nil
         }
-        return parse(text)
+        return Array(parse(text).prefix(rowCap))
     }
 }

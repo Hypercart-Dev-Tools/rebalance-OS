@@ -215,29 +215,19 @@ final class Focus5Model {
         }
         if url.pathExtension.lowercased() == "md" {
             telemetryEntries = []
-            guard let data = try? Data(contentsOf: url) else {
+            // GH-121 agy [Should] #2: the read is synchronous on @MainActor, so cap
+            // it — a giant vault/telemetry .md would otherwise freeze the panel with
+            // no bound. Shared bounded read (see FileLoad); assumes .md < 1MB and
+            // truncates above that.
+            guard let (text, truncated) =
+                FileLoad.boundedText(url, byteCeiling: Self.telemetryMarkdownByteCeiling) else {
                 telemetryMarkdownContent = nil
                 telemetryLoadError = "Could not read \"\(url.lastPathComponent)\"."
                 return
             }
-            // GH-121 agy [Should] #2: the read is synchronous on @MainActor, so cap
-            // it — a giant vault/telemetry .md would otherwise freeze the panel with
-            // no bound. ponytail: assumes telemetry .md < 1MB; truncate above that.
-            if data.count > Self.telemetryMarkdownByteCeiling {
-                let truncated = data.prefix(Self.telemetryMarkdownByteCeiling)
-                // String(decoding:as:) never fails — a multi-byte character split at
-                // the truncation boundary becomes one U+FFFD instead of a decode
-                // failure, so we don't need to hand-scan for a UTF-8 boundary.
-                let text = String(decoding: truncated, as: UTF8.self)
-                telemetryMarkdownContent = text + "\n\n…truncated (file exceeds 1 MB)"
-            } else {
-                guard let text = String(data: data, encoding: .utf8) else {
-                    telemetryMarkdownContent = nil
-                    telemetryLoadError = "Could not read \"\(url.lastPathComponent)\"."
-                    return
-                }
-                telemetryMarkdownContent = text
-            }
+            telemetryMarkdownContent = truncated
+                ? text + "\n\n…truncated (file exceeds 1 MB)"
+                : text
             telemetryLoadError = nil
             return
         }
@@ -334,10 +324,12 @@ final class Focus5Model {
     }
 
     /// Max telemetry rows held in memory / rendered (newest-first after sort).
-    static let telemetryRowCap = 10_000
+    /// Aliases the shared feed cap so both file-backed viewers stay in lockstep.
+    static let telemetryRowCap = FileLoad.feedRowCap
 
     /// Max bytes read from a telemetry-tab `.md` file before truncating (GH-121).
-    static let telemetryMarkdownByteCeiling = 1_000_000
+    /// Aliases the shared Markdown ceiling (single source of truth in FileLoad).
+    static let telemetryMarkdownByteCeiling = FileLoad.markdownByteCeiling
 
     /// Switch board + re-fetch so the SERVER does the re-rank (?view=dirty), never
     /// the client. The mode is flipped optimistically and reverted if the fetch

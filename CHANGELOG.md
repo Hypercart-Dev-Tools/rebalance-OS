@@ -6,6 +6,25 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.64.0] - 2026-07-19
+
+### Fixed
+- **Focus5Float's Prompt Log viewer no longer loads an unbounded CLIO file into memory.** The
+  `PromptLogReader.load` path read the entire `.md` into RAM, split every line, and parsed every
+  entry with no cap — then re-did it on the 90s poll timer. A CLIO log accumulates forever and
+  never rotates, so at tens of MB this would hitch the panel and balloon its footprint each poll.
+  `load` is now bounded: a **1 MB byte ceiling** on the read and a **10k-entry row cap**, both
+  keeping the *newest* prompts (CLIO writes newest-first at the top of the file). Added 3 tests
+  (row cap, byte-ceiling truncation, missing-file).
+
+### Changed
+- **DRY: extracted the shared bounded-file read into `FileLoad`.** The telemetry `.md` viewer
+  already had a 1 MB ceiling + 10k row cap (GH-121); the prompt-log viewer had neither. Rather
+  than duplicate the guard, both viewers now call `FileLoad.boundedText(_:byteCeiling:)`, and
+  `Focus5Model.telemetryMarkdownByteCeiling` / `telemetryRowCap` alias `FileLoad.markdownByteCeiling`
+  / `feedRowCap` (single source of truth). The two parsers stay separate — only the read mechanism
+  is shared. 51 swift tests pass (+3).
+
 ## [0.63.0] - 2026-07-19
 
 ### Added
