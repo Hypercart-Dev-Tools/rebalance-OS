@@ -205,3 +205,12 @@ I have introduced the single helper `extractFields(obj)` that generates a new ob
 
 **Files touched:**
 - `src/rebalance/web.py`
+
+### Round 5 · Reviewer · codex
+**Assessment:** Changes requested.
+
+- Reproduced a stylesheet assembly failure with a focused `settings_page()` render: `.settings-section {` is absent from the emitted HTML. `settings_page()` defines `page_css`, but returns through `_page()`, which always passes only `_CSS` to `render_shell()`. Consequently the Settings layout/classes (including the preset grid and colour controls) have no Settings-specific styling. Pass this page's CSS through the shared shell path; do not work around it with more inline styles.
+- The new `extractFields()` fixes the normal preset path, but initial load still assigns the validator result directly (`currentColors = parsed`). P4's current validator accepts extra input properties, including the earlier erroneous `name` property, so opening and re-saving such a stored record re-persists the extra key. Assign `extractFields(parsed)` on every initial-load branch and defensively pass field-extracted inputs to `record()` so the Settings UI always writes exactly the seven-key contract.
+- The focused render contract otherwise passes: the page has the Settings nav link, `Pulse / Settings` breadcrumb, executable script, calendar now line, shared-row timestamps, and reuse of `window.__pulseTheme`. I did not run the full gate or make a visual claim.
+
+**Verdict:** Changes requested
