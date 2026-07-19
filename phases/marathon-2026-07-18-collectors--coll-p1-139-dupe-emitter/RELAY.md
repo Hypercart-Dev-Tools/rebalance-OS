@@ -2,7 +2,7 @@
 STATUS: Open
 NEXT: codex
 
-<!-- marathon-drive: task=MARATHON-COLL-P1-139-DUPE-EMITTER-TURN builder=codex reviewer=agy round-cap=5 -->
+<!-- marathon-drive: task=MARATHON-COLL-P1-139-DUPE-EMITTER-TURN-2 builder=codex reviewer=agy round-cap=5 -->
 
 ## Phase Brief
 
@@ -90,6 +90,10 @@ Concretely:
 - [ ] A dry-run (`--dry-run`) shows the reporter would file/close the same set of checks it
       does today, minus the duplicates.
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/marathon-2026-07-18-collectors--coll-p1-139-dupe-emitter/ESCALATION.md): `turn-timeout-or-hang`. Read it before re-guessing.
 ---
 
 ▶ TAKE YOUR TURN (codex — BUILDER role)
@@ -98,9 +102,9 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 1. Implement the brief by creating/editing the artifact file(s): scripts/health_issue_reporter.py
 2. Append a build block to this relay file: `### Round N · Builder · codex` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-COLL-P1-139-DUPE-EMITTER-TURN --agent codex --paths "phases/marathon-2026-07-18-collectors--coll-p1-139-dupe-emitter/RELAY.md,scripts/health_issue_reporter.py"
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-COLL-P1-139-DUPE-EMITTER-TURN --agent codex
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P1-139-DUPE-EMITTER-TURN --agent codex --to agy
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-COLL-P1-139-DUPE-EMITTER-TURN-2 --agent codex --paths "phases/marathon-2026-07-18-collectors--coll-p1-139-dupe-emitter/RELAY.md,scripts/health_issue_reporter.py"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-COLL-P1-139-DUPE-EMITTER-TURN-2 --agent codex
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P1-139-DUPE-EMITTER-TURN-2 --agent codex --to agy
 4. Edit ONLY these paths: phases/marathon-2026-07-18-collectors--coll-p1-139-dupe-emitter/RELAY.md and scripts/health_issue_reporter.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
 ---
@@ -109,7 +113,7 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: scripts/health_issue_reporter.py.
 1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P1-139-DUPE-EMITTER-TURN --agent agy --to codex
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P1-139-DUPE-EMITTER-TURN --agent agy
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P1-139-DUPE-EMITTER-TURN-2 --agent agy --to codex
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P1-139-DUPE-EMITTER-TURN-2 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/marathon-2026-07-18-collectors--coll-p1-139-dupe-emitter/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
