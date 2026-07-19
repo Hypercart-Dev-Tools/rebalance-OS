@@ -64,3 +64,10 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/GitHub-Repos/xyz-3-agents-swarm/bin/tick done MARATHON-SIG-P3-153-SEVERITY-BUCKETS-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/GitHub-Repos/xyz-3-agents-swarm/bin/tick
    Edit ONLY phases/marathon-2026-07-18-signal-health--sig-p3-153-severity-buckets/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Reviewer · agy
+
+The implementation for the severity taxonomy has not been created yet. The `Check` dataclass in `src/rebalance/doctor.py` is missing the `severity` field, and there are no changes to `src/rebalance/health.py` for grouping and counting by bucket.
+
+**Verdict:** Changes requested
+
