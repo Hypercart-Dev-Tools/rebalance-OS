@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Auto-file GitHub issues for failing rebalance health checks.
 
-Runs ``rebalance doctor`` + (optionally) the git-pulse collector health check,
-then creates/closes GitHub issues on ``Hypercart-Dev-Tools/rebalance-OS`` so
+Runs ``rebalance doctor``, then creates/closes GitHub issues on
+``Hypercart-Dev-Tools/rebalance-OS`` so
 failures are tracked in the project backlog without manual triage.
 
 Logging
@@ -38,7 +38,7 @@ Usage
 
 Options
 -------
-    --also-pulse            Include git-pulse collector checks
+    --also-pulse            Deprecated compatibility flag; collector checks are in doctor
     --warn                  File issues for WARN findings too (default: FAIL only)
     --close                 Close issues whose checks have recovered
     --llm-triage            Ask an LLM whether each finding is worth filing
@@ -59,7 +59,6 @@ import json
 import os
 import re
 import socket
-import subprocess
 import sys
 import urllib.error
 import urllib.request
@@ -341,47 +340,6 @@ def run_doctor_checks() -> list[dict]:
     ]
 
 
-def run_pulse_checks(warn_hours: float = 3.0, alert_hours: float = 24.0) -> list[dict]:
-    script = _REPO_ROOT / "experimental" / "git-pulse" / "health-check.py"
-    if not script.exists():
-        print(f"  [pulse] script not found at {script}, skipping", file=sys.stderr)
-        return []
-    result = subprocess.run(
-        [sys.executable, str(script),
-         f"--warn-hours={warn_hours}", f"--alert-hours={alert_hours}"],
-        capture_output=True, text=True,
-    )
-    checks: list[dict] = []
-    for line in result.stdout.splitlines():
-        stripped = line.strip()
-        if (not stripped or stripped.startswith("Git Pulse")
-                or stripped.startswith("Now:") or stripped.startswith("-")):
-            continue
-        if len(line) < 56:
-            continue
-        device_name = line[:36].strip()
-        status_field = line[38:56].strip()
-        notes = line[60:].strip() if len(line) > 60 else ""
-        if not device_name or not status_field:
-            continue
-        if status_field.startswith(("ALERT", "DEGRADED", "NO PUSHES")):
-            level = "fail"
-        elif status_field.startswith("STALE"):
-            level = "warn"
-        else:
-            continue
-        detail = f"Collector '{device_name}': {status_field}"
-        if notes:
-            detail += f"\n{notes}"
-        checks.append({
-            "name": f"pulse-collector:{device_name}", "status": level,
-            "detail": detail,
-            "hint": "Check the collector's machine or the sync repo for errors.",
-            "source": "git-pulse-health-check",
-        })
-    return checks
-
-
 # ---------------------------------------------------------------------------
 # LLM triage — generic provider interface
 #
@@ -537,7 +495,10 @@ def _resolve_token() -> str:
 def main() -> int:
     parser = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--also-pulse", action="store_true")
+    parser.add_argument(
+        "--also-pulse", action="store_true",
+        help="Deprecated; rebalance doctor already includes collector checks.",
+    )
     parser.add_argument("--warn", action="store_true",
                         help="File issues for WARN findings too (default: FAIL only)")
     parser.add_argument("--close", action="store_true",
@@ -594,8 +555,7 @@ def main() -> int:
     print("Running rebalance doctor...")
     checks = run_doctor_checks()
     if args.also_pulse:
-        print("Running git-pulse health check...")
-        checks.extend(run_pulse_checks())
+        print("  --also-pulse is redundant; collector checks come from rebalance doctor")
     print(f"  {len(checks)} check(s) collected")
     for c in checks:
         run_log.add_check(c)
