@@ -307,7 +307,7 @@ tr:hover td { background: var(--zebra); }
 .f5-muted { font-size: 12px; color: var(--fg-dim); }
 .f5-act { list-style: none; display: flex; flex-direction: column; gap: 5px; }
 .f5-act li { font-size: 12px; line-height: 1.35; }
-.f5-act .when { color: var(--fg-dim); font-size: 10px; }
+.f5-act .when { color: var(--timestamp); font-size: 10px; }
 .f5-meta { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
 .f5-live { color: var(--ok); }
 .f5-stale { color: var(--warn); font-weight: 700; }

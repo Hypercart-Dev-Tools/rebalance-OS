@@ -25,7 +25,7 @@ from rebalance.tz_utils import format_timestamp
 #   --accent: Accent (default: #1f6feb)
 #   --border: Borders (default: #e3ddd0)
 #   --nowline: Calendar time line (default: #d43d2a)
-#   --timestamp: Date + time text (default: #5b5750)
+#   --timestamp: Date + time text (default: #8a857c — what timestamps render today)
 #
 # Tier 2 (derived):
 #   --muted: mix(ink, page, 0.45) (default preset exception: #5b5750)
@@ -47,7 +47,7 @@ RB_TOKENS_CSS = """:root {
   --accent: #1f6feb;
   --border: #e3ddd0;
   --nowline: #d43d2a;
-  --timestamp: #5b5750;
+  --timestamp: #8a857c;
 
   /* Tier 2 */
   --muted: #5b5750;
@@ -425,7 +425,7 @@ h2 { font-size: 14px; color: var(--ink); }
    so the layout math has exactly one home. Reuses the existing tokens, the
    `.timestamp-block` monospace treatment, and the shared zebra tint. */
 .cal-module { margin: 2px 0 4px; }
-.cal-date { font-size: 11px; color: var(--fg-dim); padding: 0 8px 8px; }
+.cal-date { font-size: 11px; color: var(--timestamp); padding: 0 8px 8px; }
 .cal-grid { position: relative; margin: 0 4px 0 0; }
 .cal-hour { position: absolute; left: 0; right: 0; display: flex; align-items: flex-start; }
 .cal-hour-label {
@@ -478,7 +478,7 @@ h2 { font-size: 14px; color: var(--ink); }
   border-radius: 6px;
 }
 .cal-up-row[data-rb-stripe="even"] { background: var(--zebra); }
-.cal-up-time { font-size: 10.5px; color: var(--fg-dim); white-space: nowrap; }
+.cal-up-time { font-size: 10.5px; color: var(--timestamp); white-space: nowrap; }
 .cal-up-title {
   font-size: 12px;
   font-weight: 500;

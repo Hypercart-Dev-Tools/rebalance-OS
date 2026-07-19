@@ -422,6 +422,9 @@ cleared browser — on `/`, which is rebuilt on a 30-minute schedule. **v1 ends 
 8. **No first-paint flash**, asserted on the first frame rather than post-load, on all 5 routes.
 9. **Every `var()` reference resolves.** No token is used that `:root` never defines — checked by
    asserting no resolved computed value is the empty string across the token set.
+11. **Every settable token is consumed.** No tier-1 or tier-2 token may have zero `var()`
+    references — a token nothing references is a picker control that does nothing. Checked in
+    both directions alongside criterion 9.
 10. Chart and graph output stays legible in every preset — the pie and Cytoscape surfaces get
     screenshot coverage and a label-vs-background contrast check, not just the HTML routes.
 6. The JS-vs-Python default-token drift test (D1) passes.
@@ -591,3 +594,30 @@ and `utils/pdda/pdda.sh run` clean.
   (harness self-reporting about its own files, "0 lines" changed) as evidence the builders were
   editing the wrong repo. They were not — `git diff` showed real, correct work. Three build/review
   rounds were lost to that. The relay's own output was fine; the reader was wrong.
+- **2026-07-18** — Marathon P0–P3 complete (exit 0, all phases approved). Tokenization landed:
+  `pulse_web.py` 59 rgb literals → **0**, `var()` refs 157 → 235; `web.py` 37 hex → 14, 68 → 89.
+  Independent verification then found **two gaps that every phase review passed** (invariant #10 —
+  approval is necessary, not sufficient):
+  1. **`--timestamp` was orphaned.** A *tier-1 settable* token — one of the 7 the picker exposes —
+     with **zero** `var()` references. The picker would have shipped a dead "Date + time text"
+     control. Cause is instructive: every timestamp surface (`.cal-date`, `.cal-up-time`,
+     `.f5-act .when`, `.timestamp-block`, `.email-row-time`) already pointed at `var(--fg-dim)`.
+     The briefs told each phase to map *literals* onto tokens; these had no literal to collapse —
+     they were already tokenized, onto the **wrong semantic token**. No brief covered that case, so
+     the gap fell between phases and each review passed correctly against its own brief.
+     Fixed by hand: surfaces remapped to `var(--timestamp)`, and its default corrected from
+     `#5b5750` to **`#8a857c`** — what timestamps actually render today. Verified pixel-neutral:
+     all five surfaces still compute `rgb(138,133,124)`.
+     **Lesson for P4/P5 and any future tokenization: "no literals remain" is not the same as
+     "every token is consumed." Both directions need checking.** Acceptance criterion 9 covered
+     `var()` that resolves to nothing; it did not cover a token nothing references. Now criterion 11.
+  2. **`.cal-event` tones remain literal** in `web_components.py:466-467` (`#e8b93a`, `#3d3006`,
+     `#f5edd8`, `#a49a76`). The plan named these for tokenization but assigned them to P3
+     (`pulse_web.py`), while they actually live in `web_components.py` (P1's artifact, whose brief
+     scoped to `RB_CHROME_CSS`/`RB_BUTTON_CSS`/the row primitive). Same fell-between-briefs shape.
+     **Left as an open decision, deliberately** — these encode event *state* (upcoming vs past),
+     which is arguably tier-3 semantic like `--ok`/`--danger` rather than themeable. Recoloring the
+     calendar unilaterally is exactly the kind of unrequested change D6 exists to prevent.
+  Justified survivors, confirmed: `PIE_PALETTE` (12 categorical fills) and `_KIND_COLOR` (graph
+  identity) keep their hues per plan; the Chart.js canvases now read `--card`/`--ink` at render time
+  with literal fallbacks (`pulse_web.py:2848-2849`, `:2901-2902`) — the canvas fix, correctly done.

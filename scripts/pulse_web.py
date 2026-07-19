@@ -1753,7 +1753,7 @@ PAGE_CSS = """
 .timestamp-block {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
-  color: var(--fg-dim);
+  color: var(--timestamp);
 }
 .health-banner {
   display: grid;
@@ -2107,7 +2107,7 @@ PAGE_CSS = """
   line-height: 1.4;
 }
 .email-row-time {
-  color: var(--fg-dim);
+  color: var(--timestamp);
   font-size: 11.5px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
