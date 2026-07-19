@@ -587,6 +587,67 @@ def _ensure_github_knowledge_schema(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _ensure_github_direct_commit_schema(conn: sqlite3.Connection) -> None:
+    """Durable receipts and file-level facts for direct branch pushes (GH-155)."""
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_push_events (
+            event_id        TEXT PRIMARY KEY,
+            repo_full_name  TEXT NOT NULL,
+            ref             TEXT NOT NULL,
+            before_sha      TEXT,
+            head_sha        TEXT,
+            observed_at     TEXT,
+            state           TEXT NOT NULL,
+            attempt_count   INTEGER NOT NULL DEFAULT 0,
+            last_attempt_at TEXT,
+            resolved_at     TEXT,
+            failure_reason  TEXT,
+            fetched_at      TEXT NOT NULL
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_push_events_pending "
+        "ON github_push_events(state, observed_at)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_direct_commits (
+            repo_full_name  TEXT NOT NULL,
+            sha             TEXT NOT NULL,
+            event_id        TEXT NOT NULL,
+            ref             TEXT,
+            author_login    TEXT,
+            author_name     TEXT,
+            message         TEXT,
+            committed_at    TEXT,
+            html_url        TEXT,
+            path_coverage   TEXT NOT NULL DEFAULT 'unavailable',
+            discovered_at   TEXT NOT NULL,
+            fetched_at      TEXT NOT NULL,
+            PRIMARY KEY (repo_full_name, sha)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_direct_commits_time "
+        "ON github_direct_commits(committed_at DESC)"
+    )
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_direct_commit_files (
+            repo_full_name  TEXT NOT NULL,
+            sha             TEXT NOT NULL,
+            path            TEXT NOT NULL,
+            status          TEXT,
+            additions       INTEGER,
+            deletions       INTEGER,
+            changes         INTEGER,
+            PRIMARY KEY (repo_full_name, sha, path)
+        )
+    """)
+    conn.execute(
+        "CREATE INDEX IF NOT EXISTS idx_github_direct_commit_files_path "
+        "ON github_direct_commit_files(repo_full_name, path)"
+    )
+
+
 def ensure_github_schema(conn: sqlite3.Connection) -> None:
     """Create GitHub activity and local knowledge tables if they don't exist.
 
@@ -597,6 +658,7 @@ def ensure_github_schema(conn: sqlite3.Connection) -> None:
     _ensure_github_repo_schema(conn)
     _ensure_github_artifact_schema(conn)
     _ensure_github_knowledge_schema(conn)
+    _ensure_github_direct_commit_schema(conn)
     conn.commit()
 
 

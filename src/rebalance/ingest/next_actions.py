@@ -575,13 +575,20 @@ def github_candidates(bundle: OperatorBundle) -> list[dict[str, Any]]:
             "why": "open GitHub item you authored/own",
         })
     for c in bundle.gh_commits:
+        direct_push = c.get("source_kind") == "direct_push"
+        paths = [path for path in c.get("paths", []) if path][:5]
+        evidence = [c.get("html_url") or (c.get("sha") or "")]
+        evidence.extend(paths)
         out.append({
             "rank_key": (4, c.get("committed_at") or ""),
             "title": c.get("subject") or "commit",
             "source": "github",
             "project": c.get("repo"),
-            "evidence": [c.get("html_url") or (c.get("sha") or "")],
-            "why": "recent commit (continue / push?)",
+            "evidence": evidence,
+            "why": (
+                "unreviewed direct branch push (inspect or continue?)"
+                if direct_push else "recent commit (continue / push?)"
+            ),
         })
     for cm in bundle.gh_comments:
         out.append({

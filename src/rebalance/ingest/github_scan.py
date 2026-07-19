@@ -87,6 +87,7 @@ class GitHubScanResult:
     days_fetched: int
     total_events: int
     repo_activity: dict[str, RepoActivity] = field(default_factory=dict)
+    events: list[dict[str, Any]] = field(default_factory=list)
 
 
 class GitHubApiError(Exception):
@@ -477,6 +478,7 @@ def scan_github(token: str, days: int = 30) -> GitHubScanResult:
         days_fetched=days,
         total_events=len(events),
         repo_activity=repo_activity,
+        events=events,
     )
 
 
