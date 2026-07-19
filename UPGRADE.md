@@ -21,6 +21,66 @@ file was missing or in the wrong place.
 > `src/rebalance/ingest/db/migrations/` are applied automatically the first time
 > any ingest or collector runs. No manual schema step required.
 
+## Refresh a running device after `git pull` (code · services · apps)
+
+`git pull` only rewrites files on disk. It does **not** touch anything already
+running — the editable install's entry points/metadata, the long-lived launchd
+daemon (which holds its imported Python modules in memory from the moment it
+started), or the compiled macOS `.app` bundles. A device can therefore have the
+new code checked out while every *running* surface still executes the old code.
+Run the steps below after every pull to bring the live device fully onto new code.
+
+```bash
+cd /path/to/rebalance-OS
+git pull
+
+# 1. Re-sync the Python runtime — entry points, dependencies, version metadata.
+#    Use the same extras you installed with; the macOS default is embeddings+calendar.
+#    (An editable install still needs re-running: deps and console-scripts change
+#     with new collectors, and the package version metadata is baked at install time.)
+.venv/bin/pip install -e ".[embeddings,calendar]"     # Linux/Intel Mac: drop `embeddings`
+
+# 2. Restart the launchd services so they exec the new code.
+#    A running Python process never hot-reloads from disk — it keeps the modules it
+#    imported at startup. `kickstart -k` stops and respawns a job on the new code.
+#    This loop is safe for every job (see the table below); the one it is REQUIRED
+#    for is the pulse server.
+launchctl list | awk '/com\.rebalance-os\./ {print $3}' | while read -r label; do
+  launchctl kickstart -k "gui/$(id -u)/$label" && echo "restarted $label"
+done
+
+# 3. Rebuild + reinstall the macOS apps (release build, ad-hoc sign, copy to /Applications).
+#    Each app under macOS/Apps/* ships its own make-app.sh that does the full pass.
+macOS/Apps/Focus5Float/make-app.sh
+
+# 4. Verify.
+.venv/bin/rebalance --version                                    # matches pyproject.toml
+.venv/bin/rebalance doctor                                       # all green
+curl -s -o /dev/null -w '%{http_code}\n' http://127.0.0.1:8767/  # 200 = pulse server up
+```
+
+### Which services actually need the restart
+
+Only one `com.rebalance-os.*` job runs **continuously**, and it is the one that
+serves stale code indefinitely if you don't restart it:
+
+| Label | Type | After a pull |
+|---|---|---|
+| `com.rebalance-os.pulse-server` | `KeepAlive` daemon — HTTP server on **:8767** that Focus 5 Float and the web pulse read from | **Must** be restarted — it holds its imported modules in memory and never re-execs on its own |
+
+Every other job (`daily-sync`, `github-sync`, `vault-sync`, `pulse-sync`,
+`pulse-web-sync`, `pulse-warning-watch`, `git-pulse-daily-synthesis`, the
+`obsidian-*` and `health-check*` jobs) is `KeepAlive=false` + `StartCalendarInterval`:
+it re-execs from scratch on its **next scheduled tick** and self-heals onto new code
+with no action. The kickstart loop in step 2 just makes that immediate instead of
+waiting for the next tick — harmless (each runs one cycle early), never required.
+
+> **Restart only the pulse server** (the common case — you changed a collector or a
+> render path and want :8767 on it now):
+> ```bash
+> launchctl kickstart -k "gui/$(id -u)/com.rebalance-os.pulse-server"
+> ```
+
 ## Credential model (after upgrade)
 
 > This table reflects the **auth-storage hardening (Phases 0–3, landed 2026-06-21)**:
@@ -69,7 +129,9 @@ the sidecar — only a SHA-256 fingerprint.
 ```bash
 cd /path/to/rebalance-OS
 git pull
-.venv/bin/pip install -e .          # run after every pull — dependencies change with new collectors
+.venv/bin/pip install -e ".[embeddings,calendar]"   # run after every pull — deps/entry points change with new collectors
+                                                    # (see "Refresh a running device after git pull" above for the full
+                                                    #  code + services + apps refresh; the credential steps below are separate)
 
 # 1. Adopt keyring + move secrets out of the repo (both idempotent, safe to re-run):
 .venv/bin/rebalance config migrate-to-keyring   # sleuth env file / any legacy → keyring
