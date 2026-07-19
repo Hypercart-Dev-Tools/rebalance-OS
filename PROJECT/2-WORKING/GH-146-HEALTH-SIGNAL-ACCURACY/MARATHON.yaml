@@ -40,3 +40,12 @@ phases:
     turn_timeout_s: 1200
     depends_on: gh146-p2-launchd-json
     max_review_rounds: 2
+
+  - id: gh146-p4-deep-work-tz
+    name: "deep work stall check pins today to the local day, not UTC"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/briefs/p4-deep-work-tz.md
+    artifact: src/rebalance/doctor.py,tests/test_doctor_deep_work_tz.py
+    turn_timeout_s: 1200
+    depends_on: gh146-p3-device-scoping
+    max_review_rounds: 2
