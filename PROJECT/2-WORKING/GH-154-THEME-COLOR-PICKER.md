@@ -276,15 +276,27 @@ materializing the preset into `colors`.
 Sequential. Each phase ends green on the [gate](#verification-gate) and is committed separately —
 phase 3 in particular is large enough that bisecting matters.
 
-### P0 — Vocabulary and derivation contract
-No behavior change. Write the token table into `web_components.py` as the docstring of
-`RB_TOKENS_CSS`, resolve the `--fg-dim` / `--shadow` calls against their real call sites, and mine
-`FOCUS5-UI.html` for naming. Land the rename of the 6 existing 1:1 tokens with call sites updated.
-**Exit:** every page renders byte-identically except for property names.
+### P0 — Vocabulary, full `:root`, and the rename
+No behavior change. Resolve `--fg-dim` / `--shadow` against their real call sites, fix the derived
+token count, and mine `FOCUS5-UI.html` for naming. Write the token table into `web_components.py`
+as the `RB_TOKENS_CSS` docstring. Land the rename of the 6 existing 1:1 tokens with call sites
+updated. **Also expand `:root` to the complete tier-1 + tier-2 set**, with default-preset values —
+so every token any later phase will reference already exists and resolves.
+
+Enumerate and record here (not estimate): the true inline `style=` write-set for P2, and the final
+derived-token count.
+
+**Exit:** every page renders byte-identically except for property names; every tier-1 and tier-2
+token is defined in `:root`.
+
+> **Why `:root` moved here from P1.** P1/P2/P3 are then pure literal→`var()` rewrites against a
+> vocabulary that already exists, touching **disjoint files** — which lets them run as one
+> concurrent wave instead of a three-phase chain. If `:root` expansion stayed in P1, P2 and P3
+> would both have to wait on it.
 
 ### P1 — Tokenize the shared shell (`web_components.py`)
-Expand `:root` to the full tier-1 + tier-2 set with default-preset values. Rewrite the 36 literals
-in `RB_CHROME_CSS` / `RB_BUTTON_CSS` / the row primitive to `var()`.
+Rewrite the 36 literals in `RB_CHROME_CSS` / `RB_BUTTON_CSS` / the row primitive to `var()`.
+No `:root` changes — P0 already defined every token this phase consumes.
 **Exit:** `/focus-5`, `/whats-next`, `/auth-log`, `/sleuth-graph` visually unchanged.
 
 ### P2 — Tokenize `web.py`
