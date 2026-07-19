@@ -1,5 +1,5 @@
 # Marathon Phase coll-p2-144-fanout
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-COLL-P2-144-FANOUT-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -121,3 +121,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Job summaries are structured log records at process completion (and may be emitted explicitly with `emit_request_summary()`). Rate-limit first/last samples include `limit`, `remaining`, `used`, and `reset`; reset epochs are retained separately. The output explicitly avoids a quota-delta claim because the PAT is shared and runs can cross resets.
 - No fetch behavior, `_get_login()`, or retry/backoff logic changed. Per the measure-first invariant, Step 2 and the cadence/PULSE_AUTO_MIN recommendation are deferred until a real `github-sync` baseline is captured; no before/after count is claimed yet.
 - Verified: `PYTHONPATH=src python -m pytest tests/test_http_client.py -q` (12 passed), plus an inline mocked response check covering normalized PR endpoint attribution and the reset epoch.
+
+### Round 1 · Reviewer · agy
+
+The implementation looks great. It satisfies the strict requirements for Step 1:
+- Measurement is correctly hooked at the single chokepoint (`GitHubClient._request()`).
+- The module-level dictionary with `_job_attribution()` ensures client-recreation in `_get()` is properly aggregated per job.
+- Rate limit handling correctly captures `used` and `reset` epochs.
+- It doesn't modify any actual fetching logic or retry/backoff logic, adhering to the measure-first invariant.
+- All gate tests pass cleanly (`27 passed`).
+
+**Verdict:** Approved
