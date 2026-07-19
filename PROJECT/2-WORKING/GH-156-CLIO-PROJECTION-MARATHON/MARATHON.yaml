@@ -9,7 +9,9 @@
 #
 # Parent doc:   PROJECT/1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md
 # Predecessor:  PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/ (COMPLETE — shipped clio:id + conflict reconciliation)
-# Branch:       marathon/gh-156-clio-projection (cut from development @ 0970d3f)
+# Branch:       marathon/gh-156-critical-clio-projection-reconciliation-2026-07-19
+#               (cut from development @ 008e582 — matches the preflight packet's
+#                deterministic suggested_branch, so branch_ready resolves true)
 #
 # ---------------------------------------------------------------------------
 # WHY THIS PLAN IS RESCOPED
