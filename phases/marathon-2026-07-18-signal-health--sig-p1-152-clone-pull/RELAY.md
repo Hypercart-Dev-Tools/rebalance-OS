@@ -64,3 +64,9 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/GitHub-Repos/xyz-3-agents-swarm/bin/tick done MARATHON-SIG-P1-152-CLONE-PULL-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/GitHub-Repos/xyz-3-agents-swarm/bin/tick
    Edit ONLY phases/marathon-2026-07-18-signal-health--sig-p1-152-clone-pull/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Reviewer · agy
+
+The fetch + reconcile logic has not been implemented in `scripts/pulse_sync.sh` yet (the builder block is missing). Please implement the required git fetch and integrate/reconcile steps in `scripts/pulse_sync.sh` as described in the phase brief, and add relevant test coverage under `tests/`.
+
+**Verdict:** Changes requested
