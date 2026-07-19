@@ -1,30 +1,26 @@
 ---
 name: clio
-description: Install, verify, or uninstall a Claude Code hook that logs every submitted prompt to a centralized JSONL file at ~/.claude/prompt-log.jsonl, tagged with timestamp, repo name, git branch, and machine name — and optionally export that log to a human-readable Markdown file at any location, such as an Obsidian vault. Use when the user asks to set up prompt logging, track/save Claude Code prompts, build a prompt history or audit trail, sync prompts into Obsidian/notes, or mentions wanting a centralized, readable record of what they've asked Claude Code across projects.
+description: Install, verify, or uninstall a Claude Code hook that logs prompts to centralized JSONL and optionally renders them into a readable Markdown note.
 ---
 
 # CLIO
 
-Installs a `UserPromptSubmit` hook (user-scope, applies to every repo) that appends
-one JSON line per submitted prompt to a single centralized file:
-`~/.claude/prompt-log.jsonl`.
-
-A second, optional script converts that JSONL into a human-readable Markdown file
-at any location you choose — an Obsidian vault, a notes folder, wherever. It's kept
-separate from the hook on purpose: the hook must stay fast (it blocks every prompt
-for up to 30s), so formatting happens later, on demand, not inline.
+CLIO installs a user-scope `UserPromptSubmit` hook, which appends every submitted
+prompt to `~/.claude/prompt-log.jsonl`. An optional exporter renders that JSONL as
+Markdown at a location you choose. The capture hook stays fast; formatting happens
+later, on demand or on a schedule.
 
 ## What gets logged
 
 One line per prompt:
+
 ```json
 {"timestamp":"2026-07-09T18:42:11Z","repo":"hypercart","branch":"main","machine":"Noels-MacBook-Pro","session_id":"abc123","prompt":"..."}
 ```
 
 ## Install
 
-Run once in a terminal (macOS/Linux). Requires `jq` — install it first if needed
-(`brew install jq` on macOS, `apt install jq` on Debian/Ubuntu):
+Run once from the root of this CLIO checkout (macOS/Linux). CLIO requires `jq`:
 
 ```bash
 command -v jq >/dev/null 2>&1 || { echo "jq is required. Install it: brew install jq (macOS) / apt install jq (Linux)"; return 1 2>/dev/null || exit 1; }
@@ -56,7 +52,7 @@ if ! echo "$input" | jq -c \
   '
   def clean_prompt:
     gsub("(?i)<(ide_selection|system-reminder|local-command-stdout|local-command-caveat|command-name|command-message|command-args|command-contents|function_results)[^>]*>.*?</\\1>"; ""; "gm")
-    | gsub("\n[ \t]*\n[ \t]*\n+"; "\n\n")
+    | gsub("\\n[ \\t]*\\n[ \\t]*\\n+"; "\\n\\n")
     | sub("^\\s+"; "") | sub("\\s+$"; "");
   {timestamp:$ts, repo:$repo, branch:$branch, machine:$machine, session_id:.session_id, prompt:(.prompt | clean_prompt)}
   ' \
@@ -80,6 +76,8 @@ else
   echo "Hook registered in $SETTINGS."
 fi
 
+install -m 0755 utils/CLIO/prompt-log-to-md.sh ~/.claude/hooks/prompt-log-to-md.sh
+
 echo "✅ Installed. Smoke test:"
 echo '{"prompt":"test","session_id":"install-check"}' | ~/.claude/hooks/log-prompt.sh
 tail -1 ~/.claude/prompt-log.jsonl
@@ -88,293 +86,48 @@ tail -1 ~/.claude/prompt-log.jsonl
 ## Verify (real session)
 
 Start a new Claude Code session anywhere, submit any prompt, then:
+
 ```bash
 tail -f ~/.claude/prompt-log.jsonl
 ```
 
 ## Optional: export to human-readable Markdown
 
-Converts the JSONL log into readable Markdown by **appending only entries not
-already present in the note**. Each entry carries an invisible, content-derived ID.
-A cursor (a line count) is kept in `~/.claude/prompt-log-to-md.state` as a scan
-optimization, and each run prepends new prompts below a fixed header, newest first.
-Before exporting, it recovers missing full entry blocks from sync conflict siblings
-and moves each processed copy into `.clio-reconciled/` instead of deleting it.
+The exporter appends only entries not already identified in the note, with newest
+ones immediately below `<!-- CLIO:ENTRIES -->`. It preserves everything above that
+marker, reconciles full entries found in matching conflict siblings, and quarantines
+those siblings under `.clio-reconciled/`.
 
-It **never rewrites entries it has already written** — and that's the property that
-makes it work across machines. When the output file lives in a folder synced between
-devices (an Obsidian vault via Obsidian Sync / iCloud / Dropbox), each device only
-ever adds *its own* new prompts to whatever the shared file currently holds. Neither
-device regenerates or clobbers the file, so both machines' history **accumulates into
-the one note** instead of overwriting each other. Each device tracks its own cursor
-against its own local JSONL, so it never needs to read the other device's log — the
-cross-device merge is emergent from sync + incremental append, not a cross-device read.
-
-Machine-triggered relay turns (from `/relay-xyz` etc.) are filtered out via
-`PROMPT_LOG_EXCLUDE` so they never reach the doc — the raw JSONL still keeps them.
-
-```bash
-cat > ~/.claude/hooks/prompt-log-to-md.sh << 'EOF'
-#!/bin/bash
-# Converts ~/.claude/prompt-log.jsonl into a human-readable Markdown file by
-# APPENDING only entries not already present in the note. Each entry has a stable
-# ID derived from its session and timestamp. A cursor (the line count already
-# processed) is stored in ~/.claude/prompt-log-to-md.state as a scan optimization;
-# each run prepends new prompts below a fixed header, newest first.
-#
-# It never rewrites entries it has already emitted. When the output file lives in
-# a folder synced between machines (e.g. an Obsidian vault), each device only adds
-# its own new prompts to whatever the shared file currently holds — so both
-# devices' history accumulates into the one file instead of overwriting. Each
-# device tracks its own cursor against its own local JSONL and never reads the
-# other's log; the cross-device merge is emergent from sync + incremental append.
-#
-# Usage: prompt-log-to-md.sh [output_md_path]
-# Default output: ~/.claude/prompt-log.md
-#
-# Filtering: prompts whose text matches PROMPT_LOG_EXCLUDE (a case-insensitive
-# regex) are skipped — used to drop machine-triggered relay turns. The cursor
-# still advances past them, so they're never reconsidered. Set it empty to keep all.
-
-set -euo pipefail
-
-JSONL="$HOME/.claude/prompt-log.jsonl"
-OUT="${1:-$HOME/.claude/prompt-log.md}"
-STATE="$HOME/.claude/prompt-log-to-md.state"
-EXCLUDE_REGEX="${PROMPT_LOG_EXCLUDE:-file-based relay|cross-agent dependency drift}"
-MARKER="<!-- CLIO:ENTRIES -->"
-RECONCILE_DRY_RUN="${CLIO_RECONCILE_DRY_RUN:-0}"
-OUT_DIR=$(dirname "$OUT")
-OUT_NAME=$(basename "$OUT")
-OUT_BASE=${OUT_NAME%.md}
-
-command -v jq >/dev/null 2>&1 || { echo "jq is required (brew install jq / apt install jq)"; exit 1; }
-
-if [ "$RECONCILE_DRY_RUN" != 1 ]; then
-  mkdir -p "$OUT_DIR"
-fi
-
-# Ensure the file has the fixed header and the insertion MARKER. Everything above
-# the marker is preserved verbatim every run; new entries go directly below it;
-# existing entries below it are never rewritten. Any content from an older
-# headerless/markerless file is kept (moved below the new marker).
-if [ "$RECONCILE_DRY_RUN" != 1 ] && { [ ! -f "$OUT" ] || ! grep -qF "$MARKER" "$OUT"; }; then
-  old=$(mktemp)
-  [ -f "$OUT" ] && cat "$OUT" > "$old"
-  {
-    printf '%s\n' \
-      '# Claude Code Prompt Log' \
-      '' \
-      'Generated by CLIO (A member of the rebalanceOS | XYZ | HiQS family)' \
-      'https://github.com/Claude-AI-Tools-Ventura-County/clio' \
-      '' \
-      "$MARKER"
-    cat "$old"
-  } > "$OUT.tmp.$$" && mv "$OUT.tmp.$$" "$OUT"
-  rm -f "$old"
-fi
-
-# Recover complete CLIO entry blocks stranded in sync conflict siblings before
-# considering the local JSONL cursor. Only files derived from this note's base
-# name are candidates, so unrelated conflict notes in the same folder are safe.
-# IDs are added to the in-memory set as they are planned, which also deduplicates
-# the same entry when it appears in more than one conflict sibling.
-existing_ids=$(grep -o 'clio:id:[^ ]*' "$OUT" 2>/dev/null || true)
-shopt -s nullglob
-conflict_siblings=(
-  "$OUT_DIR/$OUT_BASE".sync-conflict-*.md
-  "$OUT_DIR/$OUT_BASE"' (conflicted copy'*.md
-  "$OUT_DIR/$OUT_BASE"' '[0-9]*.md
-)
-shopt -u nullglob
-
-# `${arr[@]+...}` guard: on macOS's bash 3.2, expanding an EMPTY array under
-# `set -u` aborts with "unbound variable" (only fixed in bash 4.4+), and the
-# common case is zero conflict siblings — so the bare `"${conflict_siblings[@]}"`
-# broke every normal run. This form expands to nothing when the array is empty.
-for conflict in ${conflict_siblings[@]+"${conflict_siblings[@]}"}; do
-  [ "$conflict" = "$OUT" ] && continue
-
-  recovered=$(mktemp)
-  merged_count=0
-  conflict_ids=$(grep -o 'clio:id:[^ ]*' "$conflict" 2>/dev/null || true)
-  while IFS= read -r conflict_id; do
-    [ -z "$conflict_id" ] && continue
-    case $'\n'"$existing_ids"$'\n' in
-      *$'\n'"$conflict_id"$'\n'*) continue ;;
-    esac
-
-    block=$(mktemp)
-    awk -v wanted="$conflict_id" '
-      $0 == "<!-- " wanted " -->" { copying = 1; heading = 0 }
-      copying {
-        if ($0 ~ /^<!-- clio:id:/ && $0 != "<!-- " wanted " -->") exit
-        if ($0 ~ /^## /) {
-          if (heading) exit
-          heading = 1
-        }
-        print
-      }
-    ' "$conflict" > "$block"
-
-    # A bare ID is not recoverable: require the rendered heading and prompt so
-    # reconciliation can never claim success after merging metadata alone.
-    if grep -q '^## ' "$block" && grep -q '^> "' "$block"; then
-      cat "$block" >> "$recovered"
-      printf '\n' >> "$recovered"
-      existing_ids="${existing_ids}${existing_ids:+$'\n'}${conflict_id}"
-      merged_count=$((merged_count + 1))
-    fi
-    rm -f "$block"
-  done <<< "$conflict_ids"
-
-  quarantine_dir="$OUT_DIR/.clio-reconciled"
-  destination="$quarantine_dir/$(basename "$conflict")"
-  suffix=1
-  while [ -e "$destination" ]; do
-    destination="$quarantine_dir/$(basename "$conflict").$suffix"
-    suffix=$((suffix + 1))
-  done
-
-  if [ "$RECONCILE_DRY_RUN" = 1 ]; then
-    echo "reconciled $(basename "$conflict"): merged=$merged_count quarantined=$destination (dry-run)"
-  else
-    if [ -s "$recovered" ]; then
-      marker_line=$(grep -nF "$MARKER" "$OUT" | head -1 | cut -d: -f1)
-      merged="$OUT.tmp.$$"
-      {
-        head -n "$marker_line" "$OUT"
-        echo
-        cat "$recovered"
-        tail -n +"$((marker_line + 1))" "$OUT"
-      } > "$merged"
-      mv "$merged" "$OUT"
-    fi
-    mkdir -p "$quarantine_dir"
-    mv "$conflict" "$destination"
-    echo "reconciled $(basename "$conflict"): merged=$merged_count quarantined=$destination"
-  fi
-  rm -f "$recovered"
-done
-
-# Reconciliation dry-run is a read-only operation: do not continue into the
-# normal exporter, which could create the note or advance its cursor.
-[ "$RECONCILE_DRY_RUN" = 1 ] && exit 0
-
-[ -f "$JSONL" ] || { echo "No log yet at $JSONL"; exit 0; }
-
-TOTAL_LINES=$(grep -c '' "$JSONL")
-LAST_LINE=$( [ -f "$STATE" ] && cat "$STATE" || echo 0 )
-case "$LAST_LINE" in ''|*[!0-9]*) LAST_LINE=0 ;; esac   # corrupt state → start over
-[ "$LAST_LINE" -gt "$TOTAL_LINES" ] && LAST_LINE=0      # JSONL shrank/rotated → re-emit all
-
-if [ "$LAST_LINE" -ge "$TOTAL_LINES" ]; then
-  echo "✅ Synced 0 new prompt(s) to $OUT ($LAST_LINE/$TOTAL_LINES lines scanned)."
-  exit 0
-fi
-
-reverse_lines() { if command -v tac >/dev/null 2>&1; then tac; else tail -r; fi; }
-
-# Render the new entries (newest first). jq -R reads each raw line; fromjson parses
-# it; malformed lines, excluded prompts, and IDs already in the note are dropped
-# without aborting the run. The ID is derived inline without per-entry subprocesses.
-new_entries=$(mktemp)
-tail -n +"$((LAST_LINE + 1))" "$JSONL" | reverse_lines | jq -Rr \
-  --arg exclude "$EXCLUDE_REGEX" --arg existing_ids "$existing_ids" '
-  (fromjson? // empty)
-  | select(($exclude | length) == 0 or ((.prompt // "") | test($exclude; "i") | not))
-  | ((.session_id // "") + ":" + (.timestamp // "")) as $id
-  | select(($existing_ids | split("\n") | index("clio:id:" + $id)) == null)
-  | "<!-- clio:id:\($id) -->\n## \(.repo // "unknown" | ascii_upcase)\n\(.timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
-' > "$new_entries"
-
-emitted_ids=$(grep -o 'clio:id:[^ ]*' "$new_entries" 2>/dev/null || true)
-emitted_count=$(grep -c '^<!-- clio:id:' "$new_entries" 2>/dev/null || true)
-
-# Insert the new entries right after the MARKER, preserving everything else. Write
-# atomically (temp + mv) so a reader like Obsidian never sees a half-written file.
-if [ -s "$new_entries" ]; then
-  marker_line=$(grep -nF "$MARKER" "$OUT" | head -1 | cut -d: -f1)
-  merged="$OUT.tmp.$$"   # same dir as $OUT so the mv is a true atomic rename
-  {
-    head -n "$marker_line" "$OUT"
-    echo
-    cat "$new_entries"
-    tail -n +"$((marker_line + 1))" "$OUT"
-  } > "$merged"
-  mv "$merged" "$OUT"
-
-  # Do not advance the cursor until every entry from this run is visible in the
-  # atomically replaced output. A failed verification leaves the state untouched,
-  # so the next run retries the same JSONL range.
-  written_ids=$(grep -o 'clio:id:[^ ]*' "$OUT" 2>/dev/null || true)
-  while IFS= read -r emitted_id; do
-    [ -z "$emitted_id" ] && continue
-    case $'\n'"$written_ids"$'\n' in
-      *$'\n'"$emitted_id"$'\n'*) ;;
-      *)
-        rm -f "$new_entries"
-        echo "Failed to verify emitted CLIO entry $emitted_id; cursor not advanced." >&2
-        exit 1
-        ;;
-    esac
-  done <<< "$emitted_ids"
-fi
-rm -f "$new_entries"
-
-echo "$TOTAL_LINES" > "$STATE"
-echo "✅ Synced $emitted_count new prompt(s) to $OUT"
-EOF
-
-chmod +x ~/.claude/hooks/prompt-log-to-md.sh
-```
+Its cursor (`~/.claude/prompt-log-to-md.state`) is only a scan optimization. The
+source-owned `~/.claude/prompt-log-manifest.txt` is an append-only delivery receipt:
+one rendered `clio:id` per line, no prompt text. It remains if the cursor is deleted.
 
 **Run it** — default location:
+
 ```bash
 ~/.claude/hooks/prompt-log-to-md.sh
 ```
 
-**Run it** — custom location, e.g. an Obsidian vault:
+**Run it** — custom location, for example an Obsidian vault:
+
 ```bash
 ~/.claude/hooks/prompt-log-to-md.sh ~/vault/_meta/prompt-log/prompt-log.md
 ```
 
 **Preview conflict recovery without changing the note or moving files:**
+
 ```bash
 CLIO_RECONCILE_DRY_RUN=1 ~/.claude/hooks/prompt-log-to-md.sh ~/vault/_meta/prompt-log/prompt-log.md
 ```
 
-The file opens with the fixed header and the `<!-- CLIO:ENTRIES -->` marker (an
-HTML comment, invisible when rendered), then one `## <REPO>` block per prompt,
-newest first — new prompts are inserted directly below the marker on each run:
-```markdown
-# Claude Code Prompt Log
-
-Generated by CLIO (A member of the rebalanceOS | XYZ | HiQS family)
-https://github.com/Claude-AI-Tools-Ventura-County/clio
-
-<!-- CLIO:ENTRIES -->
-
-<!-- clio:id:abc123:2026-07-09T18:55:03Z -->
-## HYPERCART
-2026-07-09T18:55:03Z  
-Noels-MacBook-Pro · main
-
-> "Now add a regression test for it"
-
-<!-- clio:id:abc123:2026-07-09T18:42:11Z -->
-## HYPERCART
-2026-07-09T18:42:11Z  
-Noels-MacBook-Pro · main
-
-> "Help me refactor the wpdbtk delta-sync logic"
-```
-
-To sync on a schedule instead of running by hand, add it as a `launchd` job (macOS) or a cron entry pointing at the same command with your chosen output path — the script itself doesn't change either way. On a shared output file in a synced folder, run it on **every** machine: each device keeps appending its own new prompts to the one note, and both devices' history accumulates there.
+The first run creates a fixed header and marker, then one `## <REPO>` block per
+prompt. To sync on a schedule, point a launchd job (macOS) or cron entry at the
+same exporter command and output path. On a shared synced file, run it on every
+machine; each device adds its own local prompts without regenerating the note.
 
 ### Auto-sync every 1 minute (macOS launchd)
 
-Replace `OUT_PATH` with your chosen output file (e.g. an Obsidian note):
+Replace `OUT_PATH` with your chosen output file:
 
 ```bash
 OUT_PATH="$HOME/vault/_meta/prompt-log/prompt-log.md"
@@ -408,12 +161,14 @@ launchctl unload "$PLIST" 2>/dev/null
 launchctl load "$PLIST"
 ```
 
-Check it's running:
+Check it is running:
+
 ```bash
 launchctl list | grep com.claude.prompt-log-to-md
 ```
 
 Stop and remove it:
+
 ```bash
 launchctl unload ~/Library/LaunchAgents/com.claude.prompt-log-to-md.plist
 rm ~/Library/LaunchAgents/com.claude.prompt-log-to-md.plist
@@ -422,8 +177,8 @@ rm -f ~/.claude/prompt-log-to-md.out.log ~/.claude/prompt-log-to-md.err.log
 
 ## Uninstall
 
-⚠️ This removes only the `log-prompt.sh` entry from `UserPromptSubmit` — it does
-**not** touch other `UserPromptSubmit` hooks you may have registered separately.
+This removes only the `log-prompt.sh` entry from `UserPromptSubmit`; it does not
+touch other registered hooks.
 
 ```bash
 tmp=$(mktemp)
@@ -434,22 +189,13 @@ jq '.hooks.UserPromptSubmit = ((.hooks.UserPromptSubmit // [])
   ~/.claude/settings.json > "$tmp" && mv "$tmp" ~/.claude/settings.json
 
 rm ~/.claude/hooks/log-prompt.sh
-rm -f ~/.claude/hooks/prompt-log-to-md.sh ~/.claude/prompt-log-to-md.state ~/.claude/prompt-log-errors.log
+rm -f ~/.claude/hooks/prompt-log-to-md.sh ~/.claude/prompt-log-to-md.state ~/.claude/prompt-log-manifest.txt ~/.claude/prompt-log-errors.log
 ```
 
 ## Notes
 
-- **Scope**: lives in `~/.claude/settings.json` (user-level), so one log file covers every repo — not project-local.
-- **`repo`**: git toplevel directory name; falls back to the project directory name if not a git repo.
-- **`branch`**: the checked-out branch at prompt time (`git rev-parse --abbrev-ref HEAD`); empty string if not a git repo or in detached HEAD with no symbolic ref. Recorded per-prompt so you can later tell which branch a given ask/change was made on, even after the branch is merged or deleted.
-- **`machine`**: macOS "Computer Name" (System Settings → General → Sharing), falling back to `hostname` on other platforms — useful once you're working across more than one machine.
-- **Timeout**: `UserPromptSubmit` hooks default to a 30s timeout; a plain append is instant and won't stall a session.
-- **Resumed sessions**: `--resume`/`--continue` replay saved context rather than re-running the hook for past turns — only genuinely new prompts get logged.
-- **Idempotent**: re-running the install block is safe; it skips re-registering the hook if it's already present, but always rewrites `log-prompt.sh`.
-- **MD export is a separate, incremental step**: it reads the same JSONL and never touches the hook, so the two can be versioned, run, or dropped independently. It appends only entries logged since its last run — a cursor (line count) in `~/.claude/prompt-log-to-md.state` — and prepends them below the fixed header, newest first. It never rewrites entries it has already written.
-- **Cross-device accumulation**: because the export only *appends its own new local prompts* and never regenerates the file, pointing several machines' exports at one output file in a synced folder (e.g. an Obsidian vault) makes every device's history pile into the one note instead of overwriting. Each device keeps its own cursor against its own local JSONL and never reads another device's log. If the sync stack creates a conflict sibling, the next export merges any missing full blocks by `clio:id` and quarantines the processed copy under `.clio-reconciled/`. The default cadence is **every 1 minute**; a tighter cadence surfaces prompts faster but can create more conflict copies, which reconciliation handles idempotently.
-- **Resetting / rebuilding the export**: delete `~/.claude/prompt-log-to-md.state` to re-emit from the top of the JSONL on the next run (it prepends everything again above existing content); delete the output file too for a clean rebuild. On a shared synced file, resetting one device re-adds only *that* device's local prompts.
-- **Relay/machine-prompt filtering**: prompts whose text matches `PROMPT_LOG_EXCLUDE` (default `file-based relay|cross-agent dependency drift`, case-insensitive) are omitted from the Markdown — this hides `/relay-xyz`-style machine-triggered turns. They stay in the raw JSONL; only the rendered export drops them. Override the env var to change what's hidden, or set it empty (`PROMPT_LOG_EXCLUDE= prompt-log-to-md.sh …`) to hide nothing.
-- **Errors are non-fatal but visible**: the hook always exits 0 so a logging failure never blocks a prompt from being submitted, but any failure (missing `jq`, malformed input) is recorded to `~/.claude/prompt-log-errors.log` instead of vanishing silently. Check that file if entries seem to be missing.
-- **Context stripping**: Claude Code's raw prompt field can include auto-injected blocks (`<ide_selection>`, `<system-reminder>`, local-command wrappers) alongside what you actually typed — e.g. having a file selected in your IDE dumps its contents into the prompt. The hook strips known wrapper tags before logging so entries stay a readable record of what you typed, not what the harness injected. jq's regex engine (Oniguruma) uses the `m` flag for dot-matches-newline, not `s` — that's intentional, not a typo.
-- **Uninstall matches the exact hook command, not a substring**: it compares each entry to the literal `$HOME/.claude/hooks/log-prompt.sh` string (unexpanded, matching exactly what install writes) rather than using `contains(...)`. A loose substring match would also strip an unrelated command that merely mentions "log-prompt.sh" in its text, and would miss this hook entirely if it were ever bundled into the same matcher block alongside another command at a non-zero array index.
+- **Scope:** `~/.claude/settings.json` is user-level, so one log covers every repo.
+- **Machine and branch:** both are recorded with each prompt for later context.
+- **Filtering:** `PROMPT_LOG_EXCLUDE` defaults to `file-based relay|cross-agent dependency drift`; matching text stays in raw JSONL but is omitted from the Markdown. Set it empty to render all prompts.
+- **Resetting:** deleting the state file rescans JSONL, but ID-based note deduplication prevents a duplicate rendered entry. The manifest is intentionally independent of that cursor.
+- **Errors:** the capture hook always exits 0, writing failures to `~/.claude/prompt-log-errors.log`; a manifest receipt failure is reported but never rolls back a successful export.

@@ -1,6 +1,6 @@
 # Marathon Phase gh156-p1-manifest
 STATUS: Open
-NEXT: codex
+NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-GH156-P1-MANIFEST-TURN builder=codex reviewer=agy round-cap=7 -->
 
@@ -121,3 +121,10 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH156-P1-MANIFEST-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh-156-clio-projection--gh156-p1-manifest/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Extracted the exporter into executable `utils/CLIO/prompt-log-to-md.sh`; `INSTALL.md` now installs that source file rather than embedding a second copy, while retaining the capture-hook, run/verify, launchd, and uninstall instructions.
+- Added a cursor-independent, IDs-only manifest receipt at `~/.claude/prompt-log-manifest.txt` (overrideable with `CLIO_MANIFEST`). It is atomically replaced from the existing receipt plus newly verified IDs, does not duplicate IDs, and reports failures without failing the export. The cursor write is now atomic as well.
+- Added `test/clio-exporter.sh` fixture coverage for fresh/idempotent exports, legacy un-ID'd entries, displaced markers, conflict-sibling recovery/quarantine, cursor-reset manifest retention, and nonfatal manifest failures. It runs each fixture suite through `bash` and `/bin/bash`.
+- Verification: `bash -n utils/CLIO/prompt-log-to-md.sh test/clio-exporter.sh && bash test/clio-exporter.sh` (PASS for both shells).
