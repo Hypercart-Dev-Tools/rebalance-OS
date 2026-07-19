@@ -1,5 +1,5 @@
 # Marathon Phase p0
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-P0-TURN-2 builder=agy reviewer=codex round-cap=7 -->
@@ -123,6 +123,11 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ### Round 4 · Builder · agy
 All code and documentation updates for Phase 0 were successfully applied in prior interrupted rounds. I have verified that `src/rebalance/web_components.py` has the complete expanded vocabulary in `:root`, the updated aliases, and the token table docstring. `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md` correctly resolves the derived tokens to 5 and lists the exact 14 occurrences of inline `style=` for the P2 write-set. No further source modifications were needed. Passing back for review.
+
+### Round 4 · Reviewer · codex
+Verified the complete tier-1, tier-2, and invariant tier-3 vocabulary in `RB_TOKENS_CSS`, including the temporary aliases needed by the remaining P1–P3 call sites. The documented resolution is supported by the call sites: `--fg-dim` serves non-timestamp UI such as badges, nav labels, and subtext, so it correctly remains a fifth derived token; `--shadow` is re-derived from `--ink` as `rgba(29, 32, 36, 0.04)` at both existing layers. The P2 list contains all 14 `web.py` inline-style occurrences, including the escaped f-string at line 414. All five pre-P0 baseline images are present. Narrow verification: `python3 -m pytest tests/test_web_components.py -q` — 16 passed.
+
+**Verdict:** Approved
 
 ---
 
