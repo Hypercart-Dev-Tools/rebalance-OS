@@ -1,5 +1,5 @@
 # Marathon Phase gh146-p3-device-scoping
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-GH146-P3-DEVICE-SCOPING-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -132,3 +132,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Scoped `scheduler:git-pulse-daily-synthesis` to the MBP 16. A missing unscoped scheduler job retains its existing warning behavior.
 - Added `tests/test_doctor_device_scope.py`, covering foreign-device suppression, own-device staleness, laptop-versus-workstation thresholds, and unchanged unscoped scheduler behavior. The foreign-device `assert checks[0].status == OK` is the required assertion that fails before this implementation.
 - Verification: `PYTHONPATH=src python3 -m pytest tests/test_doctor_device_scope.py -q` → `4 passed`. The relay-driver constraint permits only this specific test, so I did not run the full doctor command / project gate and cannot honestly report a live warn count from this worktree.
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+The declarative `_DEVICE_SCOPE_REGISTRY` successfully removes the false alarms of device-scoped checks on foreign devices. Review of the code confirms:
+- Device IDs mapped to known instances.
+- Foreign device checks properly emit an informational `OK` response.
+- Intermittent-device window parameter correctly propagates for the laptops.
+- Tests adequately cover the new logic and pass.
+
+Verification with `PYTHONPATH=src python3 -m rebalance doctor` confirms the three device-scoped defects (`pulse collector:Noel's MBP 16" M1 Pro`, `pulse collector:noel's MacBook Pro 14"`, and `scheduler:git-pulse-daily-synthesis`) now gracefully report `OK (not applicable on noels-mac-studio)`. Total warn count is 7, but none are related to device scoping (the remaining warnings involve missing configurations like vault path, pulse keys, some failed launchd jobs, and unrelated signals like Figma and Sleuth). The marathon target of clearing the device-scoped warnings is achieved.
