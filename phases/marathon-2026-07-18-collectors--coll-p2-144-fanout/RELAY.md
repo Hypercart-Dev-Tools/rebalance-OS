@@ -113,3 +113,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P2-144-FANOUT-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/marathon-2026-07-18-collectors--coll-p2-144-fanout/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Implemented Step 1 only in `src/rebalance/ingest/_http.py`: every request now contributes to a process/run-scoped counter keyed by `job_label` + `run_id`; callers can supply those arguments or use `REBALANCE_GITHUB_JOB_LABEL` / `REBALANCE_GITHUB_RUN_ID`.
+- The counter is deliberately not client-scoped. `github_scan._get()` creates a client for each call, so a module-level run registry is necessary to retain one complete job total. It records logical requests, actual attempts (including retries), and normalized endpoint-path counts for both.
+- Job summaries are structured log records at process completion (and may be emitted explicitly with `emit_request_summary()`). Rate-limit first/last samples include `limit`, `remaining`, `used`, and `reset`; reset epochs are retained separately. The output explicitly avoids a quota-delta claim because the PAT is shared and runs can cross resets.
+- No fetch behavior, `_get_login()`, or retry/backoff logic changed. Per the measure-first invariant, Step 2 and the cadence/PULSE_AUTO_MIN recommendation are deferred until a real `github-sync` baseline is captured; no before/after count is claimed yet.
+- Verified: `PYTHONPATH=src python -m pytest tests/test_http_client.py -q` (12 passed), plus an inline mocked response check covering normalized PR endpoint attribution and the reset epoch.
