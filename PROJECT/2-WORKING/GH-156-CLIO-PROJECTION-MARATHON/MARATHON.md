@@ -18,12 +18,12 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| Doc rescoped to its genuine remainder (its original P1 + most of P2 shipped a day later via `CLIO-DURABLE-MARATHON`). Swarm Preflight Contract added — **preflight ready, exit 0, all 3 `fix_probes` `unfixed`**. 3 briefs authored. Gate verified green at baseline. **Dry run clean:** 3/3 phases resolve in `depends_on` order, briefs render into relay files. Branch cut off `development@008e582`. | **Operator decision: fire or hold.** Nothing has been executed. Fire with the command below. |
+| Doc rescoped to its genuine remainder (its original P1 + most of P2 shipped a day later via `MARATHON-2026-07-19-CLIO-DURABLE`). Swarm Preflight Contract added — **preflight ready, exit 0, all 3 `fix_probes` `unfixed`**. 3 briefs authored. Gate verified green at baseline. **Dry run clean:** 3/3 phases resolve in `depends_on` order, briefs render into relay files. Branch cut off `development@008e582`. | **Operator decision: fire or hold.** Nothing has been executed. Fire with the command below. |
 
 ## Plan
 
 - Plan: [MARATHON.yaml](MARATHON.yaml) · Parent doc: [GH-156](../../1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md)
-- Predecessor: [CLIO-DURABLE-MARATHON](../CLIO-DURABLE-MARATHON/MARATHON.md) (COMPLETE — shipped `clio:id` + conflict reconciliation)
+- Predecessor: [MARATHON-2026-07-19-CLIO-DURABLE](../../3-COMPLETED/MARATHON-2026-07-19-CLIO-DURABLE/MARATHON.md) (COMPLETE — shipped `clio:id` + conflict reconciliation)
 
 | Phase | Id | Artifact | Depends on |
 |---|---|---|---|

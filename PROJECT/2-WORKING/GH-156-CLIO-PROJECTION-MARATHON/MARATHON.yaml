@@ -9,7 +9,7 @@
 #
 # Parent doc:   PROJECT/1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md
 # Status doc:   PROJECT/2-WORKING/GH-156-CLIO-PROJECTION-MARATHON/MARATHON.md
-# Predecessor:  PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/ (COMPLETE — shipped clio:id + conflict reconciliation)
+# Predecessor:  PROJECT/3-COMPLETED/MARATHON-2026-07-19-CLIO-DURABLE/ (COMPLETE — shipped clio:id + conflict reconciliation)
 #
 # VERIFIED 2026-07-19 (not fired):
 #   preflight ready (exit 0) · all 3 fix_probes `unfixed` · branch_ready=true · dirty=0

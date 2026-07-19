@@ -36,7 +36,7 @@ promise of a durable, cross-device prompt history.
 ## What already shipped (2026-07-19 rescope)
 
 This doc was captured **2026-07-18**, one day before the CLIO durable-writes
-marathon (`PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/`, status COMPLETE) landed.
+marathon (`PROJECT/3-COMPLETED/MARATHON-2026-07-19-CLIO-DURABLE/`, status COMPLETE) landed.
 Two of its three original phases are now substantially built, so the plan below
 is rescoped to the genuine remainder. Verified against `utils/CLIO/INSTALL.md`
 at `development@0970d3f`:

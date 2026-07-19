@@ -18,7 +18,7 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| Brief authored 2026-07-19; parent doc `PROJECT/1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md`. Predecessor marathon (`CLIO-DURABLE-MARATHON`) already shipped `clio:id` + conflict reconciliation. | Execute as marathon phase `gh156-p1-manifest` (reviewer: agy). P2/P3 depend on this phase's script file and harness. |
+| Brief authored 2026-07-19; parent doc `PROJECT/1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md`. Predecessor marathon (`MARATHON-2026-07-19-CLIO-DURABLE`) already shipped `clio:id` + conflict reconciliation. | Execute as marathon phase `gh156-p1-manifest` (reviewer: agy). P2/P3 depend on this phase's script file and harness. |
 
 ## Where the code lives
 
