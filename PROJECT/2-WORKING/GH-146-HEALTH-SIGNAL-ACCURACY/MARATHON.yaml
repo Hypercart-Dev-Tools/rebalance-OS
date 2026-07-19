@@ -7,13 +7,17 @@
 # depends_on p2 — they cannot run concurrently. p1 is independent of both in write-set but p2
 # reads the JSON contract p1 establishes, so p2 depends_on p1. The chain is therefore serial by
 # necessity, not by preference.
+#
+# Agent assignment: builder defaults to `codex`, and marathon-drive rejects a phase whose reviewer
+# equals the builder — so every reviewer here is `agy`. Both are subscription-billed (cost-blind);
+# neither incurs per-call API charges the way `--builder claude` would.
 
 name: gh-146-health-signal-accuracy
 
 phases:
   - id: gh146-p1-exit-semantics
     name: "daily_sync.sh — fatal vs partial/transient exit semantics"
-    reviewer: codex
+    reviewer: agy
     brief: PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/briefs/p1-exit-semantics.md
     artifact: scripts/daily_sync.sh,tests/test_daily_sync_exit.py
     turn_timeout_s: 1200
@@ -30,7 +34,7 @@ phases:
 
   - id: gh146-p3-device-scoping
     name: "Device-scoped checks stop warning on the wrong device"
-    reviewer: codex
+    reviewer: agy
     brief: PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/briefs/p3-device-scoping.md
     artifact: src/rebalance/doctor.py,tests/test_doctor_device_scope.py
     turn_timeout_s: 1200
