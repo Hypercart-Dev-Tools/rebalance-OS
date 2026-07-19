@@ -17,6 +17,7 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 OK = "ok"
 WARN = "warn"
@@ -337,12 +338,20 @@ def _check_collector_freshness(
     warn_days: int,
     empty_hint: str,
     stale_hint: str,
+    quality_predicate: str | None = None,
+    quality_label: str = "meaningful content",
+    quality_table: str | None = None,
+    max_invalid_fraction: float = 0.5,
+    volume_ts_col: str | None = None,
+    quiet_filter: Callable[[], str] | None = None,
 ) -> Check:
     """Generic data-freshness check for any collector table.
 
     Warns when the most recent *ts_col* value is older than *warn_days* days,
-    or when the table is empty.  Used for Sleuth, Calendar, and Email — the
-    collectors that previously had credential checks but no freshness checks.
+    or when the table is empty. A declared ``quality_predicate`` is a local,
+    declarative SQL assertion about a meaningful row; a majority of failures
+    degrades the check even when rows are fresh. ``volume_ts_col`` lets a
+    successful filtered collector name an intentionally quiet window.
     """
     from rebalance.ingest.db import db_connection
 
@@ -357,11 +366,38 @@ def _check_collector_freshness(
             latest = conn.execute(
                 f"SELECT MAX({ts_col}) FROM {table}"  # noqa: S608
             ).fetchone()[0]
+            invalid_count = 0
+            quality_count = 0
+            if quality_predicate:
+                predicate_table = quality_table or table
+                quality_count = conn.execute(
+                    f"SELECT COUNT(*) FROM {predicate_table}"  # noqa: S608
+                ).fetchone()[0]
+                invalid_count = conn.execute(
+                    f"SELECT COUNT(*) FROM {predicate_table} "  # noqa: S608
+                    f"WHERE NOT ({quality_predicate})"  # noqa: S608
+                ).fetchone()[0]
+            recent_count = None
+            if volume_ts_col:
+                recent_count = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} "  # noqa: S608
+                    f"WHERE julianday({volume_ts_col}) >= julianday('now', ?)",  # noqa: S608
+                    (f"-{warn_days} days",),
+                ).fetchone()[0]
     except Exception as exc:  # noqa: BLE001
         return Check(name, FAIL, f"could not read {table}: {exc}")
 
     if count == 0:
-        return Check(name, WARN, f"no {name} data ingested", empty_hint)
+        return Check(name, WARN, f"no {name} ingested", empty_hint)
+
+    if quality_count and invalid_count / quality_count > max_invalid_fraction:
+        invalid_percent = round(invalid_count / quality_count * 100)
+        return Check(
+            name,
+            WARN,
+            f"degraded: {invalid_count}/{quality_count} rows ({invalid_percent}%) lack {quality_label}",
+            "check the collector payload before refreshing the semantic index",
+        )
 
     if latest:
         try:
@@ -378,7 +414,10 @@ def _check_collector_freshness(
         except (TypeError, ValueError):
             pass
 
-    return Check(name, OK, f"{count} rows, last sync {latest}")
+    detail = f"{count} rows, last sync {latest}"
+    if recent_count == 0 and quiet_filter is not None:
+        detail += f"; no rows matched in the last {warn_days}d ({quiet_filter()})"
+    return Check(name, OK, detail)
 
 
 def _launchctl_list() -> str | None:
@@ -1009,8 +1048,17 @@ def _check_deep_work_stalls(db_path: Path) -> Check:
 #
 # To add a new collector: append one entry.  No other code needs to change.
 # Fields: name (Check label), table, ts_col (MAX'd for age), warn_days,
-#         empty_hint, stale_hint.
+#         empty_hint, stale_hint, plus optional quality/volume declarations.
 # ---------------------------------------------------------------------------
+
+
+def _active_gmail_filter() -> str:
+    """Name the active Gmail query when a successful sync is intentionally quiet."""
+    from rebalance.ingest.config import get_gmail_query_filter
+    from rebalance.ingest.gmail import DEFAULT_QUERY_FILTER
+
+    return f"Gmail filter: {get_gmail_query_filter() or DEFAULT_QUERY_FILTER}"
+
 
 _COLLECTOR_FRESHNESS: list[dict] = [
     dict(
@@ -1023,6 +1071,9 @@ _COLLECTOR_FRESHNESS: list[dict] = [
             "registered and the token is in config"
         ),
         stale_hint="run `rebalance refresh` (scope github)",
+        quality_table="github_items",
+        quality_predicate="title IS NOT NULL AND TRIM(title) != ''",
+        quality_label="a title",
     ),
     dict(
         name="sleuth data",
@@ -1043,10 +1094,17 @@ _COLLECTOR_FRESHNESS: list[dict] = [
     dict(
         name="email data",
         table="email_messages",
-        ts_col="received_at",
+        ts_col="synced_at",
         warn_days=7,
         empty_hint="ingest email via the Gmail MCP connector or the OAuth sync (scripts/setup_gmail_oauth.py)",
         stale_hint="no new email ingested in 7+ days — ask Claude to call `ingest_gmail_messages` (MCP mode), or check the Gmail OAuth token (`rebalance doctor`)",
+        quality_predicate=(
+            "(from_address IS NOT NULL AND TRIM(from_address) != '') "
+            "OR (subject IS NOT NULL AND TRIM(subject) != '')"
+        ),
+        quality_label="a sender or subject",
+        volume_ts_col="received_at",
+        quiet_filter=_active_gmail_filter,
     ),
 ]
 

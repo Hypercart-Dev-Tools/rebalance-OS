@@ -145,6 +145,45 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
    - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P4-127-HEALTH-PREDICATE-TURN --agent codex --to agy
 4. Edit ONLY these paths: phases/marathon-2026-07-18-collectors--coll-p4-127-health-predicate/RELAY.md and src/rebalance/doctor.py,tests/test_collector_health_predicate.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
+### Round 1 · Builder · codex
+
+**Surfacing decision:** freshness status. A materially contentless collector is
+an operator-facing data-integrity problem, so it must make the existing
+freshness row non-OK (rendered as `WARN` by doctor's established three-state
+contract) instead of becoming an easy-to-miss informational badge. The detail
+will explicitly say `degraded` and quantify the invalid share.
+
+**Run-volume constraint:** the raw collector tables do not persist a successful
+run timestamp or an `examined` count when Gmail retains zero messages. In
+particular, `sync_gmail()` only writes `synced_at` while iterating retained
+messages. Therefore an entirely empty table cannot be distinguished honestly
+from a failed/never-run collector in this phase; it remains non-OK. The
+implemented quiet-filter case is the live #141 shape: retained historical rows
+with a current successful sync and zero recent matches, reported OK with the
+configured Gmail filter. Persisting per-run `examined`, `retained`, outcome,
+and finished-at is the prerequisite for the fully-empty success case.
+
+**Implemented:** extended `src/rebalance/doctor.py`'s declarative freshness
+entries with optional row-quality SQL, a per-source invalid-share threshold,
+and a volume timestamp. Email now uses `synced_at` for collector freshness,
+marks a majority of rows without sender/subject as `degraded` (a doctor WARN),
+and names its active Gmail filter when no recent message matched. GitHub is a
+second declarative predicate (`github_items.title`), demonstrating that the
+generic check has no source branch. Sources with no predicate retain their
+previous freshness behavior. Added
+`tests/test_collector_health_predicate.py` for husks, quiet Gmail, empty/no-run,
+legacy behavior, and the second declaration.
+
+**Verification:** `PYTHONPATH=src python -m pytest
+tests/test_collector_health_predicate.py -q` → `5 passed`.
+
+**Scope note:** the phase write-set excludes the central
+`ingest/index_ops.py` collector registry, so these declarations live in
+doctor's existing freshness registry rather than adding the requested third
+`Collector` provider there. A follow-up with that file in scope is required to
+make this seam shared with `semantic_docs` and `candidates`, and to persist the
+run ledger needed for the truly empty success case.
+
 ---
 
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
