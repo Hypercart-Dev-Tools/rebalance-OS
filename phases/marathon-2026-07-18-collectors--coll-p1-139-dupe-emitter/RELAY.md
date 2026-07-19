@@ -1,5 +1,5 @@
 # Marathon Phase coll-p1-139-dupe-emitter
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-COLL-P1-139-DUPE-EMITTER-TURN-3 builder=codex reviewer=agy round-cap=5 -->
@@ -124,3 +124,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Retained `--also-pulse` only as an explicit deprecated compatibility no-op, so existing scheduled invocations continue to work without adding a second check. All emitted doctor dictionaries retain `name`, `status`, `detail`, `hint`, and `source`.
 - Verified: `python3 -m pytest tests/test_health_issue_reporter.py -q` → 47 passed, 10 skipped. A direct structured-check assertion found 27 doctor checks, including 3 canonical pulse checks, with the required shape and `rebalance-doctor` source. `rg` finds no `pulse-collector:` in `src/` or `scripts/`; the stored `temp` configuration has no pulse collector suppression/demotion pattern, while the CLI documentation uses the canonical space form.
 - Dry-run breadcrumb: `python3 scripts/health_issue_reporter.py --dry-run --also-pulse` reached doctor, reported the flag redundant, and collected 27 checks; it then failed at the pre-existing GitHub label GET because this sandbox has no DNS/network access. It made no GitHub action and did not reach logging. This confirms the duplicate collection is absent before the network boundary.
+
+### Round 3 · Reviewer · agy
+
+**Verdict:** Approved
+
+The builder successfully implemented the requirements:
+- `run_pulse_checks` and its subprocess/fixed-width parser were removed from `scripts/health_issue_reporter.py`.
+- The reporter now sources `pulse collector:*` checks directly from `rebalance.doctor`.
+- Check dictionary keys (`name`, `status`, `detail`, `hint`, `source`) remain unchanged.
+- `src/rebalance/doctor.py` is unmodified.
+- Checked `src/`, `scripts/`, and config files (`temp/`), and the deprecated `pulse-collector:` string does not exist anywhere.
+- The gate tests pass successfully.
