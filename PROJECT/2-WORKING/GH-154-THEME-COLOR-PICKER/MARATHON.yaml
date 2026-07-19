@@ -30,6 +30,18 @@
 # BASELINE: p0 captures the pre-change Playwright screenshots that every later phase diffs against.
 # That is what makes these phases safe to automate at all — the exit condition is a pixel diff a
 # machine can check exactly, not an opinion.
+#
+# BUILDER/REVIEWER: marathon.sh requires builder != reviewer, and --builder is global (default
+# codex). Every phase here reviews with CODEX, so the run must pass `--builder agy`. Codex is the
+# reviewer by choice, not by elimination: on this issue it found the D1/D3 contradiction in the
+# plan doc, then two further blockers in the persistence design that a full relay round had missed.
+# The build work is mechanical substitution; the review is where the judgment is.
+#
+# GATE: --pre-advance-cmd is global and defaults to `bash validate.sh`, which does not exist in
+# this repo. It MUST be passed explicitly — see the launch command in the plan doc's progress log.
+# A full `pytest tests/` would gate every phase on 15 documented pre-existing failures in
+# test_auto_promote.py / test_hiqs_pipeline.py, so the gate is the module list from GH-136's
+# verification gate plus a pulse_web.py regeneration.
 
 name: gh-154-tokenize
 phases:
@@ -52,7 +64,7 @@ phases:
 
   - id: p2
     name: Tokenize web.py
-    reviewer: agy
+    reviewer: codex
     brief: PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER/briefs/p2-webpy.md
     artifact: src/rebalance/web.py
     turn_timeout_s: 1800
