@@ -1,7 +1,8 @@
 ---
 title: Web app theme color picker — tokenize the UI CSS, then ship Settings → Color theme
-status: "Planning — no code written. Worktree ~/wt/theme-picker on branch feat/theme-picker (from origin/development). Awaiting QA relay on this doc before build."
+status: "Planning — no code written. Worktree ~/wt/theme-picker on branch feat/theme-picker (from origin/development). QA relay R1 complete (codex, Changes requested); all 6 findings folded in. Ready to start P0."
 gh_issue: 154
+owner: noelsaw1
 created: 2026-07-18
 updated: 2026-07-18
 branch: feat/theme-picker
@@ -111,13 +112,21 @@ Three tiers. The picker only ever touches tier 1.
 | `--nowline` | `nowline` | Calendar time line |
 | `--timestamp` | `timestamp` | Date + time text |
 
-**Tier 2 — derived (3), never settable.** Per the mockup's `themeOf()`:
+**Tier 2 — derived, never settable.** The first three are the mockup's `themeOf()`; the fourth is
+ours, because the existing `--shadow` is colored and so cannot stay literal:
 
 - `--muted` = `mix(ink, page, 0.45)`
 - `--accent-ink` = `#ffffff` if `isDark(accent)` else `#111111`
 - `--zebra` = `mix(card, isDark(page) ? #ffffff : #000000, 0.96)`
+- `--shadow` = the existing multi-layer value with each layer's color replaced by `--ink` at that
+  layer's alpha. It is a full CSS value, not a color, so its derivation returns a string — the
+  snapshot schema must carry it as such.
 
 `isDark(hex)` is the standard luminance test `0.299R + 0.587G + 0.114B < 128`.
+
+**The count is deliberately not fixed yet.** It is 4 derived tokens *if* `--fg-dim` collapses into
+`--timestamp`, and 5 if it does not. P0 resolves that against real call sites and writes the final
+number here — quoting a count before P0 would be asserting the answer to P0's only question.
 
 **Tier 3 — semantic status colors, theme-invariant for v1.** `--ok`, `--warn`, `--danger`, `--info`.
 These carry meaning independent of taste; a custom theme that recolors "danger" is a footgun. They
@@ -135,6 +144,32 @@ stays as a derived tier-2 token instead); `--shadow` becomes derived from `--ink
 **Rule: a tier-1 or tier-2 token is the only way a color reaches the page.** Any literal that
 survives phase 3 must be justified in the doc, not left silently.
 
+### Color that CSS variables cannot reach
+
+The inventory above covers stylesheets. Three surfaces emit color *outside* them, so tokenizing
+`PAGE_CSS` will not touch them — and the "5 routes × 5 themes" criterion is meaningless if they stay
+frozen while everything around them changes.
+
+| Surface | Where | Why `var()` can't reach it |
+|---|---|---|
+| **Chart.js pie fills** | `PIE_PALETTE` (`pulse_web.py:1001`), consumed at `:982` and `:1040` | 12 hardcoded fills passed as canvas paint values; a canvas has no computed style to inherit |
+| **Cytoscape graph + legend** | `_KIND_COLOR` emitted inline (`web.py:1597-1601`, `:1714-1719`) | colors go into a JS style object and inline `style=` attributes, not a stylesheet |
+| **Inline `style=` attributes** | `web.py` — 7 literal `style="` occurrences, incl. `#5b5750` in the graph tooltip at `:1851-1853` | inline styles are reachable by `var()`, but only once each is rewritten by hand |
+
+Two of the three are *categorical* colors — a repo's slice, a node's kind. They encode identity, not
+theme, which makes them closer to tier 3 than tier 1. The call for each is made in P0 and recorded
+here, but the leaning is:
+
+- **Pie + graph palettes stay categorical**, and get a derived *contrast* treatment rather than a
+  derived hue: keep the 12 fills, but take label/stroke color from `--card` and `--ink` so slices
+  stay legible on a dark page. Recoloring identity per theme would make the same repo a different
+  color in every theme, which is worse than a fixed palette.
+- **The tooltip literal is plain drift** — `#5b5750` is today's `--fg-muted`. It becomes `var(--muted)`.
+
+The 7-count above is the literal `style="` occurrence count I verified. Codex reported 14, counting
+single-quote and f-string variants; the true figure for the P2 write-set is between the two and is
+settled in P0 by enumeration, not by either estimate.
+
 ## Design decisions
 
 **D1 — Where derivation lives: JavaScript, single implementation.**
@@ -143,10 +178,29 @@ so derivation must exist in JS. Having it *also* in Python guarantees drift. The
 derivation**, and Python's `RB_TOKENS_CSS` ships only the *default preset*, fully pre-derived, as
 literal values — a no-JS fallback that renders exactly today's appearance.
 
-The drift risk this creates is real and must be gated, not trusted: a Playwright test loads a page,
-reads `getComputedStyle(document.documentElement)` for every tier-1 and tier-2 token, and asserts it
-equals the Python `RB_TOKENS_CSS` defaults. Playwright is already available (see
-[[reference-playwright-install]]) and invariant #8 already requires rendering.
+**The corollary that makes D3 possible: Python never derives, so Python must be handed something
+already derived.** The persisted artifact is therefore not the 7 settable colors — it is a
+**fully-derived snapshot**: every tier-1 and tier-2 token, resolved, produced only by the JS
+derivation functions at Save time. Python's job on both the live routes and the static rebuild is to
+*serialize a snapshot it was given*, never to compute one. That is the whole seam. A snapshot is
+validated on write (every token present, every color a well-formed hex, `--shadow` a CSS value) and
+rejected wholesale on failure — a partial snapshot would render a half-themed page, which is worse
+than falling back to the default preset.
+
+The drift risk this creates is real and must be gated, not trusted — but the obvious test does not
+gate it. Loading a page with *no* stored theme only reads Python's own defaults back and asserts
+they equal themselves; JS derivation never runs. The test must therefore **seed `localStorage`
+before navigation**:
+
+1. Seed the default preset's 7 settable colors, load, and assert all resolved tokens from
+   `getComputedStyle(document.documentElement)` equal the Python `RB_TOKENS_CSS` defaults. This is
+   the actual drift gate: JS derives, Python's literals are the expected value.
+2. Seed at least one **non-default** fixture whose expected outputs are computed independently (by
+   hand, in the test, from the mix/luminance formulas — not by calling the implementation), so the
+   test can fail if the derivation formula itself changes.
+
+Playwright is already available (see [[reference-playwright-install]]) and invariant #8 already
+requires rendering.
 
 *Alternative rejected:* derivation in Python exposed via a `/settings/theme/preview` endpoint —
 correct single-source, but a network round-trip on `input` events makes the live preview laggy, and
@@ -162,16 +216,32 @@ flash is a defect, not a cosmetic nit, and the acceptance criteria call it out.
 
 This is the reason the whole feature is possible without touching the render pipeline.
 
-**D3 — Persistence: `localStorage` is the applied layer; `config.py` is the durable record.**
+**D3 — Persistence: `localStorage` applies; `config.py` stores a derived snapshot.**
 `localStorage` alone is per-browser and invisible to the rest of the system. `config.py` alone
 can't be read by a static page. So: the picker writes `localStorage` immediately (that's what
 applies), and Save also `POST`s to a new endpoint that writes through `get_theme()`/`set_theme()`
-in `config.py`. On a browser with no `localStorage` entry, the server-rendered default in
-`RB_TOKENS_CSS` is regenerated from `config.py` at build time, so a saved theme survives a cleared
-browser.
+in `config.py`.
 
-*If the QA relay finds this over-built for v1:* the fallback is `localStorage`-only, and
-`config.py` write-through moves to a phase 6. It is deliberately the last phase for that reason.
+**What crosses that boundary is the derived snapshot from D1, not the 7 settable colors.** This is
+the correction that makes D3 implementable at all. `render_shell()` today emits a fixed
+`RB_TOKENS_CSS` constant (`web_components.py:19-32`, `:640-641`); if the server held only the 7
+inputs it would have to derive the rest to render them, which D1 forbids. Handed a snapshot, it
+serializes and never computes. Concretely:
+
+- **Live routes** — `render_shell()` emits the stored snapshot in place of the `RB_TOKENS_CSS`
+  constant when one exists, falling back to the constant when it does not.
+- **Static `/`** — the same snapshot is serialized into the generated page during the regular
+  `build_page()` rebuild. Invariant #6 holds: `web/pulse.html` is still only ever written by the
+  build, never patched in place by a Save.
+- The two paths call **one** serializer, so they cannot diverge.
+
+The gating test is the one Codex named: **save a custom theme → clear `localStorage` → reload all 5
+routes** and assert each renders the custom values, not the default preset. Without it this decision
+is untested by construction, because every other test path has `localStorage` populated.
+
+*If this proves over-built for v1:* the fallback is `localStorage`-only, and `config.py`
+write-through moves to P6. It is deliberately the last phase for that reason — but note the snapshot
+*schema* is not deferrable, since P4 has to produce it either way.
 
 **D4 — The picker page is a new live route, `/settings`.**
 Not part of the static `/`. It goes in `web.py` alongside the other live pages, using
@@ -200,19 +270,46 @@ in `RB_CHROME_CSS` / `RB_BUTTON_CSS` / the row primitive to `var()`.
 
 ### P2 — Tokenize `web.py`
 `_CSS` (`web.py:244-356`), the focus-5 inline `<style>` (`:700-731`), `_SYSLOG_TOGGLE_CSS`
-(`:1473`), and the 5 inline `style=` attributes. 51 literals.
+(`:1473`), the inline `style=` attributes (7 literal `style="`, plus quote/f-string variants
+enumerated in P0 — incl. the `#5b5750` tooltip at `:1851-1853`), and the Cytoscape `_KIND_COLOR`
+emission at `:1597-1601` / `:1714-1719` per the categorical-color call. ~51 literals plus the
+non-CSS surfaces.
 
-### P3 — Tokenize `pulse_web.py` `PAGE_CSS`
-The big one: 101 literals across ~690 lines, plus 7 inline `style=` attributes. Includes the
+### P3 — Tokenize `pulse_web.py` `PAGE_CSS` + the canvas palettes
+The big one: 101 literals across ~690 lines, plus 7 inline `style=` attributes. Also the two
+Chart.js canvases: `PIE_PALETTE` (`:1001`) reaches both charts via `:982` and `:1040`, and its
+label/stroke colors must be fed from the resolved theme at render time rather than left literal
+(see [Color that CSS variables cannot reach](#color-that-css-variables-cannot-reach)). Includes the
 calendar module's `.cal-*` colors from GH-137 (`#e8b93a` / `#f5edd8` event tones, the now-line)
 — the now-line becomes `var(--nowline)`, which is precisely why the mockup exposes it as tier 1.
 **Exit:** `python3 scripts/pulse_web.py` regenerates, and a Playwright screenshot of `/` is
 visually identical to a pre-change baseline captured at P0.
 
 ### P4 — Theme runtime
-The pre-paint inline script (D2), the JS derivation functions (D1), `localStorage` read/write
-(D5). No UI yet — verified by setting `localStorage` by hand and reloading each page.
-**Exit:** all 5 routes respond to a hand-set theme; the drift test from D1 passes.
+The pre-paint inline script (D2), the JS derivation functions (D1), the snapshot schema +
+validator (D1/D3), `localStorage` read/write (D5). No UI yet — verified by setting `localStorage`
+by hand and reloading each page.
+
+**The insertion contract, which D2 asserts but does not yet specify.** No suitable slot exists
+today: `render_shell()`'s only head hook emits `head_extra` *after* the style block
+(`web_components.py:617-621`, `:640-642`, and its docstring says so explicitly), and `/` uses that
+hook only for deferred Chart.js while its app script sits at body-end
+(`pulse_web.py:3169-3172`). Neither can theme before first paint. So P4 must **add a synchronous
+pre-style head slot** to `render_shell()`, and `build_page()` must emit through the same slot —
+one mechanism, both pipelines. Requirements on it:
+
+- Synchronous and inline. No `defer`, no `async`, no external file — any of the three reintroduces
+  the flash the whole decision exists to prevent.
+- Emitted *before* the `<style>` block, so tokens are set when the stylesheet first resolves.
+- **Malformed-storage fallback**: absent, unparseable, schema-invalid, or partial `localStorage`
+  falls back to the default preset silently. A theme picker that white-screens on a bad JSON blob
+  is a worse failure than one that ignores it.
+
+**Exit:** all 5 routes respond to a hand-set theme; the drift test from D1 passes; and **first
+paint** is verified — not merely the post-load state. A post-load assertion passes even when a
+flash occurred, so it cannot gate D2's central claim. Capture the first frame (Playwright
+screenshot on `domcontentloaded` with the network idled, or a CDP paint trace) and assert the page
+background is already the themed value.
 
 ### P5 — The Settings page
 `/settings` route in `web.py`. Preset grid with the mini-dashboard previews, the 7-field
@@ -237,6 +334,17 @@ design-tool artifact.
    to an operator who never opens Settings.
 5. Save persists across reload; Reset returns to the selected preset's defaults without clearing
    the preset selection.
+6. **A saved theme survives a cleared browser.** Save a custom theme, clear `localStorage`, reload
+   all 5 routes — each renders the custom values from the stored snapshot, not the default preset.
+   (Gates D3; every other test path has `localStorage` populated, so nothing else exercises it.)
+7. **The drift test exercises JS derivation**, i.e. it seeds `localStorage` before navigation and
+   includes a non-default fixture with independently computed expectations. A test that loads with
+   no stored theme does not satisfy this criterion.
+8. **No first-paint flash**, asserted on the first frame rather than post-load, on all 5 routes.
+9. **Every `var()` reference resolves.** No token is used that `:root` never defines — checked by
+   asserting no resolved computed value is the empty string across the token set.
+10. Chart and graph output stays legible in every preset — the pie and Cytoscape surfaces get
+    screenshot coverage and a label-vs-background contrast check, not just the HTML routes.
 6. The JS-vs-Python default-token drift test (D1) passes.
 7. Dark mode passes a WCAG AA contrast check (4.5:1) for `--ink` on `--page`, `--ink` on `--card`,
    and `--accent-ink` on `--accent`. Custom themes are the operator's own risk and are **not**
@@ -298,3 +406,19 @@ and `utils/pdda/pdda.sh run` clean.
   `feat/theme-picker`. Issue #154 filed under epic #136. CSS surface inventory taken (table above).
   This doc written; **no code written yet**. Next: QA relay on this doc via `relay-xyz` with codex
   as reviewer, then P0.
+- **2026-07-18** — QA relay R1 complete (codex, *Changes requested*: 1 Blocker, 5 Shoulds, 1 Pass).
+  All six folded in; still **no code written**. The substantive change is the Blocker: D1 and D3
+  contradicted each other, since D3 required the server to render custom themes while D1 forbade
+  the server from deriving. Resolved by making the persisted artifact a **fully-derived snapshot**
+  produced only by JS — Python serializes, never computes — which keeps D1's single-implementation
+  goal and makes D3 actually buildable. Also: `--shadow` promoted to an explicit derived token with
+  the count deferred to P0; the drift test rewritten to seed `localStorage` (the original was
+  tautological — it asserted Python's defaults against themselves and never ran JS); P4 given a
+  concrete pre-style head-slot contract, since no existing hook emits before the stylesheet; and a
+  new section added for color that `var()` cannot reach (`PIE_PALETTE` on both Chart.js canvases,
+  Cytoscape `_KIND_COLOR`, inline `style=`), which the original inventory missed entirely.
+  Two corrections to *my own* claims: `web.py` has 7 literal `style="` occurrences, not the 5 I
+  wrote (codex's 14 counts quote/f-string variants — the P2 write-set is enumerated in P0 rather
+  than guessed); and the mockup's `PIE_PALETTE` reach was verified directly at `:982`/`:1040`
+  rather than taken on the reviewer's word, per invariant #10 applied to findings as well as
+  approvals.
