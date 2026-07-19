@@ -84,6 +84,13 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
    - /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick release MARATHON-CLIO-P2-RECONCILE-TURN --agent codex --to agy
 4. Edit ONLY these paths: phases/clio-durable-idempotent-writes--clio-p2-reconcile/RELAY.md and utils/CLIO/INSTALL.md. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
+### Round 1 · Builder · codex
+
+- Updated `utils/CLIO/INSTALL.md` so the exporter scans base-name conflict siblings before cursor handling, extracts and prepends only complete missing entry blocks, and deduplicates across the canonical note and all siblings by `clio:id`.
+- Processed siblings are moved to collision-safe paths under `.clio-reconciled/`; already-known-only copies are quarantined with `merged=0`. Each sibling emits the required structured reconciliation line.
+- Added `CLIO_RECONCILE_DRY_RUN=1` as a fully read-only preview that reports planned merges and destinations, then exits before normal export mutations.
+- Verified the embedded script with `bash -n` and a focused temporary smoke test covering unique full-block recovery, known-ID quarantine without duplication, and dry-run preservation of both canonical and conflict files. No project-wide gate was run.
+
 ---
 
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
