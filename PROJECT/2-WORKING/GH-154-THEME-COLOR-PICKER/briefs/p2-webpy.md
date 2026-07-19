@@ -59,6 +59,10 @@ PYTHONPATH=src python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_cal
   && python3 scripts/pulse_web.py
 ```
 
+> **Running this as a marathon `--pre-advance-cmd`:** prefix it with `env` —
+> `env PYTHONPATH=src python3 -m pytest ...`. The driver resolves the command's first token on
+> PATH, so a bare `PYTHONPATH=src ...` prefix fails with "command 'PYTHONPATH=src' is not on PATH".
+
 `pytest tests/` carries 15 pre-existing failures in `test_auto_promote.py` /
 `test_hiqs_pipeline.py` — documented baseline, not your regression.
 
