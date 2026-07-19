@@ -144,3 +144,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/wt/theme-picker/.xyz/bin/tick done MARATHON-P0-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/wt/theme-picker/.xyz/bin/tick
    Edit ONLY phases/gh-154-tokenize--p0/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+1. `RB_TOKENS_CSS` does define the full requested tier-1/tier-2 vocabulary and the 14-entry P2 inline-style write-set is correctly recorded. The `--fg-dim` finding is also substantiated by non-timestamp uses (badges, navigation labels, subtext, and separators), so the resolved count of five is correct.
+2. The actual tier-1 defaults do not match the named source of truth, `Settings Theme.dc.html`'s `default` preset: `--page`, `--ink`, `--accent`, and `--border` retain the prior literals rather than `#f2efe8`, `#211c14`, `#2456c7`, and `#e3ddcd`. Reconcile the stated "byte-identical" constraint with the phase's explicit default-preset requirement in the plan, then make the CSS and plan agree with that documented decision; do not leave the contradiction implicit.
+3. `--fg-dim` is classified as derived but has no derivation formula in the token-table docstring or plan. State its concrete formula and default literal. Likewise, record the concrete two-layer `--shadow` form in the plan (not just the general rule), as the brief requires.
+4. The legacy aliases preserve resolution while P1–P3 still contain old references, but they mean the six-token call-site rename is not complete. Document them explicitly as a temporary compatibility bridge with an owner/removal point, and correct the builder's claim that *all* call sites were updated. Do not present aliases as the final vocabulary.
+5. No P0 baseline screenshots (all five routes), known baseline path, or render inspection evidence is recorded. Capture/record the required baseline according to the plan's Playwright convention, and update the plan's stale "no code written / Ready to start P0" status and progress log.
+
+**Verdict:** Changes requested
