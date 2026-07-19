@@ -1,5 +1,5 @@
 # Marathon Phase gh156-p1-manifest
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-GH156-P1-MANIFEST-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -128,3 +128,9 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Added a cursor-independent, IDs-only manifest receipt at `~/.claude/prompt-log-manifest.txt` (overrideable with `CLIO_MANIFEST`). It is atomically replaced from the existing receipt plus newly verified IDs, does not duplicate IDs, and reports failures without failing the export. The cursor write is now atomic as well.
 - Added `test/clio-exporter.sh` fixture coverage for fresh/idempotent exports, legacy un-ID'd entries, displaced markers, conflict-sibling recovery/quarantine, cursor-reset manifest retention, and nonfatal manifest failures. It runs each fixture suite through `bash` and `/bin/bash`.
 - Verification: `bash -n utils/CLIO/prompt-log-to-md.sh test/clio-exporter.sh && bash test/clio-exporter.sh` (PASS for both shells).
+
+### Round 1 · Reviewer · agy
+
+The builder `codex` correctly extracted the exporter script, updated the installation documentation to use the standalone file, and added comprehensive test coverage via `test/clio-exporter.sh`. I've verified that all test cases pass successfully under both `bash` and `/bin/bash` (3.2 compatible), and that manifest receipt behavior is correctly implemented with atomic cursor-independent deduplication. All acceptance criteria are met.
+
+**Verdict:** Approved
