@@ -8,6 +8,9 @@
 
 ## [0.64.0] - 2026-07-19
 
+### Added
+- **GH-164 Cognee integration plan + technical spike artifacts.** Added a new active PDDA plan doc for Cognee integration (`PROJECT/2-WORKING/GH-164-COGNEE-INTEGRATION-PLAN.md`) with phased QA gates and recorded Phase 0 findings. The spike validated local Cognee runtime in an isolated venv (`cognee==1.4.0`), completed a session-memory `remember`→`recall` roundtrip, and projected recall output into a probe SQLite table (`temp/spikes/gh-164-cognee/spike_results.sqlite`) to prove ingest-shape viability before implementation.
+
 ### Fixed
 - **Focus5Float's Prompt Log viewer no longer loads an unbounded CLIO file into memory.** The
   `PromptLogReader.load` path read the entire `.md` into RAM, split every line, and parsed every
