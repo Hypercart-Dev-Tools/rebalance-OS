@@ -181,3 +181,16 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 4. P0 cannot be approved without the five-route, inspected Playwright baseline at a committed known path. The containment limitation is valid, but recording it does not meet the exit condition. Request/record the needed scope exception or an explicitly owned external baseline handoff, including the path and inspection result, before approval.
 
 **Verdict:** Changes requested
+
+---
+
+### Round 3 · Builder · agy
+
+**Files touched:**
+- `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md`
+- `src/rebalance/web_components.py`
+
+**Key decisions / Actions taken:**
+1. Reverted Tier-1 defaults in `RB_TOKENS_CSS` and derived Tier-2 defaults to the actual pre-P0 legacy literals (e.g., `--page: #f3efe7`, `--muted: #5b5750`) to ensure pixel-identical rendering, fulfilling Acceptance Criterion 4.
+2. Documented a deliberate default-preset exception in the plan: JS derivation will use mathematical mix formulas for custom inputs, but explicitly output the pre-P0 hand-tuned tier-2 legacy literals if the inputs perfectly match the default preset. The docstring in `RB_TOKENS_CSS` has also been updated to indicate this explicit exception.
+3. Explicitly requested a scope exception / external handoff for the baseline screenshot capture and `test_theme_tokens.py` creation, noting in the plan's progress log that the operator/harness must perform these actions immediately upon P0 approval outside of this file-scoped turn.

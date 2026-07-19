@@ -115,17 +115,19 @@ Three tiers. The picker only ever touches tier 1.
 **Tier 2 — derived, never settable.** The first three are the mockup's `themeOf()`; the fourth is
 ours, because the existing `--shadow` is colored and so cannot stay literal:
 
-- `--muted` = `mix(ink, page, 0.45)`
-- `--accent-ink` = `#ffffff` if `isDark(accent)` else `#111111`
-- `--zebra` = `mix(card, isDark(page) ? #ffffff : #000000, 0.96)`
-- `--shadow` = `0 1px 2px rgba(33, 28, 20, 0.04), 0 8px 24px rgba(33, 28, 20, 0.04)` (derived from `--ink` at each layer's alpha)
+- `--muted` = `mix(ink, page, 0.45)` (default preset exception: `#5b5750`)
+- `--accent-ink` = `#ffffff` if `isDark(accent)` else `#111111` (default preset: `#ffffff`)
+- `--zebra` = `mix(card, isDark(page) ? #ffffff : #000000, 0.96)` (default preset: `#f5f5f5`)
+- `--shadow` = `0 1px 2px rgba(29, 32, 36, 0.04), 0 8px 24px rgba(29, 32, 36, 0.04)` (derived from `--ink` at each layer's alpha)
 
 `isDark(hex)` is the standard luminance test `0.299R + 0.587G + 0.114B < 128`.
 
 **The count is resolved to 5 derived tokens.** `--fg-dim` does *not* collapse into
 `--timestamp` because it is used for badges, subtext, nav section labels, and other non-time text.
 It survives as a tier-2 derived token:
-- `--fg-dim` = `mix(ink, page, 0.5)` (uncollapsed legacy token, defaults to `#89857d`)
+- `--fg-dim` = `mix(ink, page, 0.5)` (uncollapsed legacy token, default preset exception: `#8a857c`)
+
+**Deliberate Default-Preset Exception:** The JS mix formulas and the mockup's own default values (e.g. `--page: #f2efe8`) differ subtly from the hand-tuned pre-P0 literals in production today (e.g. `--page: #f3efe7`, `--muted: #5b5750`). To satisfy Acceptance Criterion 4 (pixel-identical to today's dashboard without changing existing aesthetic), we explicitly override the mockup and use the exact pre-P0 legacy literals as the default preset. The JS derivation contract in P4 must implement this exception: if the inputs match the default preset exactly, yield these explicit pre-computed Tier-2 literals rather than calculating them mathematically.
 
 **Tier 3 — semantic status colors, theme-invariant for v1.** `--ok`, `--warn`, `--danger`, `--info`.
 These carry meaning independent of taste; a custom theme that recolors "danger" is a footgun. They
@@ -489,3 +491,4 @@ and `utils/pdda/pdda.sh run` clean.
   I/O-free. (`consult.sh` stamped `NO FIRSTHAND VERIFICATION CITED` on this answer; that was a
   false positive — the `[Pass]` did carry `file:line`, and all citations checked out.)
 - **2026-07-18** — Relay turn for P0 (Round 2). Addressed codex's feedback: updated Tier 1 defaults to exactly match the mockup's `default` preset rather than keeping the byte-identical legacy literals. Stated derivation formulas and default literals for `--fg-dim` and `--shadow`. Documented legacy aliases as a temporary compatibility bridge (to be removed after P3). Note: `test_theme_tokens.py` and baseline screenshots were NOT created in this turn because the strict harness containment rules prohibit creating new files ("trip containment and DISCARD your whole turn"). They must be added outside the file-scoped token boundaries.
+- **2026-07-18** — Relay turn for P0 (Round 3). Reverted Tier 1 and Tier 2 defaults to the actual pre-P0 legacy literals to maintain pixel-identical rendering (Acceptance Criterion 4). Documented a deliberate default-preset exception in the plan: JS derivation will use mathematical mix formulas for custom inputs, but explicitly output the pre-P0 hand-tuned tier-2 legacy literals if the inputs perfectly match the default preset. Baseline screenshot capture and `test_theme_tokens.py` file creation are explicitly requested to be performed by the operator/harness *outside* this file-scoped turn immediately upon P0 approval.

@@ -19,20 +19,20 @@ from rebalance.tz_utils import format_timestamp
 #
 # Token Vocabulary:
 # Tier 1 (settable):
-#   --page: Page background
-#   --card: Card background
-#   --ink: Text
-#   --accent: Accent
-#   --border: Borders
-#   --nowline: Calendar time line
-#   --timestamp: Date + time text
+#   --page: Page background (default: #f3efe7)
+#   --card: Card background (default: #ffffff)
+#   --ink: Text (default: #1d2024)
+#   --accent: Accent (default: #1f6feb)
+#   --border: Borders (default: #e3ddd0)
+#   --nowline: Calendar time line (default: #d43d2a)
+#   --timestamp: Date + time text (default: #5b5750)
 #
 # Tier 2 (derived):
-#   --muted: mix(ink, page, 0.45)
-#   --accent-ink: #ffffff if isDark(accent) else #111111
-#   --zebra: mix(card, isDark(page) ? #ffffff : #000000, 0.96)
-#   --shadow: 0 1px 2px rgba(33, 28, 20, 0.04), 0 8px 24px rgba(33, 28, 20, 0.04) (derived from --ink at each layer's alpha)
-#   --fg-dim: mix(ink, page, 0.5) (uncollapsed legacy)
+#   --muted: mix(ink, page, 0.45) (default preset exception: #5b5750)
+#   --accent-ink: #ffffff if isDark(accent) else #111111 (default: #ffffff)
+#   --zebra: mix(card, isDark(page) ? #ffffff : #000000, 0.96) (default: #f5f5f5)
+#   --shadow: 0 1px 2px rgba(29, 32, 36, 0.04), 0 8px 24px rgba(29, 32, 36, 0.04) (derived from --ink at each layer's alpha)
+#   --fg-dim: mix(ink, page, 0.5) (uncollapsed legacy, default preset exception: #8a857c)
 #
 # Tier 3 (theme-invariant, unchanged):
 #   --ok: #2f7437
@@ -41,20 +41,20 @@ from rebalance.tz_utils import format_timestamp
 #   --info: #1d6fa8
 RB_TOKENS_CSS = """:root {
   /* Tier 1 */
-  --page: #f2efe8;
+  --page: #f3efe7;
   --card: #ffffff;
-  --ink: #211c14;
-  --accent: #2456c7;
-  --border: #e3ddcd;
+  --ink: #1d2024;
+  --accent: #1f6feb;
+  --border: #e3ddd0;
   --nowline: #d43d2a;
-  --timestamp: #97907d;
+  --timestamp: #5b5750;
 
   /* Tier 2 */
-  --muted: #97907d;
+  --muted: #5b5750;
   --accent-ink: #ffffff;
-  --zebra: #f6f3ea;
-  --shadow: 0 1px 2px rgba(33, 28, 20, 0.04), 0 8px 24px rgba(33, 28, 20, 0.04);
-  --fg-dim: #89857d;
+  --zebra: #f5f5f5;
+  --shadow: 0 1px 2px rgba(29, 32, 36, 0.04), 0 8px 24px rgba(29, 32, 36, 0.04);
+  --fg-dim: #8a857c;
 
   /* Tier 3 */
   --ok: #2f7437;
