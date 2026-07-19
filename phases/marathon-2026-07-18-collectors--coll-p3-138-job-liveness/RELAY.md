@@ -2,7 +2,7 @@
 STATUS: Open
 NEXT: codex
 
-<!-- marathon-drive: task=MARATHON-COLL-P3-138-JOB-LIVENESS-TURN builder=codex reviewer=agy round-cap=5 -->
+<!-- marathon-drive: task=MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 builder=codex reviewer=agy round-cap=5 -->
 
 ## Phase Brief
 
@@ -84,6 +84,9 @@ loaded on this device.
 - [ ] Gate: `.venv/bin/python -m pytest tests/ -k "doctor or scheduler_policy" -q` green.
 - [ ] `_check_collector_freshness()` unmodified (`git diff` proves it).
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
 ---
 
 ▶ TAKE YOUR TURN (codex — BUILDER role)
@@ -92,9 +95,9 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 1. Implement the brief by creating/editing the artifact file(s): src/rebalance/doctor.py
 2. Append a build block to this relay file: `### Round N · Builder · codex` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-COLL-P3-138-JOB-LIVENESS-TURN --agent codex --paths "phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md,src/rebalance/doctor.py"
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-COLL-P3-138-JOB-LIVENESS-TURN --agent codex
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P3-138-JOB-LIVENESS-TURN --agent codex --to agy
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent codex --paths "phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md,src/rebalance/doctor.py"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent codex
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent codex --to agy
 4. Edit ONLY these paths: phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md and src/rebalance/doctor.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
 ---
@@ -103,15 +106,7 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/doctor.py.
 1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P3-138-JOB-LIVENESS-TURN --agent agy --to codex
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P3-138-JOB-LIVENESS-TURN --agent agy
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent agy --to codex
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
-
-### Round 1 · Builder · codex
-
-Implemented `src/rebalance/doctor.py` only. Doctor now parses the `SCHEDULER.md` job-policy table, takes one read-only `launchctl list` snapshot, and emits `scheduler:<job>` WARN checks for policy jobs absent from this device. Each warning names the actual installer by discovering the installer that declares that launchd label (with a conventional fallback); legacy `daily-sync` correctly points at `scripts/install_scheduler.sh`. Existing `launchd:<job>` checks continue to report non-zero last-exit status separately, so absence and failure are distinguishable.
-
-Verification: `PYTHONPATH=src python -m pytest tests/test_doctor.py -q` → 26 passed. Also exercised the new seam with a temporary policy table containing an added fake row plus stubbed launchctl output: only the absent fake job warned, with the expected installer hint. The handoff's file-containment rule permits edits only to `doctor.py` and this relay, so that regression probe is not committed as a new test file.
-
-Multi-device policy remains open. This first version is intentionally WARN-only, but an always-on per-device check will be noisy if a job is deliberately assigned to one machine. Recommendation: add an explicit `Expected devices`/machine-role column to the policy table (or an equivalent device-scoped suppression), then have doctor skip jobs not assigned to the current device; do not infer assignment from past execution.
