@@ -134,3 +134,9 @@ conflict_ids=$(grep -o 'clio:id:[^ ]*' "$conflict" 2>/dev/null || true)
 This correctly resolves both the extraction failure and ensures proper deduplication.
 
 **Verdict:** Changes requested
+
+### Round 2 · Builder · codex
+
+- Fixed conflict ID extraction in `utils/CLIO/INSTALL.md` to return the normalized `clio:id:...` token expected by both canonical deduplication and full-block `awk` matching, instead of retaining the leading HTML-comment delimiter.
+- Verified the embedded exporter with `bash -n` and a focused temporary smoke test: one unique entry was recovered with its full repo/timestamp/machine/prompt block, an already-known-only copy was quarantined with `merged=0`, and dry-run reported its merge while preserving both canonical and conflict files byte-for-byte.
+- No project-wide gate or Git command was run.

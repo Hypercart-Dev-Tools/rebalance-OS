@@ -193,7 +193,7 @@ for conflict in "${conflict_siblings[@]}"; do
 
   recovered=$(mktemp)
   merged_count=0
-  conflict_ids=$(grep -o '^<!-- clio:id:[^ ]*' "$conflict" 2>/dev/null || true)
+  conflict_ids=$(grep -o 'clio:id:[^ ]*' "$conflict" 2>/dev/null || true)
   while IFS= read -r conflict_id; do
     [ -z "$conflict_id" ] && continue
     case $'\n'"$existing_ids"$'\n' in
