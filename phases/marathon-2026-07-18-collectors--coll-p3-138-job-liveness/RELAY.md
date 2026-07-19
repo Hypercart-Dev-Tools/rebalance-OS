@@ -2,7 +2,7 @@
 STATUS: Open
 NEXT: codex
 
-<!-- marathon-drive: task=MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 builder=codex reviewer=agy round-cap=5 -->
+<!-- marathon-drive: task=MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-4 builder=codex reviewer=agy round-cap=5 -->
 
 ## Phase Brief
 
@@ -27,6 +27,22 @@ plist **templates**. It cannot observe installed state, and passed throughout.
 
 The generalizable defect: **SCHEDULER.md is repo-level policy describing per-device state.**
 A job can be fully specified, tested, and documented while installed on zero machines.
+
+## ⛔ Your write-set is EXACTLY two files
+
+```
+src/rebalance/doctor.py
+tests/test_scheduler_liveness.py      <- create this; it is the required regression test
+```
+
+Containment reverts any edit outside that list and **fails the turn** (exit 6). This already
+happened once on this phase: a turn edited `ROADMAP.md` — reasonable under this repo's PDDA
+convention — and the harness reverted it and killed the turn. **Do not update `ROADMAP.md`,
+`CHANGELOG.md`, `AGENTS.md`, or any capture doc.** The marathon driver owns governance
+records for this phase; your job is the code and its test.
+
+The test filename above is fixed, because the allowlist is matched by exact string equality
+(no globs). Writing the test anywhere else will be reverted.
 
 ## ⛔ Hard invariants
 
@@ -84,29 +100,30 @@ loaded on this device.
 - [ ] Gate: `.venv/bin/python -m pytest tests/ -k "doctor or scheduler_policy" -q` green.
 - [ ] `_check_collector_freshness()` unmodified (`git diff` proves it).
 
-## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+## Debug mantra (auto-triggered — 2 prior attempt(s) on this phase did not reach Approved)
 
 Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/ESCALATION.md): `containment-violation (off-lane edit reverted by a turn-taker)`. Read it before re-guessing.
 ---
 
 ▶ TAKE YOUR TURN (codex — BUILDER role)
 
 You are the BUILDER for this phase. Read the phase brief above and implement it.
-1. Implement the brief by creating/editing the artifact file(s): src/rebalance/doctor.py
+1. Implement the brief by creating/editing the artifact file(s): src/rebalance/doctor.py,tests/test_scheduler_liveness.py
 2. Append a build block to this relay file: `### Round N · Builder · codex` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent codex --paths "phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md,src/rebalance/doctor.py"
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent codex
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent codex --to agy
-4. Edit ONLY these paths: phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md and src/rebalance/doctor.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-4 --agent codex --paths "phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md,src/rebalance/doctor.py,tests/test_scheduler_liveness.py"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-4 --agent codex
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-4 --agent codex --to agy
+4. Edit ONLY these paths: phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md and src/rebalance/doctor.py,tests/test_scheduler_liveness.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
 ---
 
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
-You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/doctor.py.
+You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/doctor.py,tests/test_scheduler_liveness.py.
 1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent agy --to codex
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-3 --agent agy
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-4 --agent agy --to codex
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-4 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
