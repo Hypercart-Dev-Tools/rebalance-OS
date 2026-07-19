@@ -1,6 +1,6 @@
 ---
 title: Web app theme color picker — tokenize the UI CSS, then ship Settings → Color theme
-status: "Working — P0 in progress. Worktree ~/wt/theme-picker on branch feat/theme-picker (from origin/development). QA relay R1 + a follow-up design consult both folded in; P6 cut, v1 is localStorage-only and ends at P5. P0 vocabulary populated."
+status: "Working — P0–P5 complete and verified; v1 feature-complete. Worktree ~/wt/theme-picker on branch feat/theme-picker, unmerged. Remaining: legacy-alias retirement, true first-paint (CDP) check, and the operator visual pass on the light theme."
 gh_issue: 154
 owner: noelsaw1
 created: 2026-07-18
@@ -675,3 +675,20 @@ and `utils/pdda/pdda.sh run` clean.
      Note what was and was not affected: the **rendering** verification was always valid, because
      `pulse_web.py` and the uvicorn server both import `_bootstrap`, which puts the local `src/`
      first. The **pytest** gate was the unreliable half.
+- **2026-07-19** — P5 complete. The marathon escalated at the round cap (exit 4), **not** on a
+  defect: codex and agy were converging productively through six rounds and ran out of rounds
+  before a confirming review turn. Two of codex's findings were genuinely good and would have been
+  easy to miss — `PRESETS` carried a presentation `name` key that leaked into the persisted
+  `inputs` (breaking the 7-key contract *and* making a saved theme read as dirty on reload), and
+  `settings_page()` defined `page_css` but returned through `_page()`, which only ever passed
+  `_CSS` to `render_shell()` — so the Settings stylesheet was never emitted at all.
+  Verified independently after the escalation: gate 67 passed with `PYTHONPATH=src`; `/settings`
+  returns 200 with its CSS present; **zero page-own derivation definitions** (9 `__pulseTheme`
+  calls, so D1's single-implementation rule holds); live preview re-themes on preset click
+  (`#f3efe7` → `#191713`); Save persists exactly the seven tier-1 keys at `schema_version: 1`; the
+  theme carries to `/focus-5`; no console errors. Rendered and looked at (invariant #8).
+  **v1 is feature-complete.** Carried, none blocking: the legacy aliases (`--fg`, `--fg-muted`)
+  are still referenced ~38 times in `pulse_web.py` so the P0 bridge cannot retire yet; first paint
+  is verified at `domcontentloaded` rather than by a paint trace; and the Settings preview rows
+  render sample timestamps ~7h off (a naive-string/UTC artifact in demo data only, not a
+  `format_timestamp()` defect).
