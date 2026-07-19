@@ -1887,14 +1887,14 @@ def settings_page() -> HTMLResponse:
         data_row(
             marker_html='<span style="width:15px;height:15px;border:1.5px solid var(--muted);border-radius:4px;display:inline-block;opacity:0.6;"></span>',
             title_html=title,
-            fallback_timestamp=ts,
+            timestamp=ts,
             stripe_index=i
         )
         for i, (title, ts) in enumerate([
-            ("Invoice Taiwo", "2026-07-18 9:00 AM"),
-            ("Rebalance PRs", "2026-07-18 1:45 PM"),
-            ("Team Call", "July 19 1:45 PM"),
-            ("Submit Sleuth to Product Hunt", "July 20 9:00 AM"),
+            ("Invoice Taiwo", "2026-07-18T09:00:00Z"),
+            ("Rebalance PRs", "2026-07-18T13:45:00Z"),
+            ("Team Call", "2026-07-19T13:45:00Z"),
+            ("Submit Sleuth to Product Hunt", "2026-07-20T09:00:00Z"),
         ])
     )
 
@@ -1984,6 +1984,7 @@ def settings_page() -> HTMLResponse:
   
   let currentTheme = 'default';
   let currentColors = null; // null means using preset unmodified
+  let lastPreset = 'default';
   
   function getWorkingColors() {{
     return currentColors || {{ ...PRESETS[currentTheme === 'custom' ? 'default' : currentTheme] }};
@@ -2005,7 +2006,7 @@ def settings_page() -> HTMLResponse:
       
       const el = document.createElement('div');
       el.className = 'preset-card' + (currentTheme === k ? ' active' : '');
-      el.onclick = () => {{ currentTheme = k; currentColors = null; setColors(getWorkingColors()); renderUI(); }};
+      el.onclick = () => {{ currentTheme = k; lastPreset = k; currentColors = null; setColors(getWorkingColors()); renderUI(); }};
       
       el.innerHTML = `
         <div class="preset-preview" style="background: ${{p.page}}; border: 1px solid ${{p.border}};">
@@ -2039,7 +2040,10 @@ def settings_page() -> HTMLResponse:
       inp.value = working[f];
       inp.oninput = (e) => {{
         if (!currentColors) currentColors = {{ ...working }};
-        if (currentTheme !== 'custom') currentTheme = 'custom';
+        if (currentTheme !== 'custom') {{
+           lastPreset = currentTheme;
+           currentTheme = 'custom';
+        }}
         currentColors[f] = e.target.value;
         setColors(currentColors);
         renderUI();
@@ -2054,12 +2058,12 @@ def settings_page() -> HTMLResponse:
       fineTuneGrid.appendChild(el);
     }});
     
-    // Update theme name label
     let displayName = currentTheme === 'custom' ? 'Custom' : PRESETS[currentTheme].name;
-    if (currentColors && currentTheme !== 'custom') displayName += ' (modified)';
+    if (currentTheme !== 'custom' && JSON.stringify(working) !== JSON.stringify(PRESETS[currentTheme])) {{
+      displayName += ' (modified)';
+    }}
     document.getElementById('lblThemeName').textContent = 'theme: ' + displayName;
     
-    // Check dirtiness
     let saved = null;
     try {{
       const raw = localStorage.getItem(window.__pulseTheme.KEY);
@@ -2068,16 +2072,12 @@ def settings_page() -> HTMLResponse:
       }}
     }} catch(e) {{}}
     
-    // Is dirty if the saved state is not exactly what we're editing
     let isDirty = true;
-    if (saved && saved.preset === currentTheme) {{
-      if (currentTheme === 'custom') {{
-         isDirty = JSON.stringify(saved.inputs) !== JSON.stringify(working);
-      }} else {{
-         isDirty = currentColors !== null; // If preset matched and we haven't touched colors
-      }}
+    if (saved) {{
+      isDirty = (saved.preset !== currentTheme) || (JSON.stringify(saved.inputs) !== JSON.stringify(working));
+    }} else {{
+      isDirty = (currentTheme !== 'default') || (JSON.stringify(working) !== JSON.stringify(PRESETS.default));
     }}
-    if (!saved && currentTheme === 'default' && !currentColors) isDirty = false;
     
     const btnSave = document.getElementById('btnSave');
     btnSave.style.opacity = isDirty ? '1' : '0.5';
@@ -2085,7 +2085,7 @@ def settings_page() -> HTMLResponse:
   }}
   
   document.getElementById('btnReset').onclick = () => {{
-    if (currentTheme === 'custom') currentTheme = 'default';
+    if (currentTheme === 'custom') currentTheme = lastPreset;
     currentColors = null;
     setColors(getWorkingColors());
     renderUI();
@@ -2098,14 +2098,18 @@ def settings_page() -> HTMLResponse:
     renderUI();
   }};
   
-  // Initial load
   try {{
     const raw = localStorage.getItem(window.__pulseTheme.KEY);
     const parsed = window.__pulseTheme.parse(raw);
     if (parsed) {{
       const saved = JSON.parse(raw);
       currentTheme = saved.preset || 'default';
-      currentColors = parsed;
+      lastPreset = currentTheme === 'custom' ? 'default' : currentTheme;
+      if (currentTheme !== 'custom' && PRESETS[currentTheme]) {{
+         currentColors = (JSON.stringify(parsed) === JSON.stringify(PRESETS[currentTheme])) ? null : parsed;
+      }} else {{
+         currentColors = parsed;
+      }}
     }}
   }} catch(e) {{}}
   

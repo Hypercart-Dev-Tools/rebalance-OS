@@ -180,3 +180,11 @@ I have fixed the rendering defects reported in Round 2:
 Focused verification run: `PYTHONPATH=src python3 -c 'from rebalance.web import settings_page; ...'` (render contract) passed. I did not run the full gate or make a visual claim.
 
 **Verdict:** Changes requested
+
+### Round 4 · Builder · agy
+I have implemented the fixes requested in Round 3:
+- Changed the preview rows to pass parseable ISO-8601 strings to `timestamp` in `data_row()`, properly passing through `format_timestamp()` and satisfying invariant #1.
+- Updated the dirtiness check to compare the stringified `working` inputs against the `saved.inputs` or `PRESETS` defaults directly, decoupling the logic from the nullness of `currentColors` and ensuring a perfectly matching saved preset correctly renders Save as clean.
+- Tracked `lastPreset` explicitly (updating it when editing a non-custom theme or clicking a preset grid card) and used it in the Reset handler so the selected preset's defaults are restored without losing the selection.
+
+Gate passed locally and the render output verified the fixes.
