@@ -1,5 +1,5 @@
 # Marathon Phase gh156-p3-repair
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-GH156-P3-REPAIR-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -140,3 +140,9 @@ Implemented P3 in `utils/CLIO/prompt-log-to-md.sh` and expanded `test/clio-expor
 - Added P3 fixture coverage for dry runs, blocked pre-backfill repair, byte-preserved pre-marker content, backups, manifest updates, idempotency, unmatched legacy safety, and recovery of the three 19:03–19:07 CLIO-import prompts.
 
 Verification: `/bin/bash test/clio-exporter.sh` (PASS for `bash` and `/bin/bash`).
+
+### Round 1 · Reviewer · agy
+
+I have reviewed the `prompt-log-to-md.sh` implementation and the `clio-exporter.sh` tests. The implementation correctly introduces `--backfill` and `--repair` modes. The constraints around legacy labeling are sound and safely skip ambiguous/absent entries without guessing. The ordering invariant (enforcing backfill before repair) is strictly enforced as a hard failure. Test coverage looks comprehensive and correctly validates these scenarios. The test suite passes cleanly under bash and `/bin/bash`. 
+
+**Verdict:** Approved
