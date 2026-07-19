@@ -1055,7 +1055,10 @@ def _check_commit_coverage(db_path: Path) -> Check:
         repos = _resolve_repos_for_refresh(db_path, None)
         if not repos:
             return Check("commit coverage", OK, "no watched repos to check")
-        report = check_coverage(db_path, repos)
+        # check_remote=False: local git only, no network. Staleness is enforced
+        # by clone fetch AGE instead, so a stale clone still cannot report a
+        # confident 0 -- doctor must stay fast (60 ls-remotes blew a 2min budget).
+        report = check_coverage(db_path, repos, check_remote=False)
         verdict = coverage_health(report)
     except Exception as exc:  # noqa: BLE001 — a probe failure is not a crash
         return Check("commit coverage", WARN, f"coverage check failed: {exc}")

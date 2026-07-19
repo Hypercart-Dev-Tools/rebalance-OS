@@ -50,6 +50,11 @@ class CoverageCheckTests(unittest.TestCase):
             _git(self.clone, "add", "-A")
             _git(self.clone, "commit", "-q", "-m", f"chore: commit {i}")
         _git(self.clone, "update-ref", "refs/remotes/origin/development", "development")
+        # A real clone has fetched at some point; FETCH_HEAD's mtime is the
+        # network-free staleness signal, and its ABSENCE is correctly treated as
+        # stale. Mirror a freshly-fetched clone rather than testing a shape no
+        # working clone has.
+        (self.clone / ".git" / "FETCH_HEAD").write_text("")
 
     def tearDown(self):
         self._tmp.cleanup()
@@ -141,6 +146,14 @@ class CoverageCheckTests(unittest.TestCase):
         self.assertEqual(c.collection_gap, 1)
 
     # -- agy r1 Blocker: a stale clone must never report a confident 0 --
+
+    def test_never_fetched_clone_reports_stale_not_zero(self):
+        """The anti-self-agreement invariant, enforced without the network."""
+        (self.clone / ".git" / "FETCH_HEAD").unlink()
+        c = self._check()
+        self.assertEqual(c.state, "stale")
+        self.assertEqual(c.collection_gap, 0)  # not measured -- and not claimed as clean
+        self.assertFalse(c.is_clean)
 
     def test_stale_clone_reports_stale_not_zero(self):
         c = check_repo_coverage(

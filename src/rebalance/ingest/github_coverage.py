@@ -57,6 +57,7 @@ class RepoCoverage:
     incomplete: int = 0
     remote_commits: int = 0
     captured_complete: int = 0
+    fetch_age_hours: float | None = None
 
     def as_dict(self) -> dict:
         return asdict(self)
@@ -93,6 +94,26 @@ class CoverageReport:
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _fetch_age_hours(repo_path: Path) -> float | None:
+    """Hours since this clone last fetched, from FETCH_HEAD's mtime.
+
+    A network-free staleness proxy: it answers "could this clone be behind?"
+    without a round-trip, which is what makes the doctor check affordable.
+    """
+    fetch_head = repo_path / ".git" / "FETCH_HEAD"
+    if not fetch_head.exists():
+        # A worktree keeps .git as a file; resolve the real git dir.
+        code, out, _ = _git(repo_path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+        if code != 0 or not out:
+            return None
+        fetch_head = Path(out) / "FETCH_HEAD"
+    try:
+        mtime = fetch_head.stat().st_mtime
+    except OSError:
+        return None
+    return (datetime.now(timezone.utc).timestamp() - mtime) / 3600.0
 
 
 def remote_tip(repo_full_name: str, branch: str = "HEAD") -> str:
@@ -133,6 +154,24 @@ def check_repo_coverage(
 
     code, local_tip, _ = _git(path, "rev-parse", "HEAD")
     coverage.local_tip = local_tip if code == 0 else ""
+
+    # Clone freshness without touching the network. `git ls-remote` per repo is
+    # ~1 network round-trip each, which is fine for a refresh but NOT for a
+    # doctor run over 60 watched repos (measured: doctor exceeded 2 minutes).
+    # Fetch AGE still enforces the anti-self-agreement invariant -- a clone that
+    # has not been fetched in days can never report a confident 0 -- so the
+    # local-only path degrades honestly instead of going quiet.
+    fetch_age_hours = _fetch_age_hours(path)
+    coverage.fetch_age_hours = fetch_age_hours
+    if not check_remote:
+        if fetch_age_hours is None or fetch_age_hours > STALE_FETCH_WARN_HOURS:
+            coverage.state = "stale"
+            coverage.reason = (
+                "clone not fetched recently"
+                if fetch_age_hours is None
+                else f"clone last fetched {fetch_age_hours:.0f}h ago"
+            )
+            return coverage
 
     if check_remote:
         coverage.remote_tip = remote_tip(repo_full_name)
@@ -217,7 +256,7 @@ def check_coverage(
     repos: list[str],
     *,
     roots: list[str] | None = None,
-    check_remote: bool = True,
+    check_remote: bool = False,
 ) -> CoverageReport:
     """Measure coverage across *repos*; one repo's failure never hides another."""
     return CoverageReport(

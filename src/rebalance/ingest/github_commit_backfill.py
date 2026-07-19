@@ -23,6 +23,7 @@ Two invariants this module exists to hold:
 from __future__ import annotations
 
 import subprocess
+from functools import lru_cache
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -41,6 +42,13 @@ _LOG_FORMAT = _FIELD_SEP.join(["%H", "%an", "%ae", "%aI", "%B"]) + _RECORD_SEP
 
 MAX_COMMITS_PER_BACKFILL = 5000
 _GIT_TIMEOUT_S = 120
+
+# This DB is written by long-lived processes (pulse-server, MCP servers), so a
+# backfill must not hold one write transaction across a whole repo walk. Found
+# live: the first full run died on "database is locked" against 60 repos.
+# Commit in batches and wait rather than failing instantly.
+_COMMIT_BATCH = 100
+_BUSY_TIMEOUT_MS = 30_000
 
 
 @dataclass
@@ -90,17 +98,66 @@ def _git(repo_path: Path, *args: str) -> tuple[int, str, str]:
     return result.returncode, result.stdout.strip(), result.stderr.strip()
 
 
+def default_roots() -> list[str]:
+    """Where to look for clones when ``local_repo_roots`` is unset.
+
+    Discovered the hard way: the first live run marked all 60 watched repos
+    ``uncoverable`` because ``local_repo_roots`` defaults to empty, so the whole
+    backfill was a no-op. Reusing that config key is still right — one canonical
+    place per fact — but a feature that requires manual configuration before it
+    does anything will simply never run.
+
+    The fallback is the parent of this installation's own repository: sibling
+    clones under a shared dev directory are the overwhelmingly common layout,
+    and `walk_repo_candidates` is depth-bounded and stops descending at a
+    ``.git``, so this stays cheap. Explicit config always wins.
+    """
+    from rebalance.ingest.config import get_local_repo_roots
+
+    configured = get_local_repo_roots()
+    if configured:
+        return configured
+
+    # Resolve via git rather than walking for a `.git` entry. In a worktree
+    # `.git` is a FILE pointing elsewhere, so a naive walk stops at the worktree
+    # and returns `.claude/worktrees` as the dev root — which finds nothing.
+    # `--git-common-dir` always resolves to the MAIN checkout's .git, whether we
+    # are running from the main tree or any worktree of it.
+    here = Path(__file__).resolve().parent
+    code, out, _ = _git(here, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if code != 0 or not out:
+        return []
+    main_repo_root = Path(out).parent
+    return [str(main_repo_root.parent)]
+
+
+@lru_cache(maxsize=8)
+def _clone_index(roots_key: tuple[str, ...]) -> dict[str, Path]:
+    """``owner/repo`` (lowercased) -> local path, scanned ONCE per root set.
+
+    Cached because the naive form re-walked the whole dev directory for every
+    repo: with 60 watched repos that is 60 full filesystem scans, which pushed
+    a single `rebalance doctor` run past two minutes. The scan result is stable
+    within a process, so once is enough.
+    """
+    index: dict[str, Path] = {}
+    for repo in scan_local_repos(list(roots_key)):
+        if repo.full_name:
+            index.setdefault(repo.full_name.lower(), repo.path)
+    return index
+
+
 def resolve_clone(repo_full_name: str, *, roots: list[str] | None = None) -> Path | None:
     """Local checkout for ``owner/repo``, or None when this machine has none.
 
     Reuses the existing ``local_repo_roots`` scan rather than introducing a
     second notion of "where repos live" — one canonical place per fact.
     """
-    target = repo_full_name.strip().lower()
-    for repo in scan_local_repos(roots):
-        if (repo.full_name or "").lower() == target:
-            return repo.path
-    return None
+    if roots is None:
+        roots = default_roots()
+    if not roots:
+        return None
+    return _clone_index(tuple(roots)).get(repo_full_name.strip().lower())
 
 
 def _default_branch(repo_path: Path) -> str:
@@ -206,6 +263,7 @@ def backfill_commits(
         result.state = "uncoverable"
         result.reason = "no local clone found under configured local_repo_roots"
         with db_connection(database_path, ensure_github_schema) as conn:
+            conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
             _record_coverage(conn, repo_full_name, result, now)
             conn.commit()
         return result
@@ -248,6 +306,7 @@ def backfill_commits(
         result.state = "uncoverable"
         result.reason = f"git log failed on {ref}: {err or 'unknown error'}"
         with db_connection(database_path, ensure_github_schema) as conn:
+            conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
             _record_coverage(conn, repo_full_name, result, now)
             conn.commit()
         return result
@@ -262,6 +321,7 @@ def backfill_commits(
     result.commits_seen = len(commits)
 
     with db_connection(database_path, ensure_github_schema) as conn:
+        conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
         pr_shas = {
             row[0] for row in conn.execute(
                 "SELECT sha FROM github_commits WHERE repo_full_name = ?", (repo_full_name,)
@@ -314,6 +374,12 @@ def backfill_commits(
                 result.commits_inserted += 1
             else:
                 result.commits_updated += 1
+
+            # Release the write lock periodically so concurrent readers/writers
+            # are not starved for the length of a full-history walk.
+            written = result.commits_inserted + result.commits_updated
+            if written % _COMMIT_BATCH == 0:
+                conn.commit()
 
         _record_coverage(conn, repo_full_name, result, now)
         conn.commit()
