@@ -6,6 +6,39 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.60.0] - 2026-07-18
+
+### Fixed
+- **Collector health signal no longer reports a working system as broken.** Months of "the
+  collectors are unstable" traced to the health checks, not the collectors — 6 of 6 findings
+  investigated on 2026-07-18 were misreads, and **zero** were real collector defects. (GH-146)
+  - `scripts/daily_sync.sh` no longer exits 1 when any single sub-source errors. A transient
+    GitHub rate limit was failing an otherwise-successful ~49-minute refresh, which launchd
+    recorded as status 1 and `doctor` then reported hourly — 7 of the last 10 runs ended
+    `finished with errors` this way. A new `classify_sync_outcome()` splits fatal (migrations
+    failure, or every stage failed/skipped) from degraded (exit 0), and the JSON gains
+    `sync_outcome` alongside existing keys.
+  - `doctor`'s launchd check reads the run's structured result instead of asserting a stale
+    `launchctl` exit status as current health; an unknown state now reports as stale rather than
+    as a current failure.
+  - Device-bound checks (`pulse collector:*`, `scheduler:*`) no longer warn on machines they do
+    not describe. Laptops that are legitimately asleep stopped raising alerts on the Mac Studio.
+  - The `deep work` stall check pins "today" to the operator's local day via `tz_utils.local_tz()`
+    instead of UTC. After 17:00 PDT it had been reporting **every** tracked project quiet on a UTC
+    day that was two hours old — same bug class as GH-129's day-boundary tz pin, fixed there and
+    missed here.
+
+### Known gaps (GH-146)
+- `launchd:pulse-server — exited with status -15` still warns. `-15` is SIGTERM from a deliberate
+  restart; the phase brief named this target but no test covered it and it was not fixed.
+- `launchd:daily-sync` now reports honestly ("stale/unknown") but still surfaces as a WARN; whether
+  an unknown state should warn at all is unresolved.
+- Device ownership is hardcoded by device id in `_DEVICE_SCOPE_REGISTRY`; it will drift as machines
+  are added or renamed.
+
+Net effect measured on the same host, same config, same moment: **6 warns → 5**, against a target
+of 0. `daily_sync.sh`'s effect is not observable until the next 06:30 scheduled run.
+
 ## [0.59.1] - 2026-07-16
 
 ### Fixed

@@ -1,5 +1,8 @@
 # Marathon Phase gh146-p1-exit-semantics
-STATUS: Open
+<!-- STATUS corrected 2026-07-18: this phase was APPROVED by agy and its work shipped. A later
+     re-run of MARATHON.yaml re-rendered this relay (resetting STATUS to Open) before halting on
+     the already-closed tick token. See ESCALATION.md in this directory. -->
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-GH146-P1-EXIT-SEMANTICS-TURN builder=codex reviewer=agy round-cap=5 -->

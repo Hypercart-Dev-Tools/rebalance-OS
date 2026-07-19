@@ -2,7 +2,7 @@
 gh_issue: 146
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/146
 title: Collector health signal reports a working system as broken
-status: "Proposed (1-INBOX — not yet active)"
+status: "Built — all 4 phases approved and merged on work/sentinel-process-review. Measured 6 warns → 5 against a target of 0; 3 known gaps remain (pulse-server -15 unfixed, daily-sync WARN-vs-INFO unresolved, device ids hardcoded). P1's effect is not observable until the next 06:30 sync."
 created: 2026-07-18
 doc_type: bugfix
 effort: 2
@@ -102,6 +102,36 @@ changed the warn composition, so the original 8-warn table above is superseded:
 `email data` dropping off is convenient but **unexplained**. Whether #147 fixed the Gmail
 collector or merely stopped reporting it is unverified; do not assume that real defect resolved
 itself.
+
+## Outcome — measured 2026-07-18 19:47 PDT
+
+Same host, same config, same moment; only the code differs. **6 warns → 5** (target was 0).
+
+| Warn | Before | After | Verdict |
+|---|---|---|---|
+| `deep work` | `rebalance-OS: quiet 2026-07-19 after 2026-07-18` — 5 projects, UTC date | `Binoid: quiet 2026-07-18 after 2026-07-17` — 1 project, local date | ✅ P4. Surviving warn is legitimate |
+| `scheduler:git-pulse-daily-synthesis` | present | gone | ✅ P3 |
+| `pulse collector:` ×2 laptops | present | gone | ✅ P3 |
+| `launchd:daily-sync` | `last run exited with status 1` | `launchctl status 1 is stale/unknown` | ⚠️ Honest now, but still WARNs |
+| `launchd:pulse-server` | `exited with status -15` | unchanged | ❌ Not fixed |
+| `sleuth`, `signal health figma` | present | present | — out of scope |
+
+**Why P2 missed.** Its brief named `pulse-server -15` in prose but not as an acceptance
+criterion. codex wrote 6 legitimate tests with verified fail-before/pass-after — **none covering
+the -15 case** — and agy approved. The lesson generalizes past §4a of `AGY-SENTINEL.md`: a gate
+over existing tests can't prove a new test exists, *and a new test existing can't prove it tests
+what you asked for*. Acceptance criteria must name the **observable that must change**, not the
+artifact that must appear. P3 and P4 stated theirs that way and both delivered.
+
+**Verification performed by hand** (not taken on agy's word): every phase's new tests were run
+against the immediately-prior commit's source. P1 4/4 fail, P2 6/6 fail, P3 4/4 fail, P4 2/4 fail
+(the two tz-specific ones; the other two are guards that correctly pass either way).
+
+## Follow-up work
+
+1. `pulse-server -15` (SIGTERM) — the original named target, still open
+2. Whether a stale/unknown launchd state should WARN at all, or report as OK/info
+3. `_DEVICE_SCOPE_REGISTRY` hardcodes device ids in source; it will drift
 
 ## Asks (acceptance criteria)
 

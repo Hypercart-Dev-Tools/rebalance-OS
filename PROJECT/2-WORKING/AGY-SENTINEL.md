@@ -1,6 +1,6 @@
 ---
 title: Collector sentinel — scheduled detect → triage → repair → PR loop (Antigravity)
-status: "Proposed — Phase 0 (emitter overlap) is blocking and unresolved. The prompt in Appendix A is drafted and its gate baseline is verified (178 passed / 10 skipped, 2026-07-18), but nothing is scheduled yet. Do not stand this up before Phase 0 closes."
+status: "Proposed — Phase 0 (emitter overlap) is blocking and unresolved. The prompt in Appendix A is drafted and its gate baseline is verified (241 passed / 10 skipped, 2026-07-18), but nothing is scheduled yet. Do not stand this up before Phase 0 closes."
 created: 2026-07-18
 updated: 2026-07-18
 owner: noel
@@ -31,7 +31,7 @@ roadmap_exempt: false
 
 | What was just completed | What's next |
 |---|---|
-| Prompt drafted (Appendix A) and audited against this repo's rails. Gate baseline **verified live 2026-07-18**: the §5 selector returns `178 passed, 10 skipped, 1264 deselected`. Confirmed `development` exists on `origin` (`961da06`) and is a valid PR base. Confirmed **both** `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` are loaded and active in launchd — so the duplicate-emitter risk is live, not hypothetical. Folded in two operator lessons on how a green gate can hide a missing regression test (§4a, §5). | **Phase 0 is blocking:** decide whether the sentinel *replaces* or *supplements* `scripts/health_issue_reporter.py`. Until that is resolved, standing this up reproduces the exact twin-issue defect that #139 was closed by deleting. Nothing should be scheduled before Phase 0's gate passes. |
+| Prompt drafted (Appendix A) and audited against this repo's rails. Gate baseline **verified live 2026-07-18**: the §5 selector returns `241 passed, 10 skipped, 1245 deselected`. Confirmed `development` exists on `origin` (`961da06`) and is a valid PR base. Confirmed **both** `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` are loaded and active in launchd — so the duplicate-emitter risk is live, not hypothetical. Folded in two operator lessons on how a green gate can hide a missing regression test (§4a, §5). | **Phase 0 is blocking:** decide whether the sentinel *replaces* or *supplements* `scripts/health_issue_reporter.py`. Until that is resolved, standing this up reproduces the exact twin-issue defect that #139 was closed by deleting. Nothing should be scheduled before Phase 0's gate passes. |
 
 ## Table of contents
 
@@ -307,8 +307,8 @@ a green gate and an honest-looking report:
 So, mechanically:
 
 - **Name the new test** — file and test function — in the PR body before you run the gate.
-- **Assert the count moved.** Baseline is `178 passed`. Your gate run must report
-  **strictly more than 178 passed**. If it reports exactly 178, you did not add a test;
+- **Assert the count moved.** Baseline is `241 passed`. Your gate run must report
+  **strictly more than 241 passed**. If it reports exactly 241, you did not add a test;
   the turn has failed its own §4 rule regardless of the green result. Report that
   honestly and stop.
 - **Prove it fails without the fix.** Run the new test against the pre-fix code
@@ -327,8 +327,13 @@ So, mechanically:
   -k "doctor or health or freshness or scheduler_policy or github_scan or http" -q
 ```
 
-Baseline: **178 passed, 10 skipped, 1264 deselected** (verified 2026-07-18). Per §4a your
-run must exceed 178 passed; equal to baseline means no test was added.
+Baseline: **241 passed, 10 skipped, 1245 deselected** (verified 2026-07-18, after GH-146's four
+phases landed; it was 178 before PR #147 and GH-146 added tests). Per §4a your run must exceed
+241 passed; equal to baseline means no test was added.
+
+> **This number moves.** Re-derive it on a clean checkout whenever the suite grows — a stale
+> baseline silently disables the §4a assertion, since "greater than a too-low number" is true
+> even when you added nothing.
 
 `ROUTER.md` §7 says to run `pytest tests/`. This selector deliberately narrows that, and
 the divergence is intentional rather than an oversight: the full suite has ~15
@@ -392,7 +397,7 @@ The PR body must contain, honestly:
 - The write-set and why each file needed to change
 - **The new test's file and function name, and its pre-fix failure output** (§4a)
 - All three gate outputs pasted in full, including the pass/skip/fail counts, with the
-  pass count explicitly compared to the 178 baseline
+  pass count explicitly compared to the 241 baseline
 - **What you did not verify** — every repair has an untested edge; name yours
 - `Closes #<issue>`
 
@@ -412,7 +417,7 @@ SENTINEL <timestamp>
   classified: <n> real · <n> working-as-configured · <n> transient · <n> environmental
   filed:     #<n> (+ capture doc, + ROADMAP park) ... (or: none)
   repaired:  PR #<n> ... (or: none — reason)
-  test:      <path>::<fn> · pre-fix FAIL confirmed · <n> passed vs 178 baseline
+  test:      <path>::<fn> · pre-fix FAIL confirmed · <n> passed vs 241 baseline
   gates:     pytest <n>p/<n>s · pdda <ok|regressed> · doctor <n> warnings
   escalated: #<n> ... (or: none)
   skipped:   <reason, if you exited early>
