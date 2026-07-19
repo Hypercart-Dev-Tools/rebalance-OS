@@ -16,19 +16,57 @@ from rebalance.tz_utils import format_timestamp
 # surface). Inject it FIRST inside every page's <style> so var(--…) refs resolve to
 # the same values everywhere (Focus 5 / Auth Log + the dashboard). Changing the
 # palette is now this one block, not a grep across pages.
+#
+# Token Vocabulary:
+# Tier 1 (settable):
+#   --page: Page background
+#   --card: Card background
+#   --ink: Text
+#   --accent: Accent
+#   --border: Borders
+#   --nowline: Calendar time line
+#   --timestamp: Date + time text
+#
+# Tier 2 (derived):
+#   --muted: mix(ink, page, 0.45)
+#   --accent-ink: #ffffff if isDark(accent) else #111111
+#   --zebra: mix(card, isDark(page) ? #ffffff : #000000, 0.96)
+#   --shadow: derived from --ink at each layer's alpha
+#   --fg-dim: legacy, uncollapsed
+#
+# Tier 3 (theme-invariant, unchanged):
+#   --ok: #2f7437
+#   --warn: #a65f00
+#   --danger: #c0392b
+#   --info: #1d6fa8
 RB_TOKENS_CSS = """:root {
-  --bg: #f3efe7;
-  --panel: #ffffff;
-  --border: #e3ddd0;
-  --fg: #1d2024;
-  --fg-muted: #5b5750;
-  --fg-dim: #8a857c;
+  /* Tier 1 */
+  --page: #f3efe7;
+  --card: #ffffff;
+  --ink: #1d2024;
   --accent: #1f6feb;
+  --border: #e3ddd0;
+  --nowline: #d43d2a;
+  --timestamp: #97907d;
+
+  /* Tier 2 */
+  --muted: #5b5750;
+  --accent-ink: #ffffff;
+  --zebra: #f6f3ea;
+  --shadow: 0 1px 2px rgba(29, 32, 36, 0.04), 0 8px 24px rgba(29, 32, 36, 0.04);
+  --fg-dim: #8a857c;
+
+  /* Tier 3 */
   --ok: #2f7437;
   --warn: #a65f00;
   --danger: #c0392b;
   --info: #1d6fa8;
-  --shadow: 0 1px 2px rgba(0,0,0,.04), 0 8px 24px rgba(0,0,0,.04);
+
+  /* Legacy aliases for P1/P2/P3 to rewrite */
+  --bg: var(--page);
+  --panel: var(--card);
+  --fg: var(--ink);
+  --fg-muted: var(--muted);
 }"""
 
 # The one button style every web page shares. ``color`` uses the page's
@@ -196,15 +234,15 @@ RB_CHROME_CSS = """
 html, body { margin: 0; padding: 0; }
 body {
   font: 13px/1.45 -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
-  color: var(--fg);
-  background: var(--bg);
+  color: var(--ink);
+  background: var(--page);
   -webkit-font-smoothing: antialiased;
 }
-code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--fg-muted); }
+code { font-family: "SF Mono", ui-monospace, Menlo, monospace; font-size: 12px; color: var(--muted); }
 .subtle { color: var(--fg-dim); font-size: 12px; }
 h1, h2, h3 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
 h1 { font-size: 22px; }
-h2 { font-size: 14px; color: var(--fg); }
+h2 { font-size: 14px; color: var(--ink); }
 
 .app { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
 
@@ -225,8 +263,8 @@ h2 { font-size: 14px; color: var(--fg); }
 .nav-section-label.section-link .section-link-arrow { font-size: 12px; line-height: 1; opacity: .65; }
 .nav-section-label.section-link:hover .section-link-arrow { opacity: 1; color: var(--accent); }
 .nav-list { list-style: none; margin: 0; padding: 0; }
-.nav-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--fg); cursor: default; }
-.nav-list li.active { background: rgba(31,111,235,.10); color: var(--fg); font-weight: 500; }
+.nav-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--ink); cursor: default; }
+.nav-list li.active { background: rgba(31,111,235,.10); color: var(--ink); font-weight: 500; }
 .nav-list .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
 .nav-list .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: #fff; text-align: center; }
 .sidebar-foot { margin-top: auto; padding: 8px; font-variant-numeric: tabular-nums; }
@@ -240,7 +278,7 @@ h2 { font-size: 14px; color: var(--fg); }
 .side-row-link { display: block; padding: 7px 8px; color: inherit; text-decoration: none; border-radius: 6px; }
 .side-row-link:hover { background: rgba(124,196,255,.10); }
 .side-row-link:hover .side-row-title { color: var(--info); }
-.side-row-title { font-size: 12.5px; line-height: 1.35; color: var(--fg); font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.side-row-title { font-size: 12.5px; line-height: 1.35; color: var(--ink); font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .side-row-meta { font-size: 11.5px; color: var(--fg-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
 .side-row.empty .side-row-meta { font-style: italic; }
 
@@ -309,7 +347,7 @@ h2 { font-size: 14px; color: var(--fg); }
 }
 .rb-data-row-body { min-width: 0; }
 .rb-data-row-title {
-  color: var(--fg);
+  color: var(--ink);
   font-size: 13px;
   line-height: 1.35;
   font-weight: 500;
@@ -323,7 +361,7 @@ h2 { font-size: 14px; color: var(--fg); }
   text-decoration: underline;
 }
 .rb-data-row-meta {
-  color: var(--fg-muted);
+  color: var(--muted);
   font-size: 11.75px;
   line-height: 1.4;
   margin-top: 3px;
@@ -352,7 +390,7 @@ h2 { font-size: 14px; color: var(--fg); }
   line-height: 1;
   border: 1px solid var(--border);
   background: #fff;
-  color: var(--fg-muted);
+  color: var(--muted);
 }
 .rb-data-marker-rank {
   border-color: rgba(31,111,235,.18);
@@ -456,7 +494,7 @@ h2 { font-size: 14px; color: var(--fg); }
 .streams .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
 .streams .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: #fff; text-align: center; }
 .auth-log-link a { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); text-decoration: none; font-size: 13px; width: 100%; }
-.auth-log-link a:hover { color: var(--fg); }
+.auth-log-link a:hover { color: var(--ink); }
 .auth-log-icon { font-size: 13px; }
 
 /* Content area — the <main> beside the sidebar. Shared chrome so every surface

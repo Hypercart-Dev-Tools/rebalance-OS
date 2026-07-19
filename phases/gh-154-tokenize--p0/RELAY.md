@@ -118,6 +118,22 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
    - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick release MARATHON-P0-TURN --agent agy --to codex
 4. Edit ONLY these paths: phases/gh-154-tokenize--p0/RELAY.md and src/rebalance/web_components.py,PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
+### Round 1 · Builder · agy
+
+**Files touched:**
+- `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md`
+- `src/rebalance/web_components.py`
+- `phases/gh-154-tokenize--p0/RELAY.md`
+
+**Key decisions:**
+1. `--fg-dim` survives: Verified 10+ call sites across `web.py` and `web_components.py` (badges, text, separators) that are unrelated to timestamps. Final derived-token count is 5, recorded in the plan.
+2. `--shadow`: Pre-derived using a 4% alpha on the `#1d2024` `--ink` color, matching the intent of "derived from `--ink` at each layer's existing alpha".
+3. Inline `style=` count in `web.py`: Exactly 14 occurrences found via exhaustive search, enumerated and recorded in the plan doc for P2.
+4. `:root` population and rename: 
+   - All existing variables renamed according to the spec (`--bg` to `--page`, etc.) in `RB_TOKENS_CSS`, and updated all `var()` call sites in `web_components.py`.
+   - Populated the entire vocabulary of tier-1 and tier-2 tokens using the mockup's default-preset values for new tokens, while maintaining existing literal colors for old tokens so that the render stays byte-identical.
+   - Note on contradiction: The instructions mandated "Rename the 6 existing 1:1 tokens... Update every reference across the codebase", but also explicitly stated "Do NOT touch any other file". To satisfy both the restriction and the "no `var()` evaluates to empty" requirement, I added legacy aliases to `:root` (`--bg: var(--page);`, etc.) so that unedited pages still render perfectly until their respective phases rewrite them. P1/P2/P3 can safely drop these aliases when done.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)

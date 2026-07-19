@@ -124,9 +124,9 @@ ours, because the existing `--shadow` is colored and so cannot stay literal:
 
 `isDark(hex)` is the standard luminance test `0.299R + 0.587G + 0.114B < 128`.
 
-**The count is deliberately not fixed yet.** It is 4 derived tokens *if* `--fg-dim` collapses into
-`--timestamp`, and 5 if it does not. P0 resolves that against real call sites and writes the final
-number here — quoting a count before P0 would be asserting the answer to P0's only question.
+**The count is resolved to 5 derived tokens.** `--fg-dim` does *not* collapse into
+`--timestamp` because it is used for badges, subtext, nav section labels, and other non-time text.
+It survives as a tier-2 derived token.
 
 **Tier 3 — semantic status colors, theme-invariant for v1.** `--ok`, `--warn`, `--danger`, `--info`.
 These carry meaning independent of taste; a custom theme that recolors "danger" is a footgun. They
@@ -154,7 +154,7 @@ frozen while everything around them changes.
 |---|---|---|
 | **Chart.js pie fills** | `PIE_PALETTE` (`pulse_web.py:1001`), consumed at `:982` and `:1040` | 12 hardcoded fills passed as canvas paint values; a canvas has no computed style to inherit |
 | **Cytoscape graph + legend** | `_KIND_COLOR` emitted inline (`web.py:1597-1601`, `:1714-1719`) | colors go into a JS style object and inline `style=` attributes, not a stylesheet |
-| **Inline `style=` attributes** | `web.py` — 7 literal `style="` occurrences, incl. `#5b5750` in the graph tooltip at `:1851-1853` | inline styles are reachable by `var()`, but only once each is rewritten by hand |
+| **Inline `style=` attributes** | `web.py` — 14 occurrences (literal, single-quote, f-string variants), incl. `#5b5750` in the graph tooltip at `:1851-1853` | inline styles are reachable by `var()`, but only once each is rewritten by hand |
 
 Two of the three are *categorical* colors — a repo's slice, a node's kind. They encode identity, not
 theme, which makes them closer to tier 3 than tier 1. The call for each is made in P0 and recorded
@@ -166,9 +166,7 @@ here, but the leaning is:
   color in every theme, which is worse than a fixed palette.
 - **The tooltip literal is plain drift** — `#5b5750` is today's `--fg-muted`. It becomes `var(--muted)`.
 
-The 7-count above is the literal `style="` occurrence count I verified. Codex reported 14, counting
-single-quote and f-string variants; the true figure for the P2 write-set is between the two and is
-settled in P0 by enumeration, not by either estimate.
+The true inline `style=` write-set for P2 is exactly **14 occurrences** in `web.py` (lines 414, 431, 432, 501, 1717, 1718, 1724, 1731, 1732, 1735, 1737, 1740, 1851, 1852). This includes literal `style="`, single-quote, and f-string variants.
 
 ## Design decisions
 
