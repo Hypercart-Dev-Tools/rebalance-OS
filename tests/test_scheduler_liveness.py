@@ -64,4 +64,8 @@ def test_not_loaded_warning_is_distinct_from_loaded_job_failure() -> None:
     assert len(launchd_checks) == 1
     assert launchd_checks[0].name == "launchd:daily-sync"
     assert launchd_checks[0].status == WARN
-    assert launchd_checks[0].detail == "last run exited with status 7"
+    # GH-146 P2: with no recent structured run to corroborate it, a launchctl exit code is
+    # reported as stale/unknown rather than asserted as a current failure. The exit code must
+    # still appear in the detail — this test's subject is that a *loaded* failing job surfaces
+    # as launchd:<job> and not as a missing-scheduler warning, which the assertions above cover.
+    assert "7" in launchd_checks[0].detail

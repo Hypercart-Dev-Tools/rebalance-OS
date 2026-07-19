@@ -28,11 +28,36 @@ import sys
 from rebalance.ingest.index_ops import refresh_index
 from rebalance.paths import resolve_database_path
 
+
+def classify_sync_outcome(result):
+    """Return the scheduler outcome and exit code without hiding source errors."""
+    errors = result.get("errors") or []
+    if not errors:
+        return "complete", 0
+
+    # A migration failure means no collector can safely write to the database.
+    # It is an infrastructure failure, rather than a degraded source refresh.
+    if any(error.get("scope") == "migrations" for error in errors):
+        return "fatal", 1
+
+    # A non-migration error is only fatal when every attempted stage failed or
+    # was skipped. Otherwise the scheduler completed useful work and should
+    # allow the next run to self-heal the degraded source.
+    successful_results = [
+        entry for entry in result.get("results", [])
+        if not entry.get("skipped") and not entry.get("error")
+    ]
+    if not successful_results:
+        return "fatal", 1
+    return "degraded", 0
+
+
 db_path = resolve_database_path()
 print(f"database={db_path}")
 result = refresh_index(db_path)  # default recipe: raw sources + code/semantic/sync
+result["sync_outcome"], exit_code = classify_sync_outcome(result)
 print(json.dumps(result, indent=2, default=str))
-sys.exit(1 if result.get("errors") else 0)
+sys.exit(exit_code)
 PY
 then
     EXIT_CODE=0
@@ -41,9 +66,13 @@ else
 fi
 
 if [ $EXIT_CODE -eq 0 ]; then
-    log "=== rebalance daily sync complete ==="
+    if grep -Fq '"sync_outcome": "degraded"' "$LOG_FILE"; then
+        log "=== rebalance daily sync degraded; partial errors recorded (see JSON above) ==="
+    else
+        log "=== rebalance daily sync complete ==="
+    fi
 else
-    log "=== rebalance daily sync finished with errors (see JSON above) ==="
+    log "=== rebalance daily sync failed fatally (see JSON above) ==="
 fi
 
 rb_trim_logs

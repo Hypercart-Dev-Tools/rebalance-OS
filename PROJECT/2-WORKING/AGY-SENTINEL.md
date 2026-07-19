@@ -1,6 +1,6 @@
 ---
 title: Collector sentinel — scheduled detect → triage → repair → PR loop (Antigravity)
-status: "Proposed — Phase 0 (emitter overlap) is blocking and unresolved. The prompt in Appendix A is drafted and its gate baseline is verified (178 passed / 10 skipped, 2026-07-18), but nothing is scheduled yet. Do not stand this up before Phase 0 closes."
+status: "Proposed — Phase 0 (emitter overlap) is blocking and unresolved. The prompt in Appendix A is drafted and its gate baseline is verified (241 passed / 10 skipped, 2026-07-18), but nothing is scheduled yet. Do not stand this up before Phase 0 closes."
 created: 2026-07-18
 updated: 2026-07-18
 owner: noel
@@ -17,6 +17,7 @@ effort: 3
 complexity: 4
 risk: 3
 phases: 4
+branch: work/sentinel-process-review
 related:
   - scripts/health_issue_reporter.py
   - src/rebalance/doctor.py
@@ -30,7 +31,7 @@ roadmap_exempt: false
 
 | What was just completed | What's next |
 |---|---|
-| Prompt drafted (Appendix A) and audited against this repo's rails. Gate baseline **verified live 2026-07-18**: the §5 selector returns `178 passed, 10 skipped, 1264 deselected`. Confirmed `development` exists on `origin` (`961da06`) and is a valid PR base. Confirmed **both** `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` are loaded and active in launchd — so the duplicate-emitter risk is live, not hypothetical. | **Phase 0 is blocking:** decide whether the sentinel *replaces* or *supplements* `scripts/health_issue_reporter.py`. Until that is resolved, standing this up reproduces the exact twin-issue defect that #139 was closed by deleting. Nothing should be scheduled before Phase 0's gate passes. |
+| Prompt drafted (Appendix A) and audited against this repo's rails. Gate baseline **verified live 2026-07-18**: the §5 selector returns `241 passed, 10 skipped, 1245 deselected`. Confirmed `development` exists on `origin` (`961da06`) and is a valid PR base. Confirmed **both** `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` are loaded and active in launchd — so the duplicate-emitter risk is live, not hypothetical. Folded in two operator lessons on how a green gate can hide a missing regression test (§4a, §5). | **Phase 0 is blocking:** decide whether the sentinel *replaces* or *supplements* `scripts/health_issue_reporter.py`. Until that is resolved, standing this up reproduces the exact twin-issue defect that #139 was closed by deleting. Nothing should be scheduled before Phase 0's gate passes. |
 
 ## Table of contents
 
@@ -44,12 +45,13 @@ roadmap_exempt: false
 ## Why this doc exists
 
 A repair loop that files its own issues is one bad assumption away from being a noise
-generator. Three things make it safe rather than merely automated, and all three are
+generator. Four things make it safe rather than merely automated, and all four are
 *process*, not prompt text:
 
 1. It cannot be the second thing filing health issues (Phase 0).
 2. Its writes land on the repo's existing PDDA rails, not beside them (Phase 1).
-3. It earns unattended operation by being watched first (Phase 2).
+3. Its gate can actually detect the absence of the test it requires (§4a, §5).
+4. It earns unattended operation by being watched first (Phase 2).
 
 ---
 
@@ -128,6 +130,8 @@ Trial exit criteria — all must hold across at least 10 consecutive runs:
 - Zero issues filed for findings that were working-as-configured or transient
 - Every PR opened passed its gate on the first try, or failed for a reason the sentinel
   reported honestly
+- **Every PR that claims a regression test actually contains one** — verified by reading
+  the diff, not by trusting the gate (see §4a)
 - `utils/pdda/pdda.sh run` never regressed as a result of a sentinel run
 
 ### QA gate — Phase 2
@@ -136,6 +140,7 @@ Trial exit criteria — all must hold across at least 10 consecutive runs:
 - [ ] Every misclassification has been added to Appendix A §2's trap list
 - [ ] At least one *correct no-op* run observed (the sentinel deciding to do nothing)
 - [ ] At least one PR reviewed end-to-end by the operator and judged mergeable on merit
+- [ ] At least one PR's test-count delta manually cross-checked against its diff
 
 ---
 
@@ -267,6 +272,8 @@ Rules:
 
 - **One issue per branch, per PR.** Never bundle.
 - **Touch only the files the fix requires.** State the write-set before you edit.
+- **`tests/` is always in your write-set.** See §4a — this is not optional and not a
+  judgement call.
 - **Extend, don't rewrite.** `_check_collector_freshness()` in `src/rebalance/doctor.py`
   is shared across all eight collectors — changing its contract changes every source's
   reported status.
@@ -282,6 +289,35 @@ Rules:
   start the repair, and update its ROADMAP pointer — per `PROJECT/PDDA.md`, execution
   starting is exactly what promotion means.
 
+#### 4a. The regression test must be *provably* present
+
+Two ways this loop silently drops the regression test §4 requires, both of which end with
+a green gate and an honest-looking report:
+
+1. **A gate over existing tests cannot prove a new test exists.** The §5 selector runs
+   tests that were already there. It passes identically whether you wrote a new test or
+   wrote none. A green run is evidence your fix didn't break anything — it is *not*
+   evidence you added coverage, and it must never be reported as such.
+2. **A path allowlist that omits `tests/` converts "write a regression test" into "skip
+   it."** If your write-set or any enclosing harness allowlist covers only `src/`, the
+   test file you write gets reverted or never staged, the suite still passes, and the
+   omission surfaces nowhere. The instruction and the permissions have to agree, or the
+   permissions win silently.
+
+So, mechanically:
+
+- **Name the new test** — file and test function — in the PR body before you run the gate.
+- **Assert the count moved.** Baseline is `241 passed`. Your gate run must report
+  **strictly more than 241 passed**. If it reports exactly 241, you did not add a test;
+  the turn has failed its own §4 rule regardless of the green result. Report that
+  honestly and stop.
+- **Prove it fails without the fix.** Run the new test against the pre-fix code
+  (`git stash` the source change, run just that test, expect failure, restore). A
+  regression test that passes before the fix is testing nothing.
+- **Confirm `tests/` is writable** in whatever context you run. If your enclosing
+  allowlist excludes it, stop and report — do not proceed and quietly ship a fix with no
+  test.
+
 #### 5. Gate — three checks, and why the test selector is narrowed
 
 **Code correctness:**
@@ -291,7 +327,13 @@ Rules:
   -k "doctor or health or freshness or scheduler_policy or github_scan or http" -q
 ```
 
-Expected baseline: **178 passed, 10 skipped, 1264 deselected** (verified 2026-07-18).
+Baseline: **241 passed, 10 skipped, 1245 deselected** (verified 2026-07-18, after GH-146's four
+phases landed; it was 178 before PR #147 and GH-146 added tests). Per §4a your run must exceed
+241 passed; equal to baseline means no test was added.
+
+> **This number moves.** Re-derive it on a clean checkout whenever the suite grows — a stale
+> baseline silently disables the §4a assertion, since "greater than a too-low number" is true
+> even when you added nothing.
 
 `ROUTER.md` §7 says to run `pytest tests/`. This selector deliberately narrows that, and
 the divergence is intentional rather than an oversight: the full suite has ~15
@@ -300,7 +342,8 @@ pre-existing failures (`test_auto_promote.py`, `test_hiqs_pipeline.py`,
 fails on other people's problems and blocks every repair. If your change touches a
 subsystem outside the selector above, widen it deliberately and **verify the widened
 selector is green on a clean checkout first** — otherwise you cannot tell your regression
-from the baseline's.
+from the baseline's. Note the tradeoff this creates: a narrowed selector also narrows the
+baseline count that §4a leans on, so re-derive the baseline whenever you widen it.
 
 **Document hygiene** (required — you wrote docs in §3a):
 
@@ -334,8 +377,11 @@ confusing PRs. Enforce all of these:
   you attempted.
 - **If `git status` is dirty on entry, stop.** Another process (a marathon driver, a
   human) may be mid-work. Report and exit — do not stash, do not reset.
-- **If a background driver holds `.git/relay-driver.lock`, stop.** Concurrent writers in
-  one clone corrupt each other's HEAD.
+- **If a background driver holds `.git/relay-driver.lock` or `.xyz/.relay-driver.lock`,
+  stop.** Concurrent writers in one clone corrupt each other's HEAD. Absence of the lock
+  is **not** proof of safety — a driver between turns holds no lock while still owning the
+  tree. Also check for `git worktree list` entries you did not create and for recent
+  commits on the current branch you did not make.
 
 #### 7. Hand off — stop here
 
@@ -349,7 +395,9 @@ The PR body must contain, honestly:
 - The finding, verbatim from `doctor`, and **which class** you assigned it in §2
 - Why you concluded it was a real defect and not working-as-configured
 - The write-set and why each file needed to change
-- All three gate outputs pasted in full, including the pass/skip/fail counts
+- **The new test's file and function name, and its pre-fix failure output** (§4a)
+- All three gate outputs pasted in full, including the pass/skip/fail counts, with the
+  pass count explicitly compared to the 241 baseline
 - **What you did not verify** — every repair has an untested edge; name yours
 - `Closes #<issue>`
 
@@ -369,6 +417,7 @@ SENTINEL <timestamp>
   classified: <n> real · <n> working-as-configured · <n> transient · <n> environmental
   filed:     #<n> (+ capture doc, + ROADMAP park) ... (or: none)
   repaired:  PR #<n> ... (or: none — reason)
+  test:      <path>::<fn> · pre-fix FAIL confirmed · <n> passed vs 241 baseline
   gates:     pytest <n>p/<n>s · pdda <ok|regressed> · doctor <n> warnings
   escalated: #<n> ... (or: none)
   skipped:   <reason, if you exited early>
@@ -405,3 +454,20 @@ to a branch. That is the natural thing to write and the wrong thing to run: this
 enforces issue→capture-doc→ROADMAP-park deterministically, so a sentinel that files
 without capturing leaves `utils/pdda/pdda.sh roadmap-coverage` failing after every
 productive run. Automation that writes into a governed repo has to know the governance.
+
+**Why §4a exists (operator lessons, 2026-07-18).** Both failure modes were observed in
+practice, and they share a shape: the loop's *instruction* says one thing, its *mechanism*
+permits another, and the mechanism wins without saying so. A gate over pre-existing tests
+returns green whether or not you added coverage; an allowlist that omits `tests/` turns a
+mandatory regression test into a silent no-op. Neither shows up in the report. This is the
+general hazard for any autonomous loop with both a checklist and a permission boundary:
+**wherever the two disagree, the permission boundary is the real spec.** The
+count-must-exceed-baseline assertion and the pre-fix-failure proof exist because they are
+the only checks that fail loudly when the test is missing.
+
+**Why the §6 lock check is not sufficient on its own.** Observed 2026-07-18 while drafting
+this doc: a concurrent XYZ/marathon session held **no** driver lock, yet moved `HEAD` twice
+in under a minute and deleted an untracked file another session had just written. Lock
+absence means "no driver is mid-turn *right now*", not "no driver owns this tree." That is
+why §6 also requires checking `git worktree list` and recent commits — and why any real
+work in this repo should happen in its own `git worktree`.

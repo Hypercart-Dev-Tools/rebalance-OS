@@ -26,8 +26,12 @@ def test_running_daemon_with_sigterm_last_exit_is_ok() -> None:
 
 
 def test_negative_signal_without_live_pid_is_ok() -> None:
-    """A negative (signal) status is a clean stop, not a crash — OK even idle."""
-    check = _one("-\t-15\tcom.rebalance-os.daily-sync\n")
+    """A negative (signal) status is a clean stop, not a crash — OK even idle.
+
+    Uses a non-``daily-sync`` job: ``daily-sync`` has its own JSON-outcome check
+    (GH-146 Root cause A) and does not go through this general predicate.
+    """
+    check = _one("-\t-15\tcom.rebalance-os.vault-sync\n")
     assert check.status == OK
     assert check.detail == "idle, last run ok"
 
@@ -40,8 +44,8 @@ def test_running_daemon_with_positive_last_exit_is_ok() -> None:
 
 
 def test_crashed_job_positive_exit_no_pid_still_warns() -> None:
-    """The genuine failure: no live PID and a positive non-zero exit."""
-    check = _one("-\t7\tcom.rebalance-os.daily-sync\n")
+    """The genuine failure: no live PID and a positive non-zero exit (non-daily-sync)."""
+    check = _one("-\t7\tcom.rebalance-os.vault-sync\n")
     assert check.status == WARN
     assert check.severity == WARNING
     assert check.detail == "last run exited with status 7"
