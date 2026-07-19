@@ -1,0 +1,59 @@
+# MARATHON-resume-p2.yaml — GH-146, resuming after P1 completed
+#
+# Why this file exists: P1 (gh146-p1-exit-semantics) completed on 2026-07-18 — agy approved it
+# and called `tick done`, so its token is closed. A closed token cannot be re-seeded
+# ("only the claiming agent can mutate it"), so re-running MARATHON.yaml halts at phase 1/4 even
+# though that phase succeeded. This plan resumes the chain at P2.
+#
+# MARATHON.yaml remains the canonical record of the full 4-phase plan. Do not delete it.
+#
+# P1 status (verified before writing this file):
+#   - scripts/daily_sync.sh: classify_sync_outcome() added; migrations-scope error or all-stages-
+#     skipped => fatal/exit 1; any other error => degraded/exit 0. JSON gains "sync_outcome"
+#     alongside existing keys (backward compatible). Three-way log marker.
+#   - tests/test_daily_sync_exit.py: 4 tests. Verified fail-before/pass-after — 4 passed against
+#     the new script, 4 failed against a03168d's version.
+#   - Gate: 227 passed, 10 skipped.
+#
+# Run:
+#   bash .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/MARATHON-resume-p2.yaml \
+#     --pre-advance-cmd "PYTHONPATH=<worktree>/src <venv>/bin/python -m pytest tests/ \
+#        -k 'doctor or health or freshness or daily_sync or scheduler_policy or github_scan or http' -q"
+#
+# The --pre-advance-cmd override is REQUIRED. marathon-drive defaults its gate to
+# `bash validate.sh`, which exists in the xyz harness repo but NOT in rebalance-OS — it fails
+# with exit 127 (command not found) and halts the chain after an otherwise successful phase.
+# PYTHONPATH must be pinned to this worktree's src, or the main repo's venv resolves `rebalance`
+# to /Users/noelsaw/Documents/rebalance-OS/src and the tests silently validate the wrong code.
+#
+# Sequencing unchanged: P2, P3, P4 all edit src/rebalance/doctor.py, so they stay serial.
+
+name: gh-146-health-signal-accuracy-resume-p2
+
+phases:
+  - id: gh146-p2-launchd-json
+    name: "doctor launchd check reads the run JSON, not a stale launchctl status"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/briefs/p2-launchd-json.md
+    artifact: src/rebalance/doctor.py,tests/test_doctor_launchd.py
+    turn_timeout_s: 1200
+    max_review_rounds: 2
+
+  - id: gh146-p3-device-scoping
+    name: "Device-scoped checks stop warning on the wrong device"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/briefs/p3-device-scoping.md
+    artifact: src/rebalance/doctor.py,tests/test_doctor_device_scope.py
+    turn_timeout_s: 1200
+    depends_on: gh146-p2-launchd-json
+    max_review_rounds: 2
+
+  - id: gh146-p4-deep-work-tz
+    name: "deep work stall check pins today to the local day, not UTC"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY/briefs/p4-deep-work-tz.md
+    artifact: src/rebalance/doctor.py,tests/test_doctor_deep_work_tz.py
+    turn_timeout_s: 1200
+    depends_on: gh146-p3-device-scoping
+    max_review_rounds: 2
