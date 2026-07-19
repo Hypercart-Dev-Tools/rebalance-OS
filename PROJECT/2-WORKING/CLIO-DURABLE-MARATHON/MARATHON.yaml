@@ -1,0 +1,75 @@
+# MARATHON.yaml — CLIO durable idempotent writes (2026-07-19)
+#
+# Run (preflight then fire):
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/MARATHON.yaml \
+#     --pre-advance-cmd 'bash -c "cd macOS/Apps/Focus5Float && swift build"' \
+#     --dry-run
+#
+# Parent plan:  PROJECT/1-INBOX/CLIO-DURABLE-IDEMPOTENT-WRITES.md (agy-reviewed, 8/8 heuristics pass)
+# Branch:       work/clio-durable-obsidian-writes
+#
+# ---------------------------------------------------------------------------
+# PHASES & ORDER
+# ---------------------------------------------------------------------------
+# Both phases edit the exporter heredoc in utils/CLIO/INSTALL.md, so their
+# write-sets OVERLAP. marathon.sh runs phases STRICTLY ONE AT A TIME, so overlap
+# is safe — but p2 genuinely depends on p1's clio:id infrastructure, so it
+# declares depends_on. p1 also touches the Swift reader + its tests.
+#
+#   p1 clio-p1-idempotent : utils/CLIO/INSTALL.md
+#                           macOS/.../PromptLogReader.swift
+#                           macOS/.../PromptLogTests.swift
+#   p2 clio-p2-reconcile  : utils/CLIO/INSTALL.md   (depends_on p1)
+#
+# ---------------------------------------------------------------------------
+# GATE
+# ---------------------------------------------------------------------------
+# There is no root-level validate.sh, so an explicit --pre-advance-cmd is
+# REQUIRED. The primary cross-component risk is the Swift reader change, so the
+# gate is a Focus5Float `swift build` (green at base 2026-07-19). Do NOT gate on
+# `pytest tests/` — the suite carries ~15 pre-existing failures unrelated to this
+# work and would block every phase. Per-phase behavioral checks live in each
+# brief's Acceptance QA gate and in the agy review, not in this coarse gate.
+#
+#   --pre-advance-cmd 'bash -c "cd macOS/Apps/Focus5Float && swift build"'
+#
+# depends_on is a SCALAR, not a list (`depends_on: [x]` fails to parse).
+#
+# ---------------------------------------------------------------------------
+# BUILDER / COST
+# ---------------------------------------------------------------------------
+# Reviewer agy (cost-blind). Builder defaults to codex (subscription-billed).
+# Neither bills the Anthropic API per turn.
+
+name: clio-durable-idempotent-writes
+
+phases:
+
+  - id: clio-p1-idempotent
+    name: "CLIO P1: content-addressed idempotent append + Swift comment-skip"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/briefs/p1-idempotent-append.md
+    artifact: utils/CLIO/INSTALL.md,macOS/Apps/Focus5Float/Sources/Focus5Float/PromptLogReader.swift,macOS/Apps/Focus5Float/Tests/Focus5FloatTests/PromptLogTests.swift
+    turn_timeout_s: 1200
+    max_review_rounds: 3
+
+  - id: clio-p2-reconcile
+    name: "CLIO P2: conflict-copy reconciliation (full-block, quarantine)"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/briefs/p2-conflict-reconciliation.md
+    artifact: utils/CLIO/INSTALL.md
+    depends_on: clio-p1-idempotent
+    turn_timeout_s: 1200
+    max_review_rounds: 3
+
+# ---------------------------------------------------------------------------
+# DELIBERATELY NOT IN THIS PLAN
+# ---------------------------------------------------------------------------
+# Phase 0 (spike) — reproducing live Obsidian/iCloud conflict copies needs two
+# real syncing devices; it is operator/environment work, not headless-automatable.
+# Its one code-relevant output (the exact conflict-file glob patterns) is encoded
+# directly into the p2 brief instead.
+#
+# Phase 3 (per-device regions) — explicitly deferred/optional in the parent plan,
+# gated on p1+p2 proving insufficient in practice. Not built speculatively.

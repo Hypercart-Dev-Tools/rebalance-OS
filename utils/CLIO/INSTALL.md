@@ -94,10 +94,12 @@ tail -f ~/.claude/prompt-log.jsonl
 
 ## Optional: export to human-readable Markdown
 
-Converts the JSONL log into readable Markdown by **appending only the entries logged
-since its last run**. A cursor (a line count) is kept in
-`~/.claude/prompt-log-to-md.state`, and each run prepends the new prompts below a
-fixed header, newest first.
+Converts the JSONL log into readable Markdown by **appending only entries not
+already present in the note**. Each entry carries an invisible, content-derived ID.
+A cursor (a line count) is kept in `~/.claude/prompt-log-to-md.state` as a scan
+optimization, and each run prepends new prompts below a fixed header, newest first.
+Before exporting, it recovers missing full entry blocks from sync conflict siblings
+and moves each processed copy into `.clio-reconciled/` instead of deleting it.
 
 It **never rewrites entries it has already written** — and that's the property that
 makes it work across machines. When the output file lives in a folder synced between
@@ -115,9 +117,10 @@ Machine-triggered relay turns (from `/relay-xyz` etc.) are filtered out via
 cat > ~/.claude/hooks/prompt-log-to-md.sh << 'EOF'
 #!/bin/bash
 # Converts ~/.claude/prompt-log.jsonl into a human-readable Markdown file by
-# APPENDING only the entries logged since the last run. A cursor (the line count
-# already processed) is stored in ~/.claude/prompt-log-to-md.state; each run
-# prepends the new prompts below a fixed header, newest first.
+# APPENDING only entries not already present in the note. Each entry has a stable
+# ID derived from its session and timestamp. A cursor (the line count already
+# processed) is stored in ~/.claude/prompt-log-to-md.state as a scan optimization;
+# each run prepends new prompts below a fixed header, newest first.
 #
 # It never rewrites entries it has already emitted. When the output file lives in
 # a folder synced between machines (e.g. an Obsidian vault), each device only adds
@@ -140,18 +143,22 @@ OUT="${1:-$HOME/.claude/prompt-log.md}"
 STATE="$HOME/.claude/prompt-log-to-md.state"
 EXCLUDE_REGEX="${PROMPT_LOG_EXCLUDE:-file-based relay|cross-agent dependency drift}"
 MARKER="<!-- CLIO:ENTRIES -->"
+RECONCILE_DRY_RUN="${CLIO_RECONCILE_DRY_RUN:-0}"
+OUT_DIR=$(dirname "$OUT")
+OUT_NAME=$(basename "$OUT")
+OUT_BASE=${OUT_NAME%.md}
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required (brew install jq / apt install jq)"; exit 1; }
 
-[ -f "$JSONL" ] || { echo "No log yet at $JSONL"; exit 0; }
-
-mkdir -p "$(dirname "$OUT")"
+if [ "$RECONCILE_DRY_RUN" != 1 ]; then
+  mkdir -p "$OUT_DIR"
+fi
 
 # Ensure the file has the fixed header and the insertion MARKER. Everything above
 # the marker is preserved verbatim every run; new entries go directly below it;
 # existing entries below it are never rewritten. Any content from an older
 # headerless/markerless file is kept (moved below the new marker).
-if [ ! -f "$OUT" ] || ! grep -qF "$MARKER" "$OUT"; then
+if [ "$RECONCILE_DRY_RUN" != 1 ] && { [ ! -f "$OUT" ] || ! grep -qF "$MARKER" "$OUT"; }; then
   old=$(mktemp)
   [ -f "$OUT" ] && cat "$OUT" > "$old"
   {
@@ -167,26 +174,122 @@ if [ ! -f "$OUT" ] || ! grep -qF "$MARKER" "$OUT"; then
   rm -f "$old"
 fi
 
+# Recover complete CLIO entry blocks stranded in sync conflict siblings before
+# considering the local JSONL cursor. Only files derived from this note's base
+# name are candidates, so unrelated conflict notes in the same folder are safe.
+# IDs are added to the in-memory set as they are planned, which also deduplicates
+# the same entry when it appears in more than one conflict sibling.
+existing_ids=$(grep -o 'clio:id:[^ ]*' "$OUT" 2>/dev/null || true)
+shopt -s nullglob
+conflict_siblings=(
+  "$OUT_DIR/$OUT_BASE".sync-conflict-*.md
+  "$OUT_DIR/$OUT_BASE"' (conflicted copy'*.md
+  "$OUT_DIR/$OUT_BASE"' '[0-9]*.md
+)
+shopt -u nullglob
+
+# `${arr[@]+...}` guard: on macOS's bash 3.2, expanding an EMPTY array under
+# `set -u` aborts with "unbound variable" (only fixed in bash 4.4+), and the
+# common case is zero conflict siblings — so the bare `"${conflict_siblings[@]}"`
+# broke every normal run. This form expands to nothing when the array is empty.
+for conflict in ${conflict_siblings[@]+"${conflict_siblings[@]}"}; do
+  [ "$conflict" = "$OUT" ] && continue
+
+  recovered=$(mktemp)
+  merged_count=0
+  conflict_ids=$(grep -o 'clio:id:[^ ]*' "$conflict" 2>/dev/null || true)
+  while IFS= read -r conflict_id; do
+    [ -z "$conflict_id" ] && continue
+    case $'\n'"$existing_ids"$'\n' in
+      *$'\n'"$conflict_id"$'\n'*) continue ;;
+    esac
+
+    block=$(mktemp)
+    awk -v wanted="$conflict_id" '
+      $0 == "<!-- " wanted " -->" { copying = 1; heading = 0 }
+      copying {
+        if ($0 ~ /^<!-- clio:id:/ && $0 != "<!-- " wanted " -->") exit
+        if ($0 ~ /^## /) {
+          if (heading) exit
+          heading = 1
+        }
+        print
+      }
+    ' "$conflict" > "$block"
+
+    # A bare ID is not recoverable: require the rendered heading and prompt so
+    # reconciliation can never claim success after merging metadata alone.
+    if grep -q '^## ' "$block" && grep -q '^> "' "$block"; then
+      cat "$block" >> "$recovered"
+      printf '\n' >> "$recovered"
+      existing_ids="${existing_ids}${existing_ids:+$'\n'}${conflict_id}"
+      merged_count=$((merged_count + 1))
+    fi
+    rm -f "$block"
+  done <<< "$conflict_ids"
+
+  quarantine_dir="$OUT_DIR/.clio-reconciled"
+  destination="$quarantine_dir/$(basename "$conflict")"
+  suffix=1
+  while [ -e "$destination" ]; do
+    destination="$quarantine_dir/$(basename "$conflict").$suffix"
+    suffix=$((suffix + 1))
+  done
+
+  if [ "$RECONCILE_DRY_RUN" = 1 ]; then
+    echo "reconciled $(basename "$conflict"): merged=$merged_count quarantined=$destination (dry-run)"
+  else
+    if [ -s "$recovered" ]; then
+      marker_line=$(grep -nF "$MARKER" "$OUT" | head -1 | cut -d: -f1)
+      merged="$OUT.tmp.$$"
+      {
+        head -n "$marker_line" "$OUT"
+        echo
+        cat "$recovered"
+        tail -n +"$((marker_line + 1))" "$OUT"
+      } > "$merged"
+      mv "$merged" "$OUT"
+    fi
+    mkdir -p "$quarantine_dir"
+    mv "$conflict" "$destination"
+    echo "reconciled $(basename "$conflict"): merged=$merged_count quarantined=$destination"
+  fi
+  rm -f "$recovered"
+done
+
+# Reconciliation dry-run is a read-only operation: do not continue into the
+# normal exporter, which could create the note or advance its cursor.
+[ "$RECONCILE_DRY_RUN" = 1 ] && exit 0
+
+[ -f "$JSONL" ] || { echo "No log yet at $JSONL"; exit 0; }
+
 TOTAL_LINES=$(grep -c '' "$JSONL")
 LAST_LINE=$( [ -f "$STATE" ] && cat "$STATE" || echo 0 )
 case "$LAST_LINE" in ''|*[!0-9]*) LAST_LINE=0 ;; esac   # corrupt state → start over
 [ "$LAST_LINE" -gt "$TOTAL_LINES" ] && LAST_LINE=0      # JSONL shrank/rotated → re-emit all
 
 if [ "$LAST_LINE" -ge "$TOTAL_LINES" ]; then
-  echo "Nothing new since last sync ($LAST_LINE/$TOTAL_LINES lines)."
+  echo "✅ Synced 0 new prompt(s) to $OUT ($LAST_LINE/$TOTAL_LINES lines scanned)."
   exit 0
 fi
 
 reverse_lines() { if command -v tac >/dev/null 2>&1; then tac; else tail -r; fi; }
 
 # Render the new entries (newest first). jq -R reads each raw line; fromjson parses
-# it; malformed lines and excluded prompts are dropped without aborting the run.
+# it; malformed lines, excluded prompts, and IDs already in the note are dropped
+# without aborting the run. The ID is derived inline without per-entry subprocesses.
 new_entries=$(mktemp)
-tail -n +"$((LAST_LINE + 1))" "$JSONL" | reverse_lines | jq -Rr --arg exclude "$EXCLUDE_REGEX" '
+tail -n +"$((LAST_LINE + 1))" "$JSONL" | reverse_lines | jq -Rr \
+  --arg exclude "$EXCLUDE_REGEX" --arg existing_ids "$existing_ids" '
   (fromjson? // empty)
   | select(($exclude | length) == 0 or ((.prompt // "") | test($exclude; "i") | not))
-  | "## \(.repo // "unknown" | ascii_upcase)\n\(.timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
+  | ((.session_id // "") + ":" + (.timestamp // "")) as $id
+  | select(($existing_ids | split("\n") | index("clio:id:" + $id)) == null)
+  | "<!-- clio:id:\($id) -->\n## \(.repo // "unknown" | ascii_upcase)\n\(.timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
 ' > "$new_entries"
+
+emitted_ids=$(grep -o 'clio:id:[^ ]*' "$new_entries" 2>/dev/null || true)
+emitted_count=$(grep -c '^<!-- clio:id:' "$new_entries" 2>/dev/null || true)
 
 # Insert the new entries right after the MARKER, preserving everything else. Write
 # atomically (temp + mv) so a reader like Obsidian never sees a half-written file.
@@ -200,11 +303,27 @@ if [ -s "$new_entries" ]; then
     tail -n +"$((marker_line + 1))" "$OUT"
   } > "$merged"
   mv "$merged" "$OUT"
+
+  # Do not advance the cursor until every entry from this run is visible in the
+  # atomically replaced output. A failed verification leaves the state untouched,
+  # so the next run retries the same JSONL range.
+  written_ids=$(grep -o 'clio:id:[^ ]*' "$OUT" 2>/dev/null || true)
+  while IFS= read -r emitted_id; do
+    [ -z "$emitted_id" ] && continue
+    case $'\n'"$written_ids"$'\n' in
+      *$'\n'"$emitted_id"$'\n'*) ;;
+      *)
+        rm -f "$new_entries"
+        echo "Failed to verify emitted CLIO entry $emitted_id; cursor not advanced." >&2
+        exit 1
+        ;;
+    esac
+  done <<< "$emitted_ids"
 fi
 rm -f "$new_entries"
 
 echo "$TOTAL_LINES" > "$STATE"
-echo "✅ Synced $((TOTAL_LINES - LAST_LINE)) new prompt(s) to $OUT"
+echo "✅ Synced $emitted_count new prompt(s) to $OUT"
 EOF
 
 chmod +x ~/.claude/hooks/prompt-log-to-md.sh
@@ -220,6 +339,11 @@ chmod +x ~/.claude/hooks/prompt-log-to-md.sh
 ~/.claude/hooks/prompt-log-to-md.sh ~/vault/_meta/prompt-log/prompt-log.md
 ```
 
+**Preview conflict recovery without changing the note or moving files:**
+```bash
+CLIO_RECONCILE_DRY_RUN=1 ~/.claude/hooks/prompt-log-to-md.sh ~/vault/_meta/prompt-log/prompt-log.md
+```
+
 The file opens with the fixed header and the `<!-- CLIO:ENTRIES -->` marker (an
 HTML comment, invisible when rendered), then one `## <REPO>` block per prompt,
 newest first — new prompts are inserted directly below the marker on each run:
@@ -231,12 +355,14 @@ https://github.com/Claude-AI-Tools-Ventura-County/clio
 
 <!-- CLIO:ENTRIES -->
 
+<!-- clio:id:abc123:2026-07-09T18:55:03Z -->
 ## HYPERCART
 2026-07-09T18:55:03Z  
 Noels-MacBook-Pro · main
 
 > "Now add a regression test for it"
 
+<!-- clio:id:abc123:2026-07-09T18:42:11Z -->
 ## HYPERCART
 2026-07-09T18:42:11Z  
 Noels-MacBook-Pro · main
@@ -246,7 +372,7 @@ Noels-MacBook-Pro · main
 
 To sync on a schedule instead of running by hand, add it as a `launchd` job (macOS) or a cron entry pointing at the same command with your chosen output path — the script itself doesn't change either way. On a shared output file in a synced folder, run it on **every** machine: each device keeps appending its own new prompts to the one note, and both devices' history accumulates there.
 
-### Auto-sync every 5 minutes (macOS launchd)
+### Auto-sync every 1 minute (macOS launchd)
 
 Replace `OUT_PATH` with your chosen output file (e.g. an Obsidian note):
 
@@ -267,7 +393,7 @@ cat > "$PLIST" << EOF
         <string>$OUT_PATH</string>
     </array>
     <key>StartInterval</key>
-    <integer>300</integer>
+    <integer>60</integer>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
@@ -321,7 +447,7 @@ rm -f ~/.claude/hooks/prompt-log-to-md.sh ~/.claude/prompt-log-to-md.state ~/.cl
 - **Resumed sessions**: `--resume`/`--continue` replay saved context rather than re-running the hook for past turns — only genuinely new prompts get logged.
 - **Idempotent**: re-running the install block is safe; it skips re-registering the hook if it's already present, but always rewrites `log-prompt.sh`.
 - **MD export is a separate, incremental step**: it reads the same JSONL and never touches the hook, so the two can be versioned, run, or dropped independently. It appends only entries logged since its last run — a cursor (line count) in `~/.claude/prompt-log-to-md.state` — and prepends them below the fixed header, newest first. It never rewrites entries it has already written.
-- **Cross-device accumulation**: because the export only *appends its own new local prompts* and never regenerates the file, pointing several machines' exports at one output file in a synced folder (e.g. an Obsidian vault) makes every device's history pile into the one note instead of overwriting. Each device keeps its own cursor against its own local JSONL and never reads another device's log — the merge is emergent from sync + incremental append, not a cross-device read. **Caveat**: it's best-effort, not transactional — the cursor advances whether or not a write survives sync, so if two machines write before a sync round-trip completes, a lost batch (or an Obsidian conflict copy) is never re-emitted, and there's no dedup. In practice the 5-minute cadence makes overlap rare.
+- **Cross-device accumulation**: because the export only *appends its own new local prompts* and never regenerates the file, pointing several machines' exports at one output file in a synced folder (e.g. an Obsidian vault) makes every device's history pile into the one note instead of overwriting. Each device keeps its own cursor against its own local JSONL and never reads another device's log. If the sync stack creates a conflict sibling, the next export merges any missing full blocks by `clio:id` and quarantines the processed copy under `.clio-reconciled/`. The default cadence is **every 1 minute**; a tighter cadence surfaces prompts faster but can create more conflict copies, which reconciliation handles idempotently.
 - **Resetting / rebuilding the export**: delete `~/.claude/prompt-log-to-md.state` to re-emit from the top of the JSONL on the next run (it prepends everything again above existing content); delete the output file too for a clean rebuild. On a shared synced file, resetting one device re-adds only *that* device's local prompts.
 - **Relay/machine-prompt filtering**: prompts whose text matches `PROMPT_LOG_EXCLUDE` (default `file-based relay|cross-agent dependency drift`, case-insensitive) are omitted from the Markdown — this hides `/relay-xyz`-style machine-triggered turns. They stay in the raw JSONL; only the rendered export drops them. Override the env var to change what's hidden, or set it empty (`PROMPT_LOG_EXCLUDE= prompt-log-to-md.sh …`) to hide nothing.
 - **Errors are non-fatal but visible**: the hook always exits 0 so a logging failure never blocks a prompt from being submitted, but any failure (missing `jq`, malformed input) is recorded to `~/.claude/prompt-log-errors.log` instead of vanishing silently. Check that file if entries seem to be missing.
