@@ -1714,7 +1714,7 @@ def sleuth_graph_page() -> HTMLResponse:
     _legend_entries = [("client", "Client"), ("github", "GitHub issue/PR"),
                         ("channel", "Channel"), ("other", "Other")]
     legend_items = "".join(
-        "<span style='display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;'>"
+        "<span style='display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;color:var(--ink);'>"
         f"<span style='width:10px;height:10px;border-radius:50%;background:{_KIND_COLOR[k]['bg']};display:inline-block;'></span>"
         f"{lbl}</span>"
         for k, lbl in _legend_entries
@@ -1752,12 +1752,7 @@ def sleuth_graph_page() -> HTMLResponse:
   var rootStyle = getComputedStyle(document.documentElement);
   var getVar = function(prop) {{ return rootStyle.getPropertyValue(prop).trim(); }};
 
-  var kindColor = {{
-    client:  {{ bg: '#2f7437', border: '#1e4d25' }},
-    github:  {{ bg: '#1d6fa8', border: '#134d75' }},
-    channel: {{ bg: '#6f3fa8', border: '#4d2a75' }},
-    other:   {{ bg: '#8a857c', border: '#5b5750' }},
-  }};
+
 
   var cy = cytoscape({{
     container: document.getElementById('cy'),
@@ -1768,18 +1763,18 @@ def sleuth_graph_page() -> HTMLResponse:
         selector: 'node[kind]',
         style: {{
           'background-color': 'data(bg)',
-          'border-color': 'data(border)',
+          'border-color': getVar('--border'),
           'border-width': 2,
           'label': 'data(label)',
           'font-size': 13,
           'font-weight': 600,
-          'color': '#fff',
+          'color': getVar('--ink'),
           'text-valign': 'top',
           'text-halign': 'center',
           'text-margin-y': -6,
           'padding': 18,
           'shape': 'round-rectangle',
-          'text-background-color': 'data(bg)',
+          'text-background-color': getVar('--card'),
           'text-background-opacity': 0.85,
           'text-background-padding': '3px',
           'text-background-shape': 'round-rectangle',

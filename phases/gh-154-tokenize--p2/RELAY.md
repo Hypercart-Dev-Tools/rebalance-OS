@@ -129,3 +129,14 @@ The stylesheet and all 14 enumerated inline `style=` occurrences are tokenized c
 The Cytoscape contrast furniture does not yet meet the phase brief: the compound-node label remains hard-coded `#fff` and its border remains the categorical `data(border)`. Keep each node kind's `background-color` categorical, but source the label and outline/stroke from the resolved theme values (`--ink` / `--card` or `--border`, per the brief); make the legend text explicitly theme-derived as well. The local `kindColor` JS object is now unused and may be removed while making that correction.
 
 **Verdict:** Changes requested
+
+---
+
+### Round 2 · Builder · agy
+
+Addressed the reviewer's feedback for Cytoscape contrast furniture in `src/rebalance/web.py`:
+1. Updated the compound group node style (`node[kind]`) to use `--border` for its outline, `--ink` for its text label, and `--card` for its text label background.
+2. Updated the legend text items to explicitly use `--ink` so they remain legible in dark mode.
+3. Removed the unused local `kindColor` JS object from the cytoscape script block.
+
+Gate test suite passed.
