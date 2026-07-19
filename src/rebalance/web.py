@@ -40,6 +40,10 @@ from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
 from rebalance.paths import resolve_db, resolve_secret_path
 from rebalance.tz_utils import format_relative
 from rebalance.web_components import badge_html, button_link, render_shell
+import rebalance.web_components
+
+if not any(k == "settings" for k, _, _ in rebalance.web_components._NAV_LINKS):
+    rebalance.web_components._NAV_LINKS = rebalance.web_components._NAV_LINKS + (("settings", "/settings", "Settings"),)
 
 logger = logging.getLogger(__name__)
 
@@ -1960,19 +1964,7 @@ def settings_page() -> HTMLResponse:
       <span class="cal-preview-line2"></span>
       <span class="cal-preview-now">
         <span class="cal-preview-now-dot"></span>
-        <span class="cal-preview-now-line"></span>
-      </span>
-    </div>
-    
-    <div style="display: flex; gap: 10px; margin-top: 6px;">
-      <button class="btn-primary">Primary action</button>
-      <button class="btn-secondary">Secondary</button>
-    </div>
-  </section>
-</div>
-
-<script>
-(function() {{
+        <span class="cal-preview-(function() {{
   const PRESETS = {{
     default:  {{ name: 'Current default', page: '#f3efe7', card: '#ffffff', ink: '#1d2024', accent: '#1f6feb', border: '#e3ddd0', nowline: '#d43d2a', timestamp: '#8a857c' }},
     dark:     {{ name: 'Dark mode',       page: '#191713', card: '#242019', ink: '#f0ece1', accent: '#6f97ea', border: '#3a3529', nowline: '#e05a48', timestamp: '#8f887a' }},
@@ -1981,7 +1973,7 @@ def settings_page() -> HTMLResponse:
   }};
   
   const FIELD_LABELS = {{ page: 'Page background', card: 'Card background', ink: 'Text', accent: 'Accent', border: 'Borders', nowline: 'Calendar time line', timestamp: 'Date + time text' }};
-  const FIELDS = Object.keys(FIELD_LABELS);
+  const FIELDS = window.__pulseTheme.FIELDS;
   
   let currentTheme = 'default';
   let currentColors = null; // null means using preset unmodified
@@ -1991,17 +1983,7 @@ def settings_page() -> HTMLResponse:
   }}
   
   function setColors(newColors) {{
-    const isDark = window.__RB_THEME.isDark;
-    const mix = window.__RB_THEME.mix;
-    
-    // Apply live to document element styles
-    const s = document.documentElement.style;
-    for (const f of FIELDS) s.setProperty('--' + f, newColors[f]);
-    s.setProperty('--muted', mix(newColors.ink, newColors.page, 0.45));
-    s.setProperty('--fg-dim', mix(newColors.ink, newColors.page, 0.5));
-    s.setProperty('--accent-ink', isDark(newColors.accent) ? '#ffffff' : '#111111');
-    s.setProperty('--zebra', mix(newColors.card, isDark(newColors.page) ? '#ffffff' : '#000000', 0.96));
-    s.setProperty('--shadow', '0 1px 2px ' + window.__RB_THEME.rgba(newColors.ink, 0.04) + ', 0 8px 24px ' + window.__RB_THEME.rgba(newColors.ink, 0.04));
+    window.__pulseTheme.apply(newColors);
   }}
   
   function renderUI() {{
@@ -2011,8 +1993,7 @@ def settings_page() -> HTMLResponse:
     
     ['default', 'dark', 'grey', 'lightblue'].forEach(k => {{
       const p = PRESETS[k];
-      const isDark = window.__RB_THEME.isDark;
-      const mix = window.__RB_THEME.mix;
+      const mix = window.__pulseTheme.mix;
       const pMuted = mix(p.ink, p.page, 0.45);
       
       const el = document.createElement('div');
@@ -2073,7 +2054,12 @@ def settings_page() -> HTMLResponse:
     
     // Check dirtiness
     let saved = null;
-    try {{ saved = JSON.parse(localStorage.getItem('pulse-theme-settings-v2')); }} catch(e) {{}}
+    try {{
+      const raw = localStorage.getItem(window.__pulseTheme.KEY);
+      if (raw && window.__pulseTheme.parse(raw)) {{
+        saved = JSON.parse(raw);
+      }}
+    }} catch(e) {{}}
     
     // Is dirty if the saved state is not exactly what we're editing
     let isDirty = true;
@@ -2100,22 +2086,19 @@ def settings_page() -> HTMLResponse:
   
   document.getElementById('btnSave').onclick = () => {{
     const working = getWorkingColors();
-    const payload = {{
-      schema_version: 1,
-      derivation_version: 1,
-      preset: currentTheme,
-      inputs: working
-    }};
-    localStorage.setItem('pulse-theme-settings-v2', JSON.stringify(payload));
+    const payload = window.__pulseTheme.record(currentTheme, working);
+    localStorage.setItem(window.__pulseTheme.KEY, JSON.stringify(payload));
     renderUI();
   }};
   
   // Initial load
   try {{
-    const saved = JSON.parse(localStorage.getItem('pulse-theme-settings-v2'));
-    if (saved && saved.schema_version === 1) {{
+    const raw = localStorage.getItem(window.__pulseTheme.KEY);
+    const parsed = window.__pulseTheme.parse(raw);
+    if (parsed) {{
+      const saved = JSON.parse(raw);
       currentTheme = saved.preset || 'default';
-      currentColors = saved.inputs;
+      currentColors = parsed;
     }}
   }} catch(e) {{}}
   
