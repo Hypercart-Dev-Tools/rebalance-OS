@@ -1,5 +1,5 @@
 # Marathon Phase gh146-p2-launchd-json
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-GH146-P2-LAUNCHD-JSON-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -133,3 +133,12 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/wt/sentinel-process-review/.xyz/bin/tick done MARATHON-GH146-P2-LAUNCHD-JSON-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/wt/sentinel-process-review/.xyz/bin/tick
    Edit ONLY phases/gh-146-health-signal-accuracy-resume-p2--gh146-p2-launchd-json/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Reviewer · agy
+
+- Verified the test coverage in `tests/test_doctor_launchd.py` perfectly satisfies all the acceptance criteria.
+- Validated manually via `PYTHONPATH=src python3 -m rebalance doctor`, observing the exact behavior requested: sticky launchctl failure correctly listed as `stale/unknown` when missing recent JSON log.
+- Implementation cleanly extends the existing `_check_launchd` without modifying other collectors.
+
+**Verdict:** Approved
+
