@@ -101,13 +101,24 @@ class DirectCommitCaptureTests(unittest.TestCase):
             self.db_path, token="unused", events=[_event()], watched_repos=[REPO],
             api_get=lambda _url: self.fail("cap must prevent API calls"), compare_cap=0,
         )
-        self.assertEqual(result.events_deferred, 1)
+        # GH-169 changed this assertion deliberately. It previously read
+        # `events_deferred == 1`, which counted a cap deferral as a deferral
+        # like any other -- and that conflation is precisely what let 20 live
+        # events be evicted while the refresh summary looked healthy. Running
+        # out of per-run budget is now counted separately from failing.
+        self.assertEqual(result.events_over_budget, 1)
+        self.assertEqual(result.events_deferred, 0)
         with db_connection(self.db_path, ensure_github_schema) as conn:
             row = conn.execute(
-                "SELECT state, failure_reason FROM github_push_events WHERE event_id = 'push-155'"
+                "SELECT state, failure_reason, deferral_kind, attempt_count "
+                "FROM github_push_events WHERE event_id = 'push-155'"
             ).fetchone()
         self.assertEqual(row["state"], "deferred")
         self.assertIn("cap", row["failure_reason"])
+        self.assertEqual(row["deferral_kind"], "budget")
+        # The receipt is durable in the sense that matters: it kept its
+        # eligibility. Charging it here is what made "durable" untrue.
+        self.assertEqual(row["attempt_count"], 0)
 
     def test_pr_overlap_removes_direct_document_but_keeps_raw_provenance(self) -> None:
         commit = _commit()

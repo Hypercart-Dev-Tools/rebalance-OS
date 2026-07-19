@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,7 +27,8 @@ class DirectCommitCaptureResult:
     events_seen: int = 0
     events_new: int = 0
     events_enriched: int = 0
-    events_deferred: int = 0
+    events_deferred: int = 0       # genuinely failed, will retry (costs an attempt)
+    events_over_budget: int = 0     # ran out of per-run quota (costs nothing)
     commits_captured: int = 0
     head_only: int = 0
     api_calls_used: int = 0
@@ -136,8 +138,9 @@ def capture_direct_commits(
 
             if not before:
                 if detail_used >= detail_cap:
-                    gh.update_push_event(conn, event_id, state="deferred", now=attempt_now, reason="commit detail cap reached")
-                    result.events_deferred += 1
+                    gh.update_push_event(conn, event_id, state="deferred", now=attempt_now,
+                                         reason="commit detail cap reached", deferral_kind="budget")
+                    result.events_over_budget += 1
                     continue
                 status, detail = fetch(f"{GITHUB_API}/repos/{quote(repo, safe='/')}/commits/{head}")
                 detail_used += 1
@@ -153,13 +156,15 @@ def capture_direct_commits(
                     result.head_only += 1
                 else:
                     state = "deferred" if status in (429, 500, 502, 503, 504) else "failed"
-                    gh.update_push_event(conn, event_id, state=state, now=attempt_now, reason=f"head fetch HTTP {status}")
+                    gh.update_push_event(conn, event_id, state=state, now=attempt_now,
+                                         reason=f"head fetch HTTP {status}", deferral_kind="failure")
                     result.events_deferred += state == "deferred"
                 continue
 
             if compare_used >= compare_cap:
-                gh.update_push_event(conn, event_id, state="deferred", now=attempt_now, reason="compare cap reached")
-                result.events_deferred += 1
+                gh.update_push_event(conn, event_id, state="deferred", now=attempt_now,
+                                     reason="compare cap reached", deferral_kind="budget")
+                result.events_over_budget += 1
                 continue
             compare_url = f"{GITHUB_API}/repos/{quote(repo, safe='/')}/compare/{before}...{head}"
             status, comparison = fetch(compare_url)
@@ -167,7 +172,8 @@ def capture_direct_commits(
             result.api_calls_used += 1
             if status != 200 or not isinstance(comparison, dict):
                 state = "deferred" if status in (429, 500, 502, 503, 504) else "failed"
-                gh.update_push_event(conn, event_id, state=state, now=attempt_now, reason=f"compare HTTP {status}")
+                gh.update_push_event(conn, event_id, state=state, now=attempt_now,
+                                     reason=f"compare HTTP {status}", deferral_kind="failure")
                 result.events_deferred += state == "deferred"
                 continue
             commits = comparison.get("commits") or []
@@ -177,6 +183,7 @@ def capture_direct_commits(
 
             complete = True
             terminal_detail_error = False
+            deferral_kind = "budget"  # downgraded to "failure" on a real fetch error
             for summary in commits:
                 sha = str(summary.get("sha") or "")
                 if not sha:
@@ -204,6 +211,7 @@ def capture_direct_commits(
                     ))
                     complete = False
                     terminal_detail_error |= detail_status not in (429, 500, 502, 503, 504)
+                    deferral_kind = "failure"
                     continue
                 gh.upsert_direct_commit(conn, _commit_values(
                     repo=repo, sha=sha, event_id=event_id, ref=ref, row=detail,
@@ -212,13 +220,22 @@ def capture_direct_commits(
                 gh.replace_direct_commit_files(conn, repo, sha, detail.get("files") or [])
                 result.commits_captured += 1
             state = "enriched" if complete else ("failed" if terminal_detail_error else "deferred")
+            # A partial pass that ran out of DETAIL budget has not failed at
+            # anything; charging it an attempt is what evicted live events.
+            kind = None if complete else ("failure" if terminal_detail_error else deferral_kind)
             reason = "" if complete else (
                 "non-retryable commit detail failure" if terminal_detail_error
-                else "commit detail cap or transient fetch failure"
+                else ("commit detail cap reached" if kind == "budget"
+                      else "transient commit detail fetch failure")
             )
-            gh.update_push_event(conn, event_id, state=state, now=attempt_now, reason=reason)
+            gh.update_push_event(conn, event_id, state=state, now=attempt_now,
+                                 reason=reason, deferral_kind=kind)
             result.events_enriched += complete
-            result.events_deferred += not complete and not terminal_detail_error
+            if not complete and not terminal_detail_error:
+                if kind == "budget":
+                    result.events_over_budget += 1
+                else:
+                    result.events_deferred += 1
         conn.commit()
     return result
 
@@ -269,3 +286,98 @@ def sync_direct_commit_documents(database_path: Path) -> int:
             )
         conn.commit()
     return len(rows)
+
+
+# ---------------------------------------------------------------------------
+# GH-169 Phase 2 — recovery of events evicted by budget deferrals
+# ---------------------------------------------------------------------------
+
+# Events written before `deferral_kind` existed carry their classification only
+# in prose. This is a ONE-TIME migration seed, never a control path: after the
+# migration the column is authoritative, so the fragile text match cannot rot
+# into a live dependency.
+_LEGACY_BUDGET_REASONS = ("compare cap reached", "commit detail cap reached")
+
+
+def classify_legacy_deferrals(database_path: Path) -> int:
+    """Backfill ``deferral_kind`` for rows written before the column existed.
+
+    Returns the number of rows classified. Anything not recognisably a budget
+    deferral is marked ``failure`` — the conservative direction, since it costs
+    an attempt rather than granting an infinite retry.
+    """
+    with db_connection(database_path, ensure_github_schema) as conn:
+        placeholders = ",".join("?" for _ in _LEGACY_BUDGET_REASONS)
+        cursor = conn.execute(
+            f"""
+            UPDATE github_push_events
+            SET deferral_kind = CASE
+                WHEN failure_reason IN ({placeholders}) THEN 'budget'
+                ELSE 'failure'
+            END
+            WHERE deferral_kind IS NULL AND state = 'deferred'
+            """,
+            _LEGACY_BUDGET_REASONS,
+        )
+        conn.commit()
+        return cursor.rowcount
+
+
+def recover_budget_evicted_events(
+    database_path: Path,
+    *,
+    apply: bool = False,
+    max_attempts: int = MAX_EVENT_ATTEMPTS,
+    snapshot_path: Path | None = None,
+) -> dict[str, Any]:
+    """Return events evicted purely by budget deferrals to the pending queue.
+
+    PREVIEW BY DEFAULT (``apply=False``) — this mutates a live table, so the
+    caller must opt in. Rollback is inherent: the migration is additive and the
+    reset only lowers ``attempt_count`` and returns ``state`` to ``pending``,
+    so re-running collection restores whatever the reset undid. A pre-image of
+    every affected ``(event_id, state, attempt_count)`` is written to
+    *snapshot_path* when applying.
+    """
+    classified = classify_legacy_deferrals(database_path)
+    with db_connection(database_path, ensure_github_schema) as conn:
+        rows = conn.execute(
+            """
+            SELECT event_id, repo_full_name, state, attempt_count, failure_reason
+            FROM github_push_events
+            WHERE state IN ('pending', 'deferred')
+              AND attempt_count >= ?
+              AND deferral_kind = 'budget'
+            ORDER BY observed_at ASC
+            """,
+            (max_attempts,),
+        ).fetchall()
+        affected = [dict(row) for row in rows]
+
+        result: dict[str, Any] = {
+            "legacy_rows_classified": classified,
+            "eligible": len(affected),
+            "applied": False,
+            "event_ids": [r["event_id"] for r in affected],
+            "snapshot_path": None,
+        }
+        if not apply or not affected:
+            return result
+
+        if snapshot_path is not None:
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            snapshot_path.write_text(json.dumps(affected, indent=2))
+            result["snapshot_path"] = str(snapshot_path)
+
+        conn.executemany(
+            """
+            UPDATE github_push_events
+            SET state = 'pending', attempt_count = 0,
+                failure_reason = NULL, deferral_kind = NULL
+            WHERE event_id = ?
+            """,
+            [(r["event_id"],) for r in affected],
+        )
+        conn.commit()
+        result["applied"] = True
+        return result
