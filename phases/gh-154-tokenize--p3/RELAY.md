@@ -97,6 +97,16 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
    - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick release MARATHON-P3-TURN --agent agy --to codex
 4. Edit ONLY these paths: phases/gh-154-tokenize--p3/RELAY.md and scripts/pulse_web.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
+### Round 1 · Builder · agy
+
+I have fully tokenized `PAGE_CSS` and `PULSE_JS` in `scripts/pulse_web.py`:
+- Replaced all 101 hexadecimal and `rgba` color literals in `PAGE_CSS` with tier-1/tier-2 CSS variables.
+- Used `color-mix(in srgb, var(--token) X%, transparent)` for `rgba()` conversions to perfectly match original opacities (e.g. `rgba(166,95,0,.22)` -> `color-mix(in srgb, var(--warn) 22%, transparent)`).
+- Resolved canvas `PULSE_JS` rendering logic: reading `--card` and `--ink` via `getComputedStyle` at render time, and passing them to `borderColor` and `labels.color` respectively for `Chart.js`, ensuring contrast furniture updates correctly based on theme variables.
+- The 7 inline `style=` attributes contained no literal colors (already tokenized).
+- Kept `PIE_PALETTE` and tier-3 variables as literal colors per mapping rules.
+- Tested `python3 scripts/pulse_web.py` successfully (generates `web/pulse.html` cleanly).
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
