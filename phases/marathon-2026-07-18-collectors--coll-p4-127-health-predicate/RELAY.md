@@ -28,6 +28,19 @@ This has now fired **twice on the same collector in six weeks**:
 Two shapes of the same defect: **content** absent with rows present, and **volume** absent with
 freshness current. Both report `ok`.
 
+## ⛔ Your write-set is EXACTLY two files
+
+```
+src/rebalance/doctor.py
+tests/test_collector_health_predicate.py   <- create this; it holds the required regression tests
+```
+
+Containment reverts any edit outside that list and **fails the turn** (exit 6) — p3 lost a turn
+to exactly this by editing `ROADMAP.md`. **Do not update `ROADMAP.md`, `CHANGELOG.md`,
+`AGENTS.md`, or any capture doc.** The marathon driver owns governance records here.
+
+The filename is fixed: the allowlist matches by exact string equality, no globs.
+
 ## ⛔ Hard invariants
 
 - **Registry-driven.** Adding a source's predicate must not edit the health module
@@ -53,6 +66,31 @@ Teach the freshness contract to assert **content and volume**, not merely presen
 2. Report `degraded` (not `ok`) when rows exist but a material share fail the predicate.
 3. Report the **volume** case too: freshness current but zero rows landed across the window —
    this is #141's shape and must be caught by the same mechanism, not a parallel one.
+
+   ⚠️ **#141 was diagnosed after this brief was written, and the answer changes this
+   requirement. Read this before implementing step 3.**
+
+   The email collector's "0 rows in 7d" is **not a failure**. Its configured Gmail query
+   filter is `in:inbox is:starred is:important` — a three-way AND that legitimately matches
+   almost nothing. Auth is healthy, the job runs on schedule, and `synced_at` advances daily
+   while `received_at` stays 31 days stale. 107 rows across ~6 months, 1–3 on scattered days.
+   The collector is doing exactly what it was configured to do.
+
+   So a naive `0 rows in window ⇒ degraded` rule would mark email degraded **permanently, by
+   design**, and the sentinel/health-reporter layer would file that as a bug every run. That
+   is a worse outcome than the blind spot this phase is meant to close.
+
+   The predicate must distinguish:
+
+   | Situation | Signal | Verdict |
+   |---|---|---|
+   | collector errored / never ran | no successful run in window | **degraded** |
+   | ran, examined N, retained 0 | run succeeded, filter matched nothing | **ok** (report the filter) |
+   | ran, retained rows, rows are husks | rows exist, predicate fails | **degraded** |
+
+   The honest metric is **examined vs retained**, not retained alone. If the collector does not
+   currently record "examined", say so in the relay — adding that counter may be the real
+   prerequisite, and it is better to surface that than to ship a predicate that cries wolf.
 4. Sources without a declared predicate keep today's behavior. Absence of a predicate must not
    become a silent failure.
 
@@ -76,8 +114,13 @@ reasoning before implementing.
 ## Acceptance
 
 - [ ] A source whose rows exist but are contentless reports something other than `ok`.
-- [ ] A source whose freshness is current but landed **0 rows** in the window reports
-      something other than `ok` (the #141 case), via the same mechanism.
+- [ ] A source whose collector **failed to run or errored** in the window reports something
+      other than `ok`, via the same mechanism.
+- [ ] A source whose collector **ran successfully and retained 0 rows because its filter
+      matched nothing** still reports `ok` — and names the active filter in its message, so
+      an operator can see *why* it is quiet. This is the live #141 case (email, filter
+      `in:inbox is:starred is:important`); a regression test must pin it, or the next
+      well-meaning predicate will re-break it.
 - [ ] The check is registry-driven — adding a source's predicate does not edit the health
       module. Demonstrated by adding one for a second source.
 - [ ] A regression test seeding a table full of husks asserts the source is **not** reported
@@ -94,19 +137,19 @@ reasoning before implementing.
 ▶ TAKE YOUR TURN (codex — BUILDER role)
 
 You are the BUILDER for this phase. Read the phase brief above and implement it.
-1. Implement the brief by creating/editing the artifact file(s): src/rebalance/doctor.py
+1. Implement the brief by creating/editing the artifact file(s): src/rebalance/doctor.py,tests/test_collector_health_predicate.py
 2. Append a build block to this relay file: `### Round N · Builder · codex` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-COLL-P4-127-HEALTH-PREDICATE-TURN --agent codex --paths "phases/marathon-2026-07-18-collectors--coll-p4-127-health-predicate/RELAY.md,src/rebalance/doctor.py"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-COLL-P4-127-HEALTH-PREDICATE-TURN --agent codex --paths "phases/marathon-2026-07-18-collectors--coll-p4-127-health-predicate/RELAY.md,src/rebalance/doctor.py,tests/test_collector_health_predicate.py"
    - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-COLL-P4-127-HEALTH-PREDICATE-TURN --agent codex
    - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P4-127-HEALTH-PREDICATE-TURN --agent codex --to agy
-4. Edit ONLY these paths: phases/marathon-2026-07-18-collectors--coll-p4-127-health-predicate/RELAY.md and src/rebalance/doctor.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
+4. Edit ONLY these paths: phases/marathon-2026-07-18-collectors--coll-p4-127-health-predicate/RELAY.md and src/rebalance/doctor.py,tests/test_collector_health_predicate.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
 ---
 
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
-You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/doctor.py.
+You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/doctor.py,tests/test_collector_health_predicate.py.
 1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
 2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-COLL-P4-127-HEALTH-PREDICATE-TURN --agent agy --to codex
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P4-127-HEALTH-PREDICATE-TURN --agent agy
