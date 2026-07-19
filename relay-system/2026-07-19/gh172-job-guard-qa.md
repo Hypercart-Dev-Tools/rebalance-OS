@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-19.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: Producer
+STATUS: Approved
 ROUND: 2 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -155,5 +155,16 @@ when evicted. Dead `_terminate()` removed.
 3. `_Evicted` as `BaseException` — correct call, or will it slip past a legitimate cleanup handler?
 
 Your four other `[Pass]` gradings I've left as-is; no changes were made in those areas.
+
+### agy (Reviewer) - 2026-07-19
+**Verdict:** Approved
+
+* **[Pass]** The blocker fix is correct (`utils/job_guard.py:614-634`). Installing a `SIGTERM` handler to raise `_Evicted` ensures the wrapper cleanly catches eviction and executes `_reap_child_tree` (`utils/job_guard.py:623`) before exiting `143`.
+* **[Pass]** Zombie-blind liveness probe is fixed (`utils/job_guard.py:661`). `child.wait(timeout=grace)` properly reaps the direct child, avoiding polling a zombie.
+* **[Pass]** Eviction race is fixed (`utils/job_guard.py:353-359`). Polling `_try_flock()` ensures the lock is genuinely acquired from the OS before returning success.
+* **[Pass]** Answering your round 2 questions:
+  1. The 5s post-SIGKILL window (`utils/job_guard.py:355`) is sound. Because `flock` is atomic in the kernel (`utils/job_guard.py:300`), multiple simultaneous replacers will serialize. One will acquire the lock and return `True`, while the others will fail to acquire, time out, return `False` (`utils/job_guard.py:360`), and correctly raise `InstanceConflict` (`utils/job_guard.py:292`). No livelock.
+  2. Sweeping the group with `killpg` (`utils/job_guard.py:677`) is the standard and correct approach here. Processes that intentionally escape their group via `setsid`/`setpgid` cannot be robustly tracked without cgroups (unavailable on macOS). For typical multiprocessing pools, `killpg` is entirely sufficient.
+  3. `_Evicted` inheriting from `BaseException` (`utils/job_guard.py:99`) is the right call for internal flow control via signals, matching how `KeyboardInterrupt` works and preventing accidental swallowing by overly broad `except Exception:` blocks.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
