@@ -1,5 +1,5 @@
 # Marathon Phase gh146-p1-exit-semantics
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-GH146-P1-EXIT-SEMANTICS-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -133,3 +133,14 @@ Implemented `scripts/daily_sync.sh` and added `tests/test_daily_sync_exit.py`.
 - Added distinct closing log markers for complete, degraded, and fatal outcomes.
 - Reproduced the prior fail path by inspecting the existing `sys.exit(1 if result.get("errors") else 0)`: it turned the GitHub rate-limit envelope into exit 1. Hypothesis confirmed: the wrapper had no partial-success classification. No prior `ESCALATION.md` exists for this phase.
 - Verified only the focused test: `python3 -m pytest tests/test_daily_sync_exit.py -q` → `4 passed`. The `test_github_rate_limit_payload_exits_zero` assertion is the explicit regression proof; it would have received exit 1 under the previous unconditional-errors exit rule.
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+The implementation correctly fulfills the requirements outlined in the brief. 
+- It accurately distinguishes transient errors from fatal ones by analyzing `result.get("errors")` and `result.get("results")`. 
+- The JSON result format remains backwards-compatible, preserving existing error entries and only appending the new `sync_outcome` key. 
+- The closing log markers distinguish the three outcomes `complete`, `degraded`, and `fatal`. 
+- The tests thoroughly cover the edge cases and specifically prove regression safety for the GitHub rate limit issue from 2026-07-18. 
+Tests pass. LGTM!
