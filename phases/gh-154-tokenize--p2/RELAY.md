@@ -93,6 +93,26 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ---
 
+### Round 1 · Builder · agy
+
+Tokenized `src/rebalance/web.py` per Phase 2 mapping rules.
+
+**Files Touched:**
+- `src/rebalance/web.py`
+
+**Key Decisions & Findings:**
+1. Replaced legacy tier-1 and tier-2 tokens (`--bg` → `--page`, `--panel` → `--card`, `--fg` → `--ink`, `--fg-muted` → `--muted`).
+2. Mapped `--shadow` and faint hover rows (`rgba(0,0,0,.03)`) to their proper `var(--shadow)` and `var(--zebra)` equivalents.
+3. Left `_KIND_COLOR` literal as specified (identity/categorical hues). Upgraded `cytoscape.js` stylesheet to dynamically read contrast furniture (`--card`, `--border`, `--ink`, `--info`, `--accent`) using `getComputedStyle` injected in the JS view. Kept `#fff` literal as text color for compound group nodes since identity backgrounds (green, blue, purple, gray) are dark and need white text.
+4. Mapped `.f5-dirty-banner` to use `var(--zebra)` background, `var(--border)` border, and `var(--ink)` for bold text to collapse it without a bespoke nudge token. Mapped `.f5-view.active` segment to `var(--zebra)` background with `var(--accent)` text color.
+5. **Finding**: Left `#fff` literal in `.badge-*` styles (lines 256-260). Tier-3 status colors (`--ok`, `--warn`, etc.) stay literal and do not respond to theme, so their white foreground must also stay literal to maintain contrast.
+6. **Finding**: Left `rgba(166,95,0,.08)` / `rgba(166,95,0,.28)` for `.f5-warn` and `rgba(192,57,43,.10)` for `.f5-hide:hover` literal. These are derived from Tier-3 `--warn` (`#a65f00`) and `--danger` (`#c0392b`). Since Tier-3 base colors remain literal, their derived opacity counterparts must also remain literal to avoid adding one-off theme tokens.
+7. Fixed the `color:#5b5750` inline style in the Cytoscape JS tooltip builder to use `color:var(--muted)`.
+
+Gate test suite passed.
+
+---
+
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/web.py.

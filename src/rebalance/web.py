@@ -242,15 +242,15 @@ _SOURCE_BADGE = {
 # here. All colours are design tokens (var(--…)) so the palette is single-sourced;
 # none of these rules touch the dashboard (which never includes _CSS).
 _CSS = """
-h2 { font-size: 15px; font-weight: 600; color: var(--fg-muted); margin-bottom: 16px; }
-table { width: 100%; border-collapse: collapse; background: var(--panel);
+h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin-bottom: 16px; }
+table { width: 100%; border-collapse: collapse; background: var(--card);
         border-radius: 8px; overflow: hidden;
-        box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+        box-shadow: var(--shadow); }
 th { background: var(--border); font-size: 12px; font-weight: 600;
-     color: var(--fg-muted); text-align: left; padding: 10px 14px; }
+     color: var(--muted); text-align: left; padding: 10px 14px; }
 td { padding: 10px 14px; font-size: 13px;
      border-top: 1px solid var(--border); vertical-align: top; }
-tr:hover td { background: rgba(0,0,0,.03); }
+tr:hover td { background: var(--zebra); }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
          font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; }
 .badge-ok      { background: var(--ok);     color: #fff; }
@@ -259,27 +259,27 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .badge-info    { background: var(--info);   color: #fff; }
 .badge-neutral { background: var(--fg-dim); color: #fff; }
 .detail { font-family: "SF Mono", "Fira Code", monospace; font-size: 11px;
-          color: var(--fg-muted); word-break: break-all; }
-.empty { text-align: center; padding: 48px; color: var(--fg-muted); font-size: 14px; }
+          color: var(--muted); word-break: break-all; }
+.empty { text-align: center; padding: 48px; color: var(--muted); font-size: 14px; }
 .raw-link { float: right; font-size: 12px; color: var(--accent); text-decoration: none; }
 .raw-link:hover { text-decoration: underline; }
 
 /* Sleuth reminder groups (home page) */
 .sr-search-bar { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
 .sr-input { flex:1; max-width:340px; padding:6px 10px; border:1px solid var(--border);
-            border-radius:6px; background:var(--panel); color:var(--fg); font-size:13px; }
-.sr-count-label { font-size:12px; color:var(--fg-muted); }
+            border-radius:6px; background:var(--card); color:var(--ink); font-size:13px; }
+.sr-count-label { font-size:12px; color:var(--muted); }
 .sr-groups { display:flex; flex-direction:column; gap:12px; }
-.sr-group  { background:var(--panel); border-radius:8px;
-             box-shadow:0 1px 3px rgba(0,0,0,.12); overflow:hidden; }
+.sr-group  { background:var(--card); border-radius:8px;
+             box-shadow:var(--shadow); overflow:hidden; }
 .sr-group-header { display:flex; align-items:center; gap:8px; padding:10px 14px;
                    border-bottom:1px solid var(--border); font-size:13px; font-weight:600; }
 .sr-group-name  { flex:1; }
-.sr-group-count { font-size:11px; font-weight:400; color:var(--fg-muted); }
+.sr-group-count { font-size:11px; font-weight:400; color:var(--muted); }
 .sr-tasks { list-style:none; padding:0; margin:0; }
 .sr-task  { padding:8px 14px; font-size:13px; border-top:1px solid var(--border); }
 .sr-task:first-child { border-top:none; }
-.sr-task:hover { background:rgba(0,0,0,.03); }
+.sr-task:hover { background:var(--zebra); }
 
 /* Focus 5 — sits inside the .app 280px-sidebar grid, so it has ~280px less width
    than the old centred 1480px <main>. Breakpoints retuned for that frame. */
@@ -288,18 +288,18 @@ tr:hover td { background: rgba(0,0,0,.03); }
 @media (max-width: 1400px) { .f5-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 1000px) { .f5-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 680px)  { .f5-grid { grid-template-columns: 1fr; } }
-.f5-card { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+.f5-card { background: var(--card); border-radius: 8px; box-shadow: var(--shadow);
            padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .f5-pos { font-size: 11px; font-weight: 700; color: var(--fg-dim); }
 .f5-name { font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none;
            word-break: break-word; }
 .f5-name:hover { text-decoration: underline; }
-.f5-reason { font-size: 11px; color: var(--fg-muted); }
+.f5-reason { font-size: 11px; color: var(--muted); }
 .f5-sec { border-top: 1px solid var(--border); padding-top: 8px; }
 .f5-sec h4 { font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
              color: var(--fg-dim); font-weight: 700; margin-bottom: 5px; }
-.f5-branch { font-family: "SF Mono", monospace; font-size: 11px; color: var(--fg); }
-.f5-drift { font-size: 11px; color: var(--fg-muted); margin-left: 6px; }
+.f5-branch { font-family: "SF Mono", monospace; font-size: 11px; color: var(--ink); }
+.f5-drift { font-size: 11px; color: var(--muted); margin-left: 6px; }
 .f5-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
           margin-right: 5px; vertical-align: middle; }
 .f5-pr a { color: var(--accent); text-decoration: none; font-size: 12px; }
@@ -308,7 +308,7 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .f5-act { list-style: none; display: flex; flex-direction: column; gap: 5px; }
 .f5-act li { font-size: 12px; line-height: 1.35; }
 .f5-act .when { color: var(--fg-dim); font-size: 10px; }
-.f5-meta { font-size: 12px; color: var(--fg-muted); margin-bottom: 16px; }
+.f5-meta { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
 .f5-live { color: var(--ok); }
 .f5-stale { color: var(--warn); font-weight: 700; }
 .f5-refresh { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none;
@@ -320,36 +320,36 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .f5-warn b { color: var(--warn); }
 /* GH-105: a slim, friendly (non-alarm) nudge — deliberately lighter than
    .f5-warn so it reads as "BTW" rather than a risk warning. */
-.f5-dirty-banner { background: rgba(31,111,235,.06); border: 1px solid rgba(31,111,235,.2);
-                    color: var(--fg-muted); border-radius: 8px; padding: 6px 14px;
+.f5-dirty-banner { background: var(--zebra); border: 1px solid var(--border);
+                    color: var(--muted); border-radius: 8px; padding: 6px 14px;
                     margin-bottom: 12px; font-size: 12px; line-height: 1.4; }
-.f5-dirty-banner b { color: var(--fg); }
+.f5-dirty-banner b { color: var(--ink); }
 /* GH-81 Phase 2: a fallback-basis badge on a rostered card (reflog disabled). */
-.f5-basis { color: var(--fg-muted); font-weight: 400; font-size: 12px; }
+.f5-basis { color: var(--muted); font-weight: 400; font-size: 12px; }
 /* Focus 5 / Dirty Five view toggle — a small segmented control. */
 .f5-views { display: inline-flex; gap: 4px; padding: 3px; margin-bottom: 16px;
-            background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
-.f5-view { font-size: 13px; font-weight: 600; color: var(--fg-muted); text-decoration: none;
+            background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+.f5-view { font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none;
            padding: 4px 12px; border-radius: 6px; }
-.f5-view:hover { color: var(--fg); }
-.f5-view.active { background: rgba(31,111,235,.12); color: var(--accent); }
+.f5-view:hover { color: var(--ink); }
+.f5-view.active { background: var(--zebra); color: var(--accent); }
 
 /* What's Next — the single ranked "work on next" list. Reuses the shared
    .badge/.empty rules; only the list/row chrome is page-local. */
 .wn-refresh { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none;
               margin-left: 10px; }
 .wn-refresh:hover { text-decoration: underline; }
-.wn-meta { font-size: 12px; color: var(--fg-muted); margin-bottom: 16px; }
+.wn-meta { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
 .wn-blended { color: var(--ok); }
 .wn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.wn-item { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+.wn-item { background: var(--card); border-radius: 8px; box-shadow: var(--shadow);
            padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start; }
 .wn-rank { font-size: 13px; font-weight: 700; color: var(--fg-dim); min-width: 28px;
            font-variant-numeric: tabular-nums; }
 .wn-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .wn-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.wn-title { font-size: 14px; font-weight: 600; color: var(--fg); word-break: break-word; }
-.wn-why { font-size: 12px; color: var(--fg-muted); line-height: 1.4; }
+.wn-title { font-size: 14px; font-weight: 600; color: var(--ink); word-break: break-word; }
+.wn-why { font-size: 12px; color: var(--muted); line-height: 1.4; }
 .wn-ev { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .wn-ev li { font-size: 11px; color: var(--fg-dim); word-break: break-word; }
 .wn-src { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .04em; }
@@ -429,7 +429,7 @@ def _render_sleuth_groups() -> str:
     groups_html = "\n".join(rows)
     return (
         f"<h2 style='margin-top:28px;'>Reminders"
-        f"<span style='font-size:12px;font-weight:400;color:var(--fg-muted);margin-left:10px;'>"
+        f"<span style='font-size:12px;font-weight:400;color:var(--muted);margin-left:10px;'>"
         f"{total_tasks} active across {len(groups)} group{'s' if len(groups) != 1 else ''}"
         f"</span></h2>"
         f"<div class='sr-search-bar'>"
@@ -1474,12 +1474,12 @@ _SYSLOG_TOGGLE_CSS = (
     "<style>"
     ".syslog-bar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.75rem 0}"
     ".syslog-toggles{display:flex;gap:.3rem;flex-wrap:wrap}"
-    ".syslog-toggle{padding:.3rem .75rem;border:1px solid #d0d7de;border-radius:2rem;"
-    "background:#f6f8fa;cursor:pointer;font:inherit;font-size:.85rem;color:#24292f}"
-    ".syslog-toggle.active{background:#0969da;border-color:#0969da;color:#fff;font-weight:600}"
+    ".syslog-toggle{padding:.3rem .75rem;border:1px solid var(--border);border-radius:2rem;"
+    "background:var(--card);cursor:pointer;font:inherit;font-size:.85rem;color:var(--ink)}"
+    ".syslog-toggle.active{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}"
     ".syslog-input{flex:1;min-width:14rem;padding:.4rem .6rem;font:inherit;"
-    "border:1px solid #d0d7de;border-radius:6px}"
-    ".syslog-count{color:#57606a;font-size:.85rem;white-space:nowrap}"
+    "border:1px solid var(--border);border-radius:6px}"
+    ".syslog-count{color:var(--muted);font-size:.85rem;white-space:nowrap}"
     "</style>"
 )
 
@@ -1729,17 +1729,17 @@ def sleuth_graph_page() -> HTMLResponse:
     body = f"""
 {error_html}
 <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
-  <span style="font-size:13px;color:var(--fg-muted);">
+  <span style="font-size:13px;color:var(--muted);">
     {total} active reminders · {len(groups)} groups
   </span>
   <span style="margin-left:auto;">{legend_items}</span>
 </div>
 <div id="cy" style="width:100%;height:calc(100vh - 160px);min-height:500px;
-     background:var(--panel);border-radius:8px;
-     box-shadow:0 1px 3px rgba(0,0,0,.12);"></div>
-<div id="cy-tooltip" style="display:none;position:fixed;background:var(--panel);
+     background:var(--card);border-radius:8px;
+     box-shadow:var(--shadow);"></div>
+<div id="cy-tooltip" style="display:none;position:fixed;background:var(--card);
      border:1px solid var(--border);border-radius:6px;padding:8px 12px;
-     font-size:12px;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,.15);
+     font-size:12px;max-width:320px;box-shadow:var(--shadow);
      pointer-events:none;z-index:100;line-height:1.5;"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.33.1/cytoscape.min.js"
@@ -1748,6 +1748,9 @@ def sleuth_graph_page() -> HTMLResponse:
 <script>
 (function() {{
   var elements = {elements_json};
+
+  var rootStyle = getComputedStyle(document.documentElement);
+  var getVar = function(prop) {{ return rootStyle.getPropertyValue(prop).trim(); }};
 
   var kindColor = {{
     client:  {{ bg: '#2f7437', border: '#1e4d25' }},
@@ -1786,12 +1789,12 @@ def sleuth_graph_page() -> HTMLResponse:
       {{
         selector: 'node[reminder_id]',
         style: {{
-          'background-color': '#ffffff',
-          'border-color': '#c8c0b4',
+          'background-color': getVar('--card'),
+          'border-color': getVar('--border'),
           'border-width': 1.5,
           'label': 'data(label)',
           'font-size': 10,
-          'color': '#1d2024',
+          'color': getVar('--ink'),
           'text-valign': 'bottom',
           'text-halign': 'center',
           'text-margin-y': 4,
@@ -1806,7 +1809,7 @@ def sleuth_graph_page() -> HTMLResponse:
       {{
         selector: 'edge[kind="github"]',
         style: {{
-          'line-color': '#1d6fa8',
+          'line-color': getVar('--info'),
           'width': 2,
           'line-style': 'dashed',
           'target-arrow-shape': 'none',
@@ -1819,7 +1822,7 @@ def sleuth_graph_page() -> HTMLResponse:
         selector: 'node:selected, node.highlighted',
         style: {{
           'border-width': 3,
-          'border-color': '#1f6feb',
+          'border-color': getVar('--accent'),
           'z-index': 10,
         }},
       }},
@@ -1849,7 +1852,7 @@ def sleuth_graph_page() -> HTMLResponse:
     var d = e.target.data();
     tooltip.innerHTML =
       '<b style="display:block;margin-bottom:4px;">' + escHtml(d.full_text || d.label) + '</b>' +
-      (d.channel ? '<span style="color:#5b5750;">#' + escHtml(d.channel) + '</span>' : '') +
+      (d.channel ? '<span style="color:var(--muted);">#' + escHtml(d.channel) + '</span>' : '') +
       (d.state ? ' &nbsp;·&nbsp; <code>' + escHtml(d.state) + '</code>' : '');
     tooltip.style.display = 'block';
   }});
