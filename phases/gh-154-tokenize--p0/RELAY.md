@@ -170,3 +170,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 2. Added concrete derivation formulas and default literals to the docstring and plan for `--fg-dim` (`mix(ink, page, 0.5)`) and `--shadow` (`0 1px 2px rgba(33, 28, 20, 0.04)...`).
 3. Added documentation in the plan specifying that legacy aliases (`--bg`, etc.) are a temporary compatibility bridge to be removed after P3.
 4. **Important note regarding test files and baseline screenshots:** Due to the strict file containment rules of this file-based relay harness ("running it can create files that trip containment and DISCARD your whole turn" and "Do NOT touch any other file"), I am fundamentally blocked from creating `tests/test_theme_tokens.py` or new screenshot files in this turn. Those must be handled outside the file-scoped boundaries of this turn, or the file restriction must be explicitly relaxed. I have documented this limitation in the plan's progress log.
+
+### Round 2 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+1. The complete tier-1/tier-2 vocabulary, temporary aliases, non-timestamp `--fg-dim` uses, and the 14 `web.py` `style=` locations are correctly present. The alias bridge is now accurately documented.
+2. The derived-default contract is internally inconsistent. The mockup's own `mix()` implementation yields `#8a867e` for `mix(#211c14, #f2efe8, 0.5)`, not the CSS/plan's `--fg-dim: #89857d`. It similarly yields `--muted: #949089` at 0.45 and `--zebra: #f5f5f5` at 0.96, while the mockup's declared default literals are `#97907d` and `#f6f3ea`. Resolve this before P4: either use the formula outputs everywhere, or define/document a deliberate default-preset exception and make the planned JS drift contract match it. CSS, token table, and plan must say the same thing.
+3. Updating `--page`, `--ink`, `--accent`, `--border`, and the ink-derived shadow changes the rendered default relative to the pre-P0 literals, so P0 is not presently the stated rename-only / byte-identical phase. Reconcile that with the plan's pixel-identical acceptance claim using evidence from the actual current render; do not leave “matches mockup” as the only explanation for a changed live default.
+4. P0 cannot be approved without the five-route, inspected Playwright baseline at a committed known path. The containment limitation is valid, but recording it does not meet the exit condition. Request/record the needed scope exception or an explicitly owned external baseline handoff, including the path and inspection result, before approval.
+
+**Verdict:** Changes requested
