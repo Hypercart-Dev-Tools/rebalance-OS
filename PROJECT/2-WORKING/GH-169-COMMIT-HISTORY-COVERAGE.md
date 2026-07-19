@@ -295,10 +295,10 @@ it would have passed green through the entire #155→#157 sequence.
 The check must therefore be **anchored to the remote**, and must report three distinct quantities
 rather than one number:
 
-- [ ] **Remote anchor.** Resolve the remote default-branch tip via `git ls-remote` (one cheap call,
+- [x] **Remote anchor.** Resolve the remote default-branch tip via `git ls-remote` (one cheap call,
       no clone required) and record clone freshness as `local_tip == remote_tip` plus last-fetch age.
       A check run against a clone behind the remote reports `stale`, never `0`.
-- [ ] **Three separate gaps, never netted** (closes the RC5 phantom/gap cancellation):
+- [x] **Three separate gaps, never netted** (closes the RC5 phantom/gap cancellation):
       1. `collection_gap` — SHAs on the remote default branch absent from `github_direct_commits` +
          `github_commits`. **Presence of a row is not coverage** (agy r2 Nit): a row whose
          `path_coverage` is `unavailable` is a captured commit with no file data, and a
@@ -309,25 +309,47 @@ rather than one number:
          `sync_direct_commit_documents()` full-rebuild failure mode).
       3. `orphan_count` — captured SHAs no longer reachable on the remote (force-push / squash
          residue).
-- [ ] **Uncoverable repos are a reported state**, not an omission: watched repos with no clone appear
+- [x] **Uncoverable repos are a reported state**, not an omission: watched repos with no clone appear
       in the check with `uncoverable` and a reason.
-- [ ] Surface all of it in `index_status` freshness (alongside `github_documents_missing_from_semantic`)
+- [x] Surface all of it in `index_status` freshness (alongside `github_documents_missing_from_semantic`)
       and in `rebalance doctor`.
-- [ ] Degrade health when any gap exceeds threshold, when a clone is stale, or when a repo is
+- [x] Degrade health when any gap exceeds threshold, when a clone is stale, or when a repo is
       uncoverable.
+
+### Phase 3 findings (written back per PDDA)
+
+New `src/rebalance/ingest/github_coverage.py`, surfaced in both `index_status.freshness.commit_coverage`
+and a `commit coverage` check in `rebalance doctor`.
+
+One implementation decision worth recording: the staleness test is **containment**, not tip equality.
+Comparing the remote tip to local `HEAD` would pass on whatever branch happens to be checked out —
+in a worktree that is routinely a feature branch. The real question is "does this clone contain
+everything the remote has?", so the check is `git cat-file -e <remote_tip>^{commit}`.
+
+First live run immediately surfaced true positives rather than a reassuring zero:
+
+```
+collection_gap  95    (Phase 1 backfilled --since 2026-05-01; older history still uncovered)
+projection_gap  211   (backfilled but not yet re-projected into the corpus — RC5's exact shape)
+orphan_count    0
+incomplete      16
+```
+
+`doctor` also flagged two watched repos as `uncoverable` (no local clone on this machine) instead of
+silently omitting them. That is the check doing its job on day one.
 
 ### QA gate — Phase 3
 
-- [ ] With commits deliberately withheld, the check reports the correct non-zero `collection_gap`.
-- [ ] **A deliberately stale clone reports `stale` rather than `0`** — the blocker's regression test.
-- [ ] Deleting rows from `github_documents` while leaving `github_direct_commits` intact produces a
+- [x] With commits deliberately withheld, the check reports the correct non-zero `collection_gap`.
+- [x] **A deliberately stale clone reports `stale` rather than `0`** — the blocker's regression test.
+- [x] Deleting rows from `github_documents` while leaving `github_direct_commits` intact produces a
       non-zero `projection_gap` (proves the two are measured independently).
-- [ ] A phantom SHA plus an equal-sized real gap reports **both**, not a net zero.
-- [ ] **A row present but with `path_coverage = 'unavailable'` counts as a gap, not as covered**
+- [x] A phantom SHA plus an equal-sized real gap reports **both**, not a net zero.
+- [x] **A row present but with `path_coverage = 'unavailable'` counts as a gap, not as covered**
       (agy r2 Nit regression test — presence is not coverage).
-- [ ] After backfill on a fresh clone, all three report 0 and health is `ok`.
-- [ ] Cheap enough for every `doctor` run: local git plus one `git ls-remote` per repo, no REST API.
-- [ ] Consistent with the #167 precedent for reporting corpus drift.
+- [x] After backfill on a fresh clone, all three report 0 and health is `ok`.
+- [x] Cheap enough for every `doctor` run: local git plus one `git ls-remote` per repo, no REST API.
+- [x] Consistent with the #167 precedent for reporting corpus drift.
 
 ## Phase 4 — Verification against the original symptom
 

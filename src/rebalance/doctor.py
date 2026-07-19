@@ -1032,6 +1032,38 @@ def _check_figma() -> Check:
     return Check("figma", OK, f"token present (via {where}) · {len(file_keys)} file(s)")
 
 
+
+def _check_commit_coverage(db_path: Path) -> Check:
+    """Commit-corpus completeness vs the remote (GH-169 Phase 3).
+
+    This check exists because #155 and #157 each fixed something real and each
+    left a gap that only surfaced when an operator asked a question and got a
+    bad answer. It is anchored on the remote deliberately: comparing the local
+    clone to the local DB proves only that the backfill ran, and on a stale
+    clone both sides are equally wrong and report a confident zero.
+
+    Reports the three quantities separately. A phantom row from a force-push
+    and a real uncollected commit must never cancel each other out.
+    """
+    try:
+        from rebalance.ingest.github_coverage import check_coverage, coverage_health
+        from rebalance.ingest.index_ops import _resolve_repos_for_refresh
+    except Exception as exc:  # noqa: BLE001 — doctor must never crash
+        return Check("commit coverage", WARN, f"coverage module unavailable: {exc}")
+
+    try:
+        repos = _resolve_repos_for_refresh(db_path, None)
+        if not repos:
+            return Check("commit coverage", OK, "no watched repos to check")
+        report = check_coverage(db_path, repos)
+        verdict = coverage_health(report)
+    except Exception as exc:  # noqa: BLE001 — a probe failure is not a crash
+        return Check("commit coverage", WARN, f"coverage check failed: {exc}")
+
+    status = {"ok": OK, "warn": WARN, "degraded": WARN}.get(verdict["status"], WARN)
+    return Check("commit coverage", status, verdict["reason"])
+
+
 def _check_xyz_pin() -> Check:
     """XYZ harness pin — GH-102 seam #2 (optional cross-repo integration).
 
@@ -1413,6 +1445,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     report.checks.append(_check_gmail(db_path))
     report.checks.append(_check_calendar())
     report.checks.append(_check_figma())
+    report.checks.append(_check_commit_coverage(db_path))
     report.checks.append(_check_xyz_pin())
     report.checks.append(_check_pulse())
 

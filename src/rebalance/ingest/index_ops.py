@@ -645,6 +645,31 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
         except Exception:
             drift["semantic_documents_pending_embed"] = None
 
+        # GH-169 Phase 3: commit-corpus completeness, anchored on the remote.
+        # Cheap (local git + one ls-remote per repo, no REST API) so it can run
+        # on every status call. Reported as three separate quantities that are
+        # never summed — a phantom must not cancel a real gap.
+        try:
+            from rebalance.ingest.github_coverage import check_coverage, coverage_health
+
+            repos = _resolve_repos_for_refresh(database_path, None)
+            report = check_coverage(database_path, repos)
+            drift["commit_coverage"] = {
+                "checked_at": report.checked_at,
+                "repos_checked": len(report.repos),
+                "collection_gap": sum(r.collection_gap for r in report.repos),
+                "projection_gap": sum(r.projection_gap for r in report.repos),
+                "orphan_count": sum(r.orphan_count for r in report.repos),
+                "incomplete": sum(r.incomplete for r in report.repos),
+                "uncoverable": [
+                    r.repo for r in report.repos if r.state == "uncoverable"
+                ],
+                "stale": [r.repo for r in report.repos if r.state == "stale"],
+                "health": coverage_health(report),
+            }
+        except Exception as exc:  # never let a coverage probe break status
+            drift["commit_coverage"] = {"error": str(exc)}
+
         payload["freshness"] = {**drift, "signal_health": _derive_signal_health(payload["sources"])}
 
     return payload
