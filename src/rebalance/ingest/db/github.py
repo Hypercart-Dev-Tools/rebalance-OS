@@ -285,18 +285,33 @@ def update_push_event(
     state: str,
     now: str,
     reason: str = "",
+    deferral_kind: str | None = None,
 ) -> None:
-    """Advance a receipt state without hiding its prior observation."""
+    """Advance a receipt state without hiding its prior observation.
+
+    ``attempt_count`` counts ATTEMPTS, not visits (GH-169). A deferral with
+    ``deferral_kind='budget'`` means the run exhausted its own per-refresh cap
+    before reaching this event — nothing was tried, so nothing is charged.
+
+    The previous unconditional ``attempt_count + 1`` charged those too, and
+    ``pending_push_events()`` filters ``attempt_count < MAX_EVENT_ATTEMPTS``.
+    An event that merely lost the cap lottery three times was therefore evicted
+    permanently, never fetched, and never reported as lost — 20 real events on
+    the live DB, every one of them for "compare cap reached". Genuine failures
+    still cost an attempt, so a non-retryable error still stops retrying.
+    """
+    charge = 0 if deferral_kind == "budget" else 1
     conn.execute(
         """
         UPDATE github_push_events
-        SET state = ?, attempt_count = attempt_count + 1, last_attempt_at = ?,
+        SET state = ?, attempt_count = attempt_count + ?, last_attempt_at = ?,
             resolved_at = CASE WHEN ? IN ('enriched', 'ignored', 'head_only', 'failed')
                                THEN ? ELSE resolved_at END,
-            failure_reason = ?
+            failure_reason = ?,
+            deferral_kind = ?
         WHERE event_id = ?
         """,
-        (state, now, state, now, reason[:500] or None, event_id),
+        (state, charge, now, state, now, reason[:500] or None, deferral_kind, event_id),
     )
 
 

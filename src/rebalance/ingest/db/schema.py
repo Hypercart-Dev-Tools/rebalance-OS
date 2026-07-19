@@ -672,6 +672,15 @@ def _ensure_github_direct_commit_schema(conn: sqlite3.Connection) -> None:
     _add_column_if_missing(
         conn, "github_direct_commits", "source", "TEXT NOT NULL DEFAULT 'events'"
     )
+    # GH-169 Phase 2: why an event was deferred is a CONTROL signal, so it needs
+    # a column of its own. It previously lived only inside `failure_reason`, a
+    # human-readable log string — and reading control flow out of prose is how
+    # 20 events were evicted for "compare cap reached", which is not a failure
+    # at all. 'budget' = the run ran out of its own quota (must not cost an
+    # attempt); 'failure' = the fetch genuinely failed (must cost one).
+    _add_column_if_missing(
+        conn, "github_push_events", "deferral_kind", "TEXT"
+    )
     # GH-169 Phase 1: a watched repo we cannot enumerate locally is a REPORTED
     # state, not an omission. Silence is the failure shape this whole issue is
     # about, so an uncoverable repo gets a durable row with a reason.

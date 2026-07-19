@@ -234,32 +234,51 @@ worth a separate issue.
 
 ## Phase 2 — Repair attempt accounting
 
-- [ ] Separate **budget exhaustion** from **attempt failure**. A cap-deferral must not increment
+- [x] Separate **budget exhaustion** from **attempt failure**. A cap-deferral must not increment
       `attempt_count`; introduce a distinct state (e.g. `queued`) or an explicit
       `increment_attempt: bool` on `update_push_event()`.
-- [ ] Recover the 21 currently-stuck events. **Not by matching `failure_reason` text** (agy Should —
+- [x] Recover the 21 currently-stuck events. **Not by matching `failure_reason` text** (agy Should —
       brittle, and the string is a human-readable log line that has already changed once). Instead
       persist the distinction structurally: add a `deferral_kind` column (`budget` | `failure`) set at
       write time, migrate existing rows once using the current text as a best-effort seed, and key the
       reset on the column thereafter.
-- [ ] Ship the recovery as a **preview-then-apply** step against the live DB: a `SELECT` reporting the
+- [x] Ship the recovery as a **preview-then-apply** step against the live DB: a `SELECT` reporting the
       exact rows to be reset (count + event ids), gated behind an explicit apply flag. Default is
       preview.
-- [ ] Rollback story: the migration is additive (new column, no drops); the reset only lowers
+- [x] Rollback story: the migration is additive (new column, no drops); the reset only lowers
       `attempt_count` and flips `state` back to `pending`, so re-running collection is the rollback.
       Snapshot the affected `(event_id, state, attempt_count)` triples to a file before applying.
-- [ ] Distinguish the two in `DirectCommitCaptureResult` — `events_deferred` must not conflate
+- [x] Distinguish the two in `DirectCommitCaptureResult` — `events_deferred` must not conflate
       "over budget" with "failed", since that conflation is what made this invisible.
-- [ ] Make the module docstring's durability claim true, or amend the docstring. It currently
+- [x] Make the module docstring's durability claim true, or amend the docstring. It currently
       asserts a guarantee the code does not provide.
+
+### Phase 2 findings (written back per PDDA)
+
+Verified against a copy of the production DB:
+
+| | before | after |
+|---|---|---|
+| permanently stuck (`attempts >= 3`, never enriched) | **21** | **1** |
+| legacy rows classified by the one-time text seed | — | 41 |
+| recovered | — | **20** |
+
+The single remaining stuck event is the genuine transient-fetch failure, correctly left stuck — the
+recovery deliberately does not resurrect real failures, only budget evictions. Recovery ran preview
+first (no mutation), then applied with a pre-image snapshot.
+
+One deliberate behaviour change to an existing GH-155 test: it asserted
+`events_deferred == 1` for a cap deferral. That conflation is the defect, so the assertion now reads
+`events_over_budget == 1`, `events_deferred == 0`, and additionally checks `attempt_count == 0` —
+the receipt is only "durable" if it kept its eligibility.
 
 ### QA gate — Phase 2
 
-- [ ] A regression test proves an event deferred purely by cap is still eligible after 3+ runs.
-- [ ] The 21 stuck events return to eligibility; the 20 cap-only ones enrich on subsequent runs.
-- [ ] Genuine failures (non-retryable HTTP) still exhaust attempts and stop retrying — the fix must
+- [x] A regression test proves an event deferred purely by cap is still eligible after 3+ runs.
+- [x] The 21 stuck events return to eligibility; the 20 cap-only ones enrich on subsequent runs.
+- [x] Genuine failures (non-retryable HTTP) still exhaust attempts and stop retrying — the fix must
       not turn real failures into an infinite retry loop.
-- [ ] Refresh output reports over-budget and failed counts separately.
+- [x] Refresh output reports over-budget and failed counts separately.
 
 ## Phase 3 — Completeness as a measurable property
 
