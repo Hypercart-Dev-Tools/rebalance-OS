@@ -6,6 +6,23 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.61.0] - 2026-07-19
+
+### Changed
+- **CLIO Markdown exporter auto-sync default is now every 1 minute (was 5).** Updated the
+  launchd `StartInterval` in `utils/CLIO/INSTALL.md` (300 → 60) and the live
+  `com.claude.prompt-log-to-md` job on this machine (reloaded; prior plist backed up to
+  `*.plist.bak-300s`). Faster surfacing of new prompts into the shared Obsidian note, at the
+  cost of higher concurrent-write odds — which motivates the durability plan below.
+
+### Added
+- **Plan: durable, idempotent CLIO writes to the shared Obsidian note.** Root-caused CLIO's
+  best-effort merge gap (the per-device line-count cursor is load-bearing for correctness and
+  advances whether or not a write survives sync; no content-level idempotency; no conflict-copy
+  reconciliation) and drafted a 4-phase fix: content-addressed entry IDs, conflict-copy
+  reconciliation, verify-after-write, and a coupled `PromptLogReader` change to skip HTML-comment
+  lines. → `PROJECT/1-INBOX/CLIO-DURABLE-IDEMPOTENT-WRITES.md`
+
 ## [0.60.0] - 2026-07-18
 
 ### Fixed

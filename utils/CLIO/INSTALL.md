@@ -246,7 +246,7 @@ Noels-MacBook-Pro · main
 
 To sync on a schedule instead of running by hand, add it as a `launchd` job (macOS) or a cron entry pointing at the same command with your chosen output path — the script itself doesn't change either way. On a shared output file in a synced folder, run it on **every** machine: each device keeps appending its own new prompts to the one note, and both devices' history accumulates there.
 
-### Auto-sync every 5 minutes (macOS launchd)
+### Auto-sync every 1 minute (macOS launchd)
 
 Replace `OUT_PATH` with your chosen output file (e.g. an Obsidian note):
 
@@ -267,7 +267,7 @@ cat > "$PLIST" << EOF
         <string>$OUT_PATH</string>
     </array>
     <key>StartInterval</key>
-    <integer>300</integer>
+    <integer>60</integer>
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
@@ -321,7 +321,7 @@ rm -f ~/.claude/hooks/prompt-log-to-md.sh ~/.claude/prompt-log-to-md.state ~/.cl
 - **Resumed sessions**: `--resume`/`--continue` replay saved context rather than re-running the hook for past turns — only genuinely new prompts get logged.
 - **Idempotent**: re-running the install block is safe; it skips re-registering the hook if it's already present, but always rewrites `log-prompt.sh`.
 - **MD export is a separate, incremental step**: it reads the same JSONL and never touches the hook, so the two can be versioned, run, or dropped independently. It appends only entries logged since its last run — a cursor (line count) in `~/.claude/prompt-log-to-md.state` — and prepends them below the fixed header, newest first. It never rewrites entries it has already written.
-- **Cross-device accumulation**: because the export only *appends its own new local prompts* and never regenerates the file, pointing several machines' exports at one output file in a synced folder (e.g. an Obsidian vault) makes every device's history pile into the one note instead of overwriting. Each device keeps its own cursor against its own local JSONL and never reads another device's log — the merge is emergent from sync + incremental append, not a cross-device read. **Caveat**: it's best-effort, not transactional — the cursor advances whether or not a write survives sync, so if two machines write before a sync round-trip completes, a lost batch (or an Obsidian conflict copy) is never re-emitted, and there's no dedup. In practice the 5-minute cadence makes overlap rare.
+- **Cross-device accumulation**: because the export only *appends its own new local prompts* and never regenerates the file, pointing several machines' exports at one output file in a synced folder (e.g. an Obsidian vault) makes every device's history pile into the one note instead of overwriting. Each device keeps its own cursor against its own local JSONL and never reads another device's log — the merge is emergent from sync + incremental append, not a cross-device read. **Caveat**: it's best-effort, not transactional — the cursor advances whether or not a write survives sync, so if two machines write before a sync round-trip completes, a lost batch (or an Obsidian conflict copy) is never re-emitted, and there's no dedup. The default cadence is **every 1 minute** — a tighter cadence surfaces new prompts faster but also makes concurrent multi-device writes (and thus conflict copies) *more* likely, which is exactly the durability gap tracked in `PROJECT/1-INBOX/CLIO-DURABLE-IDEMPOTENT-WRITES.md` (content-addressed idempotent writes + conflict-copy reconciliation).
 - **Resetting / rebuilding the export**: delete `~/.claude/prompt-log-to-md.state` to re-emit from the top of the JSONL on the next run (it prepends everything again above existing content); delete the output file too for a clean rebuild. On a shared synced file, resetting one device re-adds only *that* device's local prompts.
 - **Relay/machine-prompt filtering**: prompts whose text matches `PROMPT_LOG_EXCLUDE` (default `file-based relay|cross-agent dependency drift`, case-insensitive) are omitted from the Markdown — this hides `/relay-xyz`-style machine-triggered turns. They stay in the raw JSONL; only the rendered export drops them. Override the env var to change what's hidden, or set it empty (`PROMPT_LOG_EXCLUDE= prompt-log-to-md.sh …`) to hide nothing.
 - **Errors are non-fatal but visible**: the hook always exits 0 so a logging failure never blocks a prompt from being submitted, but any failure (missing `jq`, malformed input) is recorded to `~/.claude/prompt-log-errors.log` instead of vanishing silently. Check that file if entries seem to be missing.
