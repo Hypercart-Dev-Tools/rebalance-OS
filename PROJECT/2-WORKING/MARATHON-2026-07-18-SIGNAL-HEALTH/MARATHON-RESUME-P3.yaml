@@ -1,0 +1,59 @@
+# MARATHON-RESUME-P3.yaml — resume plan for the 2026-07-18 signal-health bundle
+#
+# WHY THIS FILE EXISTS
+# -------------------
+# marathon.sh has NO skip-if-already-approved logic — it runs every phase in the
+# plan on every invocation. Re-firing the full MARATHON.yaml would re-run p1 and
+# p2, which have already landed correct, gate-passing work (committed 440a5f4):
+#
+#   p1 sig-p1-152-clone-pull        Approved, gate passed  (scripts/pulse_sync.sh, +35)
+#   p2 sig-p2-146-launchd-predicate Approved, gate passed  (src/rebalance/doctor.py, +25/-5)
+#
+# So this plan carries ONLY p3. It is a resume artifact — MARATHON.yaml remains
+# the record of the whole bundle.
+#
+# ⚠️ The plan `name` MUST match the original (marathon-2026-07-18-signal-health):
+# the relay lane id is `marathon-<plan-name>--<phase-id>`, so a different name
+# mints a FRESH lane. Here the name match is deliberate (same lane).
+#
+# WHY p3's depends_on IS DROPPED
+# ------------------------------
+# p2 is already committed to HEAD, so p3's worktree (seeded from ROOT@HEAD) now
+# contains p2's doctor.py changes. The dependency is satisfied by git history,
+# not by re-running p2. Dropping depends_on keeps this a single-phase plan.
+#
+# STATE AT RESUME (2026-07-18)
+# ---------------------------
+# The first p3 attempt produced NO code — the harness ran non-vendored, so ROOT
+# resolved to the swarm repo and worktree isolation guarded the wrong tree;
+# codex's turns registered "no tracked changes" every round and the relay
+# escalated (cap-or-close-mismatch). There is nothing to preserve, so the stale
+# p3 phase dir (RELAY.md + ESCALATION.md) is cleared before this fire for a fresh
+# render. Fixed by:
+#   - swarm ddb6c40: turn shims root at the CWD git toplevel (the target repo)
+#   - this plan: artifact now doctor.py,health.py (the 2-file lane #153 needs;
+#     health.py was off-lane last run)
+#
+# GATE — same union selector as the parent plan, green at baseline
+# (305 passed, 10 skipped, 0 failed). Do NOT gate on the full suite (~15
+# pre-existing failures are unrelated debt).
+#
+#   .venv/bin/python -m pytest tests/ -k "doctor or health or freshness or pulse or signal" -q
+#
+# RUN
+#   xyz-3-agents-swarm/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-2026-07-18-SIGNAL-HEALTH/MARATHON-RESUME-P3.yaml \
+#     --retry sig-p3-153-severity-buckets --force \
+#     --pre-advance-cmd '<the selector above>'
+
+name: marathon-2026-07-18-signal-health
+
+phases:
+
+  - id: sig-p3-153-severity-buckets
+    name: "GH-153: segment collector-panel checks into notices / warnings / errors"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-SIGNAL-HEALTH/briefs/p3-153-severity-buckets.md
+    artifact: src/rebalance/doctor.py,src/rebalance/health.py
+    turn_timeout_s: 1200
+    max_review_rounds: 3

@@ -873,6 +873,7 @@ def _refresh_github(
     plan_steps = [
         "sync_pushed_repos()",
         f"github_scan(days={since_days})",
+        "capture_direct_commits(events, watched_repos, cap=5/20)",
         f"sync_github_repo() x ~{len(initial_target_repos)} repos (after auto-discovery)",
         f"reconcile_watched_repo() x {external_count} external repos (rollup or purge)",
         "embed_github_documents()",
@@ -893,6 +894,10 @@ def _refresh_github(
     )
     from rebalance.ingest.config import get_github_ignored_repos
     from rebalance.ingest.github_knowledge import sync_github_repo
+    from rebalance.ingest.github_direct_commits import (
+        capture_direct_commits,
+        sync_direct_commit_documents,
+    )
 
     # Auto-discovery: fetch /user/repos?sort=pushed and upsert into
     # github_pushed_repos BEFORE resolving target repos, so newly-pushed
@@ -903,6 +908,12 @@ def _refresh_github(
     scan_result = scan_github(token=token, days=since_days)
     skipped = filter_ignored_repo_activity(scan_result, get_github_ignored_repos())
     upsert_github_activity(database_path, scan_result)
+    direct_commits = capture_direct_commits(
+        database_path,
+        token=token,
+        events=scan_result.events,
+        watched_repos=target_repos,
+    )
 
     repo_results: list[dict[str, Any]] = []
     for repo in target_repos:
@@ -947,6 +958,19 @@ def _refresh_github(
             )
         except Exception as e:  # noqa: BLE001 — one repo must not abort the run
             watched_activity.append({"repo": repo, "error": str(e)})
+
+    direct_documents = sync_direct_commit_documents(database_path)
+    # The GitHub raw source emits github_documents; semantic_index remains the
+    # sole writer of semantic_documents. Re-project each refreshed repo so a
+    # direct commit is queryable in the same run.
+    from rebalance.ingest.db import db_connection, ensure_github_schema
+    from rebalance.ingest.semantic_index import sync_github_documents
+
+    direct_semantic: dict[str, dict[str, int]] = {}
+    with db_connection(database_path, ensure_github_schema) as conn:
+        for repo in target_repos:
+            direct_semantic[repo] = sync_github_documents(conn, repo_full_name=repo)
+        conn.commit()
 
     from rebalance.ingest.github_knowledge import embed_github_documents
 
@@ -1002,6 +1026,11 @@ def _refresh_github(
             "events": scan_result.total_events,
             "repos": len(scan_result.repo_activity),
             "skipped_ignored": len(skipped),
+        },
+        "direct_commit_capture": {
+            **direct_commits.as_dict(),
+            "documents_built": direct_documents,
+            "semantic_projection": direct_semantic,
         },
         "artifact_sync": repo_results,
         "watched_activity": watched_activity,

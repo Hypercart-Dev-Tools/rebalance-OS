@@ -53,6 +53,49 @@ CLOUD_AGENT_AUTHORS: tuple[str, ...] = (
 )
 
 
+class PulseReconcileError(RuntimeError):
+    """The pulse export mirror could not be reconciled with origin (GH-152)."""
+
+
+def reconcile_pulse_mirror(target_path: Path) -> None:
+    """Fetch origin and rebase the local pulse mirror onto it.
+
+    Keeps the dashboard-read mirror fresh without discarding local pulse-write
+    commits (rebase replays them onto origin). Without this, ``pulse_sync`` only
+    writes/commits/pushes and never pulls, so the mirror freezes and every
+    freshness signal read from it reports live collectors as stale (GH-152).
+
+    Raises ``PulseReconcileError`` on any failure so the caller can surface it
+    loudly — never a silent "fresh" state. The caller decides whether that is
+    fatal; a reconcile failure does not corrupt the working tree (a failed
+    rebase is aborted here before raising).
+    """
+    git_dir = target_path / ".git"
+    if not git_dir.exists():
+        raise PulseReconcileError(f"pulse_target_path is not a git repo: {target_path}")
+    # Defer to an operator's in-progress rebase rather than trampling it.
+    if (git_dir / "rebase-merge").exists() or (git_dir / "rebase-apply").exists():
+        raise PulseReconcileError(
+            f"a git rebase is already in progress in {target_path}; deferring to operator"
+        )
+    proc = subprocess.run(
+        ["git", "pull", "--rebase"],
+        cwd=str(target_path),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        # Restore the repo so a conflicted rebase does not linger for the next run.
+        subprocess.run(
+            ["git", "rebase", "--abort"], cwd=str(target_path), capture_output=True
+        )
+        detail = (proc.stderr or proc.stdout).strip()
+        raise PulseReconcileError(
+            f"git pull --rebase failed (code {proc.returncode}) in {target_path}: {detail}"
+        )
+
+
 def _author_filter_sql(column: str) -> str:
     """SQL fragment matching the user OR any cloud-agent bot author."""
     placeholders = ", ".join("?" for _ in CLOUD_AGENT_AUTHORS)
@@ -209,6 +252,46 @@ def _query_day_activity(
                 "html_url": r["html_url"] or "",
                 "author_login": r["author_login"] or "",
                 "source_tag": tag,
+                "source_kind": "pull_request",
+            })
+
+    # Direct branch commits are a distinct raw source. The anti-join means a
+    # later-discovered PR commit replaces the visible signal without deleting
+    # the direct-push receipt/provenance.
+    direct_filter = _author_filter_sql("d.author_login")
+    rows = conn.execute(
+        f"""
+        SELECT d.repo_full_name, d.sha, d.message, d.committed_at, d.html_url,
+               d.author_login, d.ref,
+               (SELECT GROUP_CONCAT(path, char(10))
+                  FROM github_direct_commit_files f
+                 WHERE f.repo_full_name = d.repo_full_name AND f.sha = d.sha) AS paths
+        FROM github_direct_commits d
+        WHERE d.committed_at >= ?
+          AND {direct_filter}
+          AND NOT EXISTS (
+              SELECT 1 FROM github_commits p
+              WHERE p.repo_full_name = d.repo_full_name AND p.sha = d.sha
+          )
+        ORDER BY d.committed_at DESC
+        """,
+        (sql_floor, github_login, *CLOUD_AGENT_AUTHORS),
+    ).fetchall()
+    for r in rows:
+        if _in_window(r["committed_at"], start, end):
+            message = r["message"] or ""
+            activity.gh_commits.append({
+                "repo": r["repo_full_name"],
+                "sha": r["sha"][:7] if r["sha"] else "",
+                "subject": message.splitlines()[0][:160] if message else "direct commit",
+                "committed_at": r["committed_at"],
+                "html_url": r["html_url"] or "",
+                "author_login": r["author_login"] or "",
+                "paths": (r["paths"] or "").splitlines(),
+                "source_tag": classify_source(
+                    branch=r["ref"], author_login=r["author_login"], commit_message=message,
+                ),
+                "source_kind": "direct_push",
             })
 
     item_filter = _author_filter_sql("author_login")

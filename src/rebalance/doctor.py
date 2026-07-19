@@ -17,13 +17,18 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable
+from typing import Callable, Literal
 
 from rebalance.tz_utils import local_tz
 
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
+
+NOTICE = "notice"
+WARNING = "warning"
+ERROR = "error"
+Severity = Literal["notice", "warning", "error"]
 
 
 @dataclass
@@ -34,6 +39,14 @@ class Check:
     status: str  # OK | WARN | FAIL
     detail: str
     hint: str = ""
+    severity: Severity = WARNING
+
+    def __post_init__(self) -> None:
+        """Keep legacy FAIL emitters in the error bucket and reject typos."""
+        if self.severity not in {NOTICE, WARNING, ERROR}:
+            raise ValueError(f"invalid check severity: {self.severity}")
+        if self.status == FAIL and self.severity == WARNING:
+            self.severity = ERROR
 
 
 @dataclass
@@ -423,7 +436,9 @@ def _check_collector_freshness(
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
             ).fetchone()
             if not has_table:
-                return Check(name, WARN, f"{table} table not present")
+                return Check(
+                    name, WARN, f"{table} table not present", severity=ERROR
+                )
             count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]  # noqa: S608
             latest = conn.execute(
                 f"SELECT MAX({ts_col}) FROM {table}"  # noqa: S608
@@ -450,7 +465,9 @@ def _check_collector_freshness(
         return Check(name, FAIL, f"could not read {table}: {exc}")
 
     if count == 0:
-        return Check(name, WARN, f"no {name} ingested", empty_hint)
+        return Check(
+            name, WARN, f"no {name} ingested", empty_hint, severity=ERROR
+        )
 
     if quality_count and invalid_count / quality_count > max_invalid_fraction:
         invalid_percent = round(invalid_count / quality_count * 100)
@@ -479,7 +496,7 @@ def _check_collector_freshness(
     detail = f"{count} rows, last sync {latest}"
     if recent_count == 0 and quiet_filter is not None:
         detail += f"; no rows matched in the last {warn_days}d ({quiet_filter()})"
-    return Check(name, OK, detail)
+    return Check(name, OK, detail, severity=NOTICE)
 
 
 def _launchctl_list() -> str | None:
@@ -609,6 +626,7 @@ def _check_scheduler_liveness(
                     WARN,
                     "scheduled job is not loaded on this device",
                     f"install it with `bash {installer}`",
+                    severity=NOTICE,
                 )
             )
     return checks
@@ -747,20 +765,42 @@ def _check_launchd(
             continue
         pid, status, label = parts
         short = label.replace("com.rebalance-os.", "").replace("com.user.", "")
+        # daily-sync has a richer JSON outcome that supersedes its sticky
+        # launchctl status (GH-146 Root cause A, from development).
         if short == "daily-sync":
             checks.append(_daily_sync_launchd_check(pid.strip(), status.strip(), log_dir, now))
             continue
-        if status.strip() not in ("0", "-"):
+
+        # Every other job: a live PID means it is up now, and a negative (signal,
+        # e.g. -15 SIGTERM from `kickstart -k`) status is a clean stop, not a crash
+        # (GH-146 Root cause B). WARN only on a positive non-zero exit with no PID.
+        pid_val = pid.strip()
+        status_val = status.strip()
+        has_live_pid = pid_val != "-"
+
+        is_negative_signal = False
+        try:
+            val = int(status_val)
+            if val < 0:
+                is_negative_signal = True
+        except ValueError:
+            pass
+
+        is_ok_status = status_val in ("0", "-") or is_negative_signal
+
+        if has_live_pid or is_ok_status:
+            running = "running" if has_live_pid else "idle, last run ok"
+            checks.append(
+                Check(f"launchd:{short}", OK, running, severity=NOTICE)
+            )
+        else:
             checks.append(
                 Check(
                     f"launchd:{short}", WARN,
-                    f"last run exited with status {status.strip()}",
+                    f"last run exited with status {status_val}",
                     "inspect temp/logs/ for this job's error output",
                 )
             )
-        else:
-            running = "running" if pid.strip() != "-" else "idle, last run ok"
-            checks.append(Check(f"launchd:{short}", OK, running))
     return checks
 
 
@@ -829,6 +869,7 @@ def _check_sleuth(db_path: Path | None = None) -> Check:
                     f"published export is stale — heartbeat {stamp} ({age_h:.1f}h ago)",
                     "the Sleuth publisher (sleuth-reminders-export.timer on the box) or the "
                     f"local export clone may be stuck; check the timer and `git -C {sync_repo} pull`",
+                    severity=ERROR,
                 )
             return Check("sleuth", OK, f"configured (via {where}) · export {age_h:.1f}h old")
     return Check("sleuth", OK, f"configured (via {where})")
@@ -1074,6 +1115,7 @@ def _check_auth_failures() -> list[Check]:
                 WARN,
                 f"last auth event was a failure — {event} at {ts} UTC{where}",
                 _AUTH_FAIL_HINT.get(source, "re-authenticate this integration"),
+                severity=ERROR,
             )
         )
 
@@ -1145,6 +1187,7 @@ def _check_pulse_collectors(*, current_device_id: str | None = None) -> list[Che
                 "" if healthy else
                 "check the collector machine / its launchd git-pulse job; "
                 "`python experimental/git-pulse/health-check.py` for the full view",
+                severity=WARNING if health.healthy else ERROR,
             )
         )
     return checks

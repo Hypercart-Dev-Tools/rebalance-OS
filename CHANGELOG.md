@@ -6,7 +6,7 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
-## [0.62.0] - 2026-07-19
+## [0.63.0] - 2026-07-19
 
 ### Added
 - **CLIO exporter is now idempotent by content and self-healing across devices.** Implemented
@@ -32,7 +32,7 @@
   exercise the shell path) and fixed with the portable `${arr[@]+…}` guard. Re-verified on
   `/bin/bash` 3.2: idempotency, state-delete safety, full-block reconciliation, and dry-run.
 
-## [0.61.0] - 2026-07-19
+## [0.62.0] - 2026-07-19
 
 ### Changed
 - **CLIO Markdown exporter auto-sync default is now every 1 minute (was 5).** Updated the
@@ -48,6 +48,14 @@
   reconciliation) and drafted a 4-phase fix: content-addressed entry IDs, conflict-copy
   reconciliation, verify-after-write, and a coupled `PromptLogReader` change to skip HTML-comment
   lines. → `PROJECT/1-INBOX/CLIO-DURABLE-IDEMPOTENT-WRITES.md`
+
+## [0.61.0] - 2026-07-18
+
+### Added
+- Direct branch pushes in watched repositories now retain a durable event
+  receipt, per-commit identity, and exact changed-file records. The bounded
+  enrichment path surfaces non-PR commits in activity, HiQS evidence, and the
+  dashboard while preventing duplicate signals when a matching PR is present.
 
 ## [0.60.0] - 2026-07-18
 

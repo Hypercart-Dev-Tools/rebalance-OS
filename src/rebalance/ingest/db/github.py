@@ -247,6 +247,104 @@ def upsert_commit(conn: sqlite3.Connection, values: tuple) -> None:
     )
 
 
+def insert_push_event(conn: sqlite3.Connection, values: tuple) -> bool:
+    """Insert one direct-push receipt; return whether it was newly observed."""
+    cursor = conn.execute(
+        """
+        INSERT OR IGNORE INTO github_push_events
+            (event_id, repo_full_name, ref, before_sha, head_sha, observed_at,
+             state, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, 'pending', ?)
+        """,
+        values,
+    )
+    return cursor.rowcount == 1
+
+
+def pending_push_events(
+    conn: sqlite3.Connection, limit: int, max_attempts: int
+) -> list[sqlite3.Row]:
+    """Oldest direct-push receipts still requiring bounded enrichment."""
+    return conn.execute(
+        """
+        SELECT event_id, repo_full_name, ref, before_sha, head_sha, observed_at,
+               state, attempt_count
+        FROM github_push_events
+        WHERE state IN ('pending', 'deferred') AND attempt_count < ?
+        ORDER BY observed_at ASC, event_id ASC
+        LIMIT ?
+        """,
+        (max_attempts, limit),
+    ).fetchall()
+
+
+def update_push_event(
+    conn: sqlite3.Connection,
+    event_id: str,
+    *,
+    state: str,
+    now: str,
+    reason: str = "",
+) -> None:
+    """Advance a receipt state without hiding its prior observation."""
+    conn.execute(
+        """
+        UPDATE github_push_events
+        SET state = ?, attempt_count = attempt_count + 1, last_attempt_at = ?,
+            resolved_at = CASE WHEN ? IN ('enriched', 'ignored', 'head_only', 'failed')
+                               THEN ? ELSE resolved_at END,
+            failure_reason = ?
+        WHERE event_id = ?
+        """,
+        (state, now, state, now, reason[:500] or None, event_id),
+    )
+
+
+def upsert_direct_commit(conn: sqlite3.Connection, values: tuple) -> None:
+    """Insert-or-replace a direct commit while retaining its event provenance."""
+    conn.execute(
+        """
+        INSERT INTO github_direct_commits
+            (repo_full_name, sha, event_id, ref, author_login, author_name,
+             message, committed_at, html_url, path_coverage, discovered_at, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(repo_full_name, sha) DO UPDATE SET
+            event_id=excluded.event_id, ref=excluded.ref,
+            author_login=excluded.author_login, author_name=excluded.author_name,
+            message=excluded.message, committed_at=excluded.committed_at,
+            html_url=excluded.html_url, path_coverage=excluded.path_coverage,
+            fetched_at=excluded.fetched_at
+        """,
+        values,
+    )
+
+
+def replace_direct_commit_files(
+    conn: sqlite3.Connection, repo_full_name: str, sha: str, files: list[dict[str, object]]
+) -> None:
+    """Replace the exact file list for one direct commit atomically."""
+    conn.execute(
+        "DELETE FROM github_direct_commit_files WHERE repo_full_name = ? AND sha = ?",
+        (repo_full_name, sha),
+    )
+    conn.executemany(
+        """
+        INSERT INTO github_direct_commit_files
+            (repo_full_name, sha, path, status, additions, deletions, changes)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        [
+            (
+                repo_full_name, sha, str(row.get("filename") or ""),
+                str(row.get("status") or ""), row.get("additions"),
+                row.get("deletions"), row.get("changes"),
+            )
+            for row in files
+            if row.get("filename")
+        ],
+    )
+
+
 def upsert_check_run(conn: sqlite3.Connection, values: tuple) -> None:
     """Insert-or-replace one ``github_check_runs`` row.
 

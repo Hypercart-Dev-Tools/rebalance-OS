@@ -1,0 +1,88 @@
+# MARATHON.yaml — 2026-07-18 signal-health nuance bundle
+#
+# Run (from the swarm harness — .xyz/ is gitignored in this repo):
+#   /Users/noelsaw/Documents/GitHub-Repos/xyz-3-agents-swarm/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-2026-07-18-SIGNAL-HEALTH/MARATHON.yaml \
+#     --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k "doctor or health or freshness or pulse or signal" -q'
+#
+# Plan doc: PROJECT/2-WORKING/SIGNAL-HEALTH-NUANCE.md
+# Branch:   marathon/2026-07-18-signal-health (cut from development @ 0bcde2f)
+#
+# ---------------------------------------------------------------------------
+# WHY THESE PHASES, IN THIS ORDER  (write-sets verified against the tree)
+# ---------------------------------------------------------------------------
+#   p1 (#152) scripts/pulse_sync.sh     <- disjoint
+#   p2 (#146) src/rebalance/doctor.py   <- disjoint from p1
+#   p3 (#153) src/rebalance/doctor.py   <- COLLIDES with p2, must follow it
+#                (also edits src/rebalance/health.py — disjoint from everyone)
+#
+# p1/p2 are mutually disjoint; p3 shares doctor.py with p2 (it adds the severity
+# field to the same Check dataclass p2 corrects) and is sequenced after it via
+# depends_on. marathon.sh runs phases ONE AT A TIME in resolved order, halting on
+# first failure — sequential, no worktree/parallel machinery. The disjoint
+# analysis buys correctness (why p3 declares depends_on, the others need not),
+# not wall-clock.
+#
+# ---------------------------------------------------------------------------
+# GATE (read before firing)
+# ---------------------------------------------------------------------------
+# marathon-drive's default pre-advance gate is `bash <root>/validate.sh`, which
+# DOES NOT EXIST here. Always pass an explicit --pre-advance-cmd (above).
+# Do NOT gate on the full `pytest tests/`: the suite carries ~15 pre-existing
+# failures (auto_promote, hiqs_pipeline, project_inference, …) unrelated to this
+# work; a full-suite gate blocks every phase on unrelated debt. The scoped
+# selector above is the union gate for all three phases — verify it green at
+# baseline (`--dry-run` first) before the first fire.
+#
+# depends_on is a SCALAR, not a list. `depends_on: [id]` parses as the literal
+# string "[id]" and fails with "depends_on unknown phase".
+#
+# ---------------------------------------------------------------------------
+# BUILDER / COST
+# ---------------------------------------------------------------------------
+# Builder defaults to `codex` (subscription-billed, no per-call API charge).
+# Reviewer `agy` is the other cost-blind option. `--builder claude` would spawn
+# API-billed headless turns — not used here.
+
+name: marathon-2026-07-18-signal-health
+
+phases:
+
+  - id: sig-p1-152-clone-pull
+    name: "GH-152: give the git-pulse-sync export clone a pull/reconcile step"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-SIGNAL-HEALTH/briefs/p1-152-clone-pull.md
+    artifact: scripts/pulse_sync.sh
+    turn_timeout_s: 1200
+    max_review_rounds: 2
+    # gate: .venv/bin/python -m pytest tests/ -k "pulse or sync" -q
+
+  - id: sig-p2-146-launchd-predicate
+    name: "GH-146: doctor stops flagging a running/just-restarted daemon as broken"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-SIGNAL-HEALTH/briefs/p2-146-launchd-predicate.md
+    artifact: src/rebalance/doctor.py
+    turn_timeout_s: 900
+    max_review_rounds: 2
+    # gate: .venv/bin/python -m pytest tests/ -k "doctor or launchd" -q
+
+  - id: sig-p3-153-severity-buckets
+    name: "GH-153: segment collector-panel checks into notices / warnings / errors"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-18-SIGNAL-HEALTH/briefs/p3-153-severity-buckets.md
+    artifact: src/rebalance/doctor.py,src/rebalance/health.py
+    depends_on: sig-p2-146-launchd-predicate
+    turn_timeout_s: 1200
+    max_review_rounds: 3
+    # gate: .venv/bin/python -m pytest tests/ -k "doctor or health or severity" -q
+
+# ---------------------------------------------------------------------------
+# DELIBERATELY NOT IN THIS PLAN
+# ---------------------------------------------------------------------------
+# #146 Root cause A (daily_sync.sh exits 1 on any transient sub-source error) —
+# real, but a distinct artifact (scripts/daily_sync.sh) and a separate call on
+# transient-error handling. Sequence as a follow-up once doctor.py is stable.
+#
+# The one-time reconciliation of the live ~/git-pulse-sync clone (86 ahead /
+# 1016 behind) is an operator action, not a code change — do it by hand when p1
+# lands.
