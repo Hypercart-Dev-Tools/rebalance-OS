@@ -112,6 +112,21 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
+### Round 1 · Builder · codex
+
+- Implemented the scoped change in `src/rebalance/doctor.py` and added
+  `tests/test_doctor_launchd.py`.
+- `daily-sync` now reads the latest recent `daily_sync_*.log` JSON result and
+  trusts `sync_outcome`: `complete` and `degraded` are OK (with degraded shown
+  explicitly), while `fatal` WARNs. A sticky launchctl status is labelled stale
+  when contradicted by a recent structured success.
+- Missing or stale run evidence WARNs as `stale/unknown`; jobs without a
+  structured-result contract, including pre-contract daily logs, retain the
+  legacy launchctl assessment.
+- Verification: `PYTHONPATH=src python3 -m pytest tests/test_doctor_launchd.py -q`
+  — 6 passed. Per the file-scoped verification instruction, I did not run the
+  broader doctor command or project gate.
+
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/doctor.py,tests/test_doctor_launchd.py.
 1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
 2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/wt/sentinel-process-review/.xyz/bin/tick release MARATHON-GH146-P2-LAUNCHD-JSON-TURN --agent agy --to codex

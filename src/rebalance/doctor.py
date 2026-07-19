@@ -539,12 +539,131 @@ def _check_scheduler_liveness(
     return checks
 
 
-def _check_launchd(launchctl_output: str | None = None) -> list[Check]:
-    """Report rebalance launchd jobs and their last exit status (macOS only)."""
+_STRUCTURED_LAUNCHD_RUN_MAX_AGE_HOURS = 48
+
+
+def _latest_daily_sync_result(
+    log_dir: Path, now: datetime
+) -> tuple[dict[str, object] | None, Path | None, datetime | None]:
+    """Return the latest recent daily-sync JSON result, if its contract is present.
+
+    ``launchctl list`` retains an exit status until a later invocation overwrites
+    it, so it cannot establish the current health of the daily sync.  The wrapper
+    writes a structured outcome to its per-day log instead.  An unrecognised JSON
+    shape deliberately returns ``None`` so pre-contract logs retain launchctl's
+    legacy behaviour.
+    """
+    try:
+        log_paths = sorted(
+            log_dir.glob("daily_sync_*.log"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return None, None, None
+    if not log_paths:
+        return None, None, None
+
+    log_path = log_paths[0]
+    try:
+        modified_at = datetime.fromtimestamp(log_path.stat().st_mtime, timezone.utc)
+    except OSError:
+        return None, None, None
+    age_hours = (now - modified_at).total_seconds() / 3600
+    if age_hours > _STRUCTURED_LAUNCHD_RUN_MAX_AGE_HOURS:
+        return None, log_path, modified_at
+
+    from rebalance.ingest.profile_sync import parse_daily_sync_log
+
+    result = parse_daily_sync_log(log_path)
+    if not isinstance(result, dict) or not isinstance(result.get("sync_outcome"), str):
+        return None, log_path, modified_at
+    return result, log_path, modified_at
+
+
+def _daily_sync_launchd_check(
+    pid: str, status: str, log_dir: Path, now: datetime
+) -> Check:
+    """Assess daily-sync from its recent structured result, not stale launchctl state."""
+    result, log_path, modified_at = _latest_daily_sync_result(log_dir, now)
+    if result is not None and log_path is not None and modified_at is not None:
+        outcome = result["sync_outcome"]
+        age_minutes = max(0, int((now - modified_at).total_seconds() // 60))
+        source = f"recent structured run ({log_path.name}, {age_minutes}m ago)"
+        if outcome == "complete":
+            detail = f"{source} completed"
+            if status != "0":
+                detail += f"; launchctl status {status} is stale"
+            return Check("launchd:daily-sync", OK, detail)
+        if outcome == "degraded":
+            detail = f"{source} degraded (partial source errors recorded)"
+            if status != "0":
+                detail += f"; launchctl status {status} is stale"
+            return Check("launchd:daily-sync", OK, detail)
+        if outcome == "fatal":
+            return Check(
+                "launchd:daily-sync",
+                WARN,
+                f"{source} failed fatally",
+                "inspect temp/logs/daily_sync_*.log for the structured error result",
+            )
+
+    # A recent pre-GH-146 log has no run-result contract to prefer.  Retain the
+    # historical launchctl assessment in that case instead of inventing a new
+    # verdict for a job that supplied no structured result.
+    if log_path is not None and modified_at is not None:
+        age_hours = (now - modified_at).total_seconds() / 3600
+        if age_hours <= _STRUCTURED_LAUNCHD_RUN_MAX_AGE_HOURS:
+            if status not in ("0", "-"):
+                return Check(
+                    "launchd:daily-sync",
+                    WARN,
+                    f"last run exited with status {status}",
+                    "inspect temp/logs/ for this job's error output",
+                )
+            running = "running" if pid != "-" else "idle, last run ok"
+            return Check("launchd:daily-sync", OK, running)
+
+    log_detail = (
+        f"; latest log {log_path.name} is outside the "
+        f"{_STRUCTURED_LAUNCHD_RUN_MAX_AGE_HOURS}h window"
+        if log_path is not None and modified_at is not None
+        else ""
+    )
+    return Check(
+        "launchd:daily-sync",
+        WARN,
+        f"launchctl status {status} is stale/unknown: no recent structured daily-sync run"
+        f"{log_detail}",
+        "inspect temp/logs/daily_sync_*.log or run `bash scripts/daily_sync.sh`",
+    )
+
+
+def _check_launchd(
+    launchctl_output: str | None = None,
+    *,
+    log_dir: Path | None = None,
+    now: datetime | None = None,
+) -> list[Check]:
+    """Report rebalance launchd jobs and their last exit status (macOS only).
+
+    ``daily-sync`` has a richer, recent JSON outcome which supersedes its sticky
+    launchctl exit status. Other jobs have no comparable result contract and keep
+    the historical launchctl-only assessment.
+    """
     if launchctl_output is None:
         launchctl_output = _launchctl_list()
     if launchctl_output is None:
         return []  # not macOS / launchctl unavailable — silently skip
+
+    if log_dir is None:
+        try:
+            from rebalance.paths import resolve_project_root
+
+            log_dir = resolve_project_root(Path(__file__)) / "temp" / "logs"
+        except RuntimeError:
+            log_dir = Path("temp/logs")
+    now = now or datetime.now(timezone.utc)
 
     checks: list[Check] = []
     for line in launchctl_output.splitlines():
@@ -553,6 +672,9 @@ def _check_launchd(launchctl_output: str | None = None) -> list[Check]:
             continue
         pid, status, label = parts
         short = label.replace("com.rebalance-os.", "").replace("com.user.", "")
+        if short == "daily-sync":
+            checks.append(_daily_sync_launchd_check(pid.strip(), status.strip(), log_dir, now))
+            continue
         if status.strip() not in ("0", "-"):
             checks.append(
                 Check(
