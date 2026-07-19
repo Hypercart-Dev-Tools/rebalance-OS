@@ -274,7 +274,11 @@ h2 { font-size: 14px; color: var(--ink); }
 .nav-section-label.section-link:hover .section-link-arrow { opacity: 1; color: var(--accent); }
 .nav-list { list-style: none; margin: 0; padding: 0; }
 .nav-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--ink); cursor: default; }
-.nav-list li.active { background: rgba(31,111,235,.10); color: var(--ink); font-weight: 500; }
+/* Nav anchors had NO colour rule, so they fell back to the UA default link blue. That reads
+   acceptably on the light default but is near-invisible on a dark theme (GH-154 P4). */
+.nav-list li a { color: inherit; text-decoration: none; }
+.nav-list li a:hover { color: var(--accent); text-decoration: underline; }
+.nav-list li.active { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--ink); font-weight: 500; }
 .nav-list .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
 .nav-list .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: var(--card); text-align: center; }
 .sidebar-foot { margin-top: auto; padding: 8px; font-variant-numeric: tabular-nums; }
@@ -286,7 +290,7 @@ h2 { font-size: 14px; color: var(--ink); }
 .side-row:hover { background: var(--zebra); }
 .side-row.has-link { padding: 0; }
 .side-row-link { display: block; padding: 7px 8px; color: inherit; text-decoration: none; border-radius: 6px; }
-.side-row-link:hover { background: rgba(124,196,255,.10); }
+.side-row-link:hover { background: color-mix(in srgb, var(--accent) 10%, transparent); }
 .side-row-link:hover .side-row-title { color: var(--info); }
 .side-row-title { font-size: 12.5px; line-height: 1.35; color: var(--ink); font-weight: 500; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
 .side-row-meta { font-size: 11.5px; color: var(--fg-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
@@ -403,13 +407,13 @@ h2 { font-size: 14px; color: var(--ink); }
   color: var(--muted);
 }
 .rb-data-marker-rank {
-  border-color: rgba(31,111,235,.18);
-  background: rgba(31,111,235,.08);
+  border-color: color-mix(in srgb, var(--accent) 18%, transparent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--accent);
 }
 .rb-data-marker-avatar {
-  border-color: rgba(29,111,168,.18);
-  background: rgba(29,111,168,.08);
+  border-color: color-mix(in srgb, var(--info) 18%, transparent);
+  background: color-mix(in srgb, var(--info) 8%, transparent);
   color: var(--info);
 }
 .rb-data-marker-glyph {
@@ -647,6 +651,64 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
     """
 
 
+RB_THEME_BOOTSTRAP_JS = """<script>
+/* GH-154 P4 — theme bootstrap. MUST stay synchronous and inline, and MUST be emitted
+   BEFORE the <style> block: any defer/async/external form reintroduces the flash of the
+   default theme that decision D2 exists to prevent.
+
+   This is the ONE derivation implementation (D1). Python never derives; it ships the default
+   preset pre-derived as literals in RB_TOKENS_CSS and serialises the user's inputs here.
+   Persisted record is versioned INPUTS, never derived output (D1/D3) — a formula change must
+   be able to re-derive, which a frozen snapshot cannot.
+
+   Any malformed state falls through to the default preset silently: a theme picker that
+   white-screens on a bad JSON blob is worse than one that ignores it. */
+(function () {
+  var KEY = 'pulse-theme-settings-v2';
+  var SCHEMA = 1;
+  var HEX = /^#[0-9a-fA-F]{6}$/;
+  var FIELDS = ['page', 'card', 'ink', 'accent', 'border', 'nowline', 'timestamp'];
+  try {
+    var raw = window.localStorage.getItem(KEY);
+    if (!raw) return;                                  /* no theme set -> Python's defaults */
+    var rec = JSON.parse(raw);
+    if (!rec || rec.schema_version !== SCHEMA) return; /* unknown/absent version -> defaults */
+    var i = rec.inputs;
+    if (!i) return;
+    for (var n = 0; n < FIELDS.length; n++) {
+      if (!HEX.test(i[FIELDS[n]])) return;             /* partial/invalid -> defaults, wholesale */
+    }
+    var int_ = function (h) { return parseInt(h.slice(1), 16); };
+    var isDark = function (h) {
+      var v = int_(h);
+      return (0.299 * (v >> 16 & 255) + 0.587 * (v >> 8 & 255) + 0.114 * (v & 255)) < 128;
+    };
+    var mix = function (a, b, w) {
+      var pa = int_(a), pb = int_(b);
+      var ch = function (s) { return Math.round((pa >> s & 255) * w + (pb >> s & 255) * (1 - w)); };
+      return '#' + [16, 8, 0].map(function (s) {
+        return ch(s).toString(16).padStart(2, '0');
+      }).join('');
+    };
+    var rgba = function (h, a) {
+      var v = int_(h);
+      return 'rgba(' + (v >> 16 & 255) + ', ' + (v >> 8 & 255) + ', ' + (v & 255) + ', ' + a + ')';
+    };
+    var s = document.documentElement.style;
+    for (var f = 0; f < FIELDS.length; f++) s.setProperty('--' + FIELDS[f], i[FIELDS[f]]);
+    /* Tier 2 — derived here and ONLY here. Mirrors the mockup's themeOf(). */
+    s.setProperty('--muted', mix(i.ink, i.page, 0.45));
+    s.setProperty('--fg-dim', mix(i.ink, i.page, 0.5));
+    s.setProperty('--accent-ink', isDark(i.accent) ? '#ffffff' : '#111111');
+    s.setProperty('--zebra', mix(i.card, isDark(i.page) ? '#ffffff' : '#000000', 0.96));
+    s.setProperty('--shadow',
+      '0 1px 2px ' + rgba(i.ink, 0.04) + ', 0 8px 24px ' + rgba(i.ink, 0.04));
+    /* Legacy aliases are var()-chained in RB_TOKENS_CSS, so they follow automatically. */
+  } catch (e) { /* malformed storage, disabled localStorage, quota -> default preset */ }
+})();
+</script>"""
+
+
 def render_shell(
     title: str,
     body: str,
@@ -657,6 +719,7 @@ def render_shell(
     page_css: str = "",
     body_extra: str = "",
     head_extra: str = "",
+    theme_bootstrap: str = RB_THEME_BOOTSTRAP_JS,
 ) -> str:
     """Assemble a complete HTML document around a page ``body``.
 
@@ -664,8 +727,13 @@ def render_shell(
     bytes, including leading/trailing whitespace). The page's ``<style>`` is
     composed as ``<style>\\n{RB_TOKENS_CSS}{RB_CHROME_CSS}{page_css}{RB_BUTTON_CSS}</style>``
     so tokens + chrome are single-sourced and the page-local rules slot in
-    between. ``head_extra`` is emitted inside ``<head>`` immediately after the
-    style block (e.g. a Chart.js ``<script>``); ``body_extra`` is emitted inside
+    between. ``theme_bootstrap`` is emitted inside ``<head>`` **before** the style
+    block and must stay synchronous and inline — it sets the theme's custom
+    properties on ``<html>`` ahead of first paint, so there is no flash of the
+    default theme (GH-154 D2/P4). Both the live routes and the static ``/`` build
+    pass through here, so it is single-sourced. ``head_extra`` is emitted inside
+    ``<head>`` immediately *after* the style block (e.g. a Chart.js ``<script>``)
+    and is therefore NOT suitable for theming; ``body_extra`` is emitted inside
     ``<body>`` after the app shell (e.g. a generated-at comment + the page's
     ``<script>``). ``wide`` widens the main column. ``nav_data`` is forwarded to
     :func:`render_sidebar`.
@@ -685,6 +753,7 @@ def render_shell(
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>{html.escape(title)}</title>
+  {theme_bootstrap}
   <style>
 {RB_TOKENS_CSS}{RB_CHROME_CSS}{page_css}{RB_BUTTON_CSS}</style>{head_extra}
 </head>

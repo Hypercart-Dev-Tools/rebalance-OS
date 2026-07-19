@@ -427,8 +427,17 @@ cleared browser — on `/`, which is rebuilt on a 30-minute schedule. **v1 ends 
 3. Zero hardcoded color literals remain in `PAGE_CSS`, `_CSS`, `RB_CHROME_CSS`, `RB_BUTTON_CSS`,
    `_SYSLOG_TOGGLE_CSS`, or any inline `style=` — except tier-3 status colors and any literal
    explicitly justified in this doc's progress log.
-4. The default preset is **pixel-identical to today's dashboard**. This feature must be invisible
-   to an operator who never opens Settings.
+4. The default preset is **pixel-identical to today's dashboard**, with **one documented
+   exception**: sidebar nav links. This feature must otherwise be invisible to an operator who
+   never opens Settings.
+
+   *The exception, and why it is unavoidable:* nav anchors were never styled, so they rendered the
+   UA default link blue with an underline. An unstyled link cannot be theme-aware — it has no
+   colour to theme — and in any dark preset UA blue on near-black is effectively invisible, which
+   would ship a picker whose own presets break navigation. Any colour we choose differs from UA
+   blue, so the change is forced; only its size is a choice. Operator decision 2026-07-18:
+   `var(--ink)`, no underline, matching the sidebar's other text. Verified on the deterministic
+   routes — this is the *only* light-mode difference from the pre-P0 baseline.
 5. Save persists across reload; Reset returns to the selected preset's defaults without clearing
    the preset selection.
 6. **A cleared browser falls back cleanly, and says so.** Clearing `localStorage` returns every
