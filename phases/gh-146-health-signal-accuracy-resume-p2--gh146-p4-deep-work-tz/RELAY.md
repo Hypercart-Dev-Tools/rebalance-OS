@@ -1,5 +1,5 @@
 # Marathon Phase gh146-p4-deep-work-tz
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-GH146-P4-DEEP-WORK-TZ-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -157,3 +157,9 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Added `tests/test_doctor_deep_work_tz.py` covering the 18:59 PDT regression, a morning control, preservation of a genuine stall WARN, and invariance to the process `TZ` while the operator zone remains America/Los_Angeles. The evening-date assertion is the fail-before/pass-after assertion: the old UTC implementation supplies 2026-07-19; the fixed code supplies 2026-07-18.
 - Verification: `PYTHONPATH=src python -m pytest tests/test_doctor_deep_work_tz.py` → 4 passed. `.venv/bin/python` is unavailable in this worktree, and the default interpreter initially imported another checkout, so `PYTHONPATH=src` was required to exercise this artifact.
 - Did not run `rebalance doctor`, per the turn constraint to verify only the focused test. The separate UTC date use at `doctor.py:465` remains intentionally unchanged and should be triaged separately.
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+The fix correctly implements the brief. `local_tz()` is used properly in `_check_deep_work_stalls` without duplicating timezone logic, keeping the contract of `compute_deep_work_signals` intact. The tests successfully verify that the local timezone boundary is respected and that false "quiet" warnings in the evening PDT are prevented. I verified `tests/test_doctor_deep_work_tz.py` passes. Running `python -m rebalance doctor` showed `OK   deep work — no possible-stall projects in the last 7 days`. The overall warning count is an honest 5 (`vault`, `sleuth`, `pulse`, `launchd:pulse-server`, `launchd:daily-sync`); the target warning for `deep work` is explicitly cleared.
