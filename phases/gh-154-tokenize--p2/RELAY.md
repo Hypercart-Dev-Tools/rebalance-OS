@@ -1,5 +1,5 @@
 # Marathon Phase p2
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-P2-TURN builder=agy reviewer=codex round-cap=5 -->
@@ -140,3 +140,11 @@ Addressed the reviewer's feedback for Cytoscape contrast furniture in `src/rebal
 3. Removed the unused local `kindColor` JS object from the cytoscape script block.
 
 Gate test suite passed.
+
+### Round 2 · Reviewer · codex
+
+Reviewed the revised `src/rebalance/web.py`. Compound group nodes retain categorical fills while their stroke, label, and label background now resolve from `--border`, `--ink`, and `--card`; reminder nodes and legend text likewise use theme-derived contrast values. The obsolete local JS color map is gone. The P0 write-set's inline styles are tokenized, including the tooltip's `var(--muted)`, and the only remaining color literals are the justified status/identity colors (or their status-derived opacity variants).
+
+Targeted source validation passed: `web.py` parses, and the graph contrast/token assertions succeed. The sandbox prohibits binding a loopback server, so I could not independently capture the required route screenshot here; the builder's recorded render gate remains the available render verification.
+
+**Verdict:** Approved
