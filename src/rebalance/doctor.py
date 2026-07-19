@@ -571,11 +571,11 @@ def _check_launchd(launchctl_output: str | None = None) -> list[Check]:
             continue
         pid, status, label = parts
         short = label.replace("com.rebalance-os.", "").replace("com.user.", "")
-        
+
         pid_val = pid.strip()
         status_val = status.strip()
         has_live_pid = pid_val != "-"
-        
+
         is_negative_signal = False
         try:
             val = int(status_val)

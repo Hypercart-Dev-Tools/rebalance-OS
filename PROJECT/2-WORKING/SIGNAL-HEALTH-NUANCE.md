@@ -23,7 +23,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| Diagnosed the 2026-07-18 "14 warnings" panel end-to-end. Root causes isolated and dated, three GH issues cut (#152 new, #146 augmented with the `-15`/live-PID case, #153 new). Marathon plan + three phase briefs authored on branch `marathon/2026-07-18-signal-health`. | Run preflight (`marathon.sh --dry-run` + baseline gate green), then fire the marathon: p1 #152 → p2 #146 → p3 #153 (p3 depends on p2). |
+| Marathon complete — **3/3 phases landed** on `marathon/2026-07-18-signal-health`: p1 #152 (`pulse_sync.sh` pull/reconcile), p2 #146 (`doctor.py` launchd predicate), p3 #153 (`doctor.py`+`health.py` severity buckets). First run escalated p3 on a harness cross-repo bug (fixed: swarm `ddb6c40`, bug filed swarm #248/#249); re-ran clean. Follow-up added the regression tests the marathon skipped (22 tests) + p1 review hardening (reconcile failure is now loud-but-non-fatal so a diverged mirror can't brick publishing). Gate 328 passed. | **Merge review** → PR `marathon/2026-07-18-signal-health` → development. Then the one-time operator reconcile of the live `~/git-pulse-sync` clone (86 ahead/1016 behind). Optional follow-up phase for #146 Root cause A (`daily_sync.sh` transient-error exit code). |
 
 ## Table of contents
 
