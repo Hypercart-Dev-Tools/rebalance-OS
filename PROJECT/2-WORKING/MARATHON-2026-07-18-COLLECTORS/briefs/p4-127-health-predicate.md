@@ -20,6 +20,19 @@ This has now fired **twice on the same collector in six weeks**:
 Two shapes of the same defect: **content** absent with rows present, and **volume** absent with
 freshness current. Both report `ok`.
 
+## ⛔ Your write-set is EXACTLY two files
+
+```
+src/rebalance/doctor.py
+tests/test_collector_health_predicate.py   <- create this; it holds the required regression tests
+```
+
+Containment reverts any edit outside that list and **fails the turn** (exit 6) — p3 lost a turn
+to exactly this by editing `ROADMAP.md`. **Do not update `ROADMAP.md`, `CHANGELOG.md`,
+`AGENTS.md`, or any capture doc.** The marathon driver owns governance records here.
+
+The filename is fixed: the allowlist matches by exact string equality, no globs.
+
 ## ⛔ Hard invariants
 
 - **Registry-driven.** Adding a source's predicate must not edit the health module

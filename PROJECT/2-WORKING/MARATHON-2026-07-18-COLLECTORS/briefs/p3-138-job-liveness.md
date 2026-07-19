@@ -20,6 +20,22 @@ plist **templates**. It cannot observe installed state, and passed throughout.
 The generalizable defect: **SCHEDULER.md is repo-level policy describing per-device state.**
 A job can be fully specified, tested, and documented while installed on zero machines.
 
+## ⛔ Your write-set is EXACTLY two files
+
+```
+src/rebalance/doctor.py
+tests/test_scheduler_liveness.py      <- create this; it is the required regression test
+```
+
+Containment reverts any edit outside that list and **fails the turn** (exit 6). This already
+happened once on this phase: a turn edited `ROADMAP.md` — reasonable under this repo's PDDA
+convention — and the harness reverted it and killed the turn. **Do not update `ROADMAP.md`,
+`CHANGELOG.md`, `AGENTS.md`, or any capture doc.** The marathon driver owns governance
+records for this phase; your job is the code and its test.
+
+The test filename above is fixed, because the allowlist is matched by exact string equality
+(no globs). Writing the test anywhere else will be reverted.
+
 ## ⛔ Hard invariants
 
 - **Keep `tests/test_scheduler_policy.py` hermetic.** Do not add `launchctl` or live

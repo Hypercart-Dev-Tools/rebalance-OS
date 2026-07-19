@@ -60,7 +60,7 @@ phases:
     name: "GH-138: doctor warns when a SCHEDULER.md job is not loaded"
     reviewer: agy
     brief: PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/briefs/p3-138-job-liveness.md
-    artifact: src/rebalance/doctor.py
+    artifact: src/rebalance/doctor.py,tests/test_scheduler_liveness.py
     turn_timeout_s: 900
     max_review_rounds: 2
 
@@ -68,7 +68,7 @@ phases:
     name: "GH-127: registry-driven content/volume health predicate"
     reviewer: agy
     brief: PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/briefs/p4-127-health-predicate.md
-    artifact: src/rebalance/doctor.py
+    artifact: src/rebalance/doctor.py,tests/test_collector_health_predicate.py
     depends_on: coll-p3-138-job-liveness
     turn_timeout_s: 1200
     max_review_rounds: 3
