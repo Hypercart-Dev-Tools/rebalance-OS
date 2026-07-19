@@ -80,3 +80,7 @@ xyz-tick/
 REPO_MAP.md
 .aider/
 /extensions
+
+# Per-developer VS Code editor prefs (theme colors, chat auto-approve).
+# Shared VS Code config (launch.json / tasks.json) stays tracked.
+.vscode/settings.json
