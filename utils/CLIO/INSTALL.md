@@ -29,12 +29,23 @@ mkdir -p ~/.claude/hooks
 
 cat > ~/.claude/hooks/log-prompt.sh << 'EOF'
 #!/bin/bash
-# Logs every Claude Code prompt to a centralized JSONL file.
+# Logs Claude Code prompts to a centralized JSONL file.
 # Never blocks prompt submission (always exits 0) — failures go to a
 # separate error log instead of silently dropping the prompt.
+#
+# CAPTURE FILTERS (a skipped prompt is never written to the raw JSONL, so
+# this is a permanent drop, not a render-time hide — see INSTALL.md Notes):
+#   1. Automated, non-user turns (background-task notifications, monitor
+#      events) are skipped outright. Matched on the RAW prompt, before tag
+#      stripping, because stripping would remove the evidence.
+#   2. Prompts shorter than CLIO_MIN_PROMPT_CHARS (default 100) after
+#      cleaning are skipped. Intent: capture substantive session-opening
+#      prompts, not "yes" / "push it" / "do it".
+# Set CLIO_MIN_PROMPT_CHARS=0 to capture everything again.
 input=$(cat)
 errlog="$HOME/.claude/prompt-log-errors.log"
 ts=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+minchars="${CLIO_MIN_PROMPT_CHARS:-100}"
 
 if ! command -v jq >/dev/null 2>&1; then
   echo "$ts jq not found — prompt not logged" >> "$errlog"
@@ -49,12 +60,20 @@ machine=$(scutil --get ComputerName 2>/dev/null || hostname -s 2>/dev/null || ho
 # command wrappers, etc.) so only what you actually typed gets logged.
 if ! echo "$input" | jq -c \
   --arg ts "$ts" --arg repo "$repo" --arg branch "$branch" --arg machine "$machine" \
+  --arg minchars "$minchars" \
   '
   def clean_prompt:
-    gsub("(?i)<(ide_selection|system-reminder|local-command-stdout|local-command-caveat|command-name|command-message|command-args|command-contents|function_results)[^>]*>.*?</\\1>"; ""; "gm")
+    gsub("(?i)<(ide_selection|system-reminder|task-notification|local-command-stdout|local-command-caveat|command-name|command-message|command-args|command-contents|function_results)[^>]*>.*?</\\1>"; ""; "gm")
     | gsub("\\n[ \\t]*\\n[ \\t]*\\n+"; "\\n\\n")
     | sub("^\\s+"; "") | sub("\\s+$"; "");
-  {timestamp:$ts, repo:$repo, branch:$branch, machine:$machine, session_id:.session_id, prompt:(.prompt | clean_prompt)}
+  ($minchars | tonumber) as $min
+  | (.prompt // "") as $raw
+  | ($raw | clean_prompt) as $cleaned
+  # 1. drop automated, non-user turns (checked on $raw, pre-strip)
+  | select($raw | test("<task-notification>|\\[SYSTEM NOTIFICATION - NOT USER INPUT\\]"; "i") | not)
+  # 2. drop anything too short to be a substantive prompt
+  | select(($cleaned | length) >= $min)
+  | {timestamp:$ts, repo:$repo, branch:$branch, machine:$machine, session_id:.session_id, prompt:$cleaned}
   ' \
   >> "$HOME/.claude/prompt-log.jsonl" 2>>"$errlog"; then
   echo "$ts failed to log prompt (malformed input?)" >> "$errlog"
@@ -196,6 +215,11 @@ rm -f ~/.claude/hooks/prompt-log-to-md.sh ~/.claude/prompt-log-to-md.state ~/.cl
 
 - **Scope:** `~/.claude/settings.json` is user-level, so one log covers every repo.
 - **Machine and branch:** both are recorded with each prompt for later context.
-- **Filtering:** `PROMPT_LOG_EXCLUDE` defaults to `file-based relay|cross-agent dependency drift`; matching text stays in raw JSONL but is omitted from the Markdown. Set it empty to render all prompts.
+- **Capture filtering (permanent):** the hook skips two classes of prompt outright, so they never reach the raw JSONL:
+  - *Automated turns* — anything containing `<task-notification>` or the `[SYSTEM NOTIFICATION - NOT USER INPUT]` preamble (background-task and monitor events). Matched on the raw prompt before tag stripping.
+  - *Short prompts* — under `CLIO_MIN_PROMPT_CHARS` (default **100**) after injected blocks are stripped, so `yes` / `push it` are dropped while substantive session-opening prompts are kept. Set `CLIO_MIN_PROMPT_CHARS=0` to capture everything again.
+
+  This is a **drop, not a hide** — unlike `PROMPT_LOG_EXCLUDE` below, a skipped prompt is unrecoverable. Prefer the render-side filter if you might want the text back later. Covered by `test/clio-capture.sh`.
+- **Render filtering (reversible):** `PROMPT_LOG_EXCLUDE` defaults to `file-based relay|cross-agent dependency drift`; matching text stays in raw JSONL but is omitted from the Markdown (reported as `state: excluded` by `--status`). Set it empty to render all prompts.
 - **Resetting:** deleting the state file rescans JSONL, but ID-based note deduplication prevents a duplicate rendered entry. The manifest is intentionally independent of that cursor.
 - **Errors:** the capture hook always exits 0, writing failures to `~/.claude/prompt-log-errors.log`; a manifest receipt failure is reported but never rolls back a successful export.
