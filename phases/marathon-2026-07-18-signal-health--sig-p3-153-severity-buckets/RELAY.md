@@ -1,5 +1,5 @@
 # Marathon Phase sig-p3-153-severity-buckets
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-SIG-P3-153-SEVERITY-BUCKETS-TURN-2 builder=codex reviewer=agy round-cap=7 -->
@@ -76,3 +76,13 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Classified device-scoped missing schedulers, healthy in-SLA collector freshness, and running/restarted launchd jobs as notices; missing/empty collector storage, stopped pulse collectors, active auth failures, and the stale Sleuth export/clone condition as errors. Existing soft-SLA freshness and fallback/config breaches remain warnings. The p2 launchd predicate is unchanged.
 - Traced the flow from `Check` construction (`src/rebalance/doctor.py:32-47`) through visibility/order (`src/rebalance/health.py:102-130`) into bucket reconciliation and render labels (`src/rebalance/health.py:139-237`). Explicit notices remain separate from verdict-driving problems so the existing collapsed/muted notice section can render them without escalating health.
 - Previous retry breadcrumb: no code failure was reproducible; `ESCALATION.md` records only `cap-or-close-mismatch`. The worktree has no `.venv/bin/python`, so the literal acceptance command cannot start. Equivalent worktree-pinned verification passed with `PYTHONPATH=src python3 -m pytest tests/ -k "doctor or health or severity" -q`: **148 passed, 10 skipped**. A synthetic 14-item regression rendered `3 errors · 4 warnings · 7 notices`.
+
+### Round 1 · Reviewer · agy
+
+Reviewed the changes implemented by codex in `src/rebalance/doctor.py` and `src/rebalance/health.py`.
+- Checked the `Check` dataclass and its severity validation/defaulting behavior.
+- Confirmed correct classification of errors, warnings, and notices (including launchd, scheduler liveness, data freshness, Sleuth heartbeats, auth failures, and pulse collectors).
+- Verified the bucket grouping and rendering in `HealthStatus` and `compute_health_status`.
+- Ran targeted unit tests (`tests/test_health.py` and `tests/test_doctor.py`), all 41 of which pass successfully.
+
+**Verdict:** Approved
