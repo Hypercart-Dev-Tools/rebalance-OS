@@ -1706,46 +1706,46 @@ PAGE_CSS = """
 .topbar .crumb { color: var(--fg-muted); font-weight: 500; padding-top: 4px; }
 .topbar-right { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 .topbar-row { display: flex; gap: 10px; align-items: center; }
-.synced { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); }
+.synced { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); font-size: 12px; color: var(--fg-muted); }
 .synced .ok-dot { width: 8px; height: 8px; background: var(--ok); border-radius: 50%; }
-.synced.synced-warn { border-color: rgba(166,95,0,.22); color: var(--warn); background: rgba(166,95,0,.08); }
+.synced.synced-warn { border-color: color-mix(in srgb, var(--warn) 22%, transparent); color: var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent); }
 .synced.synced-warn .ok-dot { background: var(--warn); }
-.synced.synced-danger { border-color: rgba(192,57,43,.18); color: var(--danger); background: rgba(192,57,43,.08); }
+.synced.synced-danger { border-color: color-mix(in srgb, var(--danger) 18%, transparent); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); }
 .synced.synced-danger .ok-dot { background: var(--danger); }
 
 /* Status dot glow pulse */
 @keyframes glow-ok {
-  0%, 100% { box-shadow: 0 0 0   0   rgba(47,116,55,0); }
-  50%       { box-shadow: 0 0 5px 3px rgba(47,116,55,.40); }
+  0%, 100% { box-shadow: 0 0 0   0   transparent; }
+  50%       { box-shadow: 0 0 5px 3px color-mix(in srgb, var(--ok) 40%, transparent); }
 }
 @keyframes glow-warn {
-  0%, 100% { box-shadow: 0 0 0   0   rgba(166,95,0,0); }
-  50%       { box-shadow: 0 0 5px 3px rgba(166,95,0,.40); }
+  0%, 100% { box-shadow: 0 0 0   0   transparent; }
+  50%       { box-shadow: 0 0 5px 3px color-mix(in srgb, var(--warn) 40%, transparent); }
 }
 .ok-dot                        { animation: glow-ok   2.8s ease-in-out infinite; }
 .health-dot                    { animation: glow-ok   2.8s ease-in-out infinite; }
 .health-pill.has-issues .health-dot { animation: glow-warn 2.8s ease-in-out infinite; }
-.system-now { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 999px; background: #fff; font-size: 12px; color: var(--fg-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; cursor: help; }
+.system-now { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border: 1px dashed var(--border); border-radius: 999px; background: var(--card); font-size: 12px; color: var(--fg-muted); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; cursor: help; }
 .system-now .tz-key { color: var(--fg); }
-.system-now.tz-fallback { border-color: var(--warn, #c98a00); color: var(--warn, #c98a00); }
-.refresh-btn { font: inherit; padding: 6px 14px; border: 0; border-radius: 8px; background: var(--accent); color: #fff; cursor: pointer; font-weight: 500; }
+.system-now.tz-fallback { border-color: var(--warn); color: var(--warn); }
+.refresh-btn { font: inherit; padding: 6px 14px; border: 0; border-radius: 8px; background: var(--accent); color: var(--accent-ink); cursor: pointer; font-weight: 500; }
 .refresh-btn:disabled { opacity: .55; cursor: progress; }
-.pulse-filter { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: #fff; color: var(--fg); width: 220px; }
+.pulse-filter { font: inherit; padding: 6px 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); color: var(--fg); width: 220px; }
 .pulse-filter:focus { outline: none; border-color: var(--accent); }
 /* Search mode toggle (Filter | Ask) + chat results */
 .search-wrap { position: relative; display: inline-flex; align-items: center; gap: 8px; }
-.search-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; }
+.search-mode { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--card); }
 .search-mode-btn { font: inherit; font-size: 12px; line-height: 1; padding: 6px 10px; border: 0; background: transparent; color: var(--fg-muted); cursor: pointer; }
 .search-mode-btn + .search-mode-btn { border-left: 1px solid var(--border); }
-.search-mode-btn.is-active { background: var(--accent); color: #fff; }
+.search-mode-btn.is-active { background: var(--accent); color: var(--accent-ink); }
 .search-wrap.mode-ask .pulse-filter { width: 300px; border-color: var(--accent); }
-.chat-results { position: absolute; top: calc(100% + 6px); right: 0; width: 480px; max-width: 70vw; max-height: 62vh; overflow-y: auto; background: #fff; border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px; z-index: 60; text-align: left; }
+.chat-results { position: absolute; top: calc(100% + 6px); right: 0; width: 480px; max-width: 70vw; max-height: 62vh; overflow-y: auto; background: var(--card); border: 1px solid var(--border); border-radius: 10px; box-shadow: var(--shadow); padding: 10px; z-index: 60; text-align: left; }
 .chat-meta, .chat-status { font-size: 12px; color: var(--fg-dim); padding: 2px 4px 8px; }
 .chat-status.error { color: var(--danger); }
 .chat-cite-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
 .chat-cite { border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
 .chat-cite-head { display: flex; align-items: baseline; gap: 8px; }
-.chat-cite-source { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: #fff; background: var(--fg-dim); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
+.chat-cite-source { font-size: 10px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent-ink); background: var(--fg-dim); border-radius: 999px; padding: 1px 7px; white-space: nowrap; }
 .chat-cite-title { font-weight: 600; font-size: 13px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--fg); }
 .chat-cite-score { font-size: 11px; color: var(--fg-dim); white-space: nowrap; }
 .chat-cite-preview { font-size: 12px; color: var(--fg-muted); margin-top: 4px; line-height: 1.4; }
@@ -1753,7 +1753,7 @@ PAGE_CSS = """
 .timestamp-block {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-variant-numeric: tabular-nums;
-  color: var(--fg-dim);
+  color: var(--timestamp);
 }
 .health-banner {
   display: grid;
@@ -1767,12 +1767,12 @@ PAGE_CSS = """
   overflow: hidden;
 }
 .health-banner-warn {
-  border-color: rgba(166,95,0,.22);
-  background: linear-gradient(90deg, rgba(166,95,0,.10), rgba(255,255,255,.96));
+  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--warn) 10%, transparent), color-mix(in srgb, var(--page) 96%, transparent));
 }
 .health-banner-danger {
-  border-color: rgba(192,57,43,.18);
-  background: linear-gradient(90deg, rgba(192,57,43,.11), rgba(255,255,255,.96));
+  border-color: color-mix(in srgb, var(--danger) 18%, transparent);
+  background: linear-gradient(90deg, color-mix(in srgb, var(--danger) 11%, transparent), color-mix(in srgb, var(--page) 96%, transparent));
 }
 /* Sidebar Notices module — scrollable viewer for demoted WARNs */
 .notices-scroll {
@@ -1783,7 +1783,7 @@ PAGE_CSS = """
 }
 .notices-scroll::-webkit-scrollbar { width: 7px; }
 .notices-scroll::-webkit-scrollbar-thumb {
-  background: rgba(120,120,128,.32); border-radius: 4px;
+  background: color-mix(in srgb, var(--muted) 32%, transparent); border-radius: 4px;
 }
 .side-row.notice-row .side-row-hint {
   color: var(--fg-dim); font-size: 11px; margin-top: 2px;
@@ -1800,8 +1800,8 @@ PAGE_CSS = """
   justify-content: center;
   padding: 4px 10px;
   border-radius: 999px;
-  background: rgba(255,255,255,.88);
-  border: 1px solid rgba(0,0,0,.06);
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 6%, transparent);
   font-size: 11px;
   font-weight: 700;
   text-transform: uppercase;
@@ -1817,9 +1817,9 @@ PAGE_CSS = """
 }
 .health-banner-copy-btn {
   font: inherit;
-  border: 1px solid rgba(0,0,0,.08);
+  border: 1px solid color-mix(in srgb, var(--ink) 8%, transparent);
   border-radius: 999px;
-  background: rgba(255,255,255,.92);
+  background: color-mix(in srgb, var(--card) 92%, transparent);
   color: var(--fg);
   width: 34px;
   height: 34px;
@@ -1831,7 +1831,7 @@ PAGE_CSS = """
   flex: 0 0 auto;
 }
 .health-banner-copy-btn:hover {
-  background: #fff;
+  background: var(--card);
 }
 .health-banner-copy-btn:focus-visible {
   outline: 2px solid var(--accent);
@@ -1843,7 +1843,7 @@ PAGE_CSS = """
 }
 .health-banner-copy-btn.is-copied {
   color: var(--ok);
-  border-color: rgba(47,111,61,.18);
+  border-color: color-mix(in srgb, var(--ok) 18%, transparent);
 }
 .visually-hidden {
   position: absolute;
@@ -1870,8 +1870,8 @@ PAGE_CSS = """
   gap: 8px;
   padding: 6px 10px;
   border-radius: 999px;
-  background: rgba(255,255,255,.78);
-  border: 1px solid rgba(0,0,0,.05);
+  background: color-mix(in srgb, var(--card) 78%, transparent);
+  border: 1px solid color-mix(in srgb, var(--ink) 5%, transparent);
   white-space: nowrap;
   flex: 0 0 auto;
 }
@@ -1922,11 +1922,11 @@ PAGE_CSS = """
   line-height: 1.2;
   white-space: nowrap;
 }
-.badge-ok      { background: rgba(47,116,55,.12); color: var(--ok); }
-.badge-warn    { background: rgba(166,95,0,.12); color: var(--warn); }
-.badge-danger  { background: rgba(192,57,43,.12); color: var(--danger); }
-.badge-info    { background: rgba(29,111,168,.12); color: var(--info); }
-.badge-neutral { background: rgba(138,133,124,.14); color: var(--fg-muted); }
+.badge-ok      { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
+.badge-warn    { background: color-mix(in srgb, var(--warn) 12%, transparent); color: var(--warn); }
+.badge-danger  { background: color-mix(in srgb, var(--danger) 12%, transparent); color: var(--danger); }
+.badge-info    { background: color-mix(in srgb, var(--info) 12%, transparent); color: var(--info); }
+.badge-neutral { background: color-mix(in srgb, var(--fg-dim) 14%, transparent); color: var(--fg-muted); }
 
 .work-next .wn-list { margin: 0; padding: 4px 0 10px; }
 .wn-row[data-rb-row] { padding: 10px 18px; }
@@ -1943,7 +1943,7 @@ PAGE_CSS = """
 .work-next-teaser .wn-teaser-foot { margin-top: 6px; padding: 0 18px 14px; }
 .wn-open { color: var(--accent); font-weight: 600; font-size: 13px; text-decoration: none; }
 .wn-open:hover { text-decoration: underline; }
-.wn-auto { color: var(--warn, #b58900); font-weight: 600; }
+.wn-auto { color: var(--warn); font-weight: 600; }
 
 /* Hero */
 .hero { padding: 22px 24px; }
@@ -1960,13 +1960,13 @@ PAGE_CSS = """
 .hero-column-label { margin: 0 6px 4px; }
 .goals { padding: 0; margin: 0; }
 .goal[data-rb-row] { padding: 12px 6px; gap: 14px; }
-.goal .check { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid #c8c2b3; margin-top: 2px; flex-shrink: 0; background: #fff; cursor: pointer; transition: border-color .12s, background .12s; }
+.goal .check { width: 18px; height: 18px; border-radius: 5px; border: 1.5px solid var(--border); margin-top: 2px; flex-shrink: 0; background: var(--card); cursor: pointer; transition: border-color .12s, background .12s; }
 .goal .check[role="checkbox"]:hover { border-color: var(--accent); }
 .goal .check[role="checkbox"]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 .goal.is-busy .check { opacity: .55; cursor: progress; }
 .goal.is-completing { opacity: 0; transition: opacity .18s ease-out; pointer-events: none; }
 .goal .check.checked { background: var(--accent); border-color: var(--accent); position: relative; }
-.goal .check.checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 5px; height: 9px; border: solid #fff; border-width: 0 2px 2px 0; transform: rotate(45deg); }
+.goal .check.checked::after { content: ""; position: absolute; left: 4px; top: 1px; width: 5px; height: 9px; border: solid var(--accent-ink); border-width: 0 2px 2px 0; transform: rotate(45deg); }
 .goal-title { font-weight: 600; color: var(--fg); }
 .goal-desc { color: var(--fg-muted); font-size: 12.5px; margin-top: 2px; }
 .goal-title a, .goal-desc a { color: var(--accent); text-decoration: none; }
@@ -2008,7 +2008,7 @@ PAGE_CSS = """
 .goal-undo-btn {
   border: 1px solid var(--border);
   border-radius: 999px;
-  background: #fff;
+  background: var(--card);
   color: var(--accent);
   padding: 5px 11px;
   font-size: 11.5px;
@@ -2017,8 +2017,8 @@ PAGE_CSS = """
   text-decoration: none;
 }
 .goal-undo-btn:hover {
-  border-color: rgba(31,111,235,.28);
-  background: rgba(31,111,235,.07);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
   text-decoration: none;
 }
 .goal-undo-btn[aria-disabled="true"] {
@@ -2107,7 +2107,7 @@ PAGE_CSS = """
   line-height: 1.4;
 }
 .email-row-time {
-  color: var(--fg-dim);
+  color: var(--timestamp);
   font-size: 11.5px;
   white-space: nowrap;
   font-variant-numeric: tabular-nums;
@@ -2129,13 +2129,13 @@ PAGE_CSS = """
   white-space: nowrap;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fff;
-  box-shadow: 0 1px 2px rgba(0,0,0,.03);
+  background: var(--card);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--ink) 3%, transparent);
 }
 .email-row-open:hover {
   text-decoration: none;
-  border-color: rgba(31,111,235,.28);
-  background: rgba(31,111,235,.07);
+  border-color: color-mix(in srgb, var(--accent) 28%, transparent);
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
 }
 .gmail-icon {
   font-size: 14px;
@@ -2150,17 +2150,17 @@ PAGE_CSS = """
   font-weight: 600;
   letter-spacing: .01em;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--card);
 }
 .mail-badge.starred {
   color: var(--warn);
-  border-color: rgba(166,95,0,.22);
-  background: rgba(166,95,0,.08);
+  border-color: color-mix(in srgb, var(--warn) 22%, transparent);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
 }
 .mail-badge.important {
   color: var(--danger);
-  border-color: rgba(192,57,43,.20);
-  background: rgba(192,57,43,.08);
+  border-color: color-mix(in srgb, var(--danger) 20%, transparent);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
 /* Recent Figma comments */
@@ -2197,20 +2197,20 @@ PAGE_CSS = """
   font-size: 10.5px;
   font-weight: 600;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--card);
 }
 .figma-badge.resolved {
   color: var(--ok);
-  border-color: rgba(47,116,55,.22);
-  background: rgba(47,116,55,.08);
+  border-color: color-mix(in srgb, var(--ok) 22%, transparent);
+  background: color-mix(in srgb, var(--ok) 8%, transparent);
 }
 .side-age-chip {
   display: inline-flex;
   align-items: center;
   padding: 1px 7px;
   border-radius: 999px;
-  border: 1px solid rgba(138,133,124,.24);
-  background: rgba(138,133,124,.08);
+  border: 1px solid color-mix(in srgb, var(--fg-dim) 24%, transparent);
+  background: color-mix(in srgb, var(--fg-dim) 8%, transparent);
   color: var(--fg-dim);
   font-size: 10.5px;
   font-weight: 600;
@@ -2235,7 +2235,7 @@ PAGE_CSS = """
   padding: 9px 11px;
   border: 1px solid var(--border);
   border-radius: 10px;
-  background: #fff;
+  background: var(--card);
   color: var(--fg);
 }
 .figma-project-input:focus {
@@ -2248,7 +2248,7 @@ PAGE_CSS = """
   border: 0;
   border-radius: 10px;
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-ink);
   cursor: pointer;
   font-weight: 600;
   white-space: nowrap;
@@ -2270,7 +2270,7 @@ PAGE_CSS = """
   padding: 4px 8px;
   border-radius: 999px;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--card);
   color: var(--fg-muted);
   font-size: 11.5px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
@@ -2341,27 +2341,27 @@ PAGE_CSS = """
 .pr-badge {
   display: inline-block; padding: 1px 6px; border-radius: 999px;
   font-size: 10.5px; font-weight: 600; border: 1px solid var(--border);
-  background: #fff; color: var(--fg-muted); vertical-align: middle;
+  background: var(--card); color: var(--fg-muted); vertical-align: middle;
 }
 .pr-badge.draft  { color: var(--fg-dim); border-color: var(--border); }
-.pr-badge.review { color: var(--warn); border-color: rgba(166,95,0,.25); background: rgba(166,95,0,.07); }
-.pr-badge.approved { color: var(--ok); border-color: rgba(47,116,55,.25); background: rgba(47,116,55,.07); }
+.pr-badge.review { color: var(--warn); border-color: color-mix(in srgb, var(--warn) 25%, transparent); background: color-mix(in srgb, var(--warn) 7%, transparent); }
+.pr-badge.approved { color: var(--ok); border-color: color-mix(in srgb, var(--ok) 25%, transparent); background: color-mix(in srgb, var(--ok) 7%, transparent); }
 /* CI check-status badges */
-.pr-badge.ci-fail    { color: var(--danger); border-color: rgba(192,57,43,.25); background: rgba(192,57,43,.07); }
-.pr-badge.ci-mixed   { color: var(--warn);   border-color: rgba(166,95,0,.25);  background: rgba(166,95,0,.07);  }
+.pr-badge.ci-fail    { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 25%, transparent); background: color-mix(in srgb, var(--danger) 7%, transparent); }
+.pr-badge.ci-mixed   { color: var(--warn);   border-color: color-mix(in srgb, var(--warn) 25%, transparent);  background: color-mix(in srgb, var(--warn) 7%, transparent);  }
 .pr-badge.ci-pending { color: var(--fg-dim); border-color: var(--border); }
 /* Stale / CI filter toggles */
 .pr-filter-btn {
   font: inherit; font-size: 12px; font-weight: 600;
   padding: 2px 8px; border-radius: 999px; cursor: pointer;
-  border: 1px solid rgba(166,95,0,.30); background: rgba(166,95,0,.08);
+  border: 1px solid color-mix(in srgb, var(--warn) 30%, transparent); background: color-mix(in srgb, var(--warn) 8%, transparent);
   color: var(--warn); transition: background .12s, color .12s;
 }
-.pr-filter-btn:hover  { background: rgba(166,95,0,.16); }
-.pr-filter-btn.active { background: var(--warn); color: #fff; border-color: var(--warn); }
-.pr-filter-btn.ci              { border-color: rgba(192,57,43,.30); background: rgba(192,57,43,.08); color: var(--danger); }
-.pr-filter-btn.ci:hover        { background: rgba(192,57,43,.16); }
-.pr-filter-btn.ci.active       { background: var(--danger); color: #fff; border-color: var(--danger); }
+.pr-filter-btn:hover  { background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.pr-filter-btn.active { background: var(--warn); color: var(--accent-ink); border-color: var(--warn); }
+.pr-filter-btn.ci              { border-color: color-mix(in srgb, var(--danger) 30%, transparent); background: color-mix(in srgb, var(--danger) 8%, transparent); color: var(--danger); }
+.pr-filter-btn.ci:hover        { background: color-mix(in srgb, var(--danger) 16%, transparent); }
+.pr-filter-btn.ci.active       { background: var(--danger); color: var(--accent-ink); border-color: var(--danger); }
 .open-prs.filter-stale .pr-row[data-fresh]    { display: none; }
 .open-prs.filter-ci    .pr-row:not([data-ci-fail]) { display: none; }
 
@@ -2369,18 +2369,18 @@ PAGE_CSS = """
 .health-pill {
   display: inline-flex; align-items: center; gap: 6px;
   padding: 4px 10px; border-radius: 999px; font-size: 12px;
-  border: 1px solid var(--border); background: #fff;
+  border: 1px solid var(--border); background: var(--card);
   color: var(--fg-muted); text-decoration: none;
   font-variant-numeric: tabular-nums;
   transition: border-color .12s, background .12s;
 }
-.health-pill:hover { border-color: rgba(31,111,235,.28); background: rgba(31,111,235,.06); }
+.health-pill:hover { border-color: color-mix(in srgb, var(--accent) 28%, transparent); background: color-mix(in srgb, var(--accent) 6%, transparent); }
 .health-pill .health-dot {
   width: 8px; height: 8px; border-radius: 50%;
   background: var(--ok); flex-shrink: 0;
 }
 .health-pill.has-issues .health-dot { background: var(--warn); }
-.health-pill.has-issues { border-color: rgba(166,95,0,.25); color: var(--warn); }
+.health-pill.has-issues { border-color: color-mix(in srgb, var(--warn) 25%, transparent); color: var(--warn); }
 /* Activity metric (auto-filed count), not a health verdict: neutral dot, no
    glow, so it never reads as a green "all-clear" next to the collector chip. */
 .health-pill.metric:not(.has-issues) .health-dot { background: var(--fg-dim); animation: none; }
@@ -2844,6 +2844,9 @@ PULSE_JS = r"""
     const { labels = [], values = [], colors = [] } = payload;
     if (!labels.length) return true;
     const total = values.reduce((a, b) => a + b, 0) || 1;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const chartBorder = rootStyle.getPropertyValue('--card').trim() || '#ffffff';
+    const chartText = rootStyle.getPropertyValue('--ink').trim() || '#1d2024';
     new Chart(canvas, {
       type: 'doughnut',
       data: {
@@ -2851,7 +2854,7 @@ PULSE_JS = r"""
         datasets: [{
           data: values,
           backgroundColor: colors,
-          borderColor: 'rgba(0,0,0,0.25)',
+          borderColor: chartBorder,
           borderWidth: 1,
           hoverOffset: 6,
         }],
@@ -2863,7 +2866,7 @@ PULSE_JS = r"""
         plugins: {
           legend: {
             position: 'right',
-            labels: { color: '#1d2024', boxWidth: 10, boxHeight: 10, font: { size: 11 } },
+            labels: { color: chartText, boxWidth: 10, boxHeight: 10, font: { size: 11 } },
           },
           tooltip: {
             callbacks: {
@@ -2894,6 +2897,9 @@ PULSE_JS = r"""
     const { labels = [], values = [], colors = [] } = payload;
     if (!labels.length) return true;
     const total = values.reduce((a, b) => a + b, 0) || 1;
+    const rootStyle = getComputedStyle(document.documentElement);
+    const chartBorder = rootStyle.getPropertyValue('--card').trim() || '#ffffff';
+    const chartText = rootStyle.getPropertyValue('--ink').trim() || '#1d2024';
     new Chart(canvas, {
       type: 'doughnut',
       data: {
@@ -2901,7 +2907,7 @@ PULSE_JS = r"""
         datasets: [{
           data: values,
           backgroundColor: colors,
-          borderColor: 'rgba(0,0,0,0.25)',
+          borderColor: chartBorder,
           borderWidth: 1,
           hoverOffset: 6,
         }],
@@ -2913,7 +2919,7 @@ PULSE_JS = r"""
         plugins: {
           legend: {
             position: 'right',
-            labels: { color: '#1d2024', boxWidth: 10, boxHeight: 10, font: { size: 11 } },
+            labels: { color: chartText, boxWidth: 10, boxHeight: 10, font: { size: 11 } },
           },
           tooltip: {
             callbacks: {

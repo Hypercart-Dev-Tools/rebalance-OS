@@ -1,0 +1,25 @@
+# MARATHON — GH-154 P5, the Settings page. Separate plan from MARATHON.yaml (P0-P3, complete).
+#
+#   relay-automation/marathon.sh --plan PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER/MARATHON-P5.yaml \
+#     --builder agy --pre-advance-cmd '<gate>'
+#
+# WHY P5 IS AUTOMATED WHEN THE P0-P3 PLAN SAID IT SHOULD NOT BE:
+# The original objection was that P5's success criterion is "does the page look right", which a
+# headless agent cannot judge. That is an argument against letting a builder APPROVE it, not
+# against letting one BUILD it. The split here: agy/codex construct the page and verify the
+# mechanical exit conditions (route renders, record validates, one derivation implementation,
+# gate green); the OPERATOR does the visual pass afterwards. The brief says so explicitly and
+# tells the builder not to claim the page looks correct.
+#
+# Reviewer is codex (builder must differ; pass --builder agy). Round cap is deliberately higher
+# than P1-P3: this is the only phase with real UI judgment in it.
+
+name: gh-154-p5-settings
+phases:
+  - id: p5
+    name: Settings page (/settings)
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER/briefs/p5-settings.md
+    artifact: src/rebalance/web.py,scripts/pulse_server.py
+    turn_timeout_s: 2700
+    max_review_rounds: 4

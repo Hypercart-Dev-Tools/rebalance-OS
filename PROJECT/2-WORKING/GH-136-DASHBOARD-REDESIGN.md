@@ -100,6 +100,7 @@ module to the list as it lands.
 |---|---|---|---|---|
 | 00 | Cross-module consistency (timestamps, shared row, headers) | [#135](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/135) | [GH-135](GH-135-PULSE-DASHBOARD-CONSISTENCY.md) | Complete, unmerged |
 | 01 | Calendar | [#137](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/137) | this file | Complete, unmerged |
+| 02 | Theme color picker (cross-cutting: tokenizes all pages) | [#154](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154) | [GH-154](GH-154-THEME-COLOR-PICKER.md) | Planning |
 | — | Today's Goals (3 columns) | — | — | Not started |
 | — | What's Next | — | — | Not started |
 | — | Recent GitHub activity | — | — | Not started |

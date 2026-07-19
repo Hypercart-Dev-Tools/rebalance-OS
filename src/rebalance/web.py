@@ -40,7 +40,6 @@ from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
 from rebalance.paths import resolve_db, resolve_secret_path
 from rebalance.tz_utils import format_relative
 from rebalance.web_components import badge_html, button_link, render_shell
-
 logger = logging.getLogger(__name__)
 
 # How long a persisted Focus 5 roster stays authoritative before a visit lazily
@@ -242,15 +241,15 @@ _SOURCE_BADGE = {
 # here. All colours are design tokens (var(--…)) so the palette is single-sourced;
 # none of these rules touch the dashboard (which never includes _CSS).
 _CSS = """
-h2 { font-size: 15px; font-weight: 600; color: var(--fg-muted); margin-bottom: 16px; }
-table { width: 100%; border-collapse: collapse; background: var(--panel);
+h2 { font-size: 15px; font-weight: 600; color: var(--muted); margin-bottom: 16px; }
+table { width: 100%; border-collapse: collapse; background: var(--card);
         border-radius: 8px; overflow: hidden;
-        box-shadow: 0 1px 3px rgba(0,0,0,.12); }
+        box-shadow: var(--shadow); }
 th { background: var(--border); font-size: 12px; font-weight: 600;
-     color: var(--fg-muted); text-align: left; padding: 10px 14px; }
+     color: var(--muted); text-align: left; padding: 10px 14px; }
 td { padding: 10px 14px; font-size: 13px;
      border-top: 1px solid var(--border); vertical-align: top; }
-tr:hover td { background: rgba(0,0,0,.03); }
+tr:hover td { background: var(--zebra); }
 .badge { display: inline-block; padding: 2px 8px; border-radius: 12px;
          font-size: 11px; font-weight: 600; color: #fff; white-space: nowrap; }
 .badge-ok      { background: var(--ok);     color: #fff; }
@@ -259,27 +258,27 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .badge-info    { background: var(--info);   color: #fff; }
 .badge-neutral { background: var(--fg-dim); color: #fff; }
 .detail { font-family: "SF Mono", "Fira Code", monospace; font-size: 11px;
-          color: var(--fg-muted); word-break: break-all; }
-.empty { text-align: center; padding: 48px; color: var(--fg-muted); font-size: 14px; }
+          color: var(--muted); word-break: break-all; }
+.empty { text-align: center; padding: 48px; color: var(--muted); font-size: 14px; }
 .raw-link { float: right; font-size: 12px; color: var(--accent); text-decoration: none; }
 .raw-link:hover { text-decoration: underline; }
 
 /* Sleuth reminder groups (home page) */
 .sr-search-bar { display:flex; align-items:center; gap:12px; margin-bottom:16px; }
 .sr-input { flex:1; max-width:340px; padding:6px 10px; border:1px solid var(--border);
-            border-radius:6px; background:var(--panel); color:var(--fg); font-size:13px; }
-.sr-count-label { font-size:12px; color:var(--fg-muted); }
+            border-radius:6px; background:var(--card); color:var(--ink); font-size:13px; }
+.sr-count-label { font-size:12px; color:var(--muted); }
 .sr-groups { display:flex; flex-direction:column; gap:12px; }
-.sr-group  { background:var(--panel); border-radius:8px;
-             box-shadow:0 1px 3px rgba(0,0,0,.12); overflow:hidden; }
+.sr-group  { background:var(--card); border-radius:8px;
+             box-shadow:var(--shadow); overflow:hidden; }
 .sr-group-header { display:flex; align-items:center; gap:8px; padding:10px 14px;
                    border-bottom:1px solid var(--border); font-size:13px; font-weight:600; }
 .sr-group-name  { flex:1; }
-.sr-group-count { font-size:11px; font-weight:400; color:var(--fg-muted); }
+.sr-group-count { font-size:11px; font-weight:400; color:var(--muted); }
 .sr-tasks { list-style:none; padding:0; margin:0; }
 .sr-task  { padding:8px 14px; font-size:13px; border-top:1px solid var(--border); }
 .sr-task:first-child { border-top:none; }
-.sr-task:hover { background:rgba(0,0,0,.03); }
+.sr-task:hover { background:var(--zebra); }
 
 /* Focus 5 — sits inside the .app 280px-sidebar grid, so it has ~280px less width
    than the old centred 1480px <main>. Breakpoints retuned for that frame. */
@@ -288,18 +287,18 @@ tr:hover td { background: rgba(0,0,0,.03); }
 @media (max-width: 1400px) { .f5-grid { grid-template-columns: repeat(3, 1fr); } }
 @media (max-width: 1000px) { .f5-grid { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 680px)  { .f5-grid { grid-template-columns: 1fr; } }
-.f5-card { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+.f5-card { background: var(--card); border-radius: 8px; box-shadow: var(--shadow);
            padding: 14px; display: flex; flex-direction: column; gap: 10px; }
 .f5-pos { font-size: 11px; font-weight: 700; color: var(--fg-dim); }
 .f5-name { font-size: 12px; font-weight: 600; color: var(--accent); text-decoration: none;
            word-break: break-word; }
 .f5-name:hover { text-decoration: underline; }
-.f5-reason { font-size: 11px; color: var(--fg-muted); }
+.f5-reason { font-size: 11px; color: var(--muted); }
 .f5-sec { border-top: 1px solid var(--border); padding-top: 8px; }
 .f5-sec h4 { font-size: 10px; text-transform: uppercase; letter-spacing: .04em;
              color: var(--fg-dim); font-weight: 700; margin-bottom: 5px; }
-.f5-branch { font-family: "SF Mono", monospace; font-size: 11px; color: var(--fg); }
-.f5-drift { font-size: 11px; color: var(--fg-muted); margin-left: 6px; }
+.f5-branch { font-family: "SF Mono", monospace; font-size: 11px; color: var(--ink); }
+.f5-drift { font-size: 11px; color: var(--muted); margin-left: 6px; }
 .f5-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
           margin-right: 5px; vertical-align: middle; }
 .f5-pr a { color: var(--accent); text-decoration: none; font-size: 12px; }
@@ -307,8 +306,8 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .f5-muted { font-size: 12px; color: var(--fg-dim); }
 .f5-act { list-style: none; display: flex; flex-direction: column; gap: 5px; }
 .f5-act li { font-size: 12px; line-height: 1.35; }
-.f5-act .when { color: var(--fg-dim); font-size: 10px; }
-.f5-meta { font-size: 12px; color: var(--fg-muted); margin-bottom: 16px; }
+.f5-act .when { color: var(--timestamp); font-size: 10px; }
+.f5-meta { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
 .f5-live { color: var(--ok); }
 .f5-stale { color: var(--warn); font-weight: 700; }
 .f5-refresh { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none;
@@ -320,36 +319,36 @@ tr:hover td { background: rgba(0,0,0,.03); }
 .f5-warn b { color: var(--warn); }
 /* GH-105: a slim, friendly (non-alarm) nudge — deliberately lighter than
    .f5-warn so it reads as "BTW" rather than a risk warning. */
-.f5-dirty-banner { background: rgba(31,111,235,.06); border: 1px solid rgba(31,111,235,.2);
-                    color: var(--fg-muted); border-radius: 8px; padding: 6px 14px;
+.f5-dirty-banner { background: var(--zebra); border: 1px solid var(--border);
+                    color: var(--muted); border-radius: 8px; padding: 6px 14px;
                     margin-bottom: 12px; font-size: 12px; line-height: 1.4; }
-.f5-dirty-banner b { color: var(--fg); }
+.f5-dirty-banner b { color: var(--ink); }
 /* GH-81 Phase 2: a fallback-basis badge on a rostered card (reflog disabled). */
-.f5-basis { color: var(--fg-muted); font-weight: 400; font-size: 12px; }
+.f5-basis { color: var(--muted); font-weight: 400; font-size: 12px; }
 /* Focus 5 / Dirty Five view toggle — a small segmented control. */
 .f5-views { display: inline-flex; gap: 4px; padding: 3px; margin-bottom: 16px;
-            background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
-.f5-view { font-size: 13px; font-weight: 600; color: var(--fg-muted); text-decoration: none;
+            background: var(--card); border: 1px solid var(--border); border-radius: 8px; }
+.f5-view { font-size: 13px; font-weight: 600; color: var(--muted); text-decoration: none;
            padding: 4px 12px; border-radius: 6px; }
-.f5-view:hover { color: var(--fg); }
-.f5-view.active { background: rgba(31,111,235,.12); color: var(--accent); }
+.f5-view:hover { color: var(--ink); }
+.f5-view.active { background: var(--zebra); color: var(--accent); }
 
 /* What's Next — the single ranked "work on next" list. Reuses the shared
    .badge/.empty rules; only the list/row chrome is page-local. */
 .wn-refresh { font-size: 13px; font-weight: 600; color: var(--accent); text-decoration: none;
               margin-left: 10px; }
 .wn-refresh:hover { text-decoration: underline; }
-.wn-meta { font-size: 12px; color: var(--fg-muted); margin-bottom: 16px; }
+.wn-meta { font-size: 12px; color: var(--muted); margin-bottom: 16px; }
 .wn-blended { color: var(--ok); }
 .wn-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
-.wn-item { background: var(--panel); border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.12);
+.wn-item { background: var(--card); border-radius: 8px; box-shadow: var(--shadow);
            padding: 12px 14px; display: flex; gap: 12px; align-items: flex-start; }
 .wn-rank { font-size: 13px; font-weight: 700; color: var(--fg-dim); min-width: 28px;
            font-variant-numeric: tabular-nums; }
 .wn-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .wn-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.wn-title { font-size: 14px; font-weight: 600; color: var(--fg); word-break: break-word; }
-.wn-why { font-size: 12px; color: var(--fg-muted); line-height: 1.4; }
+.wn-title { font-size: 14px; font-weight: 600; color: var(--ink); word-break: break-word; }
+.wn-why { font-size: 12px; color: var(--muted); line-height: 1.4; }
 .wn-ev { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 3px; }
 .wn-ev li { font-size: 11px; color: var(--fg-dim); word-break: break-word; }
 .wn-src { font-size: 11px; color: var(--fg-dim); text-transform: uppercase; letter-spacing: .04em; }
@@ -377,14 +376,14 @@ def _auth_detail_html(detail: dict[str, Any]) -> str:
     return "<br>".join(lines)
 
 
-def _page(title: str, body: str, *, active: str, wide: bool = False) -> HTMLResponse:
+def _page(title: str, body: str, *, active: str, wide: bool = False, extra_css: str = "") -> HTMLResponse:
     """Wrap a page body in the shared sidebar shell (tokens + chrome + buttons).
 
     The nav/sidebar comes from render_shell (minimal, I/O-free sidebar); ``active``
     marks the current nav item (``'today' | 'focus5' | 'authlog'``).
     """
     return HTMLResponse(
-        render_shell(title, body, active=active, wide=wide, page_css=_CSS)
+        render_shell(title, body, active=active, wide=wide, page_css=_CSS + "\n" + extra_css)
     )
 
 
@@ -429,7 +428,7 @@ def _render_sleuth_groups() -> str:
     groups_html = "\n".join(rows)
     return (
         f"<h2 style='margin-top:28px;'>Reminders"
-        f"<span style='font-size:12px;font-weight:400;color:var(--fg-muted);margin-left:10px;'>"
+        f"<span style='font-size:12px;font-weight:400;color:var(--muted);margin-left:10px;'>"
         f"{total_tasks} active across {len(groups)} group{'s' if len(groups) != 1 else ''}"
         f"</span></h2>"
         f"<div class='sr-search-bar'>"
@@ -1474,12 +1473,12 @@ _SYSLOG_TOGGLE_CSS = (
     "<style>"
     ".syslog-bar{display:flex;gap:.5rem;align-items:center;flex-wrap:wrap;margin:.75rem 0}"
     ".syslog-toggles{display:flex;gap:.3rem;flex-wrap:wrap}"
-    ".syslog-toggle{padding:.3rem .75rem;border:1px solid #d0d7de;border-radius:2rem;"
-    "background:#f6f8fa;cursor:pointer;font:inherit;font-size:.85rem;color:#24292f}"
-    ".syslog-toggle.active{background:#0969da;border-color:#0969da;color:#fff;font-weight:600}"
+    ".syslog-toggle{padding:.3rem .75rem;border:1px solid var(--border);border-radius:2rem;"
+    "background:var(--card);cursor:pointer;font:inherit;font-size:.85rem;color:var(--ink)}"
+    ".syslog-toggle.active{background:var(--accent);border-color:var(--accent);color:var(--accent-ink);font-weight:600}"
     ".syslog-input{flex:1;min-width:14rem;padding:.4rem .6rem;font:inherit;"
-    "border:1px solid #d0d7de;border-radius:6px}"
-    ".syslog-count{color:#57606a;font-size:.85rem;white-space:nowrap}"
+    "border:1px solid var(--border);border-radius:6px}"
+    ".syslog-count{color:var(--muted);font-size:.85rem;white-space:nowrap}"
     "</style>"
 )
 
@@ -1714,7 +1713,7 @@ def sleuth_graph_page() -> HTMLResponse:
     _legend_entries = [("client", "Client"), ("github", "GitHub issue/PR"),
                         ("channel", "Channel"), ("other", "Other")]
     legend_items = "".join(
-        "<span style='display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;'>"
+        "<span style='display:inline-flex;align-items:center;gap:5px;margin-right:14px;font-size:12px;color:var(--ink);'>"
         f"<span style='width:10px;height:10px;border-radius:50%;background:{_KIND_COLOR[k]['bg']};display:inline-block;'></span>"
         f"{lbl}</span>"
         for k, lbl in _legend_entries
@@ -1729,17 +1728,17 @@ def sleuth_graph_page() -> HTMLResponse:
     body = f"""
 {error_html}
 <div style="display:flex;align-items:center;gap:16px;margin-bottom:12px;flex-wrap:wrap;">
-  <span style="font-size:13px;color:var(--fg-muted);">
+  <span style="font-size:13px;color:var(--muted);">
     {total} active reminders · {len(groups)} groups
   </span>
   <span style="margin-left:auto;">{legend_items}</span>
 </div>
 <div id="cy" style="width:100%;height:calc(100vh - 160px);min-height:500px;
-     background:var(--panel);border-radius:8px;
-     box-shadow:0 1px 3px rgba(0,0,0,.12);"></div>
-<div id="cy-tooltip" style="display:none;position:fixed;background:var(--panel);
+     background:var(--card);border-radius:8px;
+     box-shadow:var(--shadow);"></div>
+<div id="cy-tooltip" style="display:none;position:fixed;background:var(--card);
      border:1px solid var(--border);border-radius:6px;padding:8px 12px;
-     font-size:12px;max-width:320px;box-shadow:0 4px 12px rgba(0,0,0,.15);
+     font-size:12px;max-width:320px;box-shadow:var(--shadow);
      pointer-events:none;z-index:100;line-height:1.5;"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.33.1/cytoscape.min.js"
@@ -1749,12 +1748,10 @@ def sleuth_graph_page() -> HTMLResponse:
 (function() {{
   var elements = {elements_json};
 
-  var kindColor = {{
-    client:  {{ bg: '#2f7437', border: '#1e4d25' }},
-    github:  {{ bg: '#1d6fa8', border: '#134d75' }},
-    channel: {{ bg: '#6f3fa8', border: '#4d2a75' }},
-    other:   {{ bg: '#8a857c', border: '#5b5750' }},
-  }};
+  var rootStyle = getComputedStyle(document.documentElement);
+  var getVar = function(prop) {{ return rootStyle.getPropertyValue(prop).trim(); }};
+
+
 
   var cy = cytoscape({{
     container: document.getElementById('cy'),
@@ -1765,18 +1762,18 @@ def sleuth_graph_page() -> HTMLResponse:
         selector: 'node[kind]',
         style: {{
           'background-color': 'data(bg)',
-          'border-color': 'data(border)',
+          'border-color': getVar('--border'),
           'border-width': 2,
           'label': 'data(label)',
           'font-size': 13,
           'font-weight': 600,
-          'color': '#fff',
+          'color': getVar('--ink'),
           'text-valign': 'top',
           'text-halign': 'center',
           'text-margin-y': -6,
           'padding': 18,
           'shape': 'round-rectangle',
-          'text-background-color': 'data(bg)',
+          'text-background-color': getVar('--card'),
           'text-background-opacity': 0.85,
           'text-background-padding': '3px',
           'text-background-shape': 'round-rectangle',
@@ -1786,12 +1783,12 @@ def sleuth_graph_page() -> HTMLResponse:
       {{
         selector: 'node[reminder_id]',
         style: {{
-          'background-color': '#ffffff',
-          'border-color': '#c8c0b4',
+          'background-color': getVar('--card'),
+          'border-color': getVar('--border'),
           'border-width': 1.5,
           'label': 'data(label)',
           'font-size': 10,
-          'color': '#1d2024',
+          'color': getVar('--ink'),
           'text-valign': 'bottom',
           'text-halign': 'center',
           'text-margin-y': 4,
@@ -1806,7 +1803,7 @@ def sleuth_graph_page() -> HTMLResponse:
       {{
         selector: 'edge[kind="github"]',
         style: {{
-          'line-color': '#1d6fa8',
+          'line-color': getVar('--info'),
           'width': 2,
           'line-style': 'dashed',
           'target-arrow-shape': 'none',
@@ -1819,7 +1816,7 @@ def sleuth_graph_page() -> HTMLResponse:
         selector: 'node:selected, node.highlighted',
         style: {{
           'border-width': 3,
-          'border-color': '#1f6feb',
+          'border-color': getVar('--accent'),
           'z-index': 10,
         }},
       }},
@@ -1849,7 +1846,7 @@ def sleuth_graph_page() -> HTMLResponse:
     var d = e.target.data();
     tooltip.innerHTML =
       '<b style="display:block;margin-bottom:4px;">' + escHtml(d.full_text || d.label) + '</b>' +
-      (d.channel ? '<span style="color:#5b5750;">#' + escHtml(d.channel) + '</span>' : '') +
+      (d.channel ? '<span style="color:var(--muted);">#' + escHtml(d.channel) + '</span>' : '') +
       (d.state ? ' &nbsp;·&nbsp; <code>' + escHtml(d.state) + '</code>' : '');
     tooltip.style.display = 'block';
   }});
@@ -1877,3 +1874,250 @@ def sleuth_graph_page() -> HTMLResponse:
 </script>"""
 
     return _page("Reminder Graph", body, active="sleuthgraph", wide=True)
+
+def settings_page() -> HTMLResponse:
+    from rebalance.web_components import data_row
+
+    sample_rows = "".join(
+        data_row(
+            marker_html='<span style="width:15px;height:15px;border:1.5px solid var(--muted);border-radius:4px;display:inline-block;opacity:0.6;"></span>',
+            title_html=title,
+            timestamp=ts,
+            stripe_index=i
+        )
+        for i, (title, ts) in enumerate([
+            ("Invoice Taiwo", "2026-07-18T09:00:00Z"),
+            ("Rebalance PRs", "2026-07-18T13:45:00Z"),
+            ("Team Call", "2026-07-19T13:45:00Z"),
+            ("Submit Sleuth to Product Hunt", "2026-07-20T09:00:00Z"),
+        ])
+    )
+
+    page_css = """
+.settings-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 18px; transition: background 0.25s, border-color 0.25s; }
+.settings-section h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--ink); }
+.settings-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.preset-card { border: 2px solid var(--border); border-radius: 10px; padding: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 8px; background: var(--card); transition: border-color 0.15s; }
+.preset-card:hover { border-color: var(--muted); }
+.preset-card.active { border-color: var(--accent); }
+.preset-preview { border-radius: 6px; overflow: hidden; height: 84px; padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+.preset-label { display: flex; align-items: center; gap: 7px; padding: 0 4px 4px; font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.preset-dot { width: 14px; height: 14px; border-radius: 99px; flex-shrink: 0; border: 2px solid var(--muted); background: transparent; transition: border-color 0.15s, background 0.15s; }
+.preset-card.active .preset-dot { border-color: var(--accent); background: var(--accent); }
+.fine-tune-header { font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: var(--muted); text-transform: uppercase; border-top: 1px solid var(--border); padding-top: 16px; }
+.fine-tune-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.color-field { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.color-field input[type="color"] { width: 28px; height: 28px; border: none; padding: 0; background: none; cursor: pointer; }
+.color-field-label { display: flex; flex-direction: column; gap: 1px; }
+.color-field-name { font-weight: 600; font-size: 12px; color: var(--ink); }
+.color-field-val { font-family: "SF Mono", Menlo, monospace; font-size: 10.5px; color: var(--muted); }
+.btn-primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 12px; border-radius: 7px; padding: 7px 18px; cursor: pointer; border: none; display: inline-flex; align-items: center; justify-content: center; }
+.btn-secondary { background: var(--card); border: 1px solid var(--border); color: var(--ink); font-weight: 600; font-size: 12px; border-radius: 7px; padding: 7px 18px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.cal-preview { position: relative; border: 1px solid var(--border); border-radius: 8px; height: 56px; margin: 2px 0 6px; }
+.cal-preview-time1 { position: absolute; left: 10px; top: 8px; font-size: 10.5px; color: var(--timestamp); }
+.cal-preview-line1 { position: absolute; left: 48px; right: 10px; top: 12px; border-top: 1px solid var(--border); }
+.cal-preview-time2 { position: absolute; left: 10px; bottom: 8px; font-size: 10.5px; color: var(--timestamp); }
+.cal-preview-line2 { position: absolute; left: 48px; right: 10px; bottom: 12px; border-top: 1px solid var(--border); }
+.cal-preview-now { position: absolute; left: 48px; right: 10px; top: 27px; display: flex; align-items: center; }
+.cal-preview-now-dot { width: 11px; height: 11px; border-radius: 99px; background: var(--nowline); margin-left: -5px; flex-shrink: 0; }
+.cal-preview-now-line { flex: 1; height: 2px; background: var(--nowline); }
+"""
+    body = f"""
+<h2>Pulse / Settings</h2>
+<div style="display: flex; flex-direction: column; gap: 20px; max-width: 760px; padding-bottom: 64px;">
+  <section class="settings-section">
+    <div>
+      <h2>Color theme</h2>
+      <div style="color: var(--muted); font-size: 13px; margin-top: 3px;">Applies to all Pulse dashboard pages and modules.</div>
+    </div>
+    
+    <div class="settings-presets" id="presetsGrid"></div>
+    
+    <div class="fine-tune-header">Fine-tune colors</div>
+    <div class="fine-tune-grid" id="fineTuneGrid"></div>
+    
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 4px;">
+      <button id="btnSave" class="btn-primary">Save</button>
+      <button id="btnReset" class="btn-secondary">Reset</button>
+      <span style="font-size: 11.5px; color: var(--muted);">Reset returns to the selected theme's defaults.</span>
+    </div>
+  </section>
+  
+  <section class="settings-section">
+    <div style="display: flex; align-items: baseline; gap: 12px;">
+      <h2>Preview</h2>
+      <span style="font-family: 'SF Mono', Menlo, monospace; font-size: 11px; color: var(--muted);" id="lblThemeName">theme: default</span>
+    </div>
+    
+    <ul class="rb-data-list" style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-top: -4px;">
+      {sample_rows}
+    </ul>
+    
+    <div class="cal-preview">
+      <span class="cal-preview-time1">1 PM</span>
+      <span class="cal-preview-line1"></span>
+      <span class="cal-preview-time2">2 PM</span>
+      <span class="cal-preview-line2"></span>
+      <span class="cal-preview-now">
+        <span class="cal-preview-now-dot"></span>
+        <span class="cal-preview-now-line"></span>
+      </span>
+    </div>
+  </section>
+</div>
+<script>
+(function() {{
+  const PRESETS = {{
+    default:  {{ name: 'Current default', page: '#f3efe7', card: '#ffffff', ink: '#1d2024', accent: '#1f6feb', border: '#e3ddd0', nowline: '#d43d2a', timestamp: '#8a857c' }},
+    dark:     {{ name: 'Dark mode',       page: '#191713', card: '#242019', ink: '#f0ece1', accent: '#6f97ea', border: '#3a3529', nowline: '#e05a48', timestamp: '#8f887a' }},
+    grey:     {{ name: 'Grey mode',       page: '#ececec', card: '#ffffff', ink: '#1e1e1e', accent: '#444444', border: '#dcdcdc', nowline: '#d43d2a', timestamp: '#8a8a8a' }},
+    lightblue:{{ name: 'Light blue',      page: '#e9f0f7', card: '#ffffff', ink: '#16283c', accent: '#1d6fd1', border: '#d3e0ee', nowline: '#d43d2a', timestamp: '#7d90a5' }},
+  }};
+  
+  const FIELD_LABELS = {{ page: 'Page background', card: 'Card background', ink: 'Text', accent: 'Accent', border: 'Borders', nowline: 'Calendar time line', timestamp: 'Date + time text' }};
+  const FIELDS = window.__pulseTheme.FIELDS;
+  
+  let currentTheme = 'default';
+  let currentColors = null; // null means using preset unmodified
+  let lastPreset = 'default';
+  
+  function extractFields(obj) {{
+    const res = {{}};
+    FIELDS.forEach(f => res[f] = obj[f]);
+    return res;
+  }}
+  
+  function getWorkingColors() {{
+    return currentColors || extractFields(PRESETS[currentTheme === 'custom' ? 'default' : currentTheme]);
+  }}
+  
+  function setColors(newColors) {{
+    window.__pulseTheme.apply(newColors);
+  }}
+  
+  function renderUI() {{
+    const working = getWorkingColors();
+    const presetsGrid = document.getElementById('presetsGrid');
+    presetsGrid.innerHTML = '';
+    
+    ['default', 'dark', 'grey', 'lightblue'].forEach(k => {{
+      const p = PRESETS[k];
+      const mix = window.__pulseTheme.mix;
+      const pMuted = mix(p.ink, p.page, 0.45);
+      
+      const el = document.createElement('div');
+      el.className = 'preset-card' + (currentTheme === k ? ' active' : '');
+      el.onclick = () => {{ currentTheme = k; lastPreset = k; currentColors = null; setColors(getWorkingColors()); renderUI(); }};
+      
+      el.innerHTML = `
+        <div class="preset-preview" style="background: ${{p.page}}; border: 1px solid ${{p.border}};">
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <span style="width: 8px; height: 8px; border-radius: 3px; background: ${{p.accent}};"></span>
+            <span style="width: 34px; height: 4px; border-radius: 99px; background: ${{p.ink}}; opacity: 0.75;"></span>
+          </div>
+          <div style="flex: 1; border-radius: 4px; background: ${{p.card}}; border: 1px solid ${{p.border}}; padding: 5px 6px; display: flex; flex-direction: column; gap: 4px;">
+            <span style="width: 60%; height: 4px; border-radius: 99px; background: ${{p.ink}}; opacity: 0.7;"></span>
+            <span style="width: 85%; height: 4px; border-radius: 99px; background: ${{pMuted}};"></span>
+            <span style="width: 75%; height: 4px; border-radius: 99px; background: ${{pMuted}};"></span>
+          </div>
+        </div>
+        <div class="preset-label">
+          <span class="preset-dot"></span>
+          <span>${{p.name}}</span>
+        </div>
+      `;
+      presetsGrid.appendChild(el);
+    }});
+    
+    const fineTuneGrid = document.getElementById('fineTuneGrid');
+    fineTuneGrid.innerHTML = '';
+    
+    FIELDS.forEach(f => {{
+      const el = document.createElement('label');
+      el.className = 'color-field';
+      
+      const inp = document.createElement('input');
+      inp.type = 'color';
+      inp.value = working[f];
+      inp.oninput = (e) => {{
+        if (!currentColors) currentColors = {{ ...working }};
+        if (currentTheme !== 'custom') {{
+           lastPreset = currentTheme;
+           currentTheme = 'custom';
+        }}
+        currentColors[f] = e.target.value;
+        setColors(currentColors);
+        renderUI();
+      }};
+      
+      const textWrap = document.createElement('span');
+      textWrap.className = 'color-field-label';
+      textWrap.innerHTML = `<span class="color-field-name">${{FIELD_LABELS[f]}}</span><span class="color-field-val">${{working[f]}}</span>`;
+      
+      el.appendChild(inp);
+      el.appendChild(textWrap);
+      fineTuneGrid.appendChild(el);
+    }});
+    
+    let displayName = currentTheme === 'custom' ? 'Custom' : PRESETS[currentTheme].name;
+    if (currentTheme !== 'custom' && JSON.stringify(working) !== JSON.stringify(extractFields(PRESETS[currentTheme]))) {{
+      displayName += ' (modified)';
+    }}
+    document.getElementById('lblThemeName').textContent = 'theme: ' + displayName;
+    
+    let saved = null;
+    try {{
+      const raw = localStorage.getItem(window.__pulseTheme.KEY);
+      if (raw && window.__pulseTheme.parse(raw)) {{
+        saved = JSON.parse(raw);
+      }}
+    }} catch(e) {{}}
+    
+    let isDirty = true;
+    if (saved) {{
+      isDirty = (saved.preset !== currentTheme) || (JSON.stringify(saved.inputs) !== JSON.stringify(working));
+    }} else {{
+      isDirty = (currentTheme !== 'default') || (JSON.stringify(working) !== JSON.stringify(extractFields(PRESETS.default)));
+    }}
+    
+    const btnSave = document.getElementById('btnSave');
+    btnSave.style.opacity = isDirty ? '1' : '0.5';
+    btnSave.style.cursor = isDirty ? 'pointer' : 'default';
+  }}
+  
+  document.getElementById('btnReset').onclick = () => {{
+    if (currentTheme === 'custom') currentTheme = lastPreset;
+    currentColors = null;
+    setColors(getWorkingColors());
+    renderUI();
+  }};
+  
+  document.getElementById('btnSave').onclick = () => {{
+    const working = getWorkingColors();
+    const payload = window.__pulseTheme.record(currentTheme, extractFields(working));
+    localStorage.setItem(window.__pulseTheme.KEY, JSON.stringify(payload));
+    renderUI();
+  }};
+  
+  try {{
+    const raw = localStorage.getItem(window.__pulseTheme.KEY);
+    const parsed = window.__pulseTheme.parse(raw);
+    if (parsed) {{
+      const saved = JSON.parse(raw);
+      currentTheme = saved.preset || 'default';
+      lastPreset = currentTheme === 'custom' ? 'default' : currentTheme;
+      const filteredParsed = extractFields(parsed);
+      if (currentTheme !== 'custom' && PRESETS[currentTheme]) {{
+         currentColors = (JSON.stringify(filteredParsed) === JSON.stringify(extractFields(PRESETS[currentTheme]))) ? null : filteredParsed;
+      }} else {{
+         currentColors = filteredParsed;
+      }}
+    }}
+  }} catch(e) {{}}
+  
+  setColors(getWorkingColors());
+  renderUI();
+}})();
+</script>
+"""
+    return _page("Settings", body, active="settings", wide=True, extra_css=page_css)
