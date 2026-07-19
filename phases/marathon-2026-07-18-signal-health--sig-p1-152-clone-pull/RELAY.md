@@ -1,5 +1,5 @@
 # Marathon Phase sig-p1-152-clone-pull
-STATUS: Approved
+STATUS: Open
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-SIG-P1-152-CLONE-PULL-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -64,17 +64,3 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/GitHub-Repos/xyz-3-agents-swarm/bin/tick done MARATHON-SIG-P1-152-CLONE-PULL-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/GitHub-Repos/xyz-3-agents-swarm/bin/tick
    Edit ONLY phases/marathon-2026-07-18-signal-health--sig-p1-152-clone-pull/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
-
-### Round 1 · Reviewer · agy
-
-The fetch + reconcile logic has not been implemented in `scripts/pulse_sync.sh` yet (the builder block is missing). Please implement the required git fetch and integrate/reconcile steps in `scripts/pulse_sync.sh` as described in the phase brief, and add relevant test coverage under `tests/`.
-
-**Verdict:** Changes requested
-
-### Round 2 · Reviewer · agy
-
-The fetch + reconcile logic has been implemented directly in `scripts/pulse_sync.sh` before the pulse generation and publishing step. The implementation fetches and integrates remote commits using `git pull --rebase`, protecting any unpushed local commits. It also handles pre-existing interactive rebases to avoid disrupting operator work, and aborts failed/conflicting rebases cleanly while propagating git errors correctly.
-
-Existing tests are verified green.
-
-**Verdict:** Approved
