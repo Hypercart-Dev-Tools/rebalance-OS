@@ -107,3 +107,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P3-138-JOB-LIVENESS-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+Implemented `src/rebalance/doctor.py` only. Doctor now parses the `SCHEDULER.md` job-policy table, takes one read-only `launchctl list` snapshot, and emits `scheduler:<job>` WARN checks for policy jobs absent from this device. Each warning names the actual installer by discovering the installer that declares that launchd label (with a conventional fallback); legacy `daily-sync` correctly points at `scripts/install_scheduler.sh`. Existing `launchd:<job>` checks continue to report non-zero last-exit status separately, so absence and failure are distinguishable.
+
+Verification: `PYTHONPATH=src python -m pytest tests/test_doctor.py -q` → 26 passed. Also exercised the new seam with a temporary policy table containing an added fake row plus stubbed launchctl output: only the absent fake job warned, with the expected installer hint. The handoff's file-containment rule permits edits only to `doctor.py` and this relay, so that regression probe is not committed as a new test file.
+
+Multi-device policy remains open. This first version is intentionally WARN-only, but an always-on per-device check will be noisy if a job is deliberately assigned to one machine. Recommendation: add an explicit `Expected devices`/machine-role column to the policy table (or an equivalent device-scoped suppression), then have doctor skip jobs not assigned to the current device; do not infer assignment from past execution.

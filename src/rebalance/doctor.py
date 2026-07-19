@@ -12,6 +12,7 @@ projects, GitHub data freshness, the credentials for each external integration
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -380,17 +381,134 @@ def _check_collector_freshness(
     return Check(name, OK, f"{count} rows, last sync {latest}")
 
 
-def _check_launchd() -> list[Check]:
-    """Report rebalance launchd jobs and their last exit status (macOS only)."""
+def _launchctl_list() -> str | None:
+    """Return the live launchd listing, or ``None`` when unavailable."""
     try:
         out = subprocess.run(
             ["launchctl", "list"], capture_output=True, text=True, timeout=10
         )
     except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    return out.stdout
+
+
+def _scheduler_policy_jobs(policy_path: Path | None = None) -> list[str]:
+    """Read launchd job suffixes from SCHEDULER.md's job policy table.
+
+    The policy document intentionally remains the source of truth.  This is a
+    deliberately narrow Markdown parser: it recognizes only the first-column
+    backticked job name under the ``Job (label suffix)`` table header.
+    """
+    if policy_path is None:
+        from rebalance.paths import resolve_project_root
+
+        policy_path = resolve_project_root(Path(__file__)) / "SCHEDULER.md"
+
+    lines = policy_path.read_text(encoding="utf-8").splitlines()
+    header = "| Job (label suffix) |"
+    try:
+        start = next(i for i, line in enumerate(lines) if line.startswith(header))
+    except StopIteration:
+        return []
+
+    jobs: list[str] = []
+    for line in lines[start + 2 :]:  # skip the Markdown separator row
+        if not line.startswith("|"):
+            break
+        first_cell = line.split("|", 2)[1].strip()
+        match = re.fullmatch(r"`([a-z0-9-]+)`", first_cell)
+        if match:
+            jobs.append(match.group(1))
+    return jobs
+
+
+def _loaded_rebalance_labels(launchctl_output: str) -> set[str]:
+    """Extract ``com.rebalance-os.*`` labels from ``launchctl list`` output."""
+    labels: set[str] = set()
+    for line in launchctl_output.splitlines():
+        fields = line.split()
+        if fields and fields[-1].startswith("com.rebalance-os."):
+            labels.add(fields[-1])
+    return labels
+
+
+def _scheduler_installer(job: str, repo_root: Path) -> str:
+    """Find the installer that declares *job*, with a conventional fallback.
+
+    Installers predate the policy table and some omit ``-sync`` from their
+    filename.  Reading their declared label keeps the liveness check
+    table-driven while still giving the operator the real installer command.
+    """
+    label = f"com.rebalance-os.{job}"
+    scripts_dir = repo_root / "scripts"
+    installers = [
+        *scripts_dir.glob("install*_scheduler.sh"),
+        scripts_dir / "install_scheduler.sh",  # legacy daily-sync installer
+    ]
+    for installer in sorted(set(installers)):
+        try:
+            if label in installer.read_text(encoding="utf-8"):
+                return installer.relative_to(repo_root).as_posix()
+        except OSError:
+            continue
+    return f"scripts/install_{job.replace('-', '_')}_scheduler.sh"
+
+
+def _check_scheduler_liveness(
+    policy_path: Path | None = None, launchctl_output: str | None = None
+) -> list[Check]:
+    """Warn for policy jobs absent from this device's live launchd registry."""
+    try:
+        if policy_path is None:
+            from rebalance.paths import resolve_project_root
+
+            repo_root = resolve_project_root(Path(__file__))
+            policy_path = repo_root / "SCHEDULER.md"
+        else:
+            repo_root = policy_path.parent
+        jobs = _scheduler_policy_jobs(policy_path)
+    except (OSError, RuntimeError) as exc:
+        return [Check("scheduler policy", WARN, f"could not read SCHEDULER.md: {exc}")]
+
+    if not jobs:
+        return [
+            Check(
+                "scheduler policy",
+                WARN,
+                "SCHEDULER.md contains no readable launchd job policy rows",
+            )
+        ]
+
+    if launchctl_output is None:
+        launchctl_output = _launchctl_list()
+    if launchctl_output is None:
+        return []  # not macOS / launchctl unavailable — silently skip
+
+    loaded = _loaded_rebalance_labels(launchctl_output)
+    checks: list[Check] = []
+    for job in jobs:
+        if f"com.rebalance-os.{job}" not in loaded:
+            installer = _scheduler_installer(job, repo_root)
+            checks.append(
+                Check(
+                    f"scheduler:{job}",
+                    WARN,
+                    "scheduled job is not loaded on this device",
+                    f"install it with `bash {installer}`",
+                )
+            )
+    return checks
+
+
+def _check_launchd(launchctl_output: str | None = None) -> list[Check]:
+    """Report rebalance launchd jobs and their last exit status (macOS only)."""
+    if launchctl_output is None:
+        launchctl_output = _launchctl_list()
+    if launchctl_output is None:
         return []  # not macOS / launchctl unavailable — silently skip
 
     checks: list[Check] = []
-    for line in out.stdout.splitlines():
+    for line in launchctl_output.splitlines():
         parts = line.split("\t")
         if len(parts) != 3 or "rebalance" not in parts[2]:
             continue
@@ -978,7 +1096,11 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     # degraded scan) shown right next to a de-authorized one.
     report.checks.extend(_check_pulse_collectors())
 
-    report.checks.extend(_check_launchd())
+    # One live snapshot serves both checks: policy absence is different from a
+    # loaded job whose most recent run exited non-zero.
+    launchctl_output = _launchctl_list()
+    report.checks.extend(_check_scheduler_liveness(launchctl_output=launchctl_output))
+    report.checks.extend(_check_launchd(launchctl_output))
 
     # Final section: a map of every diagnostics surface, so this one command
     # is the single entry point into the project's observability.
