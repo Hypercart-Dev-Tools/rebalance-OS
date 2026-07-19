@@ -259,9 +259,20 @@ h2 { font-size: 14px; color: var(--ink); }
 /* Sidebar */
 .sidebar {
   border-right: 1px solid var(--border);
-  padding: 20px 14px;
+  /* No bottom padding: it would sit BELOW the sticky .nav-foot, and scrolling content
+     shows through that gap. The equivalent breathing room lives on .nav-foot instead. */
+  padding: 20px 14px 0;
   display: flex; flex-direction: column;
   background: var(--page);
+  /* Pinned to the viewport, not to the document. Without this the sidebar grows with the
+     page (the grid is min-height:100vh), so `.nav-foot`'s margin-top:auto pins Settings to
+     the bottom of a very tall column — i.e. below the fold on the dashboard, which is not a
+     bottom-left nav in any useful sense. overflow-y keeps a content-heavy sidebar (calendar
+     + reminders + streams) scrollable on its own rather than clipping it. */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow-y: auto;
 }
 .brand { display: flex; align-items: center; gap: 8px; padding: 0 6px 22px; }
 .brand .dot { width: 22px; height: 22px; background: var(--accent); border-radius: 5px; }
@@ -281,7 +292,17 @@ h2 { font-size: 14px; color: var(--ink); }
 .nav-list li.active { background: color-mix(in srgb, var(--accent) 10%, transparent); color: var(--ink); font-weight: 500; }
 .nav-list .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
 .nav-list .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: var(--card); text-align: center; }
-.sidebar-foot { margin-top: auto; padding: 8px; font-variant-numeric: tabular-nums; }
+/* Bottom-pinned nav (Settings). margin-top:auto pushes this — and the footer below it — to the
+   bottom of the sidebar flex column; the rule above it marks it off from the scan-path nav. */
+/* sticky bottom, not just margin-top:auto — the dashboard sidebar's own content (calendar +
+   reminders + streams) is taller than 100vh, so auto-margin alone parks Settings at the end of
+   the sidebar's internal scroll, still out of view. Sticky pins it to the visible bottom edge.
+   The background is required: transparent would let scrolled content run underneath it. */
+.nav-foot {
+  margin-top: auto; position: sticky; bottom: 0; z-index: 2;
+  padding: 8px 0 20px; background: var(--page); border-top: 1px solid var(--border);
+}
+.sidebar-foot { margin-top: 0; padding: 8px; font-variant-numeric: tabular-nums; }
 
 /* Sidebar lists (calendar + reminders) */
 .side-list { list-style: none; margin: 0; padding: 0; }
@@ -529,6 +550,23 @@ _NAV_LINKS = (
     ("sleuthgraph", "/sleuth-graph", "Reminder Graph"),
 )
 
+# Pinned to the bottom of the sidebar rather than appended to _NAV_LINKS: this is
+# configuration, not a data surface, so it should not sit in the same scan path as
+# Today / Focus 5 / What's Next. `.sidebar-foot` already has `margin-top: auto`, so
+# the footer floats to the bottom of the flex column on every page height.
+_FOOTER_NAV_LINKS = (
+    ("settings", "/settings", "Settings"),
+)
+
+
+def _render_footer_nav(active: str) -> str:
+    """Render the bottom-pinned nav (currently just Settings)."""
+    return "".join(
+        f'<li{" class=\"active\"" if key == active else ""}>'
+        f'<a href="{html.escape(href, quote=True)}">{html.escape(label)}</a></li>'
+        for key, href, label in _FOOTER_NAV_LINKS
+    )
+
 
 def render_sidebar(active: str, nav_data: dict | None = None) -> str:
     """Render the shared sidebar shell.
@@ -561,6 +599,7 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
                 f"{html.escape(label)}</a></li>"
             )
         nav_links = "".join(links)
+        footer_nav = _render_footer_nav(active)
         return f"""
     <aside class="sidebar">
       <div class="brand">
@@ -571,6 +610,9 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
       </div>
       <nav>
         <ul class="nav-list">{nav_links}</ul>
+      </nav>
+      <nav class="nav-foot">
+        <ul class="nav-list">{footer_nav}</ul>
       </nav>
       <footer class="sidebar-foot subtle"></footer>
     </aside>
@@ -583,6 +625,7 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
     streams = nav_data.get("streams") or []
     drift_total = nav_data.get("drift_total", 0)
     semantic_total = nav_data.get("semantic_total", 0)
+    footer_nav = _render_footer_nav(active)
     if isinstance(streams, dict):
         streams = [
             {"name": "github", "label": "GitHub", "kbd": "G", "count": streams.get("github", 0)},
@@ -645,6 +688,9 @@ def render_sidebar(active: str, nav_data: dict | None = None) -> str:
             </a>
           </li>
         </ul>
+      </nav>
+      <nav class="nav-foot">
+        <ul class="nav-list">{footer_nav}</ul>
       </nav>
       <footer class="sidebar-foot subtle">Drift {drift_total} · {semantic_total:,} docs</footer>
     </aside>

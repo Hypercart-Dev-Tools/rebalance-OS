@@ -40,11 +40,6 @@ from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
 from rebalance.paths import resolve_db, resolve_secret_path
 from rebalance.tz_utils import format_relative
 from rebalance.web_components import badge_html, button_link, render_shell
-import rebalance.web_components
-
-if not any(k == "settings" for k, _, _ in rebalance.web_components._NAV_LINKS):
-    rebalance.web_components._NAV_LINKS = rebalance.web_components._NAV_LINKS + (("settings", "/settings", "Settings"),)
-
 logger = logging.getLogger(__name__)
 
 # How long a persisted Focus 5 roster stays authoritative before a visit lazily
