@@ -221,6 +221,21 @@ _SIGNAL_HEALTH_RULES: dict[str, dict[str, Any]] = {
         "freshness_key": "last_synced_at",
         "window_days": 7,
         "zero_status": "degraded",
+        # GH-145 / GH-141: this source is narrowed by an operator-configured
+        # Gmail query. When the collector runs successfully and that query
+        # matches nothing, zero rows is the CONFIGURED outcome, not a failure —
+        # so a quiet window reports `ok` and names the filter instead of
+        # applying zero_status. Freshness is already known-current at the point
+        # this is consulted, which is what proves the collector actually ran;
+        # a stale or missing timestamp is still caught above and still degrades.
+        #
+        # Without this, the live filter `in:inbox is:starred is:important` (a
+        # three-way AND matching ~1-3 messages a month) marked email degraded
+        # permanently by design, and contradicted doctor's own `email data`
+        # check in the same output.
+        #
+        # Declarative: any other filtered source adds this key. No new branch.
+        "quiet_filter": "describe_gmail_query_filter",
         # GH-127 content-quality check — the exact defect that hid 119/124
         # dead rows for 3 weeks (#125). Same table + window email already
         # uses for recent_row_count_7d (email_messages / received_at).
@@ -271,6 +286,31 @@ def _source_total_rows(source_name: str, source_payload: dict[str, Any]) -> int:
     return 0
 
 
+def _quiet_filter_description(rule: dict[str, Any]) -> str | None:
+    """Describe *rule*'s configured narrowing filter, or None if it declares none.
+
+    GH-145. The rule names a formatter in ``rebalance.ingest.config`` rather than
+    embedding a filter string, so the filter has exactly one home and no health
+    surface can drift from it. A source with no ``quiet_filter`` key is
+    unaffected, and a formatter that fails is treated as "no filter declared" —
+    a health check must never crash the status it is reporting on.
+    """
+    name = rule.get("quiet_filter")
+    if not name:
+        return None
+    try:
+        from rebalance.ingest import config as _config  # noqa: PLC0415
+
+        formatter = getattr(_config, str(name), None)
+        if formatter is None:
+            return None
+        described = formatter()
+    except Exception:  # noqa: BLE001 — never let a description break the verdict
+        return None
+    described = str(described).strip()
+    return described or None
+
+
 def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]]:
     now = datetime.now(timezone.utc)
     signal_health: dict[str, dict[str, str]] = {}
@@ -308,10 +348,19 @@ def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[
                 }
             elif recent_rows == 0:
                 zero_status = str(rule["zero_status"])
+                quiet_filter = _quiet_filter_description(rule)
                 if total_rows == 0:
                     status_entry = {
                         "status": "warn",
                         "reason": "freshness timestamp is current but the source has no rows yet",
+                    }
+                elif quiet_filter is not None:
+                    # GH-145 / GH-141: freshness is current, so the collector
+                    # ran. A narrowing filter that matched nothing is the
+                    # configured outcome, not silent data loss.
+                    status_entry = {
+                        "status": "ok",
+                        "reason": f"no rows matched in the last {rule['window_days']}d ({quiet_filter})",
                     }
                 else:
                     status_entry = {

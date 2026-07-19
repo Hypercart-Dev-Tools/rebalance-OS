@@ -549,6 +549,24 @@ def set_gmail_query_filter(query: str) -> None:
     _write_config(config)
 
 
+def describe_gmail_query_filter() -> str:
+    """Return the active Gmail filter as an operator-facing phrase.
+
+    Single formatter for every health surface that needs to explain *why* the
+    email collector is quiet. GH-145: ``doctor``'s freshness check and the CLI's
+    ``signal health`` line each used to reach their own conclusion about a
+    zero-row window, and disagreed in the same output — one said ``ok``, the
+    other ``degraded``. The underlying fact (the configured filter) has exactly
+    one home, and this is how both surfaces read it.
+
+    Kept here rather than in ``doctor`` so nothing has to import a health module
+    to describe a config value.
+    """
+    from rebalance.ingest.gmail import DEFAULT_QUERY_FILTER  # noqa: PLC0415 — avoids a cycle
+
+    return f"Gmail filter: {get_gmail_query_filter() or DEFAULT_QUERY_FILTER}"
+
+
 # ---------------------------------------------------------------------------
 # Health notices — demote intentional/non-actionable WARNs to a calmer tier
 # ---------------------------------------------------------------------------

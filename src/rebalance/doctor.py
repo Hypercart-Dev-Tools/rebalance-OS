@@ -1053,11 +1053,14 @@ def _check_deep_work_stalls(db_path: Path) -> Check:
 
 
 def _active_gmail_filter() -> str:
-    """Name the active Gmail query when a successful sync is intentionally quiet."""
-    from rebalance.ingest.config import get_gmail_query_filter
-    from rebalance.ingest.gmail import DEFAULT_QUERY_FILTER
+    """Name the active Gmail query when a successful sync is intentionally quiet.
 
-    return f"Gmail filter: {get_gmail_query_filter() or DEFAULT_QUERY_FILTER}"
+    GH-145: delegates to the shared formatter so this check and the CLI's
+    ``signal health`` line cannot describe the same filter differently.
+    """
+    from rebalance.ingest.config import describe_gmail_query_filter  # noqa: PLC0415
+
+    return describe_gmail_query_filter()
 
 
 _COLLECTOR_FRESHNESS: list[dict] = [
