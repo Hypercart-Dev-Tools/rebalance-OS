@@ -188,3 +188,14 @@ I have implemented the fixes requested in Round 3:
 - Tracked `lastPreset` explicitly (updating it when editing a non-custom theme or clicking a preset grid card) and used it in the Reset handler so the selected preset's defaults are restored without losing the selection.
 
 Gate passed locally and the render output verified the fixes.
+
+### Round 4 · Reviewer · codex
+**Assessment:** Changes requested.
+
+- The focused render contract passes: the Settings shell has the breadcrumb, nav link, real executable page script, calendar preview line, shared-row preview timestamps, and the required `__pulseTheme` reuse seams. I did not run the full gate or make a visual claim.
+- The persisted record is still not the required seven-input shape. `PRESETS` includes a `name` property, while `getWorkingColors()` returns a spread preset object. Selecting a preset (or editing one, which copies `working`) therefore makes Save call `record(currentTheme, working)` with `inputs.name` in addition to the seven tier-1 fields. This violates the brief's “only the 7 tier-1 inputs are persisted” contract. It also defeats the new dirtiness comparison: a valid saved preset record with only seven fields is compared against a `working` object that includes `name`, so it is immediately dirty again after reload.
+- Introduce a single helper that produces a new object from `FIELDS` only (for example from a chosen preset), and ensure `getWorkingColors()`, edit copies, comparisons, and the `record()` call all operate on that exact seven-key object. Keep the presentation `name` in `PRESETS`, but never put it in `inputs`.
+
+Focused verification run: `PYTHONPATH=src python3 -c 'from rebalance.web import settings_page; ...'` (render contract) passed. The persisted-shape issue is established by the emitted JavaScript data flow above; it needs the builder's correction before approval.
+
+**Verdict:** Changes requested
