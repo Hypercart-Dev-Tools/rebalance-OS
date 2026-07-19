@@ -37,6 +37,7 @@ Exit codes in wrapper mode:
     0    child exited 0
     3    another instance holds the lock (``--on-conflict refuse``)
     4    memory ceiling tripped; the job was terminated
+    143  evicted by a later ``--on-conflict replace`` run (child tree reaped)
     else the child's own exit status
 
 NOT installed into any job by this change — see GH-172. Landing it on the ingest
@@ -49,6 +50,7 @@ from __future__ import annotations
 import argparse
 import errno
 import fcntl
+import json
 import os
 import re
 import signal
@@ -92,6 +94,14 @@ class InstanceConflict(GuardError):
 
 class MemoryCeilingExceeded(GuardError):
     """The job tripped the RSS ceiling or the system-available floor."""
+
+
+class _Evicted(BaseException):
+    """Raised in the wrapper's main thread when a replacing run SIGTERMs it.
+
+    BaseException, not Exception: it must not be swallowed by a broad
+    ``except Exception`` between the handler and the teardown.
+    """
 
 
 # --------------------------------------------------------------------------- #
@@ -234,15 +244,25 @@ class SingleInstanceLock:
         self.path = (lock_dir or LOCK_DIR) / f"{safe}.lock"
         self._fh = None
 
-    def holder_pid(self) -> int | None:
-        """PID recorded in the lockfile, if it names a live process."""
+    def _read_state(self) -> dict:
+        """Lockfile contents as a dict. Tolerates a bare-PID legacy file."""
         try:
             raw = self.path.read_text().strip()
         except OSError:
+            return {}
+        if not raw:
+            return {}
+        try:
+            state = json.loads(raw)
+        except ValueError:
+            return {"pid": int(raw)} if raw.isdigit() else {}
+        return state if isinstance(state, dict) else {}
+
+    def holder_pid(self) -> int | None:
+        """PID recorded in the lockfile, if it names a live process."""
+        pid = self._read_state().get("pid")
+        if not isinstance(pid, int):
             return None
-        if not raw.isdigit():
-            return None
-        pid = int(raw)
         return pid if _pid_alive(pid) else None
 
     def acquire(self, on_conflict: str = "refuse", replace_grace: float = 15.0) -> None:
@@ -259,13 +279,12 @@ class SingleInstanceLock:
         self._fh = open(self.path, "a+")
 
         if self._try_flock():
-            self._write_pid()
+            self._write_state()
             return
 
         if on_conflict == "replace":
-            self._evict(replace_grace)
-            if self._try_flock():
-                self._write_pid()
+            if self._evict(replace_grace):
+                self._write_state()
                 return
 
         pid = self.holder_pid()
@@ -283,17 +302,62 @@ class SingleInstanceLock:
             return False
         return True
 
-    def _write_pid(self) -> None:
+    def _write_state(self, **extra) -> None:
         self._fh.seek(0)
         self._fh.truncate()
-        self._fh.write(str(os.getpid()))
+        self._fh.write(json.dumps({"pid": os.getpid(), **extra}))
         self._fh.flush()
 
-    def _evict(self, grace: float) -> None:
-        pid = self.holder_pid()
-        if pid is None or pid == os.getpid():
+    def record_child_group(self, pgid: int) -> None:
+        """Record the guarded child's process group in the lockfile.
+
+        Load-bearing for ``--on-conflict replace``: the child runs in its OWN
+        session, so it is unreachable via the wrapper's process group. Without
+        this, an evictor that has to SIGKILL an unresponsive wrapper leaves the
+        grandchildren resident — the exact stacking GH-172 is about.
+        """
+        if self._fh is None:
             return
-        _terminate(pid, grace)
+        self._write_state(child_pgid=pgid)
+
+    def _evict(self, grace: float) -> bool:
+        """Displace the incumbent and take the lock. True if we now hold it.
+
+        Success is measured by ACQUIRING THE FLOCK, not by the incumbent's PID
+        disappearing. PID liveness is the wrong signal: ``kill(pid, 0)`` succeeds
+        against a zombie, so a reaped-but-unwaited incumbent reads as alive
+        forever, and a bare "SIGKILL then retry once" races the kernel's lock
+        release. The flock is the only ground truth about who owns the job.
+        """
+        state = self._read_state()
+        pid = state.get("pid")
+        child_pgid = state.get("child_pgid")
+        if not isinstance(pid, int) or pid == os.getpid():
+            return self._try_flock()
+
+        def _signal_all(sig: int) -> None:
+            try:
+                os.kill(pid, sig)
+            except OSError:
+                pass
+            # The incumbent's child runs in its OWN session, so it is not
+            # reachable via the wrapper's group. A cooperative wrapper reaps it
+            # on SIGTERM; a SIGKILLed one never gets the chance. Signal it
+            # directly so eviction is total either way.
+            if isinstance(child_pgid, int) and child_pgid > 0:
+                try:
+                    os.killpg(child_pgid, sig)
+                except OSError:
+                    pass
+
+        for sig in (signal.SIGTERM, signal.SIGKILL):
+            _signal_all(sig)
+            deadline = time.monotonic() + (grace if sig == signal.SIGTERM else 5.0)
+            while time.monotonic() < deadline:
+                if self._try_flock():
+                    return True
+                time.sleep(0.1)
+        return self._try_flock()
 
     def release(self) -> None:
         if self._fh is None:
@@ -315,21 +379,29 @@ class SingleInstanceLock:
         self.release()
 
 
-def _terminate(pid: int, grace: float) -> None:
-    """SIGTERM a process, escalating to SIGKILL after ``grace`` seconds."""
+def _group_alive(pgid: int) -> bool:
     try:
-        os.kill(pid, signal.SIGTERM)
+        os.killpg(pgid, 0)
+    except OSError as exc:
+        return exc.errno == errno.EPERM
+    return True
+
+
+def _terminate_group(pgid: int, grace: float) -> None:
+    """SIGTERM a process GROUP, escalating to SIGKILL after ``grace`` seconds."""
+    try:
+        os.killpg(pgid, signal.SIGTERM)
     except OSError:
         return
 
     deadline = time.monotonic() + grace
     while time.monotonic() < deadline:
-        if not _pid_alive(pid):
+        if not _group_alive(pgid):
             return
         time.sleep(0.25)
 
     try:
-        os.kill(pid, signal.SIGKILL)
+        os.killpg(pgid, signal.SIGKILL)
     except OSError:
         pass
 
@@ -531,17 +603,34 @@ def run_guarded(
         # Own process group, so the whole tree dies together — a pool's workers
         # outliving their parent is how 90 GB stayed resident in GH-172.
         child = subprocess.Popen(argv, start_new_session=True)
+        lock.record_child_group(child.pid)  # new session => pgid == pid
         ceiling.pid = child.pid
-        ceiling.on_trip = lambda reason: _kill_group(child.pid, grace_seconds, log)
+        ceiling.on_trip = lambda reason: _reap_child_tree(child, grace_seconds, log)
         ceiling.start()
+
+        # A replacing run SIGTERMs THIS wrapper. Without a handler the wrapper
+        # dies instantly and the child — in its own session — is orphaned, so
+        # "replace" would stack processes instead of replacing them.
+        def _on_term(signum, frame):
+            raise _Evicted()
+
+        previous_term = signal.signal(signal.SIGTERM, _on_term)
 
         try:
             code = child.wait()
+        except _Evicted:
+            log("evicted by a replacing run; tearing down child tree")
+            _reap_child_tree(child, grace_seconds, log)
+            return 143
         except KeyboardInterrupt:
-            _kill_group(child.pid, grace_seconds, log)
+            _reap_child_tree(child, grace_seconds, log)
             return 130
         finally:
             ceiling.stop()
+            try:
+                signal.signal(signal.SIGTERM, previous_term)
+            except (ValueError, TypeError):
+                pass
 
         log(f"{name!r} finished with exit {code}; peak tree RSS {_fmt_gb(ceiling.peak_rss)}")
         return 4 if ceiling.tripped_reason else code
@@ -549,24 +638,43 @@ def run_guarded(
         lock.release()
 
 
-def _kill_group(pid: int, grace: float, log) -> None:
-    log(f"terminating process group {pid}")
-    try:
-        os.killpg(os.getpgid(pid), signal.SIGTERM)
-    except OSError:
-        return
+def _reap_child_tree(child: subprocess.Popen, grace: float, log) -> None:
+    """Terminate the guarded child's process group and REAP the child.
 
-    deadline = time.monotonic() + grace
-    while time.monotonic() < deadline:
-        if not _pid_alive(pid):
-            return
-        time.sleep(0.25)
-
-    log(f"process group {pid} ignored SIGTERM; sending SIGKILL")
+    The parent must ``waitpid`` rather than poll ``killpg(pgid, 0)``: a zombie
+    still answers signal 0, so polling alone would block for the entire grace
+    period on a child that has already exited.
+    """
     try:
-        os.killpg(os.getpgid(pid), signal.SIGKILL)
+        pgid = os.getpgid(child.pid)
     except OSError:
-        pass
+        pgid = None
+
+    log(f"terminating child tree {child.pid}")
+    if pgid is not None:
+        try:
+            os.killpg(pgid, signal.SIGTERM)
+        except OSError:
+            pass
+
+    try:
+        child.wait(timeout=grace)
+    except subprocess.TimeoutExpired:
+        log(f"child {child.pid} ignored SIGTERM; sending SIGKILL")
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except OSError:
+                pass
+        try:
+            child.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            log(f"child {child.pid} survived SIGKILL")
+
+    # Sweep grandchildren that outlived the direct child (the reaped child no
+    # longer confuses the liveness probe, so this poll is now meaningful).
+    if pgid is not None and _group_alive(pgid):
+        _terminate_group(pgid, min(grace, 5.0))
 
 
 def main(argv: list[str] | None = None) -> int:
