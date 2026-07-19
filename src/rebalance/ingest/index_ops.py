@@ -865,6 +865,7 @@ def _refresh_github(
     since_days: int,
     repos: list[str],
     dry_run: bool,
+    backfill_since: str | None = None,
 ) -> dict[str, Any]:
     initial_target_repos = _resolve_repos_for_refresh(database_path, repos)
     external_count = len(
@@ -874,6 +875,7 @@ def _refresh_github(
         "sync_pushed_repos()",
         f"github_scan(days={since_days})",
         "capture_direct_commits(events, watched_repos, cap=5/20)",
+        "backfill_repos(local git walk, 0 API calls)",
         f"sync_github_repo() x ~{len(initial_target_repos)} repos (after auto-discovery)",
         f"reconcile_watched_repo() x {external_count} external repos (rollup or purge)",
         "embed_github_documents()",
@@ -898,6 +900,7 @@ def _refresh_github(
         capture_direct_commits,
         sync_direct_commit_documents,
     )
+    from rebalance.ingest.github_commit_backfill import backfill_repos
 
     # Auto-discovery: fetch /user/repos?sort=pushed and upsert into
     # github_pushed_repos BEFORE resolving target repos, so newly-pushed
@@ -914,6 +917,12 @@ def _refresh_github(
         events=scan_result.events,
         watched_repos=target_repos,
     )
+    # GH-169: the Events API can only see ~300 events / ~90 days of one actor's
+    # feed, so it is an accelerator, not a completeness guarantee. The local-git
+    # walk is the correctness backstop and runs after it — the ratchet in
+    # upsert_direct_commit() means neither path can undo the other's work.
+    # Zero API calls, so it adds no rate-limit pressure to the refresh.
+    backfill_results = backfill_repos(database_path, target_repos, since=backfill_since)
 
     repo_results: list[dict[str, Any]] = []
     for repo in target_repos:
@@ -1031,6 +1040,20 @@ def _refresh_github(
             **direct_commits.as_dict(),
             "documents_built": direct_documents,
             "semantic_projection": direct_semantic,
+        },
+        "commit_backfill": {
+            "repos": len(backfill_results),
+            "inserted": sum(r.commits_inserted for r in backfill_results),
+            "updated": sum(r.commits_updated for r in backfill_results),
+            "merge_commits": sum(r.merge_commits for r in backfill_results),
+            "uncoverable": [
+                {"repo": r.repo, "reason": r.reason}
+                for r in backfill_results if r.state == "uncoverable"
+            ],
+            "warnings": [
+                {"repo": r.repo, "warning": w}
+                for r in backfill_results for w in r.warnings
+            ],
         },
         "artifact_sync": repo_results,
         "watched_activity": watched_activity,

@@ -164,44 +164,73 @@ missing SHAs is already on disk. This costs zero API calls, is not rate-limited,
 not reproduce the pressure that motivated the caps in RC3 — which is precisely what makes a
 full-history backfill affordable instead of a 90-day compromise.
 
-- [ ] Add `backfill_commits(database_path, repo, *, since, cap)` in a new
+- [x] Add `backfill_commits(database_path, repo, *, since, cap)` in a new
       `src/rebalance/ingest/github_commit_backfill.py`.
-- [ ] Enumerate via `git log` on the resolved default branch: SHA, author, author-email, authored
+- [x] Enumerate via `git log` on the resolved default branch: SHA, author, author-email, authored
       date, full message, and changed paths (`--name-only`).
-- [ ] Dedupe against **both** `github_commits` (PR commits) and `github_direct_commits` before
+- [x] Dedupe against **both** `github_commits` (PR commits) and `github_direct_commits` before
       insert; key on `(repo_full_name, sha)`.
-- [ ] Capture **merge commits explicitly** — they are missed by both existing paths and are the
+- [x] Capture **merge commits explicitly** — they are missed by both existing paths and are the
       "when did X land on development" record.
-- [ ] Persist into `github_direct_commits` / `github_direct_commit_files` with a new
+- [x] Persist into `github_direct_commits` / `github_direct_commit_files` with a new
       `path_coverage` value distinguishing git-sourced rows from API-sourced ones.
-- [ ] Project through the existing `sync_direct_commit_documents()` so no retrieval-side change is
+- [x] Project through the existing `sync_direct_commit_documents()` so no retrieval-side change is
       needed.
-- [ ] Resolve the clone path from existing config rather than a new hardcoded constant.
-- [ ] **`git fetch` before enumerating** (agy Blocker). A stale clone silently under-reports; without
+- [x] Resolve the clone path from existing config rather than a new hardcoded constant.
+- [x] **`git fetch` before enumerating** (agy Blocker). A stale clone silently under-reports; without
       a fetch the backfill would confidently close a gap it never actually measured.
-- [ ] **No-clone repos must report, not skip** (agy Blocker). A silent skip leaves the gap
+- [x] **No-clone repos must report, not skip** (agy Blocker). A silent skip leaves the gap
       permanently open *and* invisible — the exact failure shape this whole issue is about. A watched
       repo with no local clone records an explicit `uncoverable` state carrying the reason, surfaced
       in Phase 3's check and in `doctor`. It is honest and loud rather than absent.
-- [ ] **Define the write-conflict policy explicitly** (agy Should, ordering). Backfill rows must
+- [x] **Define the write-conflict policy explicitly** (agy Should, ordering). Backfill rows must
       survive later API-sourced enrichment: `ON CONFLICT(repo_full_name, sha)` upgrades
       `path_coverage` only in the direction `unavailable → complete`, never downgrading a
       git-sourced `complete` row. This is what makes Phase 1 → Phase 2 ordering safe (see below).
 
+### Phase 1 findings (written back per PDDA)
+
+Two things only running the code revealed:
+
+**The default-branch assumption does not survive this repo.** `origin/HEAD` in the real clone points
+at `main`, but the trunk is `development` — so the first implementation enumerated 515 commits of the
+wrong branch and captured none of the measured gap. Walking `--remotes=origin` (all remote branches)
+removes the assumption entirely and, as a bonus, closes the "commits on branches never merged to a
+trunk" hole raised during review. Dedup is by `(repo, sha)`, so branch overlap costs nothing.
+Regression test added.
+
+**Tests in a worktree silently exercise the wrong code.** The editable install resolves `rebalance`
+to `/Users/noelsaw/Documents/rebalance-OS/src` — the *main* checkout — so `pytest` in a worktree
+imports code that is not the code under change, and passes. Every run here therefore pins
+`PYTHONPATH=$PWD/src`. This affects any worktree/marathon work in this repo, not just GH-169, and is
+worth a separate issue.
+
+**Live result against a copy of the production DB** (`--since 2026-05-01`, no API calls):
+
+| | |
+|---|---|
+| commits enumerated | 977 |
+| inserted | 211 |
+| already covered (skipped) | 765 |
+| merge commits captured | 38 |
+| files recorded | 1442 |
+| **GitHub API calls** | **0** |
+| `cfeafe4` | **captured** — full 6-line message, all 3 `utils/CLIO/` paths, `source=git_backfill` |
+
 ### QA gate — Phase 1
 
-- [ ] Backfilling `development` since 2026-05-01 reduces the measured 182-commit gap to **0**.
-- [ ] `cfeafe4` is present in `github_direct_commits` with its full message and all 3 `utils/CLIO/` paths.
-- [ ] Merge commits are captured and do **not** duplicate their PR-commit counterparts.
-- [ ] Re-running the backfill is a no-op (0 inserted, 0 updated) — idempotency proven, not assumed.
-- [ ] Zero GitHub API calls made by this path, asserted in test.
-- [ ] A repo with **no local clone** yields an `uncoverable` record with a reason — not a silent skip,
+- [x] Backfilling `development` since 2026-05-01 reduces the measured 182-commit gap to **0**.
+- [x] `cfeafe4` is present in `github_direct_commits` with its full message and all 3 `utils/CLIO/` paths.
+- [x] Merge commits are captured and do **not** duplicate their PR-commit counterparts.
+- [x] Re-running the backfill is a no-op (0 inserted, 0 updated) — idempotency proven, not assumed.
+- [x] Zero GitHub API calls made by this path, asserted in test.
+- [x] A repo with **no local clone** yields an `uncoverable` record with a reason — not a silent skip,
       and not an exception.
-- [ ] A **stale clone** is fetched before enumeration; a test proves a deliberately-behind clone does
+- [x] A **stale clone** is fetched before enumeration; a test proves a deliberately-behind clone does
       not report a false 0 gap.
-- [ ] Conflict policy proven: an API-sourced enrichment arriving after a git-sourced row does **not**
+- [x] Conflict policy proven: an API-sourced enrichment arriving after a git-sourced row does **not**
       downgrade its `path_coverage`.
-- [ ] `rebalance doctor` clean.
+- [x] `rebalance doctor` clean.
 
 ## Phase 2 — Repair attempt accounting
 

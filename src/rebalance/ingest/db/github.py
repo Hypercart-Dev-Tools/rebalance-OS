@@ -300,22 +300,43 @@ def update_push_event(
     )
 
 
-def upsert_direct_commit(conn: sqlite3.Connection, values: tuple) -> None:
-    """Insert-or-replace a direct commit while retaining its event provenance."""
+def upsert_direct_commit(
+    conn: sqlite3.Connection, values: tuple, *, source: str = "events"
+) -> None:
+    """Insert-or-replace a direct commit while retaining its event provenance.
+
+    ``path_coverage`` is RATCHETED, never assigned (GH-169): it may only move
+    ``unavailable -> complete``. The previous unconditional
+    ``path_coverage=excluded.path_coverage`` meant a later cap-starved API pass
+    — which writes ``unavailable`` when it runs out of detail budget — could
+    silently *downgrade* a row that already had a full file list, turning
+    collected data back into a gap. That is what makes backfill-then-enrich
+    ordering safe: whichever path runs second cannot destroy the other's work.
+    """
     conn.execute(
         """
         INSERT INTO github_direct_commits
             (repo_full_name, sha, event_id, ref, author_login, author_name,
-             message, committed_at, html_url, path_coverage, discovered_at, fetched_at)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             message, committed_at, html_url, path_coverage, discovered_at,
+             fetched_at, source)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(repo_full_name, sha) DO UPDATE SET
             event_id=excluded.event_id, ref=excluded.ref,
             author_login=excluded.author_login, author_name=excluded.author_name,
             message=excluded.message, committed_at=excluded.committed_at,
-            html_url=excluded.html_url, path_coverage=excluded.path_coverage,
+            html_url=excluded.html_url,
+            path_coverage=CASE
+                WHEN github_direct_commits.path_coverage = 'complete' THEN 'complete'
+                ELSE excluded.path_coverage
+            END,
+            source=CASE
+                WHEN github_direct_commits.path_coverage = 'complete'
+                     THEN github_direct_commits.source
+                ELSE excluded.source
+            END,
             fetched_at=excluded.fetched_at
         """,
-        values,
+        (*values, source),
     )
 
 

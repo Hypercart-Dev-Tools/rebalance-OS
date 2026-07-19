@@ -587,6 +587,24 @@ def _ensure_github_knowledge_schema(conn: sqlite3.Connection) -> None:
     """)
 
 
+def _add_column_if_missing(
+    conn: sqlite3.Connection, table: str, column: str, decl: str
+) -> bool:
+    """Additive migration for an existing table; True when the column was added.
+
+    SQLite has no ``ADD COLUMN IF NOT EXISTS``, and ``CREATE TABLE IF NOT
+    EXISTS`` silently skips an existing table with an older shape — so a new
+    column on a table that already exists on a live DB needs this. Additive
+    only: never drops or rewrites, so it is safe to re-run and safe to roll
+    back by ignoring the column.
+    """
+    existing = {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column in existing:
+        return False
+    conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+    return True
+
+
 def _ensure_github_direct_commit_schema(conn: sqlite3.Connection) -> None:
     """Durable receipts and file-level facts for direct branch pushes (GH-155)."""
     conn.execute("""
@@ -646,6 +664,30 @@ def _ensure_github_direct_commit_schema(conn: sqlite3.Connection) -> None:
         "CREATE INDEX IF NOT EXISTS idx_github_direct_commit_files_path "
         "ON github_direct_commit_files(repo_full_name, path)"
     )
+    # GH-169: provenance is a separate axis from data completeness. `path_coverage`
+    # answers "do we have the file list?"; `source` answers "who collected it?".
+    # Conflating them would force the completeness check to special-case a
+    # coverage value that means "complete, but from git" — the kind of overloaded
+    # column that made `failure_reason` unusable as a control signal (see Phase 2).
+    _add_column_if_missing(
+        conn, "github_direct_commits", "source", "TEXT NOT NULL DEFAULT 'events'"
+    )
+    # GH-169 Phase 1: a watched repo we cannot enumerate locally is a REPORTED
+    # state, not an omission. Silence is the failure shape this whole issue is
+    # about, so an uncoverable repo gets a durable row with a reason.
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS github_repo_coverage (
+            repo_full_name  TEXT PRIMARY KEY,
+            state           TEXT NOT NULL,
+            reason          TEXT,
+            local_path      TEXT,
+            default_branch  TEXT,
+            local_tip       TEXT,
+            remote_tip      TEXT,
+            last_fetched_at TEXT,
+            checked_at      TEXT NOT NULL
+        )
+    """)
 
 
 def ensure_github_schema(conn: sqlite3.Connection) -> None:
