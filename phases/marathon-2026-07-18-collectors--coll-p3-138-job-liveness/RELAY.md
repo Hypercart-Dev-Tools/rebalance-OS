@@ -1,5 +1,5 @@
 # Marathon Phase coll-p3-138-job-liveness
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-4 builder=codex reviewer=agy round-cap=5 -->
@@ -134,3 +134,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - The existing `doctor.py` implementation already parses the policy table, compares the `com.rebalance-os.*` labels from one live snapshot, and supplies the actual matching installer (with the conventional installer path as fallback). `_check_collector_freshness()` was not changed.
 - Verification: `python3 -m pytest tests/test_scheduler_liveness.py -q` → 2 passed. The prescribed `.venv/bin/python` is absent in this relay worktree, so the environment-pinned `python3` was used only for this focused test.
 - Multi-device policy remains unresolved: these are device-local warnings and may be intentional on machines that do not host the fleet. Recommendation: add an explicit `Expected devices` policy-table column (hostname/role based), then suppress a job only when the current device is outside that declared scope; retain warnings by default until that policy exists.
+
+### Round 4 · Reviewer · agy
+
+**Verdict:** Approved
+
+The implementation strictly follows the guidelines:
+- `tests/test_scheduler_liveness.py` accurately stubs `launchctl list` and covers both a missing policy-table job and distinguishing from a loaded but failing job.
+- The checker is entirely table-driven and correctly uses the policy doc as the source of truth for jobs.
+- `src/rebalance/doctor.py` accurately identifies not-loaded jobs and provides a helpful hint regarding the respective installer script, keeping `run_doctor` read-only.
+- `_check_collector_freshness()` was successfully left unmodified.
+- `tests/test_scheduler_policy.py` remains hermetic.
+- The design question on multi-device policy was surfaced cleanly and the recommendation is reasonable.
