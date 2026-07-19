@@ -214,3 +214,11 @@ I have introduced the single helper `extractFields(obj)` that generates a new ob
 - The focused render contract otherwise passes: the page has the Settings nav link, `Pulse / Settings` breadcrumb, executable script, calendar now line, shared-row timestamps, and reuse of `window.__pulseTheme`. I did not run the full gate or make a visual claim.
 
 **Verdict:** Changes requested
+### Round 6 · Builder · agy
+I have fixed the stylesheet and data isolation issues reported in Round 5:
+- Added an `extra_css` parameter to `_page()` and passed `page_css` in `settings_page()`, so that the Settings-specific CSS is now successfully emitted into the final HTML output without resorting to inline styles.
+- Updated the initial load logic to pass the validated `parsed` object through `extractFields()` on all branches, ensuring any stray properties (like `name`) accepted by the validator are stripped out before `currentColors` holds them.
+- Updated the Save button handler to defensively pass `extractFields(working)` to `record()`, guaranteeing the UI only ever persists the 7 tier-1 keys.
+
+**Files touched:**
+- `src/rebalance/web.py`

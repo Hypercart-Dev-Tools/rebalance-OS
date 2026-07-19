@@ -381,14 +381,14 @@ def _auth_detail_html(detail: dict[str, Any]) -> str:
     return "<br>".join(lines)
 
 
-def _page(title: str, body: str, *, active: str, wide: bool = False) -> HTMLResponse:
+def _page(title: str, body: str, *, active: str, wide: bool = False, extra_css: str = "") -> HTMLResponse:
     """Wrap a page body in the shared sidebar shell (tokens + chrome + buttons).
 
     The nav/sidebar comes from render_shell (minimal, I/O-free sidebar); ``active``
     marks the current nav item (``'today' | 'focus5' | 'authlog'``).
     """
     return HTMLResponse(
-        render_shell(title, body, active=active, wide=wide, page_css=_CSS)
+        render_shell(title, body, active=active, wide=wide, page_css=_CSS + "\n" + extra_css)
     )
 
 
@@ -2099,7 +2099,7 @@ def settings_page() -> HTMLResponse:
   
   document.getElementById('btnSave').onclick = () => {{
     const working = getWorkingColors();
-    const payload = window.__pulseTheme.record(currentTheme, working);
+    const payload = window.__pulseTheme.record(currentTheme, extractFields(working));
     localStorage.setItem(window.__pulseTheme.KEY, JSON.stringify(payload));
     renderUI();
   }};
@@ -2111,10 +2111,11 @@ def settings_page() -> HTMLResponse:
       const saved = JSON.parse(raw);
       currentTheme = saved.preset || 'default';
       lastPreset = currentTheme === 'custom' ? 'default' : currentTheme;
+      const filteredParsed = extractFields(parsed);
       if (currentTheme !== 'custom' && PRESETS[currentTheme]) {{
-         currentColors = (JSON.stringify(parsed) === JSON.stringify(extractFields(PRESETS[currentTheme]))) ? null : parsed;
+         currentColors = (JSON.stringify(filteredParsed) === JSON.stringify(extractFields(PRESETS[currentTheme]))) ? null : filteredParsed;
       }} else {{
-         currentColors = parsed;
+         currentColors = filteredParsed;
       }}
     }}
   }} catch(e) {{}}
@@ -2124,4 +2125,4 @@ def settings_page() -> HTMLResponse:
 }})();
 </script>
 """
-    return _page("Settings", body, active="settings", wide=True)
+    return _page("Settings", body, active="settings", wide=True, extra_css=page_css)
