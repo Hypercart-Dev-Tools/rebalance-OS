@@ -129,6 +129,53 @@ final class PromptLogTests: XCTestCase {
         XCTAssertEqual(entries[0].prompt, "still parseable")
     }
 
+    func testMixedLegacyAndContentIDEntriesIgnoreHTMLComments() {
+        let fixture = """
+        <!-- CLIO:ENTRIES -->
+
+        <!-- clio:id:new-session:2026-07-19T12:00:00Z -->
+        ## NEW-FORMAT
+        2026-07-19T12:00:00Z
+        new-host · development
+
+        > "content-addressed prompt"
+
+        ## LEGACY-FORMAT
+        2026-07-18T11:00:00Z
+        legacy-host · main
+
+        > "legacy prompt"
+        """
+
+        let entries = PromptLogReader.parse(fixture)
+        XCTAssertEqual(entries.count, 2)
+        XCTAssertEqual(
+            entries[0],
+            PromptLogEntry(
+                repo: "NEW-FORMAT",
+                timestamp: "2026-07-19T12:00:00Z",
+                machine: "new-host",
+                branch: "development",
+                prompt: "content-addressed prompt"
+            )
+        )
+        XCTAssertEqual(
+            entries[1],
+            PromptLogEntry(
+                repo: "LEGACY-FORMAT",
+                timestamp: "2026-07-18T11:00:00Z",
+                machine: "legacy-host",
+                branch: "main",
+                prompt: "legacy prompt"
+            )
+        )
+        for entry in entries {
+            XCTAssertFalse(entry.repo.contains("clio:id"))
+            XCTAssertFalse(entry.timestamp.contains("clio:id"))
+            XCTAssertFalse(entry.prompt.contains("clio:id"))
+        }
+    }
+
     func testMachineNoiseEntriesAreFilteredOut() {
         let fixture = """
         <!-- CLIO:ENTRIES -->

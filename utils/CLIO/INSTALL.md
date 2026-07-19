@@ -94,10 +94,10 @@ tail -f ~/.claude/prompt-log.jsonl
 
 ## Optional: export to human-readable Markdown
 
-Converts the JSONL log into readable Markdown by **appending only the entries logged
-since its last run**. A cursor (a line count) is kept in
-`~/.claude/prompt-log-to-md.state`, and each run prepends the new prompts below a
-fixed header, newest first.
+Converts the JSONL log into readable Markdown by **appending only entries not
+already present in the note**. Each entry carries an invisible, content-derived ID.
+A cursor (a line count) is kept in `~/.claude/prompt-log-to-md.state` as a scan
+optimization, and each run prepends new prompts below a fixed header, newest first.
 
 It **never rewrites entries it has already written** — and that's the property that
 makes it work across machines. When the output file lives in a folder synced between
@@ -115,9 +115,10 @@ Machine-triggered relay turns (from `/relay-xyz` etc.) are filtered out via
 cat > ~/.claude/hooks/prompt-log-to-md.sh << 'EOF'
 #!/bin/bash
 # Converts ~/.claude/prompt-log.jsonl into a human-readable Markdown file by
-# APPENDING only the entries logged since the last run. A cursor (the line count
-# already processed) is stored in ~/.claude/prompt-log-to-md.state; each run
-# prepends the new prompts below a fixed header, newest first.
+# APPENDING only entries not already present in the note. Each entry has a stable
+# ID derived from its session and timestamp. A cursor (the line count already
+# processed) is stored in ~/.claude/prompt-log-to-md.state as a scan optimization;
+# each run prepends new prompts below a fixed header, newest first.
 #
 # It never rewrites entries it has already emitted. When the output file lives in
 # a folder synced between machines (e.g. an Obsidian vault), each device only adds
@@ -173,20 +174,32 @@ case "$LAST_LINE" in ''|*[!0-9]*) LAST_LINE=0 ;; esac   # corrupt state → star
 [ "$LAST_LINE" -gt "$TOTAL_LINES" ] && LAST_LINE=0      # JSONL shrank/rotated → re-emit all
 
 if [ "$LAST_LINE" -ge "$TOTAL_LINES" ]; then
-  echo "Nothing new since last sync ($LAST_LINE/$TOTAL_LINES lines)."
+  echo "✅ Synced 0 new prompt(s) to $OUT ($LAST_LINE/$TOTAL_LINES lines scanned)."
   exit 0
 fi
 
 reverse_lines() { if command -v tac >/dev/null 2>&1; then tac; else tail -r; fi; }
 
+# Read all IDs already present in the note once. Resetting or recovering the cursor
+# is therefore safe: old JSONL lines are scanned again but their entries are not
+# emitted again.
+existing_ids=$(grep -o 'clio:id:[^ ]*' "$OUT" 2>/dev/null || true)
+
 # Render the new entries (newest first). jq -R reads each raw line; fromjson parses
-# it; malformed lines and excluded prompts are dropped without aborting the run.
+# it; malformed lines, excluded prompts, and IDs already in the note are dropped
+# without aborting the run. The ID is derived inline without per-entry subprocesses.
 new_entries=$(mktemp)
-tail -n +"$((LAST_LINE + 1))" "$JSONL" | reverse_lines | jq -Rr --arg exclude "$EXCLUDE_REGEX" '
+tail -n +"$((LAST_LINE + 1))" "$JSONL" | reverse_lines | jq -Rr \
+  --arg exclude "$EXCLUDE_REGEX" --arg existing_ids "$existing_ids" '
   (fromjson? // empty)
   | select(($exclude | length) == 0 or ((.prompt // "") | test($exclude; "i") | not))
-  | "## \(.repo // "unknown" | ascii_upcase)\n\(.timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
+  | ((.session_id // "") + ":" + (.timestamp // "")) as $id
+  | select(($existing_ids | split("\n") | index("clio:id:" + $id)) == null)
+  | "<!-- clio:id:\($id) -->\n## \(.repo // "unknown" | ascii_upcase)\n\(.timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
 ' > "$new_entries"
+
+emitted_ids=$(grep -o 'clio:id:[^ ]*' "$new_entries" 2>/dev/null || true)
+emitted_count=$(grep -c '^<!-- clio:id:' "$new_entries" 2>/dev/null || true)
 
 # Insert the new entries right after the MARKER, preserving everything else. Write
 # atomically (temp + mv) so a reader like Obsidian never sees a half-written file.
@@ -200,11 +213,27 @@ if [ -s "$new_entries" ]; then
     tail -n +"$((marker_line + 1))" "$OUT"
   } > "$merged"
   mv "$merged" "$OUT"
+
+  # Do not advance the cursor until every entry from this run is visible in the
+  # atomically replaced output. A failed verification leaves the state untouched,
+  # so the next run retries the same JSONL range.
+  written_ids=$(grep -o 'clio:id:[^ ]*' "$OUT" 2>/dev/null || true)
+  while IFS= read -r emitted_id; do
+    [ -z "$emitted_id" ] && continue
+    case $'\n'"$written_ids"$'\n' in
+      *$'\n'"$emitted_id"$'\n'*) ;;
+      *)
+        rm -f "$new_entries"
+        echo "Failed to verify emitted CLIO entry $emitted_id; cursor not advanced." >&2
+        exit 1
+        ;;
+    esac
+  done <<< "$emitted_ids"
 fi
 rm -f "$new_entries"
 
 echo "$TOTAL_LINES" > "$STATE"
-echo "✅ Synced $((TOTAL_LINES - LAST_LINE)) new prompt(s) to $OUT"
+echo "✅ Synced $emitted_count new prompt(s) to $OUT"
 EOF
 
 chmod +x ~/.claude/hooks/prompt-log-to-md.sh
@@ -231,12 +260,14 @@ https://github.com/Claude-AI-Tools-Ventura-County/clio
 
 <!-- CLIO:ENTRIES -->
 
+<!-- clio:id:abc123:2026-07-09T18:55:03Z -->
 ## HYPERCART
 2026-07-09T18:55:03Z  
 Noels-MacBook-Pro · main
 
 > "Now add a regression test for it"
 
+<!-- clio:id:abc123:2026-07-09T18:42:11Z -->
 ## HYPERCART
 2026-07-09T18:42:11Z  
 Noels-MacBook-Pro · main

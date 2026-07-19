@@ -101,3 +101,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick done MARATHON-CLIO-P1-IDEMPOTENT-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/clio-durable-idempotent-writes--clio-p1-idempotent/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Updated `utils/CLIO/INSTALL.md`'s exporter heredoc to derive each entry's stable ID inline as `session_id:timestamp`, render it in an invisible `<!-- clio:id:… -->` comment, and filter exact full IDs already present in the output using one initial `grep` pass.
+- Kept cursor-based scanning as an optimization while making corrupt/deleted/rotated cursor recovery content-idempotent. The reported append count now reflects entries actually emitted, including zero after a fully deduplicated recovery scan.
+- Preserved the atomic temp-file rename and added post-rename verification of every emitted ID before advancing the cursor. Verification failure exits with the previous state intact so the same range is retried.
+- Updated `PromptLogReader.parse` to remove trimmed HTML-comment lines before positional parsing, preserving legacy entry behavior, and added a mixed legacy/new-format test asserting both entries' complete values and no ID leakage.
+- Verification: exporter heredoc passes `bash -n`; `swift test --disable-sandbox --filter PromptLogTests` passes 21 tests with 0 failures. (`--disable-sandbox` plus a `/private/tmp` module cache was required because the managed environment blocks SwiftPM's home cache and nested `sandbox-exec`.)

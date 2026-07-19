@@ -24,7 +24,9 @@ enum PromptLogReader {
             body = text[...]
         }
 
-        let lines = body.components(separatedBy: "\n")
+        let lines = body.components(separatedBy: "\n").filter {
+            !$0.trimmingCharacters(in: .whitespaces).hasPrefix("<!--")
+        }
         var entries: [PromptLogEntry] = []
         var i = 0
 
