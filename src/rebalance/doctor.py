@@ -12,10 +12,12 @@ projects, GitHub data freshness, the credentials for each external integration
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Callable
 
 OK = "ok"
 WARN = "warn"
@@ -336,12 +338,20 @@ def _check_collector_freshness(
     warn_days: int,
     empty_hint: str,
     stale_hint: str,
+    quality_predicate: str | None = None,
+    quality_label: str = "meaningful content",
+    quality_table: str | None = None,
+    max_invalid_fraction: float = 0.5,
+    volume_ts_col: str | None = None,
+    quiet_filter: Callable[[], str] | None = None,
 ) -> Check:
     """Generic data-freshness check for any collector table.
 
     Warns when the most recent *ts_col* value is older than *warn_days* days,
-    or when the table is empty.  Used for Sleuth, Calendar, and Email — the
-    collectors that previously had credential checks but no freshness checks.
+    or when the table is empty. A declared ``quality_predicate`` is a local,
+    declarative SQL assertion about a meaningful row; a majority of failures
+    degrades the check even when rows are fresh. ``volume_ts_col`` lets a
+    successful filtered collector name an intentionally quiet window.
     """
     from rebalance.ingest.db import db_connection
 
@@ -356,11 +366,38 @@ def _check_collector_freshness(
             latest = conn.execute(
                 f"SELECT MAX({ts_col}) FROM {table}"  # noqa: S608
             ).fetchone()[0]
+            invalid_count = 0
+            quality_count = 0
+            if quality_predicate:
+                predicate_table = quality_table or table
+                quality_count = conn.execute(
+                    f"SELECT COUNT(*) FROM {predicate_table}"  # noqa: S608
+                ).fetchone()[0]
+                invalid_count = conn.execute(
+                    f"SELECT COUNT(*) FROM {predicate_table} "  # noqa: S608
+                    f"WHERE NOT ({quality_predicate})"  # noqa: S608
+                ).fetchone()[0]
+            recent_count = None
+            if volume_ts_col:
+                recent_count = conn.execute(
+                    f"SELECT COUNT(*) FROM {table} "  # noqa: S608
+                    f"WHERE julianday({volume_ts_col}) >= julianday('now', ?)",  # noqa: S608
+                    (f"-{warn_days} days",),
+                ).fetchone()[0]
     except Exception as exc:  # noqa: BLE001
         return Check(name, FAIL, f"could not read {table}: {exc}")
 
     if count == 0:
-        return Check(name, WARN, f"no {name} data ingested", empty_hint)
+        return Check(name, WARN, f"no {name} ingested", empty_hint)
+
+    if quality_count and invalid_count / quality_count > max_invalid_fraction:
+        invalid_percent = round(invalid_count / quality_count * 100)
+        return Check(
+            name,
+            WARN,
+            f"degraded: {invalid_count}/{quality_count} rows ({invalid_percent}%) lack {quality_label}",
+            "check the collector payload before refreshing the semantic index",
+        )
 
     if latest:
         try:
@@ -377,20 +414,140 @@ def _check_collector_freshness(
         except (TypeError, ValueError):
             pass
 
-    return Check(name, OK, f"{count} rows, last sync {latest}")
+    detail = f"{count} rows, last sync {latest}"
+    if recent_count == 0 and quiet_filter is not None:
+        detail += f"; no rows matched in the last {warn_days}d ({quiet_filter()})"
+    return Check(name, OK, detail)
 
 
-def _check_launchd() -> list[Check]:
-    """Report rebalance launchd jobs and their last exit status (macOS only)."""
+def _launchctl_list() -> str | None:
+    """Return the live launchd listing, or ``None`` when unavailable."""
     try:
         out = subprocess.run(
             ["launchctl", "list"], capture_output=True, text=True, timeout=10
         )
     except (FileNotFoundError, subprocess.SubprocessError):
+        return None
+    return out.stdout
+
+
+def _scheduler_policy_jobs(policy_path: Path | None = None) -> list[str]:
+    """Read launchd job suffixes from SCHEDULER.md's job policy table.
+
+    The policy document intentionally remains the source of truth.  This is a
+    deliberately narrow Markdown parser: it recognizes only the first-column
+    backticked job name under the ``Job (label suffix)`` table header.
+    """
+    if policy_path is None:
+        from rebalance.paths import resolve_project_root
+
+        policy_path = resolve_project_root(Path(__file__)) / "SCHEDULER.md"
+
+    lines = policy_path.read_text(encoding="utf-8").splitlines()
+    header = "| Job (label suffix) |"
+    try:
+        start = next(i for i, line in enumerate(lines) if line.startswith(header))
+    except StopIteration:
+        return []
+
+    jobs: list[str] = []
+    for line in lines[start + 2 :]:  # skip the Markdown separator row
+        if not line.startswith("|"):
+            break
+        first_cell = line.split("|", 2)[1].strip()
+        match = re.fullmatch(r"`([a-z0-9-]+)`", first_cell)
+        if match:
+            jobs.append(match.group(1))
+    return jobs
+
+
+def _loaded_rebalance_labels(launchctl_output: str) -> set[str]:
+    """Extract ``com.rebalance-os.*`` labels from ``launchctl list`` output."""
+    labels: set[str] = set()
+    for line in launchctl_output.splitlines():
+        fields = line.split()
+        if fields and fields[-1].startswith("com.rebalance-os."):
+            labels.add(fields[-1])
+    return labels
+
+
+def _scheduler_installer(job: str, repo_root: Path) -> str:
+    """Find the installer that declares *job*, with a conventional fallback.
+
+    Installers predate the policy table and some omit ``-sync`` from their
+    filename.  Reading their declared label keeps the liveness check
+    table-driven while still giving the operator the real installer command.
+    """
+    label = f"com.rebalance-os.{job}"
+    scripts_dir = repo_root / "scripts"
+    installers = [
+        *scripts_dir.glob("install*_scheduler.sh"),
+        scripts_dir / "install_scheduler.sh",  # legacy daily-sync installer
+    ]
+    for installer in sorted(set(installers)):
+        try:
+            if label in installer.read_text(encoding="utf-8"):
+                return installer.relative_to(repo_root).as_posix()
+        except OSError:
+            continue
+    return f"scripts/install_{job.replace('-', '_')}_scheduler.sh"
+
+
+def _check_scheduler_liveness(
+    policy_path: Path | None = None, launchctl_output: str | None = None
+) -> list[Check]:
+    """Warn for policy jobs absent from this device's live launchd registry."""
+    try:
+        if policy_path is None:
+            from rebalance.paths import resolve_project_root
+
+            repo_root = resolve_project_root(Path(__file__))
+            policy_path = repo_root / "SCHEDULER.md"
+        else:
+            repo_root = policy_path.parent
+        jobs = _scheduler_policy_jobs(policy_path)
+    except (OSError, RuntimeError) as exc:
+        return [Check("scheduler policy", WARN, f"could not read SCHEDULER.md: {exc}")]
+
+    if not jobs:
+        return [
+            Check(
+                "scheduler policy",
+                WARN,
+                "SCHEDULER.md contains no readable launchd job policy rows",
+            )
+        ]
+
+    if launchctl_output is None:
+        launchctl_output = _launchctl_list()
+    if launchctl_output is None:
+        return []  # not macOS / launchctl unavailable — silently skip
+
+    loaded = _loaded_rebalance_labels(launchctl_output)
+    checks: list[Check] = []
+    for job in jobs:
+        if f"com.rebalance-os.{job}" not in loaded:
+            installer = _scheduler_installer(job, repo_root)
+            checks.append(
+                Check(
+                    f"scheduler:{job}",
+                    WARN,
+                    "scheduled job is not loaded on this device",
+                    f"install it with `bash {installer}`",
+                )
+            )
+    return checks
+
+
+def _check_launchd(launchctl_output: str | None = None) -> list[Check]:
+    """Report rebalance launchd jobs and their last exit status (macOS only)."""
+    if launchctl_output is None:
+        launchctl_output = _launchctl_list()
+    if launchctl_output is None:
         return []  # not macOS / launchctl unavailable — silently skip
 
     checks: list[Check] = []
-    for line in out.stdout.splitlines():
+    for line in launchctl_output.splitlines():
         parts = line.split("\t")
         if len(parts) != 3 or "rebalance" not in parts[2]:
             continue
@@ -891,8 +1048,20 @@ def _check_deep_work_stalls(db_path: Path) -> Check:
 #
 # To add a new collector: append one entry.  No other code needs to change.
 # Fields: name (Check label), table, ts_col (MAX'd for age), warn_days,
-#         empty_hint, stale_hint.
+#         empty_hint, stale_hint, plus optional quality/volume declarations.
 # ---------------------------------------------------------------------------
+
+
+def _active_gmail_filter() -> str:
+    """Name the active Gmail query when a successful sync is intentionally quiet.
+
+    GH-145: delegates to the shared formatter so this check and the CLI's
+    ``signal health`` line cannot describe the same filter differently.
+    """
+    from rebalance.ingest.config import describe_gmail_query_filter  # noqa: PLC0415
+
+    return describe_gmail_query_filter()
+
 
 _COLLECTOR_FRESHNESS: list[dict] = [
     dict(
@@ -905,6 +1074,9 @@ _COLLECTOR_FRESHNESS: list[dict] = [
             "registered and the token is in config"
         ),
         stale_hint="run `rebalance refresh` (scope github)",
+        quality_table="github_items",
+        quality_predicate="title IS NOT NULL AND TRIM(title) != ''",
+        quality_label="a title",
     ),
     dict(
         name="sleuth data",
@@ -925,10 +1097,17 @@ _COLLECTOR_FRESHNESS: list[dict] = [
     dict(
         name="email data",
         table="email_messages",
-        ts_col="received_at",
+        ts_col="synced_at",
         warn_days=7,
         empty_hint="ingest email via the Gmail MCP connector or the OAuth sync (scripts/setup_gmail_oauth.py)",
         stale_hint="no new email ingested in 7+ days — ask Claude to call `ingest_gmail_messages` (MCP mode), or check the Gmail OAuth token (`rebalance doctor`)",
+        quality_predicate=(
+            "(from_address IS NOT NULL AND TRIM(from_address) != '') "
+            "OR (subject IS NOT NULL AND TRIM(subject) != '')"
+        ),
+        quality_label="a sender or subject",
+        volume_ts_col="received_at",
+        quiet_filter=_active_gmail_filter,
     ),
 ]
 
@@ -978,7 +1157,11 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
     # degraded scan) shown right next to a de-authorized one.
     report.checks.extend(_check_pulse_collectors())
 
-    report.checks.extend(_check_launchd())
+    # One live snapshot serves both checks: policy absence is different from a
+    # loaded job whose most recent run exited non-zero.
+    launchctl_output = _launchctl_list()
+    report.checks.extend(_check_scheduler_liveness(launchctl_output=launchctl_output))
+    report.checks.extend(_check_launchd(launchctl_output))
 
     # Final section: a map of every diagnostics surface, so this one command
     # is the single entry point into the project's observability.

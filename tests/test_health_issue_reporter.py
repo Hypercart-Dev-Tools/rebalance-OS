@@ -853,5 +853,127 @@ class TestTriageScenarios(unittest.TestCase):
         self._assert_valid(decision, reason, "gmail-mcp-empty")
 
 
+class TestNoDuplicateCollectorEmitter(unittest.TestCase):
+    """GH-139 regression: the reporter must not emit its own collector checks.
+
+    The bug: this module used to carry ``run_pulse_checks()``, which shelled out
+    to ``experimental/git-pulse/health-check.py`` and screen-scraped fixed-width
+    columns out of its stdout to synthesise checks named ``pulse-collector:<device>``.
+    ``rebalance doctor`` independently emits the same information as
+    ``pulse collector:<device>`` — hyphen versus space.
+
+    Because issues are deduplicated by title, those two spellings never matched,
+    so every device produced a twin issue: 6 issues across 3 machines before
+    anyone noticed. The cure was to delete the reporter's emitter and let
+    doctor's canonical checks flow through as the single source.
+
+    These tests pin the deletion. If a future change reintroduces a
+    reporter-side collector emitter — under any name — the twin-issue bug comes
+    back, and dedup-by-title will not catch it.
+    """
+
+    def test_run_pulse_checks_is_gone(self) -> None:
+        self.assertFalse(
+            hasattr(hr, "run_pulse_checks"),
+            "run_pulse_checks() was deleted under GH-139 — reintroducing a "
+            "reporter-side collector emitter re-creates the twin-issue bug.",
+        )
+
+    def test_reporter_does_not_shell_out_to_the_git_pulse_health_check(self) -> None:
+        """The old emitter built the path piecewise, so assert on the leaf filename.
+
+        Pre-fix source read:
+            script = _REPO_ROOT / "experimental" / "git-pulse" / "health-check.py"
+        so a literal "git-pulse/health-check.py" would never have matched — the
+        leaf is the part that actually appears.
+        """
+        source = (SCRIPTS_DIR / "health_issue_reporter.py").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "health-check.py", source,
+            "The reporter must not invoke the git-pulse health check; doctor "
+            "already surfaces collector health as `pulse collector:*`.",
+        )
+
+    def test_source_contains_no_hyphenated_collector_spelling(self) -> None:
+        """'pulse-collector:' in the source IS the twin-issue fingerprint.
+
+        This is the assertion that actually fails against the pre-fix file — the
+        behavioural test below cannot catch it, because run_doctor_checks() never
+        produced the hyphen form; only the deleted emitter did.
+        """
+        source = (SCRIPTS_DIR / "health_issue_reporter.py").read_text(encoding="utf-8")
+        self.assertNotIn(
+            "pulse-collector:", source,
+            "'pulse-collector:' (hyphen) was the duplicate emitter's spelling. "
+            "doctor's canonical name is 'pulse collector:' (space). Two spellings "
+            "of one check defeat dedup-by-title and file twin issues per device.",
+        )
+
+    def test_all_checks_come_from_doctor(self) -> None:
+        """Every collected check carries source='rebalance-doctor', never a second producer."""
+        fake_report = MagicMock()
+        fake_report.checks = [
+            _make_check_obj("pulse collector:device-a", "warn", "ALERT — last scan 2.0d ago"),
+            _make_check_obj("email data", "ok", "107 rows"),
+        ]
+        with patch("rebalance.doctor.run_doctor", return_value=fake_report):
+            checks = hr.run_doctor_checks()
+
+        self.assertEqual(len(checks), 2)
+        self.assertEqual({c["source"] for c in checks}, {"rebalance-doctor"})
+
+    def test_no_check_uses_the_hyphenated_collector_spelling(self) -> None:
+        """The hyphen form is the fingerprint of the deleted emitter."""
+        fake_report = MagicMock()
+        fake_report.checks = [
+            _make_check_obj("pulse collector:device-a", "warn", "ALERT"),
+        ]
+        with patch("rebalance.doctor.run_doctor", return_value=fake_report):
+            checks = hr.run_doctor_checks()
+
+        for check in checks:
+            self.assertNotIn(
+                "pulse-collector:", check["name"],
+                "'pulse-collector:' (hyphen) was the duplicate emitter's spelling; "
+                "doctor's canonical name is 'pulse collector:' (space). Two "
+                "spellings of one check defeat dedup-by-title.",
+            )
+
+    def test_also_pulse_is_accepted_but_adds_no_checks(self) -> None:
+        """--also-pulse is kept as a deprecated no-op so scheduled invocations don't break.
+
+        The parser is built inline in main() and parse_args() takes no argv, so
+        this asserts on the source: the flag must still be declared (compat), and
+        its branch must not collect anything (that branch collecting again IS the
+        GH-139 bug).
+        """
+        source = (SCRIPTS_DIR / "health_issue_reporter.py").read_text(encoding="utf-8")
+
+        self.assertIn(
+            '"--also-pulse"', source,
+            "The flag must remain accepted — launchd jobs still pass it.",
+        )
+
+        _, _, after_flag = source.partition("if args.also_pulse:")
+        self.assertTrue(after_flag, "expected an `if args.also_pulse:` branch in main()")
+        branch = after_flag.split("\n\n", 1)[0]
+        for forbidden in ("checks.extend", "run_pulse", "health-check.py"):
+            self.assertNotIn(
+                forbidden, branch,
+                f"--also-pulse must stay a no-op; found {forbidden!r} in its branch, "
+                "which re-creates the duplicate collector emitter (GH-139).",
+            )
+
+
+def _make_check_obj(name: str, status: str, detail: str, hint: str = ""):
+    """A stand-in for rebalance.doctor.Check (attribute access, not a dict)."""
+    obj = MagicMock()
+    obj.name = name
+    obj.status = status
+    obj.detail = detail
+    obj.hint = hint
+    return obj
+
+
 if __name__ == "__main__":
     unittest.main()

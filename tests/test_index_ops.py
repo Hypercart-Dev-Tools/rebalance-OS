@@ -441,5 +441,133 @@ class IndexOpsTests(unittest.TestCase):
             self.assertIn("title", health["reason"])
 
 
+class SignalHealthQuietFilterTests(unittest.TestCase):
+    """GH-145 / GH-141: a filtered collector that matches nothing is not broken.
+
+    The live Gmail filter is ``in:inbox is:starred is:important`` — a three-way
+    AND matching roughly one to three messages a month. The collector runs on
+    schedule, authenticates, examines messages and retains none. That produced
+    ``degraded`` forever by design, and contradicted doctor's own ``email data``
+    check in the same output: one said ``ok``, the other ``degraded``.
+
+    The distinguishing signal is whether the collector RAN, which current
+    freshness already proves. These tests pin both halves — quiet-and-healthy
+    stays ok, and a filter must never mask a collector that actually stopped.
+    """
+
+    def _email_health(self, db_path, *, synced: str, received: str | None):
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with db_connection(db_path) as conn:
+            run_migrations(conn)
+            if received is not None:
+                conn.execute(
+                    "INSERT INTO email_messages "
+                    "(message_id, thread_id, from_address, from_name, subject, "
+                    " snippet, received_at, synced_at) "
+                    "VALUES ('old-1', NULL, 'a@b.co', 'A', 'Subject', 's', "
+                    f"datetime('now', '{received}'), datetime('now', '{synced}'))"
+                )
+            conn.commit()
+        return get_index_status(db_path)["freshness"]["signal_health"]["email"]
+
+    def test_quiet_but_successfully_synced_email_is_ok_and_names_the_filter(self) -> None:
+        """The live #141 shape: synced today, newest message 31 days old."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            health = self._email_health(db_path, synced="-1 hour", received="-31 days")
+
+        self.assertEqual(
+            health["status"], "ok",
+            "a successful sync that retained nothing is the configured outcome, "
+            "not silent data loss",
+        )
+        self.assertIn("no rows matched", health["reason"])
+        self.assertIn(
+            "Gmail filter:", health["reason"],
+            "the operator must be able to see WHY it is quiet, or 'ok' is just "
+            "as unactionable as the false 'degraded' was",
+        )
+
+    def test_a_stale_filtered_source_still_degrades(self) -> None:
+        """The critical negative: a filter must not mask a collector that died.
+
+        Same source, same filter — but the sync timestamp itself has stopped
+        advancing. That is a real failure and must survive the GH-145 change.
+        """
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            health = self._email_health(db_path, synced="-40 days", received="-40 days")
+
+        self.assertEqual(
+            health["status"], "degraded",
+            "quiet_filter only excuses a zero-row window on a collector that "
+            "demonstrably RAN; a stale freshness timestamp still degrades",
+        )
+        self.assertIn("last refresh advanced", health["reason"])
+
+    def test_source_without_a_quiet_filter_still_applies_zero_status(self) -> None:
+        """vault declares no quiet_filter, so its zero-row behaviour is unchanged.
+
+        Guards against the fix being over-broad — it would be easy to excuse
+        every quiet source and blind the whole check.
+        """
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path) as conn:
+                run_migrations(conn)
+                conn.execute(
+                    "INSERT INTO vault_files (rel_path, content_hash, ingested_at, last_modified) "
+                    "VALUES ('stale.md', 'hash1', datetime('now'), datetime('now', '-10 days'))"
+                )
+                conn.commit()
+            health = get_index_status(db_path)["freshness"]["signal_health"]["vault"]
+
+        self.assertEqual(health["status"], "degraded")
+
+    def test_quiet_filter_is_declarative_and_resolves_through_config(self) -> None:
+        """The rule names a formatter in config; it must not embed a filter string.
+
+        This is what keeps the filter to one home. If a future edit inlines the
+        query text into the rules table, doctor and signal health can drift
+        apart again — which was the whole of GH-145.
+        """
+        from rebalance.ingest.config import describe_gmail_query_filter
+        from rebalance.ingest.index_ops import _SIGNAL_HEALTH_RULES
+
+        rule = _SIGNAL_HEALTH_RULES["email"]
+        self.assertEqual(rule.get("quiet_filter"), "describe_gmail_query_filter")
+        self.assertTrue(
+            callable(describe_gmail_query_filter),
+            "the named formatter must exist in rebalance.ingest.config",
+        )
+        self.assertIn("Gmail filter:", describe_gmail_query_filter())
+
+    def test_a_broken_formatter_does_not_crash_the_verdict(self) -> None:
+        """A health check must never crash the status it reports on."""
+        from rebalance.ingest.index_ops import _quiet_filter_description
+
+        self.assertIsNone(_quiet_filter_description({}))
+        self.assertIsNone(_quiet_filter_description({"quiet_filter": "no_such_formatter"}))
+
+
+class SignalHealthAgreesWithDoctorTests(unittest.TestCase):
+    """GH-145 anti-drift: the two surfaces must not contradict each other."""
+
+    def test_doctor_and_signal_health_read_the_same_filter_description(self) -> None:
+        from rebalance.doctor import _active_gmail_filter
+        from rebalance.ingest.config import describe_gmail_query_filter
+
+        self.assertEqual(
+            _active_gmail_filter(), describe_gmail_query_filter(),
+            "doctor's freshness check and signal health must describe the "
+            "active filter identically — two formatters is how they drifted",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
