@@ -40,7 +40,19 @@
 #     --retry coll-p3-138-job-liveness --force \
 #     --pre-advance-cmd '<the selector above>'
 
-name: marathon-2026-07-18-collectors-resume-p3
+# ⚠️ The plan `name` MUST match the original plan's name.
+#
+# The relay lane id is derived as `marathon-<plan-name>--<phase-id>`, so a
+# different name mints a FRESH lane and a fresh RELAY.md instead of resuming the
+# existing one. First attempt at this resume used
+# `marathon-2026-07-18-collectors-resume-p3`, which sent codex to rebuild p3 from
+# scratch on a doctor.py that already contained its own committed +130 lines —
+# a double-application hazard. Caught before codex committed; name reverted.
+#
+# Keeping the original name is what makes this a RESUME: the existing relay file
+# (codex's turn committed, agy's verdict missing) is preserved and agy picks up
+# where it was killed.
+name: marathon-2026-07-18-collectors
 
 phases:
 
