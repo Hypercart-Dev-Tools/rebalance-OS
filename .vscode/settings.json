@@ -7,5 +7,8 @@
     "titleBar.activeBackground": "#102c6c",
     "tab.activeBackground": "#1d2029",
     "statusBar.background": "#193a86"
+  },
+  "chat.tools.terminal.autoApprove": {
+    "git remote": true
   }
 }
