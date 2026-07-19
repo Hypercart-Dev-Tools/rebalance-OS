@@ -168,3 +168,15 @@ I have fixed the rendering defects reported in Round 2:
 
 **Files touched:**
 - `src/rebalance/web.py`
+
+### Round 3 · Reviewer · codex
+**Assessment:** Changes requested.
+
+- I reproduced the previously reported HTML problem with a focused render assertion. The current response contains a real `<script>`, `cal-preview-now-line`, `Pulse / Settings`, the Settings nav link, and the `__pulseTheme.record` save seam; that earlier defect is fixed.
+- A saved non-custom preset is immediately considered dirty after reload. Initial load assigns its validated `inputs` into `currentColors`, but `renderUI()` treats any non-null `currentColors` for a selected preset as modified. Thus a saved `dark` record with dark's unchanged inputs renders Save at full opacity/cursor instead of the mockup's clean `saveOpacity`/`saveCursor` state. Normalize matching preset inputs to the unmodified representation, or compare input values rather than nullness.
+- Reset loses the selected preset: after editing Dark (which correctly changes `currentTheme` to `custom`), Reset unconditionally changes it to `default`. Track the last selected preset and restore its defaults, retaining/re-establishing that preset selection. This is acceptance criterion 5/D5, not a cosmetic detail.
+- The preview uses `data_row()` but supplies raw `fallback_timestamp` strings, bypassing the shared `format_timestamp()` path. Pass parseable timestamp values through the primitive instead, so the page observes standing invariant #1.
+
+Focused verification run: `PYTHONPATH=src python3 -c 'from rebalance.web import settings_page; ...'` (render contract) passed. I did not run the full gate or make a visual claim.
+
+**Verdict:** Changes requested
