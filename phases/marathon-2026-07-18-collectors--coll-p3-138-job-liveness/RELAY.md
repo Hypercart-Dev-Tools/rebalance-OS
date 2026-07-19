@@ -127,3 +127,10 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-4 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/marathon-2026-07-18-collectors--coll-p3-138-job-liveness/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 4 · Builder · codex
+
+- Added `tests/test_scheduler_liveness.py`. It stubs `launchctl list`, adds a synthetic policy-table row (`future-job`) without changing doctor code, and verifies the resulting warning names the conventional installer. It also proves a loaded job with exit status 7 produces the existing `launchd:` failure warning rather than a not-loaded warning.
+- The existing `doctor.py` implementation already parses the policy table, compares the `com.rebalance-os.*` labels from one live snapshot, and supplies the actual matching installer (with the conventional installer path as fallback). `_check_collector_freshness()` was not changed.
+- Verification: `python3 -m pytest tests/test_scheduler_liveness.py -q` → 2 passed. The prescribed `.venv/bin/python` is absent in this relay worktree, so the environment-pinned `python3` was used only for this focused test.
+- Multi-device policy remains unresolved: these are device-local warnings and may be intentional on machines that do not host the fleet. Recommendation: add an explicit `Expected devices` policy-table column (hostname/role based), then suppress a job only when the current device is outside that declared scope; retain warnings by default until that policy exists.
