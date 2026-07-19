@@ -55,6 +55,65 @@ OUT_BASE=${OUT_NAME%.md}
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required (brew install jq / apt install jq)"; exit 1; }
 
+# ---------------------------------------------------------------------------
+# LOCAL-TIME DISPLAY
+# ---------------------------------------------------------------------------
+# Raw JSONL and clio:id keep UTC. ONLY the displayed timestamp line is
+# localized, because clio:id is "session_id:timestamp" — changing the stored
+# timestamp would change every ID, break dedup, and re-emit the whole note as
+# duplicates.
+#
+# Conversion goes through python3, NOT jq: jq's strflocaltime is not DST-aware
+# here (it renders 2026-07 as "PST / -0800" when the correct zone is
+# "PDT / -0700"), which would print self-contradictory times in the note.
+# python3's datetime.astimezone() uses the real zone database.
+#
+# If python3 is unavailable the map is empty and rendering falls back to UTC —
+# degraded but never wrong, and never a crash.
+CLIO_PY=""
+for _cand in /usr/bin/python3 python3; do
+  if command -v "$_cand" >/dev/null 2>&1; then CLIO_PY=$_cand; break; fi
+done
+
+# stdin: JSONL. stdout: JSON object mapping UTC timestamp -> local display.
+local_time_map() {
+  if [ -z "$CLIO_PY" ]; then printf '%s' '{}'; return 0; fi
+  _map=$("$CLIO_PY" -c '
+import json, sys
+from datetime import datetime
+out = {}
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    try:
+        ts = json.loads(line).get("timestamp", "")
+    except Exception:
+        continue
+    if not ts or ts in out:
+        continue
+    try:
+        local = datetime.fromisoformat(ts.replace("Z", "+00:00")).astimezone()
+    except Exception:
+        continue
+    out[ts] = local.strftime("%Y-%m-%d %H:%M:%S %Z")
+json.dump(out, sys.stdout)
+' 2>/dev/null) || _map=""
+  # Only trust well-formed output; anything else degrades to UTC rendering.
+  case "$_map" in
+    '{'*'}') printf '%s' "$_map" ;;
+    *) printf '%s' '{}' ;;
+  esac
+}
+
+LOCALMAP=""
+ensure_local_map() {
+  [ -n "$LOCALMAP" ] && return 0
+  if [ -f "$JSONL" ]; then LOCALMAP=$(local_time_map < "$JSONL"); else LOCALMAP='{}'; fi
+  [ -n "$LOCALMAP" ] || LOCALMAP='{}'
+  return 0
+}
+
 # This is deliberately independent of export/reconciliation. In particular,
 # --status must not create the note, state, manifest, or a quarantine folder.
 # jq does the full source pass at once so the 60-second scheduled check does not
@@ -71,6 +130,7 @@ reconcile_status() {
   status_previous=$( [ -f "$STATUS_SNAPSHOT" ] && cat "$STATUS_SNAPSHOT" || echo -1 )
   case "$status_previous" in ''|*[!0-9-]*) status_previous=-1 ;; esac
   status_source_lines=$(grep -c '' "$status_jsonl" 2>/dev/null || true)
+  ensure_local_map
 
   jq -Rrs \
     --rawfile target "$status_target" \
@@ -78,6 +138,7 @@ reconcile_status() {
     --arg exclude "$EXCLUDE_REGEX" \
     --arg cursor "$status_cursor" \
     --arg source_lines "$status_source_lines" \
+    --argjson localmap "$LOCALMAP" \
     --arg previous "$status_previous" '
       . as $raw
       | ($raw | split("\n") | map(select(length > 0) | try fromjson catch empty)) as $entries
@@ -100,7 +161,8 @@ reconcile_status() {
             elif any($target_blocks[];
                 . as $block
                 | ($block | split("\n")) as $lines
-                | ((($lines[1] // "") | rtrimstr("  ")) == $timestamp)
+                | ((($lines[1] // "") | rtrimstr("  ")) as $shown
+                   | $shown == $timestamp or $shown == ($localmap[$timestamp] // $timestamp))
                 and (((($lines[2] // "") | split(" · ")[0]) == $machine))
                 and ($block | contains("> \"" + $rendered_prompt + "\""))) then "legacy-unlabelled"
             else "never-delivered"
@@ -152,7 +214,8 @@ backup_target() {
 backfill_plan() {
   [ -f "$JSONL" ] || return 0
   [ -f "$OUT" ] || return 0
-  jq -Rrs --rawfile target "$OUT" '
+  ensure_local_map
+  jq -Rrs --rawfile target "$OUT" --argjson localmap "$LOCALMAP" '
     . as $raw
     | ($raw | split("\n") | map(select(length > 0) | try fromjson catch empty)
        | map(. + {id: ("clio:id:" + ((.session_id // "") + ":" + (.timestamp // ""))), rendered: ((.prompt // "") | gsub("\n"; "\n> "))})) as $source
@@ -163,7 +226,9 @@ backfill_plan() {
        | ($block | split("\n")) as $lines
        | [ $source[] | . as $source_entry
            | select(($target_ids | index($source_entry.id)) == null)
-           | select($source_entry.timestamp == (($lines[1] // "") | rtrimstr("  ")))
+           | select((($lines[1] // "") | rtrimstr("  ")) as $shown
+         | $shown == $source_entry.timestamp
+           or $shown == ($localmap[$source_entry.timestamp] // $source_entry.timestamp))
            | select($source_entry.machine == ((($lines[2] // "") | split(" · ")[0])))
            | select($block | contains("> \"" + $source_entry.rendered + "\""))
            | $source_entry
@@ -260,12 +325,13 @@ run_repair() {
   [ -f "$JSONL" ] || { echo "Repair refused: source JSONL is absent." >&2; return 1; }
 
   repair_entries=$(mktemp)
-  reverse_lines < "$JSONL" | jq -Rr --arg ids "$repair_ids" '
+  ensure_local_map
+  reverse_lines < "$JSONL" | jq -Rr --arg ids "$repair_ids" --argjson localmap "$LOCALMAP" '
     (fromjson? // empty)
     | ((.session_id // "") + ":" + (.timestamp // "")) as $raw_id
     | ("clio:id:" + $raw_id) as $id
     | select(($ids | split("\n") | index($id)) != null)
-    | "<!-- \($id) -->\n## \(.repo // "unknown" | ascii_upcase)\n\(.timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
+    | "<!-- \($id) -->\n## \(.repo // "unknown" | ascii_upcase)\n\($localmap[.timestamp] // .timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
   ' > "$repair_entries"
   rendered_count=$(grep -c '^<!-- clio:id:' "$repair_entries" 2>/dev/null || true)
   [ "$rendered_count" = "$repair_count" ] || {
@@ -425,14 +491,15 @@ reverse_lines() { if command -v tac >/dev/null 2>&1; then tac; else tail -r; fi;
 # it; malformed lines, excluded prompts, and IDs already in the note are dropped
 # without aborting the run. The ID is derived inline without per-entry subprocesses.
 new_entries=$(mktemp)
+ensure_local_map
 if [ "$LAST_LINE" -lt "$TOTAL_LINES" ]; then
 tail -n +"$((LAST_LINE + 1))" "$JSONL" | reverse_lines | jq -Rr \
-  --arg exclude "$EXCLUDE_REGEX" --arg existing_ids "$existing_ids" '
+  --arg exclude "$EXCLUDE_REGEX" --arg existing_ids "$existing_ids" --argjson localmap "$LOCALMAP" '
   (fromjson? // empty)
   | select(($exclude | length) == 0 or ((.prompt // "") | test($exclude; "i") | not))
   | ((.session_id // "") + ":" + (.timestamp // "")) as $id
   | select(($existing_ids | split("\n") | index("clio:id:" + $id)) == null)
-  | "<!-- clio:id:\($id) -->\n## \(.repo // "unknown" | ascii_upcase)\n\(.timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
+  | "<!-- clio:id:\($id) -->\n## \(.repo // "unknown" | ascii_upcase)\n\($localmap[.timestamp] // .timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
 ' > "$new_entries"
 else
   : > "$new_entries"

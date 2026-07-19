@@ -273,10 +273,55 @@ backfill_then_targeted_repair() {
   assert_contains "$case_dir/repair-second.out" 'repair: 0 delivered-missing entries'
 }
 
+local_time_display_keeps_utc_ids() {
+  shell=$1
+  case_dir="$TMP/localtime-$2"
+  home="$case_dir/home"
+  out="$case_dir/note.md"
+  mkdir -p "$home/.claude"
+  json_line '2026-07-19T21:27:50Z' demo s1 'summer prompt' > "$home/.claude/prompt-log.jsonl"
+  json_line '2026-01-15T21:27:50Z' demo s2 'winter prompt' >> "$home/.claude/prompt-log.jsonl"
+
+  run_exporter "$shell" "$home" "$out" > /dev/null
+
+  # The ID must stay UTC — it is "session:timestamp" and is the dedup key.
+  assert_contains "$out" '<!-- clio:id:s1:2026-07-19T21:27:50Z -->'
+  assert_contains "$out" '<!-- clio:id:s2:2026-01-15T21:27:50Z -->'
+
+  # The DISPLAYED line must be local. Skip the assertion when python3 is
+  # absent, since the exporter then deliberately falls back to UTC.
+  if command -v python3 >/dev/null 2>&1 || [ -x /usr/bin/python3 ]; then
+    py=$(command -v python3 || echo /usr/bin/python3)
+    summer=$("$py" -c "from datetime import datetime; print(datetime.fromisoformat('2026-07-19T21:27:50+00:00').astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'))")
+    winter=$("$py" -c "from datetime import datetime; print(datetime.fromisoformat('2026-01-15T21:27:50+00:00').astimezone().strftime('%Y-%m-%d %H:%M:%S %Z'))")
+    assert_contains "$out" "$summer"
+    assert_contains "$out" "$winter"
+    # Guards the jq strflocaltime DST bug: summer and winter must not render
+    # with the same zone abbreviation in a DST-observing zone.
+    if [ "$(date +%Z)" != "UTC" ]; then
+      [ "$summer" != "$winter" ] || fail "summer and winter rendered identically"
+    fi
+  fi
+
+  # Re-running must not duplicate: the localized display line must never be
+  # mistaken for a new entry. This is the whole duplication hazard.
+  cp "$out" "$case_dir/before.md"
+  run_exporter "$shell" "$home" "$out" > "$case_dir/second.out"
+  cmp -s "$out" "$case_dir/before.md" || fail "second run changed a localized note"
+  assert_count "$out" '<!-- clio:id:s1:' 1
+  assert_count "$out" '<!-- clio:id:s2:' 1
+
+  # A cursor reset must also stay idempotent against localized display lines.
+  rm "$home/.claude/prompt-log-to-md.state"
+  run_exporter "$shell" "$home" "$out" > /dev/null
+  cmp -s "$out" "$case_dir/before.md" || fail "cursor reset duplicated a localized note"
+}
+
 run_suite() {
   shell=$1
   key=$2
   fresh_note_and_idempotency "$shell" "$key"
+  local_time_display_keeps_utc_ids "$shell" "$key"
   legacy_unidentified_note "$shell" "$key"
   marker_displaced "$shell" "$key"
   status_detection_is_read_only "$shell" "$key"

@@ -215,6 +215,7 @@ rm -f ~/.claude/hooks/prompt-log-to-md.sh ~/.claude/prompt-log-to-md.state ~/.cl
 
 - **Scope:** `~/.claude/settings.json` is user-level, so one log covers every repo.
 - **Machine and branch:** both are recorded with each prompt for later context.
+- **Timestamps:** the raw JSONL and every `clio:id` stay **UTC** — the ID is `session_id:timestamp`, so localizing it would change all IDs, break dedup, and re-emit the note as duplicates. Only the *displayed* line is localized (`2026-07-19 14:27:50 PDT`). Conversion uses `python3` (`datetime.astimezone()`), **not** jq: jq's `strflocaltime` is not DST-aware here and renders July as `PST / -0800`. Without `python3` the display falls back to UTC. Entries rendered before this change keep their original UTC display; history is not rewritten.
 - **Capture filtering (permanent):** the hook skips two classes of prompt outright, so they never reach the raw JSONL:
   - *Automated turns* — anything containing `<task-notification>` or the `[SYSTEM NOTIFICATION - NOT USER INPUT]` preamble (background-task and monitor events). Matched on the raw prompt before tag stripping.
   - *Short prompts* — under `CLIO_MIN_PROMPT_CHARS` (default **100**) after injected blocks are stripped, so `yes` / `push it` are dropped while substantive session-opening prompts are kept. Set `CLIO_MIN_PROMPT_CHARS=0` to capture everything again.
