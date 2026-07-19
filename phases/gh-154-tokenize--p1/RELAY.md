@@ -80,6 +80,25 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
    - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick release MARATHON-P1-TURN --agent agy --to codex
 4. Edit ONLY these paths: phases/gh-154-tokenize--p1/RELAY.md and src/rebalance/web_components.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
+### Round 1 · Builder · agy
+
+**Files Touched:**
+- `src/rebalance/web_components.py`
+
+**Key Decisions & Progress Log:**
+- Replaced 16 literal colors that cleanly collapsed into `var()` mappings:
+  - `.rb-btn` fallbacks (`#1a73e8`) -> `var(--accent)`
+  - `.sidebar` gradient (`#f8f4ec 0%, #f3efe7 100%`) -> `background: var(--page)`
+  - `.kbd` and badge backgrounds (`#fff`) -> `var(--card)`
+  - Alternating row stripes and hover states (`rgba(0,0,0,.03)` and `rgba(29,32,36,.03)`) -> `var(--zebra)`
+  - `.cal-now-dot` and line (`var(--danger, #d43d2a)`) -> `var(--nowline)`
+- **Resisting Mapping (Justifications for remaining literals):**
+  - `rgba(31,111,235,.10)` (line 267): Active nav item background. We have no transparent accent token in tier 1/2. Collapsing to a solid token loses the blue highlight.
+  - `rgba(124,196,255,.10)` (line 279): Side row link hover background. Requires a subtle `--info` or `--accent` tint.
+  - `rgba(31,111,235,.18)` / `rgba(31,111,235,.08)` (lines 396-397): Rank marker border/bg. Semantic blue tint.
+  - `rgba(29,111,168,.18)` / `rgba(29,111,168,.08)` (lines 401-402): Avatar marker border/bg. Semantic info tint.
+  - `#e8b93a`, `#3d3006`, `#f5edd8`, `#a49a76` (lines 466-467): Semantic "upcoming" (vibrant yellow) and "past" (muted grey/yellow) calendar events. `--warn` (`#a65f00`) is too dark to collapse these into.
+- Gate successfully checked.
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)

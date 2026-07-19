@@ -76,11 +76,11 @@ RB_TOKENS_CSS = """:root {
 # grep across pages. Include this string once inside each page's <style>.
 RB_BUTTON_CSS = """
 .rb-btn { display:inline-flex; align-items:center; gap:4px; font-size:13px;
-  font-weight:600; line-height:1.4; color:var(--accent,#1a73e8);
+  font-weight:600; line-height:1.4; color:var(--accent);
   text-decoration:none; cursor:pointer; background:none; border:none; padding:0;
   font-family:inherit; }
 .rb-btn:hover { text-decoration:underline; }
-.rb-btn:focus-visible { outline:2px solid var(--accent,#1a73e8); outline-offset:2px;
+.rb-btn:focus-visible { outline:2px solid var(--accent); outline-offset:2px;
   border-radius:3px; }
 .rb-btn .rb-btn-arrow { font-size:.9em; }
 """
@@ -251,7 +251,7 @@ h2 { font-size: 14px; color: var(--ink); }
   border-right: 1px solid var(--border);
   padding: 20px 14px;
   display: flex; flex-direction: column;
-  background: linear-gradient(180deg, #f8f4ec 0%, #f3efe7 100%);
+  background: var(--page);
 }
 .brand { display: flex; align-items: center; gap: 8px; padding: 0 6px 22px; }
 .brand .dot { width: 22px; height: 22px; background: var(--accent); border-radius: 5px; }
@@ -266,14 +266,14 @@ h2 { font-size: 14px; color: var(--ink); }
 .nav-list li { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; color: var(--ink); cursor: default; }
 .nav-list li.active { background: rgba(31,111,235,.10); color: var(--ink); font-weight: 500; }
 .nav-list .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
-.nav-list .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: #fff; text-align: center; }
+.nav-list .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: var(--card); text-align: center; }
 .sidebar-foot { margin-top: auto; padding: 8px; font-variant-numeric: tabular-nums; }
 
 /* Sidebar lists (calendar + reminders) */
 .side-list { list-style: none; margin: 0; padding: 0; }
 .side-row { padding: 7px 8px; border-radius: 6px; }
 .side-row + .side-row { margin-top: 1px; }
-.side-row:hover { background: rgba(0,0,0,.03); }
+.side-row:hover { background: var(--zebra); }
 .side-row.has-link { padding: 0; }
 .side-row-link { display: block; padding: 7px 8px; color: inherit; text-decoration: none; border-radius: 6px; }
 .side-row-link:hover { background: rgba(124,196,255,.10); }
@@ -321,7 +321,7 @@ h2 { font-size: 14px; color: var(--ink); }
 }
 .rb-data-list > [data-rb-row]:first-child { border-top: 0; }
 .rb-data-list > [data-rb-row][data-rb-stripe="even"],
-.rb-data-list > [data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: rgba(29,32,36,.03); }
+.rb-data-list > [data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: var(--zebra); }
 /* A linked row delegates the whole grid to its <a>. The wrapper must therefore
    STOP being a grid itself — otherwise its single <a> child is placed into the
    28px marker track, and the <a>'s own `minmax(0, 1fr)` body column collapses to
@@ -389,7 +389,7 @@ h2 { font-size: 14px; color: var(--ink); }
   font-weight: 700;
   line-height: 1;
   border: 1px solid var(--border);
-  background: #fff;
+  background: var(--card);
   color: var(--muted);
 }
 .rb-data-marker-rank {
@@ -414,7 +414,7 @@ h2 { font-size: 14px; color: var(--ink); }
 }
 .side-list.rb-data-list > .side-row[data-rb-row].has-link { padding: 0; }
 .side-list.rb-data-list > .side-row[data-rb-row][data-rb-stripe="even"],
-.side-list.rb-data-list > .side-row[data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: rgba(0,0,0,.03); }
+.side-list.rb-data-list > .side-row[data-rb-row]:nth-child(even):not([data-rb-stripe]) { background: var(--zebra); }
 .side-list .rb-data-row-link { padding: 7px 8px; border-radius: 6px; }
 
 /* The sidebar is always narrow, so it always resolves to the stacked form above
@@ -466,8 +466,8 @@ h2 { font-size: 14px; color: var(--ink); }
 .cal-event.upcoming { background: #e8b93a; color: #3d3006; }
 .cal-event.past { background: #f5edd8; color: #a49a76; }
 .cal-now { position: absolute; left: 44px; right: 0; z-index: 3; display: flex; align-items: center; }
-.cal-now-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--danger, #d43d2a); margin-left: -4px; flex-shrink: 0; }
-.cal-now-line { flex: 1; height: 2px; background: var(--danger, #d43d2a); }
+.cal-now-dot { width: 9px; height: 9px; border-radius: 999px; background: var(--nowline); margin-left: -4px; flex-shrink: 0; }
+.cal-now-line { flex: 1; height: 2px; background: var(--nowline); }
 .cal-upcoming { border-top: 1px solid var(--border); margin-top: 12px; padding-top: 10px; }
 .cal-up-list { display: flex; flex-direction: column; margin-top: 4px; }
 .cal-up-row {
@@ -477,7 +477,7 @@ h2 { font-size: 14px; color: var(--ink); }
   padding: 5px 8px;
   border-radius: 6px;
 }
-.cal-up-row[data-rb-stripe="even"] { background: rgba(0,0,0,.03); }
+.cal-up-row[data-rb-stripe="even"] { background: var(--zebra); }
 .cal-up-time { font-size: 10.5px; color: var(--fg-dim); white-space: nowrap; }
 .cal-up-title {
   font-size: 12px;
@@ -492,7 +492,7 @@ h2 { font-size: 14px; color: var(--ink); }
 .streams { list-style: none; margin: 0; padding: 0; }
 .streams li { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
 .streams .badge { margin-left: auto; color: var(--fg-dim); font-variant-numeric: tabular-nums; font-size: 12px; }
-.streams .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: #fff; text-align: center; }
+.streams .kbd { display: inline-block; min-width: 16px; padding: 0 5px; font-size: 11px; color: var(--fg-dim); border: 1px solid var(--border); border-radius: 4px; background: var(--card); text-align: center; }
 .auth-log-link a { display: flex; align-items: center; gap: 8px; color: var(--fg-dim); text-decoration: none; font-size: 13px; width: 100%; }
 .auth-log-link a:hover { color: var(--ink); }
 .auth-log-icon { font-size: 13px; }
