@@ -383,6 +383,15 @@ def fetch_recent_github(limit: int = 9) -> list[dict[str, Any]]:
                     FROM github_commits
                     WHERE committed_at IS NOT NULL
                     UNION ALL
+                    SELECT 'direct_commit', '', d.repo_full_name, 0, d.message,
+                           d.committed_at, d.author_login, d.html_url
+                    FROM github_direct_commits d
+                    WHERE d.committed_at IS NOT NULL
+                      AND NOT EXISTS (
+                          SELECT 1 FROM github_commits p
+                          WHERE p.repo_full_name = d.repo_full_name AND p.sha = d.sha
+                      )
+                    UNION ALL
                     SELECT 'comment', comment_type, repo_full_name, item_number,
                            body, created_at, author_login, html_url
                     FROM github_comments

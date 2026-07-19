@@ -6,6 +6,14 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.61.0] - 2026-07-18
+
+### Added
+- Direct branch pushes in watched repositories now retain a durable event
+  receipt, per-commit identity, and exact changed-file records. The bounded
+  enrichment path surfaces non-PR commits in activity, HiQS evidence, and the
+  dashboard while preventing duplicate signals when a matching PR is present.
+
 ## [0.60.0] - 2026-07-18
 
 ### Fixed

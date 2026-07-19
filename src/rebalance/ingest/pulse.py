@@ -209,6 +209,46 @@ def _query_day_activity(
                 "html_url": r["html_url"] or "",
                 "author_login": r["author_login"] or "",
                 "source_tag": tag,
+                "source_kind": "pull_request",
+            })
+
+    # Direct branch commits are a distinct raw source. The anti-join means a
+    # later-discovered PR commit replaces the visible signal without deleting
+    # the direct-push receipt/provenance.
+    direct_filter = _author_filter_sql("d.author_login")
+    rows = conn.execute(
+        f"""
+        SELECT d.repo_full_name, d.sha, d.message, d.committed_at, d.html_url,
+               d.author_login, d.ref,
+               (SELECT GROUP_CONCAT(path, char(10))
+                  FROM github_direct_commit_files f
+                 WHERE f.repo_full_name = d.repo_full_name AND f.sha = d.sha) AS paths
+        FROM github_direct_commits d
+        WHERE d.committed_at >= ?
+          AND {direct_filter}
+          AND NOT EXISTS (
+              SELECT 1 FROM github_commits p
+              WHERE p.repo_full_name = d.repo_full_name AND p.sha = d.sha
+          )
+        ORDER BY d.committed_at DESC
+        """,
+        (sql_floor, github_login, *CLOUD_AGENT_AUTHORS),
+    ).fetchall()
+    for r in rows:
+        if _in_window(r["committed_at"], start, end):
+            message = r["message"] or ""
+            activity.gh_commits.append({
+                "repo": r["repo_full_name"],
+                "sha": r["sha"][:7] if r["sha"] else "",
+                "subject": message.splitlines()[0][:160] if message else "direct commit",
+                "committed_at": r["committed_at"],
+                "html_url": r["html_url"] or "",
+                "author_login": r["author_login"] or "",
+                "paths": (r["paths"] or "").splitlines(),
+                "source_tag": classify_source(
+                    branch=r["ref"], author_login=r["author_login"], commit_message=message,
+                ),
+                "source_kind": "direct_push",
             })
 
     item_filter = _author_filter_sql("author_login")
