@@ -19,6 +19,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable
 
+from rebalance.tz_utils import local_tz
+
 OK = "ok"
 WARN = "warn"
 FAIL = "fail"
@@ -1234,7 +1236,7 @@ def _check_deep_work_stalls(db_path: Path) -> Check:
 
         signals = compute_deep_work_signals(
             db_path,
-            datetime.now(timezone.utc).date(),
+            datetime.now(local_tz()).date(),
             lookback_days=7,
         )
     except Exception as exc:  # noqa: BLE001 — doctor must never crash

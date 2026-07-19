@@ -150,3 +150,10 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/wt/sentinel-process-review/.xyz/bin/tick done MARATHON-GH146-P4-DEEP-WORK-TZ-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/wt/sentinel-process-review/.xyz/bin/tick
    Edit ONLY phases/gh-146-health-signal-accuracy-resume-p2--gh146-p4-deep-work-tz/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Changed `src/rebalance/doctor.py` so `_check_deep_work_stalls()` injects `datetime.now(local_tz()).date()` into `compute_deep_work_signals()`; the signal implementation itself is unchanged.
+- Added `tests/test_doctor_deep_work_tz.py` covering the 18:59 PDT regression, a morning control, preservation of a genuine stall WARN, and invariance to the process `TZ` while the operator zone remains America/Los_Angeles. The evening-date assertion is the fail-before/pass-after assertion: the old UTC implementation supplies 2026-07-19; the fixed code supplies 2026-07-18.
+- Verification: `PYTHONPATH=src python -m pytest tests/test_doctor_deep_work_tz.py` → 4 passed. `.venv/bin/python` is unavailable in this worktree, and the default interpreter initially imported another checkout, so `PYTHONPATH=src` was required to exercise this artifact.
+- Did not run `rebalance doctor`, per the turn constraint to verify only the focused test. The separate UTC date use at `doctor.py:465` remains intentionally unchanged and should be triaged separately.
