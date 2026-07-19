@@ -188,7 +188,11 @@ conflict_siblings=(
 )
 shopt -u nullglob
 
-for conflict in "${conflict_siblings[@]}"; do
+# `${arr[@]+...}` guard: on macOS's bash 3.2, expanding an EMPTY array under
+# `set -u` aborts with "unbound variable" (only fixed in bash 4.4+), and the
+# common case is zero conflict siblings — so the bare `"${conflict_siblings[@]}"`
+# broke every normal run. This form expands to nothing when the array is empty.
+for conflict in ${conflict_siblings[@]+"${conflict_siblings[@]}"}; do
   [ "$conflict" = "$OUT" ] && continue
 
   recovered=$(mktemp)

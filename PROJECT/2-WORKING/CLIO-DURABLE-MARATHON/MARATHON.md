@@ -1,6 +1,6 @@
 ---
 title: "MARATHON — CLIO durable idempotent writes (2026-07-19)"
-status: "Preflighted; firing"
+status: "COMPLETE 2026-07-19 — both phases approved, gates green; one bash-3.2 runtime defect caught in post-run verification and fixed"
 created: 2026-07-19
 updated: 2026-07-19
 owner: noel@neochro.me
@@ -19,7 +19,7 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| Plan agy-reviewed (8/8 heuristics pass, refinements applied). Marathon authored: `MARATHON.yaml` + two phase briefs; gate is a Focus5Float `swift build` (green at base). | Preflight with `marathon.sh --dry-run`, then fire. Runs **sequentially**: `clio-p1-idempotent` → `clio-p2-reconcile` (depends_on), halting on the first phase that fails review. Reviewer agy, builder codex. |
+| **Fired and completed.** Both phases approved (agy), both `swift build` gates green. Post-run verification ran the exporter on `/bin/bash` 3.2 and found the reconciliation array aborted with "unbound variable" (empty-array under `set -u`) — fixed with the `${arr[@]+…}` guard and re-verified (idempotency, state-delete, reconciliation, dry-run all pass). 48 swift tests pass. | Archive to `3-COMPLETED` after the operator litmus (install on both machines, watch a real conflict reconcile). |
 
 ## Plan
 

@@ -6,6 +6,32 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.62.0] - 2026-07-19
+
+### Added
+- **CLIO exporter is now idempotent by content and self-healing across devices.** Implemented
+  Phases 1–2 of the durability plan (via marathon; builder codex, reviewer agy) in the
+  `prompt-log-to-md.sh` exporter in `utils/CLIO/INSTALL.md`:
+  - Every rendered entry carries an invisible `<!-- clio:id:session_id:timestamp -->` marker,
+    emitted inline by the existing `jq` pass. The exporter skips any entry whose ID is already
+    in the note, so re-runs and a deleted/corrupt cursor state no longer duplicate; the cursor
+    is demoted to a scan optimization. A verify-after-write step withholds the cursor advance
+    until the emitted IDs are confirmed present.
+  - Conflict-copy reconciliation: before exporting, it recovers full entry blocks stranded in
+    sync conflict siblings (`*.sync-conflict-*.md`, `* (conflicted copy*).md`, iCloud numeric
+    dupes), deduped by ID, and **quarantines** each processed copy under `.clio-reconciled/`
+    instead of deleting it. Honors `CLIO_RECONCILE_DRY_RUN=1`.
+  - `Focus5Float`'s `PromptLogReader` now drops `<!--` lines before positional parsing, so the
+    Prompt Log tab tolerates the new ID comments (48 swift tests pass, +7).
+
+### Fixed
+- **CLIO exporter no longer aborts on macOS's bash 3.2.** The new reconciliation loop expanded
+  an empty `conflict_siblings` array under `set -u`, which raises "unbound variable" on bash
+  < 4.4 (macOS `/bin/bash` is 3.2) — the common zero-siblings case, so every normal run failed
+  and produced no output. Caught in post-marathon verification (the `swift build` gate could not
+  exercise the shell path) and fixed with the portable `${arr[@]+…}` guard. Re-verified on
+  `/bin/bash` 3.2: idempotency, state-delete safety, full-block reconciliation, and dry-run.
+
 ## [0.61.0] - 2026-07-19
 
 ### Changed
