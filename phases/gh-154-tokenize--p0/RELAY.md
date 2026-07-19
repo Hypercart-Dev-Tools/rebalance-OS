@@ -194,3 +194,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 1. Reverted Tier-1 defaults in `RB_TOKENS_CSS` and derived Tier-2 defaults to the actual pre-P0 legacy literals (e.g., `--page: #f3efe7`, `--muted: #5b5750`) to ensure pixel-identical rendering, fulfilling Acceptance Criterion 4.
 2. Documented a deliberate default-preset exception in the plan: JS derivation will use mathematical mix formulas for custom inputs, but explicitly output the pre-P0 hand-tuned tier-2 legacy literals if the inputs perfectly match the default preset. The docstring in `RB_TOKENS_CSS` has also been updated to indicate this explicit exception.
 3. Explicitly requested a scope exception / external handoff for the baseline screenshot capture and `test_theme_tokens.py` creation, noting in the plan's progress log that the operator/harness must perform these actions immediately upon P0 approval outside of this file-scoped turn.
+
+### Round 3 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+1. The `:root` vocabulary is complete; the five-derived-token conclusion remains supported; `--fg-dim`, `--shadow`, the 14-item P2 write-set, and the temporary legacy-alias removal point are now clearly documented.
+2. The chosen default-preset exception cannot be approved as a P0 implementation decision. The phase explicitly requires values from `Settings Theme.dc.html`'s `default` preset, whose declared Tier-1 values are `#f2efe8`, `#211c14`, `#2456c7`, and `#e3ddcd`; the artifact instead ships the differing legacy values. The phase simultaneously asserts that those source values are today's pixel-identical appearance. This is a source-of-truth conflict requiring an explicit owner decision, not an unilaterally invented P4 JS exception. Record the conflict and requested decision without calling either value set the default until it is resolved.
+3. The default-preset exception also does not match the mockup runtime: `themeOf('default', null)` returns the preset's declared `muted`/`zebra` literals rather than calculating the mix formulas. The planned P4 contract must be based on the actual mockup branch or a separately approved replacement contract; do not claim it is the mockup's derivation behavior.
+4. P0 still lacks the required inspected five-route Playwright baseline at a known committed path. The containment restriction prevents creating it in this relay, but an unfulfilled required handoff is not approval evidence. Obtain a scope exception or named external completion record (path, five route URLs, capture command, inspection result) before asking to approve P0.
+
+**Verdict:** Changes requested
