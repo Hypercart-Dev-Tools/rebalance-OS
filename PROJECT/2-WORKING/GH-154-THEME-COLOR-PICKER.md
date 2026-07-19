@@ -1,6 +1,6 @@
 ---
 title: Web app theme color picker — tokenize the UI CSS, then ship Settings → Color theme
-status: "Planning — no code written. Worktree ~/wt/theme-picker on branch feat/theme-picker (from origin/development). QA relay R1 complete (codex, Changes requested); all 6 findings folded in. Ready to start P0."
+status: "Planning — no code written. Worktree ~/wt/theme-picker on branch feat/theme-picker (from origin/development). QA relay R1 + a follow-up design consult both folded in; P6 cut, v1 is localStorage-only and ends at P5. Ready to start P0."
 gh_issue: 154
 owner: noelsaw1
 created: 2026-07-18
@@ -120,7 +120,7 @@ ours, because the existing `--shadow` is colored and so cannot stay literal:
 - `--zebra` = `mix(card, isDark(page) ? #ffffff : #000000, 0.96)`
 - `--shadow` = the existing multi-layer value with each layer's color replaced by `--ink` at that
   layer's alpha. It is a full CSS value, not a color, so its derivation returns a string — the
-  snapshot schema must carry it as such.
+  derivation returns a string rather than a color — the JS derivation layer must handle it as such.
 
 `isDark(hex)` is the standard luminance test `0.299R + 0.587G + 0.114B < 128`.
 
@@ -178,14 +178,29 @@ so derivation must exist in JS. Having it *also* in Python guarantees drift. The
 derivation**, and Python's `RB_TOKENS_CSS` ships only the *default preset*, fully pre-derived, as
 literal values — a no-JS fallback that renders exactly today's appearance.
 
-**The corollary that makes D3 possible: Python never derives, so Python must be handed something
-already derived.** The persisted artifact is therefore not the 7 settable colors — it is a
-**fully-derived snapshot**: every tier-1 and tier-2 token, resolved, produced only by the JS
-derivation functions at Save time. Python's job on both the live routes and the static rebuild is to
-*serialize a snapshot it was given*, never to compute one. That is the whole seam. A snapshot is
-validated on write (every token present, every color a well-formed hex, `--shadow` a CSS value) and
-rejected wholesale on failure — a partial snapshot would render a half-themed page, which is worse
-than falling back to the default preset.
+**The corollary: Python never derives, so Python must never be the thing that stores derived
+values.** The persisted artifact is the **7 settable inputs, versioned** — not the derived output:
+
+```json
+{ "schema_version": 1, "derivation_version": 1, "preset": "custom", "inputs": { …7 colors… } }
+```
+
+Python serializes that record into the page; the single JS implementation derives from it before
+paint. The boundary holds because Python is moving *data it was given*, never computing a color.
+
+*Superseded design, kept because the reason matters:* an earlier revision persisted a
+**fully-derived snapshot** — all 10 resolved tokens, computed by JS at Save time. It also honored
+"Python never derives", but it was strictly worse, and the failure is instructive. Derived output
+frozen at Save time cannot survive a change to the mix/luminance formula: every stored snapshot is
+silently stale, the drift test can't catch it (it derives fresh fixtures from current JS), and
+because the inputs were discarded there is **no way to regenerate** the user's intended theme. The
+versioned-inputs record has the opposite property — a formula change re-derives correctly from what
+was kept, and `derivation_version` makes the change detectable rather than silent. *(Found by the
+GH-154 design consult, 2026-07-18.)*
+
+The record is validated on read (all 7 inputs present, each a well-formed hex, `schema_version`
+recognized) and rejected wholesale on failure — a partial record would render a half-themed page,
+which is worse than falling back to the default preset.
 
 The drift risk this creates is real and must be gated, not trusted — but the obvious test does not
 gate it. Loading a page with *no* stored theme only reads Python's own defaults back and asserts
@@ -216,32 +231,36 @@ flash is a defect, not a cosmetic nit, and the acceptance criteria call it out.
 
 This is the reason the whole feature is possible without touching the render pipeline.
 
-**D3 — Persistence: `localStorage` applies; `config.py` stores a derived snapshot.**
-`localStorage` alone is per-browser and invisible to the rest of the system. `config.py` alone
-can't be read by a static page. So: the picker writes `localStorage` immediately (that's what
-applies), and Save also `POST`s to a new endpoint that writes through `get_theme()`/`set_theme()`
-in `config.py`.
+**D3 — Persistence: `localStorage` only. v1 has no server-side theme storage.**
+The versioned record from D1 lives in `localStorage` and nowhere else. There is no `config.py`
+write-through, no `POST` endpoint, and no server-rendered custom theme.
 
-**What crosses that boundary is the derived snapshot from D1, not the 7 settable colors.** This is
-the correction that makes D3 implementable at all. `render_shell()` today emits a fixed
-`RB_TOKENS_CSS` constant (`web_components.py:19-32`, `:640-641`); if the server held only the 7
-inputs it would have to derive the rest to render them, which D1 forbids. Handed a snapshot, it
-serializes and never computes. Concretely:
+This reverses an earlier revision of this doc, and the reason is worth stating plainly, because
+"the durable record is obviously better" is the intuition that produced the mistake:
 
-- **Live routes** — `render_shell()` emits the stored snapshot in place of the `RB_TOKENS_CSS`
-  constant when one exists, falling back to the constant when it does not.
-- **Static `/`** — the same snapshot is serialized into the generated page during the regular
-  `build_page()` rebuild. Invariant #6 holds: `web/pulse.html` is still only ever written by the
-  build, never patched in place by a Save.
-- The two paths call **one** serializer, so they cannot diverge.
+**Durable cross-browser theming cannot work for `/` without a rebuild, and `/` is the main page.**
+`/` is served as a `FileResponse` of an already-built `web/pulse.html` (`pulse_server.py:268`),
+regenerated by a **30-minute** scheduler (`install_pulse_web_scheduler.sh:27`). A config write does
+not regenerate it. So "Save → clear `localStorage` → reload" would show the *old* theme on `/` for
+up to half an hour. The sting is precise: with `localStorage` intact every route themes instantly
+via the pre-paint script, so **the only scenario durable persistence exists to serve is the exact
+scenario in which it fails.** It would have added a config schema, an endpoint, and a shared
+serializer to buy a stale page.
 
-The gating test is the one Codex named: **save a custom theme → clear `localStorage` → reload all 5
-routes** and assert each renders the custom values, not the default preset. Without it this decision
-is untested by construction, because every other test path has `localStorage` populated.
+The available fixes were rebuild-on-Save (a `build_page()` regeneration in the request path, racing
+the scheduler and needing atomic-write care) or dropping it. For a single-operator local dashboard,
+dropping it is correct — the cleared-browser case is rare, cheap to recover from (re-pick the
+preset), and speculative until observed.
 
-*If this proves over-built for v1:* the fallback is `localStorage`-only, and `config.py`
-write-through moves to P6. It is deliberately the last phase for that reason — but note the snapshot
-*schema* is not deferrable, since P4 has to produce it either way.
+*Revisit only on evidence:* if the theme is genuinely lost often enough to annoy, the smallest
+honest addition is rebuild-on-Save, not a scheduler-dependent config read. Note it in the progress
+log if it happens.
+
+**What this deletes from the plan:** P6 entirely, the `get_theme()`/`set_theme()` config work, the
+`POST` endpoint, the "one shared serializer" for live-vs-static, and the acceptance criterion that
+asserted a saved theme survives a cleared browser. `render_shell()` stays pure and I/O-free
+(`web_components.py:602-645`) — it is handed a theme bootstrap by its callers and never reads
+config, which is the property that made it a safe seam in the first place.
 
 **D4 — The picker page is a new live route, `/settings`.**
 Not part of the static `/`. It goes in `web.py` alongside the other live pages, using
@@ -286,8 +305,8 @@ calendar module's `.cal-*` colors from GH-137 (`#e8b93a` / `#f5edd8` event tones
 visually identical to a pre-change baseline captured at P0.
 
 ### P4 — Theme runtime
-The pre-paint inline script (D2), the JS derivation functions (D1), the snapshot schema +
-validator (D1/D3), `localStorage` read/write (D5). No UI yet — verified by setting `localStorage`
+The pre-paint inline script (D2), the JS derivation functions (D1), the versioned record schema +
+validator (D1), `localStorage` read/write (D5). No UI yet — verified by setting `localStorage`
 by hand and reloading each page.
 
 **The insertion contract, which D2 asserts but does not yet specify.** No suitable slot exists
@@ -301,6 +320,11 @@ one mechanism, both pipelines. Requirements on it:
 - Synchronous and inline. No `defer`, no `async`, no external file — any of the three reintroduces
   the flash the whole decision exists to prevent.
 - Emitted *before* the `<style>` block, so tokens are set when the stylesheet first resolves.
+- **Passed in as an explicit argument** (a `theme_bootstrap` parameter supplied by `_page()` at
+  `web.py:386-388` and `build_page()` at `pulse_web.py:3173-3182`), never read from config inside
+  `render_shell()`. In v1 it is a static default-preset bootstrap for every caller; keeping it a
+  parameter rather than a global preserves `render_shell()`'s I/O-free property and is the seam any
+  future durable-persistence work would use.
 - **Malformed-storage fallback**: absent, unparseable, schema-invalid, or partial `localStorage`
   falls back to the default preset silently. A theme picker that white-screens on a bad JSON blob
   is a worse failure than one that ignores it.
@@ -318,9 +342,10 @@ fine-tune grid, live preview section, Save / Reset with the mockup's dirty-state
 shared row primitive — do not carry over its inline-style-everything approach, which is a
 design-tool artifact.
 
-### P6 — Durable persistence
-`get_theme()` / `set_theme()` in `config.py`, the `POST` endpoint, build-time regeneration of
-`RB_TOKENS_CSS` defaults from config. Split out per D3 so v1 can ship without it.
+### ~~P6 — Durable persistence~~ *(cut — see D3)*
+`config.py` write-through, the `POST` endpoint, and build-time regeneration of `RB_TOKENS_CSS`
+from config are **out of scope**. They cannot deliver their one benefit — a saved theme surviving a
+cleared browser — on `/`, which is rebuilt on a 30-minute schedule. **v1 ends at P5.**
 
 ## Acceptance criteria
 
@@ -334,9 +359,12 @@ design-tool artifact.
    to an operator who never opens Settings.
 5. Save persists across reload; Reset returns to the selected preset's defaults without clearing
    the preset selection.
-6. **A saved theme survives a cleared browser.** Save a custom theme, clear `localStorage`, reload
-   all 5 routes — each renders the custom values from the stored snapshot, not the default preset.
-   (Gates D3; every other test path has `localStorage` populated, so nothing else exercises it.)
+6. **A cleared browser falls back cleanly, and says so.** Clearing `localStorage` returns every
+   route to the default preset with no error, no half-themed page, and no console noise. Per D3,
+   v1 deliberately does *not* recover a saved theme across browsers — this criterion asserts the
+   documented behavior, not the wished-for one.
+   Also gate the malformed cases: absent, truncated, non-JSON, wrong `schema_version`, and missing
+   an input key must each fall back to the default preset rather than render partially.
 7. **The drift test exercises JS derivation**, i.e. it seeds `localStorage` before navigation and
    includes a non-default fixture with independently computed expectations. A test that loads with
    no stored theme does not satisfy this criterion.
@@ -395,10 +423,12 @@ and `utils/pdda/pdda.sh run` clean.
 4. **Custom themes can be made unreadable.** Deliberately permitted (criterion 7 warns, doesn't
    block) — but Reset must be genuinely reliable, since it is the only escape from a theme so bad
    the Settings page itself is unusable. Consider a `?theme=default` URL escape hatch.
-5. **`localStorage` is per-origin.** An operator hitting the dashboard on both `localhost:PORT` and
-   a LAN IP gets two independent themes. D3's `config.py` write-through is what fixes this; if P6
-   is deferred, this is a known v1 limitation and should be stated in the release note rather than
-   discovered.
+5. **`localStorage` is per-origin — accepted, not mitigated.** An operator hitting the dashboard on
+   both `localhost:PORT` and a LAN IP gets two independent themes. Earlier revisions named D3's
+   `config.py` write-through as the fix; since P6 is now cut (D3), this is a **known v1
+   limitation** and must be stated in the release note rather than discovered. It is also the one
+   real argument for reinstating durable persistence later — so if this turns out to bite in
+   practice, revisit D3 with rebuild-on-Save, and note it here.
 
 ## Progress log
 
@@ -422,3 +452,26 @@ and `utils/pdda/pdda.sh run` clean.
   than guessed); and the mockup's `PIE_PALETTE` reach was verified directly at `:982`/`:1040`
   rather than taken on the reviewer's word, per invariant #10 applied to findings as well as
   approvals.
+- **2026-07-18** — Design consult (codex, one-shot advisory via `consult.sh`, no relay loop) on the
+  D1/D3 persistence design alone. Two Blockers, both verified against source and both accepted;
+  **the design I committed hours earlier was wrong in two ways.** Worth recording, because the
+  error has a shape that will recur.
+  1. **Durable cross-browser theming can't work for `/`.** It's a `FileResponse` of a pre-built
+     file (`pulse_server.py:268`) on a 30-minute rebuild (`install_pulse_web_scheduler.sh:27`), so
+     a config write leaves it stale for up to half an hour. Acceptance criterion 6 as I wrote it
+     was unsatisfiable. **P6 is cut**; v1 is `localStorage`-only and ends at P5. The tell was there
+     to be noticed: the only case durable persistence served was the only case it failed at.
+  2. **The derived snapshot was strictly worse than persisting inputs.** Freezing derived output at
+     Save time cannot survive a formula change — every stored snapshot goes silently stale, the
+     drift test can't see it, and with the inputs discarded the theme can never be regenerated.
+     Now a versioned `{schema_version, derivation_version, preset, inputs}` record; JS derives from
+     it before paint. Python still never derives — it moves data instead of results.
+  The meta-lesson: the snapshot was introduced *as the fix to the previous review's Blocker*, and I
+  defended it on that basis. A fix that resolves a contradiction is not thereby a good design, and
+  the second reviewer had to be pointed at that one decision to see it. Consult cost ~40k tokens
+  against ~88k for a full relay round, and found more.
+  Also verified independently: `_page()` (`web.py:386-388`) and `build_page()`
+  (`pulse_web.py:3173-3182`) both route through `render_shell()`, so the shared seam is real —
+  P4's pre-paint slot is now an explicit `theme_bootstrap` parameter, keeping `render_shell()`
+  I/O-free. (`consult.sh` stamped `NO FIRSTHAND VERIFICATION CITED` on this answer; that was a
+  false positive — the `[Pass]` did carry `file:line`, and all citations checked out.)
