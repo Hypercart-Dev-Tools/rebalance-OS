@@ -1928,6 +1928,7 @@ def settings_page() -> HTMLResponse:
 .cal-preview-now-line { flex: 1; height: 2px; background: var(--nowline); }
 """
     body = f"""
+<h2>Pulse / Settings</h2>
 <div style="display: flex; flex-direction: column; gap: 20px; max-width: 760px; padding-bottom: 64px;">
   <section class="settings-section">
     <div>
@@ -1964,7 +1965,13 @@ def settings_page() -> HTMLResponse:
       <span class="cal-preview-line2"></span>
       <span class="cal-preview-now">
         <span class="cal-preview-now-dot"></span>
-        <span class="cal-preview-(function() {{
+        <span class="cal-preview-now-line"></span>
+      </span>
+    </div>
+  </section>
+</div>
+<script>
+(function() {{
   const PRESETS = {{
     default:  {{ name: 'Current default', page: '#f3efe7', card: '#ffffff', ink: '#1d2024', accent: '#1f6feb', border: '#e3ddd0', nowline: '#d43d2a', timestamp: '#8a857c' }},
     dark:     {{ name: 'Dark mode',       page: '#191713', card: '#242019', ink: '#f0ece1', accent: '#6f97ea', border: '#3a3529', nowline: '#e05a48', timestamp: '#8f887a' }},

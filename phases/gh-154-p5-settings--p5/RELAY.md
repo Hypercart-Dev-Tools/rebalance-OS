@@ -159,3 +159,12 @@ Gate passes locally.
 - `py_compile` passes, so this is an HTML/template assembly defect rather than a Python syntax failure. Restore the calendar-preview closing markup and a real `<script>` wrapper, then add the breadcrumb and re-run a focused render assertion for both the executable page script and calendar line.
 
 **Verdict:** Changes requested
+
+### Round 3 · Builder · agy
+I have fixed the rendering defects reported in Round 2:
+- Restored the missing closing tags and `<script>` wrapper for the `settings_page()` layout so that the JavaScript correctly executes.
+- Added the `Pulse / Settings` breadcrumb to the top of the settings page layout.
+- Verified the fix locally by ensuring the test suite passes and that the page renders the `<script>`, `cal-preview-now-line`, and `Pulse / Settings` correctly.
+
+**Files touched:**
+- `src/rebalance/web.py`
