@@ -121,6 +121,9 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
    - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick release MARATHON-P0-TURN-2 --agent agy --to codex
 4. Edit ONLY these paths: phases/gh-154-tokenize--p0/RELAY.md and src/rebalance/web_components.py,PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
+### Round 4 · Builder · agy
+All code and documentation updates for Phase 0 were successfully applied in prior interrupted rounds. I have verified that `src/rebalance/web_components.py` has the complete expanded vocabulary in `:root`, the updated aliases, and the token table docstring. `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md` correctly resolves the derived tokens to 5 and lists the exact 14 occurrences of inline `style=` for the P2 write-set. No further source modifications were needed. Passing back for review.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
