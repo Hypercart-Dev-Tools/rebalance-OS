@@ -1,6 +1,6 @@
 ---
 title: Web app theme color picker — tokenize the UI CSS, then ship Settings → Color theme
-status: "Planning — no code written. Worktree ~/wt/theme-picker on branch feat/theme-picker (from origin/development). QA relay R1 + a follow-up design consult both folded in; P6 cut, v1 is localStorage-only and ends at P5. Ready to start P0."
+status: "Working — P0 in progress. Worktree ~/wt/theme-picker on branch feat/theme-picker (from origin/development). QA relay R1 + a follow-up design consult both folded in; P6 cut, v1 is localStorage-only and ends at P5. P0 vocabulary populated."
 gh_issue: 154
 owner: noelsaw1
 created: 2026-07-18
@@ -118,15 +118,14 @@ ours, because the existing `--shadow` is colored and so cannot stay literal:
 - `--muted` = `mix(ink, page, 0.45)`
 - `--accent-ink` = `#ffffff` if `isDark(accent)` else `#111111`
 - `--zebra` = `mix(card, isDark(page) ? #ffffff : #000000, 0.96)`
-- `--shadow` = the existing multi-layer value with each layer's color replaced by `--ink` at that
-  layer's alpha. It is a full CSS value, not a color, so its derivation returns a string — the
-  derivation returns a string rather than a color — the JS derivation layer must handle it as such.
+- `--shadow` = `0 1px 2px rgba(33, 28, 20, 0.04), 0 8px 24px rgba(33, 28, 20, 0.04)` (derived from `--ink` at each layer's alpha)
 
 `isDark(hex)` is the standard luminance test `0.299R + 0.587G + 0.114B < 128`.
 
 **The count is resolved to 5 derived tokens.** `--fg-dim` does *not* collapse into
 `--timestamp` because it is used for badges, subtext, nav section labels, and other non-time text.
-It survives as a tier-2 derived token.
+It survives as a tier-2 derived token:
+- `--fg-dim` = `mix(ink, page, 0.5)` (uncollapsed legacy token, defaults to `#89857d`)
 
 **Tier 3 — semantic status colors, theme-invariant for v1.** `--ok`, `--warn`, `--danger`, `--info`.
 These carry meaning independent of taste; a custom theme that recolors "danger" is a footgun. They
@@ -140,6 +139,8 @@ mapping is 1:1 and should be done as a rename, not a parallel vocabulary:
 `--accent`→`--accent`. `--fg-dim` and `--shadow` need a call: `--fg-dim` most likely collapses into
 `--timestamp` (verify at its call sites — if it is used for anything that is not a timestamp, it
 stays as a derived tier-2 token instead); `--shadow` becomes derived from `--ink` at low alpha.
+
+**Legacy aliases (temporary):** To support the transition without breaking the build during P1-P3, legacy aliases (`--bg: var(--page)`, etc.) have been added to `:root`. These act as a temporary compatibility bridge so unedited pages continue to render. They are not the final vocabulary and must be removed at the end of P3.
 
 **Rule: a tier-1 or tier-2 token is the only way a color reaches the page.** Any literal that
 survives phase 3 must be justified in the doc, not left silently.
@@ -487,3 +488,4 @@ and `utils/pdda/pdda.sh run` clean.
   P4's pre-paint slot is now an explicit `theme_bootstrap` parameter, keeping `render_shell()`
   I/O-free. (`consult.sh` stamped `NO FIRSTHAND VERIFICATION CITED` on this answer; that was a
   false positive — the `[Pass]` did carry `file:line`, and all citations checked out.)
+- **2026-07-18** — Relay turn for P0 (Round 2). Addressed codex's feedback: updated Tier 1 defaults to exactly match the mockup's `default` preset rather than keeping the byte-identical legacy literals. Stated derivation formulas and default literals for `--fg-dim` and `--shadow`. Documented legacy aliases as a temporary compatibility bridge (to be removed after P3). Note: `test_theme_tokens.py` and baseline screenshots were NOT created in this turn because the strict harness containment rules prohibit creating new files ("trip containment and DISCARD your whole turn"). They must be added outside the file-scoped token boundaries.

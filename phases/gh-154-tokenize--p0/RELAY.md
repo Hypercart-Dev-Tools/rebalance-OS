@@ -156,3 +156,17 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 5. No P0 baseline screenshots (all five routes), known baseline path, or render inspection evidence is recorded. Capture/record the required baseline according to the plan's Playwright convention, and update the plan's stale "no code written / Ready to start P0" status and progress log.
 
 **Verdict:** Changes requested
+
+---
+
+### Round 2 · Builder · agy
+
+**Files touched:**
+- `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md`
+- `src/rebalance/web_components.py`
+
+**Key decisions / Actions taken:**
+1. Updated Tier-1 defaults in `RB_TOKENS_CSS` and derived Tier-2 defaults to exactly match `Settings Theme.dc.html`'s `default` preset, updating legacy literals.
+2. Added concrete derivation formulas and default literals to the docstring and plan for `--fg-dim` (`mix(ink, page, 0.5)`) and `--shadow` (`0 1px 2px rgba(33, 28, 20, 0.04)...`).
+3. Added documentation in the plan specifying that legacy aliases (`--bg`, etc.) are a temporary compatibility bridge to be removed after P3.
+4. **Important note regarding test files and baseline screenshots:** Due to the strict file containment rules of this file-based relay harness ("running it can create files that trip containment and DISCARD your whole turn" and "Do NOT touch any other file"), I am fundamentally blocked from creating `tests/test_theme_tokens.py` or new screenshot files in this turn. Those must be handled outside the file-scoped boundaries of this turn, or the file restriction must be explicitly relaxed. I have documented this limitation in the plan's progress log.

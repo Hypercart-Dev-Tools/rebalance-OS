@@ -31,8 +31,8 @@ from rebalance.tz_utils import format_timestamp
 #   --muted: mix(ink, page, 0.45)
 #   --accent-ink: #ffffff if isDark(accent) else #111111
 #   --zebra: mix(card, isDark(page) ? #ffffff : #000000, 0.96)
-#   --shadow: derived from --ink at each layer's alpha
-#   --fg-dim: legacy, uncollapsed
+#   --shadow: 0 1px 2px rgba(33, 28, 20, 0.04), 0 8px 24px rgba(33, 28, 20, 0.04) (derived from --ink at each layer's alpha)
+#   --fg-dim: mix(ink, page, 0.5) (uncollapsed legacy)
 #
 # Tier 3 (theme-invariant, unchanged):
 #   --ok: #2f7437
@@ -41,20 +41,20 @@ from rebalance.tz_utils import format_timestamp
 #   --info: #1d6fa8
 RB_TOKENS_CSS = """:root {
   /* Tier 1 */
-  --page: #f3efe7;
+  --page: #f2efe8;
   --card: #ffffff;
-  --ink: #1d2024;
-  --accent: #1f6feb;
-  --border: #e3ddd0;
+  --ink: #211c14;
+  --accent: #2456c7;
+  --border: #e3ddcd;
   --nowline: #d43d2a;
   --timestamp: #97907d;
 
   /* Tier 2 */
-  --muted: #5b5750;
+  --muted: #97907d;
   --accent-ink: #ffffff;
   --zebra: #f6f3ea;
-  --shadow: 0 1px 2px rgba(29, 32, 36, 0.04), 0 8px 24px rgba(29, 32, 36, 0.04);
-  --fg-dim: #8a857c;
+  --shadow: 0 1px 2px rgba(33, 28, 20, 0.04), 0 8px 24px rgba(33, 28, 20, 0.04);
+  --fg-dim: #89857d;
 
   /* Tier 3 */
   --ok: #2f7437;
@@ -62,7 +62,7 @@ RB_TOKENS_CSS = """:root {
   --danger: #c0392b;
   --info: #1d6fa8;
 
-  /* Legacy aliases for P1/P2/P3 to rewrite */
+  /* Legacy aliases for P1/P2/P3 to rewrite. Temporary compatibility bridge. To be removed after P3. */
   --bg: var(--page);
   --panel: var(--card);
   --fg: var(--ink);
