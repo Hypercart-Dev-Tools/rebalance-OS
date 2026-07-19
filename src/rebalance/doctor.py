@@ -47,6 +47,66 @@ class DoctorReport:
         return any(c.status == WARN for c in self.checks)
 
 
+@dataclass(frozen=True)
+class _DeviceScope:
+    """Ownership and freshness policy for a device-bound health check."""
+
+    device_ids: frozenset[str]
+    stale_after_hours: float | None = None
+
+
+# Device-scoped health checks are not ingest collectors: pulse health is a
+# fleet read and scheduler policy is launchd configuration.  They therefore do
+# not fit ``index_ops.COLLECTORS`` (which owns ingest pipelines).  Keep their
+# ownership in this small declarative registry so adding a device-specific
+# policy does not introduce a new branch in either health check.
+_DEVICE_SCOPE_REGISTRY: dict[tuple[str, str], _DeviceScope] = {
+    (
+        "pulse_collector",
+        "noels-mbp-16-m1-pro",
+    ): _DeviceScope(frozenset({"noels-mbp-16-m1-pro"}), stale_after_hours=24),
+    (
+        "pulse_collector",
+        "noels-macbook-pro-14",
+    ): _DeviceScope(frozenset({"noels-macbook-pro-14"}), stale_after_hours=24),
+    (
+        "pulse_collector",
+        "noels-mac-studio",
+    ): _DeviceScope(frozenset({"noels-mac-studio"})),
+    (
+        "scheduler",
+        "git-pulse-daily-synthesis",
+    ): _DeviceScope(frozenset({"noels-mbp-16-m1-pro"})),
+}
+
+
+def _local_device_id() -> str:
+    """Return the git-pulse-compatible identity for this host.
+
+    ``sync_snapshot.get_device_id`` retains the Bonjour ``-local`` suffix,
+    while git-pulse collector IDs deliberately omit it.  Trim only that suffix
+    so the two independently produced identities compare consistently.
+    """
+    from rebalance.ingest.sync_snapshot import get_device_id
+
+    return get_device_id().removesuffix("-local")
+
+
+def _other_device_check(
+    name: str, scope: _DeviceScope | None, current_device_id: str
+) -> Check | None:
+    """Return an informational check when a scoped check belongs elsewhere."""
+    if scope is None or current_device_id in scope.device_ids:
+        return None
+    owners = ", ".join(sorted(scope.device_ids))
+    return Check(
+        name,
+        OK,
+        f"not applicable on {current_device_id}; owned by {owners}",
+        "view the fleet health from the owning device",
+    )
+
+
 # ---------------------------------------------------------------------------
 # Individual checks
 # ---------------------------------------------------------------------------
@@ -494,7 +554,10 @@ def _scheduler_installer(job: str, repo_root: Path) -> str:
 
 
 def _check_scheduler_liveness(
-    policy_path: Path | None = None, launchctl_output: str | None = None
+    policy_path: Path | None = None,
+    launchctl_output: str | None = None,
+    *,
+    current_device_id: str | None = None,
 ) -> list[Check]:
     """Warn for policy jobs absent from this device's live launchd registry."""
     try:
@@ -524,13 +587,23 @@ def _check_scheduler_liveness(
         return []  # not macOS / launchctl unavailable — silently skip
 
     loaded = _loaded_rebalance_labels(launchctl_output)
+    current_device_id = current_device_id or _local_device_id()
     checks: list[Check] = []
     for job in jobs:
         if f"com.rebalance-os.{job}" not in loaded:
+            name = f"scheduler:{job}"
+            other_device = _other_device_check(
+                name,
+                _DEVICE_SCOPE_REGISTRY.get(("scheduler", job)),
+                current_device_id,
+            )
+            if other_device is not None:
+                checks.append(other_device)
+                continue
             installer = _scheduler_installer(job, repo_root)
             checks.append(
                 Check(
-                    f"scheduler:{job}",
+                    name,
                     WARN,
                     "scheduled job is not loaded on this device",
                     f"install it with `bash {installer}`",
@@ -1007,7 +1080,7 @@ def _check_auth_failures() -> list[Check]:
     return checks
 
 
-def _check_pulse_collectors() -> list[Check]:
+def _check_pulse_collectors(*, current_device_id: str | None = None) -> list[Check]:
     """Surface git-pulse per-device collector health (ALIVE/STALE/ALERT/DEGRADED).
 
     Reads the structured per-device YAML via ``ingest/pulse_health`` so a
@@ -1022,25 +1095,52 @@ def _check_pulse_collectors() -> list[Check]:
     except Exception:  # noqa: BLE001 — doctor must never crash
         return []
 
+    current_device_id = current_device_id or _local_device_id()
     checks: list[Check] = []
     for health in devices:
+        # Every pulse row is a report about its own collector device.  The
+        # optional registry overlay adds a longer staleness window for laptops.
+        scope = _DEVICE_SCOPE_REGISTRY.get(("pulse_collector", health.device_id))
+        name = f"pulse collector:{health.device_name}"
+        other_device = _other_device_check(name, scope, current_device_id)
+        if other_device is not None:
+            checks.append(other_device)
+            continue
+
         if health.age_hours is None:
             age = "never pushed"
         elif health.age_hours >= 24:
             age = f"last scan {health.age_hours / 24:.1f}d ago"
         else:
             age = f"last scan {health.age_hours:.1f}h ago"
-        detail = f"{health.state} — {age}"
+        healthy = health.healthy
+        state = health.state
+        # A laptop's upstream classifier intentionally uses the fleet's 3h
+        # heartbeat threshold. Locally, a closed laptop is healthy until its
+        # declared intermittent-device window expires. Degraded scans still
+        # warn regardless of age.
+        if (
+            scope is not None
+            and scope.stale_after_hours is not None
+            and health.age_hours is not None
+            and not health.repo_scan_failures
+            and health.scan_status != "degraded"
+            and health.age_hours <= scope.stale_after_hours
+        ):
+            healthy = True
+            state = f"ALIVE (intermittent-device window {scope.stale_after_hours:g}h)"
+
+        detail = f"{state} — {age}"
         if health.repo_scan_failures:
             detail += f", {health.repo_scan_failures} repo scan failures"
             if health.scan_failure_examples:
                 detail += f" ({health.scan_failure_examples})"
         checks.append(
             Check(
-                f"pulse collector:{health.device_name}",
-                OK if health.healthy else WARN,
+                name,
+                OK if healthy else WARN,
                 detail,
-                "" if health.healthy else
+                "" if healthy else
                 "check the collector machine / its launchd git-pulse job; "
                 "`python experimental/git-pulse/health-check.py` for the full view",
             )

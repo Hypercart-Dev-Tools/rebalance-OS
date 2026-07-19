@@ -124,3 +124,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/wt/sentinel-process-review/.xyz/bin/tick done MARATHON-GH146-P3-DEVICE-SCOPING-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/wt/sentinel-process-review/.xyz/bin/tick
    Edit ONLY phases/gh-146-health-signal-accuracy-resume-p2--gh146-p3-device-scoping/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Added a declarative device-scope registry in `src/rebalance/doctor.py`. It is deliberately doctor-local: pulse collector fleet reads and launchd scheduler policy are health inputs, not ingest pipelines, so they do not fit `index_ops.COLLECTORS` without giving that registry a second unrelated responsibility.
+- Known laptop collector IDs are scoped to their own devices and receive a 24-hour intermittent-device window; their foreign-device result is an informational `OK` check. The Mac Studio collector is also scoped, while unknown collector IDs preserve existing behavior.
+- Scoped `scheduler:git-pulse-daily-synthesis` to the MBP 16. A missing unscoped scheduler job retains its existing warning behavior.
+- Added `tests/test_doctor_device_scope.py`, covering foreign-device suppression, own-device staleness, laptop-versus-workstation thresholds, and unchanged unscoped scheduler behavior. The foreign-device `assert checks[0].status == OK` is the required assertion that fails before this implementation.
+- Verification: `PYTHONPATH=src python3 -m pytest tests/test_doctor_device_scope.py -q` → `4 passed`. The relay-driver constraint permits only this specific test, so I did not run the full doctor command / project gate and cannot honestly report a live warn count from this worktree.
