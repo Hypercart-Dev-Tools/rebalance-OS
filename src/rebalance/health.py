@@ -27,7 +27,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from rebalance.doctor import FAIL, OK, WARN, Check
+from rebalance.doctor import ERROR, FAIL, NOTICE, OK, WARN, WARNING, Check
 
 # Credential-check name → suppression window (hours). Mirrors doctor warn_days*24.
 CREDENTIAL_SUPPRESSION_HOURS: dict[str, int] = {
@@ -102,12 +102,17 @@ def _is_suppressed(name: str, status: dict[str, Any], now: datetime) -> bool:
 def visible_problem_checks(
     checks: list[Check], status: dict[str, Any], now: datetime
 ) -> list[Check]:
-    """WARN/FAIL checks minus those a recent success has cleared."""
+    """Attention checks plus explicit notices, minus recovered WARNs."""
     visible: list[Check] = []
     for check in checks:
-        if check.status not in {FAIL, WARN}:
+        if check.status not in {FAIL, WARN} and check.severity != NOTICE:
             continue
-        if check.status == WARN and _is_suppressed(check.name, status, now):
+        recovered_auth = check.name.startswith("auth:")
+        if (
+            check.status == WARN
+            and (check.severity == WARNING or recovered_auth)
+            and _is_suppressed(check.name, status, now)
+        ):
             continue
         visible.append(check)
     return visible
@@ -116,9 +121,9 @@ def visible_problem_checks(
 def ordered_problem_checks(
     checks: list[Check], status: dict[str, Any], now: datetime
 ) -> list[Check]:
-    """Visible problems, worst-first (FAIL before WARN; launchd noise last)."""
+    """Visible checks, worst-first by explicit severity; launchd noise last."""
     def priority(check: Check) -> tuple[int, int, str]:
-        severity = 0 if check.status == FAIL else 1
+        severity = {ERROR: 0, WARNING: 1, NOTICE: 2}[check.severity]
         launchd = 1 if check.name.startswith("launchd:") else 0
         return (severity, launchd, check.name)
 
@@ -135,11 +140,10 @@ def _matches_notice(name: str, patterns: list[str]) -> bool:
 class HealthStatus:
     """The one verdict every dashboard surface renders from.
 
-    ``problems`` drive the verdict and the "collector attention needed" count.
-    ``notices`` are WARNs the operator has marked as intentional or
-    non-actionable (see ``config.get_health_notice_patterns``): still surfaced,
-    in a calmer tier, but they do NOT escalate the verdict. FAILs are never
-    notices.
+    ``problems`` contains error/warning checks and drives the verdict.
+    ``notices`` contains explicit notice-severity checks plus WARNs the operator
+    has marked as intentional. Surfaces render that list muted and collapsed;
+    it never escalates the verdict.
     """
 
     verdict: str  # OK | WARN | FAIL
@@ -148,11 +152,15 @@ class HealthStatus:
 
     @property
     def failures(self) -> list[Check]:
-        return [c for c in self.problems if c.status == FAIL]
+        return [c for c in self.problems if c.severity == ERROR]
+
+    @property
+    def errors(self) -> list[Check]:
+        return self.failures
 
     @property
     def warnings(self) -> list[Check]:
-        return [c for c in self.problems if c.status == WARN]
+        return [c for c in self.problems if c.severity == WARNING]
 
     @property
     def count(self) -> int:
@@ -160,13 +168,31 @@ class HealthStatus:
 
     @property
     def status_text(self) -> str:
-        failures = self.failures
-        if failures:
-            return f"{len(failures)} error{'s' if len(failures) != 1 else ''}"
-        warnings = self.warnings
-        if warnings:
-            return f"{len(warnings)} warning{'s' if len(warnings) != 1 else ''}"
+        # Keep the compact legacy label when there are no notices. Once the
+        # collapsed notice tier is present, expose the complete bucket summary.
+        if self.notices:
+            return self.bucket_text
+        if self.errors:
+            return _bucket_label(len(self.errors), "error")
+        if self.warnings:
+            return _bucket_label(len(self.warnings), "warning")
         return "healthy"
+
+    @property
+    def bucket_text(self) -> str:
+        """Complete panel summary, omitting empty buckets."""
+        buckets = (
+            (len(self.errors), "error"),
+            (len(self.warnings), "warning"),
+            (len(self.notices), "notice"),
+        )
+        return " · ".join(
+            _bucket_label(count, name) for count, name in buckets if count
+        )
+
+
+def _bucket_label(count: int, name: str) -> str:
+    return f"{count} {name}{'' if count == 1 else 's'}"
 
 
 def compute_health_status(
@@ -179,8 +205,9 @@ def compute_health_status(
     """Reconcile *checks* against recent activity into a single verdict.
 
     *notice_patterns* (defaults to ``config.get_health_notice_patterns()``)
-    demote matching WARNs to ``notices``: still returned for display, but they
-    don't count toward the verdict. FAILs are never demoted.
+    demote matching warning-severity checks to ``notices``. Explicit notice
+    severity needs no per-device configuration. Error severity is never
+    demoted, even where the legacy status remains WARN for CLI compatibility.
     """
     if notice_patterns is None:
         try:
@@ -193,14 +220,19 @@ def compute_health_status(
     problems: list[Check] = []
     notices: list[Check] = []
     for check in visible:
-        if check.status == WARN and _matches_notice(check.name, notice_patterns):
+        configured_notice = (
+            check.severity == WARNING
+            and check.status == WARN
+            and _matches_notice(check.name, notice_patterns)
+        )
+        if check.severity == NOTICE or configured_notice:
             notices.append(check)
         else:
             problems.append(check)
 
-    if any(c.status == FAIL for c in problems):
+    if any(c.severity == ERROR for c in problems):
         verdict = FAIL
-    elif problems:
+    elif any(c.severity == WARNING for c in problems):
         verdict = WARN
     else:
         verdict = OK

@@ -68,3 +68,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/GitHub-Repos/xyz-3-agents-swarm/bin/tick done MARATHON-SIG-P3-153-SEVERITY-BUCKETS-TURN-2 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/GitHub-Repos/xyz-3-agents-swarm/bin/tick
    Edit ONLY phases/marathon-2026-07-18-signal-health--sig-p3-153-severity-buckets/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Touched `src/rebalance/doctor.py` and `src/rebalance/health.py` only (plus this relay block).
+- Added the validated `notice` / `warning` / `error` severity taxonomy to `Check`, with `warning` as the constructor default and legacy `FAIL` checks automatically placed in the error bucket.
+- Classified device-scoped missing schedulers, healthy in-SLA collector freshness, and running/restarted launchd jobs as notices; missing/empty collector storage, stopped pulse collectors, active auth failures, and the stale Sleuth export/clone condition as errors. Existing soft-SLA freshness and fallback/config breaches remain warnings. The p2 launchd predicate is unchanged.
+- Traced the flow from `Check` construction (`src/rebalance/doctor.py:32-47`) through visibility/order (`src/rebalance/health.py:102-130`) into bucket reconciliation and render labels (`src/rebalance/health.py:139-237`). Explicit notices remain separate from verdict-driving problems so the existing collapsed/muted notice section can render them without escalating health.
+- Previous retry breadcrumb: no code failure was reproducible; `ESCALATION.md` records only `cap-or-close-mismatch`. The worktree has no `.venv/bin/python`, so the literal acceptance command cannot start. Equivalent worktree-pinned verification passed with `PYTHONPATH=src python3 -m pytest tests/ -k "doctor or health or severity" -q`: **148 passed, 10 skipped**. A synthetic 14-item regression rendered `3 errors · 4 warnings · 7 notices`.
