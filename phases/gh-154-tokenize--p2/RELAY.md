@@ -121,3 +121,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/wt/theme-picker/.xyz/bin/tick done MARATHON-P2-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/wt/theme-picker/.xyz/bin/tick
    Edit ONLY phases/gh-154-tokenize--p2/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Reviewer · codex
+
+The stylesheet and all 14 enumerated inline `style=` occurrences are tokenized correctly; the remaining CSS literals are justified status/identity colors or their status-derived opacity variants. The graph tooltip also correctly uses `var(--muted)`.
+
+The Cytoscape contrast furniture does not yet meet the phase brief: the compound-node label remains hard-coded `#fff` and its border remains the categorical `data(border)`. Keep each node kind's `background-color` categorical, but source the label and outline/stroke from the resolved theme values (`--ink` / `--card` or `--border`, per the brief); make the legend text explicitly theme-derived as well. The local `kindColor` JS object is now unused and may be removed while making that correction.
+
+**Verdict:** Changes requested
