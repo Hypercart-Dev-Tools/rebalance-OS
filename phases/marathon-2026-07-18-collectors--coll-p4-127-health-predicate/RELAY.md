@@ -1,5 +1,5 @@
 # Marathon Phase coll-p4-127-health-predicate
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-COLL-P4-127-HEALTH-PREDICATE-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -194,3 +194,13 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-COLL-P4-127-HEALTH-PREDICATE-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/marathon-2026-07-18-collectors--coll-p4-127-health-predicate/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+The implementation successfully asserts content and volume freshness in `doctor.py`, correctly reporting degraded for contentless rows while preserving `OK` for intentionally quiet Gmail queries. The tests comprehensively cover the #141 quiet-success case, the #127 husk case, and legacy behavior.
+
+I have verified the scope note: because the phase write-set (`doctor.py`, `test_collector_health_predicate.py`) explicitly excluded `index_ops.py` (which houses the `Collector` registry), it was impossible to implement this as a registry-driven provider on the `Collector` dataclass without triggering a containment failure. Implementing it in `_COLLECTOR_FRESHNESS` in `doctor.py` is the correct technical decision given the strict file constraints. The required seam refactoring must be deferred to a follow-up phase where `index_ops.py` and the source modules are in scope.
+
+Approved.
