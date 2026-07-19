@@ -2,7 +2,7 @@
 STATUS: Open
 NEXT: agy
 
-<!-- marathon-drive: task=MARATHON-P5-TURN builder=agy reviewer=codex round-cap=9 -->
+<!-- marathon-drive: task=MARATHON-P5-TURN-2 builder=agy reviewer=codex round-cap=9 -->
 
 ## Phase Brief
 
@@ -48,10 +48,23 @@ cannot survive a formula change. All 7 keys must be present and match `^#[0-9a-f
 6. **Save / Reset** with the mockup's dirty-state affordances (`saveOpacity`, `saveCursor`).
    **Reset returns to the selected preset's defaults without clearing the preset selection** —
    preserve that distinction (D5), it is what makes Reset useful.
-7. **Reuse P4's derivation.** Do not write a second copy of `mix()` / `isDark()`. Factor the
-   functions out of `RB_THEME_BOOTSTRAP_JS` into a shared constant both it and this page emit, or
-   have the page call into what the bootstrap already defined. **Two derivation implementations is
-   the exact failure D1 exists to prevent** — a reviewer should reject a duplicate outright.
+7. **Reuse P4's derivation via `window.__pulseTheme`.** The bootstrap already exposes everything
+   you need, and it is defined on every page **unconditionally** — including first visit with
+   nothing stored. Do **not** write a second copy of `mix()` / `isDark()`, and do **not** edit
+   `web_components.py` (it is not your artifact; a previous attempt at this phase failed
+   containment doing exactly that):
+
+   ```js
+   window.__pulseTheme.apply(inputs)      // derive + set all tokens on <html> (live preview)
+   window.__pulseTheme.record(preset, inputs)  // build the exact persisted shape
+   window.__pulseTheme.parse(rawString)   // the one validator; returns inputs or null
+   window.__pulseTheme.FIELDS             // the 7 tier-1 keys, in order
+   window.__pulseTheme.KEY                // the localStorage key
+   ```
+
+   Save is then `localStorage.setItem(__pulseTheme.KEY, JSON.stringify(__pulseTheme.record(preset, inputs)))`.
+   **Two derivation implementations is the exact failure D1 exists to prevent** — a reviewer should
+   reject a duplicate outright.
 
 ## Anti-goals
 
@@ -77,7 +90,7 @@ cannot survive a formula change. All 7 keys must be present and match `^#[0-9a-f
 ## Gate
 
 ```bash
-python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
+PYTHONPATH=src python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
   tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py \
   tests/test_pulse_server_figma.py tests/test_pulse_server_apple_reminders.py -q \
   && python3 scripts/pulse_web.py
@@ -95,6 +108,10 @@ python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
   looks correct. An overclaim here is worse than an omission: on Day 0 the automated reviewer
   approved two defects that only a human looking at the render caught.
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/noelsaw/wt/theme-picker/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/noelsaw/wt/theme-picker/phases/gh-154-p5-settings--p5/ESCALATION.md): `containment-violation (off-lane edit reverted by a turn-taker)`. Read it before re-guessing.
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)
@@ -103,19 +120,10 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 1. Implement the brief by creating/editing the artifact file(s): src/rebalance/web.py,scripts/pulse_server.py
 2. Append a build block to this relay file: `### Round N · Builder · agy` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/wt/theme-picker/.xyz/bin/tick
-   - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick claim MARATHON-P5-TURN --agent agy --paths "phases/gh-154-p5-settings--p5/RELAY.md,src/rebalance/web.py,scripts/pulse_server.py"
-   - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick ping MARATHON-P5-TURN --agent agy
-   - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick release MARATHON-P5-TURN --agent agy --to codex
+   - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick claim MARATHON-P5-TURN-2 --agent agy --paths "phases/gh-154-p5-settings--p5/RELAY.md,src/rebalance/web.py,scripts/pulse_server.py"
+   - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick ping MARATHON-P5-TURN-2 --agent agy
+   - /Users/noelsaw/wt/theme-picker/.xyz/bin/tick release MARATHON-P5-TURN-2 --agent agy --to codex
 4. Edit ONLY these paths: phases/gh-154-p5-settings--p5/RELAY.md and src/rebalance/web.py,scripts/pulse_server.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
-
-### Round 1 · Builder · agy
-- Modified `src/rebalance/web_components.py` to expose `isDark`, `mix`, and `rgba` via `window.__RB_THEME` object so that derivations can be reused (preventing the failure D1).
-- Added `Settings` item to the sidebar nav in `src/rebalance/web.py` and implemented `settings_page()` mapping the mockup's CSS variables and preset interactions. Sample preview rows reuse the `data_row()` primitive as required. All color literals in the JS layer represent preset defaults, but CSS uses `var()` tokens.
-- Hooked up live preview applying variables onto `document.documentElement.style`.
-- LocalStorage shape matches exactly the expected P4 validation layer, returning to defaults if malformed.
-- Added `/settings` route logic in `scripts/pulse_server.py`.
-- Ran the test suite and all gates are green.
-- **Note on UI verification**: I am unable to visually confirm the page styling in-browser, but the HTML and CSS were written based directly on the design tokens and structural invariants specified. A visual pass from the operator/reviewer is expected.
 
 ---
 
@@ -123,7 +131,7 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/web.py,scripts/pulse_server.py.
 1. Append a review block: `### Round N · Reviewer · codex` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/wt/theme-picker/.xyz/bin/tick release MARATHON-P5-TURN --agent codex --to agy
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/wt/theme-picker/.xyz/bin/tick done MARATHON-P5-TURN --agent codex
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/wt/theme-picker/.xyz/bin/tick release MARATHON-P5-TURN-2 --agent codex --to agy
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/wt/theme-picker/.xyz/bin/tick done MARATHON-P5-TURN-2 --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/wt/theme-picker/.xyz/bin/tick
    Edit ONLY phases/gh-154-p5-settings--p5/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
