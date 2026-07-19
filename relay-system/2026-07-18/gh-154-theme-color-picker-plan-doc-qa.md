@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-07-18.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 1 / 4
 
@@ -77,5 +77,16 @@ Verdict must be one of: Approved | Changes requested | Blocked.
 6. The relay ends on **Approved** (Reviewer only). End each turn by committing just this file; no push.
 
 ## Log
+
+## Reviewer · codex · R1
+
+- [Pass] The load-bearing static-route premise is correct: `/` returns `FileResponse(PULSE_HTML)` at `scripts/pulse_server.py:268-288`, while the four existing subpages are live registrations at `scripts/pulse_server.py:98-201`; the shared HTML seam is `render_shell()` at `src/rebalance/web_components.py:602-645`.
+- [Blocker] D1 and D3 cannot both hold as specified. D1 prohibits Python derivation (`GH-154-THEME-COLOR-PICKER.md:140-149`), but D3/P6 require a saved custom seven-color theme to become server-rendered defaults after cleared `localStorage` (`:165-171`, `:224-226`). Today `render_shell()` emits the fixed `RB_TOKENS_CSS` constant (`src/rebalance/web_components.py:19-32,640-641`), so a config write has no defined way to render custom derived values on live routes or the rebuilt static page. Fix: specify one persisted, validated *fully-derived snapshot* schema produced only by JS; have both live rendering and the atomic static rebuild serialize that snapshot without deriving, and add a save → clear-storage → reload-all-routes test.
+- [Should] The proposed drift test is insufficient: loading a page with no stored theme merely reads Python's static defaults, so it never exercises JS derivation (`GH-154-THEME-COLOR-PICKER.md:146-149`). Fix: seed the default preset in `localStorage` before navigation, assert all 10 resulting CSS properties against the Python defaults, and add at least one non-default fixture with independently expected outputs.
+- [Should] The token contract is not yet closed: it declares exactly three derived tokens (`GH-154-THEME-COLOR-PICKER.md:114-120`) while also requiring `--shadow` to be derived from ink and leaving `--fg-dim` potentially derived (`:127-133`). Fix: make `--shadow` an explicit fourth derived token (including its multi-layer value), defer the exact count until P0 resolves `--fg-dim`, and test that every `var()` token resolves.
+- [Should] Inventory/phase scope misses real color-bearing output. `web.py` has 14 `style=` occurrences (not five), including a literal `#5b5750` in the graph tooltip at `src/rebalance/web.py:1851-1853`; its Cytoscape legend also emits `_KIND_COLOR` values inline at `:1597-1601,1714-1719`. More materially, both Chart.js canvases receive the 12 hardcoded `PIE_PALETTE` fills (`scripts/pulse_web.py:1000-1005,1038-1043,2849-2855,2899-2905`). Fix: inventory these separately and decide explicitly whether each is semantic/invariant or theme-derived; add canvas screenshot/contrast coverage so the “all 5 routes × 5 themes” criterion is meaningful.
+- [Should] P4 identifies the pre-paint requirement but not the insertion contract. The only shared head hook currently emits `head_extra` *after* the stylesheet (`src/rebalance/web_components.py:617-621,640-642`), and `/` currently uses it only for deferred Chart.js while its app script is body-end (`scripts/pulse_web.py:3169-3172`). Fix: name a synchronous, shared pre-style head slot used by `render_shell()`/`build_page()`, require malformed-storage fallback, and test first-paint (not just post-load) on all routes.
+
+**Verdict: Changes requested.**
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
