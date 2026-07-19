@@ -34,7 +34,7 @@ deliberately leaves this open; closing it is this phase's main output.
 Count the inline `style=` occurrences in `src/rebalance/web.py` **exactly** — literal `style="`,
 single-quoted, and f-string variants. Prior estimates conflict (5, then 7, then 14) and p2 needs a
 real number. Record the list with line numbers in the plan doc. **Do not edit `web.py` in this
-phase** — it is p2's artifact and p2 runs concurrently with p1/p3.
+phase** — it is p2's artifact, and p2 consumes the vocabulary you define here.
 
 ### 3. Rename the 6 existing 1:1 tokens, with all call sites
 
@@ -54,7 +54,7 @@ Values come from the `default` preset in
 `PROJECT/1-INBOX/dashboard-redesign-2026-07-18/Settings Theme.dc.html`. **They must render
 identically to today** — the default preset is defined as today's appearance.
 
-This is the load-bearing part: p1, p2 and p3 run concurrently against this vocabulary and assume
+This is the load-bearing part: p1, p2 and p3 all build against this vocabulary and assume
 every token they reference already resolves.
 
 ### 5. Write the token table into the `RB_TOKENS_CSS` docstring

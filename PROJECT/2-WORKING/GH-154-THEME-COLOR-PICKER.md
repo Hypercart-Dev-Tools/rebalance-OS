@@ -290,9 +290,11 @@ derived-token count.
 token is defined in `:root`.
 
 > **Why `:root` moved here from P1.** P1/P2/P3 are then pure literal→`var()` rewrites against a
-> vocabulary that already exists, touching **disjoint files** — which lets them run as one
-> concurrent wave instead of a three-phase chain. If `:root` expansion stayed in P1, P2 and P3
-> would both have to wait on it.
+> vocabulary that already exists, touching **disjoint files**, each depending on P0 but not on each
+> other. They still *execute* sequentially — `marathon.sh` resolves `depends_on` topologically and
+> runs phases one at a time, and the single driver lock deliberately stops two worktrees racing on
+> the same `ROOT@HEAD` (GH-42). The decoupling buys bisectability, not wall-clock: each phase can
+> be re-run, hand-taken, or fail without cascading into the others' briefs.
 
 ### P1 — Tokenize the shared shell (`web_components.py`)
 Rewrite the 36 literals in `RB_CHROME_CSS` / `RB_BUTTON_CSS` / the row primitive to `var()`.

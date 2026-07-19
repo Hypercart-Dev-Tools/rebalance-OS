@@ -1,7 +1,7 @@
 # Phase 1 — Tokenize the shared shell
 
 Part of **GH-154**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154
-Wave 2, runs **concurrently with p2 and p3**. **Artifact: `src/rebalance/web_components.py` only.**
+Independent of p2 and p3 (no shared files); runs after p0. **Artifact: `src/rebalance/web_components.py` only.**
 
 Depends on p0, which already defined the full `:root` vocabulary. Read
 `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md` (token vocabulary section) and the
@@ -14,7 +14,7 @@ to `var()` references. Pure substitution — no new tokens, no `:root` changes, 
 
 `:root` is **not** yours to edit in this phase. p0 finished it; if you find yourself needing a token
 that does not exist, that is a finding to report, not a token to add — adding one here races p2 and
-p3, which run concurrently against the same vocabulary.
+p3, which consume the same vocabulary.
 
 ## Mapping rules
 
@@ -57,4 +57,4 @@ python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
 - **#5** No `sys.path` / `importlib` workarounds. **#6** Never hand-edit `web/pulse.html`.
 - **#8 Verify by rendering.** Tests and DOM assertions both passed a visibly broken layout once.
   Screenshot it and look.
-- **Stay in your artifact.** `web.py` and `pulse_web.py` belong to p2 and p3, running concurrently.
+- **Stay in your artifact.** `web.py` and `pulse_web.py` belong to p2 and p3, running in the same marathon.

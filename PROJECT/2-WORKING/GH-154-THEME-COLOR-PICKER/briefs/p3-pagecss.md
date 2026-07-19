@@ -1,7 +1,7 @@
 # Phase 3 — Tokenize `PAGE_CSS` and the canvas palettes
 
 Part of **GH-154**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154
-Wave 2, runs **concurrently with p1 and p2**. **Artifact: `scripts/pulse_web.py` only.**
+Independent of p1 and p2 (no shared files); runs after p0. **Artifact: `scripts/pulse_web.py` only.**
 
 The largest phase: **101 literals across ~690 lines**, plus 7 inline `style=` attributes, plus the
 two Chart.js canvases. Depends on p0's `:root` vocabulary — read the `RB_TOKENS_CSS` docstring and
@@ -20,7 +20,7 @@ two Chart.js canvases. Depends on p0's `:root` vocabulary — read the `RB_TOKEN
 - Every literal maps onto a **tier-1 or tier-2** token. A **collapse, not a find-and-replace**.
 - **Tier-3 status colors** (`--ok`, `--warn`, `--danger`, `--info`) stay literal.
 - A literal that resists the mapping is a **finding** — report it with a line number. Do not invent
-  a token; adding one here races p1 and p2, and **`:root` is not your artifact**.
+  a token; adding one here desyncs p1 and p2, and **`:root` is not your artifact**.
 
 ### The calendar module (from GH-137)
 
@@ -74,4 +74,4 @@ python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
 - **#1** Do not touch time formatting. **#5** No `sys.path` / `importlib` workarounds.
 - **#8 Verify by rendering.** This is the phase where a screenshot matters most: 101 substitutions
   in one file is exactly the change that passes every test while looking wrong.
-- **Stay in your artifact.** `web_components.py` and `web.py` belong to p1 and p2, running concurrently.
+- **Stay in your artifact.** `web_components.py` and `web.py` belong to p1 and p2, running in the same marathon.

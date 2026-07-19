@@ -1,7 +1,7 @@
 # Phase 2 — Tokenize `web.py`
 
 Part of **GH-154**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154
-Wave 2, runs **concurrently with p1 and p3**. **Artifact: `src/rebalance/web.py` only.**
+Independent of p1 and p3 (no shared files); runs after p0. **Artifact: `src/rebalance/web.py` only.**
 
 Depends on p0, which defined the full `:root` vocabulary and **enumerated this phase's exact
 inline-`style=` write-set** — read that list in `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md`
@@ -26,7 +26,7 @@ before starting. Prior estimates conflicted (5, 7, 14); p0's enumeration is auth
 - The tooltip `#5b5750` is plain drift: it is today's `--fg-muted`, so it becomes `var(--muted)`.
 - **Tier-3 status colors** (`--ok`, `--warn`, `--danger`, `--info`) stay literal.
 - A literal that resists the mapping is a **finding** — report it with a line number, do not invent
-  a token. Adding a token here races p1 and p3.
+  a token. Adding a token here desyncs p1 and p3, which consume the same vocabulary.
 
 ### Cytoscape `_KIND_COLOR` — categorical, handle differently
 
@@ -67,5 +67,5 @@ python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
 - **#5** No `sys.path` / `importlib` workarounds. **#6** Never hand-edit `web/pulse.html`.
 - **#1** Do not touch time formatting — it goes through `format_timestamp()`.
 - **#8 Verify by rendering.** Screenshot and look; assertions have passed broken layouts here before.
-- **Stay in your artifact.** `web_components.py` and `pulse_web.py` belong to p1 and p3, running
-  concurrently. In particular **do not edit `:root`** — if a token is missing, report it.
+- **Stay in your artifact.** `web_components.py` and `pulse_web.py` belong to p1 and p3, elsewhere
+  in this marathon. In particular **do not edit `:root`** — if a token is missing, report it.

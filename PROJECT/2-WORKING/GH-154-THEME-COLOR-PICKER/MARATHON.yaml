@@ -10,9 +10,17 @@
 # phase whose success criterion is "someone looked and it seemed right" is how Day 0 shipped two
 # defects that the automated reviewer approved (invariant #10).
 #
-# SHAPE: p0 runs solo and defines the full :root vocabulary. p1/p2/p3 then run as ONE CONCURRENT
-# WAVE — they are pure literal->var() rewrites against a vocabulary that already exists, and they
-# touch DISJOINT files, so they cannot conflict:
+# SHAPE: p0 runs solo and defines the full :root vocabulary. p1/p2/p3 then each depend on p0 but
+# NOT on each other.
+#
+# NOTE ON EXECUTION ORDER: marathon.sh runs phases STRICTLY SEQUENTIALLY in topologically-resolved
+# depends_on order (marathon.sh:5, :151-163) — there is no wave/concurrency mechanism, and a single
+# driver lock per harness clone deliberately prevents two worktrees racing on the same ROOT@HEAD
+# (GH-42). So p1 -> p2 -> p3 run one after another. Declaring them independent of each other still
+# buys three real things: each is bisectable alone, a failure in one does not cascade into the
+# others' briefs, and any one can be re-run or hand-taken without redoing the rest.
+#
+# They touch DISJOINT files, so they cannot conflict:
 #     p1 -> src/rebalance/web_components.py
 #     p2 -> src/rebalance/web.py
 #     p3 -> scripts/pulse_web.py
