@@ -70,7 +70,7 @@ phases:
     name: "GH-153: segment collector-panel checks into notices / warnings / errors"
     reviewer: agy
     brief: PROJECT/2-WORKING/MARATHON-2026-07-18-SIGNAL-HEALTH/briefs/p3-153-severity-buckets.md
-    artifact: src/rebalance/doctor.py
+    artifact: src/rebalance/doctor.py,src/rebalance/health.py
     depends_on: sig-p2-146-launchd-predicate
     turn_timeout_s: 1200
     max_review_rounds: 3
