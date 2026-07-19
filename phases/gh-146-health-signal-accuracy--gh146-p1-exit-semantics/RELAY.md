@@ -124,3 +124,12 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/wt/sentinel-process-review/.xyz/bin/tick done MARATHON-GH146-P1-EXIT-SEMANTICS-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/wt/sentinel-process-review/.xyz/bin/tick
    Edit ONLY phases/gh-146-health-signal-accuracy--gh146-p1-exit-semantics/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+Implemented `scripts/daily_sync.sh` and added `tests/test_daily_sync_exit.py`.
+
+- Added backward-compatible `sync_outcome` to the emitted JSON and classify the run as `complete`, `degraded`, or `fatal`. Migration failures and runs with no successful stage remain fatal; partial source errors exit 0 without dropping their existing `errors` entries.
+- Added distinct closing log markers for complete, degraded, and fatal outcomes.
+- Reproduced the prior fail path by inspecting the existing `sys.exit(1 if result.get("errors") else 0)`: it turned the GitHub rate-limit envelope into exit 1. Hypothesis confirmed: the wrapper had no partial-success classification. No prior `ESCALATION.md` exists for this phase.
+- Verified only the focused test: `python3 -m pytest tests/test_daily_sync_exit.py -q` → `4 passed`. The `test_github_rate_limit_payload_exits_zero` assertion is the explicit regression proof; it would have received exit 1 under the previous unconditional-errors exit rule.
