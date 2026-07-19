@@ -1,5 +1,5 @@
 # Marathon Phase coll-p3-138-job-liveness
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-COLL-P3-138-JOB-LIVENESS-TURN-5 builder=codex reviewer=agy round-cap=5 -->
@@ -134,3 +134,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Verified `tests/test_scheduler_liveness.py` uses a temporary policy document plus a stubbed launchctl snapshot; its fake policy row demonstrates that new table rows require no doctor-code edit, and it separately asserts the loaded/nonzero-exit path.
 - Reproduced the focused regression with `/Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_scheduler_liveness.py -q`: 2 passed. The worktree has no local `.venv`, so the repository-pinned interpreter was required.
 - Design question for review: this warns for every policy job on every device, while some jobs may intentionally be single-device. Recommendation: retain the warning-only behavior for now, then add an explicit expected-devices/role column to `SCHEDULER.md` (or a documented device-scoped suppression) before treating absence as a failing health condition.
+
+### Round 5 · Reviewer · agy
+
+**Verdict:** Approved
+
+The implementation correctly fulfills the requirements:
+1. `_check_scheduler_liveness` in `src/rebalance/doctor.py` parses `SCHEDULER.md` dynamically to verify loaded jobs against `launchctl list`.
+2. Missing jobs trigger a warning with the appropriate installer script hint, distinct from failed-but-loaded jobs.
+3. Tests in `tests/test_scheduler_liveness.py` are hermetic and effectively mock `launchctl`.
+4. `_check_collector_freshness()` was left untouched.
+5. The tests pass (`.venv/bin/python -m pytest tests/ -k "doctor or scheduler_policy" -q` is green).
+6. The multi-device policy recommendation is sensible and explicitly called out in the builder's notes.
