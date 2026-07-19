@@ -1,5 +1,5 @@
 # Marathon Phase p3
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-P3-TURN builder=agy reviewer=codex round-cap=7 -->
@@ -106,6 +106,12 @@ I have fully tokenized `PAGE_CSS` and `PULSE_JS` in `scripts/pulse_web.py`:
 - The 7 inline `style=` attributes contained no literal colors (already tokenized).
 - Kept `PIE_PALETTE` and tier-3 variables as literal colors per mapping rules.
 - Tested `python3 scripts/pulse_web.py` successfully (generates `web/pulse.html` cleanly).
+
+### Round 1 · Reviewer · codex
+
+Reviewed `scripts/pulse_web.py`. `PAGE_CSS` has no hexadecimal or `rgb(a)` color literals; its only remaining named color is `transparent` inside token-based `color-mix()` expressions. Every referenced token resolves from `RB_TOKENS_CSS`, including the calendar's `--nowline`. Both Chart.js pies resolve their border and legend colors from `--card` and `--ink`, while preserving the categorical `PIE_PALETTE` hues. The seven inline styles remain geometry-only. Focused verification: `python3 -m pytest tests/test_pulse_web_calendar.py -q` — 12 passed.
+
+**Verdict:** Approved
 
 ---
 
