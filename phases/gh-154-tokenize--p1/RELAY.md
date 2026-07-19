@@ -1,5 +1,5 @@
 # Marathon Phase p1
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-P1-TURN builder=agy reviewer=codex round-cap=5 -->
@@ -100,6 +100,14 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
   - `#e8b93a`, `#3d3006`, `#f5edd8`, `#a49a76` (lines 466-467): Semantic "upcoming" (vibrant yellow) and "past" (muted grey/yellow) calendar events. `--warn` (`#a65f00`) is too dark to collapse these into.
 - Gate successfully checked.
 ---
+
+### Round 1 · Reviewer · codex
+
+Reviewed `src/rebalance/web_components.py` against the P0 token vocabulary. The shared chrome, button CSS, and row primitive now use the defined tier-1/tier-2 variables; the only remaining color literals are the eight documented intentional exceptions (active/hover/marker tints and calendar upcoming/past semantic event tones). No layout or container-query changes were introduced.
+
+Focused verification: `python3 -m pytest tests/test_web_components.py -q` — 16 passed.
+
+**Verdict:** Approved
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
 
