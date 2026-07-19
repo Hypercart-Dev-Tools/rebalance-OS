@@ -1875,3 +1875,253 @@ def sleuth_graph_page() -> HTMLResponse:
 </script>"""
 
     return _page("Reminder Graph", body, active="sleuthgraph", wide=True)
+
+def settings_page() -> HTMLResponse:
+    from rebalance.web_components import data_row
+
+    sample_rows = "".join(
+        data_row(
+            marker_html='<span style="width:15px;height:15px;border:1.5px solid var(--muted);border-radius:4px;display:inline-block;opacity:0.6;"></span>',
+            title_html=title,
+            fallback_timestamp=ts,
+            stripe_index=i
+        )
+        for i, (title, ts) in enumerate([
+            ("Invoice Taiwo", "2026-07-18 9:00 AM"),
+            ("Rebalance PRs", "2026-07-18 1:45 PM"),
+            ("Team Call", "July 19 1:45 PM"),
+            ("Submit Sleuth to Product Hunt", "July 20 9:00 AM"),
+        ])
+    )
+
+    page_css = """
+.settings-section { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 22px; display: flex; flex-direction: column; gap: 18px; transition: background 0.25s, border-color 0.25s; }
+.settings-section h2 { margin: 0; font-size: 16px; font-weight: 700; color: var(--ink); }
+.settings-presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; }
+.preset-card { border: 2px solid var(--border); border-radius: 10px; padding: 6px; cursor: pointer; display: flex; flex-direction: column; gap: 8px; background: var(--card); transition: border-color 0.15s; }
+.preset-card:hover { border-color: var(--muted); }
+.preset-card.active { border-color: var(--accent); }
+.preset-preview { border-radius: 6px; overflow: hidden; height: 84px; padding: 8px; display: flex; flex-direction: column; gap: 5px; }
+.preset-label { display: flex; align-items: center; gap: 7px; padding: 0 4px 4px; font-weight: 600; font-size: 12.5px; color: var(--ink); }
+.preset-dot { width: 14px; height: 14px; border-radius: 99px; flex-shrink: 0; border: 2px solid var(--muted); background: transparent; transition: border-color 0.15s, background 0.15s; }
+.preset-card.active .preset-dot { border-color: var(--accent); background: var(--accent); }
+.fine-tune-header { font-size: 11px; letter-spacing: 0.08em; font-weight: 600; color: var(--muted); text-transform: uppercase; border-top: 1px solid var(--border); padding-top: 16px; }
+.fine-tune-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 12px; }
+.color-field { display: flex; align-items: center; gap: 10px; border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; cursor: pointer; }
+.color-field input[type="color"] { width: 28px; height: 28px; border: none; padding: 0; background: none; cursor: pointer; }
+.color-field-label { display: flex; flex-direction: column; gap: 1px; }
+.color-field-name { font-weight: 600; font-size: 12px; color: var(--ink); }
+.color-field-val { font-family: "SF Mono", Menlo, monospace; font-size: 10.5px; color: var(--muted); }
+.btn-primary { background: var(--accent); color: var(--accent-ink); font-weight: 600; font-size: 12px; border-radius: 7px; padding: 7px 18px; cursor: pointer; border: none; display: inline-flex; align-items: center; justify-content: center; }
+.btn-secondary { background: var(--card); border: 1px solid var(--border); color: var(--ink); font-weight: 600; font-size: 12px; border-radius: 7px; padding: 7px 18px; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
+.cal-preview { position: relative; border: 1px solid var(--border); border-radius: 8px; height: 56px; margin: 2px 0 6px; }
+.cal-preview-time1 { position: absolute; left: 10px; top: 8px; font-size: 10.5px; color: var(--timestamp); }
+.cal-preview-line1 { position: absolute; left: 48px; right: 10px; top: 12px; border-top: 1px solid var(--border); }
+.cal-preview-time2 { position: absolute; left: 10px; bottom: 8px; font-size: 10.5px; color: var(--timestamp); }
+.cal-preview-line2 { position: absolute; left: 48px; right: 10px; bottom: 12px; border-top: 1px solid var(--border); }
+.cal-preview-now { position: absolute; left: 48px; right: 10px; top: 27px; display: flex; align-items: center; }
+.cal-preview-now-dot { width: 11px; height: 11px; border-radius: 99px; background: var(--nowline); margin-left: -5px; flex-shrink: 0; }
+.cal-preview-now-line { flex: 1; height: 2px; background: var(--nowline); }
+"""
+    body = f"""
+<div style="display: flex; flex-direction: column; gap: 20px; max-width: 760px; padding-bottom: 64px;">
+  <section class="settings-section">
+    <div>
+      <h2>Color theme</h2>
+      <div style="color: var(--muted); font-size: 13px; margin-top: 3px;">Applies to all Pulse dashboard pages and modules.</div>
+    </div>
+    
+    <div class="settings-presets" id="presetsGrid"></div>
+    
+    <div class="fine-tune-header">Fine-tune colors</div>
+    <div class="fine-tune-grid" id="fineTuneGrid"></div>
+    
+    <div style="display: flex; gap: 10px; align-items: center; margin-top: 4px;">
+      <button id="btnSave" class="btn-primary">Save</button>
+      <button id="btnReset" class="btn-secondary">Reset</button>
+      <span style="font-size: 11.5px; color: var(--muted);">Reset returns to the selected theme's defaults.</span>
+    </div>
+  </section>
+  
+  <section class="settings-section">
+    <div style="display: flex; align-items: baseline; gap: 12px;">
+      <h2>Preview</h2>
+      <span style="font-family: 'SF Mono', Menlo, monospace; font-size: 11px; color: var(--muted);" id="lblThemeName">theme: default</span>
+    </div>
+    
+    <ul class="rb-data-list" style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-top: -4px;">
+      {sample_rows}
+    </ul>
+    
+    <div class="cal-preview">
+      <span class="cal-preview-time1">1 PM</span>
+      <span class="cal-preview-line1"></span>
+      <span class="cal-preview-time2">2 PM</span>
+      <span class="cal-preview-line2"></span>
+      <span class="cal-preview-now">
+        <span class="cal-preview-now-dot"></span>
+        <span class="cal-preview-now-line"></span>
+      </span>
+    </div>
+    
+    <div style="display: flex; gap: 10px; margin-top: 6px;">
+      <button class="btn-primary">Primary action</button>
+      <button class="btn-secondary">Secondary</button>
+    </div>
+  </section>
+</div>
+
+<script>
+(function() {{
+  const PRESETS = {{
+    default:  {{ name: 'Current default', page: '#f3efe7', card: '#ffffff', ink: '#1d2024', accent: '#1f6feb', border: '#e3ddd0', nowline: '#d43d2a', timestamp: '#8a857c' }},
+    dark:     {{ name: 'Dark mode',       page: '#191713', card: '#242019', ink: '#f0ece1', accent: '#6f97ea', border: '#3a3529', nowline: '#e05a48', timestamp: '#8f887a' }},
+    grey:     {{ name: 'Grey mode',       page: '#ececec', card: '#ffffff', ink: '#1e1e1e', accent: '#444444', border: '#dcdcdc', nowline: '#d43d2a', timestamp: '#8a8a8a' }},
+    lightblue:{{ name: 'Light blue',      page: '#e9f0f7', card: '#ffffff', ink: '#16283c', accent: '#1d6fd1', border: '#d3e0ee', nowline: '#d43d2a', timestamp: '#7d90a5' }},
+  }};
+  
+  const FIELD_LABELS = {{ page: 'Page background', card: 'Card background', ink: 'Text', accent: 'Accent', border: 'Borders', nowline: 'Calendar time line', timestamp: 'Date + time text' }};
+  const FIELDS = Object.keys(FIELD_LABELS);
+  
+  let currentTheme = 'default';
+  let currentColors = null; // null means using preset unmodified
+  
+  function getWorkingColors() {{
+    return currentColors || {{ ...PRESETS[currentTheme === 'custom' ? 'default' : currentTheme] }};
+  }}
+  
+  function setColors(newColors) {{
+    const isDark = window.__RB_THEME.isDark;
+    const mix = window.__RB_THEME.mix;
+    
+    // Apply live to document element styles
+    const s = document.documentElement.style;
+    for (const f of FIELDS) s.setProperty('--' + f, newColors[f]);
+    s.setProperty('--muted', mix(newColors.ink, newColors.page, 0.45));
+    s.setProperty('--fg-dim', mix(newColors.ink, newColors.page, 0.5));
+    s.setProperty('--accent-ink', isDark(newColors.accent) ? '#ffffff' : '#111111');
+    s.setProperty('--zebra', mix(newColors.card, isDark(newColors.page) ? '#ffffff' : '#000000', 0.96));
+    s.setProperty('--shadow', '0 1px 2px ' + window.__RB_THEME.rgba(newColors.ink, 0.04) + ', 0 8px 24px ' + window.__RB_THEME.rgba(newColors.ink, 0.04));
+  }}
+  
+  function renderUI() {{
+    const working = getWorkingColors();
+    const presetsGrid = document.getElementById('presetsGrid');
+    presetsGrid.innerHTML = '';
+    
+    ['default', 'dark', 'grey', 'lightblue'].forEach(k => {{
+      const p = PRESETS[k];
+      const isDark = window.__RB_THEME.isDark;
+      const mix = window.__RB_THEME.mix;
+      const pMuted = mix(p.ink, p.page, 0.45);
+      
+      const el = document.createElement('div');
+      el.className = 'preset-card' + (currentTheme === k ? ' active' : '');
+      el.onclick = () => {{ currentTheme = k; currentColors = null; setColors(getWorkingColors()); renderUI(); }};
+      
+      el.innerHTML = `
+        <div class="preset-preview" style="background: ${{p.page}}; border: 1px solid ${{p.border}};">
+          <div style="display: flex; gap: 4px; align-items: center;">
+            <span style="width: 8px; height: 8px; border-radius: 3px; background: ${{p.accent}};"></span>
+            <span style="width: 34px; height: 4px; border-radius: 99px; background: ${{p.ink}}; opacity: 0.75;"></span>
+          </div>
+          <div style="flex: 1; border-radius: 4px; background: ${{p.card}}; border: 1px solid ${{p.border}}; padding: 5px 6px; display: flex; flex-direction: column; gap: 4px;">
+            <span style="width: 60%; height: 4px; border-radius: 99px; background: ${{p.ink}}; opacity: 0.7;"></span>
+            <span style="width: 85%; height: 4px; border-radius: 99px; background: ${{pMuted}};"></span>
+            <span style="width: 75%; height: 4px; border-radius: 99px; background: ${{pMuted}};"></span>
+          </div>
+        </div>
+        <div class="preset-label">
+          <span class="preset-dot"></span>
+          <span>${{p.name}}</span>
+        </div>
+      `;
+      presetsGrid.appendChild(el);
+    }});
+    
+    const fineTuneGrid = document.getElementById('fineTuneGrid');
+    fineTuneGrid.innerHTML = '';
+    
+    FIELDS.forEach(f => {{
+      const el = document.createElement('label');
+      el.className = 'color-field';
+      
+      const inp = document.createElement('input');
+      inp.type = 'color';
+      inp.value = working[f];
+      inp.oninput = (e) => {{
+        if (!currentColors) currentColors = {{ ...working }};
+        if (currentTheme !== 'custom') currentTheme = 'custom';
+        currentColors[f] = e.target.value;
+        setColors(currentColors);
+        renderUI();
+      }};
+      
+      const textWrap = document.createElement('span');
+      textWrap.className = 'color-field-label';
+      textWrap.innerHTML = `<span class="color-field-name">${{FIELD_LABELS[f]}}</span><span class="color-field-val">${{working[f]}}</span>`;
+      
+      el.appendChild(inp);
+      el.appendChild(textWrap);
+      fineTuneGrid.appendChild(el);
+    }});
+    
+    // Update theme name label
+    let displayName = currentTheme === 'custom' ? 'Custom' : PRESETS[currentTheme].name;
+    if (currentColors && currentTheme !== 'custom') displayName += ' (modified)';
+    document.getElementById('lblThemeName').textContent = 'theme: ' + displayName;
+    
+    // Check dirtiness
+    let saved = null;
+    try {{ saved = JSON.parse(localStorage.getItem('pulse-theme-settings-v2')); }} catch(e) {{}}
+    
+    // Is dirty if the saved state is not exactly what we're editing
+    let isDirty = true;
+    if (saved && saved.preset === currentTheme) {{
+      if (currentTheme === 'custom') {{
+         isDirty = JSON.stringify(saved.inputs) !== JSON.stringify(working);
+      }} else {{
+         isDirty = currentColors !== null; // If preset matched and we haven't touched colors
+      }}
+    }}
+    if (!saved && currentTheme === 'default' && !currentColors) isDirty = false;
+    
+    const btnSave = document.getElementById('btnSave');
+    btnSave.style.opacity = isDirty ? '1' : '0.5';
+    btnSave.style.cursor = isDirty ? 'pointer' : 'default';
+  }}
+  
+  document.getElementById('btnReset').onclick = () => {{
+    if (currentTheme === 'custom') currentTheme = 'default';
+    currentColors = null;
+    setColors(getWorkingColors());
+    renderUI();
+  }};
+  
+  document.getElementById('btnSave').onclick = () => {{
+    const working = getWorkingColors();
+    const payload = {{
+      schema_version: 1,
+      derivation_version: 1,
+      preset: currentTheme,
+      inputs: working
+    }};
+    localStorage.setItem('pulse-theme-settings-v2', JSON.stringify(payload));
+    renderUI();
+  }};
+  
+  // Initial load
+  try {{
+    const saved = JSON.parse(localStorage.getItem('pulse-theme-settings-v2'));
+    if (saved && saved.schema_version === 1) {{
+      currentTheme = saved.preset || 'default';
+      currentColors = saved.inputs;
+    }}
+  }} catch(e) {{}}
+  
+  setColors(getWorkingColors());
+  renderUI();
+}})();
+</script>
+"""
+    return _page("Settings", body, active="settings", wide=True)

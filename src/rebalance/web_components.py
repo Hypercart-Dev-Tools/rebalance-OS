@@ -668,16 +668,10 @@ RB_THEME_BOOTSTRAP_JS = """<script>
   var SCHEMA = 1;
   var HEX = /^#[0-9a-fA-F]{6}$/;
   var FIELDS = ['page', 'card', 'ink', 'accent', 'border', 'nowline', 'timestamp'];
-  try {
-    var raw = window.localStorage.getItem(KEY);
-    if (!raw) return;                                  /* no theme set -> Python's defaults */
-    var rec = JSON.parse(raw);
-    if (!rec || rec.schema_version !== SCHEMA) return; /* unknown/absent version -> defaults */
-    var i = rec.inputs;
-    if (!i) return;
-    for (var n = 0; n < FIELDS.length; n++) {
-      if (!HEX.test(i[FIELDS[n]])) return;             /* partial/invalid -> defaults, wholesale */
-    }
+  /* Helpers and the reuse seam are defined UNCONDITIONALLY, before any validation.
+     The Settings page needs window.__pulseTheme even when nothing is stored yet — which
+     is precisely the first-visit case — so an early return must never skip it. */
+  {
     var int_ = function (h) { return parseInt(h.slice(1), 16); };
     var isDark = function (h) {
       var v = int_(h);
@@ -694,17 +688,47 @@ RB_THEME_BOOTSTRAP_JS = """<script>
       var v = int_(h);
       return 'rgba(' + (v >> 16 & 255) + ', ' + (v >> 8 & 255) + ', ' + (v & 255) + ', ' + a + ')';
     };
-    var s = document.documentElement.style;
-    for (var f = 0; f < FIELDS.length; f++) s.setProperty('--' + FIELDS[f], i[FIELDS[f]]);
-    /* Tier 2 — derived here and ONLY here. Mirrors the mockup's themeOf(). */
-    s.setProperty('--muted', mix(i.ink, i.page, 0.45));
-    s.setProperty('--fg-dim', mix(i.ink, i.page, 0.5));
-    s.setProperty('--accent-ink', isDark(i.accent) ? '#ffffff' : '#111111');
-    s.setProperty('--zebra', mix(i.card, isDark(i.page) ? '#ffffff' : '#000000', 0.96));
-    s.setProperty('--shadow',
-      '0 1px 2px ' + rgba(i.ink, 0.04) + ', 0 8px 24px ' + rgba(i.ink, 0.04));
-    /* Legacy aliases are var()-chained in RB_TOKENS_CSS, so they follow automatically. */
-  } catch (e) { /* malformed storage, disabled localStorage, quota -> default preset */ }
+    /* Tier 2 — derived here and ONLY here. Mirrors the mockup's themeOf().
+       Exposed on window so the Settings page (P5) can re-use it for live preview
+       instead of shipping a second copy: two derivation implementations is exactly
+       the drift D1 exists to prevent. This is the ONLY supported reuse seam. */
+    var apply = function (inp, el) {
+      var s = (el || document.documentElement).style;
+      for (var f = 0; f < FIELDS.length; f++) s.setProperty('--' + FIELDS[f], inp[FIELDS[f]]);
+      s.setProperty('--muted', mix(inp.ink, inp.page, 0.45));
+      s.setProperty('--fg-dim', mix(inp.ink, inp.page, 0.5));
+      s.setProperty('--accent-ink', isDark(inp.accent) ? '#ffffff' : '#111111');
+      s.setProperty('--zebra', mix(inp.card, isDark(inp.page) ? '#ffffff' : '#000000', 0.96));
+      s.setProperty('--shadow',
+        '0 1px 2px ' + rgba(inp.ink, 0.04) + ', 0 8px 24px ' + rgba(inp.ink, 0.04));
+      /* Legacy aliases are var()-chained in RB_TOKENS_CSS, so they follow automatically. */
+    };
+    window.__pulseTheme = {
+      KEY: KEY, SCHEMA: SCHEMA, FIELDS: FIELDS, HEX: HEX,
+      mix: mix, isDark: isDark, rgba: rgba, apply: apply,
+      /* Serialise the ONE persisted shape. Callers must not hand-build the record. */
+      record: function (preset, inp) {
+        return { schema_version: SCHEMA, derivation_version: 1, preset: preset, inputs: inp };
+      },
+      /* The one validator. Returns the inputs object, or null for ANY malformed state. */
+      parse: function (raw) {
+        if (!raw) return null;
+        var rec;
+        try { rec = JSON.parse(raw); } catch (e) { return null; }
+        if (!rec || rec.schema_version !== SCHEMA || !rec.inputs) return null;
+        for (var n = 0; n < FIELDS.length; n++) {
+          if (!HEX.test(rec.inputs[FIELDS[n]])) return null;   /* partial -> reject wholesale */
+        }
+        return rec.inputs;
+      }
+    };
+  }
+  /* Apply a stored theme, if there is a valid one. Anything else falls through to the
+     default preset Python already shipped as literals in RB_TOKENS_CSS. */
+  try {
+    var stored = window.__pulseTheme.parse(window.localStorage.getItem(KEY));
+    if (stored) window.__pulseTheme.apply(stored);
+  } catch (e) { /* disabled localStorage / quota / privacy mode -> default preset */ }
 })();
 </script>"""
 

@@ -515,7 +515,7 @@ Per GH-136 — `pytest tests/` carries 15 pre-existing failures in `test_auto_pr
 `test_hiqs_pipeline.py`. Gate module-scoped:
 
 ```bash
-python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
+PYTHONPATH=src python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
   tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py \
   tests/test_pulse_server_figma.py tests/test_pulse_server_apple_reminders.py \
   tests/test_theme_tokens.py -q \
@@ -651,3 +651,27 @@ and `utils/pdda/pdda.sh run` clean.
   Justified survivors, confirmed: `PIE_PALETTE` (12 categorical fills) and `_KIND_COLOR` (graph
   identity) keep their hues per plan; the Chart.js canvases now read `--card`/`--ink` at render time
   with literal fallbacks (`pulse_web.py:2848-2849`, `:2901-2902`) — the canvas fix, correctly done.
+- **2026-07-19** — P5 first attempt failed (containment violation, exit 6) and the diagnosis
+  surfaced a **methodological defect affecting every prior gate run**.
+  1. **My brief was wrong, not the builder.** P5's artifact list was `web.py,pulse_server.py`, but
+     task 7 told the builder to "factor the functions out of `RB_THEME_BOOTSTRAP_JS`" — which lives
+     in `web_components.py`. Agy tried, containment reverted it and failed the turn. Correct
+     behaviour by the harness and the builder; a brief that required an off-allowlist edit is a
+     brief bug. Fixed properly: **P4 now exposes `window.__pulseTheme`** (`apply` / `record` /
+     `parse` / `FIELDS` / `KEY`), so P5 re-uses the one derivation implementation without touching
+     another phase's file. The seam is defined **unconditionally**, before any validation — an
+     earlier draft put it after the early returns, so it would have been undefined on first visit
+     with nothing stored, which is exactly when the Settings page needs it.
+  2. **The verification gate has been importing the WRONG package copy.** The venv's editable
+     install points at `.../rebalance-OS/src` (the **main repo**), so under pytest whichever module
+     imports `rebalance.*` first binds the package — and `scripts/_bootstrap` cannot rebind it
+     afterwards. Run the six gate files together and an early module pins the main-repo copy; run
+     them individually and the worktree wins. **Every "67 passed" in this worktree was validating a
+     mix of main-repo and worktree code**, which is why "no regression" was so cheap to satisfy.
+     This is invariant #5's incident class exactly: *an import resolving to the wrong module copy is
+     a worktree artifact, not a code defect.*
+     Fixed by pinning `PYTHONPATH=src` in the gate, in all five briefs and the verification gate
+     section. With it: 67 passed **and** `rebalance.web_components` resolves to the worktree copy.
+     Note what was and was not affected: the **rendering** verification was always valid, because
+     `pulse_web.py` and the uvicorn server both import `_bootstrap`, which puts the local `src/`
+     first. The **pytest** gate was the unreliable half.

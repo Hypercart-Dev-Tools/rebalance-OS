@@ -80,7 +80,7 @@ known path. Every later phase diffs against these. See the plan doc for the Play
 ## Gate
 
 ```bash
-python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
+PYTHONPATH=src python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
   tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py \
   tests/test_pulse_server_figma.py tests/test_pulse_server_apple_reminders.py -q \
   && python3 scripts/pulse_web.py

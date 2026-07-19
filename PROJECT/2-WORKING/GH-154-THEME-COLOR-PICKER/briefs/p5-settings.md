@@ -40,10 +40,23 @@ cannot survive a formula change. All 7 keys must be present and match `^#[0-9a-f
 6. **Save / Reset** with the mockup's dirty-state affordances (`saveOpacity`, `saveCursor`).
    **Reset returns to the selected preset's defaults without clearing the preset selection** —
    preserve that distinction (D5), it is what makes Reset useful.
-7. **Reuse P4's derivation.** Do not write a second copy of `mix()` / `isDark()`. Factor the
-   functions out of `RB_THEME_BOOTSTRAP_JS` into a shared constant both it and this page emit, or
-   have the page call into what the bootstrap already defined. **Two derivation implementations is
-   the exact failure D1 exists to prevent** — a reviewer should reject a duplicate outright.
+7. **Reuse P4's derivation via `window.__pulseTheme`.** The bootstrap already exposes everything
+   you need, and it is defined on every page **unconditionally** — including first visit with
+   nothing stored. Do **not** write a second copy of `mix()` / `isDark()`, and do **not** edit
+   `web_components.py` (it is not your artifact; a previous attempt at this phase failed
+   containment doing exactly that):
+
+   ```js
+   window.__pulseTheme.apply(inputs)      // derive + set all tokens on <html> (live preview)
+   window.__pulseTheme.record(preset, inputs)  // build the exact persisted shape
+   window.__pulseTheme.parse(rawString)   // the one validator; returns inputs or null
+   window.__pulseTheme.FIELDS             // the 7 tier-1 keys, in order
+   window.__pulseTheme.KEY                // the localStorage key
+   ```
+
+   Save is then `localStorage.setItem(__pulseTheme.KEY, JSON.stringify(__pulseTheme.record(preset, inputs)))`.
+   **Two derivation implementations is the exact failure D1 exists to prevent** — a reviewer should
+   reject a duplicate outright.
 
 ## Anti-goals
 
@@ -69,7 +82,7 @@ cannot survive a formula change. All 7 keys must be present and match `^#[0-9a-f
 ## Gate
 
 ```bash
-python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
+PYTHONPATH=src python3 -m pytest tests/test_tz_utils.py tests/test_pulse_web_calendar.py \
   tests/test_pulse_web_goals.py tests/test_pulse_web_worknext.py \
   tests/test_pulse_server_figma.py tests/test_pulse_server_apple_reminders.py -q \
   && python3 scripts/pulse_web.py

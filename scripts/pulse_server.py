@@ -85,6 +85,7 @@ from rebalance.web import (  # noqa: E402
     sleuth_graph_page as _sleuth_graph_page,
     unhandled_exception_handler as _unhandled_exception_handler,
     whatsnext_page as _whatsnext_page,
+    settings_page as _settings_page,
 )
 
 # Show the real traceback in-browser on an unhandled error instead of a bare
@@ -199,6 +200,11 @@ def whats_next(refresh: bool = False):
 @app.get("/sleuth-graph")
 def sleuth_graph():
     return _sleuth_graph_page()
+
+
+@app.get("/settings")
+def settings():
+    return _settings_page()
 
 
 class ChatRequest(BaseModel):
