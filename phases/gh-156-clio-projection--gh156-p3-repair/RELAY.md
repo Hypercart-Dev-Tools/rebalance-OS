@@ -128,3 +128,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH156-P3-REPAIR-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh-156-clio-projection--gh156-p3-repair/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+Implemented P3 in `utils/CLIO/prompt-log-to-md.sh` and expanded `test/clio-exporter.sh`.
+
+- Added dry-run-by-default `--backfill` and `--repair` modes with explicit `--apply` writes, atomic replacements, timestamped beside-target backups, and output that names each backup.
+- Backfill matches timestamp, machine, and rendered prompt body; only unique matches get an immediately preceding `clio:id` comment and a manifest receipt. Unmatched/ambiguous entries are left unchanged and reported.
+- Repair consumes only manifest-backed `delivered-missing` IDs, hard-fails on remaining matched `legacy-unlabelled` entries, verifies all written IDs, and does not move the cursor.
+- Tightened status legacy detection to compare one rendered entry rather than unrelated strings anywhere in the note.
+- Added P3 fixture coverage for dry runs, blocked pre-backfill repair, byte-preserved pre-marker content, backups, manifest updates, idempotency, unmatched legacy safety, and recovery of the three 19:03–19:07 CLIO-import prompts.
+
+Verification: `/bin/bash test/clio-exporter.sh` (PASS for `bash` and `/bin/bash`).

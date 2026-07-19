@@ -12,7 +12,7 @@
 # device tracks its own cursor against its own local JSONL and never reads the
 # other's log; the cross-device merge is emergent from sync + incremental append.
 #
-# Usage: prompt-log-to-md.sh [--status] [output_md_path]
+# Usage: prompt-log-to-md.sh [--status|--backfill|--repair] [--apply] [output_md_path]
 # Default output: ~/.claude/prompt-log.md
 #
 # Filtering: prompts whose text matches PROMPT_LOG_EXCLUDE (a case-insensitive
@@ -22,12 +22,27 @@
 set -euo pipefail
 
 JSONL="$HOME/.claude/prompt-log.jsonl"
-STATUS_MODE=0
-if [ "${1:-}" = "--status" ]; then
-  STATUS_MODE=1
+MODE=export
+APPLY=0
+OUT=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --status) MODE=status ;;
+    --backfill) MODE=backfill ;;
+    --repair) MODE=repair ;;
+    --apply) APPLY=1 ;;
+    --*) echo "Unknown option: $1" >&2; exit 2 ;;
+    *)
+      if [ -n "$OUT" ]; then
+        echo "Only one output path may be supplied." >&2
+        exit 2
+      fi
+      OUT=$1
+      ;;
+  esac
   shift
-fi
-OUT="${1:-$HOME/.claude/prompt-log.md}"
+done
+OUT="${OUT:-$HOME/.claude/prompt-log.md}"
 STATE="$HOME/.claude/prompt-log-to-md.state"
 MANIFEST="${CLIO_MANIFEST:-$HOME/.claude/prompt-log-manifest.txt}"
 STATUS_SNAPSHOT="${CLIO_STATUS_SNAPSHOT:-$STATE.target-count}"
@@ -69,6 +84,7 @@ reconcile_status() {
       | ([$target | scan("clio:id:[^ >]+") ] | unique) as $target_ids
       | ($manifest | split("\n") | map(select(startswith("clio:id:"))) | unique) as $manifest_ids
       | ($target | split("\n")) as $target_lines
+      | ($target | split("\n## ")[1:]) as $target_blocks
       | ($target_lines | index("<!-- CLIO:ENTRIES -->")) as $marker_index
       | [ $entries[]
           | ((.session_id // "") + ":" + (.timestamp // "")) as $raw_id
@@ -81,9 +97,12 @@ reconcile_status() {
             elif ($manifest_ids | index($id)) != null then
               if ($target_ids | index($id)) != null then "delivered-present" else "delivered-missing" end
             elif ($target_ids | index($id)) != null then "delivered-present"
-            elif (($target | contains($timestamp))
-                  and ($target | contains($machine))
-                  and ($target | contains("> \"" + $rendered_prompt + "\""))) then "legacy-unlabelled"
+            elif any($target_blocks[];
+                . as $block
+                | ($block | split("\n")) as $lines
+                | ((($lines[1] // "") | rtrimstr("  ")) == $timestamp)
+                and (((($lines[2] // "") | split(" · ")[0]) == $machine))
+                and ($block | contains("> \"" + $rendered_prompt + "\""))) then "legacy-unlabelled"
             else "never-delivered"
             end) as $state
           | { id: $id, state: $state }
@@ -120,7 +139,157 @@ status_requires_attention() {
   esac
 }
 
-if [ "$STATUS_MODE" = 1 ]; then
+reverse_lines() { if command -v tac >/dev/null 2>&1; then tac; else tail -r; fi; }
+
+backup_target() {
+  backup="$OUT_DIR/${OUT_NAME}.clio-backup.$(date +%Y%m%d%H%M%S).$$"
+  cp "$OUT" "$backup"
+  echo "backup: $backup"
+}
+
+# Print tab-separated entry-index and source ID for only unambiguous legacy
+# blocks. An ID that matches more than one target block is ambiguous too.
+backfill_plan() {
+  [ -f "$JSONL" ] || return 0
+  [ -f "$OUT" ] || return 0
+  jq -Rrs --rawfile target "$OUT" '
+    . as $raw
+    | ($raw | split("\n") | map(select(length > 0) | try fromjson catch empty)
+       | map(. + {id: ("clio:id:" + ((.session_id // "") + ":" + (.timestamp // ""))), rendered: ((.prompt // "") | gsub("\n"; "\n> "))})) as $source
+    | ([$target | scan("clio:id:[^ >]+") ] | unique) as $target_ids
+    | ($target | split("\n## ")) as $pieces
+    | [range(1; $pieces | length) as $index
+       | $pieces[$index] as $block
+       | ($block | split("\n")) as $lines
+       | [ $source[] | . as $source_entry
+           | select(($target_ids | index($source_entry.id)) == null)
+           | select($source_entry.timestamp == (($lines[1] // "") | rtrimstr("  ")))
+           | select($source_entry.machine == ((($lines[2] // "") | split(" · ")[0])))
+           | select($block | contains("> \"" + $source_entry.rendered + "\""))
+           | $source_entry
+         ] as $candidates
+       | select(($candidates | length) == 1)
+       | {index: $index, id: $candidates[0].id}
+      ] as $matches
+    | [ $matches[] | . as $match | select(([$matches[] | select(.id == $match.id)] | length) == 1) ]
+    | .[] | "\(.index)\t\(.id)"
+  ' < "$JSONL"
+}
+
+backfill_unlabelled_count() {
+  [ -f "$OUT" ] || { echo 0; return; }
+  jq -n --rawfile target "$OUT" '
+    ($target | split("\n## ")) as $pieces
+    | [range(1; $pieces | length) as $index
+       | select(($pieces[$index - 1] | test("<!-- clio:id:[^ >]+ -->$")) | not)
+      ] | length
+  '
+}
+
+record_manifest_ids() {
+  manifest_ids=$1
+  [ -n "$manifest_ids" ] || return 0
+  manifest_dir=$(dirname "$MANIFEST")
+  mkdir -p "$manifest_dir" || return 1
+  manifest_tmp="$manifest_dir/.prompt-log-manifest.tmp.$$"
+  if [ -f "$MANIFEST" ]; then
+    cat "$MANIFEST" > "$manifest_tmp" || { rm -f "$manifest_tmp"; return 1; }
+  else
+    : > "$manifest_tmp" || return 1
+  fi
+  while IFS= read -r manifest_id; do
+    [ -z "$manifest_id" ] && continue
+    grep -qxF "$manifest_id" "$manifest_tmp" || printf '%s\n' "$manifest_id" >> "$manifest_tmp" || {
+      rm -f "$manifest_tmp"
+      return 1
+    }
+  done <<EOF
+$manifest_ids
+EOF
+  mv "$manifest_tmp" "$MANIFEST" || { rm -f "$manifest_tmp"; return 1; }
+}
+
+run_backfill() {
+  plan=$(backfill_plan)
+  plan_count=$(printf '%s\n' "$plan" | sed '/^$/d' | wc -l | tr -d ' ')
+  unlabelled_count=$(backfill_unlabelled_count)
+  skipped_count=$((unlabelled_count - plan_count))
+  if [ "$plan_count" = 0 ]; then
+    echo "backfill: 0 confident legacy entries"
+    [ "$unlabelled_count" -gt 0 ] && echo "backfill: skipped $unlabelled_count unlabelled entry(s) without a confident source match"
+    return 0
+  fi
+  printf '%s\n' "$plan" | while IFS=$'\t' read -r plan_index plan_id; do
+    echo "backfill: $plan_id at entry $plan_index"
+  done
+  [ "$skipped_count" -gt 0 ] && echo "backfill: skipped $skipped_count unlabelled entry(s) without a confident source match"
+  [ "$APPLY" = 1 ] || { echo "backfill: dry-run (pass --apply to write)"; return 0; }
+
+  backup_target
+  transformed=$(mktemp "$OUT_DIR/.${OUT_NAME}.clio-backfill.XXXXXX")
+  awk -F '\t' 'NR == FNR { ids[$1] = $2; next }
+    /^## / { entry++; if (entry in ids) print "<!-- " ids[entry] " -->" }
+    { print }
+  ' <(printf '%s\n' "$plan") "$OUT" > "$transformed"
+  mv "$transformed" "$OUT"
+  backfilled_ids=$(printf '%s\n' "$plan" | cut -f2)
+  if ! record_manifest_ids "$backfilled_ids"; then
+    echo "Unable to update CLIO manifest at $MANIFEST; backfill completed." >&2
+  fi
+  echo "backfill: applied $plan_count entry(s)"
+}
+
+run_repair() {
+  repair_status=$(reconcile_status)
+  printf '%s\n' "$repair_status"
+  legacy_count=$(printf '%s\n' "$repair_status" | sed -n 's/^state: legacy-unlabelled=//p')
+  case "$legacy_count" in ''|*[!0-9]*) legacy_count=0 ;; esac
+  if [ "$APPLY" = 1 ] && [ "$legacy_count" -gt 0 ]; then
+    echo "Repair refused: $legacy_count legacy-unlabelled entry(s) remain; run --backfill --apply first." >&2
+    return 1
+  fi
+  repair_ids=$(printf '%s\n' "$repair_status" | sed -n 's/^missing-clio-id: //p')
+  repair_count=$(printf '%s\n' "$repair_ids" | sed '/^$/d' | wc -l | tr -d ' ')
+  if [ "$repair_count" = 0 ]; then
+    echo "repair: 0 delivered-missing entries"
+    return 0
+  fi
+  printf '%s\n' "$repair_ids" | while IFS= read -r repair_id; do echo "repair: $repair_id"; done
+  [ "$APPLY" = 1 ] || { echo "repair: dry-run (pass --apply to write)"; return 0; }
+  [ -f "$OUT" ] || { echo "Repair refused: target note is absent." >&2; return 1; }
+  [ -f "$JSONL" ] || { echo "Repair refused: source JSONL is absent." >&2; return 1; }
+
+  repair_entries=$(mktemp)
+  reverse_lines < "$JSONL" | jq -Rr --arg ids "$repair_ids" '
+    (fromjson? // empty)
+    | ((.session_id // "") + ":" + (.timestamp // "")) as $raw_id
+    | ("clio:id:" + $raw_id) as $id
+    | select(($ids | split("\n") | index($id)) != null)
+    | "<!-- \($id) -->\n## \(.repo // "unknown" | ascii_upcase)\n\(.timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
+  ' > "$repair_entries"
+  rendered_count=$(grep -c '^<!-- clio:id:' "$repair_entries" 2>/dev/null || true)
+  [ "$rendered_count" = "$repair_count" ] || {
+    rm -f "$repair_entries"
+    echo "Repair refused: one or more delivered-missing IDs are absent from the source JSONL." >&2
+    return 1
+  }
+  backup_target
+  marker_line=$(grep -nF "$MARKER" "$OUT" | head -1 | cut -d: -f1)
+  [ -n "$marker_line" ] || { rm -f "$repair_entries"; echo "Repair refused: marker is absent." >&2; return 1; }
+  merged="$OUT_DIR/.${OUT_NAME}.clio-repair.$$"
+  { head -n "$marker_line" "$OUT"; echo; cat "$repair_entries"; tail -n +"$((marker_line + 1))" "$OUT"; } > "$merged"
+  mv "$merged" "$OUT"
+  rm -f "$repair_entries"
+  written_ids=$(grep -o 'clio:id:[^ ]*' "$OUT" 2>/dev/null || true)
+  while IFS= read -r repair_id; do
+    case $'\n'"$written_ids"$'\n' in *$'\n'"$repair_id"$'\n'*) ;; *) echo "Failed to verify repaired CLIO entry $repair_id." >&2; return 1 ;; esac
+  done <<EOF
+$repair_ids
+EOF
+  echo "repair: applied $repair_count entry(s)"
+}
+
+if [ "$MODE" = status ]; then
   status_report=$(reconcile_status)
   printf '%s\n' "$status_report"
   if status_requires_attention "$status_report"; then
@@ -128,6 +297,9 @@ if [ "$STATUS_MODE" = 1 ]; then
   fi
   exit 0
 fi
+
+if [ "$MODE" = backfill ]; then run_backfill; exit $?; fi
+if [ "$MODE" = repair ]; then run_repair; exit $?; fi
 
 if [ "$RECONCILE_DRY_RUN" != 1 ]; then
   mkdir -p "$OUT_DIR"

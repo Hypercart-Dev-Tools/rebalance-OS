@@ -38,6 +38,15 @@ run_status() {
   HOME="$home" PROMPT_LOG_EXCLUDE= "$shell" "$EXPORTER" --status "$out"
 }
 
+run_mode() {
+  shell=$1
+  home=$2
+  out=$3
+  mode=$4
+  apply=${5:-}
+  HOME="$home" PROMPT_LOG_EXCLUDE= "$shell" "$EXPORTER" "$mode" $apply "$out"
+}
+
 fresh_note_and_idempotency() {
   shell=$1
   case_dir="$TMP/fresh-$2"
@@ -98,7 +107,7 @@ status_detection_is_read_only() {
   } > "$home/.claude/prompt-log.jsonl"
   printf '%s\n' '# Heading' '<!-- CLIO:ENTRIES -->' \
     '<!-- clio:id:delivered:2026-07-19T12:00:00Z -->' '2026-07-19T12:00:00Z  ' 'fixture' '> "healthy prompt"' \
-    '2026-07-19T12:02:00Z  ' 'old' '> "legacy prompt"' > "$out"
+    '## LEGACY' '2026-07-19T12:02:00Z  ' 'fixture' '> "legacy prompt"' > "$out"
   printf '%s\n' 'clio:id:delivered:2026-07-19T12:00:00Z' 'clio:id:lost:2026-07-19T12:01:00Z' > "$home/.claude/prompt-log-manifest.txt"
   printf '%s\n' 4 > "$home/.claude/prompt-log-to-md.state"
   cp "$out" "$case_dir/note-before"
@@ -204,6 +213,66 @@ manifest_failure_is_nonfatal() {
   assert_contains "$case_dir/stderr" 'Unable to update CLIO manifest'
 }
 
+backfill_then_targeted_repair() {
+  shell=$1
+  case_dir="$TMP/p3-$2"
+  home="$case_dir/home"
+  out="$case_dir/note.md"
+  mkdir -p "$home/.claude"
+  {
+    json_line '2026-07-17T19:03:00Z' import legacy 'first CLIO-import prompt'
+    json_line '2026-07-17T19:05:00Z' import missing-one 'second CLIO-import prompt'
+    json_line '2026-07-17T19:07:00Z' import missing-two 'third CLIO-import prompt'
+  } > "$home/.claude/prompt-log.jsonl"
+  printf '%s\n' '# Protected heading' 'This must survive byte-for-byte.' '<!-- CLIO:ENTRIES -->' \
+    '## IMPORT' '2026-07-17T19:03:00Z  ' 'fixture · main' '' '> "first CLIO-import prompt"' \
+    '## UNKNOWN' '2026-07-17T19:09:00Z  ' 'fixture' '' '> "no matching source prompt"' > "$out"
+  printf '%s\n' 'clio:id:missing-one:2026-07-17T19:05:00Z' 'clio:id:missing-two:2026-07-17T19:07:00Z' > "$home/.claude/prompt-log-manifest.txt"
+  head -n 3 "$out" > "$case_dir/above-before"
+  cp "$out" "$case_dir/before-dry-run"
+
+  run_mode "$shell" "$home" "$out" --backfill > "$case_dir/backfill-dry.out"
+  cmp -s "$out" "$case_dir/before-dry-run" || fail "backfill dry-run changed note"
+  assert_contains "$case_dir/backfill-dry.out" 'clio:id:legacy:2026-07-17T19:03:00Z'
+  assert_contains "$case_dir/backfill-dry.out" 'dry-run'
+  assert_contains "$case_dir/backfill-dry.out" 'skipped 1 unlabelled entry(s)'
+
+  if run_mode "$shell" "$home" "$out" --repair --apply > "$case_dir/repair-blocked.out" 2> "$case_dir/repair-blocked.err"; then
+    fail "repair applied with legacy entries still unlabelled"
+  fi
+  assert_contains "$case_dir/repair-blocked.err" 'run --backfill --apply first'
+  assert_not_contains "$out" 'clio:id:missing-one:2026-07-17T19:05:00Z'
+
+  run_mode "$shell" "$home" "$out" --backfill --apply > "$case_dir/backfill-apply.out"
+  assert_contains "$out" '<!-- clio:id:legacy:2026-07-17T19:03:00Z -->'
+  assert_contains "$home/.claude/prompt-log-manifest.txt" 'clio:id:legacy:2026-07-17T19:03:00Z'
+  assert_contains "$case_dir/backfill-apply.out" 'backup:'
+  head -n 3 "$out" > "$case_dir/above-after-backfill"
+  cmp -s "$case_dir/above-before" "$case_dir/above-after-backfill" || fail "backfill changed content above marker"
+  cp "$out" "$case_dir/backfilled-note"
+  run_mode "$shell" "$home" "$out" --backfill --apply > "$case_dir/backfill-second.out"
+  cmp -s "$out" "$case_dir/backfilled-note" || fail "second backfill changed note"
+  assert_contains "$case_dir/backfill-second.out" '0 confident legacy entries'
+  assert_not_contains "$out" 'clio:id:unknown:'
+
+  run_mode "$shell" "$home" "$out" --repair > "$case_dir/repair-dry.out"
+  assert_contains "$case_dir/repair-dry.out" 'repair: clio:id:missing-one:2026-07-17T19:05:00Z'
+  assert_contains "$case_dir/repair-dry.out" 'repair: clio:id:missing-two:2026-07-17T19:07:00Z'
+  assert_not_contains "$out" 'clio:id:missing-one:2026-07-17T19:05:00Z'
+  run_mode "$shell" "$home" "$out" --repair --apply > "$case_dir/repair-apply.out"
+  assert_contains "$case_dir/repair-apply.out" 'backup:'
+  assert_contains "$out" '<!-- clio:id:missing-one:2026-07-17T19:05:00Z -->'
+  assert_contains "$out" '<!-- clio:id:missing-two:2026-07-17T19:07:00Z -->'
+  assert_contains "$out" '> "second CLIO-import prompt"'
+  assert_contains "$out" '> "third CLIO-import prompt"'
+  head -n 3 "$out" > "$case_dir/above-after-repair"
+  cmp -s "$case_dir/above-before" "$case_dir/above-after-repair" || fail "repair changed content above marker"
+  cp "$out" "$case_dir/repaired-note"
+  run_mode "$shell" "$home" "$out" --repair --apply > "$case_dir/repair-second.out"
+  cmp -s "$out" "$case_dir/repaired-note" || fail "second repair changed note"
+  assert_contains "$case_dir/repair-second.out" 'repair: 0 delivered-missing entries'
+}
+
 run_suite() {
   shell=$1
   key=$2
@@ -215,6 +284,7 @@ run_suite() {
   target_replacement_fails_after_export "$shell" "$key"
   conflict_sibling "$shell" "$key"
   manifest_failure_is_nonfatal "$shell" "$key"
+  backfill_then_targeted_repair "$shell" "$key"
   echo "PASS: $shell"
 }
 
