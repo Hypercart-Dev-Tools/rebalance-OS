@@ -31,6 +31,13 @@ run_exporter() {
   HOME="$home" PROMPT_LOG_EXCLUDE= "$shell" "$EXPORTER" "$out"
 }
 
+run_status() {
+  shell=$1
+  home=$2
+  out=$3
+  HOME="$home" PROMPT_LOG_EXCLUDE= "$shell" "$EXPORTER" --status "$out"
+}
+
 fresh_note_and_idempotency() {
   shell=$1
   case_dir="$TMP/fresh-$2"
@@ -75,6 +82,79 @@ legacy_unidentified_note() {
   # behaviour keeps a future P3 migration deliberate rather than accidental.
   assert_count "$out" 'legacy prompt' 2
   assert_contains "$out" '<!-- clio:id:session:2026-07-19T10:00:00Z -->'
+}
+
+status_detection_is_read_only() {
+  shell=$1
+  case_dir="$TMP/status-$2"
+  home="$case_dir/home"
+  out="$case_dir/note.md"
+  mkdir -p "$home/.claude"
+  {
+    json_line '2026-07-19T12:00:00Z' healthy delivered 'healthy prompt'
+    json_line '2026-07-19T12:01:00Z' missing lost 'missing prompt'
+    json_line '2026-07-19T12:02:00Z' legacy old 'legacy prompt'
+    json_line '2026-07-19T12:03:00Z' excluded skip 'skip this prompt'
+  } > "$home/.claude/prompt-log.jsonl"
+  printf '%s\n' '# Heading' '<!-- CLIO:ENTRIES -->' \
+    '<!-- clio:id:delivered:2026-07-19T12:00:00Z -->' '2026-07-19T12:00:00Z  ' 'fixture' '> "healthy prompt"' \
+    '2026-07-19T12:02:00Z  ' 'old' '> "legacy prompt"' > "$out"
+  printf '%s\n' 'clio:id:delivered:2026-07-19T12:00:00Z' 'clio:id:lost:2026-07-19T12:01:00Z' > "$home/.claude/prompt-log-manifest.txt"
+  printf '%s\n' 4 > "$home/.claude/prompt-log-to-md.state"
+  cp "$out" "$case_dir/note-before"
+  cp "$home/.claude/prompt-log-manifest.txt" "$case_dir/manifest-before"
+  cp "$home/.claude/prompt-log-to-md.state" "$case_dir/state-before"
+  if HOME="$home" PROMPT_LOG_EXCLUDE='skip this prompt' "$shell" "$EXPORTER" --status "$out" > "$case_dir/status.out"; then
+    fail "--status did not flag the missing delivered entry"
+  fi
+  cmp -s "$out" "$case_dir/note-before" || fail "--status changed note"
+  cmp -s "$home/.claude/prompt-log-manifest.txt" "$case_dir/manifest-before" || fail "--status changed manifest"
+  cmp -s "$home/.claude/prompt-log-to-md.state" "$case_dir/state-before" || fail "--status changed cursor"
+  assert_contains "$case_dir/status.out" 'state: delivered-present=1'
+  assert_contains "$case_dir/status.out" 'state: delivered-missing=1'
+  assert_contains "$case_dir/status.out" 'state: legacy-unlabelled=1'
+  assert_contains "$case_dir/status.out" 'state: excluded=1'
+  assert_contains "$case_dir/status.out" 'missing-clio-id: clio:id:lost:2026-07-19T12:01:00Z'
+  assert_contains "$case_dir/status.out" 'marker: displaced line=2 lines-above=1'
+}
+
+target_replacement_fails_after_export() {
+  shell=$1
+  case_dir="$TMP/replacement-$2"
+  home="$case_dir/home"
+  out="$case_dir/note.md"
+  mkdir -p "$home/.claude"
+  json_line '2026-07-19T13:00:00Z' replace one 'replacement prompt' > "$home/.claude/prompt-log.jsonl"
+  run_exporter "$shell" "$home" "$out" > /dev/null
+  printf '%s\n' '# replacement' '<!-- CLIO:ENTRIES -->' > "$out"
+  if run_exporter "$shell" "$home" "$out" > "$case_dir/stdout" 2> "$case_dir/stderr"; then
+    fail "replacement was not reported as failure"
+  fi
+  assert_contains "$case_dir/stdout" 'target-replacement: yes'
+  assert_contains "$case_dir/stderr" 'run --status for details'
+}
+
+single_missing_entry_fails_after_export() {
+  shell=$1
+  case_dir="$TMP/missing-$2"
+  home="$case_dir/home"
+  out="$case_dir/note.md"
+  mkdir -p "$home/.claude"
+  {
+    json_line '2026-07-19T14:00:00Z' loss one 'kept prompt'
+    json_line '2026-07-19T14:01:00Z' loss two 'removed prompt'
+  } > "$home/.claude/prompt-log.jsonl"
+  run_exporter "$shell" "$home" "$out" > /dev/null
+  awk '
+    $0 == "<!-- clio:id:two:2026-07-19T14:01:00Z -->" { dropping = 1; next }
+    dropping && /^<!-- clio:id:/ { dropping = 0 }
+    !dropping { print }
+  ' "$out" > "$out.missing" && mv "$out.missing" "$out"
+  if run_exporter "$shell" "$home" "$out" > "$case_dir/stdout" 2> "$case_dir/stderr"; then
+    fail "a missing delivered entry was not reported as failure"
+  fi
+  assert_contains "$case_dir/stdout" 'state: delivered-missing=1'
+  assert_contains "$case_dir/stdout" 'missing-clio-id: clio:id:two:2026-07-19T14:01:00Z'
 }
 
 marker_displaced() {
@@ -130,6 +210,9 @@ run_suite() {
   fresh_note_and_idempotency "$shell" "$key"
   legacy_unidentified_note "$shell" "$key"
   marker_displaced "$shell" "$key"
+  status_detection_is_read_only "$shell" "$key"
+  single_missing_entry_fails_after_export "$shell" "$key"
+  target_replacement_fails_after_export "$shell" "$key"
   conflict_sibling "$shell" "$key"
   manifest_failure_is_nonfatal "$shell" "$key"
   echo "PASS: $shell"

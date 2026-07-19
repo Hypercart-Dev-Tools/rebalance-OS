@@ -12,7 +12,7 @@
 # device tracks its own cursor against its own local JSONL and never reads the
 # other's log; the cross-device merge is emergent from sync + incremental append.
 #
-# Usage: prompt-log-to-md.sh [output_md_path]
+# Usage: prompt-log-to-md.sh [--status] [output_md_path]
 # Default output: ~/.claude/prompt-log.md
 #
 # Filtering: prompts whose text matches PROMPT_LOG_EXCLUDE (a case-insensitive
@@ -22,9 +22,15 @@
 set -euo pipefail
 
 JSONL="$HOME/.claude/prompt-log.jsonl"
+STATUS_MODE=0
+if [ "${1:-}" = "--status" ]; then
+  STATUS_MODE=1
+  shift
+fi
 OUT="${1:-$HOME/.claude/prompt-log.md}"
 STATE="$HOME/.claude/prompt-log-to-md.state"
 MANIFEST="${CLIO_MANIFEST:-$HOME/.claude/prompt-log-manifest.txt}"
+STATUS_SNAPSHOT="${CLIO_STATUS_SNAPSHOT:-$STATE.target-count}"
 EXCLUDE_REGEX="${PROMPT_LOG_EXCLUDE:-file-based relay|cross-agent dependency drift}"
 MARKER="<!-- CLIO:ENTRIES -->"
 RECONCILE_DRY_RUN="${CLIO_RECONCILE_DRY_RUN:-0}"
@@ -33,6 +39,95 @@ OUT_NAME=$(basename "$OUT")
 OUT_BASE=${OUT_NAME%.md}
 
 command -v jq >/dev/null 2>&1 || { echo "jq is required (brew install jq / apt install jq)"; exit 1; }
+
+# This is deliberately independent of export/reconciliation. In particular,
+# --status must not create the note, state, manifest, or a quarantine folder.
+# jq does the full source pass at once so the 60-second scheduled check does not
+# spawn a process for every prompt.
+reconcile_status() {
+  status_jsonl=$JSONL
+  status_target=$OUT
+  status_manifest=$MANIFEST
+  [ -f "$status_jsonl" ] || status_jsonl=/dev/null
+  [ -f "$status_target" ] || status_target=/dev/null
+  [ -f "$status_manifest" ] || status_manifest=/dev/null
+  status_cursor=$( [ -f "$STATE" ] && cat "$STATE" || echo 0 )
+  case "$status_cursor" in ''|*[!0-9]*) status_cursor=0 ;; esac
+  status_previous=$( [ -f "$STATUS_SNAPSHOT" ] && cat "$STATUS_SNAPSHOT" || echo -1 )
+  case "$status_previous" in ''|*[!0-9-]*) status_previous=-1 ;; esac
+  status_source_lines=$(grep -c '' "$status_jsonl" 2>/dev/null || true)
+
+  jq -Rrs \
+    --rawfile target "$status_target" \
+    --rawfile manifest "$status_manifest" \
+    --arg exclude "$EXCLUDE_REGEX" \
+    --arg cursor "$status_cursor" \
+    --arg source_lines "$status_source_lines" \
+    --arg previous "$status_previous" '
+      . as $raw
+      | ($raw | split("\n") | map(select(length > 0) | try fromjson catch empty)) as $entries
+      | ([$target | scan("clio:id:[^ >]+") ] | unique) as $target_ids
+      | ($manifest | split("\n") | map(select(startswith("clio:id:"))) | unique) as $manifest_ids
+      | ($target | split("\n")) as $target_lines
+      | ($target_lines | index("<!-- CLIO:ENTRIES -->")) as $marker_index
+      | [ $entries[]
+          | ((.session_id // "") + ":" + (.timestamp // "")) as $raw_id
+          | ("clio:id:" + $raw_id) as $id
+          | (.prompt // "") as $prompt
+          | (.timestamp // "") as $timestamp
+          | (.machine // "") as $machine
+          | ($prompt | gsub("\n"; "\n> ")) as $rendered_prompt
+          | (if (($exclude | length) > 0 and ($prompt | test($exclude; "i"))) then "excluded"
+            elif ($manifest_ids | index($id)) != null then
+              if ($target_ids | index($id)) != null then "delivered-present" else "delivered-missing" end
+            elif ($target_ids | index($id)) != null then "delivered-present"
+            elif (($target | contains($timestamp))
+                  and ($target | contains($machine))
+                  and ($target | contains("> \"" + $rendered_prompt + "\""))) then "legacy-unlabelled"
+            else "never-delivered"
+            end) as $state
+          | { id: $id, state: $state }
+        ] as $classified
+      | ([ $classified[] | select(.state == "delivered-missing") | .id ]) as $missing
+      | (["delivered-present", "delivered-missing", "never-delivered", "legacy-unlabelled", "excluded"]
+          | map(. as $state | {key: $state, value: ([ $classified[] | select(.state == $state) ] | length) })) as $counts
+      | (($manifest_ids | length) > 0 and (($target_ids | length) == 0 or (($previous | tonumber) >= 0 and ($target_ids | length) < ($previous | tonumber)))) as $replacement
+      | "source-count: \($source_lines)",
+        "manifest-count: \($manifest_ids | length)",
+        "target-rendered-id-count: \($target_ids | length)",
+        "cursor: \($cursor)",
+        ($counts[] | "state: \(.key)=\(.value)"),
+        (if $marker_index == null then "marker: absent"
+         elif $marker_index == 0 then "marker: top"
+         else "marker: displaced line=\($marker_index + 1) lines-above=\($marker_index)"
+         end),
+        "target-replacement: \(if $replacement then "yes" else "no" end) previous-target-rendered-id-count=\($previous)",
+        (if $replacement and ($missing | length) > 1 then
+           "missing-clio-ids: suppressed=\($missing | length) reason=target-replacement"
+         elif ($missing | length) == 0 then "missing-clio-ids: none"
+         else
+           ($missing[0:20][] | "missing-clio-id: \(.)"),
+           (if ($missing | length) > 20 then "missing-clio-ids: … and \(($missing | length) - 20) more" else empty end)
+         end)
+    ' < "$status_jsonl"
+}
+
+status_requires_attention() {
+  status_report=$1
+  case "$status_report" in
+    *"state: delivered-missing="[1-9]*|*"target-replacement: yes"*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
+if [ "$STATUS_MODE" = 1 ]; then
+  status_report=$(reconcile_status)
+  printf '%s\n' "$status_report"
+  if status_requires_attention "$status_report"; then
+    exit 1
+  fi
+  exit 0
+fi
 
 if [ "$RECONCILE_DRY_RUN" != 1 ]; then
   mkdir -p "$OUT_DIR"
@@ -152,17 +247,13 @@ LAST_LINE=$( [ -f "$STATE" ] && cat "$STATE" || echo 0 )
 case "$LAST_LINE" in ''|*[!0-9]*) LAST_LINE=0 ;; esac   # corrupt state → start over
 [ "$LAST_LINE" -gt "$TOTAL_LINES" ] && LAST_LINE=0      # JSONL shrank/rotated → re-emit all
 
-if [ "$LAST_LINE" -ge "$TOTAL_LINES" ]; then
-  echo "✅ Synced 0 new prompt(s) to $OUT ($LAST_LINE/$TOTAL_LINES lines scanned)."
-  exit 0
-fi
-
 reverse_lines() { if command -v tac >/dev/null 2>&1; then tac; else tail -r; fi; }
 
 # Render the new entries (newest first). jq -R reads each raw line; fromjson parses
 # it; malformed lines, excluded prompts, and IDs already in the note are dropped
 # without aborting the run. The ID is derived inline without per-entry subprocesses.
 new_entries=$(mktemp)
+if [ "$LAST_LINE" -lt "$TOTAL_LINES" ]; then
 tail -n +"$((LAST_LINE + 1))" "$JSONL" | reverse_lines | jq -Rr \
   --arg exclude "$EXCLUDE_REGEX" --arg existing_ids "$existing_ids" '
   (fromjson? // empty)
@@ -171,6 +262,9 @@ tail -n +"$((LAST_LINE + 1))" "$JSONL" | reverse_lines | jq -Rr \
   | select(($existing_ids | split("\n") | index("clio:id:" + $id)) == null)
   | "<!-- clio:id:\($id) -->\n## \(.repo // "unknown" | ascii_upcase)\n\(.timestamp)  \n\(.machine // "")\(if (.branch // "") != "" then " · \(.branch)" else "" end)\n\n> \"\((.prompt // "") | gsub("\n"; "\n> "))\"\n"
 ' > "$new_entries"
+else
+  : > "$new_entries"
+fi
 
 emitted_ids=$(grep -o 'clio:id:[^ ]*' "$new_entries" 2>/dev/null || true)
 emitted_count=$(grep -c '^<!-- clio:id:' "$new_entries" 2>/dev/null || true)
@@ -239,3 +333,15 @@ fi
 state_tmp="$STATE.tmp.$$"
 printf '%s\n' "$TOTAL_LINES" > "$state_tmp" && mv "$state_tmp" "$STATE"
 echo "✅ Synced $emitted_count new prompt(s) to $OUT"
+
+# Detection runs after a completed export. Its snapshot is only a baseline for
+# the next scheduled run; a detected loss never undoes the export or cursor.
+status_report=$(reconcile_status)
+printf '%s\n' "$status_report"
+snapshot_tmp="$STATUS_SNAPSHOT.tmp.$$"
+printf '%s\n' "$(printf '%s\n' "$status_report" | sed -n 's/^target-rendered-id-count: //p')" > "$snapshot_tmp"
+mv "$snapshot_tmp" "$STATUS_SNAPSHOT"
+if status_requires_attention "$status_report"; then
+  echo "CLIO delivery loss detected after export; run --status for details." >&2
+  exit 1
+fi

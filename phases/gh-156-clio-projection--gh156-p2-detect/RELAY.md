@@ -124,3 +124,12 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH156-P2-DETECT-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh-156-clio-projection--gh156-p2-detect/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+Implemented P2 in `utils/CLIO/prompt-log-to-md.sh` and extended `test/clio-exporter.sh`.
+
+- Added a read-only `--status` reconciliation pass before any export setup: source/manifest/target/cursor facts, state counts, capped missing IDs, marker displacement, and target-count baseline/replacement reporting.
+- Classifies excluded prompts separately so intentional filtering cannot become a loss signal; legacy detection requires timestamp, machine, and rendered prompt content without an ID.
+- Normal export now always runs post-export detection, snapshots the rendered-ID count for the next run, and exits non-zero only after preserving the completed export and cursor when loss/replacement is found.
+- Added fixtures for status immutability, legacy/unlabelled and excluded classification, marker displacement, one-entry loss, and wholesale replacement. Verified with `/bin/bash test/clio-exporter.sh` (`bash` and `/bin/bash` PASS).
