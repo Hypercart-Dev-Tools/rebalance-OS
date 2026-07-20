@@ -420,6 +420,31 @@ class TestInstallers(unittest.TestCase):
             )
 
 
+    def test_installers_are_executable_in_git(self):
+        """Every installer must be mode 100755 in the index, not just on disk.
+
+        Four of these shipped as 100644, so the documented
+        ``./scripts/install_*.sh`` invocation died with "permission denied" on
+        every fresh clone — a hard stop for anyone following UPGRADE.md. A local
+        ``chmod`` does not fix it for other people; the mode has to be in git,
+        which is what this asserts.
+        """
+        out = subprocess.run(
+            ["git", "ls-files", "-s", "--", "scripts/install_*.sh"],
+            cwd=REPO, capture_output=True, text=True, check=True,
+        ).stdout.strip().splitlines()
+        self.assertTrue(out, "no installers found in the git index")
+
+        not_exec = [
+            line.split("\t")[-1] for line in out if not line.startswith("100755")
+        ]
+        self.assertEqual(
+            not_exec, [],
+            "installer(s) not executable in git — `git update-index --chmod=+x` "
+            f"is required for: {not_exec}",
+        )
+
+
 class TestSchedulerDoc(unittest.TestCase):
     def test_policy_doc_exists_and_documents_every_job(self):
         self.assertTrue(SCHEDULER_MD.is_file(), "SCHEDULER.md missing")

@@ -353,9 +353,16 @@ contention — it is a derived read-only stage over what `pulse-sync` writes at
 | `health-check-triage` | 8/14/20:00 | 8/14/20:**25** |
 | `obsidian-rollover` | 00:00 | 00:**40** |
 | `obsidian-daily-sync` | 18:00 | 18:**20** |
+| `git-pulse-daily-synthesis` | 18:05 | 18:**30** |
 
-Unchanged: `vault-sync` :15, `github-sync` :45, `daily-sync` 6:30,
-`git-pulse-daily-synthesis` 18:05.
+Unchanged: `vault-sync` :15, `github-sync` :45, `daily-sync` 6:30.
+
+> **`obsidian-daily-sync` and `git-pulse-daily-synthesis` must be re-rendered
+> together.** They carry an **ordering dependency**: when both destinations are
+> configured, the Git Pulse block must land *after* the GH-112 AI Daily Summary
+> block. Re-rendering only the first leaves synthesis at 18:05 — 15 minutes
+> *before* the job it has to follow — and the Git Pulse block silently lands above
+> the AI summary in Obsidian. Nothing errors; the order is just wrong.
 
 Re-render and reload:
 
@@ -373,10 +380,19 @@ so run the one per changed template:
 ./scripts/install_health_check_triage_scheduler.sh  # health-check-triage  (:25)
 ./scripts/install_obsidian_rollover_scheduler.sh    # obsidian-rollover    (00:40)
 ./scripts/install_obsidian_daily_sync_scheduler.sh  # obsidian-daily-sync  (18:20)
+./scripts/install_git_pulse_daily_synthesis_scheduler.sh  # git-pulse-daily-synthesis (18:30)
 ```
 
-`pulse-server` and `git-pulse-daily-synthesis` are unchanged — no need to
-re-render those.
+`pulse-server` is unchanged — no need to re-render it.
+
+> **Two of these fire immediately.** `daily-sync` and `pulse-warning-watch` set
+> `RunAtLoad=true`, so re-rendering them kicks off one real run on the spot — a
+> full ingest in `daily-sync`'s case. Expected, not a fault, but pick your moment.
+
+> **If `git-pulse-daily-synthesis` was never installed on this device**, that last
+> line installs it for the first time rather than re-rendering. It needs a Gemini
+> API key and Full Disk Access; skip it if you do not use the Git Pulse summary,
+> but then also skip moving `obsidian-daily-sync` — the pair only matters together.
 
 Verify the new schedule and `Nice` took effect:
 
@@ -385,8 +401,18 @@ Verify the new schedule and `Nice` took effect:
 /usr/libexec/PlistBuddy -c "Print :StartCalendarInterval" ~/Library/LaunchAgents/com.rebalance-os.health-check.plist
 ```
 
-Expect `5` and `Minute = 10`. If `Print :Nice` errors with "Does Not Exist",
-the plist has not been re-rendered.
+Expect `5`, and a `StartCalendarInterval` **array containing** `Minute = 10`:
+
+```
+Array {
+    Dict {
+        Minute = 10
+    }
+}
+```
+
+If `Print :Nice` errors with "Does Not Exist", the plist has not been
+re-rendered.
 
 > **Note on scope.** This de-conflicts jobs firing in the same *minute*. It does
 > not address run-window *overlap* — `daily-sync` runs ~25–30 minutes from 06:30
