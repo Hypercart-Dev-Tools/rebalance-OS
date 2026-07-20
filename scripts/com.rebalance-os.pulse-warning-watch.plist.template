@@ -24,10 +24,13 @@
 
     <key>StartCalendarInterval</key>
     <array>
-        <dict><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Minute</key><integer>15</integer></dict>
-        <dict><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Minute</key><integer>45</integer></dict>
+        <!-- Offset off the quarter hours (GH-175 finding 3): on :00/:15/:30/:45
+             this collided with pulse-sync, vault-sync, pulse-web-sync and
+             github-sync in turn. Same 15-minute cadence, no shared minute. -->
+        <dict><key>Minute</key><integer>7</integer></dict>
+        <dict><key>Minute</key><integer>22</integer></dict>
+        <dict><key>Minute</key><integer>37</integer></dict>
+        <dict><key>Minute</key><integer>52</integer></dict>
     </array>
 
     <key>StandardOutPath</key>

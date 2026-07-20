@@ -16,7 +16,7 @@
     <!-- Every hour on the hour -->
     <key>StartCalendarInterval</key>
     <array>
-        <dict><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Minute</key><integer>10</integer></dict>
     </array>
 
     <key>EnvironmentVariables</key>

@@ -293,6 +293,106 @@ export JOB_GUARD_MODULE=/path/to/job_guard.py
 Failing to do so does not break ingest — the guard fails **open** with a warning
 so `daily-sync` keeps working — but the device is unprotected against GH-172.
 
+### Peak-memory logging (GH-175) — how the next incident stays attributable
+
+Every guarded run now appends one row to `temp/logs/job_rss.jsonl`, on **every**
+exit path — clean, raised, or ceiling-tripped:
+
+```json
+{"ts": "2026-07-19T21:34:37-0700", "job": "rebalance-embed", "pid": 57379,
+ "peak_rss_gb": 12.4, "total_memory_gb": 64.0, "max_rss_gb": 22.4,
+ "tripped_reason": null, "exit_code": 0, "duration_s": 812.3}
+```
+
+This exists because GH-172 could not be attributed from the panic log: jetsam
+records only the process name `Python`, so three processes at 45.9 / 35.8 /
+9.2 GB gave no indication of *which* code path held them. Attribution took
+several rounds of artifact forensics and still needed a correction. With this
+log, the next incident reads `rebalance-embed peaked at 45.8 GB at 15:38`.
+
+Inspect the heaviest recent runs:
+
+```bash
+tail -50 temp/logs/job_rss.jsonl | python3 -c "
+import sys, json
+rows = [json.loads(l) for l in sys.stdin if l.strip()]
+for r in sorted(rows, key=lambda r: -r['peak_rss_gb'])[:10]:
+    print(f\"{r['peak_rss_gb']:6.2f} GB  {r['job']:24s} {r['ts']}  trip={r['tripped_reason']}\")
+"
+```
+
+Override the location with `JOB_GUARD_RSS_LOG`. Writing is best-effort: a
+logging failure is swallowed rather than allowed to take down the job it was
+only observing.
+
+### Re-render your launchd plists (GH-175) — REQUIRED on existing devices
+
+> **This is the one step in this section that is not automatic.** `git pull`
+> updates the plist *templates* in `scripts/`; it does **not** touch the rendered
+> plists already installed in `~/Library/LaunchAgents`. Until you re-run the
+> installers, your device keeps the old schedule and no `Nice` value.
+
+Two changes landed in the templates:
+
+**1. `Nice=5` on the batch jobs** — `daily-sync`, `github-sync`, `vault-sync`,
+`pulse-sync`, `pulse-web-sync`. This is interactive-responsiveness hygiene, **not**
+a GH-172 mitigation: that panic came from `kernel_task` compression starving
+`watchdogd`, which `Nice` does not affect. The memory protection is the job guard.
+
+**2. A de-collided schedule.** Four jobs previously fired at `:00`. The
+`pulse-web-sync` collision in particular was a **correctness** problem, not just
+contention — it is a derived read-only stage over what `pulse-sync` writes at
+`:00`, so firing in the same minute risked reading half-written state.
+
+| Job | Was | Now |
+|---|---|---|
+| `pulse-sync` | :00 | :00 (unchanged — hourly anchor) |
+| `pulse-warning-watch` | :00 / :15 / :30 / :45 | :07 / :22 / :37 / :52 |
+| `pulse-web-sync` | :00 / :30 | :08 / :38 |
+| `health-check` | :00 | :10 |
+| `health-check-triage` | 8/14/20:00 | 8/14/20:**25** |
+| `obsidian-rollover` | 00:00 | 00:**40** |
+| `obsidian-daily-sync` | 18:00 | 18:**20** |
+
+Unchanged: `vault-sync` :15, `github-sync` :45, `daily-sync` 6:30,
+`git-pulse-daily-synthesis` 18:05.
+
+Re-render and reload:
+
+Each job has its own installer — there is no single "install everything" script,
+so run the one per changed template:
+
+```bash
+./scripts/install_scheduler.sh                      # daily-sync           (Nice)
+./scripts/install_github_scheduler.sh               # github-sync          (Nice)
+./scripts/install_vault_scheduler.sh                # vault-sync           (Nice)
+./scripts/install_pulse_scheduler.sh                # pulse-sync           (Nice)
+./scripts/install_pulse_web_scheduler.sh            # pulse-web-sync       (Nice + :08/:38)
+./scripts/install_pulse_warning_watch_scheduler.sh  # pulse-warning-watch  (:07/:22/:37/:52)
+./scripts/install_health_check_scheduler.sh         # health-check         (:10)
+./scripts/install_health_check_triage_scheduler.sh  # health-check-triage  (:25)
+./scripts/install_obsidian_rollover_scheduler.sh    # obsidian-rollover    (00:40)
+./scripts/install_obsidian_daily_sync_scheduler.sh  # obsidian-daily-sync  (18:20)
+```
+
+`pulse-server` and `git-pulse-daily-synthesis` are unchanged — no need to
+re-render those.
+
+Verify the new schedule and `Nice` took effect:
+
+```bash
+/usr/libexec/PlistBuddy -c "Print :Nice" ~/Library/LaunchAgents/com.rebalance-os.daily-sync.plist
+/usr/libexec/PlistBuddy -c "Print :StartCalendarInterval" ~/Library/LaunchAgents/com.rebalance-os.health-check.plist
+```
+
+Expect `5` and `Minute = 10`. If `Print :Nice` errors with "Does Not Exist",
+the plist has not been re-rendered.
+
+> **Note on scope.** This de-conflicts jobs firing in the same *minute*. It does
+> not address run-window *overlap* — `daily-sync` runs ~25–30 minutes from 06:30
+> and still spans `github-sync` at :45. That overlap was handled separately by
+> GH-131's bounded SQLite retry and is deliberately unchanged.
+
 ### Guarding non-Python jobs
 
 `utils/job_guard.py` also works as a wrapper for any command, which is the route

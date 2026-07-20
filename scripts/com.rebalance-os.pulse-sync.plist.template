@@ -47,6 +47,12 @@
     <key>KeepAlive</key>
     <false/>
 
+    <!-- Batch job: yield to interactive work (GH-175 remediation 3). Stays on
+         :00 as the hourly anchor — the derived stages were moved off it, not
+         this one, because they read what it writes. -->
+    <key>Nice</key>
+    <integer>5</integer>
+
     <key>ProcessType</key>
     <string>Background</string>
 </dict>

@@ -23,9 +23,10 @@
          run if the first two exhausted the quota. -->
     <key>StartCalendarInterval</key>
     <array>
-        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
+        <!-- :25 not :00 (GH-175 finding 3) — the hourly pulse-sync owns :00. -->
+        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>25</integer></dict>
+        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>25</integer></dict>
+        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>25</integer></dict>
     </array>
 
     <key>EnvironmentVariables</key>

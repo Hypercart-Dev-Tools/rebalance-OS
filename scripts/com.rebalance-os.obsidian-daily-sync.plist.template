@@ -17,12 +17,14 @@
     <!-- Fire at 18:00 every day. If the Mac is asleep at 6 PM, launchd runs the
          job as soon as it next wakes — the script's own late-run guard skips any
          catch-up that fires after midnight (past the 00:00 rollover). -->
+    <!-- 18:20, not 18:00 (GH-175 finding 3): collided with the hourly pulse-sync
+         at :00, and sits clear of git-pulse-daily-synthesis at 18:05. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>18</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>20</integer>
     </dict>
 
     <!-- Stay false: loading should not fire an off-schedule summary write. -->
