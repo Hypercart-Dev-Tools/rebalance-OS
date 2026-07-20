@@ -24,17 +24,17 @@ The sentinel may replace **only** the content between these markers after its bo
 This is the durable handoff for the operator even when the GitHub verdict is inconclusive.
 
 <!-- SENTINEL:FINDINGS:START -->
-### Run finding — 2026-07-19 17:35:00 UTC
+### Run finding — 2026-07-20 14:37:38 UTC
 
-- Verdict: INCONCLUSIVE for the daily request path
-- Daily sync: 06:30:06 PT → 06:59:39 PT
+- Verdict: 403 recurred — primary (quota)
+- Daily sync: 06:30:06 PT → 07:01:24 PT
 - `sync_outcome`: `"degraded"`
-- `errors`: `[{"scope": "github", "error": "UNIQUE constraint failed on github_embeddings primary key"}]`
-- Rate evidence: absent in `daily_sync_2026-07-19.log` (checked with rg)
-- Hourly github-sync: 06:45:06 PT → 07:02:04 PT, overlap yes, 38 explicit 403s observed
-- Hypothesis (2): still open — The jobs overlapped and the hourly job hit 403s, but the daily job failed early on a DB constraint before it could hit or log any rate limits.
-- Unknowns: Whether daily-sync would have also hit the 403 rate limit if it hadn't crashed early on the UNIQUE constraint.
-- GitHub report: posted to issue #144
+- `errors`: `[{"scope": "github", "error": "Rate limited fetching /user (primary; remaining=0, retry_after=-)"}]`
+- Rate evidence: `remaining=0 used=5000 retry_after=- reset=1784557695`
+- Hourly github-sync: 06:45:17 PT → 07:33:30 PT, overlap yes, 15 explicit 403s observed
+- Hypothesis (2): killed — Although the jobs overlapped, the rate limit hit by `daily-sync` was a primary quota exhaustion (remaining=0), pointing to total volume or off-box spend (#138) instead of a secondary burst collision.
+- Unknowns: None. The evidence clearly establishes primary quota exhaustion.
+- GitHub report: pending attempt to post to issue #144
 <!-- SENTINEL:FINDINGS:END -->
 
 **Schedule it for 2026-07-19 at 07:45 PT or later.** That leaves room for a long run, but duration
