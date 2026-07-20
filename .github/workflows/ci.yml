@@ -36,6 +36,16 @@ jobs:
           # can't collect them, and one imports pytest at module scope).
           pip install -e ".[calendar,server]" pytest
 
+      # tests/test_pulse_reconcile.py drives real `git pull --rebase` against a
+      # throwaway clone. Without an identity that dies with code 128 on a fresh
+      # runner — a CI-environment gap, not a product bug, and one only CI ever
+      # hits (developer machines always have a global identity). (GH-177)
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.email "ci@rebalance-os.invalid"
+          git config --global user.name "rebalance-OS CI"
+          git config --global init.defaultBranch main
+
       - name: Run tests
         run: python -m pytest tests/ -q
 
