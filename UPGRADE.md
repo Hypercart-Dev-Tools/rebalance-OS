@@ -213,6 +213,99 @@ token is required — the existing GitHub PAT covers public repos and any privat
 repos the PAT can read. External repos enter the canonical watched set and appear
 in the pulse "Watched repos" section automatically on the next refresh.
 
+## Embedding job guard (GH-172) — verify on every device
+
+> **Why this matters.** On 2026-07-19 this Mac hard kernel-panicked. Three
+> unbounded Python embedding runs stacked to ~90 GB resident on a 68.7 GB
+> machine, saturated the VM compressor (74 swapfiles, 100% of segment limit),
+> starved `watchdogd` for 90s, and the kernel shot itself. Nothing prevented
+> concurrent invocation and nothing aborted before the cliff.
+
+Since GH-172 the two embedding leaves — `embed_chunks` (vault) and
+`embed_pending` (semantic) — hold a **single-instance lock** and run under a
+**memory ceiling**. The guard sits at the library level, so it applies to *every*
+caller: launchd, CLI, MCP tools, and agent- or shell-spawned runs alike. That
+last category matters — the run that caused GH-172 was agent-spawned, so
+guarding only the launchd wrappers would not have caught it.
+
+**Nothing to install.** The guard ships with the code and is on by default. This
+section is verification, not setup.
+
+### Verify it is active on this device
+
+```bash
+.venv/bin/python -c "
+from rebalance.ingest import _job_guard as g
+print('guard module:', g.module_path())
+print('locatable   :', g.available())
+print('enabled     :', g.enabled())
+"
+```
+
+Expect `locatable: True` and `enabled: True`. If `locatable` is `False` the
+device is embedding **unguarded** — see "Non-editable installs" below.
+
+Confirm both leaves are actually wrapped (this is the regression that GH-174
+shipped and GH-172 had to fix — a guard with zero callers):
+
+```bash
+.venv/bin/python -m pytest tests/test_job_guard_wiring.py -q
+```
+
+### What happens when it trips
+
+| Condition | Behaviour |
+|---|---|
+| Another embedding run holds the lock | `InstanceConflict` — the second run refuses and exits. **This is the GH-172 fix.** |
+| Job exceeds 35% of physical RAM | `MemoryCeilingExceeded` — SIGTERM, then SIGKILL after grace |
+| Machine available memory below floor | Refuses to *start* (`preflight`), rather than dying at minute two |
+| Guard module missing | Warns loudly on stderr, runs **unguarded** — see below |
+
+A scheduled job that refuses because another run holds the lock is **correct
+behaviour**, not a failure: it skips that cycle instead of stacking. Expect to
+see this occasionally in `daily-sync`/`github-sync`/`vault-sync` logs.
+
+### Tuning (per device, optional)
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `REBALANCE_JOB_GUARD` | `1` | Set `0` to disable entirely. **Do not** disable on a machine that runs scheduled embeds. |
+| `REBALANCE_JOB_GUARD_MAX_RSS_GB` | 35% of physical RAM | Absolute RSS ceiling for one embedding pass |
+| `REBALANCE_JOB_GUARD_ON_CONFLICT` | `refuse` | `replace` SIGTERMs the incumbent and takes over — the "re-run the embeddings" ergonomic |
+| `JOB_GUARD_LOCK_DIR` | `~/.cache/rebalance-os/locks` | Lock namespace. Shared across clones **on purpose**: two worktrees running the same job must still collide. |
+| `JOB_GUARD_MODULE` | `<repo>/utils/job_guard.py` | Point at a vendored copy on non-editable installs |
+
+On a machine with substantially less RAM than 68 GB, consider setting
+`REBALANCE_JOB_GUARD_MAX_RSS_GB` explicitly rather than relying on the fraction.
+
+### Non-editable installs
+
+`utils/job_guard.py` deliberately lives **outside** the Python package, because
+it must also run under the system `python3` inside launchd wrappers with no
+install step. A normal editable checkout resolves it automatically. If the
+package was installed without the repo tree beside it, `locatable` will be
+`False` — vendor the file and point at it:
+
+```bash
+export JOB_GUARD_MODULE=/path/to/job_guard.py
+```
+
+Failing to do so does not break ingest — the guard fails **open** with a warning
+so `daily-sync` keeps working — but the device is unprotected against GH-172.
+
+### Guarding non-Python jobs
+
+`utils/job_guard.py` also works as a wrapper for any command, which is the route
+for shell-based jobs:
+
+```bash
+python3 utils/job_guard.py --name ask-self-ingest --max-rss-gb 24 -- \
+    ./scripts/ask-self-ingest.sh
+```
+
+Exit codes: `3` lock conflict, `4` memory ceiling tripped, `143` evicted by a
+later `--on-conflict replace` run.
+
 ## Notes for agents
 
 - **Never echo a token/secret value** to chat, logs, or commits. This is a

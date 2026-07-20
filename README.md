@@ -244,6 +244,29 @@ cd rebalance-OS
 .venv/bin/rebalance ingest embed --database rebalance.db
 ```
 
+> **Embedding runs under a memory guard (GH-172).** Embedding is the heaviest
+> local job in this project — it loads a Qwen model and holds vectors resident.
+> Every embedding pass therefore takes a **single-instance lock** and runs under a
+> **memory ceiling** (default: 35% of physical RAM), so a second run cannot stack
+> on a first and exhaust the machine. This is on by default with nothing to
+> install.
+>
+> If a run exits with "job 'rebalance-embed' is already running", that is the
+> guard working — another embed (often a scheduled `daily-sync`) holds the lock.
+> Wait, or re-run with `REBALANCE_JOB_GUARD_ON_CONFLICT=replace` to take over.
+>
+> Verify it is active, and tune it per machine:
+>
+> ```bash
+> .venv/bin/python -c "from rebalance.ingest import _job_guard as g; print(g.available(), g.enabled())"
+> # -> True True
+> ```
+>
+> Full reference, tuning variables, and the non-editable-install caveat:
+> [UPGRADE.md § Embedding job guard](./UPGRADE.md#embedding-job-guard-gh-172--verify-on-every-device).
+> On a machine with substantially less than 64 GB RAM, set
+> `REBALANCE_JOB_GUARD_MAX_RSS_GB` explicitly rather than relying on the fraction.
+
 ### Step 3 — Connect GitHub
 
 ```bash
