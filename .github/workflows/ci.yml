@@ -1,10 +1,15 @@
 name: CI
 
+# `development` is the integration branch and the repo default — every feature
+# branch is cut from it and merged back into it. Triggering on `main` alone meant
+# the branch that receives all the work had ZERO checks, which is how GH-124
+# merged 10 failing tests on 2026-07-11 and went unnoticed for 9 days (GH-178).
+# `main` stays listed so release merges are still gated. (GH-177)
 on:
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
-    branches: [main]
+    branches: [main, development]
 
 jobs:
   test:
