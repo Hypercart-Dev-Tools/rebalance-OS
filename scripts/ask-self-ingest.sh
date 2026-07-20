@@ -88,22 +88,6 @@ if ! has_flag "--mode" "$@"; then
     DEFAULT_ARGS+=(--mode all)
 fi
 
-EMBED_PROVIDER="$(read_harness_json "((data.get('embedding') or {}).get('provider'))")"
-case "$EMBED_PROVIDER" in
-    qwen-local|qwen-mlx)
-        # ask-self disables local Qwen providers by default (gemini-first upstream);
-        # re-enable for this portable local-Qwen repo so no Gemini key is needed.
-        export ASK_SELF_ENABLE_QWEN="${ASK_SELF_ENABLE_QWEN:-1}"
-        export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
-        export ASK_SELF_QWEN_BATCH_SIZE="${ASK_SELF_QWEN_BATCH_SIZE:-8}"
-        export ASK_SELF_QWEN_MAX_TOKENS="${ASK_SELF_QWEN_MAX_TOKENS:-2048}"
-        ;;
-esac
-# qwen-local rides the PyTorch/MPS path and needs serial embedding; qwen-mlx does not.
-if [ "$EMBED_PROVIDER" = "qwen-local" ] && ! has_flag "--concurrency" "$@"; then
-    DEFAULT_ARGS+=(--concurrency 1)
-fi
-
 GITHUB_OWNER="$(read_harness_json "((data.get('github') or {}).get('owner'))")"
 GITHUB_REPO="$(read_harness_json "((data.get('github') or {}).get('repo'))")"
 
