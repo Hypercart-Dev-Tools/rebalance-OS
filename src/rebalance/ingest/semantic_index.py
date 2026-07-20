@@ -18,6 +18,7 @@ from rebalance.ingest.db import (
     ensure_semantic_schema,
     run_migrations,
 )
+from rebalance.ingest._job_guard import guarded_embedding
 from rebalance.ingest.db import semantic as sem
 from rebalance.ingest.embedder import (
     DEFAULT_MODEL as DEFAULT_EMBED_MODEL,
@@ -609,6 +610,7 @@ def embed_semantic_pending(
     )
 
 
+@guarded_embedding
 def embed_pending(
     database_path: Path,
     *,
@@ -619,7 +621,13 @@ def embed_pending(
     source_types: Iterable[str] | None = None,
     embed_texts: EmbedTexts | None = None,
 ) -> SemanticEmbedResult:
-    """Embed pending semantic document rows via the shared local embedder."""
+    """Embed pending semantic document rows via the shared local embedder.
+
+    Guarded by a single-instance lock and memory ceiling (GH-172), sharing one
+    lock with :func:`rebalance.ingest.embedder.embed_chunks` — both load the same
+    Qwen model, so their memory cost is cumulative and they must serialise
+    against each other, not merely against themselves.
+    """
     start = time.monotonic()
     embed_fn = embed_texts or _default_embed_texts
     selected_sources = _normalize_sources(source_types)

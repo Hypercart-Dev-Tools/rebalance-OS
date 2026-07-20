@@ -40,9 +40,18 @@ Exit codes in wrapper mode:
     143  evicted by a later ``--on-conflict replace`` run (child tree reaped)
     else the child's own exit status
 
-NOT installed into any job by this change — see GH-172. Landing it on the ingest
-stacks is a separate, deliberate step, because the issue's open question (which
-embedding stack actually held the 45 GB) is still unresolved.
+Installed on the embedding path as of GH-172. #174 landed this module with zero
+callers; the wiring followed once attribution was resolved. The 45 GB belonged to
+the **HiQS signal / activity RAG** (``src/rebalance/ingest/embedder.py``,
+Qwen3-Embedding-0.6B via MLX) — NOT the ask_self codebase index, which is Gemini
+and was ruled out. ``rebalance.ingest._job_guard`` loads this module by path and
+applies :func:`guard` to ``embed_chunks`` and ``embed_pending``.
+
+Guard the *leaves*, never the facades: ``embed_vault_chunks`` and
+``embed_semantic_pending`` delegate to those leaves, and guarding both layers
+would take the same ``flock`` twice in one process and self-deadlock.
+
+Operator reference: UPGRADE.md § "Embedding job guard (GH-172)".
 """
 
 from __future__ import annotations

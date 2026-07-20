@@ -6,6 +6,20 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def _disable_job_guard(monkeypatch):
+    """Turn off the GH-172 embedding guard for the whole suite.
+
+    The guard takes a real ``flock`` and starts a memory watchdog whose
+    ``preflight()`` REFUSES to start when the machine is low on available
+    memory. Left on, tests that call ``embed_pending``/``embed_chunks`` would
+    fail spuriously on a busy machine and serialise against any real ingest
+    running on the same box. Guard behaviour itself is covered explicitly in
+    ``tests/test_job_guard_wiring.py``, which re-enables it per-test.
+    """
+    monkeypatch.setenv("REBALANCE_JOB_GUARD", "0")
+
+
+@pytest.fixture(autouse=True)
 def _isolate_secret_store(tmp_path_factory):
     """Redirect the out-of-repo secret store to a fresh tmp dir for EACH test.
 
