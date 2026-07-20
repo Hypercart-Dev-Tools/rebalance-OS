@@ -92,6 +92,17 @@ MIN_AVAILABLE_FLOOR = 4 * GIB
 DEFAULT_POLL_SECONDS = 5.0
 DEFAULT_GRACE_SECONDS = 20.0
 
+#: Append-only record of every guarded run's peak memory (GH-175 remediation 4).
+#: GH-172 could not be attributed because jetsam records only the process name
+#: ``Python`` — three processes at 45.9/35.8/9.2 GB with no way to tell which
+#: code path held them. This file makes the NEXT incident attributable to a job.
+RSS_LOG_PATH = Path(
+    os.environ.get(
+        "JOB_GUARD_RSS_LOG",
+        Path(__file__).resolve().parents[1] / "temp" / "logs" / "job_rss.jsonl",
+    )
+)
+
 
 class GuardError(RuntimeError):
     """Base class for guard failures."""
@@ -514,6 +525,40 @@ class MemoryCeiling:
 # In-process entry point
 # --------------------------------------------------------------------------- #
 
+def record_peak_rss(
+    name: str,
+    ceiling: "MemoryCeiling",
+    *,
+    started: float | None = None,
+    exit_code: int | None = None,
+    path: Path | None = None,
+) -> None:
+    """Append one JSONL row describing a guarded run's peak memory.
+
+    Best-effort by construction: a logging failure must never take down the job
+    it was only observing. Every exception is swallowed deliberately.
+    """
+    target = path or RSS_LOG_PATH
+    try:
+        row = {
+            "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+            "job": name,
+            "pid": os.getpid(),
+            "peak_rss_bytes": int(ceiling.peak_rss or 0),
+            "peak_rss_gb": round((ceiling.peak_rss or 0) / GIB, 3),
+            "total_memory_gb": round((ceiling.total or 0) / GIB, 1),
+            "max_rss_gb": round((ceiling.max_rss or 0) / GIB, 3) if ceiling.max_rss else None,
+            "tripped_reason": ceiling.tripped_reason,
+            "exit_code": exit_code,
+            "duration_s": round(time.monotonic() - started, 1) if started else None,
+        }
+        target.parent.mkdir(parents=True, exist_ok=True)
+        with open(target, "a") as fh:
+            fh.write(json.dumps(row) + "\n")
+    except Exception:  # pragma: no cover - observability must never break the job
+        pass
+
+
 @contextmanager
 def guard(
     name: str,
@@ -554,6 +599,7 @@ def guard(
     def _handler(signum, frame):
         raise MemoryCeilingExceeded(ceiling.tripped_reason or "terminated by job guard")
 
+    started = time.monotonic()
     try:
         ceiling.preflight()
         signal.signal(signal.SIGTERM, _handler)
@@ -565,6 +611,9 @@ def guard(
             signal.signal(signal.SIGTERM, previous)
         except (ValueError, TypeError):
             pass
+        # Written on EVERY exit path — clean, raised, or ceiling-tripped. The
+        # tripped run is precisely the one worth having a record of.
+        record_peak_rss(name, ceiling, started=started)
         lock.release()
 
 
@@ -591,6 +640,7 @@ def run_guarded(
         log(str(exc))
         return 3
 
+    started = time.monotonic()
     try:
         ceiling = MemoryCeiling(
             max_rss_bytes=int(max_rss_gb * GIB) if max_rss_gb else None,
@@ -642,6 +692,7 @@ def run_guarded(
                 pass
 
         log(f"{name!r} finished with exit {code}; peak tree RSS {_fmt_gb(ceiling.peak_rss)}")
+        record_peak_rss(name, ceiling, started=started, exit_code=code)
         return 4 if ceiling.tripped_reason else code
     finally:
         lock.release()

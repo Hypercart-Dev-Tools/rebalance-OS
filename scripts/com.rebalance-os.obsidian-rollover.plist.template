@@ -16,12 +16,14 @@
 
     <!-- Fire at 00:00 every day. If the Mac is asleep at midnight, launchd
          runs the job as soon as it next wakes. -->
+    <!-- 00:40, not 00:00 (GH-175 finding 3): midnight collided with the hourly
+         pulse-sync. Still comfortably inside the same calendar day. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>0</integer>
         <key>Minute</key>
-        <integer>0</integer>
+        <integer>40</integer>
     </dict>
 
     <!-- IMPORTANT: must stay false. RunAtLoad would fire the rollover the

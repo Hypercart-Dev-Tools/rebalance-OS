@@ -262,10 +262,24 @@ cd rebalance-OS
 > # -> True True
 > ```
 >
+> Every guarded run also appends its peak memory to `temp/logs/job_rss.jsonl`,
+> so if a job ever does exhaust the machine you can tell **which** one it was —
+> the incident that motivated this (GH-172) was hard to attribute precisely
+> because macOS records only the process name `Python`.
+>
 > Full reference, tuning variables, and the non-editable-install caveat:
 > [UPGRADE.md § Embedding job guard](./UPGRADE.md#embedding-job-guard-gh-172--verify-on-every-device).
 > On a machine with substantially less than 64 GB RAM, set
 > `REBALANCE_JOB_GUARD_MAX_RSS_GB` explicitly rather than relying on the fraction.
+
+> **If you install the scheduled jobs**, note that the plist templates in
+> `scripts/` set `Nice=5` on batch jobs and use a deliberately de-collided
+> schedule — no two jobs fire in the same minute. `pulse-web-sync` in particular
+> must not share a slot with `pulse-sync`: it is a derived read-only stage over
+> what `pulse-sync` writes, so a shared minute risks reading half-written state.
+> Install via the per-job `scripts/install_*_scheduler.sh` scripts; there is no
+> single install-everything script. Details:
+> [UPGRADE.md § Re-render your launchd plists](./UPGRADE.md#re-render-your-launchd-plists-gh-175--required-on-existing-devices).
 
 ### Step 3 — Connect GitHub
 

@@ -19,12 +19,16 @@
          asleep at 18:05, launchd runs the job as soon as it next wakes — the
          script's own late-run guard skips any catch-up that fires after
          midnight (past the 00:00 rollover). -->
+    <!-- 18:30, moved with obsidian-daily-sync (18:00->18:20) in GH-175.
+         ORDERING DEPENDENCY: must fire AFTER obsidian-daily-sync so, when both
+         destinations are configured, this block lands after the GH-112 AI Daily
+         Summary block. Do not move either job without the other. -->
     <key>StartCalendarInterval</key>
     <dict>
         <key>Hour</key>
         <integer>18</integer>
         <key>Minute</key>
-        <integer>5</integer>
+        <integer>30</integer>
     </dict>
 
     <!-- Stay false: loading should not fire an off-schedule summary write. -->
