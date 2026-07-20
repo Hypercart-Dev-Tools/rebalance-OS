@@ -513,8 +513,9 @@ The query wrapper pins `--db-path` to the committed portable DB, so it works on 
 Notes:
 - The wrapper now defaults to `--mode all` if you omit `--mode`, but keeping it explicit in maintainer docs is still clearer.
 - `--no-architecture-md` is intentional: the curated [ARCHITECTURE.md](ARCHITECTURE.md) is hand-edited and should not be regenerated.
-- For this repo's `qwen-local` harness, the wrapper now auto-applies the stable macOS settings: `TOKENIZERS_PARALLELISM=false`, `ASK_SELF_QWEN_BATCH_SIZE=8`, `ASK_SELF_QWEN_MAX_TOKENS=2048`, and `--concurrency 1` when you do not pass one explicitly.
-- Embedding is local (`qwen-local` with Qwen3-Embedding-0.6B via `sentence-transformers`) — no Gemini API key needed for ingest or query. Install `sentence-transformers` in the external ask-self venv if you are refreshing from a new machine.
+- Embedding is **Gemini** (`gemini-embedding-001`, dim 768), set in [ask_self/ask_self_harness.json](ask_self/ask_self_harness.json) since commit `4ef8c39`. `GOOGLE_API_KEY` is required for **both** ingest and query — query-time embedding needs it too, not just synthesis.
+- The wrapper no longer auto-applies `qwen-local` tuning (`TOKENIZERS_PARALLELISM`, `ASK_SELF_QWEN_BATCH_SIZE`, `ASK_SELF_QWEN_MAX_TOKENS`, `--concurrency 1`); that path was dead under the Gemini harness and was removed. If you switch the harness back to a local Qwen provider, set those explicitly — the defaults are not memory-safe on this machine (see #172).
+- Switching provider changes the embedding dimension, which forces a **full index rebuild**. That is the heaviest local job in the repo; do not flip it casually.
 - PR ingestion now fails loudly if neither `GITHUB_TOKEN` / `SLEUTH_RAG_GITHUB_PAT` nor a healthy `gh auth login` is available. Pass `--no-prs` only if you intentionally want a files-only refresh.
 - Synthesis (the answer step) still defaults to Gemini unless you pass `--retrieval-only` or configure a local synthesis provider in [ask_self/ask_self_harness.json](ask_self/ask_self_harness.json).
 
