@@ -1,10 +1,15 @@
 name: CI
 
+# `development` is the integration branch and the repo default — every feature
+# branch is cut from it and merged back into it. Triggering on `main` alone meant
+# the branch that receives all the work had ZERO checks, which is how GH-124
+# merged 10 failing tests on 2026-07-11 and went unnoticed for 9 days (GH-178).
+# `main` stays listed so release merges are still gated. (GH-177)
 on:
   push:
-    branches: [main]
+    branches: [main, development]
   pull_request:
-    branches: [main]
+    branches: [main, development]
 
 jobs:
   test:
@@ -30,6 +35,16 @@ jobs:
           # locally and some modules are pytest-style (unittest discover
           # can't collect them, and one imports pytest at module scope).
           pip install -e ".[calendar,server]" pytest
+
+      # tests/test_pulse_reconcile.py drives real `git pull --rebase` against a
+      # throwaway clone. Without an identity that dies with code 128 on a fresh
+      # runner — a CI-environment gap, not a product bug, and one only CI ever
+      # hits (developer machines always have a global identity). (GH-177)
+      - name: Configure git identity for tests
+        run: |
+          git config --global user.email "ci@rebalance-os.invalid"
+          git config --global user.name "rebalance-OS CI"
+          git config --global init.defaultBranch main
 
       - name: Run tests
         run: python -m pytest tests/ -q

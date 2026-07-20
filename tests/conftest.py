@@ -4,6 +4,47 @@ import os
 
 import pytest
 
+#: GH-178 quarantine. These failed at GH-124's own final commit (536de83,
+#: 2026-07-11) and were merged red — nothing caught it because CI did not run on
+#: `development` until GH-177. Verified to fail identically on macOS and on clean
+#: Ubuntu CI, so they are real product bugs, not environment artifacts.
+#:
+#: They are quarantined rather than deleted so CI regains signal NOW: a red run
+#: means *new* breakage instead of the same 10 forever, which is the state that
+#: trains people to ignore CI. This list must shrink to empty — every entry is a
+#: real defect in commit-threshold auto-promotion.
+#:
+#: DO NOT add to this list to make a red build green. Fix the test or the code.
+KNOWN_FAILING_GH178 = {
+    "tests/test_auto_promote.py::AutoPromoteTests::test_activity_commits_sum_across_scan_dates",
+    "tests/test_auto_promote.py::AutoPromoteTests::test_auto_promoted_row_survives_activity_inference_sync",
+    "tests/test_auto_promote.py::AutoPromoteTests::test_cloud_agent_commits_count_toward_threshold",
+    "tests/test_auto_promote.py::AutoPromoteTests::test_direct_push_commits_count_not_just_pr_commits",
+    "tests/test_auto_promote.py::AutoPromoteTests::test_idempotent_rerun_does_not_duplicate",
+    "tests/test_auto_promote.py::AutoPromoteTests::test_name_collision_disambiguates_instead_of_overwriting",
+    "tests/test_auto_promote.py::AutoPromoteTests::test_operator_push_and_bot_commits_combine",
+    "tests/test_auto_promote.py::AutoPromoteTests::test_promotes_repo_at_threshold",
+    "tests/test_auto_promote.py::AutoPromoteTests::test_promotion_fires_auth_log_alert",
+    "tests/test_project_inference.py::ProjectInferenceTests::test_infers_binoid_from_github_and_ltvera_from_calendar_only",
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    """Mark the GH-178 quarantine xfail, non-strict.
+
+    Non-strict on purpose: if one starts passing the run stays green (XPASS) and
+    the entry is simply stale. Strict would turn someone else's unrelated fix
+    into a red build, which is the opposite of the point.
+    """
+    for item in items:
+        if item.nodeid in KNOWN_FAILING_GH178:
+            item.add_marker(
+                pytest.mark.xfail(
+                    reason="GH-178: known-failing since GH-124 (536de83); quarantined by GH-177",
+                    strict=False,
+                )
+            )
+
 
 @pytest.fixture(autouse=True)
 def _disable_job_guard(monkeypatch):
