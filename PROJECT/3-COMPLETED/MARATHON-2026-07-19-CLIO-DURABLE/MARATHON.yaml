@@ -2,7 +2,7 @@
 #
 # Run (preflight then fire):
 #   .xyz/relay-automation/marathon.sh \
-#     --plan PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/MARATHON.yaml \
+#     --plan PROJECT/3-COMPLETED/MARATHON-2026-07-19-CLIO-DURABLE/MARATHON.yaml \
 #     --pre-advance-cmd 'bash -c "cd macOS/Apps/Focus5Float && swift build"' \
 #     --dry-run
 #
@@ -49,7 +49,7 @@ phases:
   - id: clio-p1-idempotent
     name: "CLIO P1: content-addressed idempotent append + Swift comment-skip"
     reviewer: agy
-    brief: PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/briefs/p1-idempotent-append.md
+    brief: PROJECT/3-COMPLETED/MARATHON-2026-07-19-CLIO-DURABLE/briefs/p1-idempotent-append.md
     artifact: utils/CLIO/INSTALL.md,macOS/Apps/Focus5Float/Sources/Focus5Float/PromptLogReader.swift,macOS/Apps/Focus5Float/Tests/Focus5FloatTests/PromptLogTests.swift
     turn_timeout_s: 1200
     max_review_rounds: 3
@@ -57,7 +57,7 @@ phases:
   - id: clio-p2-reconcile
     name: "CLIO P2: conflict-copy reconciliation (full-block, quarantine)"
     reviewer: agy
-    brief: PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/briefs/p2-conflict-reconciliation.md
+    brief: PROJECT/3-COMPLETED/MARATHON-2026-07-19-CLIO-DURABLE/briefs/p2-conflict-reconciliation.md
     artifact: utils/CLIO/INSTALL.md
     depends_on: clio-p1-idempotent
     turn_timeout_s: 1200

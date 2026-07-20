@@ -1,3 +1,11 @@
+# Marathon Phase gh156-p1-manifest
+STATUS: Approved
+NEXT: agy
+
+<!-- marathon-drive: task=MARATHON-GH156-P1-MANIFEST-TURN builder=codex reviewer=agy round-cap=7 -->
+
+## Phase Brief
+
 ---
 title: "GH-156 P1 — extract the exporter to a testable script + fixture harness + manifest receipt"
 status: "Brief authored; phase not yet run"
@@ -89,3 +97,40 @@ exits non-zero on any failure. It must cover at minimum:
 - [ ] Deleting the state file leaves the manifest intact.
 - [ ] A manifest write failure does not abort the export.
 - [ ] `utils/pdda/pdda.sh run` clean.
+
+---
+
+▶ TAKE YOUR TURN (codex — BUILDER role)
+
+You are the BUILDER for this phase. Read the phase brief above and implement it.
+1. Implement the brief by creating/editing the artifact file(s): utils/CLIO/INSTALL.md,utils/CLIO/prompt-log-to-md.sh,test/clio-exporter.sh
+2. Append a build block to this relay file: `### Round N · Builder · codex` summarizing what you did (files touched, key decisions).
+3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-GH156-P1-MANIFEST-TURN --agent codex --paths "phases/gh-156-clio-projection--gh156-p1-manifest/RELAY.md,utils/CLIO/INSTALL.md,utils/CLIO/prompt-log-to-md.sh,test/clio-exporter.sh"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-GH156-P1-MANIFEST-TURN --agent codex
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH156-P1-MANIFEST-TURN --agent codex --to agy
+4. Edit ONLY these paths: phases/gh-156-clio-projection--gh156-p1-manifest/RELAY.md and utils/CLIO/INSTALL.md,utils/CLIO/prompt-log-to-md.sh,test/clio-exporter.sh. Do NOT run git. Do NOT touch any other file — the harness commits for you.
+
+---
+
+▶ TAKE YOUR TURN (agy — REVIEWER role)
+
+You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: utils/CLIO/INSTALL.md,utils/CLIO/prompt-log-to-md.sh,test/clio-exporter.sh.
+1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH156-P1-MANIFEST-TURN --agent agy --to codex
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH156-P1-MANIFEST-TURN --agent agy
+4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
+   Edit ONLY phases/gh-156-clio-projection--gh156-p1-manifest/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Extracted the exporter into executable `utils/CLIO/prompt-log-to-md.sh`; `INSTALL.md` now installs that source file rather than embedding a second copy, while retaining the capture-hook, run/verify, launchd, and uninstall instructions.
+- Added a cursor-independent, IDs-only manifest receipt at `~/.claude/prompt-log-manifest.txt` (overrideable with `CLIO_MANIFEST`). It is atomically replaced from the existing receipt plus newly verified IDs, does not duplicate IDs, and reports failures without failing the export. The cursor write is now atomic as well.
+- Added `test/clio-exporter.sh` fixture coverage for fresh/idempotent exports, legacy un-ID'd entries, displaced markers, conflict-sibling recovery/quarantine, cursor-reset manifest retention, and nonfatal manifest failures. It runs each fixture suite through `bash` and `/bin/bash`.
+- Verification: `bash -n utils/CLIO/prompt-log-to-md.sh test/clio-exporter.sh && bash test/clio-exporter.sh` (PASS for both shells).
+
+### Round 1 · Reviewer · agy
+
+The builder `codex` correctly extracted the exporter script, updated the installation documentation to use the standalone file, and added comprehensive test coverage via `test/clio-exporter.sh`. I've verified that all test cases pass successfully under both `bash` and `/bin/bash` (3.2 compatible), and that manifest receipt behavior is correctly implemented with atomic cursor-independent deduplication. All acceptance criteria are met.
+
+**Verdict:** Approved

@@ -8,8 +8,23 @@
 #     --dry-run
 #
 # Parent doc:   PROJECT/1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md
-# Predecessor:  PROJECT/2-WORKING/CLIO-DURABLE-MARATHON/ (COMPLETE — shipped clio:id + conflict reconciliation)
-# Branch:       marathon/gh-156-clio-projection (cut from development @ 0970d3f)
+# Status doc:   PROJECT/2-WORKING/GH-156-CLIO-PROJECTION-MARATHON/MARATHON.md
+# Predecessor:  PROJECT/3-COMPLETED/MARATHON-2026-07-19-CLIO-DURABLE/ (COMPLETE — shipped clio:id + conflict reconciliation)
+#
+# VERIFIED 2026-07-19 (not fired):
+#   preflight ready (exit 0) · all 3 fix_probes `unfixed` · branch_ready=true · dirty=0
+#   dry-run clean: 3/3 phases resolve in depends_on order, briefs render into relay files
+#   gate green at baseline (marker-based extraction, 209 lines, `bash -n` clean)
+#   dry-run phase renders deleted afterwards — stale placeholders; a real fire needs a fresh render
+#
+# RUN VENDORED (.xyz/…), not from an external swarm checkout. Rooting verified here:
+# marathon-drive.sh:54 detects the `.xyz` basename and sets ROOT to the consumer repo;
+# relay-drive.sh:332 falls back to the git toplevel of the relay file's dir. A NON-vendored run
+# is what cost the 2026-07-18 signal-health marathon its P3 (rooted at the swarm repo; codex
+# registered "no tracked changes" every round and the relay escalated).
+# Branch:       marathon/gh-156-critical-clio-projection-reconciliation-2026-07-19
+#               (cut from development @ 008e582 — matches the preflight packet's
+#                deterministic suggested_branch, so branch_ready resolves true)
 #
 # ---------------------------------------------------------------------------
 # WHY THIS PLAN IS RESCOPED
