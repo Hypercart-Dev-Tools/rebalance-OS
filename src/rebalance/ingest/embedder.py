@@ -16,6 +16,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from rebalance.ingest._job_guard import guarded_embedding
 from rebalance.ingest.db import db_connection, ensure_schema
 
 DEFAULT_MODEL = "Qwen/Qwen3-Embedding-0.6B"
@@ -101,6 +102,7 @@ def embed_vault_chunks(
     )
 
 
+@guarded_embedding
 def embed_chunks(
     database_path: Path,
     *,
@@ -112,6 +114,10 @@ def embed_chunks(
 
     Detects model version changes via embedding_meta and triggers full re-embed
     if the model name changed.
+
+    Guarded by a single-instance lock and memory ceiling (GH-172). The guard is
+    on this leaf rather than on :func:`embed_vault_chunks`, because that facade
+    delegates here — guarding both would self-deadlock on the same ``flock``.
     """
     start = time.monotonic()
 
