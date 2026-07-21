@@ -1,0 +1,9 @@
+FIRSTHAND_COUNT=3
+ECHOED_COUNT=7
+ECHOED `isMovableByWindowBackground = true`
+ECHOED `CGEventPost`
+ECHOED `CGEventPost`
+ECHOED `NSHostingView`
+ECHOED `maxSize.width = 420`
+ECHOED `NSHostingView`
+ECHOED `maxSize.width = 420`

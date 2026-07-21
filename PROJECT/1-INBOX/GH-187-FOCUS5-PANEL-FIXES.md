@@ -2,7 +2,7 @@
 gh_issue: 187
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/187
 title: "GH-187 Focus 5 Float: Dock-icon reopen (fixed) + panel can't resize taller (paused, unresolved)"
-status: "Paused — Dock-reopen fixed and shipped; top-edge resize still broken, root cause not isolated"
+status: "Paused — Dock-reopen fixed and shipped; top-edge resize still broken; Codex+agy consult captured, not yet tried"
 created: 2026-07-21
 updated: 2026-07-21
 doc_type: bugfix
@@ -76,3 +76,52 @@ What we know does **not** fully explain the remaining symptom (still can't grow 
    - SwiftUI `NSHostingView` content (`FirstMouseHostingView`) vs. the isolation app's plain `NSView` — the isolation app never had real SwiftUI content; layer in a trivial SwiftUI view to see if that alone changes drag behavior.
    - Whether height-only growth (not width) specifically works via the *native* resize border once the handle is gone — this was not explicitly re-confirmed by the operator; only "edge to edge" (which reads as width) and the full-tile-snap behavior were confirmed.
 3. Do not reintroduce a custom resize-handle NSView without confirming (via the debugger, not synthetic events) exactly which region of the window it is being hit-tested against during a real drag — the previous attempt appears to have been receiving events meant for the native background-move/resize path and interfering with it.
+
+## Consult — Codex + agy second opinion (2026-07-21, advisory only, not yet tried)
+
+Ran `/consult` (both models read this doc + `Focus5FloatApp.swift` directly). Full raw transcripts:
+`relay-system/2026-07-21/gh187-panel-resize-124307/gh187-panel-resize.{codex,agy}.md`.
+
+**Reconciled call:** both independently suspect the SwiftUI `NSHostingView` content as the real
+differentiator from the isolated test app — but Codex adds a sharper, more important catch: this
+doc's own "can drag edge to edge" conclusion never explicitly re-confirmed *height* growth via the
+native top edge post-handle-revert; "edge to edge" almost certainly described *width*. That's a gap
+in our own methodology, not just a new theory, and should be closed before trusting any other
+hypothesis below.
+
+**Where they disagreed:**
+- Codex flagged `[Blocker]`: post-revert testing never explicitly confirmed a successful (or failed)
+  *height-only* native top-edge resize — only width ("edge to edge") and the full-tile-snap were
+  confirmed. The earlier custom handle had also regressed normal resize, which may have contaminated
+  what we thought we'd already ruled out. Agy did not raise this; it accepted the log at face value
+  and went straight to a sizing hypothesis.
+- Mechanism specificity differs: agy's theory is that `NSHostingView`'s intrinsic SwiftUI layout can
+  override `panel.maxSize` outright. Codex doesn't make that literal claim but independently surfaced
+  that `contentMinSize`/`contentMaxSize` are **distinct `NSWindow` properties from `minSize`/`maxSize`**
+  and take precedence — a more precise, directly-checkable mechanism neither of us had inspected
+  before. Not truly contradictory — same suspect (SwiftUI content constraining the window), Codex's
+  framing is the more actionable one.
+
+**Where they agreed:**
+- SwiftUI/`NSHostingView` content (vs. the isolation app's plain `NSView`) is the top suspect.
+- `panel.isMovableByWindowBackground = false` is a good *diagnostic* (not a permanent fix) to test
+  whether background-move is swallowing the resize attempt.
+- The tile-to-center-at-420 behavior is expected given `maxSize.width`, not a separate bug.
+- Frame-autosave state is low-priority, unlikely to actively fight a live resize.
+
+**Sorted, not yet attempted:**
+- **Blocking (do first):** re-verify with a human, cursor-watching test whether *height-only*
+  top-edge resize actually works or fails now that the handle is reverted — our "fixed" read may
+  rest on an untested assumption (Codex).
+- **Worth doing, optional:** inspect runtime `contentMinSize`/`contentMaxSize`/`aspectRatio`/resize
+  increments and `panel.screen?.visibleFrame` vs `NSScreen.main` (can differ on multi-monitor)
+  (Codex); run an A/B ladder — plain `NSView` → `FirstMouseView` → empty `NSHostingView` → real
+  `ContentView`, same panel subclass/bundle/agent policy throughout — to isolate which exact layer
+  changes drag behavior (Codex); temporarily flip `isMovableByWindowBackground = false` as a
+  diagnostic (both); add `.frame(maxWidth: .infinity, maxHeight: .infinity)` to `ContentView` as a
+  quick sizing-conflict probe (agy).
+- **Skip / out of scope:** autosave-state clearing — low confidence from both, test once but don't
+  treat as a likely culprit.
+
+Per the operator's instruction, **none of this has been tried yet** — paused here for a future
+session.
