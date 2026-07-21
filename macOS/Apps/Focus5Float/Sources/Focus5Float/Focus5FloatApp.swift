@@ -39,6 +39,49 @@ final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 }
 
+// A thin transparent strip pinned to the very top of the panel that drives
+// top-edge resize manually. Needed because `isMovableByWindowBackground` wins
+// hit-testing over the OS's native resize border in that same band on a
+// titled-but-hidden-titlebar panel: dragging near the top either does nothing
+// or silently drags the whole window (which can trigger macOS's snap-to-full-
+// screen window tiling once it nears the screen's top edge) instead of
+// resizing. Overlaying our own drag handler here sidesteps that entirely.
+final class TopEdgeResizeHandle: NSView {
+    weak var targetWindow: NSWindow?
+    private var dragStartMouseLocation: NSPoint?
+    private var dragStartFrame: NSRect?
+
+    // Same reasoning as FirstMouseHostingView: this is a non-activating panel,
+    // so a plain NSView's default (false) would swallow the very first click
+    // as a pure activation event instead of delivering it as a real mouseDown.
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func resetCursorRects() {
+        addCursorRect(bounds, cursor: .resizeUpDown)
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        dragStartMouseLocation = NSEvent.mouseLocation
+        dragStartFrame = targetWindow?.frame
+    }
+
+    override func mouseDragged(with event: NSEvent) {
+        guard let window = targetWindow,
+              let startLocation = dragStartMouseLocation,
+              let startFrame = dragStartFrame else { return }
+        let dy = NSEvent.mouseLocation.y - startLocation.y   // screen coords: up is positive
+        var newFrame = startFrame
+        newFrame.size.height = min(window.maxSize.height, max(window.minSize.height, startFrame.height + dy))
+        newFrame.origin.y = startFrame.origin.y   // keep the bottom edge fixed; only the top moves
+        window.setFrame(newFrame, display: true)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        dragStartMouseLocation = nil
+        dragStartFrame = nil
+    }
+}
+
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var panel: FloatingPanel!
@@ -187,6 +230,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         ))
         hostingView.frame = defaultRect
+        hostingView.autoresizingMask = [.width, .height]
 
         panel = FloatingPanel(
             contentRect: defaultRect,
@@ -213,7 +257,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.standardWindowButton(.miniaturizeButton)?.isHidden = true
         panel.standardWindowButton(.zoomButton)?.isHidden = true
 
-        panel.contentView = hostingView
+        let container = NSView(frame: defaultRect)
+        container.addSubview(hostingView)
+
+        let topResizeHandleHeight: CGFloat = 8
+        let topResizeHandle = TopEdgeResizeHandle(frame: NSRect(
+            x: 0, y: defaultRect.height - topResizeHandleHeight,
+            width: defaultRect.width, height: topResizeHandleHeight
+        ))
+        topResizeHandle.autoresizingMask = [.width, .minYMargin]
+        topResizeHandle.targetWindow = panel
+        container.addSubview(topResizeHandle)
+
+        panel.contentView = container
 
         // Keep the reference width by default but allow one bounded wider state
         // from the in-panel expand action. Height cap tracks the screen's
