@@ -85,6 +85,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         startPolling()
     }
 
+    // Fires on Dock/Launch-Services reopen (e.g. clicking a pinned Dock tile
+    // while already running). The panel is an NSPanel we manually orderOut(),
+    // not a standard miniaturized/hidden window, so AppKit's default reopen
+    // handling has nothing to unhide — bring it forward ourselves.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        if !panel.isVisible {
+            showPanel()
+        }
+        return true
+    }
+
     private func startPolling() {
         pollTimer = Timer.scheduledTimer(withTimeInterval: pollInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.model.refresh() }
@@ -205,9 +216,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.contentView = hostingView
 
         // Keep the reference width by default but allow one bounded wider state
-        // from the in-panel expand action.
+        // from the in-panel expand action. Height cap tracks the screen's
+        // visible frame (already excludes the menu bar) instead of a hardcoded
+        // constant, so the panel can resize all the way up to it on any display.
+        let maxHeight = NSScreen.main?.visibleFrame.height ?? 1200
         panel.minSize = NSSize(width: 340, height: 360)
-        panel.maxSize = NSSize(width: 420, height: 1200)
+        panel.maxSize = NSSize(width: 420, height: maxHeight)
 
         // Frame autosave — bumped so the refreshed width/glass shell takes effect
         // once over any prior narrow saved frame, then persists again.
