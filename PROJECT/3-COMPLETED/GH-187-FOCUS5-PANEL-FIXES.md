@@ -1,12 +1,12 @@
 ---
 gh_issue: 187
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/187
-title: "GH-187 Focus 5 Float: Dock-icon reopen (fixed) + panel can't resize taller (paused, unresolved)"
-status: "Paused — Dock-reopen fixed and shipped; top-edge resize still broken; Codex+agy consult captured, not yet tried"
+title: "GH-187 Focus 5 Float: Dock reopen and panel resizing fixed"
+status: "Complete — Dock reopen and native panel resizing shipped; top visual gap removed; regression coverage added"
 created: 2026-07-21
 updated: 2026-07-21
 doc_type: bugfix
-branch: fix/gh-187-focus5-dock-reopen-and-panel-height
+branch: development
 roadmap_exempt: false
 ---
 
@@ -16,7 +16,7 @@ roadmap_exempt: false
 
 | What was just completed | What's next |
 |---|---|
-| Dock/Launch-Services reopen fix shipped and verified live (hiding the panel, then reactivating the app, brings it back). Panel-height investigation ruled out several hypotheses via a disposable isolation test app but has **not** found the real root cause; the custom top-edge resize handle was found to make native resize *worse* and was reverted. | Pick a debugger-first approach (attach LLDB / Instruments to a real user-driven drag) instead of headless synthetic-event probing, which proved unreliable for simulating held-button drags in this environment. See the "Next steps" section for the concrete remaining hypotheses to test. |
+| Dock/Launch-Services reopen is verified live. The operator confirmed native horizontal and vertical resizing after the artificial height cap was removed. The remaining visual gap was eliminated at the AppKit/SwiftUI boundary: the hosting view now suppresses the hidden titlebar's 28pt safe area and the root shell has no top gutter. A real-panel regression test failed at 28pt before the fix and passes at 0pt after it; the packaged app screenshot is flush and all 53 Swift tests pass. | None. Monitor the geometry log if a future macOS/AppKit change alters resize or safe-area behavior. |
 
 ## Original ask
 
@@ -30,7 +30,7 @@ Two bugs in the Focus 5 Float menu-bar app (`macOS/Apps/Focus5Float`):
 
 **Fix:** added `applicationShouldHandleReopen` to call `showPanel()` when the panel isn't visible. Verified live via unified log (`panel hidden` → `panel shown` after a simulated Dock reopen) and by the operator directly ("1 is good now"). Commit `c75a5f0`.
 
-## Fix 2 — Panel can't resize taller (PAUSED, unresolved)
+## Fix 2 — Panel resizing and top gap (DONE, shipped)
 
 ### Investigation log (chronological, debug-mantra breadcrumbs)
 
@@ -55,29 +55,42 @@ Two bugs in the Focus 5 Float menu-bar app (`macOS/Apps/Focus5Float`):
    - Triggering the full-screen snap only widens it slightly (doesn't grow taller) — consistent with the width-capped-centering behavior seen on the test app.
    - **Can now drag edge to edge, unlike the version with the custom handle.**
 
-   **Conclusion:** the custom `TopEdgeResizeHandle` (step 2) was actively regressing normal native resize/drag behavior rather than fixing it. It has been reverted out of the working tree (uncommitted revert is the current state pending this pause).
+   **Conclusion:** the custom `TopEdgeResizeHandle` (step 2) was actively regressing normal native resize/drag behavior rather than fixing it. It was reverted in `fbf5f58`.
+
+6. **Live-frame inspection isolated the remaining height blocker.** With the installed app running:
+   - Accessibility reported the live panel at position `(-341, 30)`, size `(341, 1415)`.
+   - `NSScreen.main.visibleFrame.height` was `1415`, exactly the value assigned to `panel.maxSize.height`.
+   - The panel was actually on the other 2560×1440 display, whose visible height was `1440`, and its top remained about 30pt below that display's top.
+   - The saved `.v5` frame was also 1415pt tall.
+
+   **Conclusion:** AppKit was honoring the app's explicit maximum. The panel had already reached the 1415pt cap, and `NSScreen.main` described the wrong display for a panel restored/moved onto another screen. Even on one screen, an autosaved frame offset a few points below the visible origin cannot grow its top edge back to the menu bar when maximum height equals the full visible height.
+
+   **Fix:** preserve the intentional 420pt width maximum but restore AppKit's default unbounded frame height (`Float.greatestFiniteMagnitude`). Runtime geometry logging confirms `max={420, 3.402823e+38}` and `contentMax={420, 3.402823e+38}`. The operator then verified both horizontal and vertical native resizing.
+
+7. **Operator verified both horizontal and vertical resizing, but reported the panel still could not visually reach the top.** Post-gesture inspection showed the window at Accessibility `y=25`, exactly the bottom of the main display's 25pt menu bar. The window itself was therefore correctly placed. A cropped screenshot showed the visible glass shell beginning about 34pt inside the window: AppKit's hidden-titlebar safe area was 28pt and the root SwiftUI view added another 6pt on every edge.
+
+   **Final fix:** `FirstMouseHostingView` now reports zero safe-area insets, enforcing the full-size-titlebar contract at the AppKit/SwiftUI boundary, while the root view retains padding only on the horizontal and bottom edges. This lets the visible shell reach the legal menu-bar boundary without placing the actual window underneath system UI. A regression test mounts the real hosting view in the real panel chrome: it failed with the prior 28pt inset, then passed at 0pt after the fix. The installed build and a post-install screenshot confirm the gap is gone.
 
 ### Current code state
 
-- `panel.maxSize` dynamic-height fix (from step 1) — kept, working tree state matches commit `c75a5f0`.
-- `TopEdgeResizeHandle` custom overlay (from step 2, commit `bd6fd1b`) — reverted out of the working tree. **Not yet committed as a revert** — next session should either commit this revert explicitly or `git revert bd6fd1b`.
-- Installed `/Applications/Focus 5 Float.app` currently reflects the reverted (no-handle) build.
+- Dock reopen fix — committed in `c75a5f0`.
+- `TopEdgeResizeHandle` — reverted and committed in `fbf5f58` (the earlier note that this was uncommitted was stale).
+- Final code replaces the screen-derived height maximum with AppKit's default maximum while preserving the 420pt width cap, logs frame/constraint geometry, suppresses the hidden-titlebar safe area in the hosting view, and leaves no top shell gutter.
+- Regression coverage asserts both the unbounded-height/width-cap sizing contract and the real hosting view's zero safe-area inset inside a hidden-titlebar panel.
+- Installed `/Applications/Focus 5 Float.app` contains the fixes. Runtime logging verifies the old height cap is absent, and a screenshot verifies the shell draws to the top window boundary.
 - Disposable isolation app lives at `/private/tmp/.../scratchpad/ResizeTestBar` (session-scoped temp dir, not part of this repo, safe to ignore/lose).
 
-### Root cause: NOT yet isolated
+### Root cause: isolated and fixed
 
-What we know does **not** fully explain the remaining symptom (still can't grow the panel taller by dragging, even without the custom handle, even edge-to-edge width resize now works): the height-specific top-edge growth remains blocked or at least never actually tested to succeed by the operator. The investigation ran out of remaining variables that could be cheaply isolated with headless tooling.
+The screen-derived maximum is the direct blocker in the observed live state. `panel.maxSize.height` was 1415 and the live panel height was already 1415, so no user drag could make it taller. Because the cap came from `NSScreen.main` before/independently of the panel's eventual screen, it was also 25pt shorter than the visible height of the display holding the panel. SwiftUI intrinsic size and autosave may influence layout/placement, but neither is required to explain this failure.
 
-### Next steps (for whoever resumes this)
+### Next steps
 
-1. **Attach a real debugger or Instruments session** to the installed `.app` while a human performs the actual drag gesture (debug-mantra step 2: "debugger first" — this was never done; all investigation so far was source-trace + synthetic-event knob-flipping because a debugger wasn't attached to a live interactive gesture).
-2. Candidate remaining variables not yet isolated:
-   - `panel.setFrameAutosaveName("Focus5FloatPanel.v5")` — a persisted frame from a prior (centered, narrower) session could be fighting a live resize/tiling attempt. Test by clearing the autosave defaults key (`defaults delete me.neochro.Focus5Float NSWindow\ Frame\ Focus5FloatPanel.v5` or similar) before a retest, and by adding the same autosave name to the isolation test app to see if it reproduces the remaining symptom.
-   - SwiftUI `NSHostingView` content (`FirstMouseHostingView`) vs. the isolation app's plain `NSView` — the isolation app never had real SwiftUI content; layer in a trivial SwiftUI view to see if that alone changes drag behavior.
-   - Whether height-only growth (not width) specifically works via the *native* resize border once the handle is gone — this was not explicitly re-confirmed by the operator; only "edge to edge" (which reads as width) and the full-tile-snap behavior were confirmed.
-3. Do not reintroduce a custom resize-handle NSView without confirming (via the debugger, not synthetic events) exactly which region of the window it is being hit-tested against during a real drag — the previous attempt appears to have been receiving events meant for the native background-move/resize path and interfering with it.
+1. No further implementation work is required.
+2. If a future macOS release recreates the gap, inspect the `panel shown` / `panel live resize ended` geometry logs before changing hit-testing.
+3. Do not reintroduce a custom resize-handle view; it already regressed native resize and move behavior.
 
-## Consult — Codex + agy second opinion (2026-07-21, advisory only, not yet tried)
+## Consult — Codex + agy second opinion (2026-07-21, historical)
 
 Ran `/consult` (both models read this doc + `Focus5FloatApp.swift` directly). Full raw transcripts:
 `relay-system/2026-07-21/gh187-panel-resize-124307/gh187-panel-resize.{codex,agy}.md`.
@@ -109,7 +122,7 @@ hypothesis below.
 - The tile-to-center-at-420 behavior is expected given `maxSize.width`, not a separate bug.
 - Frame-autosave state is low-priority, unlikely to actively fight a live resize.
 
-**Sorted, not yet attempted:**
+**Advisory list at the time:**
 - **Blocking (do first):** re-verify with a human, cursor-watching test whether *height-only*
   top-edge resize actually works or fails now that the handle is reverted — our "fixed" read may
   rest on an untested assumption (Codex).
@@ -123,5 +136,24 @@ hypothesis below.
 - **Skip / out of scope:** autosave-state clearing — low confidence from both, test once but don't
   treat as a likely culprit.
 
-Per the operator's instruction, **none of this has been tried yet** — paused here for a future
-session.
+The resumed investigation tested the useful parts of this advice. Runtime inspection disproved an
+active `contentMaxSize` constraint in the final build, confirmed the screen-derived `maxSize` was the
+original hard stop, and isolated the remaining visible gap to the hosting view's titlebar safe area.
+The background-move diagnostic and custom-handle path were unnecessary.
+
+## Verification
+
+- Operator verified Dock/Launch-Services reopen.
+- Operator verified both horizontal and vertical native resizing after the height cap was removed.
+- Runtime log: panel and content maximum heights both equal AppKit's default `Float.greatestFiniteMagnitude`; width remains capped at 420pt.
+- Regression test red/green proof: real hosting view mounted in real hidden-titlebar panel reported 28pt before the boundary fix and 0pt after it.
+- Packaged app rebuilt, ad-hoc signature verified, installed, relaunched, and screenshot-checked at the menu-bar boundary.
+- `swift test`: 53 tests passed, 0 failures.
+
+## Lessons Learned (For Future Agents)
+
+- A window can be correctly positioned while its visible SwiftUI shell is inset; inspect both the AppKit frame and hosting-view safe area before changing resize hit-testing.
+- `NSScreen.main` is not a stable sizing authority for a movable, autosaved multi-display panel. Cap the dimension that is intentionally bounded (width) and leave height at AppKit's default maximum.
+- `.fullSizeContentView` does not make `NSHostingView.safeAreaInsets.top` zero. Enforce that invariant at the hosting boundary and test the real panel chrome.
+- Synthetic held-button drags were unreliable here. Runtime geometry plus one human gesture produced better evidence than a custom event-handling workaround.
+- Custom resize handles are high-risk on native resizable panels because they can intercept the same edge region AppKit uses for move/resize behavior.

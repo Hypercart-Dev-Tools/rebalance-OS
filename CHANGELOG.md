@@ -6,6 +6,11 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.64.1] - 2026-07-21
+
+### Fixed
+- The floating macOS panel now reopens after being hidden, resizes vertically without inheriting a maximum from the wrong display, and draws its visible shell to the menu-bar boundary instead of retaining a hidden-titlebar safe-area gap. Real panel-chrome regression coverage protects both the unbounded-height contract and the zero top inset.
+
 ## [0.64.0] - 2026-07-19
 
 ### Added

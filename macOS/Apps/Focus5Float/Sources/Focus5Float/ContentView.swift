@@ -32,7 +32,13 @@ struct ContentView: View {
                 .strokeBorder(Theme.glassEdge, lineWidth: 0.5)
         }
         .shadow(color: .black.opacity(0.24), radius: 30, x: 0, y: 18)
-        .padding(6)
+        // GH-187 REGRESSION GUARD: no top gutter here. FirstMouseHostingView
+        // suppresses the hidden titlebar's 28pt safe area; adding the old 6pt
+        // all-edge padding back would recreate a visible gap even though the
+        // actual NSPanel frame is correctly flush with the menu bar. Keep only
+        // the side/bottom gutters needed by the glass shadow.
+        .padding(.horizontal, 6)
+        .padding(.bottom, 6)
         .background(Color.clear)
         .overlay(alignment: .bottom) {
             if let banner = model.banner {

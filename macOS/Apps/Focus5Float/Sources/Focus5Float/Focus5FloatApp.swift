@@ -37,10 +37,31 @@ final class FloatingPanel: NSPanel {
 // so buttons fire on the first click over a frontmost fullscreen app.
 final class FirstMouseHostingView<Content: View>: NSHostingView<Content> {
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    // GH-187 REGRESSION GUARD: `.fullSizeContentView` makes the AppKit content
+    // view fill the panel frame, but NSHostingView still inherits the hidden
+    // titlebar's 28pt safe-area inset. If this override is removed, the window
+    // can be flush with the menu bar while the visible SwiftUI shell starts
+    // 28pt lower and looks artificially height-capped. Keep this invariant at
+    // the AppKit/SwiftUI boundary; the regression test mounts this real hosting
+    // view in the real FloatingPanel chrome and asserts a zero top inset.
+    override var safeAreaInsets: NSEdgeInsets { NSEdgeInsets() }
+}
+
+/// Frame-size constraints for the floating panel. Width is intentionally
+/// bounded, but height must retain AppKit's default maximum: a screen-height
+/// cap prevents a slightly off-screen/autosaved panel from growing its top edge
+/// back to the menu bar.
+enum PanelSizing {
+    static let minimum = NSSize(width: 340, height: 360)
+    static let maximum = NSSize(
+        width: 420,
+        height: CGFloat(Float.greatestFiniteMagnitude)
+    )
 }
 
 @MainActor
-final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private var panel: FloatingPanel!
     private var statusItem: NSStatusItem!
     private var contextMenu: NSMenu!
@@ -214,14 +235,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         panel.standardWindowButton(.zoomButton)?.isHidden = true
 
         panel.contentView = hostingView
+        panel.delegate = self
 
-        // Keep the reference width by default but allow one bounded wider state
-        // from the in-panel expand action. Height cap tracks the screen's
-        // visible frame (already excludes the menu bar) instead of a hardcoded
-        // constant, so the panel can resize all the way up to it on any display.
-        let maxHeight = NSScreen.main?.visibleFrame.height ?? 1200
-        panel.minSize = NSSize(width: 340, height: 360)
-        panel.maxSize = NSSize(width: 420, height: maxHeight)
+        // Keep the reference width by default but allow one bounded wider state.
+        // Do not cap height to a screen here: an autosaved frame can be offset a
+        // few points below the visible frame, and a screen-height maximum then
+        // blocks the top edge before it can reach the menu bar.
+        panel.minSize = PanelSizing.minimum
+        panel.maxSize = PanelSizing.maximum
 
         // Frame autosave — bumped so the refreshed width/glass shell takes effect
         // once over any prior narrow saved frame, then persists again.
@@ -249,12 +270,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func showPanel() {
         panel.orderFrontRegardless()   // show WITHOUT activating the app
-        log.info("panel shown")
+        logPanelGeometry("shown")
     }
 
     private func hidePanel() {
         panel.orderOut(nil)
         log.info("panel hidden")
+    }
+
+    func windowDidEndLiveResize(_ notification: Notification) {
+        logPanelGeometry("live resize ended")
+    }
+
+    private func logPanelGeometry(_ event: String) {
+        let frame = NSStringFromRect(panel.frame)
+        let maximum = NSStringFromSize(panel.maxSize)
+        let contentMaximum = NSStringFromSize(panel.contentMaxSize)
+        let screenVisibleFrame = panel.screen.map { NSStringFromRect($0.visibleFrame) } ?? "none"
+        log.info("panel \(event, privacy: .public) frame=\(frame, privacy: .public) max=\(maximum, privacy: .public) contentMax=\(contentMaximum, privacy: .public) screenVisible=\(screenVisibleFrame, privacy: .public)")
     }
 
     // MARK: - Actions

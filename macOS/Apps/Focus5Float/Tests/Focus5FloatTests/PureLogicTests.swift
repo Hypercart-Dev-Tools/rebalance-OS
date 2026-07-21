@@ -6,6 +6,41 @@ import SwiftUI
 /// (`FOCUS5_HEALTHTEST`, `FOCUS5_VSCODETEST`) only smoke-checked by eyeballing
 /// printed output. `swift test` gives these a pass/fail result and CI hookup.
 final class PureLogicTests: XCTestCase {
+    @MainActor
+    func testPanelHostingViewSuppressesHiddenTitlebarSafeArea() {
+        let rect = NSRect(x: 0, y: 0, width: 340, height: 660)
+        let hostingView = FirstMouseHostingView(rootView: Color.clear)
+        hostingView.frame = rect
+
+        let panel = FloatingPanel(
+            contentRect: rect,
+            styleMask: [.titled, .closable, .resizable, .fullSizeContentView, .nonactivatingPanel],
+            backing: .buffered,
+            defer: false
+        )
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.contentView = hostingView
+        panel.contentView?.layoutSubtreeIfNeeded()
+
+        XCTAssertEqual(
+            hostingView.safeAreaInsets.top,
+            0,
+            "The hidden titlebar must not reintroduce a blank strip above the visible panel shell"
+        )
+        XCTAssertEqual(hostingView.safeAreaRect, hostingView.bounds)
+    }
+
+    func testPanelSizingCapsWidthWithoutCappingHeightToCurrentScreen() {
+        XCTAssertEqual(PanelSizing.minimum, NSSize(width: 340, height: 360))
+        XCTAssertEqual(PanelSizing.maximum.width, 420)
+        XCTAssertEqual(
+            PanelSizing.maximum.height,
+            CGFloat(Float.greatestFiniteMagnitude),
+            "Height must retain AppKit's default maximum so an offset autosaved frame can still grow upward"
+        )
+    }
+
     func testRosterHealthTint() {
         XCTAssertEqual(RosterHealth.tint(dirty: 0, total: 5), Theme.diffAdd)     // all clean → green
         XCTAssertEqual(RosterHealth.tint(dirty: 5, total: 5), Theme.diffRemove) // all dirty → red
