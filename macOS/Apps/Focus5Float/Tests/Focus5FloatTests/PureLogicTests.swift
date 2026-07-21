@@ -6,6 +6,39 @@ import SwiftUI
 /// (`FOCUS5_HEALTHTEST`, `FOCUS5_VSCODETEST`) only smoke-checked by eyeballing
 /// printed output. `swift test` gives these a pass/fail result and CI hookup.
 final class PureLogicTests: XCTestCase {
+    func testAppIconKeepsMacOSOpticalMargin() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // Focus5FloatTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // package root
+        let iconURL = packageRoot.appendingPathComponent("Resources/AppIcon.icns")
+
+        let image = try XCTUnwrap(NSImage(contentsOf: iconURL))
+        let tiff = try XCTUnwrap(image.tiffRepresentation)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: tiff))
+        XCTAssertEqual(bitmap.pixelsWide, 1024)
+        XCTAssertEqual(bitmap.pixelsHigh, 1024)
+
+        var minX = bitmap.pixelsWide
+        var minY = bitmap.pixelsHigh
+        var maxX = -1
+        var maxY = -1
+        for y in 0..<bitmap.pixelsHigh {
+            for x in 0..<bitmap.pixelsWide
+            where (bitmap.colorAt(x: x, y: y)?.alphaComponent ?? 0) > 0.01 {
+                minX = min(minX, x)
+                minY = min(minY, y)
+                maxX = max(maxX, x)
+                maxY = max(maxY, y)
+            }
+        }
+
+        // ICON REGRESSION GUARD: macOS does not normalize full-bleed artwork;
+        // without this optical margin Focus 5 looks larger than adjacent icons.
+        XCTAssertEqual(NSRect(x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1),
+                       NSRect(x: 100, y: 100, width: 824, height: 824))
+    }
+
     @MainActor
     func testPanelHostingViewSuppressesHiddenTitlebarSafeArea() {
         let rect = NSRect(x: 0, y: 0, width: 340, height: 660)

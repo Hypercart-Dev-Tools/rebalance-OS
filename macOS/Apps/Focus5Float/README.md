@@ -86,7 +86,10 @@ An icon is included at `Resources/AppIcon.icns` (wired automatically by
 `make-app.sh`). A menu-bar agent has no Dock icon, so it only appears in
 Finder / Spotlight.
 
-To replace the icon: export a new 1024×1024 PNG, convert it to
+To replace the icon: export a new 1024×1024 PNG with the visible artwork inside
+a centered 824×824 region (100 px of transparent margin on every edge). The
+margin is part of the macOS optical-size contract; full-bleed artwork appears
+larger than neighboring Dock and app-switcher icons. Convert the padded PNG to
 `Resources/AppIcon.icns`, and re-run `./make-app.sh`:
 
 ```bash

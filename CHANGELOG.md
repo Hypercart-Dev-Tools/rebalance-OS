@@ -6,6 +6,11 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.64.2] - 2026-07-21
+
+### Fixed
+- The floating macOS app icon now uses the platform-sized transparent margin, so its visual footprint matches neighboring Dock and app-switcher icons instead of appearing oversized.
+
 ## [0.64.1] - 2026-07-21
 
 ### Fixed
