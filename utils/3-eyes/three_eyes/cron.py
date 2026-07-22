@@ -39,9 +39,15 @@ def render_cron_line(job) -> str | None:
 
 
 def render_block(jobs) -> str:
-    """Render the full managed crontab block from the registry."""
+    """Render the full managed crontab block from the registry.
+
+    S8: a ``enabled = false`` job is NOT scheduled — it is skipped here, matching
+    launchd's refusal, so "disabled" prevents installation, not just runtime skip.
+    """
     lines = [BEGIN]
     for job in jobs:
+        if not job.enabled:
+            continue
         line = render_cron_line(job)
         if line:
             lines.append(line)

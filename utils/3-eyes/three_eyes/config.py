@@ -12,7 +12,10 @@ Inert by default. The gate is TRUE only when BOTH hold:
 
 A downstream clone has neither, so it is inert: no network, no ``ollama``, no
 ``gh``, no launchd/cron mutation, no marathon fire. There is nothing to turn off
-because nothing is on.
+because nothing is on. (Precisely: the gate keys off the *effective* runtime.env —
+``config/runtime.env`` by default, or the path in ``THREE_EYES_RUNTIME_ENV``, an
+override that exists only so tests can point at an isolated tmp file. A default
+deployment has neither an enabled file nor that override, so it is inert.)
 
 Two hard overrides force the gate CLOSED regardless of the above — the global
 kill-switch:

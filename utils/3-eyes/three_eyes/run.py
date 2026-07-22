@@ -73,7 +73,9 @@ def _process_emit(job) -> list[dict]:
         _classify_within_budget(job, finding)
     results = routes.route(finding, job.routes)
 
-    all_ok = all(r.get("status") in _OK_STATUSES for r in results) if results else True
+    # S7: empty results means NO route consumed the finding (e.g. a route-less job)
+    # — that is not success. Only delete when at least one route ran and all acked.
+    all_ok = bool(results) and all(r.get("status") in _OK_STATUSES for r in results)
     if all_ok:
         path.unlink(missing_ok=True)
     else:

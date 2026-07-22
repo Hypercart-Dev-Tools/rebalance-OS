@@ -4,8 +4,14 @@ two designated boundary modules.
 Only ``classify.py`` (ollama) and ``routes.py`` (gh) may contain egress
 primitives. Every other ``three_eyes/*.py`` must be egress-free, so "does this
 module talk to the outside world?" is answerable by looking at exactly two files.
-The pattern matches quoted argv tokens and ``urlopen(`` — precise enough not to
-trip on prose/docstrings that merely mention ``gh`` or ``curl``.
+The checks: quoted argv tokens + ``urlopen(`` (regex), network-module imports and
+``os.system``/``os.popen`` and dynamic ``__import__``/``importlib`` (AST).
+
+Honest limit (GH-195 review B5): static analysis cannot catch every conceivable
+bypass — an unlisted network library or a dynamically-assembled argv could evade
+it. The BEHAVIOURAL proof of inertness is ``test_inert_by_default.py``, which
+stubs ``urlopen``/``subprocess``/``gh`` to fail loudly and asserts nothing calls
+them. This guard is defense-in-depth over that, not a substitute for it.
 """
 
 from __future__ import annotations
@@ -71,6 +77,28 @@ def test_no_network_imports_outside_boundary_modules():
         if bad:
             offenders.append(f"{path.name}: imports {sorted(bad)}")
     assert not offenders, "network import outside classify.py/routes.py:\n" + "\n".join(offenders)
+
+
+def test_no_dynamic_import_outside_boundary_modules():
+    """Dynamic imports (`__import__`, `importlib.import_module`) could smuggle a
+    network module past the direct-import check — forbid them outside the boundary."""
+    offenders = []
+    for path in sorted(PKG.glob("*.py")):
+        if path.name in EXEMPT:
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                fn = node.func
+                if isinstance(fn, ast.Name) and fn.id == "__import__":
+                    offenders.append(f"{path.name}:{node.lineno}: __import__()")
+                elif (isinstance(fn, ast.Attribute) and fn.attr in ("import_module", "__import__")
+                      and isinstance(fn.value, ast.Name) and fn.value.id == "importlib"):
+                    offenders.append(f"{path.name}:{node.lineno}: importlib.{fn.attr}()")
+    # breakers.py legitimately loads job_guard by path via importlib.util — that is
+    # a LOCAL module load, not network egress, and uses spec_from_file_location, not
+    # import_module. Assert none of the *network-capable* dynamic forms appear.
+    assert not offenders, "dynamic import outside classify.py/routes.py:\n" + "\n".join(offenders)
 
 
 def test_no_os_system_anywhere():

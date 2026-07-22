@@ -101,6 +101,29 @@ def test_emit_moved_to_deadletter_when_route_fails(activate, monkeypatch):
     assert len(failed) == 1                                 # preserved as evidence
 
 
+def test_zero_route_finding_is_deadlettered_not_deleted(activate):
+    """S7 round-2: a route-less job's finding is preserved, not silently dropped."""
+    activate()
+    job = registry.Job(id="noroute", command="noop", routes=(),
+                       schedule={"launchd": {"StartInterval": 60}})
+    emit = config.state_dir() / "emit"
+    emit.mkdir(parents=True, exist_ok=True)
+    (emit / "noroute.json").write_text(json.dumps({"title": "x", "severity": "warn", "text": "t"}))
+    run._process_emit(job)
+    assert not (emit / "noroute.json").exists()
+    assert list((emit / "failed").glob("noroute.*.json"))     # preserved
+
+
+def test_cron_render_block_skips_disabled_jobs():
+    """S8 round-2: cron does not schedule enabled=false jobs (parity with launchd)."""
+    from three_eyes import cron
+    on = registry.Job(id="on", command="noop", enabled=True, schedule={"cron": {"expr": "*/5 * * * *"}})
+    off = registry.Job(id="off", command="noop", enabled=False, schedule={"cron": {"expr": "*/5 * * * *"}})
+    block = cron.render_block([on, off])
+    assert "run-job.sh on" in block
+    assert "run-job.sh off" not in block
+
+
 def test_emit_deleted_when_all_routes_ok(activate, monkeypatch):
     activate()
     job = registry.load_job("selfcheck")
