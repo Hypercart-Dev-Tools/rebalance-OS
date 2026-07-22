@@ -93,6 +93,15 @@ def test_observe_existing_reads_and_tags(monkeypatch, tmp_path):
 
 # ------------------------------- cron ------------------------------------- #
 
+def test_shim_selects_a_tomllib_capable_python():
+    """Regression: launchd's minimal PATH resolves `python3` to system 3.9 (no
+    tomllib). The shim must SELECT a >=3.11 interpreter, not bare-exec python3."""
+    shim = (config.ROOT / "shims" / "run-job.sh").read_text()
+    assert "import tomllib" in shim, "shim must probe for a tomllib-capable python"
+    assert ".venv/bin/python" in shim, "shim should prefer the repo venv python"
+    assert "exec python3 -m" not in shim, "shim must not bare-exec python3 (may be 3.9)"
+
+
 def test_cron_line_and_block(tmp_path):
     reg = tmp_path / "registry"
     (reg / "jobs.d").mkdir(parents=True)
