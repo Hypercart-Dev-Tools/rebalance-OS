@@ -1,5 +1,11 @@
 # MARATHON.yaml — 2026-07-18 collector health bundle
 #
+# STATUS (added 2026-07-21, doc-hygiene pass): COMPLETE. All 4 phases fired and merged to
+# development via PR #147 ("Collector health bundle: #139 #144 #138 #127 #145 (+#141
+# diagnosed)", merged 2026-07-19T01:32:52Z). This directory sat in 2-WORKING unarchived —
+# no prior status comment claimed otherwise, it just never got moved. Archived to
+# PROJECT/3-COMPLETED/ 2026-07-21.
+#
 # Run:
 #   .xyz/relay-automation/marathon.sh \
 #     --plan PROJECT/2-WORKING/MARATHON-2026-07-18-COLLECTORS/MARATHON.yaml \

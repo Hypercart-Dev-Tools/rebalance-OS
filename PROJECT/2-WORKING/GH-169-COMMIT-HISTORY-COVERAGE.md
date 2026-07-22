@@ -18,8 +18,8 @@ goal: >
 related:
   - PROJECT/1-INBOX/GH-155-DIRECT-COMMIT-SIGNALS.md
   - PROJECT/2-WORKING/GH-146-HEALTH-SIGNAL-ACCURACY.md
-  - PROJECT/2-WORKING/SIGNAL-HEALTH-NUANCE.md
-  - PROJECT/1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md
+  - PROJECT/3-COMPLETED/SIGNAL-HEALTH-NUANCE.md
+  - PROJECT/3-COMPLETED/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md
 non_goals:
   - Ingesting archived third-party repos (deferred from the original #169 framing — the destination
     repo's own commit already carries the provenance).

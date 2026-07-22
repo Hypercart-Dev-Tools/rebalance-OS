@@ -22,8 +22,8 @@ goal: >
 
 ## Plan
 
-- Plan: [MARATHON.yaml](MARATHON.yaml) · Parent doc: [GH-156](../../1-INBOX/GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md)
-- Predecessor: [MARATHON-2026-07-19-CLIO-DURABLE](../../3-COMPLETED/MARATHON-2026-07-19-CLIO-DURABLE/MARATHON.md) (COMPLETE — shipped `clio:id` + conflict reconciliation)
+- Plan: [MARATHON.yaml](MARATHON.yaml) · Parent doc: [GH-156](../GH-156-CRITICAL-CLIO-PROJECTION-RECONCILIATION.md) (paths corrected 2026-07-21 after both docs archived to 3-COMPLETED)
+- Predecessor: [MARATHON-2026-07-19-CLIO-DURABLE](../MARATHON-2026-07-19-CLIO-DURABLE/MARATHON.md) (COMPLETE — shipped `clio:id` + conflict reconciliation)
 
 | Phase | Id | Artifact | Depends on |
 |---|---|---|---|

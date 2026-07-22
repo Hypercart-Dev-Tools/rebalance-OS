@@ -1,6 +1,6 @@
 ---
 title: Pulse dashboard consistency refactor — one timestamp helper, one shared row component
-status: "Working — all 4 phases built, reviewed, and committed on branch marathon/2026-07-17 (2026-07-18). Verified independently: 1415 passed / 15 failed (pre-existing baseline, unrelated files) / 10 skipped; page regenerates; doctor + pdda clean. 2 residual acceptance gaps remain, both OUT of the phases' declared scope — see Acceptance results. Not yet merged; screenshots not yet taken."
+status: "MERGED 2026-07-18 via PR #143 (corrected 2026-07-21 — previously said 'not yet merged', stale). All 4 phases built, reviewed, and committed. Verified independently: 1415 passed / 15 failed (pre-existing baseline, unrelated files) / 10 skipped; page regenerates; doctor + pdda clean. 2 residual acceptance gaps, both OUT of the phases' declared scope — filed as #189. Screenshots were never taken (untracked gap, not re-opened)."
 gh_issue: 135
 created: 2026-07-17
 updated: 2026-07-17
