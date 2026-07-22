@@ -23,6 +23,14 @@ findings="$(printf '%s\n' "$report" | grep -E '^(ERROR|WARN) ' || true)"
 nerr="$(printf '%s\n' "$findings" | grep -c '^ERROR ' 2>/dev/null || true)"
 nwarn="$(printf '%s\n' "$findings" | grep -c '^WARN ' 2>/dev/null || true)"
 
+# Reconciliation drift is the one finding class that ends a unit of work rather than describing one:
+# a doc reached 3-COMPLETED with its issue still open, or a doc declares itself ready to close. A
+# script must never close an issue on its own — that is a human judgment (PDDA is recommend-never-act).
+# So the hook does the one thing a script legitimately can: name the wrap that asks. Without this the
+# operator sees a warn, has no prompt to act, and the drift survives to the next session.
+reconcile="$(printf '%s\n' "$findings" | grep -E 'pdda-check-issue-doc-sync' || true)"
+nrec="$(printf '%s\n' "$reconcile" | grep -c 'pdda-check-issue-doc-sync' 2>/dev/null || true)"
+
 {
   printf '── PDDA doc-health (stop scan) ──\n'
   if [ "${nerr:-0}" -eq 0 ] && [ "${nwarn:-0}" -eq 0 ]; then
@@ -30,6 +38,10 @@ nwarn="$(printf '%s\n' "$findings" | grep -c '^WARN ' 2>/dev/null || true)"
   else
     printf '%s error(s), %s warn(s) — incl. issue-doc-sync against the cached gh-state file:\n' "$nerr" "$nwarn"
     printf '%s\n' "$findings"
+    if [ "${nrec:-0}" -gt 0 ]; then
+      printf '\n%s doc/issue reconciliation finding(s): a unit of work looks finished but is not wrapped.\n' "$nrec"
+      printf 'Run /pdda-eod to reconcile the docs and close the issues (propose-then-confirm; nothing closes without your yes).\n'
+    fi
   fi
 } >&2
 

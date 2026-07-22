@@ -24,17 +24,17 @@ The sentinel may replace **only** the content between these markers after its bo
 This is the durable handoff for the operator even when the GitHub verdict is inconclusive.
 
 <!-- SENTINEL:FINDINGS:START -->
-### Run finding — 2026-07-20 14:37:38 UTC
+### Run finding — 2026-07-21 14:26:00 UTC
 
-- Verdict: 403 recurred — primary (quota)
-- Daily sync: 06:30:06 PT → 07:01:24 PT
-- `sync_outcome`: `"degraded"`
-- `errors`: `[{"scope": "github", "error": "Rate limited fetching /user (primary; remaining=0, retry_after=-)"}]`
-- Rate evidence: `remaining=0 used=5000 retry_after=- reset=1784557695`
-- Hourly github-sync: 06:45:17 PT → 07:33:30 PT, overlap yes, 15 explicit 403s observed
-- Hypothesis (2): killed — Although the jobs overlapped, the rate limit hit by `daily-sync` was a primary quota exhaustion (remaining=0), pointing to total volume or off-box spend (#138) instead of a secondary burst collision.
-- Unknowns: None. The evidence clearly establishes primary quota exhaustion.
-- GitHub report: pending attempt to post to issue #144
+- Verdict: INCONCLUSIVE — daily-sync has no terminal record
+- Daily sync: 06:30:05 PT → missing/no terminal marker (process was still active/hanging after 10-minute bounded check at 07:26 PT)
+- `sync_outcome`: `<none>`
+- `errors`: `<none>`
+- Rate evidence: absent + searched daily_sync_2026-07-21.log and github_sync_2026-07-21.log; type is unknown
+- Hourly github-sync: 06:45:05 PT → missing/no terminal marker, overlap yes, 0 explicit 403s observed
+- Hypothesis (2): still open — The run is unfinished and no terminal record exists; cannot determine if a burst collision occurred.
+- Unknowns: Everything. The log lacks headers or errors because the jobs are hung at `Fetching 10 files`.
+- GitHub report: posted to issue #144
 <!-- SENTINEL:FINDINGS:END -->
 
 **Schedule it for 2026-07-19 at 07:45 PT or later.** That leaves room for a long run, but duration
