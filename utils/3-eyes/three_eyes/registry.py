@@ -123,22 +123,38 @@ def _read_toml(path: Path) -> dict:
         raise RegistryError(f"{path.name}: invalid TOML — {exc}") from exc
 
 
-def load_commands_allow(registry_dir: Path | None = None) -> dict[str, dict]:
-    """The command allowlist: name → {exec, args, description}."""
-    path = (registry_dir or config.REGISTRY_DIR) / "commands.allow"
+def _parse_commands_allow(path: Path, out: dict[str, dict]) -> None:
+    """Merge one commands.allow file into ``out`` (later files override by name)."""
     data = _read_toml(path)
     commands = data.get("commands", data)  # allow either [commands] table or top-level
-    out: dict[str, dict] = {}
     for name, spec in commands.items():
         if not isinstance(spec, dict) or "exec" not in spec:
             raise RegistryError(
-                f"commands.allow: {name!r} must be a table with an 'exec' key"
+                f"{path.name}: {name!r} must be a table with an 'exec' key"
             )
         out[name] = {
             "exec": str(spec["exec"]),
             "args": list(spec.get("args", [])),
             "description": str(spec.get("description", "")),
         }
+
+
+def load_commands_allow(
+    registry_dir: Path | None = None, include_local: bool = True
+) -> dict[str, dict]:
+    """The command allowlist: name → {exec, args, description}.
+
+    ``include_local`` also merges the gitignored ``commands.local.allow`` overlay
+    (machine-specific absolute-path commands). The committed dashboard renders with
+    ``include_local=False`` so it never depends on another machine's local commands.
+    """
+    reg = registry_dir or config.REGISTRY_DIR
+    out: dict[str, dict] = {}
+    _parse_commands_allow(reg / "commands.allow", out)
+    if include_local:
+        local = reg / "commands.local.allow"
+        if local.exists():
+            _parse_commands_allow(local, out)
     return out
 
 
@@ -175,26 +191,35 @@ def _job_from_toml(data: dict, source: Path) -> Job:
     )
 
 
-def load_jobs(registry_dir: Path | None = None) -> list[Job]:
+def load_jobs(registry_dir: Path | None = None, include_local: bool = True) -> list[Job]:
     """Load every ``jobs.d/*.toml`` as a :class:`Job`, sorted by id.
 
     Sorting is what makes the generated dashboard deterministic regardless of
     filesystem ordering — load order must never change the rendered output.
+
+    ``include_local`` also loads the gitignored ``jobs.local.d/*.toml`` overlay
+    (machine-specific jobs). Runtime (run/status/health/catalog) loads them;
+    ``dashboard.render`` passes ``include_local=False`` so the committed DASHBOARD.md
+    stays fleet-portable and never lists another machine's local jobs.
     """
-    jobs_dir = (registry_dir or config.REGISTRY_DIR) / "jobs.d"
+    reg = registry_dir or config.REGISTRY_DIR
+    dirs = [reg / "jobs.d"]
+    if include_local:
+        dirs.append(reg / "jobs.local.d")
     jobs: list[Job] = []
-    if not jobs_dir.exists():
-        return jobs
-    for path in sorted(jobs_dir.glob("*.toml")):
-        data = _read_toml(path)
-        if not data:
+    for jobs_dir in dirs:
+        if not jobs_dir.exists():
             continue
-        jobs.append(_job_from_toml(data, path))
+        for path in sorted(jobs_dir.glob("*.toml")):
+            data = _read_toml(path)
+            if not data:
+                continue
+            jobs.append(_job_from_toml(data, path))
     jobs.sort(key=lambda j: j.id)
     return jobs
 
 
-def validate(registry_dir: Path | None = None) -> list[str]:
+def validate(registry_dir: Path | None = None, include_local: bool = True) -> list[str]:
     """Return a list of human-readable problems. Empty list == valid registry.
 
     Enforced invariants:
@@ -202,16 +227,20 @@ def validate(registry_dir: Path | None = None) -> list[str]:
       * every ``job.command`` is declared in ``commands.allow``,
       * every ``job.route`` is a KNOWN_ROUTE and is configured in ``routes.toml``,
       * every job has a schedule (launchd interval/calendar or a cron expr).
+
+    ``include_local`` validates the machine-local overlay too (so a broken local job
+    is caught at ``validate``/``install`` time). The committed-registry CI check runs
+    with ``include_local=False``.
     """
     registry_dir = registry_dir or config.REGISTRY_DIR
     problems: list[str] = []
 
     try:
-        jobs = load_jobs(registry_dir)
+        jobs = load_jobs(registry_dir, include_local=include_local)
     except RegistryError as exc:
         return [str(exc)]
     try:
-        allow = load_commands_allow(registry_dir)
+        allow = load_commands_allow(registry_dir, include_local=include_local)
     except RegistryError as exc:
         return [str(exc)]
     routes_cfg = load_routes(registry_dir)

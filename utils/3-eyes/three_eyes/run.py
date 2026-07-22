@@ -112,10 +112,15 @@ def run_job(job_id: str, *, log=print) -> int:
     # 3: breaker open → quarantined
     if breaker.is_open(job.id):
         log(f"[3eyes] {job.id} is quarantined (breaker open); skipping")
+        # Throttle (relief posture): the operator was already notified ONCE at the
+        # moment the breaker opened (step 6 below). Re-notifying on every subsequent
+        # skipped run would fire a banner every scheduling tick — a 120s job would
+        # spam one every 2 minutes. While quarantined, keep the evidence in the local
+        # findings log only; `resume` is the operator act that clears it.
         routes.route(
             {"source": job.id, "title": f"{job.id} quarantined", "severity": "warn",
              "summary": "breaker open — skipped run", "text": ""},
-            [r for r in job.routes if r in ("notify", "log-only")] or ["log-only"],
+            ["log-only"],
         )
         return 0
 

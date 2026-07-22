@@ -29,11 +29,10 @@ system = "managed"
 desc = "No-op proving the guarded run → breaker → route loop"
 status = "managed"
 
-[agent."com.local.skill-sync"]
+[agent."com.rebalance-os.3eyes.skill-sync"]
 system = "claude"
-desc = "Claude Skills sync (giant-brains-claude-skills/utils/skill-sync/skill-sync.sh)"
-status = "to-adopt"
-priority = 1
+desc = "Claude Skills sync (SKILL.md LWW between giant-brains-claude-skills ↔ xyz-3-agents-swarm) — ADOPTED into 3-Eyes (GH-195); replaces the retired com.local.skill-sync (was stuck exit 78)."
+status = "managed"
 
 [agent."com.claude.prompt-log-to-md"]
 system = "claude"

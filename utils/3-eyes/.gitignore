@@ -5,3 +5,10 @@ CATALOG.md
 
 # Belt-and-suspenders (also ignored in config/.gitignore): the activation config.
 config/runtime.env
+
+# Machine-local registry overlay — jobs/commands with absolute, machine-specific
+# paths (e.g. adopted cross-repo automations). Runtime reads them; the committed
+# DASHBOARD.md excludes them so it stays fleet-portable. The .example + README are
+# committed to document the mechanism; the real overlay files are per-machine.
+registry/jobs.local.d/*.toml
+registry/commands.local.allow

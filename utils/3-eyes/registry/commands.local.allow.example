@@ -1,0 +1,15 @@
+# Machine-local command allowlist (GH-195) — GITIGNORED overlay.
+#
+# Copy to `commands.local.allow` (no `.example`) and add machine-specific commands
+# whose exec is an ABSOLUTE path outside rebalance-OS (so it can't be committed to
+# the shared `commands.allow`). Merged on top of `commands.allow` at runtime when
+# `include_local=True`; the committed DASHBOARD.md never reads this file.
+#
+# Same schema as commands.allow: each entry needs an `exec`; `args` + `description`
+# are optional. Absolute paths pass through unchanged (only relative paths resolve
+# against the repo root). Adding an entry here is still an operator act.
+
+# [commands.skill-sync]
+# exec = "/bin/bash"
+# args = ["/Users/you/path/to/skill-sync.sh"]
+# description = "Adopted from com.local.skill-sync — bidirectional SKILL.md sync."

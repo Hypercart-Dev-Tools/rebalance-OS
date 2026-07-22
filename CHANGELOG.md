@@ -6,6 +6,35 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.66.0] - 2026-07-22
+
+### Added
+- **3-Eyes — first real adoption + machine-local registry overlay (GH-195).**
+  - **Machine-local overlay** — gitignored `registry/jobs.local.d/*.toml` and
+    `registry/commands.local.allow` let an adopted automation whose command is an
+    *absolute, machine-specific path* (outside rebalance-OS) enter 3-Eyes without
+    leaking that path into the committed registry. Runtime (`run`/`status`/`list`/
+    `health`/`catalog`) reads the overlay (`include_local=True`); the committed,
+    fleet-portable `DASHBOARD.md` renders committed-only (`include_local=False`) so
+    a downstream clone never inherits another machine's jobs. `.example` + a
+    `jobs.local.d/README.md` document the mechanism.
+  - **Adopted `skill-sync`** (the Claude Skills `SKILL.md` LWW sync) as the first
+    managed job. Its ad-hoc `com.local.skill-sync` LaunchAgent had been failing at
+    the launchd layer (`exit 78 EX_CONFIG`, no run since 2026-07-08) though the
+    script itself was healthy; 3-Eyes renders a fresh `com.rebalance-os.3eyes.skill-sync`
+    plist and the stale plist is retired so nothing double-schedules — one move
+    fixes the failure and completes the adoption.
+
+### Changed
+- **3-Eyes notify throttle** — a job that is *already* quarantined now re-routes only
+  to `log-only` on each skipped run instead of re-firing a `notify` banner every
+  scheduling tick (a 120s job would otherwise banner every 2 minutes). The operator
+  is still banner-alerted once, at the moment the breaker opens.
+
+### Tests
+- +8 cases (83 total): machine-local overlay load/exclude/validate/dashboard-isolation
+  and the quarantine re-notify throttle.
+
 ## [0.65.0] - 2026-07-22
 
 ### Added

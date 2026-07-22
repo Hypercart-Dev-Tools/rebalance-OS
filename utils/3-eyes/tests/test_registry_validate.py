@@ -76,8 +76,14 @@ def test_missing_command_key_is_rejected(tmp_path):
 
 
 def test_shipped_registry_is_valid():
-    """The checked-in registry must itself be valid."""
-    assert registry.validate() == []
+    """The checked-in (committed-only) registry must itself be valid."""
+    assert registry.validate(include_local=False) == []
+
+
+def test_full_registry_including_local_is_valid():
+    """Whatever machine-local overlay exists here must ALSO be self-consistent
+    (its jobs' commands resolve in commands.local.allow). No-op where none exists."""
+    assert registry.validate(include_local=True) == []
 
 
 def test_command_allowlist_requires_exec(tmp_path):

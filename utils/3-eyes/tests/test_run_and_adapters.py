@@ -46,6 +46,19 @@ def test_quarantined_job_is_skipped(activate, monkeypatch):
     assert run.run_job("selfcheck") == 0
 
 
+def test_quarantined_skip_does_not_renotify(activate, monkeypatch):
+    """Throttle: a job that is ALREADY quarantined re-routes only to log-only on each
+    skipped run — never `notify`. The operator was banner-alerted once when it opened;
+    re-notifying every scheduling tick (a 120s job → every 2 min) would be spam."""
+    activate()
+    breakers.FailureBreaker().quarantine("selfcheck")
+    seen = []
+    monkeypatch.setattr(routes, "route",
+                        lambda finding, rts, **k: seen.append(list(rts)) or [])
+    run.run_job("selfcheck")
+    assert seen == [["log-only"]]   # exactly one route call, log-only only
+
+
 def test_emitted_finding_is_routed(activate, monkeypatch):
     activate()
     monkeypatch.setattr(breakers, "run_job_command", lambda job: 0)

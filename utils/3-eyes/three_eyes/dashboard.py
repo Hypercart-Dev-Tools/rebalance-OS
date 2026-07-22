@@ -60,8 +60,10 @@ def _fmt_breakers(job) -> str:
 def render(registry_dir: Path | None = None) -> str:
     """Render DASHBOARD.md content deterministically from the registry."""
     registry_dir = registry_dir or config.REGISTRY_DIR
-    jobs = registry.load_jobs(registry_dir)
-    problems = registry.validate(registry_dir)
+    # Committed-only (include_local=False): DASHBOARD.md is the fleet-portable mirror
+    # of the checked-in registry, so a machine-local job never drifts it across clones.
+    jobs = registry.load_jobs(registry_dir, include_local=False)
+    problems = registry.validate(registry_dir, include_local=False)
     fp = _fingerprint(registry_dir)
 
     lines = [

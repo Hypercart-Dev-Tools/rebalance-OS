@@ -39,6 +39,15 @@ REGISTRY_DIR = ROOT / "registry"
 JOBS_DIR = REGISTRY_DIR / "jobs.d"
 COMMANDS_ALLOW = REGISTRY_DIR / "commands.allow"
 ROUTES_TOML = REGISTRY_DIR / "routes.toml"
+
+#: Machine-local registry overlay (GH-195). Jobs/commands that point at absolute,
+#: machine-specific paths (e.g. an automation syncing two of THIS Mac's repos) live
+#: here and are GITIGNORED — runtime (run/status/health/catalog) reads them, but the
+#: committed, fleet-portable DASHBOARD.md deliberately excludes them so a downstream
+#: clone never inherits another machine's paths. This is where an adopted cross-repo
+#: job lands when its command isn't repo-relative.
+JOBS_LOCAL_DIR = REGISTRY_DIR / "jobs.local.d"
+COMMANDS_LOCAL_ALLOW = REGISTRY_DIR / "commands.local.allow"
 CONFIG_DIR = ROOT / "config"
 RUNTIME_ENV = CONFIG_DIR / "runtime.env"
 DASHBOARD = ROOT / "DASHBOARD.md"
