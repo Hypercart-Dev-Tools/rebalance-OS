@@ -24,16 +24,16 @@ The sentinel may replace **only** the content between these markers after its bo
 This is the durable handoff for the operator even when the GitHub verdict is inconclusive.
 
 <!-- SENTINEL:FINDINGS:START -->
-### Run finding — 2026-07-21 14:26:00 UTC
+### Run finding — 2026-07-22 17:34:00 UTC
 
-- Verdict: INCONCLUSIVE — daily-sync has no terminal record
-- Daily sync: 06:30:05 PT → missing/no terminal marker (process was still active/hanging after 10-minute bounded check at 07:26 PT)
-- `sync_outcome`: `<none>`
-- `errors`: `<none>`
-- Rate evidence: absent + searched daily_sync_2026-07-21.log and github_sync_2026-07-21.log; type is unknown
-- Hourly github-sync: 06:45:05 PT → missing/no terminal marker, overlap yes, 0 explicit 403s observed
-- Hypothesis (2): still open — The run is unfinished and no terminal record exists; cannot determine if a burst collision occurred.
-- Unknowns: Everything. The log lacks headers or errors because the jobs are hung at `Fetching 10 files`.
+- Verdict: 403 did not recur in daily-sync
+- Daily sync: 06:30:05 PT → 07:17:01 PT
+- `sync_outcome`: `"complete"`
+- `errors`: `[]`
+- Rate evidence: None (no 403 or rate limit errors occurred)
+- Hourly github-sync: 06:45:06 PT → 06:52:56 PT, overlap yes but it aborted early with a "database is locked" SQLite error, preventing it from bursting network requests.
+- Hypothesis (2): still open — The fact that `daily-sync` succeeded cleanly in the absence of `github-sync`'s overlapping network burst (due to the DB lock abort) provides strong circumstantial evidence for a burst collision, but doesn't explicitly prove it.
+- Unknowns: Whether the 403 would have occurred if `github-sync` hadn't aborted on a database lock.
 - GitHub report: posted to issue #144
 <!-- SENTINEL:FINDINGS:END -->
 
