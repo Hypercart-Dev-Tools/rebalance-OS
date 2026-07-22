@@ -106,3 +106,28 @@ script — it reads the filesystem. Treat `status:`/ROADMAP prose as declared in
 
 - No `pdda.sh` invocation, no PDDA compliance reporting, no ROADMAP prose parsing in shell.
 - No change to HiQS ranking or to `fresh_tag()` logic.
+
+## Adjudication — Codex `/relay-xyz` review (2026-07-22)
+
+Codex (via `consult.sh`, cross-repo read of the whole repo) returned **Changes requested**, all
+findings `file:line`-cited. Adjudicated against GUIDING-PRINCIPLES.md / AGENTS.md — **all accepted**
+(each independently verified; none conflicted with the principles — they strengthen the Attested/
+honest signal bar and P9 verified-done):
+
+- **[Blocker] GNU `stat -f` fallback corrupts output** → accepted. `pdda_mtime` now OS-selects
+  (`case $(uname -s)`: BSD `-f` on Darwin, GNU `-c … | cut` elsewhere) instead of probe-and-fallback.
+- **[Blocker] `ROUTER.md` marker too broad → breaks strict additivity** → accepted. Marker tightened
+  to the PDDA-unique `PROJECT/PDDA.md` only. Verified live: all 6 active PDDA repos carry it (zero
+  coverage lost); a decoy `ROUTER.md`-only repo now correctly emits nothing (smoke-tested).
+- **[Should] `inbox=` counted only `GH-*.md`** → accepted; counts all `1-INBOX/*.md` (symmetric with
+  `working=`, honest label).
+- **[Should] Safety header claimed "only find + git"** → accepted; header now lists the read-only
+  utilities and reaffirms no repo-script execution.
+- **[Should] No executable smoke test** (AGENTS.md:148 mandates "smoke test before feature code") →
+  accepted; added `test-pdda-annotation.sh` (marker present/absent, spaces, mtime format).
+- **[Should] Determinism caveat under-owned mtime→selection/order** → accepted; the whole PDDA block
+  is now explicitly excluded from the git determinism guarantee, in both the collector header and SKILL.md.
+- **[Nit] Full-report diff unstable via `generated_epoch`** → accepted; litmus/smoke compares a single
+  non-PDDA stanza, not the whole report.
+- **5× [Pass]** (glob-empty→0, subshell-only, spaces-safe, placement, no-pdda.sh, no-assoc-arrays) —
+  acknowledged; confirm the core design is sound.

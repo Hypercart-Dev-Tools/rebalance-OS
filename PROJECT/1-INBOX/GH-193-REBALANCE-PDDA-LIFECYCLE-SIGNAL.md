@@ -2,7 +2,7 @@
 gh_issue: 193
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/193
 title: "Skill: rebalance — optional PDDA lifecycle signal (2-WORKING mtimes + ROADMAP) as a third reconciliation axis"
-status: "CAPTURED — intake. Next: plan doc in this INBOX, then /relay-xyz (Codex) QA, then implement collect.sh + SKILL.md and PR to development. Follow-on to GH-190."
+status: "BUILT — implemented on feat/gh-193-pdda-lifecycle-signal. Plan → Codex /relay-xyz review (Changes requested, all findings accepted, see GH-193-PLAN.md §Adjudication) → collect.sh + smoke test + SKILL.md done; bash -n + smoke green, live run confirms 9 PDDA repos annotated and non-PDDA repos byte-identical. Next: PR to development. Follow-on to GH-190."
 created: 2026-07-22
 doc_type: tooling
 effort: 1
@@ -66,15 +66,16 @@ do not assume and rely on." The brief must be identical for non-PDDA repos.
 
 ## Phase 1 — Plan + external QA
 
-- [ ] Sketch the full design to a local plan doc (collector additions + synthesis wording).
-- [ ] `/relay-xyz` review with Codex (accuracy + guardrail adherence + guiding-principles fit).
-- [ ] Adjudicate Codex findings against `GUIDING-PRINCIPLES.md` / `AGENTS.md` / existing patterns.
+- [x] Sketch the full design to a local plan doc (collector additions + synthesis wording). → GH-193-PLAN.md
+- [x] `/relay-xyz` review with Codex (accuracy + guardrail adherence + guiding-principles fit). → Changes requested.
+- [x] Adjudicate Codex findings against `GUIDING-PRINCIPLES.md` / `AGENTS.md` / existing patterns. → all accepted (GH-193-PLAN.md §Adjudication).
 
 ## Phase 2 — Implement
 
-- [ ] `collect.sh`: emit `pdda=`, `inbox=`, `working=`, and newest 2–3 `2-WORKING` basenames+mtimes.
-- [ ] `SKILL.md`: add the optional PDDA-annotation step (advisory, allowed-stale, basename↔branch match).
-- [ ] Validate live: PDDA repos annotated, non-PDDA repos unchanged; `bash -n` clean.
+- [x] `collect.sh`: emit `pdda=`, `inbox=`, `working=`, and newest ≤3 `2-WORKING` basenames+mtimes (marker = `PROJECT/PDDA.md`; OS-selected `pdda_mtime`).
+- [x] `SKILL.md`: add the optional PDDA-annotation legend + Step-3 advisory step (allowed-stale, basename↔branch match, MERGED cleanup cross-check).
+- [x] `test-pdda-annotation.sh`: executable smoke test (AGENTS.md:148) — happy path + additivity + spaces + mtime.
+- [x] Validate live: 9 PDDA repos annotated, non-PDDA repos byte-identical; `bash -n` + smoke green.
 
 ## Phase 3 — Ship
 

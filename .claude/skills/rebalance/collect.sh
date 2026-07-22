@@ -7,13 +7,21 @@
 # reported for every active repo whether or not it has linked worktrees.
 #
 # SAFETY (see WORKTREE-SAFETY.md at repo root):
-#   * READ-ONLY. Runs only: find, git rev-parse/log/status/rev-list/worktree list.
-#   * NEVER rm / mv / prune / gc / --force / branch -D. This script cannot mutate.
+#   * READ-ONLY. Runs only read-only tools: find, git (rev-parse/log/status/
+#     rev-list/worktree list), and read-only text/file utilities (ls, stat, awk,
+#     grep, head, wc, tr, cut, sed, basename). NOTHING here mutates a tree.
+#   * NEVER rm / mv / prune / gc / --force / branch -D, and NEVER executes a
+#     repo-owned script (e.g. pdda.sh): the optional PDDA annotation below only
+#     STATs and LISTs files — it never runs repo tooling.
 #   * Parses `git worktree list --porcelain` (stable API), never the human table.
 #   * No temp files (sandbox-safe); repo list is held in a shell variable.
 #
-# DETERMINISM: same tree state + same window => same report shape. Freshness tags
-# and skip rules are fixed thresholds. Ordering is `sort -u` stable.
+# DETERMINISM: same tree state + same window => same GIT report shape. Freshness
+# tags and skip rules are fixed thresholds; ordering is `sort -u` stable. The
+# optional PDDA annotation (pdda=/inbox=/working=/working_doc lines) is EXCLUDED
+# from this guarantee: it reflects advisory filesystem state (mtime), so a bare
+# touch/checkout can change which docs appear, their order, and their shown time
+# with no git/content change. It never feeds a freshness tag.
 #
 # Usage:
 #   collect.sh [ROOT ...]            # override scan roots (default = dev roots below)
@@ -94,6 +102,16 @@ fresh_tag() {
   if [ "${behind:-0}" -gt 0 ]; then echo "MERGED"; else echo "SYNCED"; fi
 }
 
+# mtime of a file as a stable "YYYY-MM-DD HH:MM" string, for the optional PDDA
+# annotation. macOS ships BSD stat (-f format string); GNU/Linux ships GNU stat
+# (-c format) — and a BSD-style `-f` on GNU means --file-system and would emit
+# garbage, so SELECT the implementation by OS rather than probe-and-fallback.
+# Advisory only (see DETERMINISM note); any failure yields an empty string.
+case "$(uname -s)" in
+  Darwin|*BSD) pdda_mtime() { stat -f '%Sm' -t '%Y-%m-%d %H:%M' "$1" 2>/dev/null; } ;;
+  *)           pdda_mtime() { stat -c '%y' "$1" 2>/dev/null | cut -c1-16; } ;;
+esac
+
 # --- 2. Group by shared object store (git-common-dir) so each worktree set is
 #        reported exactly once, with per-worktree detail.
 #        (bash 3.2 on macOS has no `declare -A`, so dedup via a newline list.) --
@@ -134,6 +152,21 @@ while IFS= read -r repo; do
   primary=$(printf '%s\n' "$wt_pairs" | head -1 | cut -f1)
   echo "## REPO $primary"
   echo "common_dir=$common worktrees=$wt_n"
+
+  # --- optional PDDA lifecycle annotation (structural, advisory; GH-193) -------
+  # Emitted ONLY when the PDDA-unique contract file PROJECT/PDDA.md exists, so a
+  # non-PDDA repo (even one that merely carries a ROUTER.md) stays byte-for-byte
+  # unchanged. Filesystem probes only — never runs pdda.sh or any repo script,
+  # never affects the freshness tag. Order/membership are mtime-derived and thus
+  # advisory (see DETERMINISM). Counts every *.md so the label matches the count.
+  if [ -f "$primary/PROJECT/PDDA.md" ]; then
+    inbox_n=$(ls "$primary"/PROJECT/1-INBOX/*.md 2>/dev/null | grep -c .)
+    working_n=$(ls "$primary"/PROJECT/2-WORKING/*.md 2>/dev/null | grep -c .)
+    echo "  pdda=yes inbox=$inbox_n working=$working_n"
+    ls -t "$primary"/PROJECT/2-WORKING/*.md 2>/dev/null | head -3 | while read -r wd; do
+      echo "    working_doc=$(basename "$wd") mtime=$(pdda_mtime "$wd")"
+    done
+  fi
 
   while IFS=$'\t' read -r wpath wbranch; do
     [ -z "$wpath" ] && continue
