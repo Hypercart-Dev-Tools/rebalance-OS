@@ -25,6 +25,16 @@
     plist and the stale plist is retired so nothing double-schedules — one move
     fixes the failure and completes the adoption.
 
+- **Focus 5 Float — 3-Eyes job-health tile (GH-195).** `GET /focus-5.json`
+  (`src/rebalance/web.py`) now appends ONE synthetic roster card summarizing 3-Eyes
+  fleet job health — a red status dot + `"3-Eyes — N jobs FAILING"` when any
+  catalogued job is failing, healthy otherwise — so the failure signal rides on the
+  panel the operator already watches. It renders through the app's existing dynamic
+  roster (no native-app change; documented in `Focus5Float/CONTRACT.md`). Additive +
+  defensive (never breaks the endpoint), gated on 3-Eyes being active (a downstream/
+  inert clone never shows it), and short-TTL cached so the polled route never spawns
+  `launchctl list` per request. `summary.roster_size` stays repo-only.
+
 ### Changed
 - **3-Eyes notify throttle** — a job that is *already* quarantined now re-routes only
   to `log-only` on each skipped run instead of re-firing a `notify` banner every
