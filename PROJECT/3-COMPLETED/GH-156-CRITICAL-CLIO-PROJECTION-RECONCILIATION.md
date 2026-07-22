@@ -2,7 +2,7 @@
 gh_issue: 156
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/156
 title: "[CRITICAL] CLIO prompt projection silently loses historical entries"
-status: triage
+status: "COMPLETE 2026-07-19 — 3/3 phases fired and merged via PR #176 (2026-07-20). Corrected 2026-07-21: this file previously said 'triage' and ROADMAP.md said 'Not fired', both stale. See PROJECT/2-WORKING/GH-156-CLIO-PROJECTION-MARATHON/MARATHON.md for the phase-by-phase record. One acceptance gap remains (no malformed-source-row test) and repair has never been run against the live '0. Claude Prompts.md' note (operator-supervised step, not yet done as of 2026-07-21) — see 'Out of scope' / MARATHON.md 'What's next'."
 doc_type: pdda-spec
 priority: P0
 effort: 2
@@ -10,7 +10,7 @@ complexity: 3
 risk: 3
 phases: 3
 created: 2026-07-18
-updated: 2026-07-19
+updated: 2026-07-21
 ---
 
 # GH-156 — Critical CLIO prompt-projection loss

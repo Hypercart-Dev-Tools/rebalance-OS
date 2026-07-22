@@ -1,0 +1,115 @@
+# MARATHON.yaml — 2026-07-21 bundle: 4 disjoint Python fixes + the carried-forward Focus5Float
+# resolution-resilience lane (Swift, extracted unchanged from MARATHON-2026-07-07 Lane C).
+#
+# Run:
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-2026-07-21/MARATHON.yaml \
+#     --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k "calendar or daily_report or querier or github_scan or github_client or github_knowledge or semantic_index or index_ops or doctor or pulse_web" -q && (cd macOS/Apps/Focus5Float && swift build 2>&1 | tail -20)' \
+#     --dry-run
+#
+# Triage:  this plan is the output of a doc-hygiene + marathon-triage pass on 2026-07-21 —
+#          see PROJECT/3-COMPLETED/MARATHON-2026-07-07.md's status line for the Lane C provenance.
+# Branch:  not yet cut — this plan has not fired as of 2026-07-21.
+#
+# ---------------------------------------------------------------------------
+# WHY THESE PHASES, IN THIS ORDER
+# ---------------------------------------------------------------------------
+# Write-sets verified against the tree on 2026-07-21, not inferred from issue titles:
+#
+#   p1 (#8)   src/rebalance/ingest/{calendar.py,daily_report.py,querier.py}   <- disjoint
+#   p2 (#171) src/rebalance/ingest/github_knowledge.py, scripts/github_sync.sh <- disjoint
+#   p3 (#167) src/rebalance/ingest/{semantic_index.py,index_ops.py}          <- disjoint
+#   p4 (#189) src/rebalance/doctor.py, scripts/pulse_web.py                  <- disjoint
+#   p5 (—)    macOS/Apps/Focus5Float/Sources/Focus5Float/*  (Swift)          <- disjoint, different toolchain
+#
+# All 5 are mutually disjoint — no depends_on chain. marathon.sh still runs phases ONE AT A TIME
+# in declared order regardless (no wave/parallel/worktree machinery — same as every prior plan in
+# this repo), so the ordering below is for readability, not correctness.
+#
+# ---------------------------------------------------------------------------
+# GATE
+# ---------------------------------------------------------------------------
+# The --pre-advance-cmd above is ONE command for the whole run (same convention as every prior
+# plan here — marathon-drive's per-phase `# gate:` comments below are documentation of intent,
+# not wiring). It combines the Python pytest selector for p1-p4 with a `swift build` for p5 so a
+# Python-lane change can never silently break the Swift build (they're disjoint, so this should
+# always be a no-op check on p1-p4, and the real gate on p5).
+#
+# Do NOT gate on the full `pytest tests/` — the suite carries pre-existing failures unrelated to
+# this plan (see #178, tracked separately, NOT part of this marathon — its file may collide with
+# p1's `querier.py`/related project_inference.py path; verify disjointness before ever combining
+# them in one plan).
+#
+# depends_on is a SCALAR, not a list, if you add one later — `depends_on: [phase-id]` parses as
+# the literal string "[phase-id]" and fails. (Recorded here because it bit the 2026-07-18
+# collectors plan before its first fire.)
+#
+# ---------------------------------------------------------------------------
+# BUILDER / COST
+# ---------------------------------------------------------------------------
+# Builder defaults to `codex` (subscription-billed). Reviewer `agy` per the repo's standing
+# convention (builder and reviewer must be different agent ids). p5 (Swift) has no reviewer
+# swap needed beyond that same rule — same harness, different language.
+
+name: marathon-2026-07-21
+
+phases:
+
+  - id: p1-8-calendar-tz-boundary
+    name: "GH-8: fix remaining timezone day-boundary bugs in calendar queries"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-21/briefs/p1-8-calendar-tz-boundary.md
+    artifact: src/rebalance/ingest/calendar.py
+    turn_timeout_s: 900
+    max_review_rounds: 2
+    # gate: .venv/bin/python -m pytest tests/ -k "calendar or daily_report or querier" -q
+
+  - id: p2-171-sqlite-write-lock
+    name: "GH-171: stop github_sync holding the SQLite write lock across network I/O"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-21/briefs/p2-171-sqlite-write-lock.md
+    artifact: src/rebalance/ingest/github_knowledge.py
+    turn_timeout_s: 1200
+    max_review_rounds: 2
+    # gate: .venv/bin/python -m pytest tests/ -k "github_scan or github_client or github_knowledge" -q
+
+  - id: p3-167-semantic-backfill-gap
+    name: "GH-167: characterize and close the 302-document semantic-index gap"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-21/briefs/p3-167-semantic-backfill-gap.md
+    artifact: src/rebalance/ingest/semantic_index.py
+    turn_timeout_s: 1200
+    max_review_rounds: 2
+    # gate: .venv/bin/python -m pytest tests/ -k "semantic_index or index_ops" -q
+
+  - id: p4-189-gh135-residual-gaps
+    name: "GH-189: close GH-135's 2 residual gaps (health banner + repo-pie labels)"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-21/briefs/p4-189-gh135-residual-gaps.md
+    artifact: src/rebalance/doctor.py
+    turn_timeout_s: 900
+    max_review_rounds: 2
+    # gate: .venv/bin/python -m pytest tests/ -k "doctor or pulse_web" -q
+
+  - id: p5-focus5-resolution-resilience
+    name: "Focus5Float: survive a display-resolution change without a reboot (Phase 1)"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-2026-07-21/briefs/p5-focus5-resolution-resilience.md
+    artifact: macOS/Apps/Focus5Float/Sources/Focus5Float/ContentView.swift
+    turn_timeout_s: 900
+    max_review_rounds: 2
+    # gate: (cd macOS/Apps/Focus5Float && swift build)
+
+# ---------------------------------------------------------------------------
+# DELIBERATELY NOT IN THIS PLAN
+# ---------------------------------------------------------------------------
+# #178 (10 failing tests, auto-promote + project_inference) — real and READY, but
+# project_inference.py may collide with p1's querier.py-adjacent ingest paths. Needs a disjointness
+# check before it's added to any plan alongside p1.
+#
+# #144 remaining scope (github-sync fan-out reduction beyond the client-attribution work already
+# shipped via PR #147) — needs re-scoping against what actually shipped before it's lane-able.
+#
+# #127 remaining 6 sources (content_predicate for vault/calendar/sleuth/apple_reminders/figma/
+# ask_self) — deliberately phased as a future follow-up by its own prior docs; no new urgency
+# signal as of 2026-07-21.

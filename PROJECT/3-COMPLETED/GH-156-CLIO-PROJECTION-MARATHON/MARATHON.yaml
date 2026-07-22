@@ -11,11 +11,14 @@
 # Status doc:   PROJECT/2-WORKING/GH-156-CLIO-PROJECTION-MARATHON/MARATHON.md
 # Predecessor:  PROJECT/3-COMPLETED/MARATHON-2026-07-19-CLIO-DURABLE/ (COMPLETE — shipped clio:id + conflict reconciliation)
 #
-# VERIFIED 2026-07-19 (not fired):
+# VERIFIED 2026-07-19 pre-fire:
 #   preflight ready (exit 0) · all 3 fix_probes `unfixed` · branch_ready=true · dirty=0
 #   dry-run clean: 3/3 phases resolve in depends_on order, briefs render into relay files
 #   gate green at baseline (marker-based extraction, 209 lines, `bash -n` clean)
 #   dry-run phase renders deleted afterwards — stale placeholders; a real fire needs a fresh render
+#
+# FIRED AND COMPLETE 2026-07-19, merged via PR #176 (2026-07-20). This comment previously read
+# "(not fired)" — corrected 2026-07-21, doc-hygiene pass. See MARATHON.md for the real outcome.
 #
 # RUN VENDORED (.xyz/…), not from an external swarm checkout. Rooting verified here:
 # marathon-drive.sh:54 detects the `.xyz` basename and sets ROOT to the consumer repo;

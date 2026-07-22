@@ -7,7 +7,7 @@ updated: 2026-07-18
 branch: marathon/2026-07-17
 supersedes: []
 synthesizes:
-  - PROJECT/2-WORKING/GH-135-PULSE-DASHBOARD-CONSISTENCY.md
+  - PROJECT/3-COMPLETED/GH-135-PULSE-DASHBOARD-CONSISTENCY.md
   - PROJECT/1-INBOX/dashboard-redesign-2026-07-17/claude-code-cleanup-prompt.md
 goal: >
   Redesign the Pulse "Today" dashboard one module per day, against design briefs and

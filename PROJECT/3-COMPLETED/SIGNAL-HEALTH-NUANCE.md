@@ -1,6 +1,6 @@
 ---
 title: Signal-health nuance — stop the collector panel from over-stating urgency
-status: In progress
+status: "MERGED 2026-07-19 via PR #158 (corrected 2026-07-21 — this doc and ROADMAP.md previously said 'in progress'/'next: preflight + run', both stale)"
 created: 2026-07-18
 updated: 2026-07-18
 owner: noel
@@ -23,7 +23,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| Marathon complete — **3/3 phases landed** on `marathon/2026-07-18-signal-health`: p1 #152 (`pulse_sync.sh` pull/reconcile), p2 #146 (`doctor.py` launchd predicate), p3 #153 (`doctor.py`+`health.py` severity buckets). First run escalated p3 on a harness cross-repo bug (fixed: swarm `ddb6c40`, bug filed swarm #248/#249); re-ran clean. Follow-up added the regression tests the marathon skipped (22 tests) + p1 review hardening (reconcile failure is now loud-but-non-fatal so a diverged mirror can't brick publishing). Gate 328 passed. | **Merge review** → PR `marathon/2026-07-18-signal-health` → development. Then the one-time operator reconcile of the live `~/git-pulse-sync` clone (86 ahead/1016 behind). Optional follow-up phase for #146 Root cause A (`daily_sync.sh` transient-error exit code). |
+| **Merged 2026-07-19 via PR #158** ("Signal-health nuance: fix stale-mirror freshness (#152), launchd false-WARN (#146), notices/warnings/errors buckets (#153)"). All 3 phases landed: p1 #152 (`pulse_sync.sh` pull/reconcile), p2 #146 (`doctor.py` launchd predicate), p3 #153 (`doctor.py`+`health.py` severity buckets). First run escalated p3 on a harness cross-repo bug (fixed: swarm `ddb6c40`, bug filed swarm #248/#249); re-ran clean. Follow-up added the regression tests the marathon skipped (22 tests) + p1 review hardening (reconcile failure is now loud-but-non-fatal so a diverged mirror can't brick publishing). Gate 328 passed. | **Operator action, unverified as of 2026-07-21:** the one-time reconcile of the live `~/git-pulse-sync` clone (was 86 ahead/1016 behind as of 2026-07-18) — confirm this was actually run. Optional follow-up phase for #146 Root cause A (`daily_sync.sh` transient-error exit code) remains open. |
 
 ## Table of contents
 
