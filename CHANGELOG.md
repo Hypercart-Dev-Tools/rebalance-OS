@@ -6,6 +6,28 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.65.0] - 2026-07-22
+
+### Added
+- **3-Eyes — unified local job supervisor (GH-195)** in `utils/3-eyes/`. One
+  optional, Python-first system that unifies the three sentinels we run today (XYZ
+  debug flywheel, Cactus Needle PDDA sentinel, Rebalance collector-health) under a
+  single TOML registry, one set of circuit breakers + pressure-relief valves, one
+  generated dashboard, and one way to talk to jobs (CLI + MCP + Claude skills).
+  - **Inert by default** — with no gitignored `config/runtime.env` (or
+    `THREE_EYES_ENABLE!=1`) it is a clean no-op: zero network / ollama / gh /
+    launchd / cron. Proven by `tests/test_inert_by_default.py` (egress primitives
+    stubbed to fail loudly). Two hard kill-switches: `THREE_EYES_ENABLE=0`, PANIC file.
+  - **Registry is the source of truth** — launchd/cron entries render from the TOML;
+    `DASHBOARD.md` is a deterministic generated projection kept honest by
+    `python -m three_eyes.dashboard --check` in CI + a `regen-dashboard` pre-commit hook.
+  - **Safety** — circuit breakers wrap the existing `utils/job_guard.py` (GH-172
+    single-instance flock + memory ceiling) and add a per-job failure breaker;
+    relief valves add daily/per-run LLM budgets, quiet-hours, and backoff. A
+    `commands.allow` allowlist means no free-form command execution.
+  - Egress confined to two boundary modules (`classify.py` ollama, `routes.py` gh),
+    enforced by a static-guard test. 51 pytest cases, wired into CI.
+
 ## [0.64.2] - 2026-07-21
 
 ### Fixed

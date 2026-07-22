@@ -1,0 +1,120 @@
+"""Single-job entrypoint — what launchd/cron actually exec (GH-195).
+
+The one-line ``shims/run-job.sh`` execs ``python3 -m three_eyes.run <job-id>``.
+This module is the gate stack every scheduled run passes through, in order:
+
+  1. **Global halt** — PANIC file / ``THREE_EYES_ENABLE=0`` → do nothing, exit 0.
+  2. **Inert** — not active (no runtime.env) → do nothing, exit 0. This is the
+     observe-first / inert-by-default guarantee at the point of execution.
+  3. **Breaker open** — job quarantined → skip, exit 0.
+  4. **Quiet hours** — inside the window → skip, exit 0.
+  5. **Run** — execute the allowlisted command under the GH-172 single-instance
+     lock + memory ceiling; record success/failure against the failure breaker.
+  6. **Route** — if the command dropped a finding (``<state>/emit/<job>.json``),
+     classify any missing severity and dispatch it to the job's routes.
+
+Exit codes: 0 skipped/ok, 2 config error (unknown job/command), else the guarded
+command's own code (3 instance-conflict, 4 memory-ceiling from job_guard).
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+from . import breakers, classify, config, registry, relief, routes
+
+
+def _emit_path(job_id: str) -> Path:
+    return config.state_dir() / "emit" / f"{job_id}.json"
+
+
+def _process_emit(job) -> list[dict]:
+    """If the job dropped a finding file, classify + route it, then clear it."""
+    path = _emit_path(job.id)
+    try:
+        finding = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    finding.setdefault("source", job.id)
+    if "severity" not in finding:
+        classified = classify.classify(finding.get("text", finding.get("summary", "")))
+        finding["severity"] = classified.get("severity", "info")
+        finding.setdefault("summary", classified.get("summary", ""))
+    results = routes.route(finding, job.routes)
+    try:
+        path.unlink()
+    except OSError:
+        pass
+    return results
+
+
+def run_job(job_id: str, *, log=print) -> int:
+    # 1 + 2: halt / inert — the inert-by-default guarantee at exec time.
+    if breakers.global_halt():
+        log(f"[3eyes] halted (kill-switch); {job_id} not run")
+        return 0
+    if not config.three_eyes_active():
+        log(f"[3eyes] inert (no runtime.env / disabled); {job_id} not run")
+        return 0
+
+    try:
+        job = registry.load_job(job_id)
+    except registry.RegistryError as exc:
+        log(f"[3eyes] {exc}")
+        return 2
+
+    breaker = breakers.FailureBreaker()
+    # 3: breaker open → quarantined
+    if breaker.is_open(job.id):
+        log(f"[3eyes] {job.id} is quarantined (breaker open); skipping")
+        routes.route(
+            {"source": job.id, "title": f"{job.id} quarantined", "severity": "warn",
+             "summary": "breaker open — skipped run", "text": ""},
+            [r for r in job.routes if r in ("notify", "log-only")] or ["log-only"],
+        )
+        return 0
+
+    # 4: quiet hours
+    if relief.in_quiet_hours(job.quiet_hours):
+        log(f"[3eyes] {job.id} inside quiet hours {job.quiet_hours!r}; skipping")
+        return 0
+
+    # 5: resolve + run the allowlisted command under breakers
+    allow = registry.load_commands_allow()
+    if job.command not in allow:
+        log(f"[3eyes] command {job.command!r} not in commands.allow; refusing")
+        return 2
+    spec = allow[job.command]
+    argv = [spec["exec"], *spec["args"]]
+
+    code = breakers.run_guarded(job.id, argv, max_rss_gb=job.max_rss_gb)
+    ok = code == 0
+    opened = breaker.record(job.id, ok, job.trip_after_failures)
+    log(f"[3eyes] {job.id} finished exit={code} ok={ok}"
+        + (" — BREAKER OPENED (quarantined)" if opened else ""))
+
+    # 6: route any finding the command emitted
+    _process_emit(job)
+
+    if opened:
+        routes.route(
+            {"source": job.id, "title": f"{job.id} breaker opened",
+             "severity": "error", "summary": f"{job.trip_after_failures} consecutive failures",
+             "text": ""},
+            [r for r in job.routes if r in ("notify", "log-only", "gh-issue")] or ["log-only"],
+        )
+    return code
+
+
+def main(argv: list[str] | None = None) -> int:
+    argv = list(sys.argv[1:] if argv is None else argv)
+    if not argv:
+        print("usage: python -m three_eyes.run <job-id>", file=sys.stderr)
+        return 2
+    return run_job(argv[0])
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

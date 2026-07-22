@@ -40,7 +40,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| Landscape scoped; three sentinels + reusable rebalance primitives identified; Python-first sketch + phasing drafted; issue #195 filed; **codename 3-Eyes** + 4 gating decisions locked. | Author P0: TOML registry schema + `config.py` inert gate + `dashboard.py` generator (TOML→DASHBOARD on every change) + `launchd-triage` skill. |
+| **Full build landed** in `utils/3-eyes/` (P0–P4): TOML registry + inert gate, breakers (job_guard wrap + failure breaker + kill-switch), relief valves, launchd/cron adapters, classify (gemma4:12b-mlx), routes, generated DASHBOARD.md (+ `--check` in CI + pre-commit hook), CLI, MCP server, `three-eyes` + `launchd-triage` skills. 51 pytest cases green; real guarded run proven end-to-end. On branch `feat/gh-195-3-eyes`. | Codex `/relay-xyz` QA → address findings → PR into `development`. Operator activation (`runtime.env`, `install`) stays a local opt-in. |
 
 ## Decisions locked (2026-07-22)
 

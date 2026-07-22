@@ -1,0 +1,3 @@
+# The activation config is local-only and NEVER committed. Its absence is what
+# keeps a clone inert by default (GH-195). Only runtime.env.example is tracked.
+runtime.env

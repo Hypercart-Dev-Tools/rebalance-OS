@@ -1,0 +1,19 @@
+# 3-Eyes route config (GH-195) — where a job's findings may go.
+#
+# A job may only name routes declared here (log-only is always available). Every
+# route except log-only requires 3-Eyes to be ACTIVE at runtime; an inert clone
+# dispatches nothing. gh-issue is the one true egress.
+
+[routes.log-only]
+description = "Append the finding to a local JSONL log. No egress. Inert-safe."
+
+[routes.notify]
+description = "Local desktop/log notification (macOS osascript). Gated on active."
+
+[routes.pdda-inbox]
+description = "Draft a PROJECT/1-INBOX PDDA capture (provisional; human promotes). Gated."
+inbox = "PROJECT/1-INBOX"
+
+[routes.gh-issue]
+description = "File a GitHub issue via gh. The one true egress. Gated hard."
+repo = "Hypercart-Dev-Tools/rebalance-OS"

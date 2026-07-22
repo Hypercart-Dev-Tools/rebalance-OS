@@ -1,0 +1,234 @@
+"""The TOML registry — the single source of truth for 3-Eyes jobs (GH-195).
+
+Three kinds of file under ``registry/``:
+
+  * ``jobs.d/*.toml``   — one job per file (command, schedule, rules, breakers,
+                          routes, relief).
+  * ``commands.allow``  — the ONLY commands a job may execute, by name. A job that
+                          names a command absent here is a hard validation error;
+                          there is no free-form command execution anywhere.
+  * ``routes.toml``     — the finding sinks a job may target (pdda-inbox, notify,
+                          gh-issue, log-only) and their config.
+
+Parsing is stdlib ``tomllib`` so the launchd run-path needs no install step. The
+registry is authored by hand in TOML; ``DASHBOARD.md`` is a *generated projection*
+of it (see ``dashboard.py``), never the other way round.
+"""
+
+from __future__ import annotations
+
+import tomllib
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from . import config
+
+#: Every finding sink 3-Eyes knows how to dispatch. A job route must be one of
+#: these AND be declared in routes.toml.
+KNOWN_ROUTES = ("pdda-inbox", "notify", "gh-issue", "log-only")
+
+
+class RegistryError(ValueError):
+    """A job/command/route definition is invalid. Message names the offender."""
+
+
+@dataclass(frozen=True)
+class Job:
+    """One scheduled, safety-bounded local job."""
+
+    id: str
+    command: str
+    schedule: dict = field(default_factory=dict)
+    rules: dict = field(default_factory=dict)
+    breakers: dict = field(default_factory=dict)
+    routes: tuple[str, ...] = ()
+    relief: dict = field(default_factory=dict)
+    enabled: bool = True
+    description: str = ""
+    source_path: Path | None = None
+
+    # -- convenience accessors -------------------------------------------- #
+
+    @property
+    def max_rss_gb(self) -> float | None:
+        v = self.breakers.get("max_rss_gb")
+        return float(v) if v is not None else None
+
+    @property
+    def single_instance(self) -> bool:
+        return bool(self.breakers.get("single_instance", True))
+
+    @property
+    def trip_after_failures(self) -> int:
+        return int(self.breakers.get("trip_after_failures", 0) or 0)
+
+    @property
+    def quiet_hours(self) -> str | None:
+        return self.rules.get("quiet_hours")
+
+    def launchd_interval(self) -> int | None:
+        node = self.schedule.get("launchd") or {}
+        v = node.get("StartInterval")
+        return int(v) if v is not None else None
+
+    def launchd_calendar(self) -> dict | None:
+        node = self.schedule.get("launchd") or {}
+        return node.get("StartCalendarInterval")
+
+    def cron_expr(self) -> str | None:
+        node = self.schedule.get("cron") or {}
+        return node.get("expr")
+
+    def schedule_summary(self) -> str:
+        if self.launchd_interval() is not None:
+            return f"launchd every {self.launchd_interval()}s"
+        cal = self.launchd_calendar()
+        if cal:
+            return f"launchd calendar {cal}"
+        if self.cron_expr():
+            return f"cron {self.cron_expr()!r}"
+        return "unscheduled"
+
+
+def _read_toml(path: Path) -> dict:
+    try:
+        with open(path, "rb") as fh:
+            return tomllib.load(fh)
+    except FileNotFoundError:
+        return {}
+    except tomllib.TOMLDecodeError as exc:
+        raise RegistryError(f"{path.name}: invalid TOML — {exc}") from exc
+
+
+def load_commands_allow(registry_dir: Path | None = None) -> dict[str, dict]:
+    """The command allowlist: name → {exec, args, description}."""
+    path = (registry_dir or config.REGISTRY_DIR) / "commands.allow"
+    data = _read_toml(path)
+    commands = data.get("commands", data)  # allow either [commands] table or top-level
+    out: dict[str, dict] = {}
+    for name, spec in commands.items():
+        if not isinstance(spec, dict) or "exec" not in spec:
+            raise RegistryError(
+                f"commands.allow: {name!r} must be a table with an 'exec' key"
+            )
+        out[name] = {
+            "exec": str(spec["exec"]),
+            "args": list(spec.get("args", [])),
+            "description": str(spec.get("description", "")),
+        }
+    return out
+
+
+def load_routes(registry_dir: Path | None = None) -> dict[str, dict]:
+    """Configured finding sinks: name → config table."""
+    path = (registry_dir or config.REGISTRY_DIR) / "routes.toml"
+    data = _read_toml(path)
+    routes = data.get("routes", data)
+    out: dict[str, dict] = {}
+    for name, spec in routes.items():
+        out[name] = dict(spec) if isinstance(spec, dict) else {}
+    return out
+
+
+def _job_from_toml(data: dict, source: Path) -> Job:
+    if "id" not in data:
+        raise RegistryError(f"{source.name}: missing required key 'id'")
+    if "command" not in data:
+        raise RegistryError(f"{source.name}: job {data['id']!r} missing 'command'")
+    routes = data.get("routes", [])
+    if isinstance(routes, str):
+        routes = [routes]
+    return Job(
+        id=str(data["id"]),
+        command=str(data["command"]),
+        schedule=dict(data.get("schedule", {})),
+        rules=dict(data.get("rules", {})),
+        breakers=dict(data.get("breakers", {})),
+        routes=tuple(str(r) for r in routes),
+        relief=dict(data.get("relief", {})),
+        enabled=bool(data.get("enabled", True)),
+        description=str(data.get("description", "")),
+        source_path=source,
+    )
+
+
+def load_jobs(registry_dir: Path | None = None) -> list[Job]:
+    """Load every ``jobs.d/*.toml`` as a :class:`Job`, sorted by id.
+
+    Sorting is what makes the generated dashboard deterministic regardless of
+    filesystem ordering — load order must never change the rendered output.
+    """
+    jobs_dir = (registry_dir or config.REGISTRY_DIR) / "jobs.d"
+    jobs: list[Job] = []
+    if not jobs_dir.exists():
+        return jobs
+    for path in sorted(jobs_dir.glob("*.toml")):
+        data = _read_toml(path)
+        if not data:
+            continue
+        jobs.append(_job_from_toml(data, path))
+    jobs.sort(key=lambda j: j.id)
+    return jobs
+
+
+def validate(registry_dir: Path | None = None) -> list[str]:
+    """Return a list of human-readable problems. Empty list == valid registry.
+
+    Enforced invariants:
+      * job ids are unique,
+      * every ``job.command`` is declared in ``commands.allow``,
+      * every ``job.route`` is a KNOWN_ROUTE and is configured in ``routes.toml``,
+      * every job has a schedule (launchd interval/calendar or a cron expr).
+    """
+    registry_dir = registry_dir or config.REGISTRY_DIR
+    problems: list[str] = []
+
+    try:
+        jobs = load_jobs(registry_dir)
+    except RegistryError as exc:
+        return [str(exc)]
+    try:
+        allow = load_commands_allow(registry_dir)
+    except RegistryError as exc:
+        return [str(exc)]
+    routes_cfg = load_routes(registry_dir)
+
+    seen: set[str] = set()
+    for job in jobs:
+        where = job.source_path.name if job.source_path else job.id
+        if job.id in seen:
+            problems.append(f"{where}: duplicate job id {job.id!r}")
+        seen.add(job.id)
+
+        if job.command not in allow:
+            problems.append(
+                f"{where}: command {job.command!r} is not in commands.allow"
+            )
+
+        for route in job.routes:
+            if route not in KNOWN_ROUTES:
+                problems.append(
+                    f"{where}: unknown route {route!r} "
+                    f"(known: {', '.join(KNOWN_ROUTES)})"
+                )
+            elif route not in routes_cfg and route != "log-only":
+                problems.append(
+                    f"{where}: route {route!r} not configured in routes.toml"
+                )
+
+        if (
+            job.launchd_interval() is None
+            and not job.launchd_calendar()
+            and not job.cron_expr()
+        ):
+            problems.append(f"{where}: job {job.id!r} has no schedule")
+
+    return problems
+
+
+def load_job(job_id: str, registry_dir: Path | None = None) -> Job:
+    """Fetch one job by id, or raise :class:`RegistryError`."""
+    for job in load_jobs(registry_dir):
+        if job.id == job_id:
+            return job
+    raise RegistryError(f"no job with id {job_id!r} in the registry")

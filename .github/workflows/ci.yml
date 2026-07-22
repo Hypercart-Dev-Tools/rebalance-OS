@@ -47,7 +47,13 @@ jobs:
           git config --global init.defaultBranch main
 
       - name: Run tests
-        run: python -m pytest tests/ -q
+        run: python -m pytest tests/ utils/3-eyes/tests -q
+
+      - name: 3-Eyes dashboard is in sync with the registry (GH-195)
+        run: python -m three_eyes.dashboard --check
+        working-directory: utils/3-eyes
+        env:
+          PYTHONPATH: ${{ github.workspace }}/utils/3-eyes
 
       - name: Check for raw datetime parsing (use parse_calendar_dt)
         run: |
