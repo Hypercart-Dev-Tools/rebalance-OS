@@ -40,7 +40,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Full build landed** in `utils/3-eyes/` (P0–P4): TOML registry + inert gate, breakers (job_guard wrap + failure breaker + kill-switch), relief valves, launchd/cron adapters, classify (gemma4:12b-mlx), routes, generated DASHBOARD.md (+ `--check` in CI + pre-commit hook), CLI, MCP server, `three-eyes` + `launchd-triage` skills. 51 pytest cases green; real guarded run proven end-to-end. On branch `feat/gh-195-3-eyes`. | Codex `/relay-xyz` QA → address findings → PR into `development`. Operator activation (`runtime.env`, `install`) stays a local opt-in. |
+| **Full build + 2-round Codex QA landed** on `feat/gh-195-3-eyes`. Build (P0–P4): TOML registry + inert gate, breakers, relief, launchd/cron, classify (gemma4:12b-mlx), routes, generated DASHBOARD.md (+ `--check` CI + pre-commit hook), CLI, MCP, skills. Codex `/relay-xyz` (consult) round 1 → 5 Blockers + 4 Shoulds, all fixed; round 2 → all Blockers + inert-by-default confirmed `[Pass]`, 3 residual Shoulds + Nit fixed. 68 pytest green. Commits `c10f127`, `de4d5b6`. | Operator: open PR to `development` (my call to make on request). Follow-on slice: real collector-health observer (GH-146 log-parsing + known-issue suppression, see below). Operator activation (`runtime.env`, `install`) stays a local opt-in. |
 
 ## Decisions locked (2026-07-22)
 
