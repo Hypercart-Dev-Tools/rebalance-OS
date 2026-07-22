@@ -7,5 +7,8 @@
 # entrypoint. All real logic lives in three_eyes/run.py.
 set -euo pipefail
 here="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"   # .../utils/3-eyes
-cd "$here"
+repo_root="$(cd "$here/../.." && pwd)"                     # rebalance-OS repo root
+# Run FROM the repo root (B4: so a job's relative allowlisted command resolves
+# against the repo, not utils/3-eyes), but keep the package importable.
+cd "$repo_root"
 PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m three_eyes.run "$@"

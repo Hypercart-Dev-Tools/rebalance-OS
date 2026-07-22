@@ -21,7 +21,7 @@ import plistlib
 import subprocess
 from pathlib import Path
 
-from . import config
+from . import config, registry
 
 LABEL_PREFIX = "com.rebalance-os.3eyes."
 LAUNCH_AGENTS_DIR = Path.home() / "Library" / "LaunchAgents"
@@ -128,6 +128,13 @@ def install(job) -> Path:
         raise PermissionError(
             "3-Eyes is inert (no runtime.env / THREE_EYES_ENABLE!=1); refusing to install a launchd agent"
         )
+    problems = registry.validate()
+    if problems:  # S8: never install from an invalid registry
+        raise registry.RegistryError(
+            "refusing to install launchd agent — registry invalid: " + "; ".join(problems)
+        )
+    if not job.enabled:  # S8: don't schedule a disabled job
+        raise registry.RegistryError(f"job {job.id!r} is disabled; refusing to install")
     LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
     (config.state_dir() / "logs").mkdir(parents=True, exist_ok=True)
     path = plist_path(job.id)

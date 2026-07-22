@@ -17,11 +17,11 @@ def test_gate_is_closed_without_runtime_env():
 
 
 def test_run_job_is_a_noop_when_inert(monkeypatch):
-    # Any attempt to actually execute a command would go through breakers.run_guarded.
+    # Any attempt to actually execute a command would go through run_job_command.
     import three_eyes.breakers as breakers
     monkeypatch.setattr(
-        breakers, "run_guarded",
-        lambda *a, **k: pytest.fail("run_guarded called while inert"),
+        breakers, "run_job_command",
+        lambda *a, **k: pytest.fail("run_job_command called while inert"),
     )
     assert run.run_job("selfcheck") == 0
 

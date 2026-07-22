@@ -17,6 +17,7 @@ of it (see ``dashboard.py``), never the other way round.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,6 +27,28 @@ from . import config
 #: Every finding sink 3-Eyes knows how to dispatch. A job route must be one of
 #: these AND be declared in routes.toml.
 KNOWN_ROUTES = ("pdda-inbox", "notify", "gh-issue", "log-only")
+
+#: A job id must be a safe token — it is interpolated into a crontab line and a
+#: launchd label, so anything outside this set is a command-injection vector
+#: (GH-195 review B2). Lowercase alnum with -/./_ separators, must start alnum.
+JOB_ID_RE = re.compile(r"^[a-z0-9][a-z0-9._-]*$")
+
+#: A single crontab field: digits, *, and the , - / operators only. No spaces,
+#: no shell metacharacters, no newlines — so ``expr`` cannot smuggle a command.
+_CRON_FIELD_RE = re.compile(r"^[0-9*/,\-]+$")
+
+
+def cron_expr_problem(expr: str) -> str | None:
+    """Return a problem string if ``expr`` is not a safe 5-field cron spec, else None."""
+    if not isinstance(expr, str) or "\n" in expr or "\r" in expr:
+        return "cron expr must be a single line"
+    fields = expr.split()
+    if len(fields) != 5:
+        return f"cron expr must have exactly 5 fields, got {len(fields)}"
+    for f in fields:
+        if not _CRON_FIELD_RE.match(f):
+            return f"cron field {f!r} has illegal characters (only 0-9 * , - / allowed)"
+    return None
 
 
 class RegistryError(ValueError):
@@ -199,6 +222,18 @@ def validate(registry_dir: Path | None = None) -> list[str]:
         if job.id in seen:
             problems.append(f"{where}: duplicate job id {job.id!r}")
         seen.add(job.id)
+
+        if not JOB_ID_RE.match(job.id):
+            problems.append(
+                f"{where}: unsafe job id {job.id!r} "
+                f"(must match {JOB_ID_RE.pattern} — it becomes a crontab/launchd token)"
+            )
+
+        cron = job.cron_expr()
+        if cron is not None:
+            cp = cron_expr_problem(cron)
+            if cp:
+                problems.append(f"{where}: {cp}")
 
         if job.command not in allow:
             problems.append(

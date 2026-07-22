@@ -16,18 +16,18 @@ def test_active_run_executes_guarded_and_succeeds(activate, monkeypatch):
     activate()
     calls = {}
 
-    def _fake_guard(job_id, argv, **k):
-        calls["argv"] = argv
+    def _fake(job):
+        calls["job"] = job.id
         return 0
 
-    monkeypatch.setattr(breakers, "run_guarded", _fake_guard)
+    monkeypatch.setattr(breakers, "run_job_command", _fake)
     assert run.run_job("selfcheck") == 0
-    assert calls["argv"][0] == "/bin/echo"   # resolved from commands.allow
+    assert calls["job"] == "selfcheck"
 
 
 def test_consecutive_failures_open_the_breaker_and_route(activate, monkeypatch):
     activate()
-    monkeypatch.setattr(breakers, "run_guarded", lambda *a, **k: 1)   # always fail
+    monkeypatch.setattr(breakers, "run_job_command", lambda job: 1)   # always fail
     logged = []
     monkeypatch.setattr(routes, "route", lambda finding, rts, **k: logged.append(finding) or [])
     # selfcheck trip_after_failures = 3
@@ -41,14 +41,14 @@ def test_consecutive_failures_open_the_breaker_and_route(activate, monkeypatch):
 def test_quarantined_job_is_skipped(activate, monkeypatch):
     activate()
     breakers.FailureBreaker().quarantine("selfcheck")
-    monkeypatch.setattr(breakers, "run_guarded",
-                        lambda *a, **k: pytest.fail("ran a quarantined job"))
+    monkeypatch.setattr(breakers, "run_job_command",
+                        lambda job: pytest.fail("ran a quarantined job"))
     assert run.run_job("selfcheck") == 0
 
 
 def test_emitted_finding_is_routed(activate, monkeypatch):
     activate()
-    monkeypatch.setattr(breakers, "run_guarded", lambda *a, **k: 0)
+    monkeypatch.setattr(breakers, "run_job_command", lambda job: 0)
     emit = config.state_dir() / "emit"
     emit.mkdir(parents=True, exist_ok=True)
     (emit / "selfcheck.json").write_text(json.dumps(

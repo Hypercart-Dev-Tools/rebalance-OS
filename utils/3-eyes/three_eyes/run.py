@@ -20,18 +20,49 @@ command's own code (3 instance-conflict, 4 memory-ceiling from job_guard).
 from __future__ import annotations
 
 import json
+import os
 import sys
 from pathlib import Path
 
 from . import breakers, classify, config, registry, relief, routes
 
 
+#: Route results that count as a successful dispatch. Anything else (error,
+#: refused, unknown) means the finding is NOT safely delivered.
+_OK_STATUSES = {"logged", "drafted", "notified", "filed", "dry-run"}
+
+
 def _emit_path(job_id: str) -> Path:
     return config.state_dir() / "emit" / f"{job_id}.json"
 
 
+def _classify_within_budget(job, finding: dict) -> None:
+    """Fill severity via the classifier, but only within the job's LLM budget (B3).
+
+    The stub classifier is free (offline); the real one must reserve budget BEFORE
+    the call, so a job's ``[relief] llm_daily_max / llm_per_run_max`` caps are
+    actually enforced instead of merely declared.
+    """
+    text = finding.get("text", finding.get("summary", ""))
+    if config.classify_stubbed():
+        classified = classify.classify(text)
+    elif relief.budget_for(job, "llm").reserve(1):
+        classified = classify.classify(text)
+    else:
+        finding["severity"] = "info"
+        finding.setdefault("summary", "(classify skipped: LLM budget exhausted)")
+        return
+    finding["severity"] = classified.get("severity", "info")
+    finding.setdefault("summary", classified.get("summary", ""))
+
+
 def _process_emit(job) -> list[dict]:
-    """If the job dropped a finding file, classify + route it, then clear it."""
+    """If the job dropped a finding file, classify + route it.
+
+    S7: the emit file is deleted ONLY when every route acknowledged. If any route
+    failed (e.g. ``gh-issue`` errored), the finding is moved to a dead-letter
+    directory instead of being discarded — verified-success-only, no lost evidence.
+    """
     path = _emit_path(job.id)
     try:
         finding = json.loads(path.read_text())
@@ -39,14 +70,19 @@ def _process_emit(job) -> list[dict]:
         return []
     finding.setdefault("source", job.id)
     if "severity" not in finding:
-        classified = classify.classify(finding.get("text", finding.get("summary", "")))
-        finding["severity"] = classified.get("severity", "info")
-        finding.setdefault("summary", classified.get("summary", ""))
+        _classify_within_budget(job, finding)
     results = routes.route(finding, job.routes)
-    try:
-        path.unlink()
-    except OSError:
-        pass
+
+    all_ok = all(r.get("status") in _OK_STATUSES for r in results) if results else True
+    if all_ok:
+        path.unlink(missing_ok=True)
+    else:
+        dead = config.state_dir() / "emit" / "failed"
+        dead.mkdir(parents=True, exist_ok=True)
+        try:
+            path.replace(dead / f"{job.id}.{os.getpid()}.json")
+        except OSError:
+            pass
     return results
 
 
@@ -65,6 +101,11 @@ def run_job(job_id: str, *, log=print) -> int:
         log(f"[3eyes] {exc}")
         return 2
 
+    # 2b: disabled jobs never run (S8) — enabled=false is an off switch, not decor.
+    if not job.enabled:
+        log(f"[3eyes] {job.id} is disabled (enabled=false); skipping")
+        return 0
+
     breaker = breakers.FailureBreaker()
     # 3: breaker open → quarantined
     if breaker.is_open(job.id):
@@ -81,15 +122,14 @@ def run_job(job_id: str, *, log=print) -> int:
         log(f"[3eyes] {job.id} inside quiet hours {job.quiet_hours!r}; skipping")
         return 0
 
-    # 5: resolve + run the allowlisted command under breakers
-    allow = registry.load_commands_allow()
-    if job.command not in allow:
-        log(f"[3eyes] command {job.command!r} not in commands.allow; refusing")
+    # 5: run the allowlisted command under the guard. run_job_command resolves the
+    # command from commands.allow itself (B1) against REPO_ROOT (B4) — run.py never
+    # constructs a free-form argv.
+    try:
+        code = breakers.run_job_command(job)
+    except registry.RegistryError as exc:
+        log(f"[3eyes] {exc}")
         return 2
-    spec = allow[job.command]
-    argv = [spec["exec"], *spec["args"]]
-
-    code = breakers.run_guarded(job.id, argv, max_rss_gb=job.max_rss_gb)
     ok = code == 0
     opened = breaker.record(job.id, ok, job.trip_after_failures)
     log(f"[3eyes] {job.id} finished exit={code} ok={ok}"

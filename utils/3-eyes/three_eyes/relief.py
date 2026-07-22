@@ -21,7 +21,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from . import config
+from . import breakers, config
 
 
 def _state_path() -> Path:
@@ -35,16 +35,23 @@ def _load() -> dict[str, Any]:
         return {}
 
 
-def _save(state: dict[str, Any]) -> None:
-    path = _state_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(state, indent=2, sort_keys=True))
-    tmp.replace(path)
-
-
 def _today(now: _dt.datetime | None = None) -> str:
     return (now or _dt.datetime.now()).strftime("%Y-%m-%d")
+
+
+def _prune_old_days(state: dict[str, Any], day: str) -> None:
+    """Drop day-buckets older than ``day`` so the file cannot grow unbounded.
+
+    Keys are ``YYYY-MM-DD`` date strings; any well-formed date strictly before
+    today is stale. Non-date keys (defensive) are left untouched.
+    """
+    for key in list(state.keys()):
+        try:
+            _dt.date.fromisoformat(key)
+        except ValueError:
+            continue
+        if key < day:
+            state.pop(key, None)
 
 
 class Budget:
@@ -72,17 +79,38 @@ class Budget:
         return remaining is None or remaining > 0
 
     def spend(self, n: int = 1, now: _dt.datetime | None = None) -> None:
-        """Record ``n`` units spent today (and this run)."""
+        """Record ``n`` units spent today (and this run), flock-guarded."""
         self._run_spent += n
         day = _today(now)
-        state = _load()
-        bucket = state.setdefault(day, {})
-        bucket[self.kind] = int(bucket.get(self.kind, 0)) + n
-        # Prune stale days so the file cannot grow unbounded.
-        for key in list(state.keys()):
-            if key < day and key != self.kind:
-                state.pop(key, None)
-        _save(state)
+        with breakers._locked("budgets"):
+            state = _load()
+            bucket = state.setdefault(day, {})
+            bucket[self.kind] = int(bucket.get(self.kind, 0)) + n
+            _prune_old_days(state, day)
+            breakers._atomic_write(_state_path(), state)
+
+    def reserve(self, n: int = 1, now: _dt.datetime | None = None) -> bool:
+        """Atomically check-and-spend under lock (GH-195 review B3/S6).
+
+        Returns True and records the spend if within both caps, else False and
+        records nothing. This is what the classify path must call BEFORE reaching
+        the model, so the daily/per-run caps are actually enforced rather than
+        merely declared.
+        """
+        if self.per_run_max is not None and self._run_spent >= self.per_run_max:
+            return False
+        day = _today(now)
+        with breakers._locked("budgets"):
+            state = _load()
+            spent = int(state.get(day, {}).get(self.kind, 0))
+            if self.daily_max is not None and spent + n > self.daily_max:
+                return False
+            bucket = state.setdefault(day, {})
+            bucket[self.kind] = spent + n
+            _prune_old_days(state, day)
+            breakers._atomic_write(_state_path(), state)
+        self._run_spent += n
+        return True
 
 
 def _parse_hhmm(text: str) -> int | None:
