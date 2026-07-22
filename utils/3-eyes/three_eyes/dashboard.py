@@ -76,6 +76,9 @@ def render(registry_dir: Path | None = None) -> str:
         f"- **Registry fingerprint:** `{fp}`",
         f"- **Jobs defined:** {len(jobs)}",
         f"- **Registry valid:** {'✅ yes' if not problems else '❌ NO — see below'}",
+        "- **Full machine inventory** (managed + observe-only + to-adopt): see "
+        "[`CATALOG.md`](CATALOG.md) — the hand-curated master list of every automation, until each is "
+        "adopted into this registry.",
         "",
         "> Inert by default: with no `config/runtime.env` (or `THREE_EYES_ENABLE!=1`) "
         "none of these jobs run — 3-Eyes makes zero network / launchd / cron calls. "

@@ -77,7 +77,17 @@ skills/         launchd-triage/ · three-eyes/
 mcp/            server.py
 config/         runtime.env.example (+ gitignored runtime.env)
 tests/          inert-by-default · dashboard-mirror · breaker trips · allowlist · egress static-guard
-DASHBOARD.md    GENERATED mirror of the registry — do not hand-edit
+DASHBOARD.md    GENERATED mirror of the registry (what 3-Eyes MANAGES) — do not hand-edit
+CATALOG.md      hand-curated master list of ALL machine automations (managed + observe-only + to-adopt)
 ```
+
+## Two lists, on purpose
+
+- **`DASHBOARD.md`** — auto-generated, deterministic, CI-`--check`ed mirror of the TOML registry. It
+  shows only what 3-Eyes actively **manages**.
+- **`CATALOG.md`** — the human master inventory of **every** scheduled automation on the machine
+  (Claude Skills sync, XYZ, Rebalance collectors, Cactus Needle, Sleuth, GA4 pulls, git-pulse, …), each
+  tagged managed / observe-only / to-adopt. Refresh its observed rows from `python -m three_eyes observe`.
+  This is the "catalog and unify under one roof" ledger until every automation is adopted into the registry.
 
 Design of record: `PROJECT/1-INBOX/GH-195-UNIFIED-SENTINEL.md`.
