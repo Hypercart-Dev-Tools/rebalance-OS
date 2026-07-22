@@ -1,0 +1,7 @@
+# Machine-specific generated artifacts — NOT committed (Time Machine covers backup).
+# CATALOG.md is rendered from registry/catalog-notes.toml ⋈ this device's live
+# `three_eyes observe`, so it differs per machine. Regenerate: python -m three_eyes catalog --write
+CATALOG.md
+
+# Belt-and-suspenders (also ignored in config/.gitignore): the activation config.
+config/runtime.env

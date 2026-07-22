@@ -57,6 +57,30 @@ def plist_path(job_id: str) -> Path:
     return LAUNCH_AGENTS_DIR / f"{plist_label(job_id)}.plist"
 
 
+def _fmt_interval(n: int) -> str:
+    if n and n % 3600 == 0:
+        return f"every {n // 3600}h"
+    if n and n % 60 == 0:
+        return f"every {n // 60}m"
+    return f"every {n}s"
+
+
+def _fmt_calendar(cal) -> str:
+    """Compact a launchd StartCalendarInterval into a readable schedule string."""
+    def one(entry: dict) -> str:
+        h, m = entry.get("Hour"), entry.get("Minute", 0)
+        return f"daily {h:02d}:{m:02d}" if h is not None else f"hourly :{m:02d}"
+
+    if isinstance(cal, dict):
+        return one(cal)
+    if isinstance(cal, list):
+        if len(cal) == 1:
+            return one(cal[0])
+        has_hour = any("Hour" in e for e in cal)
+        return f"{len(cal)}×/day" if has_hour else f"{len(cal)}×/hour"
+    return "calendar"
+
+
 def _read_plist(path: Path) -> dict | None:
     try:
         with open(path, "rb") as fh:
@@ -84,9 +108,9 @@ def observe_existing() -> list[dict]:
         program = data.get("ProgramArguments", [])
         schedule = "on-demand"
         if "StartInterval" in data:
-            schedule = f"every {data['StartInterval']}s"
+            schedule = _fmt_interval(int(data["StartInterval"]))
         elif "StartCalendarInterval" in data:
-            schedule = f"calendar {data['StartCalendarInterval']}"
+            schedule = _fmt_calendar(data["StartCalendarInterval"])
         out.append(
             {
                 "label": label,

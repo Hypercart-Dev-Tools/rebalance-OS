@@ -7,7 +7,7 @@ One optional, always-safe local job supervisor (GH-195). This file is a generate
 - **Registry fingerprint:** `926ef412446b`
 - **Jobs defined:** 2
 - **Registry valid:** ✅ yes
-- **Full machine inventory** (managed + observe-only + to-adopt): see [`CATALOG.md`](CATALOG.md) — the hand-curated master list of every automation, until each is adopted into this registry.
+- **Full machine inventory** (managed + observe-only + to-adopt): `CATALOG.md` — generated (gitignored, machine-specific) from `registry/catalog-notes.toml`; run `python -m three_eyes catalog --write`. Fleet health: `python -m three_eyes health`.
 
 > Inert by default: with no `config/runtime.env` (or `THREE_EYES_ENABLE!=1`) none of these jobs run — 3-Eyes makes zero network / launchd / cron calls. Live load-state (`loaded right now?`) is a `python -m three_eyes status` query, not shown here.
 

@@ -62,7 +62,7 @@ and `python -m three_eyes.dashboard --check` in CI (fails on drift).
 `python -m three_eyes <cmd>`: `list`, `status`, `validate`, `dry-run <job>`,
 `why <job>`, `pause <job>`, `resume <job>`, `run <job>`, `observe`,
 `sync-dashboard`, `install/uninstall <job>`. There's also a Claude skill
-(`skills/three-eyes/`) and an MCP server (`mcp/server.py`) exposing the same
+(`skills/3-eyes/`) and an MCP server (`mcp/server.py`) exposing the same
 read/pause/resume/dry-run surface, plus a `launchd-triage` skill that inventories
 everything in `~/Library/LaunchAgents` read-only.
 
@@ -73,7 +73,7 @@ three_eyes/     config gate · registry · breakers · relief · launchd · cron
 registry/       jobs.d/*.toml · commands.allow · routes.toml
 shims/          run-job.sh   (the only Bash: one-line launchd/cron → python -m three_eyes.run)
 hooks/          regen-dashboard   (pre-commit: TOML → DASHBOARD.md)
-skills/         launchd-triage/ · three-eyes/
+skills/         launchd-triage/ · 3-eyes/   (Claude skills; /3-eyes = health + catalog + control)
 mcp/            server.py
 config/         runtime.env.example (+ gitignored runtime.env)
 tests/          inert-by-default · dashboard-mirror · breaker trips · allowlist · egress static-guard

@@ -19,7 +19,7 @@ from __future__ import annotations
 import argparse
 import sys
 
-from . import breakers, config, dashboard, launchd, registry, relief, routes, run
+from . import breakers, catalog, config, dashboard, health, launchd, registry, relief, routes, run
 
 
 def _cmd_list(_args) -> int:
@@ -139,6 +139,30 @@ def _cmd_sync_dashboard(_args) -> int:
     return 0
 
 
+def _cmd_catalog(args) -> int:
+    if args.check:
+        d = catalog.drift()
+        if catalog.check() and not d["new"] and not d["removed"]:
+            print("CATALOG.md is current.")
+            return 0
+        print("CATALOG.md is STALE — run `python -m three_eyes catalog --write`.", file=sys.stderr)
+        for lbl in d["new"]:
+            print(f"  + new (unclassified): {lbl}", file=sys.stderr)
+        for lbl in d["removed"]:
+            print(f"  - gone: {lbl}", file=sys.stderr)
+        return 1
+    if args.write:
+        print(f"regenerated {catalog.write()}")
+        return 0
+    print(catalog.render())
+    return 0
+
+
+def _cmd_health(_args) -> int:
+    print(health.format_report())
+    return 0
+
+
 def _cmd_install(args) -> int:
     try:
         job = registry.load_job(args.job)
@@ -177,6 +201,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("validate", help="registry integrity").set_defaults(func=_cmd_validate)
     sub.add_parser("observe", help="read-only LaunchAgent inventory").set_defaults(func=_cmd_observe)
     sub.add_parser("sync-dashboard", help="regenerate DASHBOARD.md").set_defaults(func=_cmd_sync_dashboard)
+    sub.add_parser("health", help="fleet health of all catalogued jobs").set_defaults(func=_cmd_health)
+    cat = sub.add_parser("catalog", help="render/check/refresh CATALOG.md")
+    cat.add_argument("--check", action="store_true", help="exit 1 if CATALOG.md is stale")
+    cat.add_argument("--write", action="store_true", help="regenerate CATALOG.md")
+    cat.set_defaults(func=_cmd_catalog)
     _job_cmd("dry-run", _cmd_dry_run, "what would run (no egress)")
     _job_cmd("why", _cmd_why, "explain a job")
     _job_cmd("pause", _cmd_pause, "quarantine a job")
