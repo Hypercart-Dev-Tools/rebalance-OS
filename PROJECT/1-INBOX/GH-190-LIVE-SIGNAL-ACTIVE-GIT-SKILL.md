@@ -2,7 +2,7 @@
 gh_issue: 190
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/190
 title: "Skill: rebalance live-signal-active-git — morning brief fusing HiQS signal + device-wide git activity"
-status: "Built + validated (162 repos scanned, bash -n clean, freshness tags match reality). Retroactive capture of already-shipped tooling. Remaining: global symlink, /relay-xyz QA with agy, commit on a waived-PR branch."
+status: "SHIPPED — merged to development via PR #191 (CI green). agy /relay-xyz QA closed Approved (added SYNCED tag; fixed zero-commit-repo edge). Global symlink live. Skill dir flattened to .claude/skills/rebalance/ so it registers as /rebalance (was nested one level too deep to be discovered)."
 created: 2026-07-22
 doc_type: tooling
 effort: 1
@@ -59,19 +59,24 @@ just as much "active git" as a repo carrying five linked worktrees.
 
 ## What was built
 
-- `.claude/skills/rebalance/live-signal-active-git/SKILL.md` — the synthesizing skill
+- `.claude/skills/rebalance/SKILL.md` — the synthesizing skill
   (procedure, freshness legend, fixed output structure, guardrails).
-- `.claude/skills/rebalance/live-signal-active-git/collect.sh` — the deterministic, read-only
+- `.claude/skills/rebalance/collect.sh` — the deterministic, read-only
   device-wide git-activity collector.
+
+The skill dir is `.claude/skills/rebalance/` (SKILL.md at depth 1, `name: rebalance`) — a plain
+nested subfolder is NOT a namespace in Claude Code, so the earlier `rebalance/live-signal-active-git/`
+layout registered no skill; flattening is what makes `/rebalance` resolve.
 
 ## Phase 1 — Ship + integrate (this capture)
 
 - [x] Author `collect.sh` (deterministic, read-only, porcelain, trunk-based ahead/behind).
 - [x] Author `SKILL.md` (two-source reconciliation, freshness tags, safety, fixed brief shape).
 - [x] Validate live: 162 repos scanned, `bash -n` clean, tags match manual analysis.
-- [ ] Symlink into the global `~/.claude/skills` so it is available across projects.
-- [ ] `/relay-xyz` QA pass with agy: UX, stated goals, and technical accuracy of the skill files.
-- [ ] Commit on a new branch (operator waived the usual branch → PR flow for this small task).
+- [x] Symlink into the global `~/.claude/skills` so it is available across projects.
+- [x] `/relay-xyz` QA pass with agy: UX, stated goals, and technical accuracy (closed Approved r2).
+- [x] Commit + PR #191 → merged to `development` on CI green.
+- [x] Flatten dir to `.claude/skills/rebalance/` so the skill registers as `/rebalance`.
 
 ## QA checklist (litmus)
 
