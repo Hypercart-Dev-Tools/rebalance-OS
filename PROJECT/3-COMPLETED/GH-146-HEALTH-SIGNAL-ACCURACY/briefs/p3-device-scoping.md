@@ -1,6 +1,6 @@
 ---
 title: "GH-146 P3 — Device-scoped checks stop warning on the wrong device"
-status: "Brief authored; phase not yet run"
+status: "Complete — phase ran and was approved; GH-146 marathon merged 2026-07-19 via PR #151."
 created: 2026-07-18
 updated: 2026-07-18
 owner: noel

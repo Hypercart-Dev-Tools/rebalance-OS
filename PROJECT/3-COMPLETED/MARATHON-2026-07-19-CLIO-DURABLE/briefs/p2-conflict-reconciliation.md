@@ -1,6 +1,6 @@
 ---
 title: "CLIO P2 — conflict-copy reconciliation (full-block, quarantine-not-delete)"
-status: "Brief authored; phase not yet run"
+status: "Complete — phase ran and was approved; marathon completed 2026-07-19."
 created: 2026-07-19
 updated: 2026-07-19
 owner: noel

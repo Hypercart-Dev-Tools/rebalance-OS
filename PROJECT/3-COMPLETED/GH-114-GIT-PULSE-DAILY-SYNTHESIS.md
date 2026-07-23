@@ -2,7 +2,7 @@
 gh_issue: 114
 source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/114
 title: Multi-device Git Pulse daily synthesis → Obsidian vault
-status: Active
+status: "Complete — shipped to development (5c763f8, a3c11fa, 826fde5); utils/git_pulse_daily_synthesis.py and the git-pulse-daily-synthesis skill are live. Issue #114 closed 2026-07-22."
 created: 2026-07-05
 updated: 2026-07-05
 owner: Noel
