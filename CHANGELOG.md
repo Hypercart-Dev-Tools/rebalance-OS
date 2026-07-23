@@ -6,6 +6,24 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.67.2] - 2026-07-22
+
+### Fixed
+- **GH-154 was recorded as unmerged; it shipped on 2026-07-19.** The 0.67.1 pass corrected
+  ROADMAP's stale "Planning — no code written" claim, but replaced it with a second wrong
+  claim — "built and verified, branch unmerged" — by trusting the GH-154 doc's own
+  `status:` field for the merge half while only verifying the build half. `feat/theme-picker`
+  merged to `development` on 2026-07-19 via **PR #163** (tip `613f77b`, merge `0970d3f`);
+  `git merge-base --is-ancestor` confirms it, and the `/settings` route with its preset grid
+  is present in `web.py` on `development`. Corrected in all six places the claim had spread:
+  the GH-154 parent doc's `status:` field and Status table, its five phase briefs, the
+  ROADMAP ledger entry, and the ROADMAP Status table.
+- **Method note.** The 0.67.1 pass verified "is the code built?" with git and took "is it
+  merged?" from prose. A doc's own status field is not evidence about the branch it
+  describes — both halves needed `git`/`gh`. The remaining GH-154 items (legacy-alias
+  retirement, first-paint CDP check, light-theme visual pass) are **post-merge** work, not
+  blockers to a merge.
+
 ## [0.67.1] - 2026-07-22
 
 ### Fixed
@@ -28,10 +46,10 @@
     unmerged". PR #143 merged 2026-07-18 and `09be427` is an ancestor of `development` —
     both verified — so the doc was wrong and ROADMAP was right.
   - `GH-154` was recorded in ROADMAP as "Planning — no code written". P0–P5 are in fact
-    built and verified on `feat/theme-picker` (`35377d7` "P5 verified complete — v1
-    feature-complete"); the branch is unmerged. The effort's blocker is a merge, not a
-    build. This also corrected a line written earlier the same day in the ROADMAP Status
-    table, which had inherited the stale claim.
+    built, verified, and **merged to `development` 2026-07-19 via PR #163**
+    (`feat/theme-picker`, tip `613f77b`) — the `/settings` route and preset grid are live
+    there. See 0.67.2 for the follow-on correction: the first pass at this fix said
+    "built but unmerged", which was also wrong.
 
 ### Notes
 - `owner:` values across `PROJECT/**` are inconsistent — 8 distinct spellings including

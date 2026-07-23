@@ -1,6 +1,6 @@
 ---
 title: "GH-154 P5 — the Settings page (`/settings`)"
-status: "Complete — built and verified on `feat/theme-picker`; branch unmerged"
+status: "Complete — merged to development 2026-07-19 via PR #163"
 created: 2026-07-18
 updated: 2026-07-22
 owner: Noel
@@ -30,7 +30,7 @@ and applies before paint on every route. Your job is the UI that *writes* that r
 
 | What was just completed | What's next |
 |---|---|
-| Phase built and verified on `feat/theme-picker` (parent doc reports P0–P5 complete, v1 feature-complete; worktree `~/wt/theme-picker`). | Nothing phase-local. The branch is **unmerged** — v1 lands with GH-154 as a whole. Runs after P4. |
+| Phase built, verified, and **shipped to `development` 2026-07-19 via PR #163** (`feat/theme-picker`, tip `613f77b`). | Nothing phase-local — this phase is done and merged. Runs after P4. |
 
 ## The contract you must write to
 

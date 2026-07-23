@@ -1,6 +1,6 @@
 ---
 title: Pulse dashboard redesign — master project (one module per day)
-status: "Working — Day 0 (cross-module consistency, GH-135) merged 2026-07-18 via PR #143; Day 1 (Calendar, GH-137) shipped as 09be427, also on development. Remaining modules not started. This doc is the program ledger + the standing invariants each day inherits."
+status: "Working — Days 0-2 all shipped to development: Day 0 (GH-135) merged 2026-07-18 via PR #143, Day 1 (Calendar, GH-137) as 09be427, Day 2 (theme picker, GH-154) merged 2026-07-19 via PR #163. Day 3 onward not started. This doc is the program ledger + the standing invariants each day inherits."
 gh_issue: 136
 owner: Noel
 created: 2026-07-18
@@ -24,7 +24,7 @@ goal: >
 
 | What was just completed | What's next |
 |---|---|
-| **Day 0** (GH-135, cross-module consistency) merged to `development` 2026-07-18 via PR #143, and **Day 1** (GH-137, Calendar day-grid) shipped as `09be427` — both verified on `development`, correcting this doc's earlier "unmerged" claim. Day 0's 2 residual acceptance gaps were split out as [#189](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/189). | **Day 2 is [#154](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154)** (theme colour picker) — P0–P5 built on `feat/theme-picker`, still unmerged. Every module after that is unstarted; each inherits the standing invariants below rather than re-deriving them. #189 is carried as marathon phase `p4-189-gh135-residual-gaps` (planned, not fired). |
+| **Day 0** (GH-135, cross-module consistency) merged to `development` 2026-07-18 via PR #143, and **Day 1** (GH-137, Calendar day-grid) shipped as `09be427` — both verified on `development`, correcting this doc's earlier "unmerged" claim. Day 0's 2 residual acceptance gaps were split out as [#189](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/189). | **Day 2 ([#154](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154), theme colour picker) also shipped** — merged 2026-07-19 via PR #163, with only post-merge polish outstanding. So Days 0–2 are all on `development`, and **Day 3 is the first unstarted module**. Every module after that is unstarted; each inherits the standing invariants below rather than re-deriving them. #189 is carried as marathon phase `p4-189-gh135-residual-gaps` (planned, not fired). |
 
 ## Contents
 - [Why a master doc](#why-a-master-doc)
@@ -105,9 +105,9 @@ module to the list as it lands.
 
 | Day | Module | Issue | Doc | State |
 |---|---|---|---|---|
-| 00 | Cross-module consistency (timestamps, shared row, headers) | [#135](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/135) | [GH-135](GH-135-PULSE-DASHBOARD-CONSISTENCY.md) | Complete, unmerged |
-| 01 | Calendar | [#137](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/137) | this file | Complete, unmerged |
-| 02 | Theme color picker (cross-cutting: tokenizes all pages) | [#154](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154) | [GH-154](GH-154-THEME-COLOR-PICKER.md) | Planning |
+| 00 | Cross-module consistency (timestamps, shared row, headers) | [#135](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/135) | [GH-135](GH-135-PULSE-DASHBOARD-CONSISTENCY.md) | Shipped — merged 2026-07-18 (PR #143) |
+| 01 | Calendar | [#137](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/137) | this file | Shipped — `09be427` on `development` |
+| 02 | Theme color picker (cross-cutting: tokenizes all pages) | [#154](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154) | [GH-154](GH-154-THEME-COLOR-PICKER.md) | Shipped — merged 2026-07-19 (PR #163); post-merge polish open |
 | — | Today's Goals (3 columns) | — | — | Not started |
 | — | What's Next | — | — | Not started |
 | — | Recent GitHub activity | — | — | Not started |
