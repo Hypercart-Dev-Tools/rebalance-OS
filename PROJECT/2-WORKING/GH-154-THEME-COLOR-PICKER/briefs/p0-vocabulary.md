@@ -1,3 +1,18 @@
+---
+title: "GH-154 P0 — token vocabulary, the full `:root`, and the rename"
+status: "Complete — built and verified on `feat/theme-picker`; branch unmerged"
+created: 2026-07-18
+updated: 2026-07-22
+owner: Noel
+gh_issue: 154
+roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Establish the ~10-token colour
+  vocabulary (7 settable + 3 derived) and expand the single 12-property `:root` in
+  `web_components.py` to carry it, so the later tokenize phases have one name-set to move
+  onto. Behaviour-preserving by construction: this phase changes no rendered output.
+---
+
 # Phase 0 — Vocabulary, full `:root`, and the rename
 
 Part of **GH-154**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154
@@ -7,6 +22,12 @@ Runs **solo**; p1/p2/p3 all depend on it. **Artifacts: `src/rebalance/web_compon
 Read `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md` first — especially the token vocabulary
 section and decisions D1/D2/D3. Read `PROJECT/2-WORKING/GH-136-DASHBOARD-REDESIGN.md` for the 10
 standing invariants. **This phase changes no behavior.**
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase built and verified on `feat/theme-picker` (parent doc reports P0–P5 complete, v1 feature-complete; worktree `~/wt/theme-picker`). | Nothing phase-local. The branch is **unmerged** — v1 lands with GH-154 as a whole. Solo phase; p1/p2/p3 all depend on it. |
 
 ## What exists today
 

@@ -1,3 +1,18 @@
+---
+title: "GH-154 P5 — the Settings page (`/settings`)"
+status: "Complete — built and verified on `feat/theme-picker`; branch unmerged"
+created: 2026-07-18
+updated: 2026-07-22
+owner: Noel
+gh_issue: 154
+roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Ship Settings → Color theme:
+  4 presets plus Custom over the 7 settable tokens, with live preview. Theming is
+  client-side (pre-paint inline script + `localStorage`) because `/` is a static build
+  artifact and cannot be re-rendered server-side.
+---
+
 # Phase 5 — The Settings page (`/settings`)
 
 Part of **GH-154**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154
@@ -10,6 +25,12 @@ Design source: `PROJECT/1-INBOX/dashboard-redesign-2026-07-18/Settings Theme.dc.
 **P4 is already built and working — do not rebuild it.** The runtime exists in
 `src/rebalance/web_components.py` as `RB_THEME_BOOTSTRAP_JS`: it reads the record, derives tier-2,
 and applies before paint on every route. Your job is the UI that *writes* that record.
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase built and verified on `feat/theme-picker` (parent doc reports P0–P5 complete, v1 feature-complete; worktree `~/wt/theme-picker`). | Nothing phase-local. The branch is **unmerged** — v1 lands with GH-154 as a whole. Runs after P4. |
 
 ## The contract you must write to
 

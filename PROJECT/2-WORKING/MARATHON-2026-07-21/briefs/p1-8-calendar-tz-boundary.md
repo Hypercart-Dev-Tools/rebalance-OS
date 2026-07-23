@@ -6,6 +6,11 @@ updated: 2026-07-21
 owner: noel
 gh_issue: 8
 roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Stop calendar queries from
+  splitting days on the wrong boundary: Google returns offset-bearing timestamps that
+  `sync_calendar()` stores raw, so `DATE(start_time)` filters slice on UTC and mis-bucket
+  events near midnight local.
 ---
 
 # Phase 1 — fix remaining timezone day-boundary bugs in calendar queries
@@ -13,6 +18,12 @@ roadmap_exempt: true
 Part of **GH-8**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/8
 Disjoint from every other phase in this marathon. **Artifact:** `src/rebalance/ingest/calendar.py`,
 `src/rebalance/ingest/daily_report.py`, `src/rebalance/ingest/querier.py`.
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Brief authored 2026-07-21 for parent GH-8; marathon plan is `PROJECT/2-WORKING/MARATHON-2026-07-21/MARATHON.md` | **Not fired.** Execute as marathon phase `p1-8-calendar-tz-boundary`; disjoint write-set, so it may run in any wave. |
 
 ## The problem
 

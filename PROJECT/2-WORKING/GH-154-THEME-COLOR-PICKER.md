@@ -2,9 +2,9 @@
 title: Web app theme color picker — tokenize the UI CSS, then ship Settings → Color theme
 status: "Working — P0–P5 complete and verified; v1 feature-complete. Worktree ~/wt/theme-picker on branch feat/theme-picker, unmerged. Remaining: legacy-alias retirement, true first-paint (CDP) check, and the operator visual pass on the light theme."
 gh_issue: 154
-owner: noelsaw1
+owner: Noel
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-22
 branch: feat/theme-picker
 supersedes: []
 synthesizes:
@@ -18,6 +18,12 @@ goal: >
 ---
 
 # Theme color picker (GH-154)
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| **P0–P5 built and verified — v1 feature-complete.** The token vocabulary + full `:root` (P0), all three Python-embedded stylesheets tokenized (P1 shell, P2 `web.py`, P3 `PAGE_CSS`), and Settings → Color theme shipped (P5, incl. pinning Settings to the bottom-left nav and dropping the import-time nav monkey-patch, `613f77b`). Lives in worktree `~/wt/theme-picker` on `feat/theme-picker`. | **The branch is unmerged — merging it is the next action.** Three items remain open behind it: legacy-alias retirement, a true first-paint (CDP) check, and the operator visual pass on the light theme. |
 
 ## Contents
 - [Answering the framing question](#answering-the-framing-question)

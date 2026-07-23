@@ -6,6 +6,41 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.67.1] - 2026-07-22
+
+### Fixed
+- **PDDA doc hygiene: 30 errors → 0.** The deterministic suite now passes clean across
+  frontmatter, status-table, hardcoded-paths, roadmap, roadmap-coverage, changelog,
+  releases, and governance.
+  - **5 GH-154 phase briefs** had no YAML frontmatter at all — added the required
+    contract (`title`/`status`/`created`/`updated`/`owner`/`goal`) plus `gh_issue`,
+    `roadmap_exempt: true`, and a `## Status` table, matching the GH-146 brief precedent.
+  - **5 MARATHON-2026-07-21 phase briefs** were missing `goal` and a `## Status` table.
+  - **GH-136** was missing `owner` and a `## Status` table.
+  - **GH-169** carried an absolute `/Users/...` path inside a lessons note; reworded to a
+    repo-relative description that keeps the lesson.
+  - **GH-155** (closed 2026-07-19) was an unparked `1-INBOX` capture; now has a ROADMAP
+    queue entry recording that GH-169 absorbed its remaining scope.
+
+### Changed
+- **Two stale claims corrected against evidence, not prose.**
+  - `GH-136`'s frontmatter said Day 0/Day 1 were "complete on branch marathon/2026-07-17,
+    unmerged". PR #143 merged 2026-07-18 and `09be427` is an ancestor of `development` —
+    both verified — so the doc was wrong and ROADMAP was right.
+  - `GH-154` was recorded in ROADMAP as "Planning — no code written". P0–P5 are in fact
+    built and verified on `feat/theme-picker` (`35377d7` "P5 verified complete — v1
+    feature-complete"); the branch is unmerged. The effort's blocker is a merge, not a
+    build. This also corrected a line written earlier the same day in the ROADMAP Status
+    table, which had inherited the stale claim.
+
+### Notes
+- `owner:` values across `PROJECT/**` are inconsistent — 8 distinct spellings including
+  `noel`, `Noel`, `Noel Saw`, `noel@neochro.me`, plus the template placeholder
+  `Name or agent` and a stray `GitHub Copilot`. Docs touched here use `Noel`. Normalizing
+  the rest is deliberately left as a separate, opt-in sweep.
+- `issue-doc-sync` warns rose 15 → 20 as newly-frontmattered briefs became eligible for
+  comparison against live GitHub issue state. Warn-only by design.
+
 ## [0.67.0] - 2026-07-22
 
 ### Fixed

@@ -7,6 +7,10 @@ owner: noel
 related:
   - PROJECT/2-WORKING/FOCUS5-RESOLUTION-CHANGE-RESILIENCE.md
 roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Let the Focus5Float panel
+  survive a mid-session display-resolution or arrangement change without a reboot, by
+  re-clamping its autosaved frame into the new `visibleFrame`. Phase 1 scope only.
 ---
 
 # Phase 5 — Focus5Float: survive a display-resolution change without a reboot (Phase 1 only)
@@ -17,6 +21,12 @@ predates the issue-per-lane convention and was never fired as part of MARATHON-2
 Disjoint from every other phase in this marathon — **different toolchain (Swift/macOS), different
 write surface.** **Artifact:** `macOS/Apps/Focus5Float/Sources/Focus5Float/Focus5FloatApp.swift`,
 `.../ContentView.swift`, `.../SelfTest.swift`.
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Brief authored 2026-07-21 for parent FOCUS5-RESOLUTION-CHANGE-RESILIENCE; marathon plan is `PROJECT/2-WORKING/MARATHON-2026-07-21/MARATHON.md` | **Not fired.** Execute as marathon phase `p5-focus5-resolution-resilience`; disjoint write-set, so it may run in any wave. |
 
 ## The problem
 

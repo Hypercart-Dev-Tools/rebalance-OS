@@ -1,3 +1,17 @@
+---
+title: "GH-154 P1 — tokenize the shared shell"
+status: "Complete — built and verified on `feat/theme-picker`; branch unmerged"
+created: 2026-07-18
+updated: 2026-07-22
+owner: Noel
+gh_issue: 154
+roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Move the shared shell's colour
+  literals in `web_components.py` onto the P0 token vocabulary, so `render_shell()` — the
+  single chokepoint covering all four live routes — is themeable without touching callers.
+---
+
 # Phase 1 — Tokenize the shared shell
 
 Part of **GH-154**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154
@@ -6,6 +20,12 @@ Independent of p2 and p3 (no shared files); runs after p0. **Artifact: `src/reba
 Depends on p0, which already defined the full `:root` vocabulary. Read
 `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md` (token vocabulary section) and the
 `RB_TOKENS_CSS` docstring p0 wrote — that docstring is the authoritative token list.
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase built and verified on `feat/theme-picker` (parent doc reports P0–P5 complete, v1 feature-complete; worktree `~/wt/theme-picker`). | Nothing phase-local. The branch is **unmerged** — v1 lands with GH-154 as a whole. Runs after p0; disjoint from p2 and p3 (no shared files). |
 
 ## The task
 
