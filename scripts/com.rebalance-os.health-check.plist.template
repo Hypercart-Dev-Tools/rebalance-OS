@@ -23,7 +23,7 @@
     <dict>
         <!-- GitHub token is in the rebalance config, but add it here too
              so launchd's minimal environment can find it if needed. -->
-        <!-- <key>ANTHROPIC_API_KEY</key><string>sk-ant-...</string> -->
+        <!-- <key>GEMINI_API_KEY</key><string>AIzaSy...</string> -->
     </dict>
 
     <key>StandardOutPath</key>

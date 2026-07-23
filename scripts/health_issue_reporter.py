@@ -400,20 +400,46 @@ def _strip_code_fence(text: str) -> str:
     return text
 
 
-def _triage_anthropic(user_msg: str, model: str, api_key: str | None) -> dict:
-    try:
-        import anthropic  # noqa: PLC0415
-    except ImportError:
-        print("  [llm-triage] anthropic not installed; try: pip install anthropic", file=sys.stderr)
+def _triage_gemini(user_msg: str, model: str, api_key: str | None) -> dict:
+    import json as _json
+    import urllib.request
+    
+    if not api_key:
+        print("  [llm-triage] GEMINI_API_KEY is not set", file=sys.stderr)
         return {}
-    client = anthropic.Anthropic(api_key=api_key) if api_key else anthropic.Anthropic()
-    msg = client.messages.create(
-        model=model or "claude-haiku-4-5-20251001",
-        max_tokens=256,
-        system=_TRIAGE_SYSTEM,
-        messages=[{"role": "user", "content": user_msg}],
+        
+    model = model or "gemini-3.5-flash"
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    
+    body = _json.dumps({
+        "systemInstruction": {"parts": [{"text": _TRIAGE_SYSTEM}]},
+        "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
+        "generationConfig": {"maxOutputTokens": 256, "responseMimeType": "application/json"}
+    }).encode()
+    
+    req = urllib.request.Request(
+        url, data=body,
+        headers={"content-type": "application/json"},
+        method="POST",
     )
-    raw = _strip_code_fence(msg.content[0].text)
+    
+    try:
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = _json.loads(resp.read().decode())
+    except Exception as exc:
+        print(f"  [llm-triage] gemini api error: {exc}", file=sys.stderr)
+        return {}
+        
+    candidates = payload.get("candidates") or []
+    if not candidates:
+        return {}
+        
+    content = candidates[0].get("content") or {}
+    parts = content.get("parts") or []
+    if not parts:
+        return {}
+        
+    raw = parts[0].get("text", "").strip()
     try:
         return json.loads(raw)
     except json.JSONDecodeError as exc:
@@ -441,7 +467,7 @@ def _triage_openai_compat(user_msg: str, base_url: str, model: str, api_key: str
 
 def llm_triage(
     check: dict,
-    provider: str = "anthropic",
+    provider: str = "gemini",
     model: str = "",
     base_url: str = "",
     api_key: str | None = None,
@@ -462,8 +488,10 @@ def llm_triage(
                 return _FALLBACK
             result = _triage_openai_compat(user_msg, resolved_url, resolved_model, resolved_key)
         else:
+            from rebalance.ingest.config import get_gemini_api_key
             resolved_model = model or os.environ.get("HEALTH_LLM_MODEL", "")
-            result = _triage_anthropic(user_msg, resolved_model, api_key)
+            resolved_key = api_key or get_gemini_api_key()
+            result = _triage_gemini(user_msg, resolved_model, resolved_key)
 
         if isinstance(result, dict) and result:
             return result.get("decision", "file"), result.get("reason", "")
@@ -505,8 +533,8 @@ def main() -> int:
                         help="Close issues whose checks have recovered")
     parser.add_argument("--llm-triage", action="store_true",
                         help="Ask an LLM whether each finding is worth filing")
-    parser.add_argument("--llm-provider", default="anthropic",
-                        choices=["anthropic", "openai-compat"])
+    parser.add_argument("--llm-provider", default="gemini",
+                        choices=["gemini", "openai-compat"])
     parser.add_argument("--llm-model", default="", metavar="MODEL")
     parser.add_argument("--llm-base-url", default="", metavar="URL")
     parser.add_argument("--llm-daily-limit", type=int, default=8, metavar="N",
@@ -542,10 +570,11 @@ def main() -> int:
         if disabled:
             run_log.add_cb("CB-1: HEALTH_LLM_DISABLE")
             print("  [CB-1] HEALTH_LLM_DISABLE=1 — LLM triage will be skipped")
-        # Anthropic key check (fail early with a clear message)
-        if args.llm_provider == "anthropic" and not os.environ.get("ANTHROPIC_API_KEY"):
-            print("\n  Warning: ANTHROPIC_API_KEY is not set.")
-            print("  Set it with:  export ANTHROPIC_API_KEY=<your-key>")
+        # Gemini key check (fail early with a clear message)
+        from rebalance.ingest.config import get_gemini_api_key
+        if args.llm_provider == "gemini" and not get_gemini_api_key():
+            print("\n  Warning: GEMINI_API_KEY is not set.")
+            print("  Set it with:  export GEMINI_API_KEY=<your-key>")
             print("  LLM triage will degrade gracefully to 'file' for all checks.\n")
     print(f"  dry-run:          {'yes' if args.dry_run else 'no'}")
     print(f"  log:              {LOG_FILE.relative_to(_REPO_ROOT)}")

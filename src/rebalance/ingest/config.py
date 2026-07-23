@@ -1414,9 +1414,7 @@ def set_sync_subdir(subdir: str) -> None:
 # LLM API keys
 # ---------------------------------------------------------------------------
 
-def get_anthropic_api_key() -> str | None:
-    """Return the Anthropic API key from the environment, or None if absent."""
-    return os.environ.get("ANTHROPIC_API_KEY")
+
 
 
 def get_gemini_api_key() -> str | None:
