@@ -68,6 +68,10 @@ class Job:
     relief: dict = field(default_factory=dict)
     enabled: bool = True
     description: str = ""
+    #: Legacy launchd labels this job REPLACES. Adoption means one emitter, not two:
+    #: install refuses while any of these is still loaded, so a managed job can never
+    #: silently run alongside the ad-hoc agent it supersedes.
+    supersedes: tuple[str, ...] = ()
     source_path: Path | None = None
 
     # -- convenience accessors -------------------------------------------- #
@@ -177,6 +181,9 @@ def _job_from_toml(data: dict, source: Path) -> Job:
     routes = data.get("routes", [])
     if isinstance(routes, str):
         routes = [routes]
+    supersedes = data.get("supersedes", [])
+    if isinstance(supersedes, str):
+        supersedes = [supersedes]
     return Job(
         id=str(data["id"]),
         command=str(data["command"]),
@@ -187,6 +194,7 @@ def _job_from_toml(data: dict, source: Path) -> Job:
         relief=dict(data.get("relief", {})),
         enabled=bool(data.get("enabled", True)),
         description=str(data.get("description", "")),
+        supersedes=tuple(str(s) for s in supersedes),
         source_path=source,
     )
 

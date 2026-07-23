@@ -12,6 +12,12 @@ description = "Watch ingest freshness across GitHub / Slack-Sleuth / Gmail / Goo
 enabled = true
 routes = ["pdda-inbox", "notify"]
 
+# The ad-hoc agents this job replaces. Both currently run scripts/health_issue_reporter.py,
+# which files GitHub health issues — so installing this job while they are still loaded would
+# stand up a SECOND emitter and reproduce the duplicate-issue defect that #139 was closed by
+# deleting. `install` refuses until they are retired.
+supersedes = ["com.rebalance-os.health-check", "com.rebalance-os.health-check-triage"]
+
 [schedule.launchd]
 StartInterval = 1800
 

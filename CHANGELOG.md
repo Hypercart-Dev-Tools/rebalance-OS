@@ -6,6 +6,58 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.67.0] - 2026-07-22
+
+### Fixed
+- **3-Eyes fleet health called a running server "failing" (GH-195, GH-146 bug class).**
+  `health.py` read only the *status* column of `launchctl list` and ignored the *PID*
+  column, so `com.rebalance-os.pulse-server` — alive on PID 35845 — reported
+  `FAIL(exit -15)` because a *previous* instance had been SIGTERMed by a restart. Since
+  restarting the pulse-server is a routine operation, the fleet showed a permanent
+  phantom failure. Liveness now comes from the PID column: a job with a live PID is
+  `ok`, and the prior exit code is still surfaced (`running; prior exit -15`) rather
+  than hidden. This is the same misread `doctor._check_launchd` was fixed for in
+  GH-146, reproduced in 3-Eyes' own health module.
+- **A health probe that could not run reported a confident answer.** Inside a sandboxed
+  shell `launchctl list` exits 1 with no output; `_launchctl_list()` never checked
+  `returncode`, so it returned `{}` and every catalogued job fell through to
+  `not-loaded` — "0 ok · 0 FAILING · 29 not-loaded", indistinguishable from a real
+  dormant fleet. It now raises `LaunchctlUnavailable`, and `scan()` reports a distinct
+  `unknown` state with the reason attached.
+- **The Focus 5 Float tile rendered an unreadable fleet as green.** Because the tile
+  keyed on `failing == 0`, an unavailable probe produced the card *"3-Eyes — all jobs
+  OK"* on the operator's primary panel while nothing at all was known. It now renders
+  *"3-Eyes — job health UNKNOWN"* with `is_dirty` set, so an unreadable fleet looks
+  like it needs attention instead of a clean bill of health.
+
+### Added
+- **Adoption guard: `supersedes` (GH-195).** A registry job may now declare the legacy
+  launchd labels it replaces, and `install` refuses while any of them is still loaded.
+  `collector-health` declares `com.rebalance-os.health-check` and
+  `health-check-triage`; both run `scripts/health_issue_reporter.py`, so installing it
+  against the live incumbents would have stood up a *second* GitHub-issue emitter and
+  reproduced the duplicate-issue defect that #139 was closed by deleting. The check is
+  **fail-closed** — only a positive `not-loaded` clears the gate, so an unreadable
+  probe blocks the install rather than waving it through.
+
+### Tests
+- +10 cases (93 total): PID-beats-prior-SIGTERM liveness, `unknown`-not-healthy on an
+  unreachable probe, non-zero-exit raises rather than returning empty, PID/status
+  column parsing, `supersedes` parsing/defaults, the shipped `collector-health`
+  declaration, and four install-guard cases including the fail-closed `unknown` path
+  and a no-probe-when-empty assertion.
+
+### Operational
+- The three `com.neochro.ga-pull-*` agents (binoid/bloomz/bounce) were **booted out and
+  disabled** on the Mac Studio. They had failed on all 85 runs since 2026-04-24 with
+  `ModuleNotFoundError: No module named 'wpdbtk'` — a `sys.path` problem, not a missing
+  package (the script is invoked by absolute path, so the repo-root package is
+  invisible; `WorkingDirectory` does not put CWD on `sys.path`). Tracked in
+  [BinoidCBD/LTVera-Pandas#70](https://github.com/BinoidCBD/LTVera-Pandas/issues/70);
+  plists and logs were left in place, and `launchctl enable` reverses it.
+- Fleet health after both fixes: **25 ok · 0 FAILING · 4 not-loaded** (was reported as
+  24 ok · 4 FAILING · 1 not-loaded, of which 1 was a phantom).
+
 ## [0.66.0] - 2026-07-22
 
 ### Added
@@ -44,6 +96,20 @@
 ### Tests
 - +8 cases (83 total): machine-local overlay load/exclude/validate/dashboard-isolation
   and the quarantine re-notify throttle.
+
+### Operational status
+- **3-Eyes is now ACTIVE on Noel's Mac Studio** — this is a device-local activation, not
+  a repo default: it rides the gitignored `config/runtime.env`, so every other clone stays
+  inert. It manages `com.rebalance-os.3eyes.skill-sync` (plus the `selfcheck` demo job),
+  the stale ad-hoc `com.local.skill-sync` LaunchAgent is retired, and the Focus 5 Float
+  fleet-health tile is live. The committed `collector-health` job is registered but not
+  yet installed; everything else in the catalog is observed, not managed.
+- **Continuity check:** `cd utils/3-eyes && PYTHONPATH=$PWD python3 -m three_eyes status`.
+  **Deactivate on a device:** remove/edit `config/runtime.env` (or `THREE_EYES_ENABLE=0`);
+  **retire a managed plist:** `python -m three_eyes uninstall <job>`.
+- **Known quirk:** `three_eyes health` shells out to `launchctl list`, which a sandboxed
+  shell blocks — it then reports *every* job `not-loaded`. Re-run it unsandboxed before
+  concluding anything about fleet health.
 
 ## [0.65.0] - 2026-07-22
 

@@ -61,7 +61,7 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 - Registry: `{vault_path}/Projects/00-project-registry.md`
 - Config: `temp/rbos.config` (gitignored, repo root)
 - Database: resolved from `REBALANCE_DB` env var (set in `.vscode/mcp.json`)
-- Architecture docs: `PROJECT.md`, `MCP.md`
+- Architecture docs: `ARCHITECTURE.md`, `MCP.md`, `PROJECT/PDDA.md`
 
 **Background refresh.** A launchd job (`com.rebalance-os.daily-sync`) runs [scripts/daily_sync.sh](scripts/daily_sync.sh) at 6:30 AM daily and on boot. The script invokes the same `refresh_index(scope=["all"])` orchestration, so the cron and the MCP tool share one code path. If the index looks stale, check `temp/logs/daily_sync_YYYY-MM-DD.log` before manually re-running.
 
@@ -96,7 +96,7 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 > For the *why* behind these rules, see [GUIDING-PRINCIPLES.md](./GUIDING-PRINCIPLES.md).
 
 - Code: DRY, SOLID; balance maintainability, performance, secure. Comply with framework security best practices.
-- **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document state diagram in code comments or `/docs/state-machine.md`.
+- **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document the state diagram in code comments, or in the owning `PROJECT/**` doc.
 - **Contracts**: Designate single writer per contract/schema (API response shape, DB record structure, queue message format). Changes require review from contract owner; broadcast breaking changes immediately.
 - **Pipelines**: One logical pipeline per data flow whenever possible. Avoid forking/rejoining; use filters, transforms, and side effects in sequence. If pipeline needs multiple paths, use conditional routing within single pipeline, not separate pipelines.
 - **Collectors, sources & write paths** (see `PROJECT/2-WORKING/COLLECTOR-PATH-AND-PORTABILITY-AUDIT.md`):

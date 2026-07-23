@@ -168,7 +168,7 @@ The result is an AI assistant that actually knows your work — because it's rea
 | [UPGRADE.md](./UPGRADE.md) | Keyring credential model + multi-device upgrade steps |
 | [DASHBOARD.md](./DASHBOARD.md) | Local web/activity dashboard |
 | [ARCHITECTURE.md](./ARCHITECTURE.md) | System architecture and data flow |
-| [PROJECT.md](./PROJECT.md) · [PROJECT/](./PROJECT/README.md) | Execution source-of-truth and the plan-doc index |
+| [PROJECT/PDDA.md](./PROJECT/PDDA.md) · [ROADMAP.md](./ROADMAP.md) | Plan-doc contract and the pointer ledger indexing every active effort |
 | [AGENTS.md](./AGENTS.md) | Conventions for AI agents working in this repo |
 | [macOS/Apps/Focus5Float/README.md](./macOS/Apps/Focus5Float/README.md) | Focus 5 Float macOS app — build, install, binary path setup (`pipx`), self-checks |
 

@@ -159,6 +159,18 @@ def install(job) -> Path:
         )
     if not job.enabled:  # S8: don't schedule a disabled job
         raise registry.RegistryError(f"job {job.id!r} is disabled; refusing to install")
+    # Adoption REPLACES an emitter; it never adds a second one. Installing while the
+    # incumbent is live is how #139's duplicate-issue defect comes back. Fail closed:
+    # only a positive "not-loaded" clears the gate, so an unreadable probe blocks too.
+    blocking = [(lbl, st) for lbl in job.supersedes
+                if (st := launchctl_state(lbl)) != "not-loaded"]
+    if blocking:
+        raise registry.RegistryError(
+            f"refusing to install {job.id!r}: it supersedes "
+            + ", ".join(f"{lbl!r} ({st})" for lbl, st in blocking)
+            + ". Retire the incumbent first (launchctl bootout gui/$UID/<label>), "
+            + "then install."
+        )
     LAUNCH_AGENTS_DIR.mkdir(parents=True, exist_ok=True)
     (config.state_dir() / "logs").mkdir(parents=True, exist_ok=True)
     path = plist_path(job.id)

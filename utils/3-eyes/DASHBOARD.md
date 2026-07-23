@@ -4,7 +4,7 @@
 
 One optional, always-safe local job supervisor (GH-195). This file is a generated mirror of the TOML registry — **the jobs below are exactly what `registry/jobs.d/*.toml` declares.**
 
-- **Registry fingerprint:** `926ef412446b`
+- **Registry fingerprint:** `72eead4c1cf5`
 - **Jobs defined:** 2
 - **Registry valid:** ✅ yes
 - **Full machine inventory** (managed + observe-only + to-adopt): `CATALOG.md` — generated (gitignored, machine-specific) from `registry/catalog-notes.toml`; run `python -m three_eyes catalog --write`. Fleet health: `python -m three_eyes health`.

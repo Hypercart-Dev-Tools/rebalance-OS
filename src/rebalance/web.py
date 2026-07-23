@@ -867,9 +867,17 @@ def _build_three_eyes_card(report: dict) -> dict:
     ok = int(report.get("ok", 0))
     failing = int(report.get("failing", 0))
     not_loaded = int(report.get("not_loaded", 0))
+    unknown = int(report.get("unknown", 0))
+    probe_ok = bool(report.get("launchctl_available", True))
     fail_rows = [r for r in report.get("rows", []) if "FAIL" in r.get("health", "")]
     verdict = f"{ok} ok · {failing} failing · {not_loaded} not-loaded"
-    if failing:
+    if not probe_ok:
+        # The probe could not run. Never render this as a clean bill of health —
+        # an unreadable fleet must look like it needs attention, not like it is green.
+        title = "3-Eyes — job health UNKNOWN"
+        why = report.get("probe_error") or "launchctl could not be consulted"
+        reason = f"3-Eyes could not read launchd job state ({why}). Health is unknown, not confirmed healthy."
+    elif failing:
         title = f"3-Eyes — {failing} job{'s' if failing != 1 else ''} FAILING"
         detail = "; ".join(f"{r['label']} {r['health']}" for r in fail_rows[:6])
         reason = f"3-Eyes fleet job health — {verdict}. Failing: {detail}."
@@ -894,9 +902,9 @@ def _build_three_eyes_card(report: dict) -> dict:
         "ahead": 0,
         "behind": 0,
         "modified_count": failing,          # failing count in the "M" slot
-        "untracked_count": not_loaded,      # not-loaded count in the "U" slot
-        "is_dirty": failing > 0,            # red StatusDot when anything is failing
-        "health_available": True,
+        "untracked_count": not_loaded if probe_ok else unknown,
+        "is_dirty": (failing > 0) or not probe_ok,   # red StatusDot: failing OR unreadable
+        "health_available": probe_ok,
         "health_probed_at": now_iso,
         "last_commit_at": None,             # null → commitLine shows rank_reason
         "last_commit_ts": None,

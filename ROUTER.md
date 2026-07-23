@@ -9,6 +9,7 @@ This file is the first entry point for an AI agent working in this repo: it tell
 - `ARCHITECTURE.md` = system orientation (Signal Sources, Source→Table fanout, "Adding a New Source") — read at session start
 - `GUIDING-PRINCIPLES.md` = the *why* behind architecture and design decisions; includes the AI doc-review heuristics appendix
 - `README.md` = human-facing repo/product overview and install path
+- `CLAUDE.md` = the Claude Code entry stub; it defers to `AGENTS.md` for all behavioral rules
 - `ROADMAP.md` = pointer ledger of in-progress, completed, attempted, and deferred work
 - `CHANGELOG.md` = the end-of-iteration running log
 - `RELEASES.md` = forward-looking release-planning ledger (governed by `PROJECT/PDDA.md`)
@@ -56,6 +57,18 @@ For document hygiene:
 utils/pdda/pdda.sh run
 ```
 
+For local job health (3-Eyes — optional, inert unless activated on the device):
+
+```bash
+cd utils/3-eyes && PYTHONPATH=$PWD python3 -m three_eyes status   # is it active, what is managed
+PYTHONPATH=$PWD python3 -m three_eyes health                      # fleet health (run UNSANDBOXED — see below)
+PYTHONPATH=$PWD python3 -m three_eyes catalog --check             # catalog drift vs the live machine
+PYTHONPATH=$PWD python3 -m three_eyes why <job>                   # why a job did/didn't run
+```
+
+`health` and `catalog` shell out to `launchctl list`; a sandboxed shell blocks it and every job
+reads back `not-loaded`. Re-run unsandboxed before believing a health result.
+
 For targeted PDDA debugging:
 
 ```bash
@@ -66,9 +79,15 @@ utils/pdda/pdda.sh roadmap
 utils/pdda/pdda.sh roadmap-coverage
 utils/pdda/pdda.sh changelog
 utils/pdda/pdda.sh stale
+utils/pdda/pdda.sh quad-concepts     # opt-in: a "## Quad Concepts" section of 1-4 bullets (lever: .pdda-quad / PDDA_QUAD)
+utils/pdda/pdda.sh glance            # read-only roll-up: title + Quad Concepts for each PROJECT/2-WORKING doc
+utils/pdda/pdda.sh issue-doc-sync    # flag 2-WORKING/GH-*.md docs drifted from their GitHub issue state (warn-only)
+utils/pdda/pdda.sh gh-refresh        # refresh the cached GitHub issue-state file issue-doc-sync reads offline (needs gh)
 utils/pdda/pdda.sh releases    # validate RELEASES.md, the release-planning ledger (warn-only nudge)
 utils/pdda/pdda.sh releases-current  # read-only roll-up: RELEASES.md entries whose Status isn't "Shipped"
+utils/pdda/pdda.sh governance  # governance-doc cross-reference + doc/code drift (this file, AGENTS.md, CLAUDE.md, ...)
 utils/pdda/pdda.sh doc-ready   # LLM readiness review — set PDDA_LLM_BIN (codex/claude/agy) for recommendations, else it self-skips
+utils/pdda/pdda.sh catchup     # LLM repo triage and ROUTER.md recommendations — opt-in like doc-ready
 utils/pdda/pdda.sh help
 ```
 
@@ -81,3 +100,4 @@ utils/pdda/pdda.sh help
 - If the task is about document quality, active-doc lifecycle, roadmap sprawl, or automation policy, start in `PROJECT/PDDA.md`.
 - If the task is about installing PDDA into another repo, read `PDDA-INSTALL.md`.
 - If the task originates from a GitHub issue, capture it as `PROJECT/1-INBOX/GH-<number>-SHORT-DESCRIPTION.md`, then follow the normal `1-INBOX` → `2-WORKING` flow.
+- If the task is about job health, what is scheduled on this device, or adopting an automation under supervision, use the `/3-eyes` skill (`utils/3-eyes/`, `python -m three_eyes health|catalog|list`). For raw launchd triage below that layer, use `/launchd-triage`. 3-Eyes is **inert by default** — a clone with no gitignored `config/runtime.env` is a clean no-op, so "3-Eyes says nothing" on a fresh machine means *not activated*, not *nothing wrong*.
