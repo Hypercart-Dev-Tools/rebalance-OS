@@ -1,0 +1,52 @@
+#!/usr/bin/env python3
+"""3-Eyes pre-commit hook (GH-195) — keep DASHBOARD.md in lockstep with the TOML.
+
+Install once (idempotent):
+
+    ln -sf ../../utils/3-eyes/hooks/regen-dashboard .git/hooks/pre-commit
+
+On every commit that stages a ``registry/*.toml`` change, this regenerates
+``DASHBOARD.md`` from the registry and re-stages it, so a commit can never land a
+job change without the matching dashboard update. When no registry file is staged
+it does nothing and exits 0.
+
+Written in Python (not Bash) per the repo's Python-first posture; the hook is glue,
+but glue is still logic.
+"""
+
+from __future__ import annotations
+
+import subprocess
+import sys
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent          # utils/3-eyes
+REPO_ROOT = HERE.parent.parent
+
+
+def _staged_files() -> list[str]:
+    proc = subprocess.run(
+        ["git", "diff", "--cached", "--name-only"],
+        capture_output=True, text=True, cwd=REPO_ROOT,
+    )
+    return [ln for ln in proc.stdout.splitlines() if ln.strip()]
+
+
+def main() -> int:
+    staged = _staged_files()
+    touched = [f for f in staged if "utils/3-eyes/registry/" in f and f.endswith((".toml", ".allow"))]
+    if not touched:
+        return 0
+
+    sys.path.insert(0, str(HERE))
+    from three_eyes import dashboard  # noqa: E402  (path set above)
+
+    path = dashboard.write()
+    rel = path.relative_to(REPO_ROOT)
+    subprocess.run(["git", "add", str(rel)], cwd=REPO_ROOT)
+    print(f"[3eyes] regenerated + staged {rel} (registry changed)")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

@@ -7,6 +7,17 @@ single source of truth for the wire shape it decodes.
 > `OffRosterWarning.myLocalCommitTs` — additive, backward-compatible (both are
 > optional; an older client ignores the new field, a newer client tolerates its
 > absence).
+>
+> **Amended 2026-07-22 (GH-195):** `roster` MAY carry ONE synthetic trailing card
+> beyond the top-5 repos — the **3-Eyes fleet job-health tile** — appended by
+> `focus5_json` only when the optional 3-Eyes supervisor (`utils/3-eyes`) is ACTIVE
+> on this machine. It is a full `RepoCard` (all required fields present) with a
+> synthetic `local_path` (`.../utils/3-eyes`, doubles as its Identifiable id) and
+> `ranking_mode: "three_eyes_health"`; `is_dirty` is true when any catalogued job is
+> failing (drives the red status dot) and the verdict text rides in `repo_name` +
+> `rank_reason`. It is NOT a repo, so `summary.roster_size` is unchanged (still counts
+> only the real repo roster). The app renders it via the existing dynamic roster
+> `ForEach` — no client change required. Absent whenever 3-Eyes is inert/absent.
 
 - **Endpoint:** `GET http://localhost:8787/focus-5.json`
 - **Query:** `?view=dirty` → re-rank to the "Dirty Five" board (read-only, in-memory).

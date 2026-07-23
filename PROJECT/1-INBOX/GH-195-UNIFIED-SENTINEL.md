@@ -40,7 +40,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| Landscape scoped; three sentinels + reusable rebalance primitives identified; Python-first sketch + phasing drafted; issue #195 filed; **codename 3-Eyes** + 4 gating decisions locked. | Author P0: TOML registry schema + `config.py` inert gate + `dashboard.py` generator (TOML→DASHBOARD on every change) + `launchd-triage` skill. |
+| **Full build + 2-round Codex QA landed** on `feat/gh-195-3-eyes`. Build (P0–P4): TOML registry + inert gate, breakers, relief, launchd/cron, classify (gemma4:12b-mlx), routes, generated DASHBOARD.md (+ `--check` CI + pre-commit hook), CLI, MCP, skills. Codex `/relay-xyz` (consult) round 1 → 5 Blockers + 4 Shoulds, all fixed; round 2 → all Blockers + inert-by-default confirmed `[Pass]`, 3 residual Shoulds + Nit fixed. 68 pytest green. Commits `c10f127`, `de4d5b6`. | Operator: open PR to `development` (my call to make on request). Follow-on slice: real collector-health observer (GH-146 log-parsing + known-issue suppression, see below). Operator activation (`runtime.env`, `install`) stays a local opt-in. |
 
 ## Decisions locked (2026-07-22)
 
@@ -186,10 +186,15 @@ The registry is authored in TOML; `DASHBOARD.md` is a **generated projection** o
    whole system is a clean no-op: **zero** network / `ollama` / `gh` / launchd-load / cron-write /
    marathon fire. A single `config.three_eyes_active()` gate decides activation; all egress routes
    through `classify.py` / `routes.py`. Proven by `tests/test_inert_by_default.py` with fail-loud stubs.
-2. **DASHBOARD ≡ reality.** `DASHBOARD.md` is **generated** by `dashboard.py` from the TOML `registry ⋈
-   launchctl` live state, regenerated on every registry change (write hook + pre-commit + CI).
-   `dashboard.py --check` fails CI if the committed file drifts — it can never become a hand-edited lie.
-   This is the literal "100% mirror" guarantee.
+2. **DASHBOARD ≡ registry (100% mirror of the source of truth).** `DASHBOARD.md` is a **deterministic
+   generated projection of the TOML registry** — same registry in, byte-identical markdown out —
+   regenerated on every registry change (write hook + pre-commit + CI). `dashboard.py --check` fails CI
+   if the committed file drifts, so it can never become a hand-edited lie. It mirrors the **registry**
+   (what jobs exist and how they are configured), which is the single source of truth; the volatile
+   launchctl run-state overlay ("loaded right now?") is a separate `python -m three_eyes status` / MCP
+   query and is deliberately NOT baked into the committed file (it must be reproducible in CI, where no
+   launchd agents exist). The design record's earlier "registry ⋈ launchctl" phrasing is superseded by
+   this static-registry-mirror contract (GH-195 review S9).
 3. **Registry is the single source of truth.** launchd/cron entries are *rendered from* the registry, not
    authored by hand. "The dashboard mirrors the jobs" and "the jobs mirror the registry" become one
    statement.
@@ -228,6 +233,31 @@ The registry is authored in TOML; `DASHBOARD.md` is a **generated projection** o
 3. `commands.allow` enforced: a job referencing an unlisted command refuses (unit test).
 4. `launchd-triage` skill reads `~/Library/LaunchAgents` + `launchctl print` and explains each agent.
 5. Registered in the repo's test runner (pytest); Python-first (only `shims/run-job.sh` is Bash).
+
+## Collector-health domain knowledge (from the prior Agy/Gemini sentinel handoff)
+
+Source: `~/.gemini/antigravity/brain/2a53c06c-.../collector_sentinel_handoff.md` (2026-07-22). The
+`collector-health` job (one of the three "eyes") must absorb these before it is wired to fire for real —
+a naive "run command → check exit code" observer is **wrong** here:
+
+- **Exit codes lie (GH-146).** `daily_sync.sh` gracefully degrades and exits `0` even when collectors
+  fail. The observer must NOT trust exit status — it must tail `temp/logs/daily_sync_*.log` and parse
+  the trailing JSON (`sync_outcome: "degraded"` vs `"complete"`), and wait for a terminal marker
+  (`=== rebalance daily sync complete ===`) before evaluating (a log ending at `Fetching …` is
+  still-running/lock-blocked, not crashed).
+- **Known non-actionable issues → suppress, don't file dupes.** Sleuth staleness (#152, upstream
+  publisher, human-only fix), Python bootstrap `Errno 4` (#186, self-recovering), and SQLite
+  `database is locked` aborts (expected when `daily_sync`/`github_sync` overlap). The collector-health
+  job needs a **known-issues suppression list** so its `gh-issue`/`pdda-inbox` routes don't spam.
+- **403 burst collisions (GH-144).** `github_sync` (hourly) and `daily_sync` (06:30 PT) overlapping
+  exhausts GitHub rate limits — a scheduling/quiet-hours concern for whichever jobs 3-Eyes ends up
+  owning.
+- **Unsandboxed DB access.** `rebalance doctor` needs the prod DB outside the workspace sandbox; its
+  allowlisted command must run unsandboxed.
+
+This is a **follow-on slice** (a real log-parsing observer + known-issue suppression), not part of the
+initial build — captured here so it informs `registry/jobs.d/collector-health.toml` when activated.
+Playbook of record: `PROJECT/2-WORKING/AGY-SENTINEL.md`.
 
 ## Open questions
 

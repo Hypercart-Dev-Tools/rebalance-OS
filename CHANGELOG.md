@@ -6,6 +6,67 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.66.0] - 2026-07-22
+
+### Added
+- **3-Eyes — first real adoption + machine-local registry overlay (GH-195).**
+  - **Machine-local overlay** — gitignored `registry/jobs.local.d/*.toml` and
+    `registry/commands.local.allow` let an adopted automation whose command is an
+    *absolute, machine-specific path* (outside rebalance-OS) enter 3-Eyes without
+    leaking that path into the committed registry. Runtime (`run`/`status`/`list`/
+    `health`/`catalog`) reads the overlay (`include_local=True`); the committed,
+    fleet-portable `DASHBOARD.md` renders committed-only (`include_local=False`) so
+    a downstream clone never inherits another machine's jobs. `.example` + a
+    `jobs.local.d/README.md` document the mechanism.
+  - **Adopted `skill-sync`** (the Claude Skills `SKILL.md` LWW sync) as the first
+    managed job. Its ad-hoc `com.local.skill-sync` LaunchAgent had been failing at
+    the launchd layer (`exit 78 EX_CONFIG`, no run since 2026-07-08) though the
+    script itself was healthy; 3-Eyes renders a fresh `com.rebalance-os.3eyes.skill-sync`
+    plist and the stale plist is retired so nothing double-schedules — one move
+    fixes the failure and completes the adoption.
+
+- **Focus 5 Float — 3-Eyes job-health tile (GH-195).** `GET /focus-5.json`
+  (`src/rebalance/web.py`) now appends ONE synthetic roster card summarizing 3-Eyes
+  fleet job health — a red status dot + `"3-Eyes — N jobs FAILING"` when any
+  catalogued job is failing, healthy otherwise — so the failure signal rides on the
+  panel the operator already watches. It renders through the app's existing dynamic
+  roster (no native-app change; documented in `Focus5Float/CONTRACT.md`). Additive +
+  defensive (never breaks the endpoint), gated on 3-Eyes being active (a downstream/
+  inert clone never shows it), and short-TTL cached so the polled route never spawns
+  `launchctl list` per request. `summary.roster_size` stays repo-only.
+
+### Changed
+- **3-Eyes notify throttle** — a job that is *already* quarantined now re-routes only
+  to `log-only` on each skipped run instead of re-firing a `notify` banner every
+  scheduling tick (a 120s job would otherwise banner every 2 minutes). The operator
+  is still banner-alerted once, at the moment the breaker opens.
+
+### Tests
+- +8 cases (83 total): machine-local overlay load/exclude/validate/dashboard-isolation
+  and the quarantine re-notify throttle.
+
+## [0.65.0] - 2026-07-22
+
+### Added
+- **3-Eyes — unified local job supervisor (GH-195)** in `utils/3-eyes/`. One
+  optional, Python-first system that unifies the three sentinels we run today (XYZ
+  debug flywheel, Cactus Needle PDDA sentinel, Rebalance collector-health) under a
+  single TOML registry, one set of circuit breakers + pressure-relief valves, one
+  generated dashboard, and one way to talk to jobs (CLI + MCP + Claude skills).
+  - **Inert by default** — with no gitignored `config/runtime.env` (or
+    `THREE_EYES_ENABLE!=1`) it is a clean no-op: zero network / ollama / gh /
+    launchd / cron. Proven by `tests/test_inert_by_default.py` (egress primitives
+    stubbed to fail loudly). Two hard kill-switches: `THREE_EYES_ENABLE=0`, PANIC file.
+  - **Registry is the source of truth** — launchd/cron entries render from the TOML;
+    `DASHBOARD.md` is a deterministic generated projection kept honest by
+    `python -m three_eyes.dashboard --check` in CI + a `regen-dashboard` pre-commit hook.
+  - **Safety** — circuit breakers wrap the existing `utils/job_guard.py` (GH-172
+    single-instance flock + memory ceiling) and add a per-job failure breaker;
+    relief valves add daily/per-run LLM budgets, quiet-hours, and backoff. A
+    `commands.allow` allowlist means no free-form command execution.
+  - Egress confined to two boundary modules (`classify.py` ollama, `routes.py` gh),
+    enforced by a static-guard test. 51 pytest cases, wired into CI.
+
 ## [0.64.2] - 2026-07-21
 
 ### Fixed
