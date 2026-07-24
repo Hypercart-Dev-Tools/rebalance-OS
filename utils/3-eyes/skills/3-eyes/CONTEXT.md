@@ -26,10 +26,12 @@ findings against logs and issue history; and handles work that needs deeper judg
 classifies, and proposes; Codex/Claude Code refines and reviews; a human remains responsible for
 irreversible actions such as merging or shipping a change.
 
-> ⚠️ **Known doc drift (2026-07-24):** `PROJECT/2-WORKING/AGY-SENTINEL.md` has **not** been updated to
-> match this contract. Its title still reads *"…detect → triage → repair → PR loop **(Antigravity)**"*
-> and its front-matter is unchanged since 2026-07-18. If you follow that pointer you will land on the
-> retired ownership model. Trust this section, not that title, until that file is revised.
+> **Naming note:** `PROJECT/2-WORKING/AGY-SENTINEL.md` had this contract applied to its front-matter on
+> 2026-07-24 — its title now names the local Gemma monitor, and a `monitor:` field records that
+> Antigravity is retired from the role. **The filename is deliberately still `AGY-SENTINEL.md`** to
+> preserve inbound links from `GH-144-SENTINEL-PROMPT.md`, `GH-195-UNIFIED-SENTINEL.md`, and ROADMAP
+> entries; the "AGY" prefix is now historical and does not mean Antigravity owns the loop. If you find
+> body prose in that file still implying otherwise, fix it — the front-matter is authoritative.
 
 **Gemma instructions (runtime source).** The editable, authoritative system instructions live beside
 the runtime package in
@@ -275,8 +277,13 @@ not turn a design role into a false claim that the monitor is live.
 Do not confuse this with Layer 3's `collector-health` job (§4), which **is** enabled and scheduled on this
 device. That job is 3-Eyes' own freshness watcher, not the AGY-SENTINEL repair loop.
 
-Note also that this file's title and front-matter still name Antigravity as the owner — see the drift
-warning in §0. When the monitor is enabled, use the division of responsibility in §0: Gemma performs
+One caveat on that Phase 0 gate: the playbook's own evidence for the blocking duplicate-emitter risk was
+a 2026-07-18 reading that both `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage`
+were loaded and active in launchd. As of 2026-07-24 `three_eyes health` reports **both as `not-loaded`**
+(cf. #204 / #205). That does not close Phase 0 — not-loaded is not removed — but re-measure against
+current launchd state rather than quoting the 07-18 figure. This is flagged in the file itself.
+
+When the monitor is enabled, use the division of responsibility in §0: Gemma performs
 continuous local observation and first-pass triage; Codex or Claude Code tunes its behavior and
 independently verifies important findings before repair or PR work proceeds.
 

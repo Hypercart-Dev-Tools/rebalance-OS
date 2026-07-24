@@ -1,9 +1,11 @@
 ---
-title: Collector sentinel — scheduled detect → triage → repair → PR loop (Antigravity)
+title: Collector sentinel — scheduled detect → triage → repair → PR loop (local Ollama Gemma 4 12B)
 status: "Proposed — Phase 0 (emitter overlap) is blocking and unresolved. The prompt in Appendix A is drafted and its gate baseline is verified (241 passed / 10 skipped, 2026-07-18), but nothing is scheduled yet. Do not stand this up before Phase 0 closes."
 created: 2026-07-18
-updated: 2026-07-18
+updated: 2026-07-24
 owner: noel
+monitor: "Local Ollama Gemma 4 12B (gemma4:12b-mlx) — always-on observer/classifier. Codex or Claude Code tunes prompts, rules, and thresholds and reviews findings; a human retains authority over irreversible actions (merge, ship). Antigravity is RETIRED from this role as of 2026-07-24; the file name AGY-SENTINEL.md is kept only to preserve inbound links."
+monitor_instructions: utils/3-eyes/three_eyes/gemma_system_instructions.md
 goal: >
   Close the loop from "a collector broke" to "a reviewed PR that fixes it" on a timer,
   without the sentinel becoming a second source of duplicate issues, a doc-hygiene
@@ -31,7 +33,7 @@ roadmap_exempt: false
 
 | What was just completed | What's next |
 |---|---|
-| Prompt drafted (Appendix A) and audited against this repo's rails. Gate baseline **verified live 2026-07-18**: the §5 selector returns `241 passed, 10 skipped, 1245 deselected`. Confirmed `development` exists on `origin` (`961da06`) and is a valid PR base. Confirmed **both** `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` are loaded and active in launchd — so the duplicate-emitter risk is live, not hypothetical. Folded in two operator lessons on how a green gate can hide a missing regression test (§4a, §5). | **Phase 0 is blocking:** decide whether the sentinel *replaces* or *supplements* `scripts/health_issue_reporter.py`. Until that is resolved, standing this up reproduces the exact twin-issue defect that #139 was closed by deleting. Nothing should be scheduled before Phase 0's gate passes. |
+| Prompt drafted (Appendix A) and audited against this repo's rails. Gate baseline **verified live 2026-07-18**: the §5 selector returns `241 passed, 10 skipped, 1245 deselected`. Confirmed `development` exists on `origin` (`961da06`) and is a valid PR base. Confirmed **both** `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` are loaded and active in launchd — so the duplicate-emitter risk is live, not hypothetical. Folded in two operator lessons on how a green gate can hide a missing regression test (§4a, §5). | **Phase 0 is blocking:** decide whether the sentinel *replaces* or *supplements* `scripts/health_issue_reporter.py`. Until that is resolved, standing this up reproduces the exact twin-issue defect that #139 was closed by deleting. Nothing should be scheduled before Phase 0's gate passes. **⚠️ Re-verify the evidence first (2026-07-24):** the left-hand cell's launchd finding is stale — `three_eyes health` now reports **both** `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` as `not-loaded` (cf. open issues #204 / #205), not "loaded and active." Not-loaded is not the same as removed, so this does **not** close Phase 0 — but the duplicate-emitter risk must be re-measured against current launchd state rather than the 07-18 reading. |
 
 ## Table of contents
 
