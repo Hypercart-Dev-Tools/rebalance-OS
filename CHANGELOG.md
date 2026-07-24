@@ -6,6 +6,17 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.67.4] - 2026-07-24
+
+### Fixed
+- **The command-line interface would not start at all.** Removing the Anthropic
+  API key dependency left two modules still importing a helper that no longer
+  existed, so every command — including the health check operators are asked to
+  run before committing — failed immediately with an import error instead of
+  running. The stale references are gone and the health check passes again. The
+  removed helper was already unused; the Gemini key lookup that replaced it was
+  in place.
+
 ## [0.67.3] - 2026-07-24
 
 ### Added
