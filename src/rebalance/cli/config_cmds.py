@@ -19,7 +19,6 @@ from rebalance.ingest.config import (
     add_github_related_repo,
     add_health_notice_pattern,
     clear_github_token,
-    get_anthropic_api_key,
     get_config_path,
     get_focus5_hidden_repos,
     get_focus5_scan_roots,
