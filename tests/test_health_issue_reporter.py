@@ -199,23 +199,15 @@ class TestCircuitBreakers(unittest.TestCase):
         self._quota_path.write_text(json.dumps({"date": today, "calls_today": 8}))
         self.assertEqual(hr.quota_remaining(8), 0)
 
-    def test_cb4_import_error_returns_fallback(self) -> None:
-        """CB-4: missing anthropic package must degrade to ('file', ...) without raising."""
-        check = _make_check("test-check")
-        with patch.dict("sys.modules", {"anthropic": None}):
-            decision, reason = hr.llm_triage(check, provider="anthropic")
-        self.assertEqual(decision, "file")
-        self.assertIsInstance(reason, str)  # any non-empty fallback message
-
     def test_cb4_api_error_returns_fallback(self) -> None:
         """CB-4: any LLM API error must degrade to 'file', not raise."""
         check = _make_check("test-check")
 
-        def _exploding_anthropic(*_, **__):
+        def _exploding_gemini(*_, **__):
             raise RuntimeError("connection refused")
 
-        with patch.object(hr, "_triage_anthropic", side_effect=RuntimeError("boom")):
-            decision, reason = hr.llm_triage(check, provider="anthropic")
+        with patch.object(hr, "_triage_gemini", side_effect=RuntimeError("boom")):
+            decision, reason = hr.llm_triage(check, provider="gemini")
         self.assertEqual(decision, "file")
         self.assertIn("error", reason.lower())
 
@@ -224,10 +216,11 @@ class TestCircuitBreakers(unittest.TestCase):
         check = _make_check("test-check")
 
         def _bad_json(*_, **__):
+            import json
             raise json.JSONDecodeError("nope", "", 0)
 
-        with patch.object(hr, "_triage_anthropic", side_effect=_bad_json):
-            decision, reason = hr.llm_triage(check, provider="anthropic")
+        with patch.object(hr, "_triage_gemini", side_effect=_bad_json):
+            decision, reason = hr.llm_triage(check, provider="gemini")
         self.assertEqual(decision, "file")
 
 
@@ -615,27 +608,27 @@ class TestLLMTriage(unittest.TestCase):
         return _make_check("test-check", "warn")
 
     def test_file_decision_passes_through(self) -> None:
-        with patch.object(hr, "_triage_anthropic",
+        with patch.object(hr, "_triage_gemini",
                           return_value={"decision": "file", "reason": "real issue"}):
-            decision, reason = hr.llm_triage(self._check(), provider="anthropic")
+            decision, reason = hr.llm_triage(self._check(), provider="gemini")
         self.assertEqual(decision, "file")
         self.assertEqual(reason, "real issue")
 
     def test_skip_decision_passes_through(self) -> None:
-        with patch.object(hr, "_triage_anthropic",
+        with patch.object(hr, "_triage_gemini",
                           return_value={"decision": "skip", "reason": "noise"}):
-            decision, reason = hr.llm_triage(self._check(), provider="anthropic")
+            decision, reason = hr.llm_triage(self._check(), provider="gemini")
         self.assertEqual(decision, "skip")
 
     def test_downgrade_decision_passes_through(self) -> None:
-        with patch.object(hr, "_triage_anthropic",
+        with patch.object(hr, "_triage_gemini",
                           return_value={"decision": "downgrade", "reason": "low priority"}):
-            decision, reason = hr.llm_triage(self._check(), provider="anthropic")
+            decision, reason = hr.llm_triage(self._check(), provider="gemini")
         self.assertEqual(decision, "downgrade")
 
     def test_empty_dict_response_falls_back_to_file(self) -> None:
-        with patch.object(hr, "_triage_anthropic", return_value={}):
-            decision, _ = hr.llm_triage(self._check(), provider="anthropic")
+        with patch.object(hr, "_triage_gemini", return_value={}):
+            decision, _ = hr.llm_triage(self._check(), provider="gemini")
         self.assertEqual(decision, "file")
 
     def test_openai_compat_missing_config_returns_fallback(self) -> None:
@@ -653,19 +646,16 @@ class TestLLMTriage(unittest.TestCase):
                 os.environ["HEALTH_LLM_MODEL"] = env_backup2
         self.assertEqual(decision, "file")
 
-    def test_real_api_call_haiku(self) -> None:
-        """Live smoke test — skipped if ANTHROPIC_API_KEY is not set.
+    def test_real_api_call_gemini(self) -> None:
+        """Live smoke test — skipped if GEMINI_API_KEY is not set.
 
-        Sends a real request to claude-haiku-4-5-20251001 and verifies the
+        Sends a real request to gemini-3.5-flash and verifies the
         response is a valid triage decision.  Run manually to confirm the
         key and model are working end-to-end.
         """
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            self.skipTest("ANTHROPIC_API_KEY not set — skipping live API test")
-        try:
-            import anthropic  # noqa: F401, PLC0415
-        except ImportError:
-            self.skipTest("anthropic package not installed")
+        from rebalance.ingest.config import get_gemini_api_key
+        if not get_gemini_api_key():
+            self.skipTest("GEMINI_API_KEY not set — skipping live API test")
 
         check = _make_check(
             "github data",
@@ -673,8 +663,8 @@ class TestLLMTriage(unittest.TestCase):
             detail="github_activity last scan 5 days ago (stale)",
             hint="run `rebalance refresh` (scope github)",
         )
-        decision, reason = hr.llm_triage(check, provider="anthropic",
-                                          model="claude-haiku-4-5-20251001")
+        decision, reason = hr.llm_triage(check, provider="gemini",
+                                          model="gemini-3.5-flash")
         self.assertIn(decision, ("file", "skip", "downgrade"),
                       f"Unexpected decision: {decision!r} — reason: {reason}")
         self.assertIsInstance(reason, str)
@@ -699,21 +689,18 @@ class TestLLMTriage(unittest.TestCase):
 # ===========================================================================
 
 class TestTriageScenarios(unittest.TestCase):
-    """Live LLM scenario tests — skipped unless ANTHROPIC_API_KEY is set."""
+    """Live LLM scenario tests — skipped unless GEMINI_API_KEY is set."""
 
-    MODEL = "claude-haiku-4-5-20251001"
+    MODEL = "gemini-3.5-flash"
 
     @classmethod
     def setUpClass(cls) -> None:
-        if not os.environ.get("ANTHROPIC_API_KEY"):
-            raise unittest.SkipTest("ANTHROPIC_API_KEY not set — skipping live scenario tests")
-        try:
-            import anthropic  # noqa: F401, PLC0415
-        except ImportError:
-            raise unittest.SkipTest("anthropic package not installed")
+        from rebalance.ingest.config import get_gemini_api_key
+        if not get_gemini_api_key():
+            raise unittest.SkipTest("GEMINI_API_KEY not set — skipping live scenario tests")
 
     def _triage(self, check: dict) -> tuple[str, str]:
-        decision, reason = hr.llm_triage(check, provider="anthropic", model=self.MODEL)
+        decision, reason = hr.llm_triage(check, provider="gemini", model=self.MODEL)
         print(f"\n  [{check['name']} / {check['status'].upper()}] → {decision}: {reason}")
         return decision, reason
 
