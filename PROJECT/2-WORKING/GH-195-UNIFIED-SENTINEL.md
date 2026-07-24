@@ -4,10 +4,10 @@ source: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/195
 title: "3-Eyes — unified, optional, always-safe local job supervisor (XYZ / PDDA / Rebalance collectors)"
 slug: three-eyes
 codename: 3-Eyes
-status: "SKETCH — 4 gating questions locked 2026-07-22; ready to author P0 (2 non-gating questions open)"
+status: "Active — P0–P4 shipped; Gemma system-instructions surface built and awaiting merge"
 created: 2026-07-22
-updated: 2026-07-22
-owner: Noel (operator) · Claude (architect)
+updated: 2026-07-24
+owner: Noel (operator) · Codex (implementation) · Claude Code (review/tuning)
 doc_type: project
 goal: >
   Unify the three sentinels we run today (XYZ GH-281 debug flywheel, Cactus Needle PDDA sentinel,
@@ -20,7 +20,7 @@ effort: 4
 complexity: 4
 risk: 3
 phases: 5
-ratings_provisional: true
+ratings_provisional: false
 non_goals:
   - Not making any of the three host repos depend on the sentinel — each still works standalone
   - Not rewriting cactus/sleuth/collector-health sentinels in one shot (wrap first, migrate later)
@@ -40,7 +40,21 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Full build + 2-round Codex QA landed** on `feat/gh-195-3-eyes`. Build (P0–P4): TOML registry + inert gate, breakers, relief, launchd/cron, classify (gemma4:12b-mlx), routes, generated DASHBOARD.md (+ `--check` CI + pre-commit hook), CLI, MCP, skills. Codex `/relay-xyz` (consult) round 1 → 5 Blockers + 4 Shoulds, all fixed; round 2 → all Blockers + inert-by-default confirmed `[Pass]`, 3 residual Shoulds + Nit fixed. 68 pytest green. Commits `c10f127`, `de4d5b6`. | Operator: open PR to `development` (my call to make on request). Follow-on slice: real collector-health observer (GH-146 log-parsing + known-issue suppression, see below). Operator activation (`runtime.env`, `install`) stays a local opt-in. |
+| **P5 — Gemma instruction surface built (2026-07-24).** Added `three_eyes/gemma_system_instructions.md` beside the runtime package; `classify.py` now loads it as Ollama's `system` message, refuses classification when it is absent/empty, and honors the local `THREE_EYES_MODEL` setting. The README and 3-Eyes operational spec now link to the prompt and label 3-Eyes optional/experimental. `pytest utils/3-eyes/tests` passed: 94 tests. | Review and merge this branch, then verify the enabled device uses the committed instruction file. Next functional scope remains the real collector-health observer: log parsing and known-issue suppression (GH-146). |
+
+## Table of contents
+
+- [Decisions locked](#decisions-locked-2026-07-22)
+- [Why this exists](#why-this-exists)
+- [Operator requirements](#operator-requirements-verbatim-intent)
+- [Language posture](#language-posture--python-first)
+- [Reuse, don't reinvent](#reuse-dont-reinvent-already-in-rebalance-os)
+- [Proposed shape](#proposed-shape-utils3-eyes)
+- [Load-bearing invariants](#load-bearing-invariants-the-safety-spine)
+- [Phasing](#phasing)
+- [Acceptance](#acceptance-p0-slice-to-firm-up-after-open-questions)
+- [Collector-health domain knowledge](#collector-health-domain-knowledge-from-the-prior-agygemini-sentinel-handoff)
+- [Open questions](#open-questions)
 
 ## Decisions locked (2026-07-22)
 
@@ -215,16 +229,22 @@ The registry is authored in TOML; `DASHBOARD.md` is a **generated projection** o
 
 ## Phasing
 
-- **P0 — observe-only skeleton.** Registry schema + `config.py` inert gate + read-only `dashboard.py`
-  generator + `launchd-triage` skill. Loads nothing, writes no plists, files nothing. Ships inert.
-- **P1 — safety + scheduling.** `breakers.py` (wrap `job_guard`) + `relief.py` + `launchd.py`/`cron.py`
-  adapters that *render* schedules from the registry. Still no host-repo behavior change.
-- **P2 — adopt the three sentinels.** Register the existing XYZ / Cactus-Needle / collector-health
-  sentinels into `registry/jobs.d/` — **wrap first** (observe their current plists), then migrate to
-  registry-rendered plists one at a time. No big-bang rewrite.
-- **P3 — conversational layer.** `mcp/server.py` + `/three-eyes` skill: list, status, pause/resume,
-  why-fired, dry-run.
-- **P4 — routes + review.** PDDA/GH routing, adversarial red-team (Gemma), morning report.
+- **P0 — observe-only skeleton — completed.** Registry schema + `config.py` inert gate + read-only
+  `dashboard.py` generator + `launchd-triage` skill. Loads nothing, writes no plists, files nothing.
+- **P1 — safety + scheduling — completed.** `breakers.py` (wrap `job_guard`) + `relief.py` +
+  `launchd.py`/`cron.py` adapters that render schedules from the registry.
+- **P2 — adopt the three sentinels — in progress.** Register the existing XYZ / Cactus-Needle /
+  collector-health sentinels into `registry/jobs.d/` — **wrap first** (observe their current plists),
+  then migrate to registry-rendered plists one at a time. No big-bang rewrite.
+- **P3 — conversational layer — completed.** `mcp/server.py` + `/three-eyes` skill: list, status,
+  pause/resume, why-fired, dry-run.
+- **P4 — routes + review — completed.** PDDA/GH routing, adversarial red-team (Gemma), morning report.
+- **P5 — editable Gemma instructions — completed on this branch.** The local model's safety and
+  classification instructions now live in `utils/3-eyes/three_eyes/gemma_system_instructions.md`,
+  separate from the per-finding prompt. `classify.py` reads the file at inference time, sends it as
+  Ollama's `system` message, and fails closed if it is unavailable. The focused integration test proves
+  the model payload carries the file contents and the configured model name. **QA gate:**
+  `pytest utils/3-eyes/tests` → 94 passed.
 
 ## Acceptance (P0 slice, to firm up after open questions)
 
@@ -236,7 +256,7 @@ The registry is authored in TOML; `DASHBOARD.md` is a **generated projection** o
 
 ## Collector-health domain knowledge (from the prior Agy/Gemini sentinel handoff)
 
-Source: `~/.gemini/antigravity/brain/2a53c06c-.../collector_sentinel_handoff.md` (2026-07-22). The
+Source: historical operator-local collector-sentinel handoff (2026-07-22). The
 `collector-health` job (one of the three "eyes") must absorb these before it is wired to fire for real —
 a naive "run command → check exit code" observer is **wrong** here:
 

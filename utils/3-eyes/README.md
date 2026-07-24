@@ -1,9 +1,14 @@
-# 3-Eyes — one optional, always-safe local job supervisor
+# 3-Eyes — optional, experimental, always-safe local job supervisor
 
 GH-195. One system unifying the three sentinels we run today — the XYZ debug
 flywheel, the Cactus Needle PDDA sentinel, and the Rebalance collector-health
 sentinel — under **one TOML registry, one set of circuit breakers + relief valves,
 one generated dashboard, and one way to talk to your jobs.**
+
+**Status: experimental and optional.** This is a local opt-in supervisor, not a
+required Rebalance dependency. Treat its observations and repair proposals as
+input for a human, Codex, or Claude Code review—not as authority to alter a
+machine or ship a change on its own.
 
 The name is a nod to XYZ: the three "eyes" are XYZ-debug, Cactus-Needle-PDDA, and
 Rebalance-collectors. It lives in `rebalance-OS/utils/3-eyes/` until it needs to
@@ -30,6 +35,22 @@ python -m three_eyes validate       # registry integrity
 python -m three_eyes status         # active/inert + live launchctl + breakers
 python -m three_eyes install selfcheck   # write+load the job's launchd agent (gated)
 ```
+
+## Gemma classifier instructions
+
+The local classifier uses Ollama `gemma4:12b-mlx` when 3-Eyes is enabled. Its
+editable system instructions live beside the runtime code at
+[`three_eyes/gemma_system_instructions.md`](three_eyes/gemma_system_instructions.md).
+Those instructions define Gemma's safety boundaries, severity vocabulary, evidence
+rules, and JSON response contract. Edit that file to tune the model; the runtime
+loads it as Ollama's `system` message. Then run:
+
+```bash
+pytest tests/test_routes_classify.py
+```
+
+The model selection remains an operator-local setting in `config/runtime.env`;
+the committed default is documented in `config/runtime.env.example`.
 
 ## The registry is the source of truth
 
@@ -69,7 +90,7 @@ everything in `~/Library/LaunchAgents` read-only.
 ## Layout
 
 ```
-three_eyes/     config gate · registry · breakers · relief · launchd · cron · classify · routes · dashboard · run · CLI
+three_eyes/     config gate · registry · breakers · relief · launchd · cron · classify · routes · dashboard · run · CLI · gemma_system_instructions.md
 registry/       jobs.d/*.toml · commands.allow · routes.toml
 shims/          run-job.sh   (the only Bash: one-line launchd/cron → python -m three_eyes.run)
 hooks/          regen-dashboard   (pre-commit: TOML → DASHBOARD.md)

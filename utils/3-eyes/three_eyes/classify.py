@@ -14,11 +14,30 @@ from __future__ import annotations
 
 import json
 import urllib.request
+from pathlib import Path
 
 from . import config
 
 MODEL = "gemma4:12b-mlx"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+SYSTEM_INSTRUCTIONS_PATH = Path(__file__).with_name("gemma_system_instructions.md")
+
+
+def load_system_instructions() -> str:
+    """Return the committed, operator-editable instructions for the classifier.
+
+    The prompt belongs beside the runtime package so Codex, Claude Code, and a
+    human operator have one obvious edit point. A missing or blank file is a
+    configuration error: an active sentinel must fail closed rather than send
+    an ungoverned prompt to the local model.
+    """
+    try:
+        instructions = SYSTEM_INSTRUCTIONS_PATH.read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        raise RuntimeError(f"Gemma system instructions unavailable: {exc}") from exc
+    if not instructions:
+        raise RuntimeError("Gemma system instructions are empty")
+    return instructions
 
 
 def _stub_classify(text: str) -> dict:
@@ -60,12 +79,17 @@ def classify(text: str, model: str | None = None, timeout: float = 30.0) -> dict
     if not config.three_eyes_active():
         return {"refused": True, "reason": "3-Eyes inert (no runtime.env / disabled)"}
 
+    try:
+        system_instructions = load_system_instructions()
+    except RuntimeError as exc:
+        return {"refused": True, "reason": str(exc)}
+
     payload = json.dumps(
         {
-            "model": model or MODEL,
+            "model": model or config.config_value("THREE_EYES_MODEL", MODEL) or MODEL,
+            "system": system_instructions,
             "prompt": (
-                "Classify this log/finding. Reply with a single JSON object: "
-                '{"severity": one of critical|error|warn|info, "summary": short}. '
+                "Classify this supplied finding according to the system instructions. "
                 f"Finding:\n{text[:4000]}"
             ),
             "stream": False,

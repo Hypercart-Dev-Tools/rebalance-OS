@@ -6,6 +6,29 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.67.3] - 2026-07-24
+
+### Added
+- **Editable local Gemma instructions for 3-Eyes (GH-195).** The classifier now
+  loads `gemma_system_instructions.md` from beside its runtime package and sends
+  it as Ollama's `system` message. The instructions define a safety-first local
+  observability role, evidence and uncertainty rules, severity definitions,
+  escalation boundaries, and a JSON-only response contract. A missing or empty
+  file fails closed rather than calling the model without those controls.
+
+### Changed
+- **3-Eyes is explicitly optional and experimental.** Its README and operational
+  spec now point Codex, Claude Code, and human operators to the one prompt-tuning
+  surface; the classifier also honors the operator-local `THREE_EYES_MODEL`
+  setting.
+- **PDDA lifecycle reconciled for GH-195.** The active design record now lives in
+  `PROJECT/2-WORKING`, has current status and phase coverage, and its ROADMAP
+  pointer reflects the Gemma instruction surface.
+
+### Tests
+- **3-Eyes suite:** 94 passed, including a classifier integration test that
+  asserts the editable instructions and configured model reach the Ollama payload.
+
 ## [0.67.2] - 2026-07-22
 
 ### Fixed
