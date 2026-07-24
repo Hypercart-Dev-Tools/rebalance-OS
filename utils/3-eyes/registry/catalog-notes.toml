@@ -24,6 +24,11 @@ ga4 = "GA4 → BigQuery daily pulls"
 hq-misc = "HQ · vault · misc"
 servers = "Long-running servers (details in ~/bin/servers.md)"
 
+[agent."com.rebalance-os.3eyes.collector-health"]
+system = "managed"
+desc = "Watch ingest freshness across GitHub / Slack-Sleuth / Gmail / Google Calendar / Zapier collectors — the Layer 3 → Layer 1 bridge. Freshness only; log parsing + known-issue suppression is GH-146."
+status = "managed"
+
 [agent."com.rebalance-os.3eyes.selfcheck"]
 system = "managed"
 desc = "No-op proving the guarded run → breaker → route loop"

@@ -125,6 +125,18 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "utils/3-eyes-session-log.py",
+            "timeout": 15,
+            "async": true
+          }
+        ]
+      }
     ]
   }
 }
