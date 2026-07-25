@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
-from rebalance.tz_utils import local_tz
+from rebalance.tz_utils import format_timestamp, local_tz
 
 OK = "ok"
 WARN = "warn"
@@ -1188,10 +1188,8 @@ def _check_pulse_collectors(*, current_device_id: str | None = None) -> list[Che
 
         if health.age_hours is None:
             age = "never pushed"
-        elif health.age_hours >= 24:
-            age = f"last scan {health.age_hours / 24:.1f}d ago"
         else:
-            age = f"last scan {health.age_hours:.1f}h ago"
+            age = f"last scan {format_timestamp(health.last_scan_utc, relative=True)}"
         healthy = health.healthy
         state = health.state
         # A laptop's upstream classifier intentionally uses the fleet's 3h
