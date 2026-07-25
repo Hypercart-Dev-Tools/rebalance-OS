@@ -33,7 +33,7 @@ roadmap_exempt: false
 
 | What was just completed | What's next |
 |---|---|
-| Prompt drafted (Appendix A) and audited against this repo's rails. Gate baseline **verified live 2026-07-18**: the §5 selector returns `241 passed, 10 skipped, 1245 deselected`. Confirmed `development` exists on `origin` (`961da06`) and is a valid PR base. Confirmed **both** `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` are loaded and active in launchd — so the duplicate-emitter risk is live, not hypothetical. Folded in two operator lessons on how a green gate can hide a missing regression test (§4a, §5). | **Phase 0 is blocking:** decide whether the sentinel *replaces* or *supplements* `scripts/health_issue_reporter.py`. Until that is resolved, standing this up reproduces the exact twin-issue defect that #139 was closed by deleting. Nothing should be scheduled before Phase 0's gate passes. **⚠️ Re-verify the evidence first (2026-07-24):** the left-hand cell's launchd finding is stale — `three_eyes health` now reports **both** `com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` as `not-loaded` (cf. open issues #204 / #205), not "loaded and active." Not-loaded is not the same as removed, so this does **not** close Phase 0 — but the duplicate-emitter risk must be re-measured against current launchd state rather than the 07-18 reading. |
+| Prompt drafted (Appendix A) and audited against this repo's rails. Gate baseline **verified live 2026-07-18**: the §5 selector returns `241 passed, 10 skipped, 1245 deselected`. Confirmed `development` exists on `origin` (`961da06`) and is a valid PR base. Folded in two operator lessons on how a green gate can hide a missing regression test (§4a, §5). **2026-07-24:** read the reporter's filing behavior (Phase 0 gate item 2 now ✅ — see §Phase 0) and refreshed the launchd live-state. | **Phase 0 is blocking — a design decision, not a launchd state.** Decide whether the sentinel *replaces*, *supplements*, or *splits with* `scripts/health_issue_reporter.py`, and write the choice + reasoning into §Phase 0. Until then, standing this up reproduces the twin-issue defect #139 was closed by deleting. **Current live-state (2026-07-24):** both reporter jobs (`health-check`, `health-check-triage`) are `not-loaded` (cf. #204 / #205) — so nothing is filing *right now*, but that is a symptom under investigation, not a Phase 0 resolution, and the plists reload at any time. Evidence gathered; 1 of 5 gate boxes checked; the decision itself remains the operator's. |
 
 ## Table of contents
 
@@ -59,14 +59,30 @@ generator. Four things make it safe rather than merely automated, and all four a
 
 ## Phase 0 — Resolve the emitter overlap (blocking)
 
-`scripts/health_issue_reporter.py` already files health issues, and it is **live**:
-`com.rebalance-os.health-check` and `com.rebalance-os.health-check-triage` are both
-loaded in launchd. If the sentinel also files, every finding produces two issues on two
-schedules — which is precisely bug #139, closed by *deleting* a redundant emitter.
+`scripts/health_issue_reporter.py` is the existing issue-filer. **Live-state check (2026-07-24, updated
+from the stale 2026-07-18 reading):** both jobs that run it —
+`com.rebalance-os.health-check` (`--close`, hourly at :10) and
+`com.rebalance-os.health-check-triage` (`--warn --close --llm-triage --llm-daily-limit 8
+--llm-max-per-run 5`, thrice daily) — are currently **`not-loaded`** in launchd (confirmed via both
+`launchctl list` and `three_eyes health`; tracked as open issues #204 / #205). So the reporter is not
+filing anything right now.
 
-Deduplication inside the sentinel (Appendix A §3) does not solve this. The two emitters
-run on independent timers with no shared lock; either can win the race and the other
-files the twin before it sees it.
+**This does not resolve Phase 0, and the earlier "less blocked" read was wrong.** Phase 0 is a *design
+decision* (the table below), not a launchd state. Three reasons the blocker stands:
+1. The plists still exist and can be reloaded at any time — `not-loaded` is not removed. The whole point
+   of standing up the sentinel is to schedule an emitter, so the overlap becomes live the moment either
+   side runs.
+2. The choice below is still unmade and every QA-gate box except one is unchecked.
+3. `not-loaded` here is itself a *symptom under investigation* (#204 / #205), not a deliberate
+   retirement — it is not evidence anyone decided the reporter should stop filing.
+
+If the sentinel also files, every finding produces two issues on two schedules — which is precisely bug
+#139, closed by *deleting* a redundant emitter.
+
+Deduplication does not fully solve this. The reporter dedups by **stable title** (`health: <check-name>`,
+`file_issue()` at `scripts/health_issue_reporter.py:241`), so reporter-vs-reporter is safe — but a
+sentinel filing under a *different* title, or racing before the reporter's title exists, still twins.
+That title-coupling is exactly the failure mode #139 documents (rename a check → orphan + twin).
 
 Pick one, explicitly, and record the choice here:
 
@@ -78,11 +94,22 @@ Pick one, explicitly, and record the choice here:
 
 ### QA gate — Phase 0
 
-- [ ] The chosen option is written into this doc, with the reasoning, not just selected
-- [ ] `scripts/health_issue_reporter.py`'s filing behavior has been read, not assumed
-- [ ] If "replaces": both plists unloaded and the unload is verified with `launchctl list`
+- [ ] The chosen option is written into this doc, with the reasoning, not just selected — **STILL OPEN;
+      operator decision.** The table's third row ("Reporter keeps filing, sentinel keeps repairing") is
+      flagged as likely-correct but not yet chosen or justified in prose.
+- [x] `scripts/health_issue_reporter.py`'s filing behavior has been read, not assumed — **done
+      2026-07-24.** Files FAIL findings by default; `--warn` adds WARN findings; `--close` closes issues
+      whose checks recovered; `--llm-triage` gates filing through an LLM. Issues are matched/deduped by
+      stable title `health: <check-name>` (`file_issue()` at line 241; dedup logic ~line 236,
+      `--dedup-days` default 30). Default LLM provider is gemini.
+- [ ] If "replaces": both plists unloaded and the unload is verified with `launchctl list` — N/A until a
+      decision. (Note: both are *already* not-loaded today, but for reasons tracked in #204/#205, not as
+      a Phase 0 action.)
 - [ ] If "supplements" or "split": Appendix A §3 is rewritten to remove the filing path
-- [ ] No configuration exists in which two processes can file for the same check name
+- [ ] No configuration exists in which two processes can file for the same check name — **not met.** Two
+      plists (`health-check`, `health-check-triage`) both invoke the reporter; they dedup by shared title
+      so they don't twin each other, but no lock prevents a future sentinel from filing a differently
+      titled twin (see body). This box needs the decision above before it can be closed.
 
 ---
 
