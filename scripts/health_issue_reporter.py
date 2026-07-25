@@ -12,8 +12,14 @@ the full check results, every LLM call + response, and every GitHub action taken
 
 De-duplication
 --------------
-Issues are matched by stable title (``health: <check-name>``).
-- Already **open**: skip silently.
+Issues are matched by a stable check id (``Check.name`` from the doctor
+registry — see ``run_doctor_checks()``), not by the GitHub issue *title*.
+The id is embedded as a hidden ``<!-- health-check-id: ... -->`` marker in
+the issue body at file time, so a human retitling the issue on GitHub (or a
+future change to ``ISSUE_TITLE_PREFIX``) can no longer orphan it. Issues
+filed before this marker existed are still matched by parsing the check name
+out of their title (GH-139 legacy fallback) — see ``dedup_key_for_issue()``.
+- Already **open**: refresh the Detail block and bump the occurrence counter.
 - Recently **closed** (within --dedup-days, default 30): add a comment noting
   the recurrence instead of opening a new issue.
 - Older closed / never filed: file a new issue.
@@ -233,7 +239,7 @@ def list_health_issues(token: str, repo: str, state: str = "open",
         if not isinstance(results, list) or not results:
             break
         for issue in results:
-            issues[issue["title"]] = issue
+            issues[dedup_key_for_issue(issue)] = issue
         page += 1
     return issues
 
@@ -292,6 +298,78 @@ def set_occurrence_count(body: str, count: int, last_seen: str,
     return new_line + (body or "")
 
 
+# ---------------------------------------------------------------------------
+# Issue body — Detail block refresh
+#
+# _issue_body() writes the finding's Detail as a fenced code block:
+#   **Detail:**
+#   ```
+#   <detail text>
+#   ```
+#
+# Previously only set_occurrence_count() ran on a repeat sighting, so a
+# changed root-cause message on re-fire never reached the issue (GH-139).
+# set_detail() rewrites that block in place; everything else in the body
+# (title, status line, hint, footer, occurrence counter, check-id marker)
+# is left untouched.
+# ---------------------------------------------------------------------------
+
+_DETAIL_RE = re.compile(r"\*\*Detail:\*\*\n```\n.*?\n```", re.DOTALL)
+
+
+def set_detail(body: str, detail: str) -> str:
+    if not _DETAIL_RE.search(body or ""):
+        return body
+    replacement = f"**Detail:**\n```\n{detail}\n```"
+    return _DETAIL_RE.sub(lambda _m: replacement, body, count=1)
+
+
+# ---------------------------------------------------------------------------
+# Issue body — stable check-id marker (GH-139)
+#
+# Dedup used to key off the rendered GitHub issue *title*
+# (``f"{ISSUE_TITLE_PREFIX} {check['name']}"``), matched via exact string
+# equality against ``issue["title"]``. That title is mutable — a human can
+# retitle the issue on GitHub, or a future edit to ISSUE_TITLE_PREFIX (or to
+# a check's own registry name) changes the computed string — and either one
+# silently orphans the existing issue and files a duplicate under the new
+# title.
+#
+# Instead, every issue this script files carries a hidden marker line
+# embedding the check's stable registry id (``Check.name`` — see
+# ``run_doctor_checks()``, already the identifier used throughout the doctor
+# check registry, independent of any GitHub-side display text):
+#   <!-- health-check-id: <check-name> -->
+#
+# dedup_key_for_issue() reads that marker first. Issues filed before this
+# marker existed (e.g. the pre-GH-139 pulse-collector duplicates, #46-48 and
+# #83-85) have no marker, so it falls back to parsing the check name out of
+# the title — preserving today's matching behavior for those legacy issues
+# rather than re-duplicating or auto-touching them.
+# ---------------------------------------------------------------------------
+
+_CHECK_ID_RE = re.compile(r"^<!-- health-check-id: (.+?) -->\n?", re.MULTILINE)
+
+
+def check_id_marker(check_id: str) -> str:
+    return f"<!-- health-check-id: {check_id} -->\n"
+
+
+def parse_check_id(body: str) -> str | None:
+    m = _CHECK_ID_RE.search(body or "")
+    return m.group(1).strip() if m else None
+
+
+def dedup_key_for_issue(issue: dict) -> str:
+    """Stable dedup key for an existing GitHub issue — see module docstring."""
+    check_id = parse_check_id(issue.get("body") or "")
+    if check_id:
+        return check_id
+    title = issue.get("title") or ""
+    prefix = f"{ISSUE_TITLE_PREFIX} "
+    return title[len(prefix):] if title.startswith(prefix) else title
+
+
 def update_issue_body(
     token: str, repo: str, number: int, new_body: str, dry_run: bool
 ) -> None:
@@ -309,6 +387,7 @@ def _issue_body(check_name: str, status: str, detail: str, hint: str, source: st
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
     parts = [
         f"> **Seen:** 1× · Last: {now} · Device: {DEVICE_NAME}\n",
+        check_id_marker(check_name),
         f"## Rebalance health: `{check_name}`\n",
         f"**Status:** `{status.upper()}`  ",
         f"**Detected:** {now}  ",
@@ -609,16 +688,20 @@ def main() -> int:
     llm_calls_this_run = 0
 
     for check in checks:
-        title = f"{ISSUE_TITLE_PREFIX} {check['name']}"
-        already_open = open_issues.get(title)
-        recently_was_closed = recently_closed.get(title)
+        check_id = check["name"]  # stable, registry-level id — see run_doctor_checks()
+        title = f"{ISSUE_TITLE_PREFIX} {check_id}"
+        already_open = open_issues.get(check_id)
+        recently_was_closed = recently_closed.get(check_id)
 
         if check["status"] in min_level:
             if already_open:
-                # Increment the occurrence counter in the issue body.
+                # Refresh the Detail block, then increment the occurrence
+                # counter in the issue body (GH-139: Detail used to go stale
+                # forever after the first sighting).
                 current_body = already_open.get("body") or ""
-                new_count = parse_occurrence_count(current_body) + 1
-                new_body = set_occurrence_count(current_body, new_count, now_str,
+                refreshed_body = set_detail(current_body, check["detail"])
+                new_count = parse_occurrence_count(refreshed_body) + 1
+                new_body = set_occurrence_count(refreshed_body, new_count, now_str,
                                                 device=DEVICE_NAME)
                 update_issue_body(token, args.repo, already_open["number"], new_body, args.dry_run)
                 print(f"  SEEN×{new_count:<3} {check['status'].upper():4}  {check['name']}  "
