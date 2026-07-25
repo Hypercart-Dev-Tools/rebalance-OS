@@ -1,0 +1,102 @@
+{
+  "schema": "swarm-preflight/run-candidate@1",
+  "generated_at": "2026-07-25T06:22:19Z",
+  "mode": "gh-bundle",
+  "candidate": {
+    "slug": "gh-167-semantic-index-github-gap"
+  },
+  "provenance": {
+    "source_docs": [
+      "/Users/noelsaw/Documents/rebalance-OS/PROJECT/2-WORKING/GH-167-SEMANTIC-INDEX-GITHUB-GAP.md"
+    ],
+    "issues": [
+      "167"
+    ],
+    "target_root": "/Users/noelsaw/Documents/rebalance-OS",
+    "branch": "development",
+    "commit": "b5c9e3559c1603016d19a23878df68fcc90198aa",
+    "suggested_branch": "marathon/gh-167-semantic-index-github-gap-2026-07-25",
+    "branch_ready": false,
+    "skip_branch_prompt": false
+  },
+  "contract": {
+    "target": {
+      "repo": ".",
+      "ref": "development"
+    },
+    "gate": ".venv/bin/python -m pytest tests/ -k \"semantic_index or index_ops\" -q",
+    "fix_probes": [
+      {
+        "type": "grep_present",
+        "path": "src/rebalance/ingest/index_ops.py",
+        "pattern": "sd\\.source_type = 'github' AND sd\\.source_pk = gd\\.source_key\\s+WHERE sd\\.id IS NULL"
+      }
+    ],
+    "artifacts": [
+      "src/rebalance/ingest/semantic_index.py",
+      "src/rebalance/ingest/index_ops.py",
+      "src/rebalance/ingest/db/semantic.py"
+    ],
+    "artifacts_new": [],
+    "remediation": {
+      "source": "issue#167",
+      "criteria": "Missing-doc drift check and projection query agree on ignored-repo filtering; malformed rows don't abort a repo's projection"
+    },
+    "lanes": {
+      "agy_safe": [],
+      "orchestrator_only": []
+    }
+  },
+  "allow_paths": [
+    "src/rebalance/ingest/semantic_index.py",
+    "src/rebalance/ingest/index_ops.py",
+    "src/rebalance/ingest/db/semantic.py"
+  ],
+  "freshness": {
+    "fetch_ok": true,
+    "upstream": "origin/development",
+    "ahead": 0,
+    "behind": 0,
+    "dirty": true,
+    "stale_index_lock": false,
+    "stale_index_lock_path": null,
+    "stale_index_lock_warning": null,
+    "evaluated_ref": "development",
+    "evaluated_ref_commit": "b5c9e3559c1603016d19a23878df68fcc90198aa",
+    "checkout_matches_ref": true,
+    "head_behind_ref": 0,
+    "candidate_state": "ready",
+    "probes": [
+      {
+        "type": "grep_present",
+        "path": "src/rebalance/ingest/index_ops.py",
+        "verdict": "unfixed"
+      }
+    ]
+  },
+  "readiness": {
+    "ready": true,
+    "next_action": null
+  },
+  "lane_plan": {
+    "orchestrator_owned": [],
+    "codex_lane": [
+      "src/rebalance/ingest/semantic_index.py",
+      "src/rebalance/ingest/index_ops.py",
+      "src/rebalance/ingest/db/semantic.py"
+    ],
+    "agy_lane": [],
+    "effective_artifacts": [
+      "src/rebalance/ingest/semantic_index.py",
+      "src/rebalance/ingest/index_ops.py",
+      "src/rebalance/ingest/db/semantic.py"
+    ],
+    "inferred_test_artifacts": [],
+    "inferred_test_helpers": [],
+    "fs_touching_tests": [],
+    "agy_review_default": true,
+    "coupling_warning": "all artifacts share one top-level dir; treat as coupled",
+    "parallelizable": false,
+    "single_lane_only": true
+  }
+}

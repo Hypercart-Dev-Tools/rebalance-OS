@@ -1,0 +1,1 @@
+{"orchestrator_owned":["pyproject.toml"],"codex_lane":["conftest.py","tests/conftest.py"],"agy_lane":[],"effective_artifacts":["conftest.py","tests/conftest.py","pyproject.toml"],"inferred_test_artifacts":[],"inferred_test_helpers":[],"fs_touching_tests":[],"agy_review_default":true,"coupling_warning":null,"parallelizable":true,"single_lane_only":false}

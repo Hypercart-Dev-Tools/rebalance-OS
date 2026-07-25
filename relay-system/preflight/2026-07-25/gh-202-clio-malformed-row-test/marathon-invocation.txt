@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-202-clio-malformed-row-test .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact test/clio-exporter.sh \
+  --pre-advance-cmd 'bash test/clio-exporter.sh' \
+  --require-clean
