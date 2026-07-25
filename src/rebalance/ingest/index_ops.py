@@ -191,8 +191,36 @@ def _safe_count_where(conn: Any, table: str, where: str) -> int | None:
         return None
 
 
+# GH-166: how far behind the vault writer the ingester is allowed to drift
+# before signal_health.vault trips, in minutes. com.rebalance-os.vault-sync
+# runs hourly (:15 past the hour); a healthy install clears any edit within
+# that same run, well under the 60-minute cadence. 2x cadence (missed one
+# full cycle) warns; 3x cadence (missed two) degrades. Both are still far
+# tighter than the old 7-day freshness window, which never caught the
+# ~51-90 minute drift this fixes (#166).
+_VAULT_INGEST_LAG_WARN_MINUTES = 120
+_VAULT_INGEST_LAG_DEGRADED_MINUTES = 180
+
+# GH-166: a semantic_documents row still pending embed past this many minutes
+# is flagged "stuck" rather than counted as an in-flight run's normal tail.
+# See the comment at the pending-embed drift computation in get_index_status
+# for why 30 minutes is well past a healthy run's expected completion time.
+_PENDING_EMBED_STUCK_MINUTES = 30
+
 _SIGNAL_HEALTH_RULES: dict[str, dict[str, Any]] = {
-    "vault": {"freshness_key": "last_ingested_at", "window_days": 7, "zero_status": "degraded"},
+    "vault": {
+        "freshness_key": "last_ingested_at",
+        "window_days": 7,
+        "zero_status": "degraded",
+        # GH-166: a fresh last_ingested_at only proves *some* ingest ran
+        # recently — it says nothing about whether the writer has since
+        # moved further ahead. lag_key names a computed field on the
+        # source payload (last_modified_in_vault - last_ingested_at) that
+        # this rule's warn/degraded minutes are checked against below.
+        "lag_key": "ingest_lag_minutes",
+        "lag_warn_minutes": _VAULT_INGEST_LAG_WARN_MINUTES,
+        "lag_degraded_minutes": _VAULT_INGEST_LAG_DEGRADED_MINUTES,
+    },
     "github": {
         "freshness_key": "activity_last_scanned_at",
         "window_days": 7,
@@ -276,6 +304,29 @@ def _parse_status_timestamp(raw: Any) -> datetime | None:
         except ValueError:
             continue
     return None
+
+
+def _vault_ingest_lag_minutes(last_modified_in_vault: Any, last_ingested_at: Any) -> float | None:
+    """Minutes the ingester is behind the vault writer, clamped to >= 0.
+
+    None when either timestamp is missing or unparseable — the caller
+    already surfaces a missing-timestamp verdict via the freshness check,
+    so this stays silent rather than inventing a number.
+    """
+    modified = _parse_status_timestamp(last_modified_in_vault)
+    ingested = _parse_status_timestamp(last_ingested_at)
+    if modified is None or ingested is None:
+        return None
+    lag = (modified - ingested).total_seconds() / 60
+    return max(0.0, lag)
+
+
+def _minutes_since(raw_timestamp: Any, now: datetime) -> float | None:
+    """Minutes between *now* and *raw_timestamp*, or None if unparseable."""
+    ts = _parse_status_timestamp(raw_timestamp)
+    if ts is None:
+        return None
+    return (now - ts).total_seconds() / 60
 
 
 def _source_total_rows(source_name: str, source_payload: dict[str, Any]) -> int:
@@ -366,6 +417,35 @@ def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[
                     status_entry = {
                         "status": zero_status,
                         "reason": "freshness timestamp is current but 0 rows landed in the last 7d",
+                    }
+
+        # GH-166 ingest-lag override: last_ingested_at can be fresh (a sync
+        # ran recently) while the vault writer has still moved further
+        # ahead than the ingester has caught up to. Only overrides an
+        # otherwise-ok verdict — a source already flagged warn/degraded by
+        # freshness/zero-rows above keeps that verdict and reason, same
+        # precedence rule the content-quality override below follows.
+        lag_key = rule.get("lag_key")
+        if lag_key and status_entry["status"] == "ok":
+            lag_minutes = source_payload.get(lag_key)
+            if isinstance(lag_minutes, (int, float)):
+                degraded_after = rule.get("lag_degraded_minutes")
+                warn_after = rule.get("lag_warn_minutes")
+                if degraded_after is not None and lag_minutes > degraded_after:
+                    status_entry = {
+                        "status": "degraded",
+                        "reason": (
+                            f"ingest is {round(lag_minutes)}m behind the vault "
+                            f"writer (threshold {degraded_after}m)"
+                        ),
+                    }
+                elif warn_after is not None and lag_minutes > warn_after:
+                    status_entry = {
+                        "status": "warn",
+                        "reason": (
+                            f"ingest is {round(lag_minutes)}m behind the vault "
+                            f"writer (threshold {warn_after}m)"
+                        ),
                     }
 
         # GH-127 content-quality override: rows can be structurally valid
@@ -466,6 +546,14 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
                 conn, "vault_files", "julianday(last_modified) >= julianday('now', '-7 days')"
             ) or 0,
         }
+        # GH-166: how far the ingester is behind the vault writer, in minutes.
+        # Positive means the newest edit on disk hasn't been ingested yet;
+        # clamped at 0 so a normal ingest-after-edit ordering never reports a
+        # negative lag. None when either timestamp is missing/unparseable.
+        payload["sources"]["vault"]["ingest_lag_minutes"] = _vault_ingest_lag_minutes(
+            payload["sources"]["vault"]["last_modified_in_vault"],
+            payload["sources"]["vault"]["last_ingested_at"],
+        )
 
         payload["sources"]["github"] = {
             "items": _safe_count(conn, "github_items"),
@@ -635,15 +723,47 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             drift["github_documents_missing_from_semantic"] = None
 
         try:
-            pending_embed = conn.execute(
+            pending_rows = conn.execute(
                 """
-                SELECT COUNT(*) FROM semantic_documents
+                SELECT updated_at FROM semantic_documents
                 WHERE embedded_hash IS NULL OR embedded_hash != content_hash
                 """
-            ).fetchone()[0]
-            drift["semantic_documents_pending_embed"] = int(pending_embed)
+            ).fetchall()
+            pending_total = len(pending_rows)
+            now = datetime.now(timezone.utc)
+            oldest_minutes: float | None = None
+            stuck_count = 0
+            for row in pending_rows:
+                age_minutes = _minutes_since(row["updated_at"], now)
+                if age_minutes is None:
+                    continue
+                if oldest_minutes is None or age_minutes > oldest_minutes:
+                    oldest_minutes = age_minutes
+                if age_minutes > _PENDING_EMBED_STUCK_MINUTES:
+                    stuck_count += 1
+
+            drift["semantic_documents_pending_embed"] = pending_total
+            # GH-166: embed_chunks() runs synchronously right after ingest_vault()
+            # within the same refresh job (see _refresh_vault below), so a
+            # pending-embed row should clear within that one run — well under
+            # the ~60-minute vault-sync cadence. A row still pending past
+            # _PENDING_EMBED_STUCK_MINUTES is not an in-flight run's normal
+            # tail; it is evidence the embed step stalled or failed on that row.
+            drift["semantic_documents_pending_embed_stuck"] = stuck_count
+            drift["semantic_documents_pending_embed_oldest_minutes"] = (
+                round(oldest_minutes, 1) if oldest_minutes is not None else None
+            )
+            if stuck_count:
+                drift["semantic_documents_pending_embed_reason"] = (
+                    f"{stuck_count} of {pending_total} pending-embed row(s) unembedded "
+                    f"for over {_PENDING_EMBED_STUCK_MINUTES}m (oldest "
+                    f"{round(oldest_minutes, 1) if oldest_minutes is not None else '?'}m) "
+                    "— likely a stuck/failed embed run, not just an in-flight tail"
+                )
         except Exception:
             drift["semantic_documents_pending_embed"] = None
+            drift["semantic_documents_pending_embed_stuck"] = None
+            drift["semantic_documents_pending_embed_oldest_minutes"] = None
 
         # GH-169 Phase 3: commit-corpus completeness, anchored on the remote.
         # Cheap (local git + one ls-remote per repo, no REST API) so it can run
