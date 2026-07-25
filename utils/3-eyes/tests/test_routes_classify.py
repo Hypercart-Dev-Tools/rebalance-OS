@@ -6,6 +6,7 @@ Exercises the observe -> classify -> route path offline: the classifier stub
 
 from __future__ import annotations
 
+import json
 import re
 
 import pytest
@@ -34,6 +35,37 @@ def test_stub_makes_no_network_call(stubbed, monkeypatch):
         lambda *a, **k: pytest.fail("stub classify hit the network"),
     )
     assert classify.classify("error")["stub"] is True
+
+
+def test_active_classifier_sends_editable_system_instructions(activate, monkeypatch):
+    """The committed instructions file, not a hidden inline prompt, governs Gemma."""
+    activate()
+    monkeypatch.setenv("THREE_EYES_MODEL", "gemma-test")
+    captured: dict = {}
+
+    class Response:
+        def read(self):
+            return b'{"response": "{\\"severity\\": \\"warn\\", \\"summary\\": \\"test\\"}"}'
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return False
+
+    def fake_urlopen(request, **_kwargs):
+        captured.update(json.loads(request.data.decode()))
+        return Response()
+
+    import urllib.request
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+    result = classify.classify("collector returned no fresh rows")
+
+    assert result["severity"] == "warn"
+    assert captured["model"] == "gemma-test"
+    assert captured["system"] == classify.load_system_instructions()
+    assert "safety-first observability analyst" in captured["system"]
 
 
 # ------------------------------- routes ----------------------------------- #

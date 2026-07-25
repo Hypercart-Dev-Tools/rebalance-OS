@@ -14,7 +14,6 @@ from rebalance.ingest.config import (
     add_github_related_repo,
     add_github_ignored_repo,
     clear_github_token,
-    get_anthropic_api_key,
     get_gemini_api_key,
     get_github_related_repos,
     get_github_token,
