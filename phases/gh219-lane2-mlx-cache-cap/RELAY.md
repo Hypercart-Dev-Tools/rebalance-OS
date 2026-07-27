@@ -138,3 +138,23 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH219-LANE2 --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh219-lane2-mlx-cache-cap/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · agy
+
+I have implemented the MLX cache cap fix to prevent unbounded memory growth during variable-length embeddings.
+
+**Files Touched:**
+- `src/rebalance/ingest/embedder.py`: 
+  - Added `mx.set_cache_limit()` in `_load_model()` to cap the cache at 3.0 GB by default, which can be overridden via the `REBALANCE_MLX_CACHE_LIMIT_GB` environment variable. The rationale derivation is documented inline.
+  - Added `mx.clear_cache()` in `_embed_batch()` so it executes precisely at the end of each batch iteration. This shared location correctly guards all four funneled call sites.
+  - Re-leveled MLX memory telemetry from `logger.info()` to `logger.warning()` so it easily survives default production configs.
+- `tests/test_mlx_cache_cap.py`:
+  - Authored a new test suite that isolates caching assertions from original behavior.
+  - Includes a test that loads the real MLX and simulates multiple batches of variable-length inputs, ensuring memory stays strictly bound.
+  - Confirmed the 4 call sites are properly funneled.
+  - Tests check for graceful degradation if `mlx.core` methods are absent.
+
+**Key Decisions & Findings:**
+- Wrote a local test script to benchmark throughput of `mx.clear_cache()`. Results showed just a ~2.5% penalty for a 10-batch workload.
+- Kept `semantic_index.py` and `github_knowledge.py` untouched because all their embedding needs already delegate appropriately to `_embed_batch` and `_load_model`.
+- Verified the fix passes the gating tests without regressions.
