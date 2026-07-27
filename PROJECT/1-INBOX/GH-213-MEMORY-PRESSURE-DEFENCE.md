@@ -2,6 +2,16 @@
 
 > Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/213
 > Status: **proposed** — awaiting decision on Option A vs B. Codex sanity check pending.
+>
+> **REFRAMED 2026-07-27 by [#215](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/215).**
+> The root cause is now identified: MLX allocates **Metal** buffers charged to `phys_footprint` as
+> `iokit` and never counted in RSS, and the repo does no MLX cache management at all. That makes
+> this issue the **backstop**, not the fix — worth doing, but after #215. Two findings here bear
+> directly on Option A: (a) the RSS→footprint switch is *not* blocked by the guard's short window,
+> because footprint is absolute per-process and a later leaf call reads the accumulated total;
+> (b) the ceiling must be sized knowing footprint legitimately includes Metal. See also
+> [#216](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/216) (instrumentation) and
+> [#217](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/217) (hard MLX limit).
 
 **Component**: `utils/job_guard.py`, `utils/3-eyes`, `temp/memory-issues/`
 
