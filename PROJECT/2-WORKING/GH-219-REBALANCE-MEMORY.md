@@ -1,6 +1,6 @@
 ---
 title: "REBALANCE MEMORY — unified project (8 lanes: instrument → measure → fix → bound → backstop → inventory → cover → detect)"
-status: "FIRED 2026-07-27 as a bounded spike — Lanes 0 + 1 only. Lanes 2–7 are gated behind an explicit go/no-go decision that requires live MLX telemetry (see ⛔ GATE). Widened from a 5-lane MLX marathon into the single owner of Rebalance memory use after two adversarial Codex rounds (3 Blockers + 4 Shoulds, all applied)."
+status: "SPIKE COMPLETE 2026-07-27 — Lane 0 landed and verified; Lane 1 code landed (all four call sites instrumented, 28-test gate green, no regressions). NOW AT THE ⛔ GATE: the CONFIRMED/REFUTED verdict needs one live embedding pass on real hardware before Lanes 2–7 may be committed. Fired as a bounded spike — Lanes 0 + 1 only. Lanes 2–7 are gated behind an explicit go/no-go decision that requires live MLX telemetry (see ⛔ GATE). Widened from a 5-lane MLX marathon into the single owner of Rebalance memory use after two adversarial Codex rounds (3 Blockers + 4 Shoulds, all applied)."
 created: 2026-07-27
 updated: 2026-07-27
 owner: noel@neochro.me
@@ -182,13 +182,29 @@ names.
 
 **Goal:** stop doctor reporting a working scheduler fleet as entirely missing.
 
-- [ ] Treat non-zero `returncode` as unavailable (`doctor.py:502-510`)
-- [ ] Treat empty/whitespace-only stdout as unavailable, not "zero jobs loaded"
-- [ ] Emit exactly one "scheduler state undetermined" finding; **zero** per-job warnings
-- [ ] Regression test: available+loaded, available+genuinely missing, unavailable
+- [x] Treat non-zero `returncode` as unavailable (`doctor.py:507`)
+- [x] Treat empty/whitespace-only stdout as unavailable, not "zero jobs loaded"
+- [x] Emit exactly one "scheduler state undetermined" finding; **zero** per-job warnings
+- [x] Regression test: available+loaded, available+genuinely missing, unavailable
 
 **Gate:** on a healthy device, zero `scheduler:*` warnings; in a restricted shell, one honest
 undetermined line and no reinstall advice.
+
+**✅ LANDED 2026-07-27 — marathon phase `gh219-lane0-doctor-launchctl`, exit 0.** Verified by
+running `doctor` in both shells, not by trusting the gate:
+
+| Shell | Before | After |
+|---|---|---|
+| Restricted (`launchctl` blocked) | 14 false WARNs + reinstall advice | 1 × `WARN scheduler state — undetermined` |
+| Healthy device | — | one scheduler line, `OK`, zero WARNs |
+
+Tests 32 → 35, including the *available + genuinely missing* case, so the fix cannot pass by
+going silent about real breakage.
+
+**Carried finding — not caused by this lane.** `tests/test_scheduler_liveness.py::`
+`test_not_loaded_warning_is_distinct_from_loaded_job_failure` fails, and also fails on the
+pre-fix commit `70f36f5`. It sits in this lane's domain and the narrow gate would not have
+caught a regression there. Worth its own issue; not a blocker.
 
 → [GH-218-DOCTOR-LAUNCHCTL-FALSE-NEGATIVE.md](../1-INBOX/GH-218-DOCTOR-LAUNCHCTL-FALSE-NEGATIVE.md)
 
@@ -242,11 +258,16 @@ finds nothing, the marathon still delivers its acceptance criteria.
 
 **Goal:** make the dominant memory consumer observable, and settle #215's hypothesis with data.
 
-- [ ] Log `mx.get_active_memory()` / `get_cache_memory()` / `get_peak_memory()` every N batches
-- [ ] `mx.reset_peak_memory()` per pass so figures are attributable to a run
-- [ ] Reuse an existing log surface; do not invent a new one
-- [ ] Add `inactive_gb` + `speculative_gb` to `sys-mem-watch.sh`
-- [ ] **Emit an invocation-wide run ID and a PID → entry-point record** on every embedding pass
+- [x] Log `mx.get_active_memory()` / `get_cache_memory()` / `get_peak_memory()` every N batches
+      (every 10, `embedder.py:_embed_batch`)
+- [x] `mx.reset_peak_memory()` per pass so figures are attributable to a run
+- [x] Reuse an existing log surface; do not invent a new one (module `logger`)
+- [ ] ~~Add `inactive_gb` + `speculative_gb` to `sys-mem-watch.sh`~~ — **deferred out of the
+      marathon.** Two corrections: the sampling lives in `sys-mem-attribute.py`, not the 31-line
+      `sys-mem-watch.sh` wrapper; and `temp/` is gitignored (`.gitignore:4`), so an edit made in a
+      marathon worktree could not be committed and would be **destroyed** on teardown. Must be done
+      directly, outside the harness. **Still outstanding.**
+- [x] **Emit an invocation-wide run ID and a PID → entry-point record** on every embedding pass
       (r1 [Blocker]) — which caller (launchd job / CLI / MCP tool / agent / shell), which leaf,
       which PID. Without this the two unattributed episodes stay unattributable **by construction**,
       and no amount of per-batch MLX telemetry fixes that.
@@ -266,6 +287,33 @@ finds nothing, the marathon still delivers its acceptance criteria.
 **Gate:** a full pass emits MLX figures plus run-ID/entry-point attribution at negligible
 overhead, and the root cause is settled **CONFIRMED / REFUTED / UNOBSERVABLE** — a refutation is a
 success outcome for this lane, and it stops the marathon rather than silently mutating it.
+
+**◐ CODE LANDED 2026-07-27; VERDICT STILL OPEN.** All four call sites instrument
+(`embed_chunks`, `query_similar`, `embed_pending`, `_default_embed_texts`). Gate: 28 passed. Full
+suite 1575 passed / 6 failed — the same 6 pre-existing failures, no regressions.
+
+**How it landed matters for the record.** The marathon phase exited 5. The `agy` builder was killed
+by a **300 s wall-clock cap** after writing tests but before reconciling them with the code it then
+wrote, leaving HEAD red. Root cause is a harness parity divergence: the bash twin caps a turn at
+900 s (`agy-turn.sh:206`) while the Python twin — which runs by default — caps at 300 s
+(`agy-turn.py:157`). Same split for codex (900/300) and claude (600/300). The implementation was
+sound; the five failing tests were repaired by hand in `5b79484` rather than by burning the lane's
+last attempt.
+
+**The two test defects are worth remembering — both produced *misleading* results, not loud ones:**
+
+1. `caplog` could never capture. `logging.getLogger("rebalance")` sets `propagate = False` **and**
+   is configured to WARNING, so `logger.info()` records were discarded before construction. Raising
+   the root level alone does nothing.
+2. The MLX mock never intercepted. `mlx` is a real installed package, so `import mlx.core as mx`
+   resolves through `getattr(mlx, "core")` and a `sys.modules["mlx.core"]` patch is ignored —
+   the tests silently exercised **real MLX** and read the mock's counters as zero.
+
+Both are traps for anyone instrumenting this path again.
+
+- [ ] **Remaining: run a live embedding pass and record the verdict.** Requires real hardware —
+      a sandboxed shell has no Metal device. Until this happens, #215 stays **INFERRED** and the
+      ⛔ GATE below is not satisfied.
 
 → [GH-216-MLX-MEMORY-INSTRUMENTATION.md](../1-INBOX/GH-216-MLX-MEMORY-INSTRUMENTATION.md)
 
