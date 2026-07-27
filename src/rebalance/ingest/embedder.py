@@ -9,12 +9,60 @@ mlx-embeddings is imported lazily so the rest of the package works without it.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import struct
+import sys
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+logger = logging.getLogger(__name__)
+
+_current_run_id = None
+_current_entry_point = None
+_batch_count = 0
+_last_activity_time = 0.0
+
+def _get_caller_identity() -> str:
+    if "XPC_SERVICE_NAME" in os.environ and "com.apple" not in os.environ["XPC_SERVICE_NAME"]:
+        return f"launchd job ({os.environ['XPC_SERVICE_NAME']})"
+    cmd = sys.argv[0] if sys.argv else ""
+    if "mcp" in cmd.lower() or os.environ.get("MCP_SERVER"):
+        return "MCP tool"
+    if "agent" in cmd.lower() or os.environ.get("AGENT_NAME") or "tick" in cmd:
+        return "agent"
+    if sys.stdout.isatty():
+        return "interactive shell"
+    return f"CLI ({os.path.basename(cmd) if cmd else 'unknown'})"
+
+def instrument_embedding_pass(site_name: str) -> None:
+    """Produce the run-ID + entry-point + PID record for an embedding pass."""
+    global _current_run_id, _current_entry_point, _batch_count, _last_activity_time
+    
+    now = time.monotonic()
+    if _current_entry_point == site_name and (now - _last_activity_time) < 30.0:
+        return
+        
+    _current_run_id = str(uuid.uuid4())
+    _current_entry_point = site_name
+    _batch_count = 0
+    
+    caller = _get_caller_identity()
+    logger.info(
+        f"Embedding pass started: run_id={_current_run_id} entry_point={site_name} pid={os.getpid()} caller={caller}"
+    )
+    
+    try:
+        import mlx.core as mx
+        if hasattr(mx, 'reset_peak_memory'):
+            mx.reset_peak_memory()
+    except Exception:
+        pass
+
 
 from rebalance.ingest._job_guard import guarded_embedding
 from rebalance.ingest.db import db_connection, ensure_schema
@@ -64,6 +112,7 @@ def _load_model(model_name: str) -> tuple:
 
 def _embed_batch(model: Any, tokenizer: Any, texts: list[str]) -> list[list[float]]:
     """Embed a batch of texts and return float vectors."""
+    global _batch_count, _last_activity_time
     import mlx.core as mx
     from mlx_embeddings import generate
 
@@ -71,6 +120,22 @@ def _embed_batch(model: Any, tokenizer: Any, texts: list[str]) -> list[list[floa
     embeddings = output.text_embeds
     # Materialize and free the MLX computation graph
     mx.eval(embeddings)
+    
+    _batch_count += 1
+    _last_activity_time = time.monotonic()
+    
+    if _batch_count % 10 == 0:
+        try:
+            active = mx.get_active_memory()
+            cache = mx.get_cache_memory()
+            peak = mx.get_peak_memory()
+            logger.info(
+                f"MLX telemetry: run_id={_current_run_id} batch={_batch_count} "
+                f"active_mem={active} cache_mem={cache} peak_mem={peak}"
+            )
+        except Exception:
+            pass
+
     return embeddings.tolist()
 
 
@@ -119,6 +184,7 @@ def embed_chunks(
     on this leaf rather than on :func:`embed_vault_chunks`, because that facade
     delegates here — guarding both would self-deadlock on the same ``flock``.
     """
+    instrument_embedding_pass("embed_chunks")
     start = time.monotonic()
 
     with db_connection(database_path, ensure_schema) as conn:
@@ -224,6 +290,7 @@ def query_similar(
 
     Returns ranked results with file path, heading, body preview, and score.
     """
+    instrument_embedding_pass("query_similar")
     model, tokenizer = _load_model(model_name)
     vectors = _embed_batch(model, tokenizer, [query_text])
     query_vec = _vec_to_bytes(vectors[0])

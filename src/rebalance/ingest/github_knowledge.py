@@ -852,6 +852,8 @@ def sync_github_repo(
 
 
 def _default_embed_texts(texts: list[str], model_name: str) -> list[list[float]]:
+    from rebalance.ingest.embedder import instrument_embedding_pass
+    instrument_embedding_pass("_default_embed_texts")
     model, tokenizer = _load_model(model_name)
     return _embed_batch(model, tokenizer, texts)
 
