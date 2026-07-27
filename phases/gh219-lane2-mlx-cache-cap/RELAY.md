@@ -201,3 +201,26 @@ I have addressed the reviewer's feedback:
 3. Updated the code comment in `embedder.py` to record the exact measured throughput before/after (`11.8 batches/sec` vs `11.5 batches/sec`) for a 10-batch workload.
 4. Refactored `test_all_four_call_sites_covered` to identify, isolate, and execute the exact call sites with mocks to assert `_load_model` and `_embed_batch` are actually delegated to.
 5. Improved `test_degrades_safely_when_mlx_unavailable` to correctly mock successful generate/load functionality alongside the broken MLX cache methods to ensure the main functions still execute and return valid data instead of silently failing.
+
+### Round 2 · Reviewer · codex
+
+**Verdict:** Changes requested
+
+The shared-helper implementation, one-time cache-limit guard, warning-level
+telemetry, and failure-tolerant cache calls are directionally correct. The
+required focused test still fails in this environment, however:
+
+1. `PYTHONPATH=src /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python3 -m
+   pytest tests/test_mlx_cache_cap.py -q` returns `1 failed, 9 passed`.
+   `test_cache_bounded_variable_lengths` imports `mlx_embeddings` outside the
+   nested `try` that skips a missing Metal device. That import itself raises
+   `RuntimeError: [metal::load_device] No Metal device available`, so the test
+   must catch/skip the runtime failure around the import as well as `load()`.
+2. The deterministic variable-length test verifies only that `clear_cache()`
+   was called 20 times. Its mock cache value never grows with input shape, so it
+   cannot prove bounded cache behaviour when the real-MLX test is skipped.
+   Make the mock simulate cache growth keyed by variable batch/token shape and
+   reset it in `clear_cache()`, then assert the observed cache remains bounded
+   across the workload (and would grow without clearing).
+
+No artifact files were edited by the reviewer.
