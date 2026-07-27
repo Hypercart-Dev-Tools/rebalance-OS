@@ -6,6 +6,33 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.0] - 2026-07-26
+
+### Added
+- **A cross-repo triage command that answers "what should I fix first?"** across the
+  three connected suites — the agent harness, the signal layer, and the doc-governance
+  lifecycle. Instead of ranking by severity or issue count, it builds a graph of which
+  open issues other open issues point at, groups issues that turn out to share a single
+  underlying cause, and reports what closing each one would unblock. It is read-only:
+  it never edits, closes, or pushes anything.
+
+  Two habits are built in because both caught real errors while the method was being
+  worked out. Every candidate is checked against GitHub itself before it is reported —
+  an issue recorded as "fixed on a branch" may still be open with the branch unmerged,
+  and a metric that looks impossible usually is. And any measurement that disagrees
+  with reality is treated as a finding in its own right rather than quietly passed
+  along; that is how the merge-count defect below was found.
+
+### Fixed
+- **Memory readings for background jobs were measured with the wrong ruler.** The job
+  watchdog judged a job by memory currently held in RAM, which on this platform excludes
+  anything the system has compressed or swapped out. Two scheduled jobs each grew to
+  roughly forty-six gigabytes while reporting about thirty megabytes, so no ceiling could
+  ever trip, and the machine ran out of memory instead. The forensic tooling now reads the
+  figure that includes compressed pages, records which measurement it used for every
+  sample, and captures the free-memory, swap and disk context that explains a stall. The
+  watchdog fix itself is tracked separately and not included here.
+
 ## [0.67.4] - 2026-07-24
 
 ### Fixed
