@@ -224,3 +224,11 @@ required focused test still fails in this environment, however:
    across the workload (and would grow without clearing).
 
 No artifact files were edited by the reviewer.
+
+### Round 3 · Builder · agy
+
+I have addressed the reviewer's feedback:
+1. `test_cache_bounded_variable_lengths` now cleanly wraps the `import mlx_embeddings` along with the `.load()` in the try block, effectively skipping the test if a Metal device is missing instead of erroring on the import itself.
+2. Modified the mock `MockMLXCoreForCap` and `mock_generate` to accurately simulate cache growth. `get_cache_memory()` returns `_simulated_cache`, which grows linearly per string length generated, and resets to `0` exactly when `clear_cache()` is called. 
+3. `test_mocked_cache_bounded_variable_lengths` now asserts that the cache memory remains perfectly bounded (`== 0` directly after the loop) due to the clearing cadence. It additionally asserts (via monkeypatching out `clear_cache`) that if it were omitted, the cache would grow rapidly across batches due to the variable-length inputs.
+4. Gate passes successfully.

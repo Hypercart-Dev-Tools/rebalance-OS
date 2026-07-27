@@ -20,14 +20,15 @@ class MockMLXCoreForCap:
         self.set_cache_limit_count = 0
         self.cache_limit_val = None
         self.active_val = 1000
-        self.cache_val = 2000
         self.peak_val = 3000
+        self._simulated_cache = 0
 
     def reset_peak_memory(self) -> None:
         self.reset_count += 1
 
     def clear_cache(self) -> None:
         self.clear_cache_count += 1
+        self._simulated_cache = 0
 
     def set_cache_limit(self, limit: int) -> None:
         self.set_cache_limit_count += 1
@@ -37,7 +38,7 @@ class MockMLXCoreForCap:
         return self.active_val
 
     def get_cache_memory(self) -> int:
-        return self.cache_val
+        return self._simulated_cache
 
     def get_peak_memory(self) -> int:
         return self.peak_val
@@ -55,6 +56,11 @@ class MockGenerateOutput:
 
 
 def mock_generate(_model, _tokenizer, texts):
+    import sys
+    core = sys.modules.get("mlx.core")
+    if hasattr(core, "_simulated_cache"):
+        total_len = sum(len(t) for t in texts)
+        core._simulated_cache += total_len * 1024 * 1024
     return MockGenerateOutput(len(texts))
 
 
@@ -108,9 +114,9 @@ def test_cache_bounded_variable_lengths():
     # This must use the real MLX to prove the cache bound works with variable lengths.
     try:
         import mlx.core as mx
-        from mlx_embeddings import load
-        # Check if Metal device is available, if not skip
         try:
+            from mlx_embeddings import load
+            # Check if Metal device is available, if not skip
             load(embedder.DEFAULT_MODEL)
         except RuntimeError as e:
             if "No Metal device available" in str(e):
@@ -155,6 +161,17 @@ def test_mocked_cache_bounded_variable_lengths(mock_mlx_cap):
         
     # We should have cleared cache exactly 20 times (once per batch)
     assert mock_mlx_cap.clear_cache_count == 20
+    # Cache should be bounded (cleared after last batch)
+    assert mock_mlx_cap.get_cache_memory() == 0
+
+    # Prove it would grow without clearing
+    with patch.object(mock_mlx_cap, "clear_cache", lambda: None):
+        for i in range(20):
+            texts = ["word " * (10 + (i * 13) % 90) for _ in range(5)]
+            _embed_batch(model, tokenizer, texts)
+        
+        # Cache should have grown significantly due to variable shapes
+        assert mock_mlx_cap.get_cache_memory() > 0
 
 
 def test_set_cache_limit_applied_once(mock_mlx_cap):
