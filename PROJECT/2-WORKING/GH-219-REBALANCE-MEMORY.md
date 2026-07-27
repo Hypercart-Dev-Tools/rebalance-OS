@@ -167,8 +167,16 @@ results and the log must say which.
 |---|---|---|---|---|
 | 1 | Live index location + corpus growth | Index path found **and** row/chunk counts at two dates ≥7 days apart | Index found **and** growth <10% over 14 d | `UNOBSERVABLE — index not located in budget` |
 | 2 | Scheduler cadence change 07-20 | Pre-/post-07-20 plist diff shows changed interval or calendar set | Diff shows cadence identical | `UNOBSERVABLE — no pre-07-20 plist copy available` |
-| 3 | 3-Eyes rollout 07-22 | A 3-Eyes job demonstrably invokes or serialises against an embedding leaf | No 3-Eyes job touches an embedding entry point | `UNOBSERVABLE — trigger relationship not determinable from logs` |
-| 4 | Invocation entry points | A non-launchd caller reaching an embedding leaf is identified | All callers enumerated and guarded | `UNOBSERVABLE — caller set not enumerable` |
+| 3 | 3-Eyes rollout 07-22 | A 3-Eyes job demonstrably invokes **or temporally overlaps** an embedding leaf under memory pressure | No 3-Eyes job touches an embedding entry point **AND** sampler data shows no overlap between 3-Eyes execution windows and embedding-pass footprint growth | `UNOBSERVABLE — trigger relationship not determinable from logs` (**default** — the narrow no-direct-call finding alone does NOT exclude, see below) |
+| 4 | Invocation entry points | A non-launchd caller reaching an embedding leaf is identified | All callers enumerated and guarded **AND** evidence shows the caller set / cadence did not change before 07-25 | `UNOBSERVABLE — caller set not enumerable, or no pre-07-25 baseline exists` (**default**) |
+
+**Two exclusion tests were mislabelled in the previous draft (r2 [Should]) and are now corrected.**
+"No 3-Eyes job touches an embedding entry point" refutes a *direct trigger* but says nothing about
+the **contention** theory that row actually names — two jobs can starve a machine without either
+calling the other. "All callers enumerated and guarded" describes the caller set *today* and says
+nothing about whether it **changed before 07-25**, which is the only question archaeology is
+asking. Both rows now require temporal/overlap evidence to EXCLUDE, and default to `UNOBSERVABLE`
+without it. The narrow findings are still worth recording — as sub-findings, not as exclusions.
 | 5 | launchd env/config | An `EnvironmentVariables`/interpreter/cwd delta is found | Config byte-identical pre/post | `UNOBSERVABLE` |
 | 6 | OS / Metal runtime | An OS or driver update lands in the window | No update in window | `UNOBSERVABLE` |
 
@@ -306,8 +314,10 @@ question after shipping is "what about pulse-server?", and the project reopens.
 **Gate:** a committed table covering 100% of Rebalance-owned processes, each with a baseline and a
 budget. Over-budget processes are either fixed or have a written waiver with a reason.
 
-**Bounded by:** measurement is exhaustive; remediation touches only budget violators. A process
-that is within budget gets a row in the table and nothing else.
+**Bounded by:** measurement is exhaustive **over the frozen 2026-07-27 inventory** (14 launchd
+jobs, `pulse-server`, MCP server, 3-Eyes jobs); remediation touches only budget violators. A
+process within budget gets a row in the table and nothing else. A process that appears *after* the
+cutoff is a new issue, not more work here.
 
 ---
 
@@ -333,8 +343,10 @@ systemic.
 **Gate:** a written coverage matrix; zero unguarded paths capable of exceeding the 8 GB
 per-process bound, or an explicit waiver for each.
 
-**Bounded by:** enumeration and guard placement only. Redesigning the guard's architecture is
-**not** in this lane — that is #213's territory.
+**Bounded by:** enumeration and guard placement only, **over the frozen 2026-07-27 inventory** —
+the embedding leaves reachable from the cutoff job list, not every path that may later exist.
+Redesigning the guard's architecture is **not** in this lane; that is #213's territory. An entry
+point discovered after the cutoff follows the new-issue rule unless it breaches a reopen threshold.
 
 ---
 
@@ -400,6 +412,29 @@ this 64 GB machine the contract is:
 Aggregate is measured, not assumed: a fleet of six 3 GB processes violates the machine floor while
 every process passes its own bound. That gap is exactly what a per-process-only criterion misses.
 
+**Where these numbers come from (r2 [Should] — they were asserted, not derived).**
+
+- **8 GB per process** — a healthy embedding process was observed at **1.4–2.8 GB** footprint on
+  07-27 before ballooning (PID 2886 at 2,761 MB at 08:21; PID 883 at 2,365 MB; MCP server at
+  1,385 MB). 8 GB is ~3× the observed healthy peak, leaving room for corpus growth without
+  re-litigating the contract every quarter.
+- **16 GB aggregate** — 25% of the 64 GB machine, which leaves ~48 GB for the OS and non-Rebalance
+  workloads. LM Studio alone was measured at **13.1 GB** on 07-27, so a Rebalance budget above
+  ~16 GB cannot coexist with the tools actually in use on this device.
+- **`free_gb` ≥ 4.0** — deliberately the same value as `MIN_AVAILABLE_FLOOR = 4 * GIB` in
+  `utils/job_guard.py:90`, so the project's contract and the guard's own floor cannot drift apart.
+- **compressor ≤ 8.0 / swap ≤ 12.0** — both sat at ~0.4 GB / ~7.3 GB in the recovered 08:05 state
+  on 07-27 and at 28.99 GB / 24.7 GB at peak. The bounds sit between observed-healthy and
+  observed-pathological.
+
+**If a legitimate pass genuinely needs more than the budget (r2 [Should]).** This is a *bounded
+decision*, not a permanent failure state. The contract may be **revised exactly once**, from
+measured evidence, with the new value and its derivation written into this table and the reason
+recorded in `TRIAGE-LOG.md`. If a second revision looks necessary, that is evidence the workload —
+not the budget — is the problem: stop, close this project under the terminal-state rules below, and
+open a separately scoped successor. Lane 3's "size from Lane 1" refers to the **MLX limit**, which
+is an implementation value derived under this contract — it does not reopen the contract itself.
+
 **Out of scope — named, so they cannot creep in:**
 
 - The `figma: last refresh advanced 46d` warning (unrelated, pre-existing)
@@ -428,7 +463,42 @@ every process passes its own bound. That gap is exactly what a per-process-only 
 Anything else — an untidy warning, an unidentified 07-25 trigger, a large non-Rebalance process —
 does **not** reopen this project. It becomes a new issue with its own scope.
 
+### Terminal states — how this project ends, including when it fails (r2 [Blocker])
+
+The previous draft had **no terminal outcome for its own expected failure paths**. Lane 1 could
+declare #215 `REFUTED` or `UNOBSERVABLE` and halt the marathon, while project acceptance still
+demanded a zero-breach representative day — so on refutation the project could satisfy *nothing*
+and formally end *never*. Combined with "every owned process" and open-ended entry-point
+discovery, that is an infinite loop with no exit. Fixed below.
+
+**Scope freeze (Lanes 5–6).** Both lanes are frozen to the inventory that exists at the
+**2026-07-27 cutoff**: the 14 launchd jobs, `pulse-server`, the MCP server, the 3-Eyes jobs, and
+the embedding leaves reachable from them. A process, job, or entry point that appears **after**
+the cutoff is a **new issue**, not additional work here — unless it breaches a measured threshold
+in the reopen list above. "Every" means every item on a named, dated list; it does not mean
+"whatever is discovered next".
+
+**Finite verification attempt.** Acceptance is verified over **at most two** representative
+windows (two full waking days, ≥12 embedding passes each). Not an unbounded "keep watching until
+it's clean" — two attempts, then a terminal state is declared either way.
+
+**The project ends in exactly one of two states:**
+
+| State | Trigger | What happens |
+|---|---|---|
+| **Completed** | Every box in the acceptance list ticks within the finite verification attempt | Close #219 and all constituent issues. Claim the 70–80% outcome. |
+| **Blocked — diagnosis split** | #215 `REFUTED`, or telemetry `UNOBSERVABLE`, or a bound still breached after **both** verification windows | Close #219 **without** claiming the 70–80% outcome. Record what was learned, what shipped, and what did not, in `TRIAGE-LOG.md` and the issue. Open **exactly one** separately scoped successor issue carrying the unresolved diagnosis. |
+
+**`Blocked — diagnosis split` is a legitimate ending, not a failure to be avoided by continuing.**
+Work already landed (instrumentation, doctor fix, inventory, guard coverage) still stands and still
+ships. What does *not* happen is this project staying open while someone keeps trying. Exactly one
+successor issue may be opened — not a family of follow-ups, which is the "one more thing" pattern
+this project exists to prevent.
+
 ## Project-level acceptance
+
+*(This list defines the **Completed** state only. See terminal states above for how the project
+ends when these cannot be met.)*
 
 **Bounds met**
 - [ ] Representative window (1 full waking day, ≥ 12 embedding passes) with **zero** breaches of
