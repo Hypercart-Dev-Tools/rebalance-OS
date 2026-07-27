@@ -1,5 +1,5 @@
 # Marathon Phase gh219-lane2-mlx-cache-cap
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-GH219-LANE2 builder=agy reviewer=codex round-cap=5 -->
@@ -232,3 +232,15 @@ I have addressed the reviewer's feedback:
 2. Modified the mock `MockMLXCoreForCap` and `mock_generate` to accurately simulate cache growth. `get_cache_memory()` returns `_simulated_cache`, which grows linearly per string length generated, and resets to `0` exactly when `clear_cache()` is called. 
 3. `test_mocked_cache_bounded_variable_lengths` now asserts that the cache memory remains perfectly bounded (`== 0` directly after the loop) due to the clearing cadence. It additionally asserts (via monkeypatching out `clear_cache`) that if it were omitted, the cache would grow rapidly across batches due to the variable-length inputs.
 4. Gate passes successfully.
+
+### Round 3 · Reviewer · codex
+
+Reviewed the shared helper, all four funnelled call sites, and the revised
+variable-length cache tests. The one-time module guard, 3 GB derived cache cap,
+per-batch clear, warning-level memory telemetry, and MLX failure handling meet
+the lane contract. The deterministic mock now models shape-dependent cache
+growth and the real-MLX check skips cleanly without Metal.
+
+Focused verification: `PYTHONPATH=src /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python3 -m pytest tests/test_mlx_cache_cap.py -q` → 9 passed, 1 skipped (no Metal device).
+
+**Verdict:** Approved
