@@ -1,6 +1,15 @@
 ---
 title: "REBALANCE MEMORY — unified project (8 lanes: instrument → measure → fix → bound → backstop → inventory → cover → detect)"
-status: "GATE PASSED 2026-07-27 — #215 CONFIRMED on live hardware (cache 0.510 -> 11.546 GB in 18 variable-shape batches while active memory stayed flat at 1.110 GB; mx.clear_cache() holds footprint to 1.35 GB vs 13.00 GB, a 9.6x reduction). Lane 0 landed and verified. Lane 1 code landed, 28-test gate green, no regressions. GO on Lanes 2-7 — the hypothesis is no longer inferred. Fired as a bounded spike — Lanes 0 + 1 only. Lanes 2–7 are gated behind an explicit go/no-go decision that requires live MLX telemetry (see ⛔ GATE). Widened from a 5-lane MLX marathon into the single owner of Rebalance memory use after two adversarial Codex rounds (3 Blockers + 4 Shoulds, all applied)."
+status: >
+  LANES 0, 1, 2 COMPLETE as of 2026-07-27. Lanes 3–7 remain.
+
+  #215 is PROVEN, not inferred — the ⛔ GATE passed on live hardware, and Lane 2's fix is
+  Codex-approved and verified against the harness that produced the blowup: phys_footprint
+  13.00 -> 1.36 GB, 80/80 batches completed vs 18 before. Full suite 1585 passed / 6 failed
+  (the same 6 pre-existing failures throughout; no regressions from any lane).
+
+  Remaining outside the lanes: the sampler's inactive_gb/speculative_gb columns, deferred out
+  of the marathon because temp/ is gitignored and a worktree edit there cannot be committed.
 created: 2026-07-27
 updated: 2026-07-27
 owner: noel@neochro.me
@@ -49,10 +58,11 @@ next one verifiable rather than argued.
 
 The ordering constraint is real, not stylistic:
 
-- **#215 is currently INFERRED, not PROVEN.** `mx.get_cache_memory()` has never been sampled
-  during a live run — no Metal device is reachable from a sandboxed shell. Landing the fix before
-  the measurement means shipping a remedy that cannot be confirmed, for a bug that has already
-  survived two misdiagnoses.
+- ~~**#215 is currently INFERRED, not PROVEN.**~~ **RESOLVED 2026-07-27 — #215 is now PROVEN**
+  (see ⛔ GATE). Retained because the *reasoning* was vindicated: measuring first is what caught
+  that a uniform-shape test shows no growth at all. Had the fix landed before the measurement, a
+  green test suite would have "confirmed" a remedy nobody had shown was needed, for a bug that had
+  already survived two misdiagnoses.
 - **#217's limit must be sized from data.** A guessed ceiling that fails legitimate passes is how
   safety mechanisms get switched off by the person they annoy.
 - **#213's ceiling changes meaning** once it reads footprint instead of RSS — footprint
@@ -410,18 +420,56 @@ committed up front. That ratio is the entire justification for the gate.
 
 **Goal:** stop the allocation. Blocked on Lane 1's verdict.
 
-- [ ] `mx.set_cache_limit(...)` once at embedding-module level, sized deliberately
-- [ ] `mx.clear_cache()` at the end of each batch iteration (`embedder.py:172-177`)
-- [ ] Apply to **all four** call sites, not two (see Preflight finding above): `embedder.py:105`,
+- [x] `mx.set_cache_limit(...)` once at embedding-module level, sized deliberately (3.0 GB)
+- [x] `mx.clear_cache()` at the end of each batch iteration (`embedder.py:172-177`)
+- [x] Apply to **all four** call sites, not two (see Preflight finding above): `embedder.py:105`,
       `semantic_index.py:613`, `embedder.py:216` (`query_similar`, unguarded), and
       `github_knowledge.py:855` (`_default_embed_texts`, unguarded, in a module that never imports
       the guard). The two decorated leaves share one lock and one model per `_job_guard.py`
       "Lock scoping" — **the other two share neither**, so cache management must be attached to the
       allocation site rather than assumed from the lock
-- [ ] Measure throughput before/after; record any regression rather than hiding it
+- [x] Measure throughput before/after; record any regression rather than hiding it
+      (11.8 → 11.5 batches/sec, ~2.5%, recorded in the source comment)
 
 **Gate:** a full pass holds peak `phys_footprint` under an explicit documented bound; `free_gb`
 never approaches zero; compressor stays single-digit GB.
+
+### ✅ LANDED 2026-07-27 — phase `gh219-lane2-mlx-cache-cap`, **Codex-approved**
+
+**Verified against the harness that produced the blowup, not just against mocks:**
+
+| | Before fix | After fix |
+|---|---|---|
+| Batches completed | 18 of 80 — hit the 12 GB cap | **80 of 80** |
+| Longest sequence reached | 492 chars | **1980 chars** |
+| `cache` | 11.546 GB | **0.015 GB** (max 0.089) |
+| `phys_footprint` | 13.00 GB | **1.36 GB** |
+
+~9.6× footprint reduction, sustained over 4.4× more batches at far longer sequence lengths.
+Full suite 1585 passed / 6 failed — the same 6 pre-existing failures, no regressions.
+
+**Implementation:** `mx.set_cache_limit(3.0 GB)` once behind a module-level `_cache_limit_set`
+guard, env-overridable via `REBALANCE_MLX_CACHE_LIMIT_GB`, derivation in-comment (~1.11 GB model +
+3 GB cache ≈ 4.11 GB, well under the 8 GB contract). `mx.clear_cache()` per batch. Both wrapped so
+an MLX failure cannot become a new crash path. Telemetry raised `INFO` → `WARNING`, closing the
+production-invisibility defect — it is now recorded in default scheduled runs.
+
+**Process note — the phase exited 4, then was approved separately.** The 5-turn round cap fell
+before Codex could review Round 3 (agy → codex → agy → codex → agy), leaving `STATUS: Open` on
+work that was actually finished. A single `relay-drive --review-once` turn returned **Approved**.
+Worth remembering: *exit 4 means no sign-off, not failed work* — check the gate before assuming a
+capped phase needs rework.
+
+**Codex earned the extra rounds.** R1 caught that `set_cache_limit` fired per model load rather
+than once, and that the integration test skipped only on ImportError while MLX actually raises
+`RuntimeError: No Metal device available`. R2 caught the sharper one: the deterministic test merely
+counted `clear_cache()` calls against a mock whose cache never grew, so it **could not prove
+bounded behaviour** — only that a function was called. Both are the class of defect that makes a
+green suite meaningless.
+
+**Observability note:** telemetry reports `cache_mem` ≈ 900 MB while a post-batch sampler reports
+0.015 GB. Both are correct — telemetry samples *before* `clear_cache()`, the sampler *after*. The
+telemetry's peak-in-batch figure is the more useful one for Lane 7 detection.
 
 → [GH-215-MLX-EMBED-CACHE-LEAK.md](../1-INBOX/GH-215-MLX-EMBED-CACHE-LEAK.md)
 
