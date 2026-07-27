@@ -6,6 +6,17 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.1] - 2026-07-26
+
+### Changed
+- **The cross-repo triage command is now named for what it does, not for one of the
+  repos it looks at.** The original name implied it only served the agent-harness
+  project, when the method is general: give it any set of related repositories and it
+  reports which open issues would unblock the most work across them. The default set
+  is unchanged, and the repositories are now passed in rather than assumed, so the
+  command works for any suite. Also relaxed an internal assumption so it degrades to
+  GitHub-only inputs when the local signal tooling is unavailable.
+
 ## [0.68.0] - 2026-07-26
 
 ### Added

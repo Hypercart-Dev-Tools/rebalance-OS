@@ -1,36 +1,45 @@
 ---
-name: unlock-xyz
+name: unlock-suite
 description: >
-  Cross-repo issue triage across the three-repo suite — XYZ (xyz-3-agents-swarm), Rebalance
-  (rebalance-OS), and PDDA — that answers ONE question: which open issues, if closed first,
-  would most unblock reliable use of all three? Builds a blocker/hub graph from open-issue
-  cross-references, clusters issues that share a root cause, cross-checks every signal against
-  GitHub ground truth before trusting it, and returns a tiered shortlist with evidence.
-  Read-only: it never edits code, never closes issues, never pushes. Trigger on "/unlock-xyz",
-  "what should I fix first across the repos", "which issues unblock the most", "cross-repo
-  triage", "what's blocking the suite".
+  Cross-repo issue triage across a suite of interdependent repos — by default PDDA, XYZ
+  (xyz-3-agents-swarm), and Rebalance (rebalance-OS) — answering ONE question: which open
+  issues, if closed first, would most unblock reliable use of the whole suite? Builds a
+  blocker/hub graph from open-issue cross-references, clusters issues that share a root cause,
+  cross-checks every signal against GitHub ground truth before trusting it, and returns a
+  tiered shortlist with evidence. Read-only: it never edits code, never closes issues, never
+  pushes. Trigger on "/unlock-suite", "what should I fix first across the repos", "which issues
+  unblock the most", "cross-repo triage", "what's blocking the suite".
 ---
 
-# unlock-xyz — what to fix first across the three-repo suite
+# unlock-suite — what to fix first across a repo suite
 
-The suites depend on each other: **XYZ** provides the relay/marathon harness that reviews work
-in the other two, **PDDA** provides the doc-governance lifecycle both follow, and **Rebalance**
-provides the signal layer that says what to work on. A defect in the shared substrate taxes
-everything downstream, so "most open issues" and "most urgent issue" are both the wrong question.
-The right one is **which fix unblocks the most other work**.
+Some repos depend on each other, so a defect in shared substrate taxes everything downstream.
+"Most open issues" and "most urgent issue" are both the wrong question. The right one is
+**which fix unblocks the most other work**.
 
 This skill is read-only. It reports; it never edits, closes, or pushes.
 
-## Default repo set
+## Repo set
 
-```
-Claude-AI-Tools-Ventura-County/xyz-3-agents-swarm     # XYZ  — harness / relay / marathon
-Hypercart-Dev-Tools/rebalance-OS                      # Rebalance — signal layer
-Hypercart-Dev-Tools/pdda                              # PDDA — doc governance
-```
+Pass any repos you want compared: `/unlock-suite <owner/repo> <owner/repo> ...`.
 
-Accept an override (`/unlock-xyz <repo> <repo> ...`). Everything below is per-repo except
-Step 4, which is deliberately cross-repo.
+With no arguments, defaults to the three interdependent repos on this machine:
+
+| Repo | Role in the suite |
+|---|---|
+| `Hypercart-Dev-Tools/pdda` | doc-governance lifecycle both other repos follow |
+| `Claude-AI-Tools-Ventura-County/xyz-3-agents-swarm` | relay/marathon harness that reviews work in the other two |
+| `Hypercart-Dev-Tools/rebalance-OS` | signal layer that decides what to work on |
+
+Nothing below is specific to those three. The only assumptions are that the repos are related,
+reachable via `gh`, and use issues. **Step 1 and Step 2 additionally assume the Rebalance MCP
+tools are available — skip them without comment if they are not**, and rely on Steps 3–5, which
+need only `gh`.
+
+When the caller supplies repos, work out each one's role in the suite from its README and issue
+content rather than assuming; the role assignment is what makes Step 4's "is this shared
+substrate?" judgement possible. Everything is per-repo except Step 4, which is deliberately
+cross-repo.
 
 ## Step 0 — Preconditions
 
@@ -145,7 +154,7 @@ have each caught a wrong conclusion:
 Tier the shortlist by *what it unblocks*, not by severity:
 
 - **Tier 1 — shared machinery.** Fixes that unblock work in more than one repo. Usually a
-  root-cause cluster in XYZ's harness or PDDA's governance surface.
+  root-cause cluster in whichever repo the others route their tooling or process through.
 - **Tier 2 — signal trust.** Defects that make the data lie. Anything here poisons the ranking
   that decides what to work on next, so it compounds.
 - **Tier 3 — cheap, disproportionate friction.** One-line fixes for "works in one session, not
