@@ -1,6 +1,6 @@
 ---
 title: "REBALANCE MEMORY — unified project (8 lanes: instrument → measure → fix → bound → backstop → inventory → cover → detect)"
-status: "SPIKE COMPLETE 2026-07-27 — Lane 0 landed and verified; Lane 1 code landed (all four call sites instrumented, 28-test gate green, no regressions). NOW AT THE ⛔ GATE: the CONFIRMED/REFUTED verdict needs one live embedding pass on real hardware before Lanes 2–7 may be committed. Fired as a bounded spike — Lanes 0 + 1 only. Lanes 2–7 are gated behind an explicit go/no-go decision that requires live MLX telemetry (see ⛔ GATE). Widened from a 5-lane MLX marathon into the single owner of Rebalance memory use after two adversarial Codex rounds (3 Blockers + 4 Shoulds, all applied)."
+status: "GATE PASSED 2026-07-27 — #215 CONFIRMED on live hardware (cache 0.510 -> 11.546 GB in 18 variable-shape batches while active memory stayed flat at 1.110 GB; mx.clear_cache() holds footprint to 1.35 GB vs 13.00 GB, a 9.6x reduction). Lane 0 landed and verified. Lane 1 code landed, 28-test gate green, no regressions. GO on Lanes 2-7 — the hypothesis is no longer inferred. Fired as a bounded spike — Lanes 0 + 1 only. Lanes 2–7 are gated behind an explicit go/no-go decision that requires live MLX telemetry (see ⛔ GATE). Widened from a 5-lane MLX marathon into the single owner of Rebalance memory use after two adversarial Codex rounds (3 Blockers + 4 Shoulds, all applied)."
 created: 2026-07-27
 updated: 2026-07-27
 owner: noel@neochro.me
@@ -311,9 +311,18 @@ last attempt.
 
 Both are traps for anyone instrumenting this path again.
 
-- [ ] **Remaining: run a live embedding pass and record the verdict.** Requires real hardware —
-      a sandboxed shell has no Metal device. Until this happens, #215 stays **INFERRED** and the
-      ⛔ GATE below is not satisfied.
+- [x] **Live pass run 2026-07-27; verdict recorded — #215 CONFIRMED.** See the ⛔ GATE section
+      below for the three runs and their figures.
+
+**⚠ Instrumentation defect found by the live run — the telemetry is invisible in production.**
+It emits at `INFO`, but `src/rebalance/__init__.py:38` configures the `rebalance` logger to
+`WARNING` unless `REBALANCE_LOG_LEVEL` says otherwise. Scheduled launchd passes — exactly the ones
+that blow up — set no such variable, so **none of this telemetry would ever be recorded** in the
+runs that matter. The verdict above was only obtainable because the harness set the level
+explicitly. Must be fixed (raise the telemetry to `WARNING`, or have the embedding path force its
+own level) before Lane 7's detection can rely on it. Also seen: `run_id=None` when `_embed_batch`
+is reached without `instrument_embedding_pass` — the four instrumented sites cover it, but a fifth
+path added later would log unattributed telemetry rather than failing loudly.
 
 → [GH-216-MLX-MEMORY-INSTRUMENTATION.md](../1-INBOX/GH-216-MLX-MEMORY-INSTRUMENTATION.md)
 
@@ -342,9 +351,55 @@ device. Do not confuse "instrumentation merged" with "hypothesis settled.")
 | Both flat, peak still ~46.9 GB → **not MLX-visible** | **NO-GO on Lanes 2–3.** As above; Lane 4 (#213) may proceed since a footprint-based backstop is correct regardless of the allocator. |
 | Telemetry unobtainable → **UNOBSERVABLE** | **NO-GO.** Do not proceed on an unproven hypothesis. Terminal state as above. |
 
-- [ ] Verdict recorded in `temp/memory-issues/TRIAGE-LOG.md` with the sampled figures
-- [ ] Go/no-go decision written into this file with a date and the numbers behind it
-- [ ] On NO-GO: successor issue opened (**exactly one**) before this project closes
+- [x] Verdict recorded in `temp/memory-issues/TRIAGE-LOG.md` with the sampled figures
+- [x] Go/no-go decision written into this file with a date and the numbers behind it
+- [ ] On NO-GO: successor issue opened — **not applicable, verdict was GO**
+
+### ✅ VERDICT 2026-07-27: **#215 CONFIRMED — GO on Lanes 2–7**
+
+Settled with live telemetry on real hardware, through the repo's own `_load_model` /
+`_embed_batch` path. **#215 moves from INFERRED to PROVEN.**
+
+**Run 1 — uniform shapes (60 batches): flat. This was NOT a refutation.**
+
+| Metric | Start | End |
+|---|---|---|
+| `active` | 1.110 GB | 1.140 GB |
+| `cache` | 0.752 GB | 0.722 GB |
+| `phys_footprint` | 2.09 GB | 2.09 GB |
+
+Every batch used an identical shape. MLX's buffer cache is **keyed by buffer size**, so identical
+shapes reuse identical cached buffers and the run could only ever come out flat. Recorded because
+it is the trap: *naive testing of this bug shows nothing wrong.*
+
+**Run 2 — variable shapes (the real corpus's characteristic): CONFIRMED, and violently.**
+
+| Metric | Batch 1 | Batch 18 | Δ |
+|---|---|---|---|
+| `active` | 1.110 GB | 1.110 GB | **+0.000** |
+| `cache` | 0.510 GB | 11.546 GB | **+11.036** |
+| `phys_footprint` | 1.84 GB | 13.00 GB | **+11.16** |
+
+Halted by the 12 GB safety cap at batch 18 of 80. **Active memory never grew at all** — the model
+and nothing more. Footprint growth (+11.16 GB) is accounted for by cache growth (+11.04 GB) to
+within 0.12 GB. This is the mechanism exactly as alleged: each new tokenized shape allocates a new
+buffer size, MLX caches every one, nothing is ever released. 18 batches → 11.5 GB extrapolates
+cleanly to the observed 46.9 GB episode.
+
+**Run 3 — the Lane 2 remedy, validated before committing ~18 h to it.** Identical load, one added
+call (`mx.clear_cache()` after each batch):
+
+| At batch 18 | `cache` | `phys_footprint` |
+|---|---|---|
+| No remedy (run 2) | 11.546 GB | 13.00 GB — hit the cap |
+| With `clear_cache()` | **0.000 GB** | **1.35 GB** |
+
+**9.6× footprint reduction, from a one-liner.** Lane 2 is no longer a bet.
+
+**Safety note.** The machine began these runs with 5.30 GB free RAM and **1.29 GB of free swap** —
+too tight for an unbounded reproduction, which could have hard-frozen it. All runs were capped at
+12 GB footprint. Free RAM recovered to 18.15 GB afterwards, so the allocation is released on
+process exit — this leaks *within* a pass, not across them.
 
 **Cost of the spike if it fails: ~5 h** (Lanes 0 + 1), versus ~25 h had the full project been
 committed up front. That ratio is the entire justification for the gate.
