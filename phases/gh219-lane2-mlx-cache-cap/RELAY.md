@@ -158,3 +158,37 @@ I have implemented the MLX cache cap fix to prevent unbounded memory growth duri
 - Wrote a local test script to benchmark throughput of `mx.clear_cache()`. Results showed just a ~2.5% penalty for a 10-batch workload.
 - Kept `semantic_index.py` and `github_knowledge.py` untouched because all their embedding needs already delegate appropriately to `_embed_batch` and `_load_model`.
 - Verified the fix passes the gating tests without regressions.
+
+### Round 1 · Reviewer · codex
+
+**Verdict:** Changes requested
+
+The cache clearing belongs in the shared helper and the warning-level telemetry is
+the right production-safe direction, but the implementation and tests do not yet
+meet the lane contract:
+
+1. `tests/test_mlx_cache_cap.py -q` fails here (`1 failed, 8 passed`) because
+   `test_cache_bounded_variable_lengths` uses real MLX and only skips an import
+   failure; MLX imports but raises `RuntimeError: ... No Metal device available`
+   when `mlx_embeddings` initialises. Make the integration test skip explicitly
+   when a Metal device is unavailable, and add a deterministic mocked
+   variable-length cache-growth test that proves `clear_cache()` bounds cache
+   growth without GPU/model/network availability.
+2. The cache-limit configuration occurs each time `_load_model()` has to load a
+   different model. The brief requires `mx.set_cache_limit(...)` once at module
+   scope, not per model load. Add a module-level one-time guard and test two
+   distinct model names still produce exactly one `set_cache_limit` call.
+3. The claimed throughput result is only a percentage in a comment. Record the
+   actual before/after batches-per-second values and the variable-length workload
+   used, in the source comment or test as required by the brief.
+4. `test_all_four_call_sites_covered` is a file-wide substring assertion, so it
+   passes even if an individual call site no longer uses the shared helpers. Make
+   the parametrized coverage identify/execute or otherwise isolate each actual
+   call site and assert its delegation to `_load_model` / `_embed_batch`.
+5. `test_degrades_safely_when_mlx_unavailable` catches every exception and then
+   asserts `True`, so it cannot detect a regression. Mock successful model/generate
+   work plus failures from the new cache methods, and assert `_load_model` and
+   `_embed_batch` still return successfully.
+
+No artifact files were edited by the reviewer. The required lane-only test was
+run with the repository virtualenv (`PYTHONPATH=src /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python3 -m pytest tests/test_mlx_cache_cap.py -q`); it failed as described above.
