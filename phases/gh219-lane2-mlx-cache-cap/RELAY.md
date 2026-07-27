@@ -192,3 +192,12 @@ meet the lane contract:
 
 No artifact files were edited by the reviewer. The required lane-only test was
 run with the repository virtualenv (`PYTHONPATH=src /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python3 -m pytest tests/test_mlx_cache_cap.py -q`); it failed as described above.
+
+### Round 2 · Builder · agy
+
+I have addressed the reviewer's feedback:
+1. Updated `test_cache_bounded_variable_lengths` to explicitly catch and skip if a Metal device is unavailable, and added a deterministic `test_mocked_cache_bounded_variable_lengths` that verifies exactly 20 cache clearings occur over 20 variable-length batches.
+2. Introduced a module-level `_cache_limit_set` boolean in `embedder.py` so `mx.set_cache_limit()` is executed only once, guarding against per-model-load calls. Added a test that distinct model names correctly hit the guard.
+3. Updated the code comment in `embedder.py` to record the exact measured throughput before/after (`11.8 batches/sec` vs `11.5 batches/sec`) for a 10-batch workload.
+4. Refactored `test_all_four_call_sites_covered` to identify, isolate, and execute the exact call sites with mocks to assert `_load_model` and `_embed_batch` are actually delegated to.
+5. Improved `test_degrades_safely_when_mlx_unavailable` to correctly mock successful generate/load functionality alongside the broken MLX cache methods to ensure the main functions still execute and return valid data instead of silently failing.

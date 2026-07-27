@@ -99,6 +99,7 @@ def reset_instrumentation_state():
     embedder._cached_model = None
     embedder._cached_tokenizer = None
     embedder._cached_model_name = None
+    embedder._cache_limit_set = False
     yield
 
 
@@ -107,6 +108,14 @@ def test_cache_bounded_variable_lengths():
     # This must use the real MLX to prove the cache bound works with variable lengths.
     try:
         import mlx.core as mx
+        from mlx_embeddings import load
+        # Check if Metal device is available, if not skip
+        try:
+            load(embedder.DEFAULT_MODEL)
+        except RuntimeError as e:
+            if "No Metal device available" in str(e):
+                pytest.skip("No Metal device available")
+            raise
     except ImportError:
         pytest.skip("mlx not installed")
         
@@ -133,14 +142,29 @@ def test_cache_bounded_variable_lengths():
     assert final_cache < 200 * 1024 * 1024, f"Cache grew unbounded to {final_cache / 1024 / 1024:.2f} MB"
 
 
+def test_mocked_cache_bounded_variable_lengths(mock_mlx_cap):
+    """Proves clear_cache() bounds cache growth deterministically without real MLX."""
+    # Run _load_model to set the limit
+    model, tokenizer = _load_model("test_model")
+    
+    # 20 batches of variable lengths
+    for i in range(20):
+        # variable length between 10 and 100 words
+        texts = ["word " * (10 + (i * 13) % 90) for _ in range(5)]
+        _embed_batch(model, tokenizer, texts)
+        
+    # We should have cleared cache exactly 20 times (once per batch)
+    assert mock_mlx_cap.clear_cache_count == 20
+
+
 def test_set_cache_limit_applied_once(mock_mlx_cap):
     """set_cache_limit is applied once, not per call."""
     _load_model("test_model")
     assert mock_mlx_cap.set_cache_limit_count == 1
     assert mock_mlx_cap.cache_limit_val == int(3.0 * 1024 * 1024 * 1024)
     
-    # Second call uses cache, does not set limit again
-    _load_model("test_model")
+    # Second call with distinct model name uses cache limit previously set, does not set limit again
+    _load_model("test_model_2")
     assert mock_mlx_cap.set_cache_limit_count == 1
 
 
@@ -163,25 +187,47 @@ def test_clear_cache_invoked_expected_cadence(mock_mlx_cap):
     ],
 )
 def test_all_four_call_sites_covered(module: str, site: str):
-    """All four call sites are covered because they funnel through _embed_batch and _load_model."""
+    """All four call sites actually delegate to _load_model / _embed_batch."""
+    import importlib
+    from unittest.mock import patch
     from pathlib import Path
-    SRC = Path(__file__).resolve().parents[1] / "src" / "rebalance" / "ingest"
-    source = (SRC / module).read_text(encoding="utf-8")
+
+    mod_name = module.replace(".py", "")
+    full_mod_name = f"rebalance.ingest.{mod_name}"
+    mod = importlib.import_module(full_mod_name)
     
-    # We verify that they all call _load_model and _embed_batch, except embed_chunks and 
-    # query_similar which are in embedder.py and use _embed_batch and _load_model.
-    if module == "embedder.py":
+    with patch(f"{full_mod_name}._load_model") as mock_load, \
+         patch(f"{full_mod_name}._embed_batch") as mock_embed:
+         
+        mock_load.return_value = ("mock_model", "mock_tokenizer")
+        mock_embed.return_value = [[0.1] * 1024]
+
         if site == "embed_chunks":
-            assert "_load_model(" in source
-            assert "_embed_batch(" in source
+            with patch(f"{full_mod_name}.db_connection") as mock_db:
+                mock_conn = mock_db.return_value.__enter__.return_value
+                mock_conn.execute.return_value.fetchone.return_value = [1]
+                mock_conn.execute.return_value.fetchall.return_value = [{"id": "1", "body": "test"}]
+                mod.embed_chunks(Path("/tmp/fake.db"))
+                
         elif site == "query_similar":
-            assert "_load_model(" in source
-            assert "_embed_batch(" in source
-    elif module == "semantic_index.py":
-        assert "_default_embed_texts" in source or "_embed_batch" in source
-    elif module == "github_knowledge.py":
-        assert "_load_model" in source
-        assert "_embed_batch" in source
+            with patch(f"{full_mod_name}.db_connection") as mock_db:
+                mock_conn = mock_db.return_value.__enter__.return_value
+                mock_conn.execute.return_value.fetchall.return_value = []
+                mod.query_similar(Path("/tmp/fake.db"), "query")
+                
+        elif site == "embed_pending":
+            with patch(f"{full_mod_name}.sem") as mock_sem, \
+                 patch(f"{full_mod_name}.db_connection") as mock_db:
+                mock_sem.semantic_documents_pending_embed.return_value = [{"id": 1, "body": "test"}]
+                mock_sem.count_embeddable_semantic_documents.return_value = 1
+                mod.embed_pending(Path("/tmp/fake.db"))
+                
+        elif site == "_default_embed_texts":
+            func = getattr(mod, site)
+            func(["text"], "test_model")
+            
+        mock_load.assert_called_once()
+        mock_embed.assert_called_once()
 
 
 def test_telemetry_emitted_at_warning(mock_mlx_cap, caplog, propagating_logs):
@@ -199,24 +245,33 @@ def test_telemetry_emitted_at_warning(mock_mlx_cap, caplog, propagating_logs):
 
 
 def test_degrades_safely_when_mlx_unavailable(caplog, propagating_logs):
-    """Behaviour degrades safely when MLX is unavailable."""
+    """Behaviour degrades safely when new cache methods fail."""
     import mlx
+    import mlx.core  # noqa: F401
     
     broken = MagicMock()
     broken.set_cache_limit.side_effect = RuntimeError("no Metal device")
     broken.clear_cache.side_effect = RuntimeError("no Metal device")
     broken.get_active_memory.side_effect = RuntimeError("no Metal device")
+    broken.get_cache_memory.side_effect = RuntimeError("no Metal device")
+    broken.get_peak_memory.side_effect = RuntimeError("no Metal device")
+    broken.eval = MagicMock()
     
-    with patch.object(mlx, "core", broken):
-        # Should not crash
-        try:
-            embedder._load_model("test_model")
-        except Exception:
-            pass # load can still crash on model download/load itself, but we shouldn't add a crash
-            
-        try:
-            embedder._embed_batch(None, None, ["text"])
-        except Exception:
-            pass
-            
-        assert True
+    mock_embeddings = MagicMock()
+    mock_embeddings.generate = mock_generate
+    mock_embeddings.load = MagicMock(return_value=("mock_model", "mock_tokenizer"))
+    
+    with patch.object(mlx, "core", broken), patch.dict(
+        sys.modules, {"mlx.core": broken, "mlx_embeddings": mock_embeddings}
+    ):
+        embedder._cache_limit_set = False
+        embedder._cached_model = None
+        
+        # Should return models successfully despite set_cache_limit failing
+        model, tokenizer = embedder._load_model("test_model")
+        assert model == "mock_model"
+        
+        # Should return embeddings successfully despite clear_cache failing
+        vectors = embedder._embed_batch(model, tokenizer, ["text"])
+        assert len(vectors) == 1
+        assert len(vectors[0]) == embedder.EMBEDDING_DIM
