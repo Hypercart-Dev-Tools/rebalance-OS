@@ -507,6 +507,8 @@ def _launchctl_list() -> str | None:
         )
     except (FileNotFoundError, subprocess.SubprocessError):
         return None
+    if out.returncode != 0 or not out.stdout.strip():
+        return None
     return out.stdout
 
 
@@ -603,7 +605,7 @@ def _check_scheduler_liveness(
     if launchctl_output is None:
         launchctl_output = _launchctl_list()
     if launchctl_output is None:
-        return []  # not macOS / launchctl unavailable — silently skip
+        return [Check("scheduler state", WARN, "undetermined")]
 
     loaded = _loaded_rebalance_labels(launchctl_output)
     current_device_id = current_device_id or _local_device_id()

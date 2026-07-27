@@ -116,3 +116,12 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH219-LANE0 --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh219-lane0-doctor-launchctl/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · agy
+I have implemented the fixes to avoid false negatives when `launchctl list` fails or is empty.
+
+**Files touched:**
+- `src/rebalance/doctor.py`: Updated `_launchctl_list` to handle non-zero returncodes and empty/whitespace output by returning `None`. Updated `_check_scheduler_liveness` to return a single "undetermined" `WARN` finding when `launchctl_output` is `None` (unavailable).
+- `tests/test_doctor_launchd.py`: Added explicit tests covering all edge cases (`test_scheduler_liveness_available_and_loaded`, `test_scheduler_liveness_available_and_missing`, and `test_scheduler_liveness_unavailable`) where `launchctl list` output fails via empty stdout, non-zero return code, or `FileNotFoundError`.
+
+All tests pass without regression (35 tests total).
