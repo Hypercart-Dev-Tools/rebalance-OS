@@ -44,11 +44,52 @@ The ordering constraint is real, not stylistic:
   lies about scheduler state in restricted shells. It already cost this investigation a false
   lead. Fix the instrument before using it to certify the work.
 
+## Regression archaeology — what changed in the last 7 days
+
+The first version of this plan did **no** regression analysis. That was a gap: three events
+starting 07-25 on a machine that had been fine invites the question "what changed?", and the plan
+went straight to mechanism without asking it. Bounded first pass, run 2026-07-27:
+
+**Ruled out (PROVEN, negative results):**
+
+- **No code regression.** Zero commits in the last 7 days touch `embedder.py`,
+  `semantic_index.py`, `ingest/_job_guard.py`, `utils/job_guard.py`, or `doctor.py`. 44 commits
+  landed in the window; exactly one touched `src/rebalance/ingest/` or `scripts/` at all
+  (`0d4b6f0`, 07-23, Anthropic→Gemini key removal).
+- **No dependency change.** MLX 0.31.2 and `mlx_embeddings` 0.1.0 were installed **2026-04-24**.
+  MLX has been in the tree since March. The allocation behaviour is not newly introduced.
+
+These negatives matter: they eliminate the two most common explanations and **narrow** the
+remaining search rather than widening it. The cause is data, configuration, schedule, or load —
+not a recent edit to the embedding path.
+
+**Live candidates (INFERRED, not yet tested):**
+
+- **The 3-Eyes fleet rollout, 2026-07-22** — ~12 commits landing `skill-sync`, `selfcheck`,
+  `collector-health` and a machine-local registry overlay. The single largest change in the
+  window, and 3 days before the first event. `3eyes.skill-sync` now runs **every 120 s** (216
+  executions on 07-27 alone). Its own memory is trivial (peak RSS 0.010 GB), so it is not the hog
+  — but whether it *triggers* embedding work, or contends with it, is untested.
+- **Both scheduler plists were rewritten 2026-07-20 08:16:11** (`vault-sync`, `daily-sync`). The
+  fleet was reinstalled 7 days ago. Whether cadence changed at that point is not yet established
+  — the current cadence (`vault-sync` hourly at :15, 06:00–23:00) needs comparing against the
+  pre-07-20 plists.
+- **Corpus growth.** Not yet measured. Both tracked databases (`rebalance.db`,
+  `temp/rebalance.ask.db`) are stale from June, so the live embedding index is elsewhere on this
+  device and was not located in this pass. Finding it is a prerequisite for testing this
+  hypothesis at all.
+
+**This archaeology is deliberately bounded.** It runs as Lane 0.5 below with a hard timebox. If
+the cause is not found inside that box, the marathon proceeds anyway — because #215's fix bounds
+the allocation regardless of what started it. Knowing the trigger is valuable; it is not a
+prerequisite for stopping the bleeding.
+
 ## Lane sequencing
 
 | Order | Issue | Lane | Write-set | Depends on |
 |---|---|---|---|---|
 | 0 | [#218](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/218) | C (parallel) | `src/rebalance/doctor.py` | — |
+| 0.5 | archaeology (no issue) | D (parallel, **timeboxed**) | read-only | — |
 | 1 | [#216](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/216) | A | `embedder.py`, `semantic_index.py`, `temp/memory-issues/sys-mem-watch.sh` | — |
 | 2 | [#215](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/215) | A | `embedder.py`, `semantic_index.py` | #216 |
 | 3 | [#217](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/217) | A | `embedder.py`, `ingest/_job_guard.py` | #216, #215 |
@@ -76,6 +117,28 @@ names.
 undetermined line and no reinstall advice.
 
 → [GH-218-DOCTOR-LAUNCHCTL-FALSE-NEGATIVE.md](../1-INBOX/GH-218-DOCTOR-LAUNCHCTL-FALSE-NEGATIVE.md)
+
+---
+
+## Lane 0.5 — regression archaeology (read-only, **hard timebox**)
+
+**Goal:** find what changed around 07-25, or establish within a fixed budget that it cannot be
+found cheaply. No issue; no code changes; read-only.
+
+- [ ] Locate the **live** embedding index on this device (both tracked DBs are stale from June)
+- [ ] Measure corpus size and its growth across the last 14 days
+- [ ] Diff the pre-/post-07-20 `vault-sync` and `daily-sync` plists — did cadence change?
+- [ ] Test whether the 07-22 3-Eyes jobs trigger or contend with embedding work
+- [ ] Record the verdict in `TRIAGE-LOG.md` — including "not found within budget", which is a
+      legitimate and reportable outcome
+
+**Timebox: 90 minutes.** On expiry, write down what was eliminated and **stop**. Do not extend.
+
+**Explicitly not a blocker.** Lanes 1–4 proceed regardless. #215 bounds the allocation whatever
+started it; archaeology only tells us whether something *else* also needs changing. If this lane
+finds nothing, the marathon still delivers its acceptance criteria.
+
+→ findings land in `temp/memory-issues/TRIAGE-LOG.md` (device-local)
 
 ---
 
@@ -157,6 +220,40 @@ absolute per-process and a later leaf call reads the accumulated total. It does 
 → [GH-213-MEMORY-PRESSURE-DEFENCE.md](../1-INBOX/GH-213-MEMORY-PRESSURE-DEFENCE.md)
 
 ---
+
+## Scope discipline — what "70–80%" means here, and how this ends
+
+**The 70–80% is one number: peak `phys_footprint` during an embedding pass.** Today it is
+~46.9 GB against 64 GB of RAM, three times a day. If Lanes 1–2 land and that peak sits under an
+explicit documented bound with `free_gb` never approaching zero, the problem is solved for
+practical purposes — regardless of how many adjacent imperfections remain. Lanes 3–4 exist so a
+*recurrence* is caught automatically rather than by the operator noticing Activity Monitor again.
+
+**This marathon is scoped to the memory blowup and the two instruments that hid it.** It is
+explicitly **not** a general audit of this device's launchd / auto-loading fleet. That honest
+boundary matters, because "Rebalance auto-loading script problems" is a wider surface than what is
+planned here.
+
+**Out of scope — named, so they cannot creep in:**
+
+- General launchd fleet health beyond #218's specific false-negative path
+- The `figma: last refresh advanced 46d` warning (unrelated, pre-existing)
+- The `deep work` / `commit coverage` doctor warnings (pre-existing, separate signals)
+- Rewriting the scheduler policy table or `SCHEDULER.md`
+- Any embedding-pipeline redesign, model change, or throughput optimisation
+- The `temp/` gitignore question — device-local logs are fine for now, deliberately deferred
+- Making the sampler cross-device
+
+**Stopping rule.** The marathon is done when the acceptance list below passes, even if:
+
+- Lane 0.5 never identifies what changed on 07-25
+- The 2 of 3 unattributed episodes remain unattributed **and no new episodes occur**
+- Adjacent doctor warnings are still present
+
+**The one finding that legitimately reopens scope:** if Lane 1's instrumentation shows a second,
+non-embedding path reaching a comparable footprint. That would mean #215 fixes only part of the
+allocation, and the peak — the actual acceptance number — would not come down. Nothing else on
+the open-questions list justifies extending this effort.
 
 ## Marathon-level acceptance
 
