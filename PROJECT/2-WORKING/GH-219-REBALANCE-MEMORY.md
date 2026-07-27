@@ -1,6 +1,6 @@
 ---
 title: "REBALANCE MEMORY — unified project (8 lanes: instrument → measure → fix → bound → backstop → inventory → cover → detect)"
-status: "Planned, not fired. Widened 2026-07-27 from a 5-lane MLX marathon into the single owner of Rebalance memory use, after Codex r1 review (2 Blockers + 3 Shoulds, all accepted). No code written."
+status: "FIRED 2026-07-27 as a bounded spike — Lanes 0 + 1 only. Lanes 2–7 are gated behind an explicit go/no-go decision that requires live MLX telemetry (see ⛔ GATE). Widened from a 5-lane MLX marathon into the single owner of Rebalance memory use after two adversarial Codex rounds (3 Blockers + 4 Shoulds, all applied)."
 created: 2026-07-27
 updated: 2026-07-27
 owner: noel@neochro.me
@@ -115,19 +115,59 @@ the cause is not found inside that box, the marathon proceeds anyway — because
 the allocation regardless of what started it. Knowing the trigger is valuable; it is not a
 prerequisite for stopping the bleeding.
 
+## ⚠ Preflight finding, 2026-07-27 (found while firing — the plan was wrong)
+
+A preflight trace of every caller of `_load_model()` / `_embed_batch()` found **four** live
+embedding call sites, not the two this plan was built on:
+
+| # | Site | Guarded? |
+|---|---|---|
+| 1 | `embedder.py:105` `embed_chunks` | ✅ `@guarded_embedding` |
+| 2 | `semantic_index.py:613` `embed_pending` | ✅ `@guarded_embedding` |
+| 3 | `embedder.py:216` `query_similar` → `_load_model` + `_embed_batch` (`:227-228`) | ❌ **unguarded** |
+| 4 | `github_knowledge.py:855` `_default_embed_texts` → same (`:855-856`) | ❌ **unguarded** |
+
+**`src/rebalance/ingest/github_knowledge.py` does not import the job guard at all** — zero
+occurrences of `job_guard` or `guarded` in the file. It is a third embedding-capable module that
+appears in **no lane's write-set** anywhere in this plan.
+
+**Why this matters more than a write-set correction:**
+
+- It is a direct candidate answer to this project's sharpest open question — *why do 2 of the 3
+  07-27 episodes have no `job_rss.jsonl` record at all?* An unguarded path produces exactly that
+  signature. This moves from "either they ran unguarded, or the guard died without recording" to a
+  named, verifiable first hypothesis.
+- **Lane 2 as written would have shipped an incomplete fix.** Its instruction to "apply to **both**
+  leaves" would have left sites 3 and 4 allocating MLX buffers with no cache management — and the
+  acceptance criteria might still have passed, because a `vault-sync` workload need not exercise
+  the GitHub path.
+
+**Corrections applied:** Lane 1 instruments all four sites; Lane 2's write-set gains
+`github_knowledge.py`; Lane 6's audit now has a confirmed gap to start from rather than a blank
+sheet. Lane 1's write-set also corrected from `sys-mem-watch.sh` (a 31-line launchd wrapper) to
+`sys-mem-attribute.py`, where the sampling actually happens.
+
 ## Lane sequencing
 
-| Order | Issue | Lane | Write-set | Depends on |
-|---|---|---|---|---|
-| 0 | [#218](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/218) | C (parallel) | `src/rebalance/doctor.py` | — |
-| 0.5 | archaeology (no issue) | D (parallel, **timeboxed**) | read-only | — |
-| 1 | [#216](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/216) | A | `embedder.py`, `semantic_index.py`, `temp/memory-issues/sys-mem-watch.sh` | — |
-| 2 | [#215](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/215) | A | `embedder.py`, `semantic_index.py` | #216 |
-| 3 | [#217](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/217) | A | `embedder.py`, `ingest/_job_guard.py` | #216, #215 |
-| 4 | [#213](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/213) | B | `utils/job_guard.py` | #215 |
-| 5 | fleet inventory & budgets | E (parallel, read-mostly) | inventory table (new file) | — |
-| 6 | guard coverage audit | B (after #213) | coverage matrix + guard placement | #213 |
-| 7 | standing regression detection | C (after #218) | `src/rebalance/doctor.py` | #218, Lane 5 budgets |
+| Order | Issue | Lane | Write-set | Depends on | Est. |
+|---|---|---|---|---|---|
+| 0 | [#218](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/218) | C (parallel) | `src/rebalance/doctor.py` | — | 1–2 h |
+| 0.5 | archaeology (no issue) | D (parallel, **timeboxed**) | read-only | — | 90 min (hard) |
+| 1 | [#216](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/216) | A | `embedder.py`, `semantic_index.py`, `github_knowledge.py`, `temp/memory-issues/sys-mem-attribute.py` | — | 3–4 h |
+| **GATE** | **go/no-go** | — | **decision only** | Lane 0, Lane 1 | **30 min** |
+| 2 | [#215](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/215) | A | `embedder.py`, `semantic_index.py`, `github_knowledge.py` | #216 | 2 h |
+| 3 | [#217](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/217) | A | `embedder.py`, `ingest/_job_guard.py` | #216, #215 | 2 h |
+| 4 | [#213](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/213) | B | `utils/job_guard.py` | #215 | 3 h |
+| 5 | fleet inventory & budgets | E (parallel, read-mostly) | inventory table (new file) | — | 3–4 h |
+| 6 | guard coverage audit | B (after #213) | coverage matrix + guard placement | #213 | 3–4 h |
+| 7 | standing regression detection | C (after #218) | `src/rebalance/doctor.py` | #218, Lane 5 budgets | 2 h |
+
+**Total build effort: ~20–25 h**, plus **2 calendar days** of verification that cannot be
+compressed (acceptance needs a full waking day with ≥12 embedding passes, up to two windows). The
+project therefore cannot reach **Completed** sooner than ~3 days after Lane 2 lands, however fast
+the code is written. Sizing exists so "this is taking forever" is a *falsifiable* claim rather than
+a feeling — if actuals exceed these by >2×, that is itself a signal to invoke the terminal-state
+rules rather than push on.
 
 **Collision analysis.** Lane A's three issues all write `embedder.py` and must run strictly
 sequentially in one lane — they cannot be parallelised. Lane B (`utils/job_guard.py`) and Lane C
@@ -231,14 +271,50 @@ success outcome for this lane, and it stops the marathon rather than silently mu
 
 ---
 
+## ⛔ GATE — go/no-go on Lanes 2–7 (explicit decision, not a dependency)
+
+**The 8-lane commitment is made HERE, after the hypothesis is settled — not before.** Lanes 0 and 1
+are fired as a spike. Everything downstream waits on a written verdict at this gate.
+
+This is deliberately stronger than the dependency arrows in the sequencing table. A dependency says
+"Lane 2 runs after Lane 1." A gate says **the project stops here and a human decides** whether
+Lanes 2–7 happen at all. The distinction matters because #215 has been INFERRED since day one and
+has already survived two misdiagnoses — committing ~20 h of build to an unproven hypothesis is
+exactly how this becomes the forever-project the scope rules exist to prevent.
+
+**Entry condition:** Lane 0 landed, Lane 1's instrumentation landed, **and** at least one live
+embedding pass has run with telemetry captured. (Lane 1's marathon deliverable is the *code*; the
+CONFIRMED/REFUTED verdict requires a real pass on real hardware — a sandboxed shell has no Metal
+device. Do not confuse "instrumentation merged" with "hypothesis settled.")
+
+| Verdict at gate | Decision |
+|---|---|
+| `get_cache_memory()` climbs toward the process peak → **CONFIRMED** | **GO.** Fire Lanes 2–7 as written. Confidence in the remaining ~18 h is now evidence-backed. |
+| Cache flat, `get_active_memory()` rises → **REFUTED** | **NO-GO on Lanes 2–3.** Terminal state `Blocked — diagnosis split`. Lanes 0/5/6/7 may still ship independently (they do not depend on #215 being right); open exactly one successor issue for the diagnosis. |
+| Both flat, peak still ~46.9 GB → **not MLX-visible** | **NO-GO on Lanes 2–3.** As above; Lane 4 (#213) may proceed since a footprint-based backstop is correct regardless of the allocator. |
+| Telemetry unobtainable → **UNOBSERVABLE** | **NO-GO.** Do not proceed on an unproven hypothesis. Terminal state as above. |
+
+- [ ] Verdict recorded in `temp/memory-issues/TRIAGE-LOG.md` with the sampled figures
+- [ ] Go/no-go decision written into this file with a date and the numbers behind it
+- [ ] On NO-GO: successor issue opened (**exactly one**) before this project closes
+
+**Cost of the spike if it fails: ~5 h** (Lanes 0 + 1), versus ~25 h had the full project been
+committed up front. That ratio is the entire justification for the gate.
+
+---
+
 ## Lane 2 — #215 · cap and clear the MLX buffer cache (the fix)
 
 **Goal:** stop the allocation. Blocked on Lane 1's verdict.
 
 - [ ] `mx.set_cache_limit(...)` once at embedding-module level, sized deliberately
-- [ ] `mx.clear_cache()` at the end of each batch iteration (`embedder.py:172-186`)
-- [ ] Apply to **both** leaves (`embedder.py:105`, `semantic_index.py:613`) — they share one lock
-      and one model per `_job_guard.py` "Lock scoping"
+- [ ] `mx.clear_cache()` at the end of each batch iteration (`embedder.py:172-177`)
+- [ ] Apply to **all four** call sites, not two (see Preflight finding above): `embedder.py:105`,
+      `semantic_index.py:613`, `embedder.py:216` (`query_similar`, unguarded), and
+      `github_knowledge.py:855` (`_default_embed_texts`, unguarded, in a module that never imports
+      the guard). The two decorated leaves share one lock and one model per `_job_guard.py`
+      "Lock scoping" — **the other two share neither**, so cache management must be attached to the
+      allocation site rather than assumed from the lock
 - [ ] Measure throughput before/after; record any regression rather than hiding it
 
 **Gate:** a full pass holds peak `phys_footprint` under an explicit documented bound; `free_gb`
@@ -534,6 +610,10 @@ ends when these cannot be met.)*
   documented (`job_guard.py:614-616`) as writing on every exit path. Either they ran unguarded, or
   the guard died without recording. Lane 1 should resolve this; if those episodes are a *second*
   path to the same allocation, Lane 2's fix is incomplete.
+  **Updated 2026-07-27 (preflight):** "ran unguarded" is now the *leading* hypothesis, not a
+  co-equal one — two unguarded embedding call sites have since been found (`query_similar`,
+  `github_knowledge._default_embed_texts`), and `github_knowledge.py` never imports the guard at
+  all. Lane 1 must attribute by PID against **all four** sites before this can be closed.
 - **The episode interval is collapsing** — 01:04, 07:09, 08:21 on 07-27 (gaps ~6 h then ~1 h 12 m)
   against roughly one per day previously. Cause unknown; may simply track vault-sync's hourly
   cadence plus agent/MCP-triggered runs.
