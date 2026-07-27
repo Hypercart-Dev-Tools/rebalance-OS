@@ -1,5 +1,5 @@
 # Marathon Phase gh219-lane0-doctor-launchctl
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-GH219-LANE0 builder=agy reviewer=codex round-cap=5 -->
@@ -125,3 +125,8 @@ I have implemented the fixes to avoid false negatives when `launchctl list` fail
 - `tests/test_doctor_launchd.py`: Added explicit tests covering all edge cases (`test_scheduler_liveness_available_and_loaded`, `test_scheduler_liveness_available_and_missing`, and `test_scheduler_liveness_unavailable`) where `launchctl list` output fails via empty stdout, non-zero return code, or `FileNotFoundError`.
 
 All tests pass without regression (35 tests total).
+
+### Round 1 · Reviewer · codex
+Reviewed the scoped implementation and regression coverage. `_launchctl_list()` now treats non-zero exits and empty/whitespace output as unavailable, while scheduler liveness emits one `scheduler state` / `undetermined` warning and preserves per-job warnings for genuinely missing jobs. The targeted doctor tests pass: 35 passed.
+
+**Verdict:** Approved
