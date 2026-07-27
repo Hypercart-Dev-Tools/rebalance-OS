@@ -374,6 +374,75 @@ disposable, which after a partial-corruption incident it specifically is not.
 
 ---
 
+## 13. `git checkout -- <path>` to undo your own edit, on a file someone else was also editing
+
+**What actually happened here (2026-07-26):** an agent (me) added a one-line debug probe to
+`test/gh278-turn-timeout-parity.sh` in the `xyz-3-agents-swarm` marathon checkout, ran it, and
+reverted the probe with `git checkout -- test/gh278-turn-timeout-parity.sh`. That file also held
+~60 lines of **uncommitted** work written by a different agent earlier in the same marathon phase —
+a behavioural test for the GH-278 timeout-cleanup fix. `git checkout --` doesn't revert *your* edit;
+it discards *every* unstaged change to that path. All of it was lost. Recovery was attempted via
+stash, reflog, `git fsck --lost-found`, a scan of every blob in the object database, and the agent's
+temp worktree (already reaped): nothing. The content had never been staged, so git had never hashed
+it into an object — there was nothing to recover.
+
+**Why this belongs in a worktree guide:** the setup is worktree-shaped even though the command isn't
+a `worktree` subcommand. Multi-agent and marathon workflows leave *other* actors' uncommitted work
+sitting in a shared checkout while you operate in it. §12's warning about `--force` discarding
+someone else's uncommitted changes is the same hazard through a different door — and this door has
+no `--force` flag to make you hesitate, no prompt, and no output on success.
+
+**Anti-pattern:**
+```bash
+# "Just undoing my temporary instrumentation"
+sed -i '' 's/DEBUG//' test/some-test.sh
+bash test/some-test.sh
+git checkout -- test/some-test.sh   # silently discards ALL unstaged changes to this path
+```
+
+**Verified behavior (Git 2.50.1):**
+```bash
+# Unstaged edit + checkout -- => UNRECOVERABLE. No blob is ever written.
+printf 'UNSTAGED WORK\n' > f.txt
+git checkout -- f.txt
+git fsck --lost-found --unreachable   # finds nothing; the content was never an object
+
+# Staged edit (git add) => RECOVERABLE. The blob exists even if the file is later overwritten.
+printf 'STAGED WORK\n' > f.txt && git add f.txt
+printf 'v1\n' > f.txt
+git cat-file --batch-all-objects --batch-check='%(objecttype) %(objectname)' \
+  | awk '$1=="blob"{print $2}'       # the STAGED WORK blob is still there
+```
+Note also that `git checkout -- <path>` restores from the **index**, not `HEAD` — verified: with
+`STAGED WORK` staged and `X` on disk, `git checkout -- f.txt` yields `STAGED WORK`, not the
+committed `v1`. This is exactly why `git add` is a sufficient safety net below.
+
+**Defensive approach — check for others' work before reverting a path:**
+```bash
+# 1. Look BEFORE you revert. If the diff contains anything you didn't write, stop.
+git diff -- "$FILE"
+
+# 2. Stage first — this alone makes the content recoverable as a blob even if you
+#    then clobber the file. Cheapest possible insurance, one command.
+git add -- "$FILE"
+
+# 3. Better: never hand-edit a shared file to instrument it. Copy it out, or drive
+#    the probe through an env var the script already reads, so there is no edit to
+#    revert at all.
+```
+Prefer `git stash push -- "$FILE"` over `git checkout --` when you genuinely must clear a path:
+the content lands in a real commit object you can get back. (Mind §10 — the stash is repo-global,
+so message it unmistakably.) And note the modern spelling, `git restore <path>`, is exactly as
+destructive; the newer name is not a safer command.
+
+**The generalizable rule:** in a shared or agent-driven checkout, `git checkout --`, `git restore`,
+`git reset --hard`, and `git clean` all assume the working tree is *yours* and *disposable*. After
+any multi-agent phase, neither assumption holds. This is the same discipline §11 arrives at for
+post-corruption recovery — inspect with `diff`/`status` before running anything that overwrites the
+working tree — applied to the far more mundane act of undoing your own one-line edit.
+
+---
+
 ## Golden Rules for Worktree Safety
 
 1. **Always use `git worktree remove`/`prune`/`repair`, never manual `rm -rf` or `mv`** on worktree
@@ -395,6 +464,10 @@ disposable, which after a partial-corruption incident it specifically is not.
    command that can overwrite the working tree (`checkout -f`, `reset --hard`, `clean`)
 7. **Script against `--porcelain` output, never the human-readable table** — `git worktree list`'s
    plain format is not a stable, grep-safe API
+8. **A shared checkout is not your working tree** — in multi-agent/marathon flows, `git checkout --`,
+   `git restore`, `git reset --hard`, and `git clean` destroy *other* actors' uncommitted work with no
+   prompt, no `--force`, and no output (§13). `git diff -- <path>` before, `git add -- <path>` as
+   insurance; unstaged content that gets clobbered was never an object and is unrecoverable
 
 ---
 
