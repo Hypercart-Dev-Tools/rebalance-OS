@@ -147,7 +147,7 @@ def test_two_concurrent_runs_cannot_both_acquire(tmp_path):
             child.join(timeout=10)
 
 
-def test_peak_rss_is_recorded_to_jsonl(tmp_path, monkeypatch):
+def test_peak_footprint_is_recorded_to_jsonl(tmp_path, monkeypatch):
     """GH-175 item 4: every guarded run leaves an attributable record.
 
     GH-172 could not be attributed because jetsam logs only ``Python``. This is
@@ -161,24 +161,24 @@ def test_peak_rss_is_recorded_to_jsonl(tmp_path, monkeypatch):
 
     with guard_mod.guard("test-embed-job") as ceiling:
         pass
-    guard_mod.record_peak_rss("test-embed-job", ceiling, path=log_path)
+    guard_mod.record_peak_footprint("test-embed-job", ceiling, path=log_path)
 
     rows = [json.loads(line) for line in log_path.read_text().splitlines() if line.strip()]
     assert rows, "no peak-RSS row written"
     row = rows[-1]
     assert row["job"] == "test-embed-job"
-    assert row["peak_rss_bytes"] >= 0
-    assert "peak_rss_gb" in row and "ts" in row and "pid" in row
+    assert row["peak_footprint_bytes"] >= 0
+    assert "peak_footprint_gb" in row and "ts" in row and "pid" in row
 
 
-def test_rss_logging_never_breaks_the_job(tmp_path):
+def test_footprint_logging_never_breaks_the_job(tmp_path):
     """Observability must not be able to take down the thing it observes."""
     guard_mod = _job_guard.load_job_guard()
     ceiling = guard_mod.MemoryCeiling()
     # Unwritable target: a path under a regular file.
     bad = tmp_path / "afile"
     bad.write_text("x")
-    guard_mod.record_peak_rss("x", ceiling, path=bad / "nested" / "log.jsonl")  # must not raise
+    guard_mod.record_peak_footprint("x", ceiling, path=bad / "nested" / "log.jsonl")  # must not raise
 
 
 def test_guard_writes_a_record_on_its_own(tmp_path, monkeypatch):

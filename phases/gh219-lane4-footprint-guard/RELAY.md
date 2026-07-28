@@ -117,6 +117,19 @@ Baseline is **27 passed** across `tests/test_job_guard_wiring.py` + `tests/test_
 - `mx.set_memory_limit()` — Lane 3
 - Anything under `temp/` — gitignored; edits cannot be committed and are destroyed with the worktree
 
+### Round 1 · Builder · agy
+
+**Files Touched:**
+- `utils/job_guard.py`
+- `tests/test_job_guard_wiring.py`
+- `tests/test_job_guard_footprint.py` (new)
+
+**Key Decisions:**
+1. **Measurement**: Implemented `tree_footprint_bytes` using `ctypes` on macOS with `proc_pid_rusage(..., 2, ...)`. It correctly returns footprint, fallback flag, and unreadable count. RSS is used as fallback (e.g. Linux). 
+2. **Re-sized ceiling**: Renamed `DEFAULT_MAX_RSS_FRACTION` to `DEFAULT_MAX_FOOTPRINT_FRACTION` and set it to `0.25` (25% of 64 GB = 16 GB), aligning with the aggregate concurrent project contract.
+3. **Available memory floor**: Updated `available_memory_bytes()` to *only* sum `Pages free:` and skip `inactive` and `speculative` pages, ensuring true pressure is captured.
+4. **Compatibility**: Left `--max-rss-gb` as a deprecated alias CLI argument and supported `max_rss_gb` as a kwarg fallback in `guard` and `MemoryCeiling` for backwards compatibility with existing plists and docs. We also rename output keys to `peak_footprint_bytes` and updated existing tests in `test_job_guard_wiring.py` to match.
+5. **Tests**: Added comprehensive footprint tests in `tests/test_job_guard_footprint.py` including high-footprint/low-rss scenario, fallback verification, unreadable process counting, and the `_job_guard` deprecated env var fallback via monkeypatching. All tests pass (33 total).
 
 ---
 

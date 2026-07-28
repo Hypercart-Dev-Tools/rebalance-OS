@@ -57,6 +57,8 @@ Operator reference: UPGRADE.md § "Embedding job guard (GH-172)".
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
 import errno
 import fcntl
 import json
@@ -79,7 +81,10 @@ LOCK_DIR = Path(
 )
 
 #: Fraction of physical RAM a single guarded job may hold before it is aborted.
-DEFAULT_MAX_RSS_FRACTION = 0.35
+#: The project contract specifies <= 8 GB peak phys_footprint per process, and
+#: <= 16 GB aggregate concurrent footprint. On a 64 GB machine, 16 GB is 25%.
+#: We size the default to 25% (0.25) to align with this contract.
+DEFAULT_MAX_FOOTPRINT_FRACTION = 0.25
 
 #: Abort if system-available memory falls below this fraction of physical RAM,
 #: regardless of how well-behaved *this* job is. This is the defence against
@@ -176,7 +181,7 @@ def available_memory_bytes() -> int:
             page_size = int(header.group(1))
 
         pages = 0
-        wanted = ("Pages free:", "Pages inactive:", "Pages speculative:")
+        wanted = ("Pages free:",)  # explicitly exclude inactive/speculative under pressure
         for line in out.stdout.splitlines():
             for key in wanted:
                 if line.startswith(key):
@@ -191,21 +196,43 @@ def available_memory_bytes() -> int:
     return 0
 
 
-def tree_rss_bytes(pid: int) -> int:
-    """Resident memory of ``pid`` plus every descendant, in bytes.
 
-    Uses ``ps`` rather than /proc so one implementation covers macOS and Linux.
-    A worker pool's memory lives in its children, so summing the tree is the
-    only measurement that would have caught the GH-172 blowup.
+class _RusageInfoV2(ctypes.Structure):
+    _fields_ = [
+        ("ri_uuid", ctypes.c_uint8 * 16),
+        ("ri_user_time", ctypes.c_uint64),
+        ("ri_system_time", ctypes.c_uint64),
+        ("ri_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_interrupt_wkups", ctypes.c_uint64),
+        ("ri_pageins", ctypes.c_uint64),
+        ("ri_wired_size", ctypes.c_uint64),
+        ("ri_resident_size", ctypes.c_uint64),
+        ("ri_phys_footprint", ctypes.c_uint64),
+        ("ri_proc_start_abstime", ctypes.c_uint64),
+        ("ri_proc_exit_abstime", ctypes.c_uint64),
+        ("ri_child_user_time", ctypes.c_uint64),
+        ("ri_child_system_time", ctypes.c_uint64),
+        ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_child_interrupt_wkups", ctypes.c_uint64),
+        ("ri_child_pageins", ctypes.c_uint64),
+        ("ri_child_elapsed_abstime", ctypes.c_uint64),
+        ("ri_diskio_bytesread", ctypes.c_uint64),
+        ("ri_diskio_byteswritten", ctypes.c_uint64),
+    ]
+
+def tree_footprint_bytes(pid: int) -> tuple[int, bool, int]:
+    """Resident memory (or phys_footprint on macOS) of ``pid`` plus every descendant.
+    
+    Returns: (total_bytes, is_fallback, unreadable_count)
     """
     try:
         out = subprocess.run(
             ["ps", "-eo", "pid=,ppid=,rss="], capture_output=True, text=True, timeout=10
         )
     except (OSError, subprocess.SubprocessError):
-        return 0
+        return 0, True, 0
     if out.returncode != 0:
-        return 0
+        return 0, True, 0
 
     children: dict[int, list[int]] = {}
     rss: dict[int, int] = {}
@@ -220,17 +247,44 @@ def tree_rss_bytes(pid: int) -> int:
         rss[this_pid] = kb * 1024
         children.setdefault(ppid, []).append(this_pid)
 
-    total = 0
     stack = [pid]
     seen: set[int] = set()
+    tree_pids = []
     while stack:
         current = stack.pop()
         if current in seen:
             continue
         seen.add(current)
-        total += rss.get(current, 0)
+        tree_pids.append(current)
         stack.extend(children.get(current, ()))
-    return total
+
+    is_fallback = True
+    total = 0
+    unreadable_count = 0
+
+    if sys.platform == "darwin":
+        try:
+            libc = ctypes.CDLL(ctypes.util.find_library("c"))
+            proc_pid_rusage = libc.proc_pid_rusage
+            proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+            proc_pid_rusage.restype = ctypes.c_int
+            is_fallback = False
+        except Exception:
+            pass
+            
+        if not is_fallback:
+            for p in tree_pids:
+                buf = _RusageInfoV2()
+                rc = proc_pid_rusage(p, 2, ctypes.byref(buf))
+                if rc == 0:
+                    total += buf.ri_phys_footprint
+                else:
+                    unreadable_count += 1
+            return total, False, unreadable_count
+    
+    for p in tree_pids:
+        total += rss.get(p, 0)
+    return total, True, unreadable_count
 
 
 def _fmt_gb(value: int) -> str:
@@ -444,16 +498,19 @@ class MemoryCeiling:
     def __init__(
         self,
         pid: int | None = None,
-        max_rss_bytes: int | None = None,
+        max_footprint_bytes: int | None = None,
         min_available_bytes: int | None = None,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         on_trip=None,
         log=None,
+        max_rss_bytes: int | None = None,
     ) -> None:
         total = total_memory_bytes()
         self.pid = pid or os.getpid()
         self.total = total
-        self.max_rss = max_rss_bytes or int(total * DEFAULT_MAX_RSS_FRACTION) or None
+        
+        ceiling = max_footprint_bytes or max_rss_bytes
+        self.max_footprint = ceiling or int(total * DEFAULT_MAX_FOOTPRINT_FRACTION) or None
         self.min_available = min_available_bytes or max(
             int(total * DEFAULT_MIN_AVAILABLE_FRACTION), MIN_AVAILABLE_FLOOR if total else 0
         ) or None
@@ -461,7 +518,7 @@ class MemoryCeiling:
         self.on_trip = on_trip
         self.log = log or (lambda msg: print(f"[job-guard] {msg}", file=sys.stderr))
         self.tripped_reason: str | None = None
-        self.peak_rss = 0
+        self.peak_footprint = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -499,18 +556,21 @@ class MemoryCeiling:
                 return
 
     def _check(self) -> str | None:
-        rss = tree_rss_bytes(self.pid)
-        self.peak_rss = max(self.peak_rss, rss)
-        if self.max_rss and rss > self.max_rss:
+        footprint, is_fallback, unreadable = tree_footprint_bytes(self.pid)
+        self.peak_footprint = max(self.peak_footprint, footprint)
+        metric = "RSS (fallback)" if is_fallback else "phys_footprint"
+        unr_msg = f" (skipped {unreadable} unreadable pids)" if unreadable else ""
+
+        if self.max_footprint and footprint > self.max_footprint:
             return (
-                f"process tree holds {_fmt_gb(rss)}, ceiling is {_fmt_gb(self.max_rss)}"
+                f"process tree holds {_fmt_gb(footprint)} {metric}, ceiling is {_fmt_gb(self.max_footprint)}{unr_msg}"
             )
 
         available = available_memory_bytes()
         if self.min_available and available and available < self.min_available:
             return (
                 f"system available memory {_fmt_gb(available)} fell below "
-                f"floor {_fmt_gb(self.min_available)} (this job: {_fmt_gb(rss)})"
+                f"floor {_fmt_gb(self.min_available)} (this job {metric}: {_fmt_gb(footprint)}{unr_msg})"
             )
         return None
 
@@ -525,7 +585,7 @@ class MemoryCeiling:
 # In-process entry point
 # --------------------------------------------------------------------------- #
 
-def record_peak_rss(
+def record_peak_footprint(
     name: str,
     ceiling: "MemoryCeiling",
     *,
@@ -544,10 +604,10 @@ def record_peak_rss(
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "job": name,
             "pid": os.getpid(),
-            "peak_rss_bytes": int(ceiling.peak_rss or 0),
-            "peak_rss_gb": round((ceiling.peak_rss or 0) / GIB, 3),
+            "peak_footprint_bytes": int(ceiling.peak_footprint or 0),
+            "peak_footprint_gb": round((ceiling.peak_footprint or 0) / GIB, 3),
             "total_memory_gb": round((ceiling.total or 0) / GIB, 1),
-            "max_rss_gb": round((ceiling.max_rss or 0) / GIB, 3) if ceiling.max_rss else None,
+            "max_footprint_gb": round((ceiling.max_footprint or 0) / GIB, 3) if ceiling.max_footprint else None,
             "tripped_reason": ceiling.tripped_reason,
             "exit_code": exit_code,
             "duration_s": round(time.monotonic() - started, 1) if started else None,
@@ -562,11 +622,12 @@ def record_peak_rss(
 @contextmanager
 def guard(
     name: str,
-    max_rss_gb: float | None = None,
+    max_footprint_gb: float | None = None,
     min_available_gb: float | None = None,
     on_conflict: str = "refuse",
     poll_seconds: float = DEFAULT_POLL_SECONDS,
     log=None,
+    max_rss_gb: float | None = None,
 ):
     """Guard the calling process: single-instance lock + memory ceiling.
 
@@ -579,7 +640,7 @@ def guard(
     lock.acquire(on_conflict=on_conflict)
 
     ceiling = MemoryCeiling(
-        max_rss_bytes=int(max_rss_gb * GIB) if max_rss_gb else None,
+        max_footprint_bytes=int((max_footprint_gb or max_rss_gb) * GIB) if (max_footprint_gb or max_rss_gb) else None,
         min_available_bytes=int(min_available_gb * GIB) if min_available_gb else None,
         poll_seconds=poll_seconds,
         log=log,
@@ -613,7 +674,7 @@ def guard(
             pass
         # Written on EVERY exit path — clean, raised, or ceiling-tripped. The
         # tripped run is precisely the one worth having a record of.
-        record_peak_rss(name, ceiling, started=started)
+        record_peak_footprint(name, ceiling, started=started)
         lock.release()
 
 
@@ -624,11 +685,12 @@ def guard(
 def run_guarded(
     name: str,
     argv: list[str],
-    max_rss_gb: float | None = None,
+    max_footprint_gb: float | None = None,
     min_available_gb: float | None = None,
     on_conflict: str = "refuse",
     poll_seconds: float = DEFAULT_POLL_SECONDS,
     grace_seconds: float = DEFAULT_GRACE_SECONDS,
+    max_rss_gb: float | None = None,
 ) -> int:
     """Run ``argv`` as a guarded child process. Returns the exit code."""
     log = lambda msg: print(f"[job-guard] {msg}", file=sys.stderr)  # noqa: E731
@@ -643,7 +705,7 @@ def run_guarded(
     started = time.monotonic()
     try:
         ceiling = MemoryCeiling(
-            max_rss_bytes=int(max_rss_gb * GIB) if max_rss_gb else None,
+            max_footprint_bytes=int((max_footprint_gb or max_rss_gb) * GIB) if (max_footprint_gb or max_rss_gb) else None,
             min_available_bytes=int(min_available_gb * GIB) if min_available_gb else None,
             poll_seconds=poll_seconds,
             log=log,
@@ -655,7 +717,7 @@ def run_guarded(
             return 4
 
         log(
-            f"starting {name!r}: rss ceiling {_fmt_gb(ceiling.max_rss or 0)}, "
+            f"starting {name!r}: footprint ceiling {_fmt_gb(ceiling.max_footprint or 0)}, "
             f"available floor {_fmt_gb(ceiling.min_available or 0)}"
         )
 
@@ -691,8 +753,8 @@ def run_guarded(
             except (ValueError, TypeError):
                 pass
 
-        log(f"{name!r} finished with exit {code}; peak tree RSS {_fmt_gb(ceiling.peak_rss)}")
-        record_peak_rss(name, ceiling, started=started, exit_code=code)
+        log(f"{name!r} finished with exit {code}; peak tree footprint {_fmt_gb(ceiling.peak_footprint)}")
+        record_peak_footprint(name, ceiling, started=started, exit_code=code)
         return 4 if ceiling.tripped_reason else code
     finally:
         lock.release()
@@ -745,9 +807,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--name", required=True, help="lock identity; same name = same lock")
     parser.add_argument(
+        "--max-footprint-gb", type=float, default=None,
+        help=f"abort above this tree footprint "
+             f"(default: {DEFAULT_MAX_FOOTPRINT_FRACTION:.0%} of RAM)".replace("%", "%%"),
+    )
+    parser.add_argument(
         "--max-rss-gb", type=float, default=None,
-        help=f"abort above this tree RSS "
-             f"(default: {DEFAULT_MAX_RSS_FRACTION:.0%} of RAM)".replace("%", "%%"),
+        help="DEPRECATED alias for --max-footprint-gb",
     )
     parser.add_argument(
         "--min-available-gb", type=float, default=None,
@@ -778,7 +844,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"total RAM: {_fmt_gb(total)}")
         print(f"available: {_fmt_gb(available_memory_bytes())}")
         if holder:
-            print(f"tree RSS:  {_fmt_gb(tree_rss_bytes(holder))}")
+            footprint, is_fallback, unr = tree_footprint_bytes(holder)
+            metric = "RSS (fallback)" if is_fallback else "phys_footprint"
+            unr_msg = f" (skipped {unr} unreadable)" if unr else ""
+            print(f"tree {metric}: {_fmt_gb(footprint)}{unr_msg}")
         return 0
 
     command = args.command
@@ -790,7 +859,7 @@ def main(argv: list[str] | None = None) -> int:
     return run_guarded(
         args.name,
         command,
-        max_rss_gb=args.max_rss_gb,
+        max_footprint_gb=args.max_footprint_gb, max_rss_gb=args.max_rss_gb,
         min_available_gb=args.min_available_gb,
         on_conflict=args.on_conflict,
         poll_seconds=args.poll_seconds,
