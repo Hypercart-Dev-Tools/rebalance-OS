@@ -283,3 +283,44 @@ def test_a_problem_writes_an_emit_file_main_still_exits_zero(logdir):
     payload = json.loads((config.state_dir() / "emit" / "collector-health.json").read_text())
     assert payload["source"] == "collector-health"
     assert "severity" not in payload
+
+
+# --------------------------------------------------------------------------- #
+# Defects found by the agy QA relay (2026-07-28)
+# --------------------------------------------------------------------------- #
+
+def test_a_LONG_error_is_not_silently_invisible(logdir):
+    """QA finding 4: `[^"]{0,200}` does not truncate a long error — it MISSES it.
+
+    After 200 non-quote characters the next character must be a quote and is not, so a
+    300-character traceback produced ZERO matches. `errs` came back empty and a
+    `complete` run carrying a catastrophic error was reported as clean.
+    """
+    long_err = "ValueError: " + "z" * 400
+    body = COMPLETE.replace('"errors": [],', f'"errors": [{{"error": "{long_err}"}}],')
+    path = _write(logdir, "daily_sync_2026-07-28.log", body)
+
+    parsed = observe.parse_sync_log(path)
+    assert parsed["errors"], "a 400-character error was invisible to the parser"
+    assert parsed["errors"][0].startswith("ValueError: zzz")
+
+    finding = observe.observe(now=datetime.now(timezone.utc))
+    assert finding is not None, "a complete run with a long unknown error looked clean"
+
+
+def test_staleness_is_checked_BEFORE_the_known_errors_early_return(logdir):
+    """QA finding 3: the "complete + only-known errors" branch returned None directly.
+
+    That skipped the staleness check entirely, so a job that died after one such run
+    was reported healthy forever. Freshness is a property of the job still running at
+    all and must not be gated on what its last run happened to say.
+    """
+    body = COMPLETE.replace(
+        '"errors": [],',
+        '"errors": [{"error": "GitHub API request failed: 403 secondary rate limit"}],',
+    )
+    _write(logdir, "daily_sync_2026-07-20.log", body, age_hours=observe.STALE_HOURS + 10)
+
+    finding = observe.observe(now=datetime.now(timezone.utc))
+    assert finding is not None, "a long-dead job with only known errors read as healthy"
+    assert "stale" in finding["title"]

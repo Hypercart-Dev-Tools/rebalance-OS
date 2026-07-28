@@ -250,8 +250,16 @@ def build(job=None, now: datetime | None = None, force: bool = False) -> dict[st
         reason = "3-Eyes inert or classifier unavailable"
         summary = "digest collected but not summarised (classifier unavailable)"
     else:
+        # FAIL CLOSED when there is no job to budget against (agy review, P7 QA
+        # finding 1). The previous `budget is not None and not reserve(1)` fell
+        # through to the model whenever `job` was None — which `main()` produces
+        # whenever the registry cannot be read — so a config error silently bought
+        # an unbudgeted model call. An unmetered spender is worse than no digest.
         budget = relief.budget_for(job, "llm") if job is not None else None
-        if budget is not None and not budget.reserve(1):
+        if budget is None:
+            reason = "no job context, so no budget to reserve against"
+            summary = f"digest collected but not summarised ({reason})"
+        elif not budget.reserve(1):
             reason = "LLM budget exhausted"
             summary = "digest collected but not summarised (LLM budget exhausted)"
         else:

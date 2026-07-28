@@ -233,3 +233,41 @@ def test_an_explainer_crash_still_announces_the_trip(activate, monkeypatch):
     assert any("breaker opened" in f.get("title", "") for f, _ in seen), (
         "the trip went unannounced because the explainer crashed"
     )
+
+
+# --------------------------------------------------------------------------- #
+# Defects found by the agy QA relay (2026-07-28)
+# --------------------------------------------------------------------------- #
+
+def test_suppression_rules_are_scoped_to_jobs(monkeypatch):
+    """QA finding 5: an unscoped rule silences failures it was never meant to cover.
+
+    "interrupted system call" is a generic EINTR string that can surface in a database
+    write or any syscall-heavy collector, and a bare "403 rate limit" can come from an
+    API that has nothing to do with GitHub.
+    """
+    for rule in explain.load_rules():
+        if rule["id"] in ("python-bootstrap-errno-4", "github-403-rate-limit"):
+            assert rule.get("jobs"), f"{rule['id']} is unscoped and applies fleet-wide"
+
+
+def test_a_generic_EINTR_elsewhere_is_not_suppressed():
+    """The concrete scenario: EINTR during a DB write, not interpreter bootstrap."""
+    got = explain.match_known_issue(
+        "some-other-job", "sqlite3.OperationalError: interrupted system call during commit"
+    )
+    assert got is None, "a generic EINTR was suppressed by the bootstrap rule"
+
+
+def test_a_non_github_403_is_not_suppressed():
+    got = explain.match_known_issue("daily-sync", "Figma API returned 403 forbidden")
+    assert got is None, "an unrelated 403 was suppressed by the GitHub rate-limit rule"
+
+
+def test_the_real_github_403_is_still_suppressed():
+    """The scoping must not break the suppression it exists to provide."""
+    got = explain.match_known_issue(
+        "collector-health",
+        "GitHub API request failed: 403 https://api.github.com/repos/x/y/issues",
+    )
+    assert got is not None and got["id"] == "github-403-rate-limit"

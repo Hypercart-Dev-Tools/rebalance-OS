@@ -117,7 +117,9 @@ def test_a_noisy_fleet_DOES_spend_a_model_call(activate, monkeypatch):
         "breakers": {}, "findings": [],
     })
 
-    finding = digest.build(job=None, now=UTC_NOW)
+    # A real job, so the call is budgeted. Passing job=None here used to work and
+    # was precisely the unbudgeted path the agy review flagged.
+    finding = digest.build(job=registry.load_job("daily-digest"), now=UTC_NOW)
 
     assert finding["model_used"] is True
     assert finding["severity"] == "error"
@@ -142,7 +144,7 @@ def test_an_unreadable_launchctl_is_noisy_not_quiet(activate, monkeypatch):
         "failing": [], "breakers": {}, "findings": [],
     })
 
-    finding = digest.build(job=None, now=UTC_NOW)
+    finding = digest.build(job=registry.load_job("daily-digest"), now=UTC_NOW)
 
     assert finding["quiet"] is False, "an unreadable fleet was treated as a quiet one"
     assert finding["model_used"] is True
@@ -299,3 +301,47 @@ def test_explicit_json_nulls_do_not_survive_as_None():
     assert "severity" not in parsed
     assert parsed["summary"] == "s"
     assert "extra" not in parsed
+
+
+def test_no_job_context_means_NO_model_call(monkeypatch, activate):
+    """QA finding 1: `budget is not None and not reserve(1)` fell through to the model.
+
+    `main()` sets job=None whenever the registry cannot be read, so a config error
+    silently bought an unbudgeted model call. An unmetered spender is worse than no
+    digest — fail closed.
+    """
+    activate()
+    called = []
+    monkeypatch.setattr(classify, "summarize_digest",
+                        lambda *a, **k: called.append(1) or {"severity": "warn", "summary": "s"})
+    monkeypatch.setattr(digest, "collect", lambda now=None: {
+        "generated_at": UTC_NOW.isoformat(),
+        "health": {"ok": 1, "failing": 1, "not_loaded": 0, "unknown": 0, "rows": [],
+                   "unclassified": [], "launchctl_available": True},
+        "failing": [{"label": "x", "health": "FAIL(exit 1)", "last_exit": "1"}],
+        "breakers": {}, "findings": [],
+    })
+
+    finding = digest.build(job=None, now=UTC_NOW)
+
+    assert called == [], "an unbudgeted model call was made with no job context"
+    assert finding["model_used"] is False
+    assert "no budget" in finding["summary"]
+
+
+@pytest.mark.parametrize("reply", [
+    '{"severity": "error", "summary": "s"}\nHere is why that matters...',
+    'Thinking...\n{"severity": "error", "summary": "s"}\ntrailing prose',
+    '{"severity": "error", "summary": "s"} {"second": "object"}',
+])
+def test_valid_json_followed_by_prose_is_not_discarded(reply):
+    """QA finding 6: `Extra data` threw away an otherwise perfect answer."""
+    parsed = classify._parse_model_json(reply)
+    assert parsed is not None, "a good JSON answer was discarded because of trailing prose"
+    assert parsed["severity"] == "error"
+
+
+def test_a_brace_inside_a_string_does_not_break_extraction():
+    """raw_decode is used precisely so hand-rolled brace counting cannot mis-split."""
+    parsed = classify._parse_model_json('{"summary": "contains } a brace"} trailing')
+    assert parsed["summary"] == "contains } a brace"

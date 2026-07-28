@@ -127,7 +127,13 @@ def parse_sync_log(path: Path) -> dict[str, Any]:
         return {"state": "no-outcome", "detail": "run finished but wrote no sync_outcome",
                 "errors": [], "path": str(path)}
 
-    errors = re.findall(r'"error":\s*"([^"]{0,200})"', block)
+    # NO LENGTH CAP on the captured error (agy review, P7 QA finding 4). This was
+    # `[^"]{0,200}`, which does not truncate a long error — it fails to match it at
+    # all, because after 200 non-quote characters the next character must be a quote
+    # and is not. A 300-character traceback therefore produced ZERO matches, `errs`
+    # came back empty, and a `complete` run carrying a catastrophic error was
+    # reported as clean. Capture in full; truncate only for display.
+    errors = [e[:400] for e in re.findall(r'"error":\s*"([^"]*)"', block)]
     scopes = re.findall(r'"scope":\s*"(\w+)"', block)
     return {
         "state": outcomes[-1],              # the LAST run's outcome, not the first
@@ -199,6 +205,21 @@ def observe(now: datetime | None = None, prefix: str = "daily_sync_") -> dict[st
             "text": json.dumps(parsed, indent=2),
         }
 
+    # Freshness is checked FIRST, before any content-based early return (agy review,
+    # P7 QA finding 3). Previously the "complete plus only-known errors" branch
+    # returned None directly and skipped the staleness check below — so a job that
+    # died after one such run was reported healthy forever. Staleness is a property of
+    # the job still running at all, and must not be gated on what its last run said.
+    stale = age > STALE_HOURS
+    if stale:
+        return {
+            "source": "collector-health",
+            "title": f"collector sync stale ({age:.0f}h)",
+            "severity": "warn",
+            "summary": f"last completed sync was {age:.0f}h ago (threshold {STALE_HOURS}h)",
+            "text": f"log: {path}\nstate: {state}\nage_hours: {age:.1f}",
+        }
+
     errs = parsed.get("errors") or []
     if state == "degraded" or (state == "complete" and errs):
         # Reuse P7b's suppression list rather than growing a second one. Imported
@@ -238,16 +259,7 @@ def observe(now: datetime | None = None, prefix: str = "daily_sync_") -> dict[st
         # reason that path had never once executed.
         return finding
 
-    if age > STALE_HOURS:
-        return {
-            "source": "collector-health",
-            "title": f"collector sync stale ({age:.0f}h)",
-            "severity": "warn",
-            "summary": f"last completed sync was {age:.0f}h ago (threshold {STALE_HOURS}h)",
-            "text": f"log: {path}\nstate: {state}\nage_hours: {age:.1f}",
-        }
-
-    return None                              # complete and fresh — nothing to report
+    return None                              # complete, fresh, nothing unexplained
 
 
 def main(argv: list[str] | None = None) -> int:

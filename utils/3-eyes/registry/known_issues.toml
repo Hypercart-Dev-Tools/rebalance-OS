@@ -32,13 +32,22 @@ issue = "152"
 
 [[rule]]
 id = "python-bootstrap-errno-4"
-pattern = "errno 4\\b|interrupted system call"
+# Scoped (agy review, P7 QA finding 5). Unscoped, "interrupted system call" is a
+# generic EINTR string that can appear in a database write or any syscall-heavy
+# collector — suppressing it fleet-wide would silence failures that have nothing to
+# do with interpreter bootstrap. The pattern is also anchored on the bootstrap
+# context rather than matching EINTR anywhere.
+jobs = ["daily-sync", "github-sync", "vault-sync", "collector-health"]
+pattern = "(bootstrap|site-packages|import).{0,80}(errno 4\\b|interrupted system call)"
 reason = "EINTR during interpreter bootstrap under memory pressure; self-recovering on the next run."
 issue = "186"
 
 [[rule]]
 id = "github-403-rate-limit"
-pattern = "403.{0,60}(rate limit|abuse|secondary)"
+# Scoped + anchored on api.github.com (agy review, P7 QA finding 5): a bare
+# "403 rate limit" from some unrelated API is not this known issue.
+jobs = ["daily-sync", "github-sync", "collector-health"]
+pattern = "(github|api\\.github\\.com).{0,120}403|403.{0,60}(rate limit|abuse|secondary)"
 reason = "github_sync (hourly) overlapping daily_sync exhausts the rate limit; a scheduling concern, not a code fault."
 issue = "144"
 

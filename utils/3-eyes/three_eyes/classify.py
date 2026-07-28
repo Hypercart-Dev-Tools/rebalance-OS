@@ -53,6 +53,23 @@ def load_system_instructions() -> str:
     return instructions
 
 
+def _first_json_object(text: str) -> dict | None:
+    """Decode the first balanced ``{...}`` object in ``text``, ignoring any trailing prose.
+
+    Uses ``json.JSONDecoder.raw_decode``, which stops cleanly at the end of the first
+    value instead of demanding that the whole string be JSON. Brace-counting by hand
+    would mis-handle a ``}`` inside a string literal; the decoder does not.
+    """
+    start = text.find("{")
+    if start < 0:
+        return None
+    try:
+        parsed, _ = json.JSONDecoder().raw_decode(text[start:])
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _parse_model_json(inner: str) -> dict | None:
     """Parse the model's reply as JSON, tolerating a markdown code fence.
 
@@ -79,7 +96,13 @@ def _parse_model_json(inner: str) -> dict | None:
     try:
         parsed = json.loads(text)
     except (ValueError, TypeError):
-        return None
+        # Valid JSON followed by unfenced prose (agy review, P7 QA finding 6):
+        # `{"severity": "error"}\nHere is why...` raises "Extra data" and the whole
+        # reply was discarded. Retry on just the first balanced {...} object rather
+        # than throwing away a good answer because the model kept talking.
+        parsed = _first_json_object(text)
+        if parsed is None:
+            return None
     if not isinstance(parsed, dict):
         return None
     # Drop explicit JSON nulls. `setdefault` only fills a MISSING key, so a reply of
