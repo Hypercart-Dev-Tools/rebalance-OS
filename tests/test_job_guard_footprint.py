@@ -36,6 +36,12 @@ FAKE_TOTAL_RAM = 64 * GIB
 def isolated_guard(tmp_path, monkeypatch):
     """Detach the guard from host RAM, the real lock dir, and system memory pressure."""
     monkeypatch.setattr(job_guard, "LOCK_DIR", tmp_path / "locks")
+    # Redirect the peak-footprint telemetry log. Without this, `run_guarded` in a
+    # test writes to the REAL temp/logs/job_rss.jsonl: a single test session left
+    # 30 synthetic records there, including 14 `test-over-ceiling` entries with a
+    # mocked 10 GB peak. Lane 7's regression detection replays that file, so those
+    # would surface as phantom contract breaches long after the test run.
+    monkeypatch.setattr(job_guard, "RSS_LOG_PATH", tmp_path / "job_rss.jsonl")
     monkeypatch.setattr(job_guard, "total_memory_bytes", lambda: FAKE_TOTAL_RAM)
     # A healthy machine by default, so the preflight never masks what a test means
     # to exercise. Individual tests override these.
