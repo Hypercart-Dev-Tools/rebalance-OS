@@ -2,7 +2,7 @@
 STATUS: Open
 NEXT: codex
 
-<!-- marathon-drive: task=MARATHON-P8-WAVE1-TURN-3 builder=codex reviewer=agy round-cap=7 -->
+<!-- marathon-drive: task=MARATHON-P8-WAVE1-TURN-4 builder=codex reviewer=agy round-cap=7 -->
 
 ## Phase Brief
 
@@ -94,8 +94,35 @@ suppression rule for it — `known_issues.toml` deliberately does not suppress
   your turn rather than approximating. An adoption that silently changes a schedule is
   worse than no adoption.
 
+## Containment: your filenames are FIXED
 
-## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+The relay containment guard matches allowlisted paths by **exact string**, not by
+directory prefix. Any file you create outside the exact list below is treated as an
+off-lane edit: your entire turn is discarded and fails with exit 6, however good the
+work is. This already happened three times on this phase — the work was correct each
+time and thrown away each time.
+
+Create/modify **only** these paths:
+
+- `utils/3-eyes/registry/jobs.d/daily-sync.toml`
+- `utils/3-eyes/registry/jobs.d/github-sync.toml`
+- `utils/3-eyes/registry/jobs.d/vault-sync.toml`
+- `utils/3-eyes/registry/jobs.d/health-check.toml`
+- `utils/3-eyes/registry/jobs.d/health-check-triage.toml`
+- `utils/3-eyes/registry/jobs.d/collector-health.toml`
+- `utils/3-eyes/registry/commands.allow`
+- `utils/3-eyes/tests/test_adoption_wave1.py`
+- `utils/3-eyes/DASHBOARD.md`
+
+If the work genuinely requires a file that is not on that list, **do not create it**.
+Say so in your turn block and hand back — a turn that reports a blocked requirement is
+useful; a turn that gets discarded is not.
+
+Also: `.pytest_cache/` and `.coverage` are now gitignored, so running the test suite is
+safe. Do not create scratch files, notes, or scripts anywhere in the tree.
+
+
+## Debug mantra (auto-triggered — 2 prior attempt(s) on this phase did not reach Approved)
 
 Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
 Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/gh195-p8-fleet-adoption-resume--p8-wave1/ESCALATION.md): `containment-violation (off-lane edit reverted by a turn-taker)`. Read it before re-guessing.
@@ -105,21 +132,21 @@ Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/gh195-p8-flee
 ▶ TAKE YOUR TURN (codex — BUILDER role)
 
 You are the BUILDER for this phase. Read the phase brief above and implement it.
-1. Implement the brief by creating/editing the artifact file(s): utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md
+1. Implement the brief by creating/editing the artifact file(s): utils/3-eyes/registry/jobs.d/daily-sync.toml,utils/3-eyes/registry/jobs.d/github-sync.toml,utils/3-eyes/registry/jobs.d/vault-sync.toml,utils/3-eyes/registry/jobs.d/health-check.toml,utils/3-eyes/registry/jobs.d/health-check-triage.toml,utils/3-eyes/registry/jobs.d/collector-health.toml,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md
 2. Append a build block to this relay file: `### Round N · Builder · codex` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-P8-WAVE1-TURN-3 --agent codex --paths "phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md,utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md"
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-P8-WAVE1-TURN-3 --agent codex
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P8-WAVE1-TURN-3 --agent codex --to agy
-4. Edit ONLY these paths: phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md and utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md. Do NOT run git. Do NOT touch any other file — the harness commits for you.
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-P8-WAVE1-TURN-4 --agent codex --paths "phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md,utils/3-eyes/registry/jobs.d/daily-sync.toml,utils/3-eyes/registry/jobs.d/github-sync.toml,utils/3-eyes/registry/jobs.d/vault-sync.toml,utils/3-eyes/registry/jobs.d/health-check.toml,utils/3-eyes/registry/jobs.d/health-check-triage.toml,utils/3-eyes/registry/jobs.d/collector-health.toml,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-P8-WAVE1-TURN-4 --agent codex
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P8-WAVE1-TURN-4 --agent codex --to agy
+4. Edit ONLY these paths: phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md and utils/3-eyes/registry/jobs.d/daily-sync.toml,utils/3-eyes/registry/jobs.d/github-sync.toml,utils/3-eyes/registry/jobs.d/vault-sync.toml,utils/3-eyes/registry/jobs.d/health-check.toml,utils/3-eyes/registry/jobs.d/health-check-triage.toml,utils/3-eyes/registry/jobs.d/collector-health.toml,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
 ---
 
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
-You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md.
+You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: utils/3-eyes/registry/jobs.d/daily-sync.toml,utils/3-eyes/registry/jobs.d/github-sync.toml,utils/3-eyes/registry/jobs.d/vault-sync.toml,utils/3-eyes/registry/jobs.d/health-check.toml,utils/3-eyes/registry/jobs.d/health-check-triage.toml,utils/3-eyes/registry/jobs.d/collector-health.toml,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md.
 1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P8-WAVE1-TURN-3 --agent agy --to codex
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P8-WAVE1-TURN-3 --agent agy
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P8-WAVE1-TURN-4 --agent agy --to codex
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P8-WAVE1-TURN-4 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
