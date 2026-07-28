@@ -144,6 +144,20 @@ Targeted verification was attempted with the phase-specified command, but this w
 
 **Verdict:** Changes requested
 
+### Round 2 · Builder · agy
+
+**Files Touched:**
+- `utils/job_guard.py`
+- `tests/test_job_guard_footprint.py`
+
+**Key Decisions:**
+1. **Re-sized ceiling**: Changed `DEFAULT_MAX_FOOTPRINT_FRACTION` from `0.25` to `0.125` to correctly enforce the per-process contract (8 GB on a 64 GB machine).
+2. **Available memory floor docstring**: Corrected the stale docstring on `available_memory_bytes()` to accurately state that it now counts ONLY free pages, and explicitly excludes inactive/speculative pages.
+3. **Over-ceiling trip test**: Rewrote `test_over_ceiling_trips` to be a deterministic wrapper-mode test using `run_guarded` on a synthetic child process that allocates memory, verifying the actual kill path.
+4. **Unreadable PID test**: Refactored `test_unreadable_pids_are_skipped_and_counted` to run portably by monkeypatching `sys.platform` and injecting a callable mock for `proc_pid_rusage` that returns `-1` for a specific PID, confirming correct skipping.
+
+Tests were successfully run (33 passed in 1.57s) using the system Python 3 interpreter.
+
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)

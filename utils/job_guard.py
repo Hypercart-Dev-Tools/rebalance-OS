@@ -82,9 +82,9 @@ LOCK_DIR = Path(
 
 #: Fraction of physical RAM a single guarded job may hold before it is aborted.
 #: The project contract specifies <= 8 GB peak phys_footprint per process, and
-#: <= 16 GB aggregate concurrent footprint. On a 64 GB machine, 16 GB is 25%.
-#: We size the default to 25% (0.25) to align with this contract.
-DEFAULT_MAX_FOOTPRINT_FRACTION = 0.25
+#: <= 16 GB aggregate concurrent footprint. On a 64 GB machine, 8 GB is 12.5%.
+#: We size the default to 12.5% (0.125) to align with the per-process contract.
+DEFAULT_MAX_FOOTPRINT_FRACTION = 0.125
 
 #: Abort if system-available memory falls below this fraction of physical RAM,
 #: regardless of how well-behaved *this* job is. This is the defence against
@@ -160,10 +160,9 @@ def total_memory_bytes() -> int:
 def available_memory_bytes() -> int:
     """Memory the OS could hand out without swapping. 0 when undeterminable.
 
-    On macOS this is free + inactive + speculative pages. Inactive pages are
-    reclaimable, so counting only ``free`` would report starvation on a healthy
-    machine and abort every job. Purgeable/compressed pages are excluded because
-    by the time they dominate, the compressor is already the problem.
+    On macOS this counts ONLY free pages. While inactive/speculative are reclaimable,
+    counting them can mask true memory pressure until the compressor is saturated.
+    Purgeable/compressed pages are also excluded.
     """
     if sys.platform == "darwin":
         try:

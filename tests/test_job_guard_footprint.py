@@ -15,18 +15,24 @@ import pytest
 from utils import job_guard
 
 
-def test_over_ceiling_trips():
+def test_over_ceiling_trips(tmp_path):
     """1. A synthetic over-ceiling process trips and is killed."""
-    ceiling = job_guard.MemoryCeiling(
-        max_footprint_bytes=1024,
-        poll_seconds=0.1,
+    script = tmp_path / "spin.py"
+    script.write_text(
+        "import time\n"
+        "x = bytearray(50 * 1024 * 1024)\n"  # 50MB
+        "time.sleep(60)\n"
     )
-    # The current python process will definitely have > 1KB of footprint.
-    ceiling.start()
-    time.sleep(0.3)
-    ceiling.stop()
-    assert ceiling.tripped_reason is not None
-    assert "process tree holds" in ceiling.tripped_reason
+    
+    code = job_guard.run_guarded(
+        name="test-over-ceiling",
+        argv=[sys.executable, str(script)],
+        max_footprint_gb=0.01,  # 10 MB ceiling
+        poll_seconds=0.2,
+        grace_seconds=0.5,
+    )
+    
+    assert code == 4
 
 
 def test_healthy_footprint_does_not_trip():
@@ -64,28 +70,43 @@ def test_high_footprint_near_zero_rss(monkeypatch):
 
 def test_unreadable_pids_are_skipped_and_counted(monkeypatch):
     """4. Unreadable pids (rc = -1) are skipped, counted, and never treated as 0."""
-    if sys.platform != "darwin":
-        pytest.skip("Requires macOS for proc_pid_rusage")
+    monkeypatch.setattr(sys, "platform", "darwin")
 
-    import subprocess
+    class MockSubprocessOut:
+        returncode = 0
+        stdout = "1000 1 100\n1001 1000 200\n1002 1000 300\n"
+
+    monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: MockSubprocessOut())
+
+    class MockProcPidRusage:
+        def __call__(self, pid, flavor, buf_ptr):
+            if pid == 1001:
+                return -1 # unreadable
+            buf = buf_ptr._obj
+            buf.ri_phys_footprint = 1024 if pid == 1000 else 2048
+            return 0
+
+    class FakeLibc:
+        def __init__(self):
+            self.proc_pid_rusage = MockProcPidRusage()
+            
+    monkeypatch.setattr(ctypes, "CDLL", lambda name: FakeLibc())
+    monkeypatch.setattr(ctypes.util, "find_library", lambda name: "fake_c")
+
+    footprint, is_fallback, unreadable = job_guard.tree_footprint_bytes(1000)
     
-    # We want a real unreadable PID, e.g., pid 1 (launchd)
-    footprint, is_fallback, unreadable = job_guard.tree_footprint_bytes(1)
-    # pid 1 should be unreadable by non-root
     assert not is_fallback
-    assert unreadable > 0
-    
+    assert unreadable == 1
+    assert footprint == 3072
+
     ceiling = job_guard.MemoryCeiling(
-        pid=1,
-        max_footprint_bytes=1,
+        pid=1000,
+        max_footprint_bytes=1000,
         poll_seconds=0.1,
     )
-    ceiling.start()
-    time.sleep(0.3)
-    ceiling.stop()
-    # It might trip if total > 1, but we care that the message includes the unreadable count.
-    if ceiling.tripped_reason:
-        assert "(skipped" in ceiling.tripped_reason
+    reason = ceiling._check()
+    assert reason is not None
+    assert "(skipped 1 unreadable pids)" in reason
 
 
 def test_rss_fallback(monkeypatch):
