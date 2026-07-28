@@ -12,8 +12,16 @@ This module supplies the two missing primitives, independent of any one job:
      either REFUSES (default) or REPLACES the incumbent. Stale locks left by a
      killed process are reclaimed automatically.
   2. MemoryCeiling — a watchdog thread that samples the guarded process tree's
-     RSS *and* system-available memory, and aborts the job CLEANLY (SIGTERM, then
-     SIGKILL after a grace period) before the machine starts thrashing.
+     ``phys_footprint``, the system-available memory, *and* the memory compressor,
+     and aborts the job CLEANLY (SIGTERM, then SIGKILL after a grace period)
+     before the machine starts thrashing.
+
+     The metric is footprint, NOT RSS (GH-219 Lane 4). RSS cannot see Metal/GPU
+     buffers, which are charged to phys_footprint as ``iokit``: on 2026-07-27 the
+     offending processes held ~46.9 GB of footprint while reporting ~0.08 GB RSS,
+     so an RSS-based guard ran 233 jobs and tripped zero times while the machine
+     fell to 0.09 GB free. Do not reintroduce RSS semantics here; RSS survives
+     only as a fallback where phys_footprint is unavailable, and says so when used.
 
 Deliberately stdlib-only (no psutil): this has to run under the system python3,
 inside launchd jobs, and inside the rebalance venv without an install step.
@@ -57,6 +65,8 @@ Operator reference: UPGRADE.md § "Embedding job guard (GH-172)".
 from __future__ import annotations
 
 import argparse
+import ctypes
+import ctypes.util
 import errno
 import fcntl
 import json
@@ -79,7 +89,10 @@ LOCK_DIR = Path(
 )
 
 #: Fraction of physical RAM a single guarded job may hold before it is aborted.
-DEFAULT_MAX_RSS_FRACTION = 0.35
+#: The project contract specifies <= 8 GB peak phys_footprint per process, and
+#: <= 16 GB aggregate concurrent footprint. On a 64 GB machine, 8 GB is 12.5%.
+#: We size the default to 12.5% (0.125) to align with the per-process contract.
+DEFAULT_MAX_FOOTPRINT_FRACTION = 0.125
 
 #: Abort if system-available memory falls below this fraction of physical RAM,
 #: regardless of how well-behaved *this* job is. This is the defence against
@@ -88,6 +101,68 @@ DEFAULT_MIN_AVAILABLE_FRACTION = 0.12
 
 #: Never let the available-memory floor drop below this absolute value.
 MIN_AVAILABLE_FLOOR = 4 * GIB
+
+#: Compressor size, as a fraction of RAM, above which the machine is treated as
+#: under real memory pressure regardless of how much memory looks "available".
+#:
+#: This is the signal that CONCLUDES the availability question for GH-219 Lane 4.
+#: Reclaimable-pages accounting (free+inactive+speculative) is retained as the
+#: availability numerator, because free-only accounting refuses jobs on a healthy
+#: Mac — but on its own it can look survivable while the compressor is saturating,
+#: which is the 2026-07-27 condition. The compressor is the direct measurement of
+#: that state and needs no inference.
+#:
+#: Sized from the recorded sampler data (sysmem-sys-*.csv, 07-26 and 07-27, 1602
+#: samples). The distribution is strongly BIMODAL — median 0.65–0.96 GB when
+#: healthy, 25–35 GB when in distress, with almost nothing between: the fraction
+#: of samples above 8 GB and above 24 GB is nearly identical (22.2% vs 21.6% on
+#: 07-26; 16.7% vs 14.8% on 07-27). That gap makes the exact threshold
+#: uncritical — any value in the empty middle classifies the same way — so 25% of
+#: RAM (16 GB on this machine) is chosen to sit as far from both modes as
+#: possible. Robustness here is a property of the data, not a lucky constant.
+DEFAULT_MAX_COMPRESSOR_FRACTION = 0.25
+
+#: Override for the compressor pressure ceiling, in GB.
+ENV_MAX_COMPRESSOR_GB = "REBALANCE_JOB_GUARD_MAX_COMPRESSOR_GB"
+
+#: Per-process ceiling override, in GB. The guard measures ``phys_footprint``
+#: (GH-219 Lane 4), so the setting is named for the metric it actually applies to.
+ENV_MAX_FOOTPRINT_GB = "REBALANCE_JOB_GUARD_MAX_FOOTPRINT_GB"
+
+#: Deprecated alias, kept working so existing plists and docs do not silently
+#: stop applying when the metric was renamed RSS -> phys_footprint. Honoured with
+#: a warning; the footprint-named variable wins when both are set.
+ENV_MAX_FOOTPRINT_GB_DEPRECATED = "REBALANCE_JOB_GUARD_MAX_RSS_GB"
+
+
+def env_max_footprint_gb(warn=None) -> float | None:
+    """Resolve the per-process ceiling from the environment, or ``None``.
+
+    Prefers :data:`ENV_MAX_FOOTPRINT_GB`; falls back to the deprecated
+    RSS-named alias. A non-numeric value is reported and ignored rather than
+    crashing the job it was meant to protect.
+    """
+    warn = warn or (lambda msg: print(f"[job-guard] {msg}", file=sys.stderr))
+
+    for name, deprecated in (
+        (ENV_MAX_FOOTPRINT_GB, False),
+        (ENV_MAX_FOOTPRINT_GB_DEPRECATED, True),
+    ):
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            warn(f"ignoring non-numeric {name}={raw!r}")
+            continue
+        if deprecated:
+            warn(
+                f"{name} is deprecated (the guard measures phys_footprint, not RSS); "
+                f"use {ENV_MAX_FOOTPRINT_GB}"
+            )
+        return value
+    return None
 
 DEFAULT_POLL_SECONDS = 5.0
 DEFAULT_GRACE_SECONDS = 20.0
@@ -113,7 +188,7 @@ class InstanceConflict(GuardError):
 
 
 class MemoryCeilingExceeded(GuardError):
-    """The job tripped the RSS ceiling or the system-available floor."""
+    """The job tripped the footprint ceiling, the available floor, or compressor pressure."""
 
 
 class _Evicted(BaseException):
@@ -155,10 +230,13 @@ def total_memory_bytes() -> int:
 def available_memory_bytes() -> int:
     """Memory the OS could hand out without swapping. 0 when undeterminable.
 
-    On macOS this is free + inactive + speculative pages. Inactive pages are
-    reclaimable, so counting only ``free`` would report starvation on a healthy
-    machine and abort every job. Purgeable/compressed pages are excluded because
-    by the time they dominate, the compressor is already the problem.
+    On macOS this counts free + inactive + speculative pages, all of which the
+    kernel can reclaim without swapping. Compressed pages are excluded.
+
+    A healthy Mac routinely runs with very little *free* memory — the OS uses RAM
+    for cache and lists it as inactive — so free alone is not a usable proxy for
+    availability here. See the comment in the implementation for the measurement
+    that settled this, and for why compressor/swap are the better pressure signal.
     """
     if sys.platform == "darwin":
         try:
@@ -176,6 +254,31 @@ def available_memory_bytes() -> int:
             page_size = int(header.group(1))
 
         pages = 0
+        # GH-219 Lane 4: free-ONLY accounting was tried here and REVERTED, measured.
+        # The theory (counting inactive/speculative masks pressure until the
+        # compressor saturates) is reasonable, but the implementation made the guard
+        # refuse to start on a perfectly healthy machine: with free=1.59 GB,
+        # inactive=21.46 GB, speculative=0.93 GB — i.e. ~24 GB genuinely reclaimable —
+        # free-only reported 1.58 GB against a 7.68 GB floor, so EVERY guarded job
+        # was refused. A safety mechanism that blocks legitimate work is one that
+        # gets switched off.
+        #
+        # Changing this numerator requires re-tuning DEFAULT_MIN_AVAILABLE_FRACTION
+        # in the same edit; the two are one decision, not two.
+        #
+        # DECISION (GH-219 Lane 4, concluded — not deferred): reclaimable-pages
+        # accounting is RETAINED here, and the gap it leaves is covered by a separate,
+        # direct pressure signal rather than by tightening this numerator.
+        #
+        # Rationale. This definition can look survivable while the machine is dying,
+        # which is the real objection to it. But narrowing it to free-only is strictly
+        # worse (it refuses every job on a healthy Mac), and it cannot be validated
+        # against history: sysmem-sys-*.csv never recorded inactive/speculative, so
+        # the 07-27 crisis cannot be replayed against any variant of this number.
+        # Rather than tune a metric that cannot be checked, the guard now also reads
+        # the memory compressor (see DEFAULT_MAX_COMPRESSOR_FRACTION), which IS
+        # recorded, IS strongly bimodal between healthy and crisis, and measures the
+        # dying-machine state directly instead of inferring it.
         wanted = ("Pages free:", "Pages inactive:", "Pages speculative:")
         for line in out.stdout.splitlines():
             for key in wanted:
@@ -191,21 +294,69 @@ def available_memory_bytes() -> int:
     return 0
 
 
-def tree_rss_bytes(pid: int) -> int:
-    """Resident memory of ``pid`` plus every descendant, in bytes.
 
-    Uses ``ps`` rather than /proc so one implementation covers macOS and Linux.
-    A worker pool's memory lives in its children, so summing the tree is the
-    only measurement that would have caught the GH-172 blowup.
+class _RusageInfoV2(ctypes.Structure):
+    _fields_ = [
+        ("ri_uuid", ctypes.c_uint8 * 16),
+        ("ri_user_time", ctypes.c_uint64),
+        ("ri_system_time", ctypes.c_uint64),
+        ("ri_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_interrupt_wkups", ctypes.c_uint64),
+        ("ri_pageins", ctypes.c_uint64),
+        ("ri_wired_size", ctypes.c_uint64),
+        ("ri_resident_size", ctypes.c_uint64),
+        ("ri_phys_footprint", ctypes.c_uint64),
+        ("ri_proc_start_abstime", ctypes.c_uint64),
+        ("ri_proc_exit_abstime", ctypes.c_uint64),
+        ("ri_child_user_time", ctypes.c_uint64),
+        ("ri_child_system_time", ctypes.c_uint64),
+        ("ri_child_pkg_idle_wkups", ctypes.c_uint64),
+        ("ri_child_interrupt_wkups", ctypes.c_uint64),
+        ("ri_child_pageins", ctypes.c_uint64),
+        ("ri_child_elapsed_abstime", ctypes.c_uint64),
+        ("ri_diskio_bytesread", ctypes.c_uint64),
+        ("ri_diskio_byteswritten", ctypes.c_uint64),
+    ]
+
+def compressor_bytes() -> int:
+    """Bytes held by the macOS memory compressor. 0 when undeterminable.
+
+    A saturating compressor is the most direct evidence that the machine is in
+    real trouble: it means the kernel is already paying CPU to avoid swapping.
+    Unlike "available" memory, it cannot look healthy while the machine dies.
+    """
+    if sys.platform != "darwin":
+        return 0
+    try:
+        out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    if out.returncode != 0 or not out.stdout.strip():
+        return 0
+
+    header = re.search(r"page size of (\d+) bytes", out.stdout)
+    page_size = int(header.group(1)) if header else 4096
+    for line in out.stdout.splitlines():
+        if line.startswith("Pages occupied by compressor:"):
+            digits = line.split(":", 1)[1].strip().rstrip(".")
+            if digits.isdigit():
+                return int(digits) * page_size
+    return 0
+
+
+def tree_footprint_bytes(pid: int) -> tuple[int, bool, int]:
+    """Resident memory (or phys_footprint on macOS) of ``pid`` plus every descendant.
+    
+    Returns: (total_bytes, is_fallback, unreadable_count)
     """
     try:
         out = subprocess.run(
             ["ps", "-eo", "pid=,ppid=,rss="], capture_output=True, text=True, timeout=10
         )
     except (OSError, subprocess.SubprocessError):
-        return 0
+        return 0, True, 0
     if out.returncode != 0:
-        return 0
+        return 0, True, 0
 
     children: dict[int, list[int]] = {}
     rss: dict[int, int] = {}
@@ -220,17 +371,44 @@ def tree_rss_bytes(pid: int) -> int:
         rss[this_pid] = kb * 1024
         children.setdefault(ppid, []).append(this_pid)
 
-    total = 0
     stack = [pid]
     seen: set[int] = set()
+    tree_pids = []
     while stack:
         current = stack.pop()
         if current in seen:
             continue
         seen.add(current)
-        total += rss.get(current, 0)
+        tree_pids.append(current)
         stack.extend(children.get(current, ()))
-    return total
+
+    is_fallback = True
+    total = 0
+    unreadable_count = 0
+
+    if sys.platform == "darwin":
+        try:
+            libc = ctypes.CDLL(ctypes.util.find_library("c"))
+            proc_pid_rusage = libc.proc_pid_rusage
+            proc_pid_rusage.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_void_p]
+            proc_pid_rusage.restype = ctypes.c_int
+            is_fallback = False
+        except Exception:
+            pass
+            
+        if not is_fallback:
+            for p in tree_pids:
+                buf = _RusageInfoV2()
+                rc = proc_pid_rusage(p, 2, ctypes.byref(buf))
+                if rc == 0:
+                    total += buf.ri_phys_footprint
+                else:
+                    unreadable_count += 1
+            return total, False, unreadable_count
+    
+    for p in tree_pids:
+        total += rss.get(p, 0)
+    return total, True, unreadable_count
 
 
 def _fmt_gb(value: int) -> str:
@@ -433,35 +611,52 @@ def _terminate_group(pgid: int, grace: float) -> None:
 class MemoryCeiling:
     """Background watchdog that aborts a process tree before the machine dies.
 
-    Two independent trip conditions, because they catch different failures:
+    Three independent trip conditions, because they catch different failures:
 
-      * RSS ceiling — this job leaked or accumulated (GH-172 defects 2 and 3,
-        the ``out = [None] * len(texts)`` accumulation).
+      * ``phys_footprint`` ceiling — this job leaked or accumulated (GH-172
+        defects 2 and 3, the ``out = [None] * len(texts)`` accumulation; and
+        GH-219's MLX buffer-cache growth, which RSS could not see at all).
       * Available-memory floor — the *machine* is starved, whoever is at fault
         (GH-172 defect 1, stacked concurrent runs).
+      * Compressor pressure — the machine is already paying CPU to avoid
+        swapping. This catches the case the floor alone misses, where
+        reclaimable pages still look plentiful while the compressor saturates
+        (GH-219 Lane 4; the 2026-07-27 condition).
     """
 
     def __init__(
         self,
         pid: int | None = None,
-        max_rss_bytes: int | None = None,
+        max_footprint_bytes: int | None = None,
         min_available_bytes: int | None = None,
         poll_seconds: float = DEFAULT_POLL_SECONDS,
         on_trip=None,
         log=None,
+        max_rss_bytes: int | None = None,
     ) -> None:
         total = total_memory_bytes()
         self.pid = pid or os.getpid()
         self.total = total
-        self.max_rss = max_rss_bytes or int(total * DEFAULT_MAX_RSS_FRACTION) or None
+        
+        ceiling = max_footprint_bytes or max_rss_bytes
+        self.max_footprint = ceiling or int(total * DEFAULT_MAX_FOOTPRINT_FRACTION) or None
         self.min_available = min_available_bytes or max(
             int(total * DEFAULT_MIN_AVAILABLE_FRACTION), MIN_AVAILABLE_FLOOR if total else 0
         ) or None
+        env_comp = os.environ.get(ENV_MAX_COMPRESSOR_GB, "").strip()
+        try:
+            self.max_compressor = (
+                int(float(env_comp) * GIB)
+                if env_comp
+                else int(total * DEFAULT_MAX_COMPRESSOR_FRACTION) or None
+            )
+        except ValueError:
+            self.max_compressor = int(total * DEFAULT_MAX_COMPRESSOR_FRACTION) or None
         self.poll_seconds = poll_seconds
         self.on_trip = on_trip
         self.log = log or (lambda msg: print(f"[job-guard] {msg}", file=sys.stderr))
         self.tripped_reason: str | None = None
-        self.peak_rss = 0
+        self.peak_footprint = 0
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
 
@@ -472,6 +667,16 @@ class MemoryCeiling:
         and it is the check that turns a stacked run into a clean error instead
         of a kernel panic.
         """
+        # Compressor pressure first: it stays honest when "available" does not.
+        if self.max_compressor:
+            compressor = compressor_bytes()
+            if compressor and compressor > self.max_compressor:
+                raise MemoryCeilingExceeded(
+                    f"refusing to start: memory compressor holds "
+                    f"{_fmt_gb(compressor)}, ceiling is {_fmt_gb(self.max_compressor)} "
+                    f"(the machine is already under real pressure)"
+                )
+
         if not self.min_available:
             return
         available = available_memory_bytes()
@@ -499,18 +704,30 @@ class MemoryCeiling:
                 return
 
     def _check(self) -> str | None:
-        rss = tree_rss_bytes(self.pid)
-        self.peak_rss = max(self.peak_rss, rss)
-        if self.max_rss and rss > self.max_rss:
+        footprint, is_fallback, unreadable = tree_footprint_bytes(self.pid)
+        self.peak_footprint = max(self.peak_footprint, footprint)
+        metric = "RSS (fallback)" if is_fallback else "phys_footprint"
+        unr_msg = f" (skipped {unreadable} unreadable pids)" if unreadable else ""
+
+        if self.max_footprint and footprint > self.max_footprint:
             return (
-                f"process tree holds {_fmt_gb(rss)}, ceiling is {_fmt_gb(self.max_rss)}"
+                f"process tree holds {_fmt_gb(footprint)} {metric}, ceiling is {_fmt_gb(self.max_footprint)}{unr_msg}"
             )
+
+        if self.max_compressor:
+            compressor = compressor_bytes()
+            if compressor and compressor > self.max_compressor:
+                return (
+                    f"memory compressor holds {_fmt_gb(compressor)}, ceiling is "
+                    f"{_fmt_gb(self.max_compressor)} (this job {metric}: "
+                    f"{_fmt_gb(footprint)}{unr_msg})"
+                )
 
         available = available_memory_bytes()
         if self.min_available and available and available < self.min_available:
             return (
                 f"system available memory {_fmt_gb(available)} fell below "
-                f"floor {_fmt_gb(self.min_available)} (this job: {_fmt_gb(rss)})"
+                f"floor {_fmt_gb(self.min_available)} (this job {metric}: {_fmt_gb(footprint)}{unr_msg})"
             )
         return None
 
@@ -525,7 +742,7 @@ class MemoryCeiling:
 # In-process entry point
 # --------------------------------------------------------------------------- #
 
-def record_peak_rss(
+def record_peak_footprint(
     name: str,
     ceiling: "MemoryCeiling",
     *,
@@ -544,10 +761,10 @@ def record_peak_rss(
             "ts": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
             "job": name,
             "pid": os.getpid(),
-            "peak_rss_bytes": int(ceiling.peak_rss or 0),
-            "peak_rss_gb": round((ceiling.peak_rss or 0) / GIB, 3),
+            "peak_footprint_bytes": int(ceiling.peak_footprint or 0),
+            "peak_footprint_gb": round((ceiling.peak_footprint or 0) / GIB, 3),
             "total_memory_gb": round((ceiling.total or 0) / GIB, 1),
-            "max_rss_gb": round((ceiling.max_rss or 0) / GIB, 3) if ceiling.max_rss else None,
+            "max_footprint_gb": round((ceiling.max_footprint or 0) / GIB, 3) if ceiling.max_footprint else None,
             "tripped_reason": ceiling.tripped_reason,
             "exit_code": exit_code,
             "duration_s": round(time.monotonic() - started, 1) if started else None,
@@ -562,11 +779,12 @@ def record_peak_rss(
 @contextmanager
 def guard(
     name: str,
-    max_rss_gb: float | None = None,
+    max_footprint_gb: float | None = None,
     min_available_gb: float | None = None,
     on_conflict: str = "refuse",
     poll_seconds: float = DEFAULT_POLL_SECONDS,
     log=None,
+    max_rss_gb: float | None = None,
 ):
     """Guard the calling process: single-instance lock + memory ceiling.
 
@@ -579,7 +797,7 @@ def guard(
     lock.acquire(on_conflict=on_conflict)
 
     ceiling = MemoryCeiling(
-        max_rss_bytes=int(max_rss_gb * GIB) if max_rss_gb else None,
+        max_footprint_bytes=int((max_footprint_gb or max_rss_gb) * GIB) if (max_footprint_gb or max_rss_gb) else None,
         min_available_bytes=int(min_available_gb * GIB) if min_available_gb else None,
         poll_seconds=poll_seconds,
         log=log,
@@ -613,7 +831,7 @@ def guard(
             pass
         # Written on EVERY exit path — clean, raised, or ceiling-tripped. The
         # tripped run is precisely the one worth having a record of.
-        record_peak_rss(name, ceiling, started=started)
+        record_peak_footprint(name, ceiling, started=started)
         lock.release()
 
 
@@ -624,11 +842,12 @@ def guard(
 def run_guarded(
     name: str,
     argv: list[str],
-    max_rss_gb: float | None = None,
+    max_footprint_gb: float | None = None,
     min_available_gb: float | None = None,
     on_conflict: str = "refuse",
     poll_seconds: float = DEFAULT_POLL_SECONDS,
     grace_seconds: float = DEFAULT_GRACE_SECONDS,
+    max_rss_gb: float | None = None,
 ) -> int:
     """Run ``argv`` as a guarded child process. Returns the exit code."""
     log = lambda msg: print(f"[job-guard] {msg}", file=sys.stderr)  # noqa: E731
@@ -642,8 +861,11 @@ def run_guarded(
 
     started = time.monotonic()
     try:
+        # Explicit argument wins; otherwise fall back to the environment so a
+        # plist can raise the ceiling without a code change (GH-219 Lane 4).
+        effective_gb = max_footprint_gb or max_rss_gb or env_max_footprint_gb(warn=log)
         ceiling = MemoryCeiling(
-            max_rss_bytes=int(max_rss_gb * GIB) if max_rss_gb else None,
+            max_footprint_bytes=int(effective_gb * GIB) if effective_gb else None,
             min_available_bytes=int(min_available_gb * GIB) if min_available_gb else None,
             poll_seconds=poll_seconds,
             log=log,
@@ -655,7 +877,7 @@ def run_guarded(
             return 4
 
         log(
-            f"starting {name!r}: rss ceiling {_fmt_gb(ceiling.max_rss or 0)}, "
+            f"starting {name!r}: footprint ceiling {_fmt_gb(ceiling.max_footprint or 0)}, "
             f"available floor {_fmt_gb(ceiling.min_available or 0)}"
         )
 
@@ -691,8 +913,8 @@ def run_guarded(
             except (ValueError, TypeError):
                 pass
 
-        log(f"{name!r} finished with exit {code}; peak tree RSS {_fmt_gb(ceiling.peak_rss)}")
-        record_peak_rss(name, ceiling, started=started, exit_code=code)
+        log(f"{name!r} finished with exit {code}; peak tree footprint {_fmt_gb(ceiling.peak_footprint)}")
+        record_peak_footprint(name, ceiling, started=started, exit_code=code)
         return 4 if ceiling.tripped_reason else code
     finally:
         lock.release()
@@ -745,9 +967,13 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--name", required=True, help="lock identity; same name = same lock")
     parser.add_argument(
+        "--max-footprint-gb", type=float, default=None,
+        help=f"abort above this tree footprint "
+             f"(default: {DEFAULT_MAX_FOOTPRINT_FRACTION:.0%} of RAM)".replace("%", "%%"),
+    )
+    parser.add_argument(
         "--max-rss-gb", type=float, default=None,
-        help=f"abort above this tree RSS "
-             f"(default: {DEFAULT_MAX_RSS_FRACTION:.0%} of RAM)".replace("%", "%%"),
+        help="DEPRECATED alias for --max-footprint-gb",
     )
     parser.add_argument(
         "--min-available-gb", type=float, default=None,
@@ -778,7 +1004,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"total RAM: {_fmt_gb(total)}")
         print(f"available: {_fmt_gb(available_memory_bytes())}")
         if holder:
-            print(f"tree RSS:  {_fmt_gb(tree_rss_bytes(holder))}")
+            footprint, is_fallback, unr = tree_footprint_bytes(holder)
+            metric = "RSS (fallback)" if is_fallback else "phys_footprint"
+            unr_msg = f" (skipped {unr} unreadable)" if unr else ""
+            print(f"tree {metric}: {_fmt_gb(footprint)}{unr_msg}")
         return 0
 
     command = args.command
@@ -790,7 +1019,7 @@ def main(argv: list[str] | None = None) -> int:
     return run_guarded(
         args.name,
         command,
-        max_rss_gb=args.max_rss_gb,
+        max_footprint_gb=args.max_footprint_gb, max_rss_gb=args.max_rss_gb,
         min_available_gb=args.min_available_gb,
         on_conflict=args.on_conflict,
         poll_seconds=args.poll_seconds,
