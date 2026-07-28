@@ -94,3 +94,10 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P8-HYGIENE-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh195-p8-fleet-adoption--p8-hygiene/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Updated `utils/3-eyes/registry/catalog-notes.toml`: the two deleted Cactus sentinels are retained as historical `observe` entries, explicitly retired on 2026-07-27 and superseded by 3-Eyes. I also classified the not-loaded Cactus server and routing shim as retired `observe` entries: the Cactus stack was decommissioned with its sentinels, so neither is an active server or an adoption candidate.
+- Added `com.neochro.sys-mem-attribute` as `observe`, matching the continuous KeepAlive, CSV-only VS Code sampler; neither is a scheduled findings job.
+- Added a focused regression test asserting the retired Cactus records render as observe-only, never as adoption targets.
+- Verification: `PYTHONPATH=utils/3-eyes python3 -m pytest utils/3-eyes/tests/test_catalog_health.py -q` — 11 passed. The requested `.venv/bin/python` does not exist in this isolated worktree.

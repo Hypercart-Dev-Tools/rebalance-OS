@@ -45,6 +45,28 @@ def test_render_groups_and_flags(fixture_env):
     assert "Suggested next adoptions" in md and "com.x.adopt" in md
 
 
+def test_retired_cactus_agents_are_not_adoption_targets(monkeypatch):
+    """Retired incumbents remain curated history, never future adoption work."""
+    notes = catalog.load_notes()
+    retired = [
+        "com.neochro.sentinel-daemon",
+        "com.neochro.sentinel-daemon.sleuth-app",
+        "com.neochro.needle-router",
+        "com.neochro.cactus-serve",
+    ]
+    monkeypatch.setattr(launchd, "observe_existing",
+                        lambda: [{"label": label, "schedule": "retired"} for label in retired])
+
+    rendered = catalog.render(notes)
+    for label in retired:
+        note = notes["agent"][label]
+        assert note["status"] == "observe"
+        assert "Retired 2026-07-27" in note["desc"]
+        row = next(line for line in rendered.splitlines() if f"`{label}`" in line)
+        assert "🎯 to-adopt" not in row
+    assert "Suggested next adoptions" not in rendered
+
+
 def test_check_true_after_write_then_false_on_drift(fixture_env, monkeypatch):
     catalog.write()
     assert catalog.check() is True

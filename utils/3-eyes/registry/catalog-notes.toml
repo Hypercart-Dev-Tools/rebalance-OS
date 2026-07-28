@@ -106,23 +106,25 @@ status = "server"
 
 [agent."com.neochro.sentinel-daemon"]
 system = "cactus-sleuth"
-desc = "Cactus Needle PDDA sentinel — watches cactus PROJECT/** docs"
-status = "to-adopt"
+desc = "Retired 2026-07-27: Cactus Needle PDDA sentinel that watched cactus PROJECT/** docs; superseded by 3-Eyes."
+status = "observe"
 
 [agent."com.neochro.sentinel-daemon.sleuth-app"]
 system = "cactus-sleuth"
-desc = "Sleuth variant of the Needle sentinel"
-status = "to-adopt"
+desc = "Retired 2026-07-27: Sleuth variant of the Needle sentinel; superseded by 3-Eyes."
+status = "observe"
 
+# Retired with the sentinels: both services are not loaded, and the Cactus stack they
+# served was decommissioned when 3-Eyes became this machine's sole job supervisor.
 [agent."com.neochro.needle-router"]
 system = "cactus-sleuth"
-desc = "Cactus Sentinel routing shim (:8082) — launcher path missing, see servers.md"
-status = "server"
+desc = "Retired 2026-07-27: Cactus Sentinel routing shim (:8082); superseded by 3-Eyes."
+status = "observe"
 
 [agent."com.neochro.cactus-serve"]
 system = "cactus-sleuth"
-desc = "Cactus Needle SLM OpenAI server (:8081)"
-status = "server"
+desc = "Retired 2026-07-27: Cactus Needle SLM OpenAI server (:8081); superseded by 3-Eyes."
+status = "observe"
 
 [agent."com.neochro.ga-pull-binoid"]
 system = "ga4"
@@ -163,6 +165,11 @@ status = "to-adopt"
 [agent."com.neochro.vscode-mem-attribute"]
 system = "hq-misc"
 desc = "VS Code per-window RSS sampler → ~/Library/Logs/vscode-mem/*.csv (60s, daily rotation). Continuous KeepAlive logger, NOT a scheduled findings job — deliberately observe-only, see README-mem-forensics.md."
+status = "observe"
+
+[agent."com.neochro.sys-mem-attribute"]
+system = "hq-misc"
+desc = "System-wide RSS sampler → daily rotated CSVs. Continuous KeepAlive logger, NOT a scheduled findings job — observe-only like com.neochro.vscode-mem-attribute."
 status = "observe"
 
 [agent."com.neochro.linkding-web"]
