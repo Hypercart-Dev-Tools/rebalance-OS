@@ -181,3 +181,13 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH219-LANE4 --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh219-lane4-footprint-guard/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 2 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+1. The phase-specified focused command fails: `tests/test_job_guard_footprint.py` has 3 failures. `test_over_ceiling_trips` uses the real home lock directory (and fails with `PermissionError` here) rather than an isolated `job_guard.LOCK_DIR`; `test_high_footprint_near_zero_rss` depends on host RAM probing and never starts its watcher when `total_memory_bytes()` returns 0; and `test_rss_fallback` depends on host `ps` visibility and receives a zero sum. Make all three deterministic with isolated/mocked dependencies.
+2. The central synthetic-child test still does not prove its child was terminated and reaped. A `4` can come from preflight before the child launches. Disable/mock the available-memory preflight for this test, capture the child PID, and assert it is no longer alive after `run_guarded` returns `4`.
+3. `REBALANCE_JOB_GUARD_MAX_FOOTPRINT_GB` is not read anywhere. The old `REBALANCE_JOB_GUARD_MAX_RSS_GB` remains usable only because the bridge still passes `max_rss_gb`; add the footprint-named setting in `utils/job_guard.py` and retain the old name as its deprecated alias so the required rename is real.
+
+**Verdict:** Changes requested
