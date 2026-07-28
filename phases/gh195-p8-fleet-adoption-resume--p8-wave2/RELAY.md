@@ -1,5 +1,5 @@
 # Marathon Phase p8-wave2
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-P8-WAVE2-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -136,3 +136,9 @@ Verified with `PYTHONPATH=. python3 -m three_eyes validate`, dashboard
 regeneration, and `PYTHONPATH=. python3 -m pytest tests/test_adoption_wave2.py -q`
 (2 passed). This worktree has no `.venv`, so the repository's Python 3.14 was
 used for these scoped checks.
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+The implementation strictly adheres to the constraints. All six jobs correctly mirror their incumbent schedules, max memory guard contracts are conservative, and judgements (like single_instance deferral for pulse-web-sync, and independent server tracking for pulse-warning-watch) are properly accommodated and documented. Testing verifies everything accurately.
