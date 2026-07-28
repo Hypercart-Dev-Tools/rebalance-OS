@@ -116,6 +116,73 @@ def _stub_digest(corpus: str) -> dict:
     }
 
 
+def _stub_explain(evidence: str) -> dict:
+    """Offline failure explanation for tests and dry-runs. No network."""
+    graded = _stub_classify(evidence)
+    return {
+        "severity": graded["severity"],
+        "headline": "unrecognised failure",
+        "summary": graded["summary"],
+        "next_step": "inspect the log tail",
+        "stub": True,
+    }
+
+
+def explain_failure(evidence: str, model: str | None = None, timeout: float = 120.0) -> dict:
+    """Judge a job failure that matched NO known-issue rule (P7b).
+
+    Only reached after deterministic suppression has already failed to match, so the
+    model is being asked about genuine novelty — never about the recurring failures,
+    which are handled for free upstream in :mod:`explain`.
+
+    The prompt deliberately offers "this looks benign" as an acceptable answer. A
+    classifier that can only escalate produces an alert stream the operator stops
+    reading, which is the failure mode #139 was closed by deleting an emitter over.
+    """
+    if config.classify_stubbed():
+        return _stub_explain(evidence)
+    if not config.three_eyes_active():
+        return {"refused": True, "reason": "3-Eyes inert (no runtime.env / disabled)"}
+
+    try:
+        system_instructions = load_system_instructions()
+    except RuntimeError as exc:
+        return {"refused": True, "reason": str(exc)}
+
+    payload = json.dumps(
+        {
+            "model": model or config.config_value("THREE_EYES_MODEL", MODEL) or MODEL,
+            "system": system_instructions,
+            "prompt": (
+                "A scheduled job on this machine failed three times in a row and has "
+                "been quarantined. No known-issue rule matched it. Decide what it is.\n\n"
+                "Say plainly if it looks transient or benign — that is a useful answer, "
+                "not a failure to find something. If it looks like a real fault, name the "
+                "most likely cause from the evidence and one concrete next step. Do not "
+                "speculate beyond what the log shows.\n\n"
+                'Reply as JSON: {"severity": "info|warn|error|critical", '
+                '"headline": "<8 words or fewer>", "summary": "...", "next_step": "..."}.\n\n'
+                f"Evidence:\n{evidence[:8000]}"
+            ),
+            "stream": False,
+            "format": "json",
+        }
+    ).encode()
+    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - localhost only
+            body = json.loads(resp.read().decode())
+    except (OSError, ValueError) as exc:
+        return {"refused": True, "reason": f"ollama unreachable: {exc}"}
+
+    parsed = _parse_model_json(body.get("response", ""))
+    if parsed is None:
+        return {"refused": True, "reason": "model reply was not JSON"}
+    parsed.setdefault("severity", "error")
+    parsed.setdefault("summary", "")
+    return parsed
+
+
 def summarize_digest(corpus: str, model: str | None = None, timeout: float = 120.0) -> dict:
     """Rank a whole day of fleet state into one operator-facing summary (P7a).
 

@@ -33,7 +33,7 @@ import os
 import sys
 from pathlib import Path
 
-from . import breakers, classify, config, registry, relief, routes
+from . import breakers, classify, config, explain, registry, relief, routes
 
 
 #: Route results that count as a successful dispatch. Anything else (error,
@@ -174,12 +174,38 @@ def run_job(job_id: str, *, log=print) -> int:
 
     if opened:
         cooldown_min = breaker.status(job.id).get("cooldown_seconds", 0) // 60
+        # P7b: explain the trip before announcing it. A breaker opening is the rare,
+        # meaningful moment — three consecutive real failures — so it is worth one
+        # judgement, where explaining every individual failure would spend the daily
+        # budget on noise. `explain` suppresses known issues deterministically and
+        # only reaches the model for genuine novelty.
+        try:
+            explanation = explain.explain(job, code)
+        except Exception as exc:            # an explainer must not break the reporter
+            log(f"[3eyes] explainer failed for {job.id}: {exc}")
+            explanation = None
+
+        if explanation and explanation["verdict"] == explain.KNOWN:
+            # Suppressed: recorded, but no banner and no issue. This is the whole
+            # point of the known-issues list — recurring noise becomes a quiet line
+            # instead of a notification the operator learns to ignore.
+            log(f"[3eyes] {job.id} trip suppressed by rule {explanation['rule']}")
+            routes.route(explanation, explain.routes_for(job, explanation["verdict"]))
+            return code
+
+        finding = {
+            "source": job.id, "title": f"{job.id} breaker opened", "severity": "error",
+            "summary": f"{job.trip_after_failures} consecutive failures; "
+                       f"will self-retry once in {cooldown_min}m",
+            "text": "",
+        }
+        if explanation:
+            finding["summary"] += f" — {explanation['summary']}"
+            finding["text"] = explanation["text"]
+            if explanation.get("next_step"):
+                finding["summary"] += f" Next: {explanation['next_step']}"
         routes.route(
-            {"source": job.id, "title": f"{job.id} breaker opened",
-             "severity": "error",
-             "summary": f"{job.trip_after_failures} consecutive failures; "
-                        f"will self-retry once in {cooldown_min}m",
-             "text": ""},
+            finding,
             [r for r in job.routes if r in ("notify", "log-only", "gh-issue")] or ["log-only"],
         )
     return code
