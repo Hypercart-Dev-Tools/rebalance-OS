@@ -131,6 +131,19 @@ Baseline is **27 passed** across `tests/test_job_guard_wiring.py` + `tests/test_
 4. **Compatibility**: Left `--max-rss-gb` as a deprecated alias CLI argument and supported `max_rss_gb` as a kwarg fallback in `guard` and `MemoryCeiling` for backwards compatibility with existing plists and docs. We also rename output keys to `peak_footprint_bytes` and updated existing tests in `test_job_guard_wiring.py` to match.
 5. **Tests**: Added comprehensive footprint tests in `tests/test_job_guard_footprint.py` including high-footprint/low-rss scenario, fallback verification, unreadable process counting, and the `_job_guard` deprecated env var fallback via monkeypatching. All tests pass (33 total).
 
+### Round 1 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+1. `DEFAULT_MAX_FOOTPRINT_FRACTION = 0.25` produces a 16 GB per-process default on the stated 64 GB machine. The phase contract is **<= 8 GB per process** and <= 16 GB aggregate concurrent; the default must enforce the former (12.5% on that machine), not use the aggregate cap as an individual-process ceiling.
+2. The required central test is not present: `test_over_ceiling_trips` samples the current pytest process and only asserts a reason after stopping the watcher. It neither launches a synthetic child nor proves that an over-ceiling child is terminated/reaped. Add a deterministic wrapper-mode child test that exercises the kill path.
+3. The unreadable-PID test relies on macOS PID 1 and skips elsewhere. Replace or supplement it with a mocked `proc_pid_rusage` return of `-1`, asserting the process is excluded from the byte sum and the unreadable count is surfaced. This must be portable and must directly cover the specified failure mode.
+4. The new docstring on `available_memory_bytes()` still says macOS counts free + inactive + speculative even though the implementation intentionally counts free pages only. Correct that stale description.
+
+Targeted verification was attempted with the phase-specified command, but this worktree has no `.venv/bin/python3` executable (`zsh: no such file or directory`).
+
+**Verdict:** Changes requested
+
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)
