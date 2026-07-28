@@ -140,7 +140,7 @@
     "check": "tsc --noEmit",
     "lint": "eslint .",
     "build:test": "esbuild test/*.test.ts --bundle --platform=node --format=cjs --outdir=out-test --external:vscode",
-    "test": "npm run build:test && node --test out-test",
+    "test": "npm run build:test && node --test out-test/*.test.js",
     "esbuild": "esbuild src/extension.ts --bundle --outfile=dist/extension.js --external:vscode --format=cjs --platform=node",
     "build": "npm run check && npm run esbuild -- --sourcemap",
     "build:prod": "npm run check && npm run esbuild -- --minify",
