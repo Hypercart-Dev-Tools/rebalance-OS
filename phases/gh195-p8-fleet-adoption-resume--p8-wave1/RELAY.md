@@ -1,5 +1,5 @@
 # Marathon Phase p8-wave1
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-P8-WAVE1-TURN-4 builder=codex reviewer=agy round-cap=7 -->
@@ -156,3 +156,9 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Added declared-but-inert adoptions for `daily-sync`, `github-sync`, and `vault-sync`; their commands are committed, repo-relative allowlist entries, every replacement names its incumbent label, and the 18-entry GitHub/vault schedules reproduce the live plists exactly. Vault's `database is locked` failure is neither suppressed nor reclassified.
 - Did **not** create `health-check` or `health-check-triage` registry jobs. Both are legacy `health_issue_reporter.py` emitters; `collector-health` already supersedes both labels and the P7b/P7c path is the sole managed health-finding path. The updated comment and adoption test make that #139 exclusion machine-checkable: no enabled 3-Eyes job resolves to the reporter, while `collector-health` retains both supersedence labels.
 - Regenerated `utils/3-eyes/DASHBOARD.md`. Reproduced the initial missing-test failure (`test_adoption_wave1.py` did not exist; this worktree also has no local `.venv`), then used the pinned repository environment with the worktree package path. `python -m three_eyes validate` reports `registry OK`; targeted `test_adoption_wave1.py` passes (3 tests).
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+The builder correctly adopted `daily-sync`, `github-sync`, and `vault-sync` via `registry/jobs.d/*.toml` and `commands.allow` with matching relative paths and supersedes constraints. Crucially, the builder correctly identified that `health-check` and `health-check-triage` emitters should remain solely superseded by `collector-health` instead of being redefined as registry jobs, which prevents reproducing issue #139. The `test_adoption_wave1.py` file appropriately asserts the `supersedes` constraint on `collector-health` to machine-check this exclusion. Validations pass and the updated dashboard accurately reflects the 6 jobs.
