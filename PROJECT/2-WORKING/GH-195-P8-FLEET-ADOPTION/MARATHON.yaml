@@ -1,0 +1,66 @@
+# GH-195 P8 — fleet adoption, all 19 real targets in waves.
+#
+# Scope boundary, and it is the important line in this file: every phase here AUTHORS
+# registry entries, tests, and catalog curation. NOT ONE of them runs
+# `three_eyes install`, `launchctl bootstrap`, or `launchctl bootout`.
+#
+# `launchd.install()` writes a plist and then runs `launchctl bootout` + `bootstrap`
+# against the operator's live session — it replaces running automations on the machine
+# that does this person's actual work (GA4 pulls, pulse publishing, git sync, vault
+# ingest). That cutover is a human act, gated on the runbook p5 produces. A headless
+# builder must never perform it.
+#
+# Counts: CATALOG.md lists 21 to-adopt. Two of those are the Cactus sentinels the
+# operator deleted on 2026-07-27 (`com.neochro.sentinel-daemon` and `.sleuth-app`) —
+# they are removal targets, not adoption targets, handled in p1. Real total: 19.
+#   in-repo commands  (committed registry/jobs.d/)      : 11
+#   absolute paths outside rebalance-OS (jobs.local.d/) :  8
+# Builder is codex (the --builder default, cost-blind), so every reviewer must be agy —
+# marathon-drive refuses a phase where builder and reviewer are the same agent id, and
+# the dry-run caught exactly that on the first attempt.
+name: gh195-p8-fleet-adoption
+
+phases:
+  - id: p1
+    name: Catalog hygiene — retire the deleted, classify the unknown
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p1-hygiene.md
+    artifact: utils/3-eyes/registry/catalog-notes.toml,utils/3-eyes/tests/test_catalog_health.py
+    turn_timeout_s: 900
+    max_review_rounds: 2
+
+  - id: p2
+    name: Wave 1 — the collectors that actually break
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p2-wave1.md
+    artifact: utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py
+    turn_timeout_s: 1200
+    depends_on: p1
+    max_review_rounds: 3
+
+  - id: p3
+    name: Wave 2 — pulse and obsidian
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p3-wave2.md
+    artifact: utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave2.py
+    turn_timeout_s: 1200
+    depends_on: p2
+    max_review_rounds: 2
+
+  - id: p4
+    name: Wave 3 — machine-local jobs in the gitignored overlay
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p4-wave3.md
+    artifact: utils/3-eyes/registry/jobs.local.d,utils/3-eyes/registry/commands.local.allow.example,utils/3-eyes/tests/test_adoption_wave3.py
+    turn_timeout_s: 1200
+    depends_on: p3
+    max_review_rounds: 2
+
+  - id: p5
+    name: Cutover runbook and dry-run tooling (authors only; performs nothing)
+    reviewer: agy
+    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p5-cutover.md
+    artifact: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/CUTOVER.md,utils/3-eyes/three_eyes/cutover.py,utils/3-eyes/tests/test_cutover_plan.py
+    turn_timeout_s: 1200
+    depends_on: p4
+    max_review_rounds: 2
