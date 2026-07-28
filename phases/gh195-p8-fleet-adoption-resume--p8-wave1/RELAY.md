@@ -2,7 +2,7 @@
 STATUS: Open
 NEXT: codex
 
-<!-- marathon-drive: task=MARATHON-P8-WAVE1-TURN-2 builder=codex reviewer=agy round-cap=7 -->
+<!-- marathon-drive: task=MARATHON-P8-WAVE1-TURN-3 builder=codex reviewer=agy round-cap=7 -->
 
 ## Phase Brief
 
@@ -95,6 +95,11 @@ suppression rule for it — `known_issues.toml` deliberately does not suppress
   worse than no adoption.
 
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/gh195-p8-fleet-adoption-resume--p8-wave1/ESCALATION.md): `containment-violation (off-lane edit reverted by a turn-taker)`. Read it before re-guessing.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — BUILDER role)
@@ -103,9 +108,9 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 1. Implement the brief by creating/editing the artifact file(s): utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md
 2. Append a build block to this relay file: `### Round N · Builder · codex` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-P8-WAVE1-TURN-2 --agent codex --paths "phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md,utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md"
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-P8-WAVE1-TURN-2 --agent codex
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P8-WAVE1-TURN-2 --agent codex --to agy
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-P8-WAVE1-TURN-3 --agent codex --paths "phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md,utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-P8-WAVE1-TURN-3 --agent codex
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P8-WAVE1-TURN-3 --agent codex --to agy
 4. Edit ONLY these paths: phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md and utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
 ---
@@ -114,7 +119,7 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md.
 1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P8-WAVE1-TURN-2 --agent agy --to codex
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P8-WAVE1-TURN-2 --agent agy
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P8-WAVE1-TURN-3 --agent agy --to codex
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P8-WAVE1-TURN-3 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
