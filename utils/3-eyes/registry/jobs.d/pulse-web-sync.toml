@@ -1,0 +1,38 @@
+# 3-Eyes adoption of the incumbent pulse web-mirror refresh (GH-195 P8 Wave 2).
+# At its 30-minute cadence, a lock conflict exits 3 and is recorded as deferred
+# rather than as a failure, so an occasional busy SQLite/rendering cycle does not
+# trip the breaker.
+
+id = "pulse-web-sync"
+command = "pulse-web-sync"
+description = "Refresh the local pulse web mirror at :08 and :38 from 06:08 through 23:38 local."
+enabled = true
+routes = ["log-only"]
+supersedes = ["com.rebalance-os.pulse-web-sync"]
+
+[schedule.launchd]
+StartCalendarInterval = [
+  { Hour = 6, Minute = 8 }, { Hour = 6, Minute = 38 },
+  { Hour = 7, Minute = 8 }, { Hour = 7, Minute = 38 },
+  { Hour = 8, Minute = 8 }, { Hour = 8, Minute = 38 },
+  { Hour = 9, Minute = 8 }, { Hour = 9, Minute = 38 },
+  { Hour = 10, Minute = 8 }, { Hour = 10, Minute = 38 },
+  { Hour = 11, Minute = 8 }, { Hour = 11, Minute = 38 },
+  { Hour = 12, Minute = 8 }, { Hour = 12, Minute = 38 },
+  { Hour = 13, Minute = 8 }, { Hour = 13, Minute = 38 },
+  { Hour = 14, Minute = 8 }, { Hour = 14, Minute = 38 },
+  { Hour = 15, Minute = 8 }, { Hour = 15, Minute = 38 },
+  { Hour = 16, Minute = 8 }, { Hour = 16, Minute = 38 },
+  { Hour = 17, Minute = 8 }, { Hour = 17, Minute = 38 },
+  { Hour = 18, Minute = 8 }, { Hour = 18, Minute = 38 },
+  { Hour = 19, Minute = 8 }, { Hour = 19, Minute = 38 },
+  { Hour = 20, Minute = 8 }, { Hour = 20, Minute = 38 },
+  { Hour = 21, Minute = 8 }, { Hour = 21, Minute = 38 },
+  { Hour = 22, Minute = 8 }, { Hour = 22, Minute = 38 },
+  { Hour = 23, Minute = 8 }, { Hour = 23, Minute = 38 },
+]
+
+[breakers]
+single_instance = true
+max_rss_gb = 8
+trip_after_failures = 3

@@ -115,3 +115,24 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P8-WAVE2-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh195-p8-fleet-adoption-resume--p8-wave2/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+Implemented all six committed Wave 2 registry declarations, their fixed command
+allowlist entries, the schedule/supersession contract test, and regenerated
+`DASHBOARD.md`. The calendar arrays reproduce the 18 pulse-sync and 36
+pulse-web-sync plist entries verbatim; the watcher retains its four minute-only
+entries and Stickies retains its 300-second interval.
+
+All six jobs use the established 8 GB guard contract. None of their configured
+argv loads a local model (the watcher's Ollama path is optional and absent from
+the live plist). `pulse-web-sync` keeps `single_instance`; exit 3 is a deferred
+outcome under P6 rather than a breaker failure. The watcher TOML documents its
+independent `pulse-server` dependency and the absence of an expressible ordering
+edge. `stickies2obsidian` is committed because its executable is in-repo despite
+the `com.user.*` incumbent label.
+
+Verified with `PYTHONPATH=. python3 -m three_eyes validate`, dashboard
+regeneration, and `PYTHONPATH=. python3 -m pytest tests/test_adoption_wave2.py -q`
+(2 passed). This worktree has no `.venv`, so the repository's Python 3.14 was
+used for these scoped checks.

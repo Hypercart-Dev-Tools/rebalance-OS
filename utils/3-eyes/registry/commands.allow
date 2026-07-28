@@ -43,3 +43,33 @@ description = "Incumbent Rebalance GitHub sync, executed from the repository roo
 exec = "scripts/vault_sync.sh"
 args = []
 description = "Incumbent Rebalance vault sync, executed from the repository root."
+
+[commands.pulse-sync]
+exec = "scripts/pulse_sync.sh"
+args = []
+description = "Incumbent Rebalance pulse publisher, executed from the repository root."
+
+[commands.pulse-web-sync]
+exec = "scripts/pulse_web_sync.sh"
+args = []
+description = "Incumbent Rebalance local pulse web-mirror refresh."
+
+[commands.pulse-warning-watch]
+exec = ".venv/bin/python"
+args = ["scripts/pulse_warning_watch.py", "--url", "http://127.0.0.1:8767/", "--log", "temp/pulse-warning-watch.jsonl", "--state", "temp/pulse-warning-watch.state.json"]
+description = "Incumbent Rebalance local pulse health-banner watcher."
+
+[commands.obsidian-daily-sync]
+exec = "utils/obsidian_daily_sync.sh"
+args = []
+description = "Incumbent Rebalance daily Obsidian activity-summary wrapper."
+
+[commands.obsidian-rollover]
+exec = "utils/obsidian_rollover.sh"
+args = []
+description = "Incumbent Rebalance daily Obsidian notes-rollover wrapper."
+
+[commands.stickies2obsidian]
+exec = "/bin/bash"
+args = ["utils/stickies-to-obsidian/stickies2obsidian.sh"]
+description = "In-repo Stickies-to-Obsidian importer."
