@@ -265,3 +265,37 @@ def test_the_digest_does_NOT_file_a_github_issue():
     not to a report that runs every morning regardless.
     """
     assert "gh-issue" not in registry.load_job("daily-digest").routes
+
+
+# --------------------------------------------------------------------------- #
+# Two defects the first LIVE runs exposed (stubbed runs could not have)
+# --------------------------------------------------------------------------- #
+
+def test_every_classifier_entry_point_allows_for_a_COLD_model():
+    """The bug that would have made all three Gemma surfaces useless in production.
+
+    `classify()` defaulted to a 30 s ceiling. gemma4:12b-mlx is ~10 GB, takes ~70 s to
+    load cold, and ollama evicts it after ~5 minutes idle — while the jobs calling it
+    run every 30 minutes and once a day. So essentially every scheduled call pays the
+    cold load, and every one would have timed out at 30 s and returned a refusal.
+    Nothing crashes and nothing logs an error; the classifier just declines forever.
+    """
+    import inspect
+    for fn in (classify.classify, classify.explain_failure, classify.summarize_digest):
+        default = inspect.signature(fn).parameters["timeout"].default
+        assert default == classify.DEFAULT_TIMEOUT_S, f"{fn.__name__} has its own timeout"
+    assert classify.DEFAULT_TIMEOUT_S >= 90, (
+        "the ceiling must exceed the ~70s cold load, or it reads as a broken model"
+    )
+
+
+def test_explicit_json_nulls_do_not_survive_as_None():
+    """`setdefault` fills a MISSING key, not a present-but-null one.
+
+    A reply of {"severity": null} left severity as None, and `str(None)` renders as the
+    literal string "None" in the operator's summary.
+    """
+    parsed = classify._parse_model_json('{"severity": null, "summary": "s", "extra": null}')
+    assert "severity" not in parsed
+    assert parsed["summary"] == "s"
+    assert "extra" not in parsed

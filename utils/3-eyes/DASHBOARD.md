@@ -4,7 +4,7 @@
 
 One optional, always-safe local job supervisor (GH-195). This file is a generated mirror of the TOML registry — **the jobs below are exactly what `registry/jobs.d/*.toml` declares.**
 
-- **Registry fingerprint:** `d053b6bfdf01`
+- **Registry fingerprint:** `21c8b8b604ad`
 - **Jobs defined:** 3
 - **Registry valid:** ✅ yes
 - **Full machine inventory** (managed + observe-only + to-adopt): `CATALOG.md` — generated (gitignored, machine-specific) from `registry/catalog-notes.toml`; run `python -m three_eyes catalog --write`. Fleet health: `python -m three_eyes health`.
@@ -15,12 +15,12 @@ One optional, always-safe local job supervisor (GH-195). This file is a generate
 
 | Job | Enabled | Schedule | Command | Routes | Breakers | Relief |
 |-----|---------|----------|---------|--------|----------|--------|
-| `collector-health` | yes | launchd every 1800s | `collector-health` | pdda-inbox, notify | single-instance, ≤8GB, trip@3 | llm 5/run, 8/day |
+| `collector-health` | yes | launchd every 1800s | `collector-observe` | pdda-inbox, notify | single-instance, ≤8GB, trip@3 | llm 5/run, 8/day |
 | `daily-digest` | yes | launchd calendar {'Hour': 7, 'Minute': 15} | `daily-digest` | notify, log-only | single-instance, ≤12GB, trip@3 | llm 1/run, 8/day |
 | `selfcheck` | yes | launchd every 3600s | `noop-selfcheck` | log-only | single-instance, trip@3 | — |
 
 ## Descriptions
 
-- **`collector-health`** — Watch ingest freshness across GitHub / Slack-Sleuth / Gmail / Google Calendar / Zapier collectors.
+- **`collector-health`** — Parse daily_sync telemetry and emit a finding when collectors degrade (GH-146: exit codes lie; sync_outcome is the signal).
 - **`daily-digest`** — Once-daily ranked report of what broke, what matters, and what to ignore across the whole fleet.
 - **`selfcheck`** — Hourly no-op that proves the guarded run + breaker + route loop works.

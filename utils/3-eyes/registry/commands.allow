@@ -23,3 +23,8 @@ description = "Rebalance collector-health check (GitHub/Slack/Gmail/GCal/Zapier 
 exec = ".venv/bin/python"
 args = ["-m", "three_eyes.digest"]
 description = "Rank the day's fleet state (launchd exits, breakers, findings, log tails) via the local model."
+
+[commands.collector-observe]
+exec = ".venv/bin/python"
+args = ["-m", "three_eyes.observe"]
+description = "Parse daily_sync telemetry (sync_outcome, not exit code) and emit a finding when collectors degrade."

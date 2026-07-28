@@ -20,6 +20,19 @@ from . import config
 
 MODEL = "gemma4:12b-mlx"
 OLLAMA_URL = "http://127.0.0.1:11434/api/generate"
+
+#: Default request ceiling, in seconds.
+#:
+#: Sized for a COLD model, not a warm one. `gemma4:12b-mlx` is ~10 GB and ollama
+#: evicts it after roughly 5 minutes idle, while the jobs that call it run every 30
+#: minutes and once a day — so in production essentially *every* call pays the cold
+#: load. Measured on this machine: 70 s cold, 25-36 s warm.
+#:
+#: This was 30 s until the first live P7c run, which timed out at exactly 30.1 s and
+#: returned a refusal whose `severity` was None. Nothing crashed and nothing logged an
+#: error — the classifier simply declined, forever, on every scheduled invocation.
+#: A ceiling below the cold-load time is indistinguishable from "the model is broken".
+DEFAULT_TIMEOUT_S = 120.0
 SYSTEM_INSTRUCTIONS_PATH = Path(__file__).with_name("gemma_system_instructions.md")
 
 
@@ -67,7 +80,12 @@ def _parse_model_json(inner: str) -> dict | None:
         parsed = json.loads(text)
     except (ValueError, TypeError):
         return None
-    return parsed if isinstance(parsed, dict) else None
+    if not isinstance(parsed, dict):
+        return None
+    # Drop explicit JSON nulls. `setdefault` only fills a MISSING key, so a reply of
+    # {"severity": null} would survive as None and propagate — `str(None)` renders as
+    # the literal "None" in an operator-facing summary.
+    return {k: v for k, v in parsed.items() if v is not None}
 
 
 def _stub_classify(text: str) -> dict:
@@ -128,7 +146,7 @@ def _stub_explain(evidence: str) -> dict:
     }
 
 
-def explain_failure(evidence: str, model: str | None = None, timeout: float = 120.0) -> dict:
+def explain_failure(evidence: str, model: str | None = None, timeout: float = DEFAULT_TIMEOUT_S) -> dict:
     """Judge a job failure that matched NO known-issue rule (P7b).
 
     Only reached after deterministic suppression has already failed to match, so the
@@ -183,7 +201,7 @@ def explain_failure(evidence: str, model: str | None = None, timeout: float = 12
     return parsed
 
 
-def summarize_digest(corpus: str, model: str | None = None, timeout: float = 120.0) -> dict:
+def summarize_digest(corpus: str, model: str | None = None, timeout: float = DEFAULT_TIMEOUT_S) -> dict:
     """Rank a whole day of fleet state into one operator-facing summary (P7a).
 
     Distinct from :func:`classify`, which grades ONE finding into a severity. This
@@ -243,7 +261,7 @@ def summarize_digest(corpus: str, model: str | None = None, timeout: float = 120
     return parsed
 
 
-def classify(text: str, model: str | None = None, timeout: float = 30.0) -> dict:
+def classify(text: str, model: str | None = None, timeout: float = DEFAULT_TIMEOUT_S) -> dict:
     """Classify a finding's text into a severity + summary.
 
     Returns ``{"severity": ..., "summary": ..., ...}`` or, when 3-Eyes is inert

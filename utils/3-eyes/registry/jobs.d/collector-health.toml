@@ -7,8 +7,8 @@
 # in TOML a bare key after `[breakers]` would bind to that table, not the job.
 
 id = "collector-health"
-command = "collector-health"
-description = "Watch ingest freshness across GitHub / Slack-Sleuth / Gmail / Google Calendar / Zapier collectors."
+command = "collector-observe"
+description = "Parse daily_sync telemetry and emit a finding when collectors degrade (GH-146: exit codes lie; sync_outcome is the signal)."
 enabled = true
 routes = ["pdda-inbox", "notify"]
 
