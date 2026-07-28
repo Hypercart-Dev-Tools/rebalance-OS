@@ -150,3 +150,9 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P8-WAVE1-TURN-4 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh195-p8-fleet-adoption-resume--p8-wave1/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+- Added declared-but-inert adoptions for `daily-sync`, `github-sync`, and `vault-sync`; their commands are committed, repo-relative allowlist entries, every replacement names its incumbent label, and the 18-entry GitHub/vault schedules reproduce the live plists exactly. Vault's `database is locked` failure is neither suppressed nor reclassified.
+- Did **not** create `health-check` or `health-check-triage` registry jobs. Both are legacy `health_issue_reporter.py` emitters; `collector-health` already supersedes both labels and the P7b/P7c path is the sole managed health-finding path. The updated comment and adoption test make that #139 exclusion machine-checkable: no enabled 3-Eyes job resolves to the reporter, while `collector-health` retains both supersedence labels.
+- Regenerated `utils/3-eyes/DASHBOARD.md`. Reproduced the initial missing-test failure (`test_adoption_wave1.py` did not exist; this worktree also has no local `.venv`), then used the pinned repository environment with the worktree package path. `python -m three_eyes validate` reports `registry OK`; targeted `test_adoption_wave1.py` passes (3 tests).

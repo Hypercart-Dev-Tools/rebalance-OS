@@ -1,0 +1,18 @@
+# 3-Eyes adoption of the incumbent daily sync launcher (GH-195 P8 Wave 1).
+#
+# Declared only: 3-Eyes remains inert until an operator retires the incumbent
+# launchd agent and explicitly installs this replacement.
+
+id = "daily-sync"
+command = "daily-sync"
+description = "Run the Rebalance daily index sync at the incumbent 06:30 local schedule."
+enabled = true
+routes = ["log-only"]
+supersedes = ["com.rebalance-os.daily-sync"]
+
+[schedule.launchd]
+StartCalendarInterval = { Hour = 6, Minute = 30 }
+
+[breakers]
+single_instance = true
+trip_after_failures = 3

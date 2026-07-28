@@ -28,3 +28,18 @@ description = "Rank the day's fleet state (launchd exits, breakers, findings, lo
 exec = ".venv/bin/python"
 args = ["-m", "three_eyes.observe"]
 description = "Parse daily_sync telemetry (sync_outcome, not exit code) and emit a finding when collectors degrade."
+
+[commands.daily-sync]
+exec = "scripts/daily_sync.sh"
+args = []
+description = "Incumbent Rebalance daily index sync, executed from the repository root."
+
+[commands.github-sync]
+exec = "scripts/github_sync.sh"
+args = []
+description = "Incumbent Rebalance GitHub sync, executed from the repository root."
+
+[commands.vault-sync]
+exec = "scripts/vault_sync.sh"
+args = []
+description = "Incumbent Rebalance vault sync, executed from the repository root."

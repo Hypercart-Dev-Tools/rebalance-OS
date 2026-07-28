@@ -4,8 +4,8 @@
 
 One optional, always-safe local job supervisor (GH-195). This file is a generated mirror of the TOML registry — **the jobs below are exactly what `registry/jobs.d/*.toml` declares.**
 
-- **Registry fingerprint:** `21c8b8b604ad`
-- **Jobs defined:** 3
+- **Registry fingerprint:** `b5bdfba404c5`
+- **Jobs defined:** 6
 - **Registry valid:** ✅ yes
 - **Full machine inventory** (managed + observe-only + to-adopt): `CATALOG.md` — generated (gitignored, machine-specific) from `registry/catalog-notes.toml`; run `python -m three_eyes catalog --write`. Fleet health: `python -m three_eyes health`.
 
@@ -17,10 +17,16 @@ One optional, always-safe local job supervisor (GH-195). This file is a generate
 |-----|---------|----------|---------|--------|----------|--------|
 | `collector-health` | yes | launchd every 1800s | `collector-observe` | pdda-inbox, notify | single-instance, ≤8GB, trip@3 | llm 5/run, 8/day |
 | `daily-digest` | yes | launchd calendar {'Hour': 7, 'Minute': 15} | `daily-digest` | notify, log-only | single-instance, ≤12GB, trip@3 | llm 1/run, 8/day |
+| `daily-sync` | yes | launchd calendar {'Hour': 6, 'Minute': 30} | `daily-sync` | log-only | single-instance, trip@3 | — |
+| `github-sync` | yes | launchd calendar [{'Hour': 6, 'Minute': 45}, {'Hour': 7, 'Minute': 45}, {'Hour': 8, 'Minute': 45}, {'Hour': 9, 'Minute': 45}, {'Hour': 10, 'Minute': 45}, {'Hour': 11, 'Minute': 45}, {'Hour': 12, 'Minute': 45}, {'Hour': 13, 'Minute': 45}, {'Hour': 14, 'Minute': 45}, {'Hour': 15, 'Minute': 45}, {'Hour': 16, 'Minute': 45}, {'Hour': 17, 'Minute': 45}, {'Hour': 18, 'Minute': 45}, {'Hour': 19, 'Minute': 45}, {'Hour': 20, 'Minute': 45}, {'Hour': 21, 'Minute': 45}, {'Hour': 22, 'Minute': 45}, {'Hour': 23, 'Minute': 45}] | `github-sync` | log-only | single-instance, trip@3 | — |
 | `selfcheck` | yes | launchd every 3600s | `noop-selfcheck` | log-only | single-instance, trip@3 | — |
+| `vault-sync` | yes | launchd calendar [{'Hour': 6, 'Minute': 15}, {'Hour': 7, 'Minute': 15}, {'Hour': 8, 'Minute': 15}, {'Hour': 9, 'Minute': 15}, {'Hour': 10, 'Minute': 15}, {'Hour': 11, 'Minute': 15}, {'Hour': 12, 'Minute': 15}, {'Hour': 13, 'Minute': 15}, {'Hour': 14, 'Minute': 15}, {'Hour': 15, 'Minute': 15}, {'Hour': 16, 'Minute': 15}, {'Hour': 17, 'Minute': 15}, {'Hour': 18, 'Minute': 15}, {'Hour': 19, 'Minute': 15}, {'Hour': 20, 'Minute': 15}, {'Hour': 21, 'Minute': 15}, {'Hour': 22, 'Minute': 15}, {'Hour': 23, 'Minute': 15}] | `vault-sync` | log-only | single-instance, trip@3 | — |
 
 ## Descriptions
 
 - **`collector-health`** — Parse daily_sync telemetry and emit a finding when collectors degrade (GH-146: exit codes lie; sync_outcome is the signal).
 - **`daily-digest`** — Once-daily ranked report of what broke, what matters, and what to ignore across the whole fleet.
+- **`daily-sync`** — Run the Rebalance daily index sync at the incumbent 06:30 local schedule.
+- **`github-sync`** — Run the Rebalance GitHub sync hourly at :45 from 06:45 through 23:45 local.
 - **`selfcheck`** — Hourly no-op that proves the guarded run + breaker + route loop works.
+- **`vault-sync`** — Run the Rebalance vault sync hourly at :15 from 06:15 through 23:15 local.
