@@ -1709,7 +1709,17 @@ def _dry_run_adapter(refresh_fn: Callable[..., dict[str, Any]]) -> Callable[...,
 def _vault_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
     vault_path = opts.get("vault_path")
     assert vault_path is not None, "vault collector requires vault_path"
-    return _refresh_vault(db_path, vault_path, dry_run=opts["dry_run"])
+    # GH-131 (extended 2026-07-27): same transient "database is locked" collision the
+    # github scope already retries through. On 2026-07-27 the hourly vault-sync failed
+    # 3 of 15 runs on exactly this, in the `vault` and `semantic` scopes — the only two
+    # write-heavy scopes that had NOT been given the retry.
+    #
+    # Safe to retry: ingest_vault deletes then re-inserts per file (CASCADE covers
+    # chunks/keywords/links), so a rerun replaces rather than duplicates, and
+    # embed_chunks only embeds rows with no existing embedding.
+    return _retry_on_db_locked(lambda: _refresh_vault(
+        db_path, vault_path, dry_run=opts["dry_run"]
+    ))
 
 
 def _retry_on_db_locked(
@@ -1761,7 +1771,13 @@ _apple_reminders_adapter = _dry_run_adapter(_refresh_apple_reminders)
 _email_adapter = _dry_run_adapter(_refresh_email)
 _code_adapter = _dry_run_adapter(_refresh_code)
 _figma_adapter = _dry_run_adapter(_refresh_figma)
-_semantic_adapter = _dry_run_adapter(_refresh_semantic_only)
+def _semantic_adapter(db_path: Path, **opts: Any) -> dict[str, Any]:
+    # GH-131 (extended 2026-07-27) — see _vault_adapter. Safe to retry: the semantic
+    # embed is content-hash keyed, so a rerun re-skips unchanged rows rather than
+    # re-embedding them (2026-07-27 run: 29,099 of 29,956 skipped unchanged).
+    return _retry_on_db_locked(lambda: _refresh_semantic_only(
+        db_path, dry_run=opts["dry_run"]
+    ))
 
 
 def _refresh_sync(database_path: Path, *, dry_run: bool) -> dict[str, Any]:

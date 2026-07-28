@@ -172,6 +172,24 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 - Audit deps weekly (`safety check`, Dependabot).
 - Rate limit APIs; exponential backoff on 429s.
 
+### 3-Eyes — the local job supervisor (read this before touching scheduled jobs)
+
+**3-Eyes is the sentinel system for this machine's scheduled jobs.** It supersedes the earlier
+Cactus-Needle sentinel, which was disabled on 2026-07-27 (its four `com.neochro.*` launchd agents
+are parked in `~/Library/LaunchAgents/.disabled-cactus-sentinel-2026-07-27/`). Do not reintroduce a
+second supervisor — one machine, one sentinel.
+
+- **Code:** `utils/3-eyes/` · **Plan:** [PROJECT/2-WORKING/GH-195-UNIFIED-SENTINEL.md](PROJECT/2-WORKING/GH-195-UNIFIED-SENTINEL.md)
+- **Status / inventory:** `cd utils/3-eyes && PYTHONPATH=$PWD python3 -m three_eyes status`
+- **Skill:** `/3-eyes` for job health; `/launchd-triage` for raw launchd triage beneath it
+- **Inert by default.** A clone without a gitignored `config/runtime.env` is a clean no-op —
+  "3-Eyes says nothing" on a fresh machine means *not activated*, not *nothing wrong*.
+
+**Known gap (2026-07-27): the registry does not match reality.** `registry/jobs.d/` lists
+`collector-health` and `selfcheck`, but `3eyes.skill-sync` is loaded in launchd and firing every
+120 s without a registry entry. A supervisor that doesn't know about one of its own jobs is the
+condition 3-Eyes exists to prevent — reconcile before trusting its inventory.
+
 ## Phase 0 Technical Spikes
 
 - When proposing phased work, include Phase 0 spike (1–2h max) to validate critical assumptions.
