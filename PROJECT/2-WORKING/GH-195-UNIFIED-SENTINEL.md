@@ -46,7 +46,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **P6 — breaker semantics shipped (2026-07-28).** Guard refusals no longer count as failures (`job_guard`'s preflight now returns 75, not 4); breakers recover via a half-open probe with doubling backoff; quarantine skips are throttled. `skill-sync` un-latched and verified working — it was never broken. 26 new tests, 4 mutations applied to prove they bite (one exposed a test passing for the wrong reason). Preceded by the [audit](#audit-2026-07-28--doc-vs-running-system) that rewrote this doc. | **P6 QA relay with Agy**, then P7 (wire Gemma — start with P7a, the daily digest, which depends on nothing), then P8 (fleet adoption). |
+| **P8 waves 1–3 adopted via marathon (2026-07-28).** 17 agents now carry registry entries with schedules reproducing their live plists exactly (`pulse-web-sync` 36 calendar entries, `vault-sync`/`github-sync`/`pulse-sync` 18 each). P6 (breaker semantics), P7a/b/c (Gemma wired, verified against a live model) and the two agy QA rounds landed first. 3-Eyes suite 94 → 210. | **P8 cutover phase (p8-cutover) has not run** — the runbook + planner that gate the live `launchctl` swap. Nothing is installed yet: all 17 still run under their own plists, which is why the catalog still reads `to-adopt`. |
 
 ## Audit 2026-07-28 — doc vs. running system
 
@@ -456,11 +456,59 @@ no big-bang rewrite — but the endpoint is now the whole fleet, not three senti
       repeat.
 
 **QA gate — P8**
-- [ ] Every adopted job's plist is rendered from its registry entry — no hand-authored plist survives
-      for an adopted job (invariant 3).
-- [ ] `three_eyes health` reports zero `unclassified` and zero stale `not-loaded` to-adopt entries.
-- [ ] `dashboard.py --check` is green after each wave.
+- [x] `three_eyes health` reports zero unclassified (p8-hygiene). Fleet: 25 ok · 0 failing.
+- [x] `dashboard --check` green after each wave; `validate` green with the local overlay loaded.
+- [x] Schedules reproduce the live plists exactly — verified per job against `plistlib`.
+- [ ] Every adopted job's plist is rendered from its registry entry — **blocked on cutover**, which
+      has not run. Nothing is installed; all 17 still run under their own hand-authored plists.
 - [ ] A wave-1 dry run files **no** GitHub issue while `health-check-triage` is still loaded.
+
+### P8 execution record (2026-07-28)
+
+Run as an XYZ marathon (`PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/`), codex building and agy
+reviewing, gated on `pytest utils/3-eyes/tests` before each phase advanced.
+
+| Phase | Result |
+|---|---|
+| p8-hygiene | Approved. Both deleted Cactus sentinels moved out of `to-adopt`; `cactus-serve` + `needle-router` reclassified; `sys-mem-attribute` classified. 21 → 19 real targets. |
+| p8-wave1 | Approved. `daily-sync`, `github-sync`, `vault-sync`. |
+| p8-wave2 | Approved. `pulse-sync`, `pulse-web-sync`, `pulse-warning-watch`, `obsidian-daily-sync`, `obsidian-rollover`, `stickies2obsidian`. |
+| p8-wave3 | Content approved, **gate failed then resolved by hand** (below). 8 machine-local jobs. |
+| p8-cutover | **Not run.** |
+
+**The #139 decision, taken by the builder and correct.** The brief explicitly permitted concluding
+that `health-check` / `health-check-triage` should *not* become separate registry jobs. codex took
+that option: neither has a `jobs.d` entry, `collector-health` remains the sole job referencing
+`health_issue_reporter.py`, and it declares `supersedes` for both labels. A smaller correct registry
+over a complete wrong one.
+
+**Why wave 3's gate failed — a gap in the brief, not the work.** The brief told the builder to record
+its additions in the committed `commands.local.allow.example` (correct: no absolute machine path may
+enter a committed file, and a test enforces that). But `validate(include_local=True)` reads the
+*gitignored* `commands.local.allow`, which no builder can populate. The 8 local jobs referenced
+commands that did not exist at runtime. Resolved by the documented per-machine step: materialising
+`commands.local.allow` from the example with real paths substituted. `registry OK`, suite 210 passed.
+
+**Four failed fires before any phase ran, three of them my fault.** Recorded because the failure mode
+is not obvious and cost real tokens:
+
+1. `builder == reviewer` — the plan named codex as both. Caught by `--dry-run`, which is why it is
+   worth running every time.
+2. Generic phase ids `p1..p5` — the tick token is `MARATHON-<ID>-TURN`, derived from the phase id
+   **alone**, so they collided with spent tokens from earlier marathons in this repo. Plan-scoped ids
+   (`p8-wave1`, …) fix it; earlier plans here already used `clio-p1`/`gh135-p1` for this reason.
+3. **The real one: allowlist entries must be concrete FILE paths.** `rtl_in_allow()` matches by exact
+   string, so a directory entry like `utils/3-eyes/registry/jobs.d` never matches a new file
+   `.../jobs.d/daily-sync.toml`. Every `.toml` the brief asked for was off-lane by construction —
+   three turns of correct work discarded (exit 6). Two intervening "fixes" (`DASHBOARD.md`,
+   `.pytest_cache`) addressed non-causes; the tell was that every path codex touched was *already*
+   inside the allowlist, which should have sent the diagnosis to the matcher immediately.
+4. Lane attempt cap (exit 8) parked the lane after those attempts. `--force` is the sanctioned
+   escape once a root cause is actually known; renaming the plan to reset the counter would be the
+   same move made dishonestly.
+
+`.pytest_cache/` and `.coverage` are now gitignored — a real improvement that arrived via a wrong
+diagnosis.
 
 ## Acceptance (P0 slice, to firm up after open questions)
 
