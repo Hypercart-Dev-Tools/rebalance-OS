@@ -1,0 +1,10 @@
+node_modules/
+dist/
+out/
+out-test/
+*.vsix
+.vscode-test/
+
+# CLIO's own generated prompt log — personal session content, kept local.
+# Same rationale as the repo-root ignore on snapshot.md.
+docs/0. Claude Prompts.md
