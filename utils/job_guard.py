@@ -12,8 +12,16 @@ This module supplies the two missing primitives, independent of any one job:
      either REFUSES (default) or REPLACES the incumbent. Stale locks left by a
      killed process are reclaimed automatically.
   2. MemoryCeiling — a watchdog thread that samples the guarded process tree's
-     RSS *and* system-available memory, and aborts the job CLEANLY (SIGTERM, then
-     SIGKILL after a grace period) before the machine starts thrashing.
+     ``phys_footprint``, the system-available memory, *and* the memory compressor,
+     and aborts the job CLEANLY (SIGTERM, then SIGKILL after a grace period)
+     before the machine starts thrashing.
+
+     The metric is footprint, NOT RSS (GH-219 Lane 4). RSS cannot see Metal/GPU
+     buffers, which are charged to phys_footprint as ``iokit``: on 2026-07-27 the
+     offending processes held ~46.9 GB of footprint while reporting ~0.08 GB RSS,
+     so an RSS-based guard ran 233 jobs and tripped zero times while the machine
+     fell to 0.09 GB free. Do not reintroduce RSS semantics here; RSS survives
+     only as a fallback where phys_footprint is unavailable, and says so when used.
 
 Deliberately stdlib-only (no psutil): this has to run under the system python3,
 inside launchd jobs, and inside the rebalance venv without an install step.
@@ -94,6 +102,29 @@ DEFAULT_MIN_AVAILABLE_FRACTION = 0.12
 #: Never let the available-memory floor drop below this absolute value.
 MIN_AVAILABLE_FLOOR = 4 * GIB
 
+#: Compressor size, as a fraction of RAM, above which the machine is treated as
+#: under real memory pressure regardless of how much memory looks "available".
+#:
+#: This is the signal that CONCLUDES the availability question for GH-219 Lane 4.
+#: Reclaimable-pages accounting (free+inactive+speculative) is retained as the
+#: availability numerator, because free-only accounting refuses jobs on a healthy
+#: Mac — but on its own it can look survivable while the compressor is saturating,
+#: which is the 2026-07-27 condition. The compressor is the direct measurement of
+#: that state and needs no inference.
+#:
+#: Sized from the recorded sampler data (sysmem-sys-*.csv, 07-26 and 07-27, 1602
+#: samples). The distribution is strongly BIMODAL — median 0.65–0.96 GB when
+#: healthy, 25–35 GB when in distress, with almost nothing between: the fraction
+#: of samples above 8 GB and above 24 GB is nearly identical (22.2% vs 21.6% on
+#: 07-26; 16.7% vs 14.8% on 07-27). That gap makes the exact threshold
+#: uncritical — any value in the empty middle classifies the same way — so 25% of
+#: RAM (16 GB on this machine) is chosen to sit as far from both modes as
+#: possible. Robustness here is a property of the data, not a lucky constant.
+DEFAULT_MAX_COMPRESSOR_FRACTION = 0.25
+
+#: Override for the compressor pressure ceiling, in GB.
+ENV_MAX_COMPRESSOR_GB = "REBALANCE_JOB_GUARD_MAX_COMPRESSOR_GB"
+
 #: Per-process ceiling override, in GB. The guard measures ``phys_footprint``
 #: (GH-219 Lane 4), so the setting is named for the metric it actually applies to.
 ENV_MAX_FOOTPRINT_GB = "REBALANCE_JOB_GUARD_MAX_FOOTPRINT_GB"
@@ -157,7 +188,7 @@ class InstanceConflict(GuardError):
 
 
 class MemoryCeilingExceeded(GuardError):
-    """The job tripped the RSS ceiling or the system-available floor."""
+    """The job tripped the footprint ceiling, the available floor, or compressor pressure."""
 
 
 class _Evicted(BaseException):
@@ -235,12 +266,19 @@ def available_memory_bytes() -> int:
         # Changing this numerator requires re-tuning DEFAULT_MIN_AVAILABLE_FRACTION
         # in the same edit; the two are one decision, not two.
         #
-        # Whether this definition is *sufficient* is still UNSETTLED, and cannot be
-        # settled from existing data: sysmem-sys-*.csv never recorded inactive/
-        # speculative columns, so the 07-27 crisis cannot be replayed against it.
-        # What the CSV does show is that compressor_gb (25–34 GB at crisis vs low
-        # when healthy) and swap_used_gb discriminate cleanly — those are the better
-        # pressure signal, and adding them is follow-up work, not a tuning tweak.
+        # DECISION (GH-219 Lane 4, concluded — not deferred): reclaimable-pages
+        # accounting is RETAINED here, and the gap it leaves is covered by a separate,
+        # direct pressure signal rather than by tightening this numerator.
+        #
+        # Rationale. This definition can look survivable while the machine is dying,
+        # which is the real objection to it. But narrowing it to free-only is strictly
+        # worse (it refuses every job on a healthy Mac), and it cannot be validated
+        # against history: sysmem-sys-*.csv never recorded inactive/speculative, so
+        # the 07-27 crisis cannot be replayed against any variant of this number.
+        # Rather than tune a metric that cannot be checked, the guard now also reads
+        # the memory compressor (see DEFAULT_MAX_COMPRESSOR_FRACTION), which IS
+        # recorded, IS strongly bimodal between healthy and crisis, and measures the
+        # dying-machine state directly instead of inferring it.
         wanted = ("Pages free:", "Pages inactive:", "Pages speculative:")
         for line in out.stdout.splitlines():
             for key in wanted:
@@ -279,6 +317,32 @@ class _RusageInfoV2(ctypes.Structure):
         ("ri_diskio_bytesread", ctypes.c_uint64),
         ("ri_diskio_byteswritten", ctypes.c_uint64),
     ]
+
+def compressor_bytes() -> int:
+    """Bytes held by the macOS memory compressor. 0 when undeterminable.
+
+    A saturating compressor is the most direct evidence that the machine is in
+    real trouble: it means the kernel is already paying CPU to avoid swapping.
+    Unlike "available" memory, it cannot look healthy while the machine dies.
+    """
+    if sys.platform != "darwin":
+        return 0
+    try:
+        out = subprocess.run(["vm_stat"], capture_output=True, text=True, timeout=5)
+    except (OSError, subprocess.SubprocessError):
+        return 0
+    if out.returncode != 0 or not out.stdout.strip():
+        return 0
+
+    header = re.search(r"page size of (\d+) bytes", out.stdout)
+    page_size = int(header.group(1)) if header else 4096
+    for line in out.stdout.splitlines():
+        if line.startswith("Pages occupied by compressor:"):
+            digits = line.split(":", 1)[1].strip().rstrip(".")
+            if digits.isdigit():
+                return int(digits) * page_size
+    return 0
+
 
 def tree_footprint_bytes(pid: int) -> tuple[int, bool, int]:
     """Resident memory (or phys_footprint on macOS) of ``pid`` plus every descendant.
@@ -547,12 +611,17 @@ def _terminate_group(pgid: int, grace: float) -> None:
 class MemoryCeiling:
     """Background watchdog that aborts a process tree before the machine dies.
 
-    Two independent trip conditions, because they catch different failures:
+    Three independent trip conditions, because they catch different failures:
 
-      * RSS ceiling — this job leaked or accumulated (GH-172 defects 2 and 3,
-        the ``out = [None] * len(texts)`` accumulation).
+      * ``phys_footprint`` ceiling — this job leaked or accumulated (GH-172
+        defects 2 and 3, the ``out = [None] * len(texts)`` accumulation; and
+        GH-219's MLX buffer-cache growth, which RSS could not see at all).
       * Available-memory floor — the *machine* is starved, whoever is at fault
         (GH-172 defect 1, stacked concurrent runs).
+      * Compressor pressure — the machine is already paying CPU to avoid
+        swapping. This catches the case the floor alone misses, where
+        reclaimable pages still look plentiful while the compressor saturates
+        (GH-219 Lane 4; the 2026-07-27 condition).
     """
 
     def __init__(
@@ -574,6 +643,15 @@ class MemoryCeiling:
         self.min_available = min_available_bytes or max(
             int(total * DEFAULT_MIN_AVAILABLE_FRACTION), MIN_AVAILABLE_FLOOR if total else 0
         ) or None
+        env_comp = os.environ.get(ENV_MAX_COMPRESSOR_GB, "").strip()
+        try:
+            self.max_compressor = (
+                int(float(env_comp) * GIB)
+                if env_comp
+                else int(total * DEFAULT_MAX_COMPRESSOR_FRACTION) or None
+            )
+        except ValueError:
+            self.max_compressor = int(total * DEFAULT_MAX_COMPRESSOR_FRACTION) or None
         self.poll_seconds = poll_seconds
         self.on_trip = on_trip
         self.log = log or (lambda msg: print(f"[job-guard] {msg}", file=sys.stderr))
@@ -589,6 +667,16 @@ class MemoryCeiling:
         and it is the check that turns a stacked run into a clean error instead
         of a kernel panic.
         """
+        # Compressor pressure first: it stays honest when "available" does not.
+        if self.max_compressor:
+            compressor = compressor_bytes()
+            if compressor and compressor > self.max_compressor:
+                raise MemoryCeilingExceeded(
+                    f"refusing to start: memory compressor holds "
+                    f"{_fmt_gb(compressor)}, ceiling is {_fmt_gb(self.max_compressor)} "
+                    f"(the machine is already under real pressure)"
+                )
+
         if not self.min_available:
             return
         available = available_memory_bytes()
@@ -625,6 +713,15 @@ class MemoryCeiling:
             return (
                 f"process tree holds {_fmt_gb(footprint)} {metric}, ceiling is {_fmt_gb(self.max_footprint)}{unr_msg}"
             )
+
+        if self.max_compressor:
+            compressor = compressor_bytes()
+            if compressor and compressor > self.max_compressor:
+                return (
+                    f"memory compressor holds {_fmt_gb(compressor)}, ceiling is "
+                    f"{_fmt_gb(self.max_compressor)} (this job {metric}: "
+                    f"{_fmt_gb(footprint)}{unr_msg})"
+                )
 
         available = available_memory_bytes()
         if self.min_available and available and available < self.min_available:

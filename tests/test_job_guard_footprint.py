@@ -38,8 +38,10 @@ def isolated_guard(tmp_path, monkeypatch):
     monkeypatch.setattr(job_guard, "LOCK_DIR", tmp_path / "locks")
     monkeypatch.setattr(job_guard, "total_memory_bytes", lambda: FAKE_TOTAL_RAM)
     # A healthy machine by default, so the preflight never masks what a test means
-    # to exercise. Individual tests override this.
+    # to exercise. Individual tests override these.
     monkeypatch.setattr(job_guard, "available_memory_bytes", lambda: 32 * GIB)
+    monkeypatch.setattr(job_guard, "compressor_bytes", lambda: 1 * GIB)
+    monkeypatch.delenv(job_guard.ENV_MAX_COMPRESSOR_GB, raising=False)
     return tmp_path
 
 
@@ -233,6 +235,73 @@ def test_max_rss_bytes_still_maps_to_the_footprint_ceiling():
     """The bridge still passes max_rss_gb; that path must keep working."""
     ceiling = job_guard.MemoryCeiling(max_rss_bytes=12345)
     assert ceiling.max_footprint == 12345
+
+
+def test_deprecated_env_var_reaches_the_actual_ceiling(isolated_guard, monkeypatch):
+    """The RSS-named alias must reach the GUARD, not merely parse.
+
+    Codex R3: asserting `env_max_footprint_gb()` returns 42.0 proves the helper
+    works, not that anything consumes it. This drives run_guarded and inspects the
+    ceiling the MemoryCeiling was actually constructed with.
+    """
+    monkeypatch.delenv(job_guard.ENV_MAX_FOOTPRINT_GB, raising=False)
+    monkeypatch.setenv(job_guard.ENV_MAX_FOOTPRINT_GB_DEPRECATED, "7.0")
+
+    seen: dict[str, int | None] = {}
+    real_ceiling_cls = job_guard.MemoryCeiling
+
+    class _Recording(real_ceiling_cls):
+        def __init__(self, *a, **kw):
+            super().__init__(*a, **kw)
+            seen["max_footprint"] = self.max_footprint
+
+    monkeypatch.setattr(job_guard, "MemoryCeiling", _Recording)
+    script = isolated_guard / "noop.py"
+    script.write_text("pass\n", encoding="utf-8")
+
+    job_guard.run_guarded(
+        name="test-deprecated-alias",
+        argv=[sys.executable, str(script)],
+        poll_seconds=0.05,
+        grace_seconds=0.2,
+    )
+
+    assert seen.get("max_footprint") == int(7.0 * GIB), (
+        "the deprecated alias parsed but never reached the ceiling"
+    )
+
+
+def test_compressor_pressure_refuses_to_start(isolated_guard, monkeypatch):
+    """Compressor saturation must block a new job even when memory looks available.
+
+    This is the 2026-07-27 condition and the reason the availability question is
+    settled rather than deferred: reclaimable pages can look plentiful while the
+    kernel is already paying CPU to avoid swapping. Recorded data shows compressor
+    at 25-35 GB during the crisis versus a 0.65-0.96 GB median when healthy.
+    """
+    monkeypatch.setattr(job_guard, "available_memory_bytes", lambda: 32 * GIB)
+    monkeypatch.setattr(job_guard, "compressor_bytes", lambda: 30 * GIB)
+
+    ceiling = job_guard.MemoryCeiling(poll_seconds=0.05)
+    with pytest.raises(job_guard.MemoryCeilingExceeded) as exc:
+        ceiling.preflight()
+    assert "compressor" in str(exc.value)
+
+
+def test_compressor_below_ceiling_does_not_block(isolated_guard, monkeypatch):
+    """A healthy compressor must not refuse work — the free-only mistake, avoided."""
+    monkeypatch.setattr(job_guard, "compressor_bytes", lambda: 1 * GIB)
+    ceiling = job_guard.MemoryCeiling(poll_seconds=0.05)
+    ceiling.preflight()  # must not raise
+
+
+def test_compressor_ceiling_is_env_overridable(isolated_guard, monkeypatch):
+    """An operator must be able to loosen the compressor ceiling without a code change."""
+    monkeypatch.setenv(job_guard.ENV_MAX_COMPRESSOR_GB, "40")
+    monkeypatch.setattr(job_guard, "compressor_bytes", lambda: 30 * GIB)
+    ceiling = job_guard.MemoryCeiling(poll_seconds=0.05)
+    assert ceiling.max_compressor == int(40 * GIB)
+    ceiling.preflight()  # 30 GB is now under the raised ceiling
 
 
 def test_available_memory_counts_reclaimable_pages_not_just_free(monkeypatch):
