@@ -135,3 +135,28 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P8-WAVE3-TURN --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh195-p8-fleet-adoption-resume--p8-wave3/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · codex
+
+Added the eight machine-local Wave 3 job declarations, each with its incumbent
+label in `supersedes`, exact live plist cadence, and an explicit `log-only` route.
+The GA pulls use three command entries because the registry fixes command args;
+their shared executable cannot safely receive per-job `--brand` args. The command
+example contains only `/ABSOLUTE/PATH/...` placeholders, never this machine's
+paths; copy it to the gitignored local allowlist and replace the placeholders.
+
+`hq-rollup` retains its exact `/bin/bash -l -c '".../rollup.sh"'` argv. Both HQ
+jobs flag that their scripts remain owned by `xyz-3-agents-swarm`; this adopts
+only their local scheduling. `git-pulse`'s plist has no EnvironmentVariables,
+but its HOME working directory cannot be represented by the shared adapter,
+which always runs from the Rebalance repository; the job comment records this
+activation caveat.
+
+Added the focused Wave 3 contract test for local-only placement, supersession,
+exact schedules, a safe machine-path-free command template/committed registry,
+and an unchanged dashboard projection.
+
+Focused verification: `PYTHONPATH=utils/3-eyes python3 -m pytest
+utils/3-eyes/tests/test_adoption_wave3.py -q` — 4 passed. The repository-root
+`.venv/bin/python` is absent in this worktree; the available interpreter is the
+configured backup virtual environment.
