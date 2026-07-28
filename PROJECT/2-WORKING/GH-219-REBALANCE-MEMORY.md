@@ -1,6 +1,15 @@
 ---
 title: "REBALANCE MEMORY — unified project (8 lanes: instrument → measure → fix → bound → backstop → inventory → cover → detect)"
-status: "Planned, not fired. Widened 2026-07-27 from a 5-lane MLX marathon into the single owner of Rebalance memory use, after Codex r1 review (2 Blockers + 3 Shoulds, all accepted). No code written."
+status: >
+  LANES 0, 1, 2 COMPLETE as of 2026-07-27. Lanes 3–7 remain.
+
+  #215 is PROVEN, not inferred — the ⛔ GATE passed on live hardware, and Lane 2's fix is
+  Codex-approved and verified against the harness that produced the blowup: phys_footprint
+  13.00 -> 1.36 GB, 80/80 batches completed vs 18 before. Full suite 1585 passed / 6 failed
+  (the same 6 pre-existing failures throughout; no regressions from any lane).
+
+  Remaining outside the lanes: the sampler's inactive_gb/speculative_gb columns, deferred out
+  of the marathon because temp/ is gitignored and a worktree edit there cannot be committed.
 created: 2026-07-27
 updated: 2026-07-27
 owner: noel@neochro.me
@@ -49,10 +58,11 @@ next one verifiable rather than argued.
 
 The ordering constraint is real, not stylistic:
 
-- **#215 is currently INFERRED, not PROVEN.** `mx.get_cache_memory()` has never been sampled
-  during a live run — no Metal device is reachable from a sandboxed shell. Landing the fix before
-  the measurement means shipping a remedy that cannot be confirmed, for a bug that has already
-  survived two misdiagnoses.
+- ~~**#215 is currently INFERRED, not PROVEN.**~~ **RESOLVED 2026-07-27 — #215 is now PROVEN**
+  (see ⛔ GATE). Retained because the *reasoning* was vindicated: measuring first is what caught
+  that a uniform-shape test shows no growth at all. Had the fix landed before the measurement, a
+  green test suite would have "confirmed" a remedy nobody had shown was needed, for a bug that had
+  already survived two misdiagnoses.
 - **#217's limit must be sized from data.** A guessed ceiling that fails legitimate passes is how
   safety mechanisms get switched off by the person they annoy.
 - **#213's ceiling changes meaning** once it reads footprint instead of RSS — footprint
@@ -115,19 +125,59 @@ the cause is not found inside that box, the marathon proceeds anyway — because
 the allocation regardless of what started it. Knowing the trigger is valuable; it is not a
 prerequisite for stopping the bleeding.
 
+## ⚠ Preflight finding, 2026-07-27 (found while firing — the plan was wrong)
+
+A preflight trace of every caller of `_load_model()` / `_embed_batch()` found **four** live
+embedding call sites, not the two this plan was built on:
+
+| # | Site | Guarded? |
+|---|---|---|
+| 1 | `embedder.py:105` `embed_chunks` | ✅ `@guarded_embedding` |
+| 2 | `semantic_index.py:613` `embed_pending` | ✅ `@guarded_embedding` |
+| 3 | `embedder.py:216` `query_similar` → `_load_model` + `_embed_batch` (`:227-228`) | ❌ **unguarded** |
+| 4 | `github_knowledge.py:855` `_default_embed_texts` → same (`:855-856`) | ❌ **unguarded** |
+
+**`src/rebalance/ingest/github_knowledge.py` does not import the job guard at all** — zero
+occurrences of `job_guard` or `guarded` in the file. It is a third embedding-capable module that
+appears in **no lane's write-set** anywhere in this plan.
+
+**Why this matters more than a write-set correction:**
+
+- It is a direct candidate answer to this project's sharpest open question — *why do 2 of the 3
+  07-27 episodes have no `job_rss.jsonl` record at all?* An unguarded path produces exactly that
+  signature. This moves from "either they ran unguarded, or the guard died without recording" to a
+  named, verifiable first hypothesis.
+- **Lane 2 as written would have shipped an incomplete fix.** Its instruction to "apply to **both**
+  leaves" would have left sites 3 and 4 allocating MLX buffers with no cache management — and the
+  acceptance criteria might still have passed, because a `vault-sync` workload need not exercise
+  the GitHub path.
+
+**Corrections applied:** Lane 1 instruments all four sites; Lane 2's write-set gains
+`github_knowledge.py`; Lane 6's audit now has a confirmed gap to start from rather than a blank
+sheet. Lane 1's write-set also corrected from `sys-mem-watch.sh` (a 31-line launchd wrapper) to
+`sys-mem-attribute.py`, where the sampling actually happens.
+
 ## Lane sequencing
 
-| Order | Issue | Lane | Write-set | Depends on |
-|---|---|---|---|---|
-| 0 | [#218](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/218) | C (parallel) | `src/rebalance/doctor.py` | — |
-| 0.5 | archaeology (no issue) | D (parallel, **timeboxed**) | read-only | — |
-| 1 | [#216](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/216) | A | `embedder.py`, `semantic_index.py`, `temp/memory-issues/sys-mem-watch.sh` | — |
-| 2 | [#215](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/215) | A | `embedder.py`, `semantic_index.py` | #216 |
-| 3 | [#217](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/217) | A | `embedder.py`, `ingest/_job_guard.py` | #216, #215 |
-| 4 | [#213](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/213) | B | `utils/job_guard.py` | #215 |
-| 5 | fleet inventory & budgets | E (parallel, read-mostly) | inventory table (new file) | — |
-| 6 | guard coverage audit | B (after #213) | coverage matrix + guard placement | #213 |
-| 7 | standing regression detection | C (after #218) | `src/rebalance/doctor.py` | #218, Lane 5 budgets |
+| Order | Issue | Lane | Write-set | Depends on | Est. |
+|---|---|---|---|---|---|
+| 0 | [#218](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/218) | C (parallel) | `src/rebalance/doctor.py` | — | 1–2 h |
+| 0.5 | archaeology (no issue) | D (parallel, **timeboxed**) | read-only | — | 90 min (hard) |
+| 1 | [#216](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/216) | A | `embedder.py`, `semantic_index.py`, `github_knowledge.py`, `temp/memory-issues/sys-mem-attribute.py` | — | 3–4 h |
+| **GATE** | **go/no-go** | — | **decision only** | Lane 0, Lane 1 | **30 min** |
+| 2 | [#215](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/215) | A | `embedder.py`, `semantic_index.py`, `github_knowledge.py` | #216 | 2 h |
+| 3 | [#217](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/217) | A | `embedder.py`, `ingest/_job_guard.py` | #216, #215 | 2 h |
+| 4 | [#213](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/213) | B | `utils/job_guard.py` | #215 | 3 h |
+| 5 | fleet inventory & budgets | E (parallel, read-mostly) | inventory table (new file) | — | 3–4 h |
+| 6 | guard coverage audit | B (after #213) | coverage matrix + guard placement | #213 | 3–4 h |
+| 7 | standing regression detection | C (after #218) | `src/rebalance/doctor.py` | #218, Lane 5 budgets | 2 h |
+
+**Total build effort: ~20–25 h**, plus **2 calendar days** of verification that cannot be
+compressed (acceptance needs a full waking day with ≥12 embedding passes, up to two windows). The
+project therefore cannot reach **Completed** sooner than ~3 days after Lane 2 lands, however fast
+the code is written. Sizing exists so "this is taking forever" is a *falsifiable* claim rather than
+a feeling — if actuals exceed these by >2×, that is itself a signal to invoke the terminal-state
+rules rather than push on.
 
 **Collision analysis.** Lane A's three issues all write `embedder.py` and must run strictly
 sequentially in one lane — they cannot be parallelised. Lane B (`utils/job_guard.py`) and Lane C
@@ -142,13 +192,29 @@ names.
 
 **Goal:** stop doctor reporting a working scheduler fleet as entirely missing.
 
-- [ ] Treat non-zero `returncode` as unavailable (`doctor.py:502-510`)
-- [ ] Treat empty/whitespace-only stdout as unavailable, not "zero jobs loaded"
-- [ ] Emit exactly one "scheduler state undetermined" finding; **zero** per-job warnings
-- [ ] Regression test: available+loaded, available+genuinely missing, unavailable
+- [x] Treat non-zero `returncode` as unavailable (`doctor.py:507`)
+- [x] Treat empty/whitespace-only stdout as unavailable, not "zero jobs loaded"
+- [x] Emit exactly one "scheduler state undetermined" finding; **zero** per-job warnings
+- [x] Regression test: available+loaded, available+genuinely missing, unavailable
 
 **Gate:** on a healthy device, zero `scheduler:*` warnings; in a restricted shell, one honest
 undetermined line and no reinstall advice.
+
+**✅ LANDED 2026-07-27 — marathon phase `gh219-lane0-doctor-launchctl`, exit 0.** Verified by
+running `doctor` in both shells, not by trusting the gate:
+
+| Shell | Before | After |
+|---|---|---|
+| Restricted (`launchctl` blocked) | 14 false WARNs + reinstall advice | 1 × `WARN scheduler state — undetermined` |
+| Healthy device | — | one scheduler line, `OK`, zero WARNs |
+
+Tests 32 → 35, including the *available + genuinely missing* case, so the fix cannot pass by
+going silent about real breakage.
+
+**Carried finding — not caused by this lane.** `tests/test_scheduler_liveness.py::`
+`test_not_loaded_warning_is_distinct_from_loaded_job_failure` fails, and also fails on the
+pre-fix commit `70f36f5`. It sits in this lane's domain and the narrow gate would not have
+caught a regression there. Worth its own issue; not a blocker.
 
 → [GH-218-DOCTOR-LAUNCHCTL-FALSE-NEGATIVE.md](../1-INBOX/GH-218-DOCTOR-LAUNCHCTL-FALSE-NEGATIVE.md)
 
@@ -202,11 +268,16 @@ finds nothing, the marathon still delivers its acceptance criteria.
 
 **Goal:** make the dominant memory consumer observable, and settle #215's hypothesis with data.
 
-- [ ] Log `mx.get_active_memory()` / `get_cache_memory()` / `get_peak_memory()` every N batches
-- [ ] `mx.reset_peak_memory()` per pass so figures are attributable to a run
-- [ ] Reuse an existing log surface; do not invent a new one
-- [ ] Add `inactive_gb` + `speculative_gb` to `sys-mem-watch.sh`
-- [ ] **Emit an invocation-wide run ID and a PID → entry-point record** on every embedding pass
+- [x] Log `mx.get_active_memory()` / `get_cache_memory()` / `get_peak_memory()` every N batches
+      (every 10, `embedder.py:_embed_batch`)
+- [x] `mx.reset_peak_memory()` per pass so figures are attributable to a run
+- [x] Reuse an existing log surface; do not invent a new one (module `logger`)
+- [ ] ~~Add `inactive_gb` + `speculative_gb` to `sys-mem-watch.sh`~~ — **deferred out of the
+      marathon.** Two corrections: the sampling lives in `sys-mem-attribute.py`, not the 31-line
+      `sys-mem-watch.sh` wrapper; and `temp/` is gitignored (`.gitignore:4`), so an edit made in a
+      marathon worktree could not be committed and would be **destroyed** on teardown. Must be done
+      directly, outside the harness. **Still outstanding.**
+- [x] **Emit an invocation-wide run ID and a PID → entry-point record** on every embedding pass
       (r1 [Blocker]) — which caller (launchd job / CLI / MCP tool / agent / shell), which leaf,
       which PID. Without this the two unattributed episodes stay unattributable **by construction**,
       and no amount of per-batch MLX telemetry fixes that.
@@ -227,7 +298,121 @@ finds nothing, the marathon still delivers its acceptance criteria.
 overhead, and the root cause is settled **CONFIRMED / REFUTED / UNOBSERVABLE** — a refutation is a
 success outcome for this lane, and it stops the marathon rather than silently mutating it.
 
+**◐ CODE LANDED 2026-07-27; VERDICT STILL OPEN.** All four call sites instrument
+(`embed_chunks`, `query_similar`, `embed_pending`, `_default_embed_texts`). Gate: 28 passed. Full
+suite 1575 passed / 6 failed — the same 6 pre-existing failures, no regressions.
+
+**How it landed matters for the record.** The marathon phase exited 5. The `agy` builder was killed
+by a **300 s wall-clock cap** after writing tests but before reconciling them with the code it then
+wrote, leaving HEAD red. Root cause is a harness parity divergence: the bash twin caps a turn at
+900 s (`agy-turn.sh:206`) while the Python twin — which runs by default — caps at 300 s
+(`agy-turn.py:157`). Same split for codex (900/300) and claude (600/300). The implementation was
+sound; the five failing tests were repaired by hand in `5b79484` rather than by burning the lane's
+last attempt.
+
+**The two test defects are worth remembering — both produced *misleading* results, not loud ones:**
+
+1. `caplog` could never capture. `logging.getLogger("rebalance")` sets `propagate = False` **and**
+   is configured to WARNING, so `logger.info()` records were discarded before construction. Raising
+   the root level alone does nothing.
+2. The MLX mock never intercepted. `mlx` is a real installed package, so `import mlx.core as mx`
+   resolves through `getattr(mlx, "core")` and a `sys.modules["mlx.core"]` patch is ignored —
+   the tests silently exercised **real MLX** and read the mock's counters as zero.
+
+Both are traps for anyone instrumenting this path again.
+
+- [x] **Live pass run 2026-07-27; verdict recorded — #215 CONFIRMED.** See the ⛔ GATE section
+      below for the three runs and their figures.
+
+**⚠ Instrumentation defect found by the live run — the telemetry is invisible in production.**
+It emits at `INFO`, but `src/rebalance/__init__.py:38` configures the `rebalance` logger to
+`WARNING` unless `REBALANCE_LOG_LEVEL` says otherwise. Scheduled launchd passes — exactly the ones
+that blow up — set no such variable, so **none of this telemetry would ever be recorded** in the
+runs that matter. The verdict above was only obtainable because the harness set the level
+explicitly. Must be fixed (raise the telemetry to `WARNING`, or have the embedding path force its
+own level) before Lane 7's detection can rely on it. Also seen: `run_id=None` when `_embed_batch`
+is reached without `instrument_embedding_pass` — the four instrumented sites cover it, but a fifth
+path added later would log unattributed telemetry rather than failing loudly.
+
 → [GH-216-MLX-MEMORY-INSTRUMENTATION.md](../1-INBOX/GH-216-MLX-MEMORY-INSTRUMENTATION.md)
+
+---
+
+## ⛔ GATE — go/no-go on Lanes 2–7 (explicit decision, not a dependency)
+
+**The 8-lane commitment is made HERE, after the hypothesis is settled — not before.** Lanes 0 and 1
+are fired as a spike. Everything downstream waits on a written verdict at this gate.
+
+This is deliberately stronger than the dependency arrows in the sequencing table. A dependency says
+"Lane 2 runs after Lane 1." A gate says **the project stops here and a human decides** whether
+Lanes 2–7 happen at all. The distinction matters because #215 has been INFERRED since day one and
+has already survived two misdiagnoses — committing ~20 h of build to an unproven hypothesis is
+exactly how this becomes the forever-project the scope rules exist to prevent.
+
+**Entry condition:** Lane 0 landed, Lane 1's instrumentation landed, **and** at least one live
+embedding pass has run with telemetry captured. (Lane 1's marathon deliverable is the *code*; the
+CONFIRMED/REFUTED verdict requires a real pass on real hardware — a sandboxed shell has no Metal
+device. Do not confuse "instrumentation merged" with "hypothesis settled.")
+
+| Verdict at gate | Decision |
+|---|---|
+| `get_cache_memory()` climbs toward the process peak → **CONFIRMED** | **GO.** Fire Lanes 2–7 as written. Confidence in the remaining ~18 h is now evidence-backed. |
+| Cache flat, `get_active_memory()` rises → **REFUTED** | **NO-GO on Lanes 2–3.** Terminal state `Blocked — diagnosis split`. Lanes 0/5/6/7 may still ship independently (they do not depend on #215 being right); open exactly one successor issue for the diagnosis. |
+| Both flat, peak still ~46.9 GB → **not MLX-visible** | **NO-GO on Lanes 2–3.** As above; Lane 4 (#213) may proceed since a footprint-based backstop is correct regardless of the allocator. |
+| Telemetry unobtainable → **UNOBSERVABLE** | **NO-GO.** Do not proceed on an unproven hypothesis. Terminal state as above. |
+
+- [x] Verdict recorded in `temp/memory-issues/TRIAGE-LOG.md` with the sampled figures
+- [x] Go/no-go decision written into this file with a date and the numbers behind it
+- [ ] On NO-GO: successor issue opened — **not applicable, verdict was GO**
+
+### ✅ VERDICT 2026-07-27: **#215 CONFIRMED — GO on Lanes 2–7**
+
+Settled with live telemetry on real hardware, through the repo's own `_load_model` /
+`_embed_batch` path. **#215 moves from INFERRED to PROVEN.**
+
+**Run 1 — uniform shapes (60 batches): flat. This was NOT a refutation.**
+
+| Metric | Start | End |
+|---|---|---|
+| `active` | 1.110 GB | 1.140 GB |
+| `cache` | 0.752 GB | 0.722 GB |
+| `phys_footprint` | 2.09 GB | 2.09 GB |
+
+Every batch used an identical shape. MLX's buffer cache is **keyed by buffer size**, so identical
+shapes reuse identical cached buffers and the run could only ever come out flat. Recorded because
+it is the trap: *naive testing of this bug shows nothing wrong.*
+
+**Run 2 — variable shapes (the real corpus's characteristic): CONFIRMED, and violently.**
+
+| Metric | Batch 1 | Batch 18 | Δ |
+|---|---|---|---|
+| `active` | 1.110 GB | 1.110 GB | **+0.000** |
+| `cache` | 0.510 GB | 11.546 GB | **+11.036** |
+| `phys_footprint` | 1.84 GB | 13.00 GB | **+11.16** |
+
+Halted by the 12 GB safety cap at batch 18 of 80. **Active memory never grew at all** — the model
+and nothing more. Footprint growth (+11.16 GB) is accounted for by cache growth (+11.04 GB) to
+within 0.12 GB. This is the mechanism exactly as alleged: each new tokenized shape allocates a new
+buffer size, MLX caches every one, nothing is ever released. 18 batches → 11.5 GB extrapolates
+cleanly to the observed 46.9 GB episode.
+
+**Run 3 — the Lane 2 remedy, validated before committing ~18 h to it.** Identical load, one added
+call (`mx.clear_cache()` after each batch):
+
+| At batch 18 | `cache` | `phys_footprint` |
+|---|---|---|
+| No remedy (run 2) | 11.546 GB | 13.00 GB — hit the cap |
+| With `clear_cache()` | **0.000 GB** | **1.35 GB** |
+
+**9.6× footprint reduction, from a one-liner.** Lane 2 is no longer a bet.
+
+**Safety note.** The machine began these runs with 5.30 GB free RAM and **1.29 GB of free swap** —
+too tight for an unbounded reproduction, which could have hard-frozen it. All runs were capped at
+12 GB footprint. Free RAM recovered to 18.15 GB afterwards, so the allocation is released on
+process exit — this leaks *within* a pass, not across them.
+
+**Cost of the spike if it fails: ~5 h** (Lanes 0 + 1), versus ~25 h had the full project been
+committed up front. That ratio is the entire justification for the gate.
 
 ---
 
@@ -235,14 +420,56 @@ success outcome for this lane, and it stops the marathon rather than silently mu
 
 **Goal:** stop the allocation. Blocked on Lane 1's verdict.
 
-- [ ] `mx.set_cache_limit(...)` once at embedding-module level, sized deliberately
-- [ ] `mx.clear_cache()` at the end of each batch iteration (`embedder.py:172-186`)
-- [ ] Apply to **both** leaves (`embedder.py:105`, `semantic_index.py:613`) — they share one lock
-      and one model per `_job_guard.py` "Lock scoping"
-- [ ] Measure throughput before/after; record any regression rather than hiding it
+- [x] `mx.set_cache_limit(...)` once at embedding-module level, sized deliberately (3.0 GB)
+- [x] `mx.clear_cache()` at the end of each batch iteration (`embedder.py:172-177`)
+- [x] Apply to **all four** call sites, not two (see Preflight finding above): `embedder.py:105`,
+      `semantic_index.py:613`, `embedder.py:216` (`query_similar`, unguarded), and
+      `github_knowledge.py:855` (`_default_embed_texts`, unguarded, in a module that never imports
+      the guard). The two decorated leaves share one lock and one model per `_job_guard.py`
+      "Lock scoping" — **the other two share neither**, so cache management must be attached to the
+      allocation site rather than assumed from the lock
+- [x] Measure throughput before/after; record any regression rather than hiding it
+      (11.8 → 11.5 batches/sec, ~2.5%, recorded in the source comment)
 
 **Gate:** a full pass holds peak `phys_footprint` under an explicit documented bound; `free_gb`
 never approaches zero; compressor stays single-digit GB.
+
+### ✅ LANDED 2026-07-27 — phase `gh219-lane2-mlx-cache-cap`, **Codex-approved**
+
+**Verified against the harness that produced the blowup, not just against mocks:**
+
+| | Before fix | After fix |
+|---|---|---|
+| Batches completed | 18 of 80 — hit the 12 GB cap | **80 of 80** |
+| Longest sequence reached | 492 chars | **1980 chars** |
+| `cache` | 11.546 GB | **0.015 GB** (max 0.089) |
+| `phys_footprint` | 13.00 GB | **1.36 GB** |
+
+~9.6× footprint reduction, sustained over 4.4× more batches at far longer sequence lengths.
+Full suite 1585 passed / 6 failed — the same 6 pre-existing failures, no regressions.
+
+**Implementation:** `mx.set_cache_limit(3.0 GB)` once behind a module-level `_cache_limit_set`
+guard, env-overridable via `REBALANCE_MLX_CACHE_LIMIT_GB`, derivation in-comment (~1.11 GB model +
+3 GB cache ≈ 4.11 GB, well under the 8 GB contract). `mx.clear_cache()` per batch. Both wrapped so
+an MLX failure cannot become a new crash path. Telemetry raised `INFO` → `WARNING`, closing the
+production-invisibility defect — it is now recorded in default scheduled runs.
+
+**Process note — the phase exited 4, then was approved separately.** The 5-turn round cap fell
+before Codex could review Round 3 (agy → codex → agy → codex → agy), leaving `STATUS: Open` on
+work that was actually finished. A single `relay-drive --review-once` turn returned **Approved**.
+Worth remembering: *exit 4 means no sign-off, not failed work* — check the gate before assuming a
+capped phase needs rework.
+
+**Codex earned the extra rounds.** R1 caught that `set_cache_limit` fired per model load rather
+than once, and that the integration test skipped only on ImportError while MLX actually raises
+`RuntimeError: No Metal device available`. R2 caught the sharper one: the deterministic test merely
+counted `clear_cache()` calls against a mock whose cache never grew, so it **could not prove
+bounded behaviour** — only that a function was called. Both are the class of defect that makes a
+green suite meaningless.
+
+**Observability note:** telemetry reports `cache_mem` ≈ 900 MB while a post-batch sampler reports
+0.015 GB. Both are correct — telemetry samples *before* `clear_cache()`, the sampler *after*. The
+telemetry's peak-in-batch figure is the more useful one for Lane 7 detection.
 
 → [GH-215-MLX-EMBED-CACHE-LEAK.md](../1-INBOX/GH-215-MLX-EMBED-CACHE-LEAK.md)
 
@@ -534,6 +761,10 @@ ends when these cannot be met.)*
   documented (`job_guard.py:614-616`) as writing on every exit path. Either they ran unguarded, or
   the guard died without recording. Lane 1 should resolve this; if those episodes are a *second*
   path to the same allocation, Lane 2's fix is incomplete.
+  **Updated 2026-07-27 (preflight):** "ran unguarded" is now the *leading* hypothesis, not a
+  co-equal one — two unguarded embedding call sites have since been found (`query_similar`,
+  `github_knowledge._default_embed_texts`), and `github_knowledge.py` never imports the guard at
+  all. Lane 1 must attribute by PID against **all four** sites before this can be closed.
 - **The episode interval is collapsing** — 01:04, 07:09, 08:21 on 07-27 (gaps ~6 h then ~1 h 12 m)
   against roughly one per day previously. Cause unknown; may simply track vault-sync's hourly
   cadence plus agent/MCP-triggered runs.

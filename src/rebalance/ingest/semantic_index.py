@@ -628,6 +628,8 @@ def embed_pending(
     Qwen model, so their memory cost is cumulative and they must serialise
     against each other, not merely against themselves.
     """
+    from rebalance.ingest.embedder import instrument_embedding_pass
+    instrument_embedding_pass("embed_pending")
     start = time.monotonic()
     embed_fn = embed_texts or _default_embed_texts
     selected_sources = _normalize_sources(source_types)

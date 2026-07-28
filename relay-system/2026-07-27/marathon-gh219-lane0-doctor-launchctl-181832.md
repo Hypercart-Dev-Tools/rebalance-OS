@@ -1,5 +1,5 @@
-# Marathon Phase p1
-STATUS: Open
+# Marathon Phase gh219-lane0-doctor-launchctl
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-GH219-LANE0 builder=agy reviewer=codex round-cap=5 -->
@@ -93,11 +93,6 @@ doctor silent about real breakage is worse than the bug being fixed.
 - Anything touching the memory/embedding path — that is Lane 1 and later
 
 
-## Debug mantra (auto-triggered — 2 prior attempt(s) on this phase did not reach Approved)
-
-Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
-Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/p1/ESCALATION.md): `no-progress`. Read it before re-guessing.
-
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)
@@ -106,10 +101,10 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 1. Implement the brief by creating/editing the artifact file(s): src/rebalance/doctor.py,tests/test_doctor_launchd.py
 2. Append a build block to this relay file: `### Round N · Builder · agy` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-GH219-LANE0 --agent agy --paths "phases/p1/RELAY.md,src/rebalance/doctor.py,tests/test_doctor_launchd.py"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-GH219-LANE0 --agent agy --paths "phases/gh219-lane0-doctor-launchctl/RELAY.md,src/rebalance/doctor.py,tests/test_doctor_launchd.py"
    - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-GH219-LANE0 --agent agy
    - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH219-LANE0 --agent agy --to codex
-4. Edit ONLY these paths: phases/p1/RELAY.md and src/rebalance/doctor.py,tests/test_doctor_launchd.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
+4. Edit ONLY these paths: phases/gh219-lane0-doctor-launchctl/RELAY.md and src/rebalance/doctor.py,tests/test_doctor_launchd.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
 ---
 
@@ -120,4 +115,18 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-GH219-LANE0 --agent codex --to agy
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-GH219-LANE0 --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   Edit ONLY phases/p1/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+   Edit ONLY phases/gh219-lane0-doctor-launchctl/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · agy
+I have implemented the fixes to avoid false negatives when `launchctl list` fails or is empty.
+
+**Files touched:**
+- `src/rebalance/doctor.py`: Updated `_launchctl_list` to handle non-zero returncodes and empty/whitespace output by returning `None`. Updated `_check_scheduler_liveness` to return a single "undetermined" `WARN` finding when `launchctl_output` is `None` (unavailable).
+- `tests/test_doctor_launchd.py`: Added explicit tests covering all edge cases (`test_scheduler_liveness_available_and_loaded`, `test_scheduler_liveness_available_and_missing`, and `test_scheduler_liveness_unavailable`) where `launchctl list` output fails via empty stdout, non-zero return code, or `FileNotFoundError`.
+
+All tests pass without regression (35 tests total).
+
+### Round 1 · Reviewer · codex
+Reviewed the scoped implementation and regression coverage. `_launchctl_list()` now treats non-zero exits and empty/whitespace output as unavailable, while scheduler liveness emits one `scheduler state` / `undetermined` warning and preserves per-job warnings for genuinely missing jobs. The targeted doctor tests pass: 35 passed.
+
+**Verdict:** Approved
