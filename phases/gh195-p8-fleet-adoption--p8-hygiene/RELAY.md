@@ -1,5 +1,5 @@
 # Marathon Phase p8-hygiene
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-P8-HYGIENE-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -101,3 +101,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Added `com.neochro.sys-mem-attribute` as `observe`, matching the continuous KeepAlive, CSV-only VS Code sampler; neither is a scheduled findings job.
 - Added a focused regression test asserting the retired Cactus records render as observe-only, never as adoption targets.
 - Verification: `PYTHONPATH=utils/3-eyes python3 -m pytest utils/3-eyes/tests/test_catalog_health.py -q` — 11 passed. The requested `.venv/bin/python` does not exist in this isolated worktree.
+
+### Round 1 · Reviewer · agy
+
+The implementation meets all constraints:
+- `com.neochro.sys-mem-attribute` is correctly classified as `observe`, consistent with its sibling.
+- The Cactus stack and sentinels are classified as `observe` with explanatory `desc` about their retirement on 2026-07-27.
+- Added `test_retired_cactus_agents_are_not_adoption_targets` regression test which passes successfully.
+- `three_eyes health` outputs 0 unclassified agents.
+- `three_eyes catalog --check` fails with expected drift for the four Cactus agents (they are "gone" because their plists were removed, but we keep them in `catalog-notes.toml` for historical record as instructed).
+
+**Verdict:** Approved
