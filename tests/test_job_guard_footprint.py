@@ -233,3 +233,48 @@ def test_max_rss_bytes_still_maps_to_the_footprint_ceiling():
     """The bridge still passes max_rss_gb; that path must keep working."""
     ceiling = job_guard.MemoryCeiling(max_rss_bytes=12345)
     assert ceiling.max_footprint == 12345
+
+
+def test_available_memory_counts_reclaimable_pages_not_just_free(monkeypatch):
+    """A healthy Mac with little FREE but lots of INACTIVE must not read as starved.
+
+    Regression test for the defect this lane briefly shipped: `available_memory_bytes`
+    was narrowed to free-only without re-tuning the floor that consumes it. On a
+    healthy machine (free 1.59 GB, inactive 21.46 GB, speculative 0.93 GB) that
+    reported 1.58 GB against a 7.68 GB floor, so the preflight refused EVERY guarded
+    job. macOS keeps cache in inactive by design, so free alone is not availability.
+
+    Nothing caught it because every other test pins this function to a healthy
+    constant for determinism — correct in itself, but it left the real
+    implementation with no coverage at all.
+    """
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    # Real vm_stat shape, 16 KiB pages: the healthy-machine numbers above.
+    class _VmStatOut:
+        returncode = 0
+        stdout = (
+            "Mach Virtual Memory Statistics: (page size of 16384 bytes)\n"
+            "Pages free:                              104000.\n"
+            "Pages active:                            874626.\n"
+            "Pages inactive:                         1406000.\n"
+            "Pages speculative:                        61000.\n"
+        )
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _VmStatOut())
+
+    available = job_guard.available_memory_bytes()
+    free_only = 104000 * 16384
+
+    assert available > free_only, "inactive/speculative must count as reclaimable"
+    assert available == (104000 + 1406000 + 61000) * 16384
+
+    # And the consequence that actually matters: this machine must clear the floor.
+    floor = max(
+        int(FAKE_TOTAL_RAM * job_guard.DEFAULT_MIN_AVAILABLE_FRACTION),
+        job_guard.MIN_AVAILABLE_FLOOR,
+    )
+    assert available > floor, (
+        f"a healthy machine reads as starved: {available / GIB:.2f} GB < "
+        f"{floor / GIB:.2f} GB floor — the guard would refuse every job"
+    )

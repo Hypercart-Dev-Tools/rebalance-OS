@@ -199,9 +199,13 @@ def total_memory_bytes() -> int:
 def available_memory_bytes() -> int:
     """Memory the OS could hand out without swapping. 0 when undeterminable.
 
-    On macOS this counts ONLY free pages. While inactive/speculative are reclaimable,
-    counting them can mask true memory pressure until the compressor is saturated.
-    Purgeable/compressed pages are also excluded.
+    On macOS this counts free + inactive + speculative pages, all of which the
+    kernel can reclaim without swapping. Compressed pages are excluded.
+
+    A healthy Mac routinely runs with very little *free* memory — the OS uses RAM
+    for cache and lists it as inactive — so free alone is not a usable proxy for
+    availability here. See the comment in the implementation for the measurement
+    that settled this, and for why compressor/swap are the better pressure signal.
     """
     if sys.platform == "darwin":
         try:
@@ -219,7 +223,25 @@ def available_memory_bytes() -> int:
             page_size = int(header.group(1))
 
         pages = 0
-        wanted = ("Pages free:",)  # explicitly exclude inactive/speculative under pressure
+        # GH-219 Lane 4: free-ONLY accounting was tried here and REVERTED, measured.
+        # The theory (counting inactive/speculative masks pressure until the
+        # compressor saturates) is reasonable, but the implementation made the guard
+        # refuse to start on a perfectly healthy machine: with free=1.59 GB,
+        # inactive=21.46 GB, speculative=0.93 GB — i.e. ~24 GB genuinely reclaimable —
+        # free-only reported 1.58 GB against a 7.68 GB floor, so EVERY guarded job
+        # was refused. A safety mechanism that blocks legitimate work is one that
+        # gets switched off.
+        #
+        # Changing this numerator requires re-tuning DEFAULT_MIN_AVAILABLE_FRACTION
+        # in the same edit; the two are one decision, not two.
+        #
+        # Whether this definition is *sufficient* is still UNSETTLED, and cannot be
+        # settled from existing data: sysmem-sys-*.csv never recorded inactive/
+        # speculative columns, so the 07-27 crisis cannot be replayed against it.
+        # What the CSV does show is that compressor_gb (25–34 GB at crisis vs low
+        # when healthy) and swap_used_gb discriminate cleanly — those are the better
+        # pressure signal, and adding them is follow-up work, not a tuning tweak.
+        wanted = ("Pages free:", "Pages inactive:", "Pages speculative:")
         for line in out.stdout.splitlines():
             for key in wanted:
                 if line.startswith(key):
