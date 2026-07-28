@@ -94,6 +94,45 @@ DEFAULT_MIN_AVAILABLE_FRACTION = 0.12
 #: Never let the available-memory floor drop below this absolute value.
 MIN_AVAILABLE_FLOOR = 4 * GIB
 
+#: Per-process ceiling override, in GB. The guard measures ``phys_footprint``
+#: (GH-219 Lane 4), so the setting is named for the metric it actually applies to.
+ENV_MAX_FOOTPRINT_GB = "REBALANCE_JOB_GUARD_MAX_FOOTPRINT_GB"
+
+#: Deprecated alias, kept working so existing plists and docs do not silently
+#: stop applying when the metric was renamed RSS -> phys_footprint. Honoured with
+#: a warning; the footprint-named variable wins when both are set.
+ENV_MAX_FOOTPRINT_GB_DEPRECATED = "REBALANCE_JOB_GUARD_MAX_RSS_GB"
+
+
+def env_max_footprint_gb(warn=None) -> float | None:
+    """Resolve the per-process ceiling from the environment, or ``None``.
+
+    Prefers :data:`ENV_MAX_FOOTPRINT_GB`; falls back to the deprecated
+    RSS-named alias. A non-numeric value is reported and ignored rather than
+    crashing the job it was meant to protect.
+    """
+    warn = warn or (lambda msg: print(f"[job-guard] {msg}", file=sys.stderr))
+
+    for name, deprecated in (
+        (ENV_MAX_FOOTPRINT_GB, False),
+        (ENV_MAX_FOOTPRINT_GB_DEPRECATED, True),
+    ):
+        raw = os.environ.get(name, "").strip()
+        if not raw:
+            continue
+        try:
+            value = float(raw)
+        except ValueError:
+            warn(f"ignoring non-numeric {name}={raw!r}")
+            continue
+        if deprecated:
+            warn(
+                f"{name} is deprecated (the guard measures phys_footprint, not RSS); "
+                f"use {ENV_MAX_FOOTPRINT_GB}"
+            )
+        return value
+    return None
+
 DEFAULT_POLL_SECONDS = 5.0
 DEFAULT_GRACE_SECONDS = 20.0
 
@@ -703,8 +742,11 @@ def run_guarded(
 
     started = time.monotonic()
     try:
+        # Explicit argument wins; otherwise fall back to the environment so a
+        # plist can raise the ceiling without a code change (GH-219 Lane 4).
+        effective_gb = max_footprint_gb or max_rss_gb or env_max_footprint_gb(warn=log)
         ceiling = MemoryCeiling(
-            max_footprint_bytes=int((max_footprint_gb or max_rss_gb) * GIB) if (max_footprint_gb or max_rss_gb) else None,
+            max_footprint_bytes=int(effective_gb * GIB) if effective_gb else None,
             min_available_bytes=int(min_available_gb * GIB) if min_available_gb else None,
             poll_seconds=poll_seconds,
             log=log,
