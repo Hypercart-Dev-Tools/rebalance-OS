@@ -40,6 +40,36 @@ def load_system_instructions() -> str:
     return instructions
 
 
+def _parse_model_json(inner: str) -> dict | None:
+    """Parse the model's reply as JSON, tolerating a markdown code fence.
+
+    Ollama's ``format: "json"`` is a request, not a guarantee — `gemma4:12b-mlx`
+    routinely answers with ```` ```json … ``` ```` anyway. The first live digest run
+    hit exactly this: a perfectly good ranked summary was discarded to the `raw`
+    branch and the operator's "summary" became the fenced blob verbatim.
+
+    This bug was latent in :func:`classify` since P5 and had never fired, because
+    nothing in 3-Eyes had ever called the model. Both callers share this helper so
+    it cannot be fixed in one and left broken in the other.
+
+    Returns the parsed object, or ``None`` when the reply genuinely is not JSON.
+    """
+    text = (inner or "").strip()
+    if text.startswith("```"):
+        # Drop the opening fence (with optional language tag) and any closing fence.
+        text = text.split("\n", 1)[-1] if "\n" in text else ""
+        if "```" in text:
+            text = text.rsplit("```", 1)[0]
+        text = text.strip()
+    if not text:
+        return None
+    try:
+        parsed = json.loads(text)
+    except (ValueError, TypeError):
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
 def _stub_classify(text: str) -> dict:
     """Deterministic offline classification for tests and dry-runs.
 
@@ -65,6 +95,85 @@ def _stub_classify(text: str) -> dict:
 def available() -> bool:
     """True when classification may proceed (active or stubbed)."""
     return config.three_eyes_active() or config.classify_stubbed()
+
+
+def _stub_digest(corpus: str) -> dict:
+    """Offline digest summary for tests and dry-runs. No network.
+
+    Mirrors the shape :func:`summarize_digest` returns so the caller's code path is
+    identical stubbed or live — the reason the classify path could sit unexercised
+    for weeks was that nothing ever ran it, and a stub that diverges from the real
+    thing just relocates that problem.
+    """
+    lines = [l for l in corpus.splitlines() if l.startswith("- ")]
+    failing = [l for l in lines if "FAIL" in l]
+    severity = "error" if failing else ("warn" if lines else "info")
+    head = (failing or lines or ["nothing notable"])[0].lstrip("- ").strip()
+    return {
+        "severity": severity,
+        "summary": f"{len(failing)} failing, {len(lines)} items; first: {head}"[:400],
+        "stub": True,
+    }
+
+
+def summarize_digest(corpus: str, model: str | None = None, timeout: float = 120.0) -> dict:
+    """Rank a whole day of fleet state into one operator-facing summary (P7a).
+
+    Distinct from :func:`classify`, which grades ONE finding into a severity. This
+    asks the model to trade off across everything at once: what broke, what matters,
+    what is known-benign. Same egress gate, same inert-by-default refusal, same
+    committed system instructions — only the task differs, so there is still exactly
+    one file in 3-Eyes that talks to a model.
+
+    The timeout is far longer than ``classify``'s: this prompt carries log tails and
+    a 12B local model on first load has to page ~10 GB in from disk. A 30 s ceiling
+    would fail every cold morning run and look like the model was broken.
+    """
+    if config.classify_stubbed():
+        return _stub_digest(corpus)
+    if not config.three_eyes_active():
+        return {"refused": True, "reason": "3-Eyes inert (no runtime.env / disabled)"}
+
+    try:
+        system_instructions = load_system_instructions()
+    except RuntimeError as exc:
+        return {"refused": True, "reason": str(exc)}
+
+    payload = json.dumps(
+        {
+            "model": model or config.config_value("THREE_EYES_MODEL", MODEL) or MODEL,
+            "system": system_instructions,
+            "prompt": (
+                "You are reviewing one day of scheduled-job state on a single Mac. "
+                "Rank what matters. Lead with anything genuinely broken and what it "
+                "blocks; then anything degraded; then explicitly say what looks alarming "
+                "but is known-benign, so the operator can skip it. Be concise and "
+                "concrete — name jobs and exit codes. If nothing is wrong, say so in one "
+                "line rather than padding.\n\n"
+                'Reply as JSON: {"severity": "info|warn|error|critical", "summary": "..."}.\n\n'
+                f"Fleet state:\n{corpus[:12000]}"
+            ),
+            "stream": False,
+            "format": "json",
+        }
+    ).encode()
+    req = urllib.request.Request(OLLAMA_URL, data=payload, headers={"Content-Type": "application/json"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - localhost only
+            body = json.loads(resp.read().decode())
+    except (OSError, ValueError) as exc:
+        return {"refused": True, "reason": f"ollama unreachable: {exc}"}
+
+    inner = body.get("response", "")
+    parsed = _parse_model_json(inner)
+    if parsed is None:
+        return {"severity": "info", "summary": str(inner)[:2000], "raw": True}
+    parsed.setdefault("severity", "info")
+    parsed.setdefault("summary", str(inner)[:2000])
+    # gemma volunteers `confidence` / `evidence` / `next_safe_step` beyond the two
+    # keys asked for. Keep them — the evidence list is the most operator-useful part
+    # of the reply, and discarding it would waste the call that produced it.
+    return parsed
 
 
 def classify(text: str, model: str | None = None, timeout: float = 30.0) -> dict:
@@ -104,9 +213,8 @@ def classify(text: str, model: str | None = None, timeout: float = 30.0) -> dict
         return {"refused": True, "reason": f"ollama unreachable: {exc}"}
 
     inner = body.get("response", "")
-    try:
-        parsed = json.loads(inner)
-    except (ValueError, TypeError):
+    parsed = _parse_model_json(inner)
+    if parsed is None:
         return {"severity": "info", "summary": str(inner)[:200], "raw": True}
     parsed.setdefault("severity", "info")
     parsed.setdefault("summary", str(inner)[:200])

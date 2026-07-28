@@ -1,0 +1,41 @@
+# 3-Eyes daily digest job (GH-195 P7a) — the first job that actually asks Gemma
+# a question.
+#
+# Sequenced first among the three Gemma surfaces because it depends on NOTHING:
+# it reads launchd exit codes, breaker state, the findings log, and log tails that
+# already exist on disk. The other two surfaces (P7b failure explainer, P7c findings
+# triage) need the collector-health observer to emit findings first; this one does
+# not, so the model stops being dead weight immediately.
+#
+# NOTE: top-level keys (id, command, routes, ...) MUST precede any [table] header —
+# in TOML a bare key after `[breakers]` would bind to that table, not the job.
+
+id = "daily-digest"
+command = "daily-digest"
+description = "Once-daily ranked report of what broke, what matters, and what to ignore across the whole fleet."
+enabled = true
+
+# notify = the operator sees the headline; log-only = the record survives the banner.
+# Deliberately NOT gh-issue: a digest that files an issue every morning is 365
+# issues a year, which is the duplicate-issue flood #139 was closed by deleting.
+# gh-issue belongs to the failure explainer (P7b), which fires on real breakage.
+routes = ["notify", "log-only"]
+
+[schedule.launchd]
+# 07:15 local — after the 06:30 daily-sync has finished, so the digest reports on a
+# completed night rather than a run still in flight.
+StartCalendarInterval = { Hour = 7, Minute = 15 }
+
+[rules]
+fire_when = "always"
+
+[breakers]
+single_instance = true
+max_rss_gb = 12          # the 12B model is ~10 GB resident when ollama loads it
+trip_after_failures = 3
+
+[relief]
+# One model call per run. The cap exists so the digest cannot silently consume the
+# same daily allowance P7b/P7c draw from.
+llm_daily_max = 8
+llm_per_run_max = 1

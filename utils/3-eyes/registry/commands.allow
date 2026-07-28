@@ -18,3 +18,8 @@ description = "Always-safe no-op used to prove the guarded run loop end-to-end."
 exec = ".venv/bin/python"
 args = ["scripts/health_issue_reporter.py", "--warn"]
 description = "Rebalance collector-health check (GitHub/Slack/Gmail/GCal/Zapier ingest freshness)."
+
+[commands.daily-digest]
+exec = ".venv/bin/python"
+args = ["-m", "three_eyes.digest"]
+description = "Rank the day's fleet state (launchd exits, breakers, findings, log tails) via the local model."
