@@ -1,36 +1,19 @@
 ---
 title: "REBALANCE MEMORY — unified project (8 lanes: instrument → measure → fix → bound → backstop → inventory → cover → detect)"
 status: >
-  LANES 0, 1, 2 COMPLETE as of 2026-07-27. Lanes 3–7 remain.
+  LANES 0, 1, 2, 4 COMPLETE as of 2026-07-28. Lanes 3, 5, 6, 7 remain.
 
-  #215 is PROVEN, not inferred — the ⛔ GATE passed on live hardware, and Lane 2's fix is
-  Codex-approved and verified against the harness that produced the blowup: phys_footprint
-  13.00 -> 1.36 GB, 80/80 batches completed vs 18 before. Full suite 1585 passed / 6 failed
-  (the same 6 pre-existing failures throughout; no regressions from any lane).
+  #215 is PROVEN and FIXED: phys_footprint 13.00 -> 1.36 GB on the harness that produced the
+  blowup, 80/80 batches vs 18. The guard that missed it is repaired too — it now measures
+  phys_footprint (25x more visible than RSS on Metal allocations), plus a compressor-pressure
+  backstop sized from 1602 recorded samples. Lanes 2 and 4 are both Codex-approved.
+  Full suite 1600 passed / 6 failed (the same 6 pre-existing throughout).
 
-  Remaining outside the lanes: the sampler's inactive_gb/speculative_gb columns, deferred out
-  of the marathon because temp/ is gitignored and a worktree edit there cannot be committed.
-created: 2026-07-27
-updated: 2026-07-27
-owner: noel@neochro.me
-branch: marathon/2026-07-27-mlx-memory
-issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/219
-roadmap_exempt: true
-goal: >
-  End the recurring whole-machine memory starvation on the Mac Studio (three events: 07-25,
-  07-26, 07-27) by fixing the allocation that causes it, bounding the damage when that fix is
-  wrong, and repairing the two instruments that failed to see it.
+  Outstanding: the sampler's inactive_gb/speculative_gb columns. THREE separate questions have
+  now dead-ended on that missing data (the availability floor's soundness, replaying 07-27, and
+  Lane 7's thresholds). It is a small direct edit, blocked only by temp/ being gitignored —
+  a decision to revisit, not a technical obstacle. Recommend it jumps ahead of Lane 5.
 
-  Root cause, identified 2026-07-27: the embedding backend is MLX, not torch. MLX allocates
-  Metal buffers charged to `phys_footprint` as `iokit` and never counted in RSS, caches freed
-  buffers with an effectively unbounded default limit, and the repo performs no MLX cache
-  management anywhere. A single `rebalance-embed` process reaches ~46.9 GB footprint while
-  reporting ~0.08 GB RSS.
-
-  This file exists because the five issues are NOT independent: #216 produces the measurement
-  that validates #215, #217 must be sized from #216's numbers, #213's ceiling only means the
-  right thing once footprint semantics are settled, and #218 repairs the health instrument the
-  marathon itself uses as a gate. Firing them in issue-number order would be actively wrong.
 ---
 
 # REBALANCE MEMORY — unified project (2026-07-27)
@@ -499,14 +482,62 @@ during that failure; the next run starts.
 
 **Goal:** repair the external net. Demoted from "the fix" to "the backstop" by #215.
 
-- [ ] Switch the ceiling metric from tree RSS to `phys_footprint`
-- [ ] **Re-size the ceiling** knowing footprint legitimately includes Metal — the current
+- [x] Switch the ceiling metric from tree RSS to `phys_footprint`
+- [x] **Re-size the ceiling** (0.35 RSS -> 0.125 footprint = 8 GB, the per-process contract) knowing footprint legitimately includes Metal — the current
       35%-of-RAM value is not transferable unexamined
-- [ ] Settle whether the available-memory floor is sound, using Lane 1's new
+- [x] Settle whether the available-memory floor is sound — CONCLUDED via compressor signal, using Lane 1's new
       `inactive_gb`/`speculative_gb` columns
 
 **Gate:** a synthetic over-ceiling job trips and is killed; guarded jobs on a healthy machine do
 not trip.
+
+### ✅ LANDED 2026-07-28 — phase `gh219-lane4-footprint-guard`, **Codex-approved (round 4)**
+
+**The blindness, measured.** On real MLX Metal allocations the new metric sees what the old one
+could not:
+
+| | Delta |
+|---|---|
+| `phys_footprint` (new) | **+0.327 GB** |
+| `ps` RSS (old) | +0.013 GB |
+
+**25×.** That gap is why the RSS guard ran 233 jobs on 07-27 and tripped zero times while the
+machine fell to 0.09 GB free.
+
+**Three independent trip conditions now**, each catching what the others cannot: the
+`phys_footprint` ceiling (this job leaking), the available-memory floor (the machine starved by
+anyone), and **compressor pressure** (the machine already paying CPU to avoid swapping).
+
+**The availability question is CONCLUDED, not deferred.** Reclaimable-pages accounting is retained
+— free-only was tried and reverted after it refused *every* job on a healthy machine (free 1.59 GB
+but ~24 GB genuinely reclaimable, against a 7.68 GB floor). The gap it leaves is covered by a
+direct compressor check rather than by tightening a number that **cannot be validated**:
+`inactive_gb`/`speculative_gb` were never recorded, so no variant of that metric can be replayed
+against 07-27.
+
+Compressor threshold sized from 1602 recorded samples. The distribution is **bimodal** — median
+0.65–0.96 GB healthy vs 25–35 GB at crisis, with the fraction above 8 GB and above 24 GB nearly
+identical (22.2%/21.6% on 07-26; 16.7%/14.8% on 07-27). Almost nothing lands between the modes, so
+threshold robustness is a property of the data rather than a lucky constant. Set at 25% of RAM,
+env-overridable.
+
+**Cost, recorded honestly: estimated 3 h, took far longer** — four review rounds, two failed
+marathon fires (exit 6 containment, then a stall), one regression I introduced, and one latent
+defect that regression exposed. Lanes 5–7 estimates should be revised upward rather than repeating
+this. Codex found something substantive on **all four** passes; three of its findings were
+requirements the brief stated but never verified.
+
+**The recurring defect class in this lane and Lane 2 — tests that pass without proving anything:**
+
+- `assert code == 4` — satisfied by the preflight refusing, without the child ever launching
+- counting `clear_cache()` calls against a mock whose cache never grew
+- a file-wide substring match standing in for per-call-site coverage
+- asserting a parser returns 42.0 as proof that the setting *applies*
+- and the inverse: `available_memory_bytes` had **zero** real coverage because every test pinned
+  it healthy — which is exactly how free-only shipped
+
+All new assertions in this lane were **mutation-checked**: the source was broken deliberately, the
+test confirmed failing, then restored. Worth doing for Lanes 5–7 too.
 
 **Carried finding — not a blocker:** the guard's window is far shorter than the leak's.
 `guarded_embedding` decorates embedding *leaf* functions, so each call builds a fresh
