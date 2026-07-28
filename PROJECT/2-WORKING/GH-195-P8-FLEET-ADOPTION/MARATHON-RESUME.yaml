@@ -28,16 +28,12 @@
 # `sync-dashboard` to be regenerated and committed. It is deliberately ABSENT from
 # wave3's, whose brief requires DASHBOARD.md to be unchanged — leaving it off the
 # allowlist makes containment enforce that requirement instead of merely stating it.
-name: gh195-p8-fleet-adoption
-
+# RESUME plan. p8-hygiene is approved (MARATHON-P8-HYGIENE-TURN status=done) and is
+# omitted — a spent token cannot be reclaimed. p8-wave1's token was spent by the
+# containment escalation, so it needs `--retry p8-wave1`; wave2/wave3/cutover tokens
+# were never seeded and keep their original ids.
+name: gh195-p8-fleet-adoption-resume
 phases:
-  - id: p8-hygiene
-    name: Catalog hygiene — retire the deleted, classify the unknown
-    reviewer: agy
-    brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p1-hygiene.md
-    artifact: utils/3-eyes/registry/catalog-notes.toml,utils/3-eyes/tests/test_catalog_health.py
-    turn_timeout_s: 900
-    max_review_rounds: 2
 
   - id: p8-wave1
     name: Wave 1 — the collectors that actually break
@@ -45,7 +41,6 @@ phases:
     brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p2-wave1.md
     artifact: utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md
     turn_timeout_s: 1200
-    depends_on: p8-hygiene
     max_review_rounds: 3
 
   - id: p8-wave2
