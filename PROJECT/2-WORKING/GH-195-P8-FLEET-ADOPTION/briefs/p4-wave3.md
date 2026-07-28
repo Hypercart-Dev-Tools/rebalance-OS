@@ -74,3 +74,31 @@ what the schema actually supports, and say which in your turn.
 - **No absolute machine-specific path may enter a committed file.** This is the one that
   breaks other clones, and a test must enforce it.
 - Do not modify Wave 1 or Wave 2 files.
+
+## Containment: your filenames are FIXED
+
+The relay containment guard matches allowlisted paths by **exact string**, not by
+directory prefix. Any file you create outside the exact list below is treated as an
+off-lane edit: your entire turn is discarded and fails with exit 6, however good the
+work is. This already happened three times on this phase — the work was correct each
+time and thrown away each time.
+
+Create/modify **only** these paths:
+
+- `utils/3-eyes/registry/jobs.local.d/prompt-log-to-md.toml`
+- `utils/3-eyes/registry/jobs.local.d/ga-pull-binoid.toml`
+- `utils/3-eyes/registry/jobs.local.d/ga-pull-bloomz.toml`
+- `utils/3-eyes/registry/jobs.local.d/ga-pull-bounce.toml`
+- `utils/3-eyes/registry/jobs.local.d/hq-rollup.toml`
+- `utils/3-eyes/registry/jobs.local.d/servers-monitor.toml`
+- `utils/3-eyes/registry/jobs.local.d/git-pulse.toml`
+- `utils/3-eyes/registry/jobs.local.d/hq-marathon-scan.toml`
+- `utils/3-eyes/registry/commands.local.allow.example`
+- `utils/3-eyes/tests/test_adoption_wave3.py`
+
+If the work genuinely requires a file that is not on that list, **do not create it**.
+Say so in your turn block and hand back — a turn that reports a blocked requirement is
+useful; a turn that gets discarded is not.
+
+Also: `.pytest_cache/` and `.coverage` are now gitignored, so running the test suite is
+safe. Do not create scratch files, notes, or scripts anywhere in the tree.

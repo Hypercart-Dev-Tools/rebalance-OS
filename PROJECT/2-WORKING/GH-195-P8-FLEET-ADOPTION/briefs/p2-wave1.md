@@ -85,3 +85,30 @@ suppression rule for it — `known_issues.toml` deliberately does not suppress
 - If something in the schema cannot express a live plist faithfully, STOP and say so in
   your turn rather than approximating. An adoption that silently changes a schedule is
   worse than no adoption.
+
+## Containment: your filenames are FIXED
+
+The relay containment guard matches allowlisted paths by **exact string**, not by
+directory prefix. Any file you create outside the exact list below is treated as an
+off-lane edit: your entire turn is discarded and fails with exit 6, however good the
+work is. This already happened three times on this phase — the work was correct each
+time and thrown away each time.
+
+Create/modify **only** these paths:
+
+- `utils/3-eyes/registry/jobs.d/daily-sync.toml`
+- `utils/3-eyes/registry/jobs.d/github-sync.toml`
+- `utils/3-eyes/registry/jobs.d/vault-sync.toml`
+- `utils/3-eyes/registry/jobs.d/health-check.toml`
+- `utils/3-eyes/registry/jobs.d/health-check-triage.toml`
+- `utils/3-eyes/registry/jobs.d/collector-health.toml`
+- `utils/3-eyes/registry/commands.allow`
+- `utils/3-eyes/tests/test_adoption_wave1.py`
+- `utils/3-eyes/DASHBOARD.md`
+
+If the work genuinely requires a file that is not on that list, **do not create it**.
+Say so in your turn block and hand back — a turn that reports a blocked requirement is
+useful; a turn that gets discarded is not.
+
+Also: `.pytest_cache/` and `.coverage` are now gitignored, so running the test suite is
+safe. Do not create scratch files, notes, or scripts anywhere in the tree.

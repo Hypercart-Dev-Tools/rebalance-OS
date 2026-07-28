@@ -1,3 +1,11 @@
+# CONTAINMENT NOTE — allowlist entries must be CONCRETE FILE PATHS, never directories.
+# rtl_in_allow() does exact string matching. A bare directory entry such as
+# `utils/3-eyes/registry/jobs.d` does NOT match a new file `.../jobs.d/daily-sync.toml`:
+# git porcelain reports the new file individually (the collapsed `dir/` form only appears
+# when the whole directory is untracked, and even then the allowlist must contain a
+# concrete descendant). That mismatch cost THREE consecutive exit-6 containment failures
+# on 2026-07-28 — codex's work was correct every time and discarded every time, because
+# the .toml files it was asked to create could never match a directory entry.
 # GH-195 P8 — fleet adoption, all 19 real targets in waves.
 #
 # Scope boundary, and it is the important line in this file: every phase here AUTHORS
@@ -43,7 +51,7 @@ phases:
     name: Wave 1 — the collectors that actually break
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p2-wave1.md
-    artifact: utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md
+    artifact: utils/3-eyes/registry/jobs.d/daily-sync.toml,utils/3-eyes/registry/jobs.d/github-sync.toml,utils/3-eyes/registry/jobs.d/vault-sync.toml,utils/3-eyes/registry/jobs.d/health-check.toml,utils/3-eyes/registry/jobs.d/health-check-triage.toml,utils/3-eyes/registry/jobs.d/collector-health.toml,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py,utils/3-eyes/DASHBOARD.md
     turn_timeout_s: 1200
     depends_on: p8-hygiene
     max_review_rounds: 3
@@ -52,7 +60,7 @@ phases:
     name: Wave 2 — pulse and obsidian
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p3-wave2.md
-    artifact: utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave2.py,utils/3-eyes/DASHBOARD.md
+    artifact: utils/3-eyes/registry/jobs.d/pulse-sync.toml,utils/3-eyes/registry/jobs.d/pulse-web-sync.toml,utils/3-eyes/registry/jobs.d/pulse-warning-watch.toml,utils/3-eyes/registry/jobs.d/obsidian-daily-sync.toml,utils/3-eyes/registry/jobs.d/obsidian-rollover.toml,utils/3-eyes/registry/jobs.d/stickies2obsidian.toml,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave2.py,utils/3-eyes/DASHBOARD.md
     turn_timeout_s: 1200
     depends_on: p8-wave1
     max_review_rounds: 2
@@ -61,7 +69,7 @@ phases:
     name: Wave 3 — machine-local jobs in the gitignored overlay
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p4-wave3.md
-    artifact: utils/3-eyes/registry/jobs.local.d,utils/3-eyes/registry/commands.local.allow.example,utils/3-eyes/tests/test_adoption_wave3.py
+    artifact: utils/3-eyes/registry/jobs.local.d/prompt-log-to-md.toml,utils/3-eyes/registry/jobs.local.d/ga-pull-binoid.toml,utils/3-eyes/registry/jobs.local.d/ga-pull-bloomz.toml,utils/3-eyes/registry/jobs.local.d/ga-pull-bounce.toml,utils/3-eyes/registry/jobs.local.d/hq-rollup.toml,utils/3-eyes/registry/jobs.local.d/servers-monitor.toml,utils/3-eyes/registry/jobs.local.d/git-pulse.toml,utils/3-eyes/registry/jobs.local.d/hq-marathon-scan.toml,utils/3-eyes/registry/commands.local.allow.example,utils/3-eyes/tests/test_adoption_wave3.py
     turn_timeout_s: 1200
     depends_on: p8-wave2
     max_review_rounds: 2

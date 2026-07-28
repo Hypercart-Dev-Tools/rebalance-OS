@@ -55,3 +55,30 @@ the kind of thing to verify rather than assume.
 - **No `launchctl`. No `three_eyes install`. No writes to `~/Library/LaunchAgents`.**
 - Schedules reproduce the live plists exactly — 36 calendar entries stay 36 entries.
 - Do not modify Wave 1's files. If you find a Wave 1 defect, report it in your turn.
+
+## Containment: your filenames are FIXED
+
+The relay containment guard matches allowlisted paths by **exact string**, not by
+directory prefix. Any file you create outside the exact list below is treated as an
+off-lane edit: your entire turn is discarded and fails with exit 6, however good the
+work is. This already happened three times on this phase — the work was correct each
+time and thrown away each time.
+
+Create/modify **only** these paths:
+
+- `utils/3-eyes/registry/jobs.d/pulse-sync.toml`
+- `utils/3-eyes/registry/jobs.d/pulse-web-sync.toml`
+- `utils/3-eyes/registry/jobs.d/pulse-warning-watch.toml`
+- `utils/3-eyes/registry/jobs.d/obsidian-daily-sync.toml`
+- `utils/3-eyes/registry/jobs.d/obsidian-rollover.toml`
+- `utils/3-eyes/registry/jobs.d/stickies2obsidian.toml`
+- `utils/3-eyes/registry/commands.allow`
+- `utils/3-eyes/tests/test_adoption_wave2.py`
+- `utils/3-eyes/DASHBOARD.md`
+
+If the work genuinely requires a file that is not on that list, **do not create it**.
+Say so in your turn block and hand back — a turn that reports a blocked requirement is
+useful; a turn that gets discarded is not.
+
+Also: `.pytest_cache/` and `.coverage` are now gitignored, so running the test suite is
+safe. Do not create scratch files, notes, or scripts anywhere in the tree.

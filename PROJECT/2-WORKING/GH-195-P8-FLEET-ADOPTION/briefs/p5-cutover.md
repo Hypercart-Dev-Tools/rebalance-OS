@@ -78,3 +78,24 @@ The operator-facing runbook. Written for someone doing this at their desk, awake
 - If you conclude the cutover cannot be made safe for some job, say so in the runbook and
   exclude it with reasons. An honest "do not adopt this one yet" is a better deliverable
   than a plan that pretends a risk away.
+
+## Containment: your filenames are FIXED
+
+The relay containment guard matches allowlisted paths by **exact string**, not by
+directory prefix. Any file you create outside the exact list below is treated as an
+off-lane edit: your entire turn is discarded and fails with exit 6, however good the
+work is. This already happened three times on this phase — the work was correct each
+time and thrown away each time.
+
+Create/modify **only** these paths:
+
+- `PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/CUTOVER.md`
+- `utils/3-eyes/three_eyes/cutover.py`
+- `utils/3-eyes/tests/test_cutover_plan.py`
+
+If the work genuinely requires a file that is not on that list, **do not create it**.
+Say so in your turn block and hand back — a turn that reports a blocked requirement is
+useful; a turn that gets discarded is not.
+
+Also: `.pytest_cache/` and `.coverage` are now gitignored, so running the test suite is
+safe. Do not create scratch files, notes, or scripts anywhere in the tree.
