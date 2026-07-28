@@ -144,6 +144,19 @@ Targeted verification was attempted with the phase-specified command, but this w
 
 **Verdict:** Changes requested
 
+### Round 3 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+The focused acceptance command now passes with **38 passed**:
+`python3 -m pytest tests/test_job_guard_wiring.py tests/test_watchlist_guard.py tests/test_job_guard_footprint.py -q`.
+
+1. The available-memory requirement is still not settled. `available_memory_bytes()` retains the original `free + inactive + speculative` numerator, but its new implementation comment explicitly says “Whether this definition is *sufficient* is still UNSETTLED.” The phase requires a concluded definition/floor decision: either make the guard use a pressure signal that catches the 07-27 condition, or explicitly retain the reclaimable-pages definition with a defensible, final rationale and an appropriate regression test. Do not leave the core safety decision marked unresolved.
+2. The deprecated environment-variable requirement is only tested by calling `env_max_footprint_gb()` directly. Add a behavior-level test that sets `REBALANCE_JOB_GUARD_MAX_RSS_GB`, invokes the guarded wrapper path (with the ceiling constructor or child execution safely mocked), and asserts that it receives the resulting footprint ceiling. This proves the alias actually applies, rather than merely that its parsing helper returns a value.
+3. Clean up the remaining RSS-era descriptions in `utils/job_guard.py` (the module overview, `MemoryCeilingExceeded`, and the `MemoryCeiling` trip-condition documentation). They now misdescribe the metric that the guard measures and can steer future changes back toward RSS semantics.
+
+**Verdict:** Changes requested
+
 ### Round 2 · Builder · agy
 
 **Files Touched:**
