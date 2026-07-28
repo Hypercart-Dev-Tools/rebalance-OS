@@ -18,10 +18,16 @@
 # Builder is codex (the --builder default, cost-blind), so every reviewer must be agy —
 # marathon-drive refuses a phase where builder and reviewer are the same agent id, and
 # the dry-run caught exactly that on the first attempt.
+# Phase ids are PLAN-SCOPED, not generic p1..p5. The tick token is named
+# MARATHON-<ID>-TURN from the phase id ALONE — not the plan name — so a plan using
+# `p1` collides with the spent token of every earlier marathon in this repo. That is
+# exactly how the first attempt halted: MARATHON-P1-TURN was already open and reserved
+# for 'claude' from a prior run, and a spent token cannot be reclaimed. Earlier plans
+# here used `clio-p1` / `gh135-p1` for the same reason.
 name: gh195-p8-fleet-adoption
 
 phases:
-  - id: p1
+  - id: p8-hygiene
     name: Catalog hygiene — retire the deleted, classify the unknown
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p1-hygiene.md
@@ -29,38 +35,38 @@ phases:
     turn_timeout_s: 900
     max_review_rounds: 2
 
-  - id: p2
+  - id: p8-wave1
     name: Wave 1 — the collectors that actually break
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p2-wave1.md
     artifact: utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave1.py
     turn_timeout_s: 1200
-    depends_on: p1
+    depends_on: p8-hygiene
     max_review_rounds: 3
 
-  - id: p3
+  - id: p8-wave2
     name: Wave 2 — pulse and obsidian
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p3-wave2.md
     artifact: utils/3-eyes/registry/jobs.d,utils/3-eyes/registry/commands.allow,utils/3-eyes/tests/test_adoption_wave2.py
     turn_timeout_s: 1200
-    depends_on: p2
+    depends_on: p8-wave1
     max_review_rounds: 2
 
-  - id: p4
+  - id: p8-wave3
     name: Wave 3 — machine-local jobs in the gitignored overlay
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p4-wave3.md
     artifact: utils/3-eyes/registry/jobs.local.d,utils/3-eyes/registry/commands.local.allow.example,utils/3-eyes/tests/test_adoption_wave3.py
     turn_timeout_s: 1200
-    depends_on: p3
+    depends_on: p8-wave2
     max_review_rounds: 2
 
-  - id: p5
+  - id: p8-cutover
     name: Cutover runbook and dry-run tooling (authors only; performs nothing)
     reviewer: agy
     brief: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/briefs/p5-cutover.md
     artifact: PROJECT/2-WORKING/GH-195-P8-FLEET-ADOPTION/CUTOVER.md,utils/3-eyes/three_eyes/cutover.py,utils/3-eyes/tests/test_cutover_plan.py
     turn_timeout_s: 1200
-    depends_on: p4
+    depends_on: p8-wave3
     max_review_rounds: 2
