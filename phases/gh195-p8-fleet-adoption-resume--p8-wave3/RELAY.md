@@ -1,5 +1,5 @@
 # Marathon Phase p8-wave3
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-P8-WAVE3-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -160,3 +160,15 @@ Focused verification: `PYTHONPATH=utils/3-eyes python3 -m pytest
 utils/3-eyes/tests/test_adoption_wave3.py -q` — 4 passed. The repository-root
 `.venv/bin/python` is absent in this worktree; the available interpreter is the
 configured backup virtual environment.
+
+### Round 1 · Reviewer · agy
+
+Verified all constraints and requirements from the phase brief:
+- The eight jobs were placed in `jobs.local.d/`.
+- `commands.local.allow.example` was updated with the required local commands, and no machine-specific paths were leaked (they use `/ABSOLUTE/PATH/`).
+- `hq-rollup` retains its `-l` login shell wrapper correctly.
+- Three separate `ga-pull-*` commands were provided to handle the fixed arguments cleanly.
+- Tests verify all properties including local-only placement, correct launchd schedules, and no dashboard drift.
+- All tests pass locally.
+
+**Verdict:** Approved
