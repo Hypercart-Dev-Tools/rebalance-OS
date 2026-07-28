@@ -45,11 +45,15 @@ for cand in "$repo_root/.venv/bin/python" python3.13 python3.12 python3.11 pytho
     /bin/sleep 1 || true
     status=0; probe "$cand" || status=$?
   fi
-  case "$status" in
-    0)          py="$cand"; break ;;
-    126|127|1??) transient=1 ;;    # still could not execute — remember, keep looking
-    *)          : ;;               # ran and lacks tomllib — a real, permanent answer
-  esac
+  # Integer comparison, NOT a glob (agy review, P6 QA finding 2). `126|127|1??`
+  # looked right because signal deaths land in 128-159, but `1??` matches exactly
+  # three characters starting with 1 — so a 255 (bash's out-of-range exit) fell
+  # through to "permanent" and would have been reported as a missing interpreter.
+  if [ "$status" -eq 0 ]; then
+    py="$cand"; break
+  elif [ "$status" -ge 126 ]; then
+    transient=1                    # still could not execute — remember, keep looking
+  fi                               # else: ran and lacks tomllib — permanent, real answer
 done
 
 if [ -z "$py" ]; then

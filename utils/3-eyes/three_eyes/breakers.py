@@ -179,12 +179,20 @@ class FailureBreaker:
             node = self._job(state, job_id)
             if ok:
                 node["consecutive_failures"] = 0
-                node["quarantined"] = False
-                # A success closes the breaker completely: clear the half-open
-                # bookkeeping too, or the next trip would inherit a stale
-                # (already doubled) cooldown from a previous episode.
-                for key in ("quarantined_at", "cooldown_seconds", "probe_at", "skip_notice_at"):
-                    node.pop(key, None)
+                # An OPERATOR PAUSE outranks a successful run (agy review, P6 QA
+                # finding 1b). Without this guard: a job is running, the operator
+                # pauses it mid-flight, the run then succeeds, and `record` clears
+                # `quarantined` while leaving `paused` set — `is_open` reads only
+                # `quarantined`, so the next wake runs a job the operator had
+                # explicitly stopped. Only `reset()` may lift a pause.
+                if not node.get("paused"):
+                    node["quarantined"] = False
+                    # A success closes the breaker completely: clear the half-open
+                    # bookkeeping too, or the next trip would inherit a stale
+                    # (already doubled) cooldown from a previous episode.
+                    for key in ("quarantined_at", "cooldown_seconds", "probe_at",
+                                "skip_notice_at"):
+                        node.pop(key, None)
             else:
                 node["consecutive_failures"] = int(node.get("consecutive_failures", 0)) + 1
             node["last"] = "ok" if ok else "fail"
@@ -241,6 +249,12 @@ class FailureBreaker:
             node["last"] = "deferred"
             node["last_deferred_code"] = int(code)
             node["deferred_runs"] = int(node.get("deferred_runs", 0)) + 1
+            # RELEASE AN UNUSED PROBE CLAIM (agy review, P6 QA finding 5). If this
+            # run was the half-open probe and it never actually executed, the claim
+            # must go back — otherwise a deferral silently costs the job a whole
+            # cooldown of recovery time. That is the same "a busy machine punished a
+            # healthy job" mistake P6 exists to fix, reintroduced one level up.
+            node.pop("probe_at", None)
             _atomic_write(_state_path(), state)
 
     def claim_probe(self, job_id: str, now: float | None = None) -> bool:
@@ -264,7 +278,18 @@ class FailureBreaker:
                 float(node.get("quarantined_at") or 0.0),
                 float(node.get("probe_at") or 0.0),
             )
-            if since <= 0.0 or now - since < cooldown:
+            # NO CLOCK AT ALL = a breaker latched by the PRE-P6 code, which never
+            # recorded one (agy review, P6 QA finding 6). Refusing here would strand
+            # precisely the jobs this phase exists to rescue — skill-sync sat dead
+            # for a day in exactly this state. Grant the probe immediately: such a
+            # quarantine necessarily predates this deploy, so its cooldown is long
+            # since served.
+            if since <= 0.0:
+                node["probe_at"] = now
+                node.setdefault("cooldown_seconds", DEFAULT_COOLDOWN_SECONDS)
+                _atomic_write(_state_path(), state)
+                return True
+            if now - since < cooldown:
                 return False
             node["probe_at"] = now
             _atomic_write(_state_path(), state)

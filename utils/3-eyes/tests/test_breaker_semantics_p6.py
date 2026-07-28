@@ -401,3 +401,105 @@ def test_shim_selects_the_repo_venv_when_it_works():
         capture_output=True, text=True,
     )
     assert proc.returncode == 0, proc.stderr
+
+
+# --------------------------------------------------------------------------- #
+# 5. Defects found by the agy QA relay (2026-07-28) — regression locks
+# --------------------------------------------------------------------------- #
+
+def test_a_successful_run_does_not_lift_an_OPERATOR_pause():
+    """QA finding 1b: a pause must outrank a success.
+
+    Sequence: the job is already running when the operator pauses it, then the run
+    succeeds. `record(ok=True)` cleared `quarantined` while leaving `paused` set,
+    and `is_open()` reads only `quarantined` — so the next wake ran a job the
+    operator had explicitly stopped. Only `reset()` may lift a pause.
+    """
+    breaker = breakers.FailureBreaker()
+    breaker.quarantine("selfcheck", reason="operator paused")
+
+    breaker.record("selfcheck", ok=True, trip_after=3)
+
+    assert breaker.is_open("selfcheck") is True, "a successful run lifted an operator pause"
+    assert breaker.status("selfcheck")["paused"] is True
+
+    breaker.reset("selfcheck")                    # the ONLY sanctioned way out
+    assert breaker.is_open("selfcheck") is False
+
+
+def test_a_deferred_probe_does_not_burn_the_probe_slot():
+    """QA finding 5: a probe that never ran must not cost a full cooldown.
+
+    The job claims its half-open probe, then the guard refuses to start it — so
+    nothing executed. Leaving `probe_at` set meant the next wake measured against
+    it and waited another full cooldown. That is P6's own thesis ("a busy machine
+    must not punish a healthy job") violated one level up.
+    """
+    breaker = _open_breaker()
+    status = breaker.status("selfcheck")
+    due = status["quarantined_at"] + status["cooldown_seconds"] + 1
+    assert breaker.claim_probe("selfcheck", now=due) is True
+
+    breaker.record_deferred("selfcheck", breakers.job_guard.EXIT_REFUSED_TO_START)
+
+    assert "probe_at" not in breaker.status("selfcheck"), "the unused probe claim was not released"
+    assert breaker.claim_probe("selfcheck", now=due + 1) is True, (
+        "a deferral cost the job a whole cooldown of recovery time"
+    )
+
+
+def test_a_pre_P6_quarantine_is_rescued_not_stranded():
+    """QA finding 6: state latched by the old code has no retry clock.
+
+    Pre-P6 `breakers.json` records `quarantined: true` with no `quarantined_at` and
+    no `cooldown_seconds`. Refusing the probe when `since <= 0` would strand exactly
+    the jobs P6 was written to rescue — skill-sync sat dead for a day in this state.
+    """
+    import json
+    path = breakers._state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "selfcheck": {"consecutive_failures": 3, "last": "fail", "quarantined": True}
+    }))
+
+    breaker = breakers.FailureBreaker()
+    assert breaker.is_open("selfcheck") is True
+    assert breaker.claim_probe("selfcheck") is True, "a pre-P6 quarantine was stranded forever"
+    # And it must now carry a clock, so it behaves like any other episode afterwards.
+    after = breaker.status("selfcheck")
+    assert after["probe_at"] > 0
+    assert after["cooldown_seconds"] == breakers.DEFAULT_COOLDOWN_SECONDS
+    assert breaker.claim_probe("selfcheck") is False, "the rescue granted more than one probe"
+
+
+def test_a_pre_P6_state_that_is_PAUSED_is_still_not_rescued():
+    """The rescue must not resurrect an operator pause that predates P6 either."""
+    import json
+    path = breakers._state_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({
+        "selfcheck": {"consecutive_failures": 0, "quarantined": True, "paused": True}
+    }))
+    assert breakers.FailureBreaker().claim_probe("selfcheck") is False
+
+
+def test_shim_defers_on_an_out_of_range_exit_status(tmp_path):
+    """QA finding 2: 255 is not "the interpreter lacks tomllib".
+
+    The old `126|127|1??` glob matched exactly three characters starting with 1, so
+    it covered signal deaths (128-159) but let 255 — what bash reports for an
+    out-of-range exit — fall through to the permanent branch.
+    """
+    assert _run_shim(tmp_path, probe_exit=255) == 75
+
+
+def test_deferred_exit_codes_cannot_silently_diverge_from_job_guard():
+    """QA finding 4: the literal fallback in breakers.py is unreachable today.
+
+    `run_job_command` raises if job_guard is missing, so the `frozenset({3, 75})`
+    default never faces a real exit code. Keeping a hand-copied mirror of another
+    module's constants is still a divergence risk, so pin them equal here — if the
+    guard's codes change and the fallback does not, this fails instead of rotting.
+    """
+    assert breakers.DEFERRED_EXIT_CODES == breakers.job_guard.DEFERRED_EXIT_CODES
+    assert breakers.DEFERRED_EXIT_CODES == frozenset({3, 75})
