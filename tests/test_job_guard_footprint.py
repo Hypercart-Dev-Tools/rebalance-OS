@@ -103,6 +103,41 @@ def test_over_ceiling_trips_and_child_is_reaped(isolated_guard, monkeypatch):
     assert not _pid_alive(captured["pid"]), "child survived the ceiling trip"
 
 
+def test_preflight_refusal_has_its_own_exit_code(isolated_guard, monkeypatch):
+    """1b. "Refused to start" and "tripped mid-run" must be distinguishable.
+
+    Both were exit 4 until GH-195 P6, which is exactly the ambiguity the test above
+    has to work around with a liveness check. A caller could not tell "the machine
+    was busy, nothing ran" from "this job blew its budget and was killed" — so a
+    supervisor counting non-zero exits as failures quarantined healthy jobs during
+    unrelated memory pressure. The preflight now returns EX_TEMPFAIL (75).
+    """
+    script = isolated_guard / "noop.py"
+    script.write_text("pass\n", encoding="utf-8")
+
+    launched: list[int] = []
+    real_popen = subprocess.Popen
+    monkeypatch.setattr(
+        subprocess, "Popen",
+        lambda *a, **k: (lambda p: (launched.append(p.pid), p)[1])(real_popen(*a, **k)),
+    )
+    # Starve the machine so the availability preflight refuses.
+    monkeypatch.setattr(job_guard, "available_memory_bytes", lambda: 1 * GIB)
+
+    code = job_guard.run_guarded(
+        name="test-preflight-refusal",
+        argv=[sys.executable, str(script)],
+        max_footprint_gb=8.0,
+        min_available_gb=16.0,
+        poll_seconds=0.1,
+    )
+
+    assert code == job_guard.EXIT_REFUSED_TO_START
+    assert code != job_guard.EXIT_CEILING_TRIPPED, "refusal must not masquerade as a trip"
+    assert not launched, "the child launched despite the preflight refusing"
+    assert code in job_guard.DEFERRED_EXIT_CODES
+
+
 def test_healthy_footprint_does_not_trip(isolated_guard, monkeypatch):
     """2. A process at a healthy footprint does not trip."""
     monkeypatch.setattr(

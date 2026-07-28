@@ -44,9 +44,18 @@ the whole child process tree::
 Exit codes in wrapper mode:
     0    child exited 0
     3    another instance holds the lock (``--on-conflict refuse``)
-    4    memory ceiling tripped; the job was terminated
+    4    memory ceiling tripped MID-RUN; the child launched and was terminated
+    75   refused to start: the machine was already starved (child NEVER launched)
     143  evicted by a later ``--on-conflict replace`` run (child tree reaped)
     else the child's own exit status
+
+3 and 75 both mean *deferred* — nothing ran and nothing is broken, so a supervisor
+must not count them as job failures. 4 means the job actually misbehaved. These
+were both 4 until GH-195 P6, which made them indistinguishable to a caller: three
+"machine was busy" refusals silently latched a 3-Eyes circuit breaker and killed a
+healthy job for a day. 75 is ``EX_TEMPFAIL`` from ``sysexits.h`` — "temporary
+failure, the user is invited to retry" — chosen over a low number because it is far
+less likely to collide with a real child's exit status.
 
 Installed on the embedding path as of GH-172. #174 landed this module with zero
 callers; the wiring followed once attribution was resolved. The 45 GB belonged to
@@ -124,6 +133,19 @@ DEFAULT_MAX_COMPRESSOR_FRACTION = 0.25
 
 #: Override for the compressor pressure ceiling, in GB.
 ENV_MAX_COMPRESSOR_GB = "REBALANCE_JOB_GUARD_MAX_COMPRESSOR_GB"
+
+#: Wrapper-mode exit codes. Named so a supervisor can branch on *why* a run did
+#: not succeed instead of pattern-matching integers. The distinction that matters:
+#: CONFLICT and REFUSED are **deferred** (nothing ran, nothing is broken, retry
+#: later is correct), while CEILING is a real failure (the job launched and blew
+#: its budget). Conflating the two is GH-195 P6's root cause.
+EXIT_INSTANCE_CONFLICT = 3
+EXIT_CEILING_TRIPPED = 4
+EXIT_REFUSED_TO_START = 75          # EX_TEMPFAIL
+
+#: The codes that mean "did not run; not the job's fault". Supervisors should
+#: leave their failure counters untouched for these.
+DEFERRED_EXIT_CODES = frozenset({EXIT_INSTANCE_CONFLICT, EXIT_REFUSED_TO_START})
 
 #: Per-process ceiling override, in GB. The guard measures ``phys_footprint``
 #: (GH-219 Lane 4), so the setting is named for the metric it actually applies to.
@@ -857,7 +879,7 @@ def run_guarded(
         lock.acquire(on_conflict=on_conflict, replace_grace=grace_seconds)
     except InstanceConflict as exc:
         log(str(exc))
-        return 3
+        return EXIT_INSTANCE_CONFLICT
 
     started = time.monotonic()
     try:
@@ -873,8 +895,10 @@ def run_guarded(
         try:
             ceiling.preflight()
         except MemoryCeilingExceeded as exc:
+            # Distinct from the mid-run trip below: the child never launched, so
+            # this is "come back later", not "this job is broken" (GH-195 P6).
             log(str(exc))
-            return 4
+            return EXIT_REFUSED_TO_START
 
         log(
             f"starting {name!r}: footprint ceiling {_fmt_gb(ceiling.max_footprint or 0)}, "
@@ -915,7 +939,7 @@ def run_guarded(
 
         log(f"{name!r} finished with exit {code}; peak tree footprint {_fmt_gb(ceiling.peak_footprint)}")
         record_peak_footprint(name, ceiling, started=started, exit_code=code)
-        return 4 if ceiling.tripped_reason else code
+        return EXIT_CEILING_TRIPPED if ceiling.tripped_reason else code
     finally:
         lock.release()
 

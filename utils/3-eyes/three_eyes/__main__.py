@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 
 from . import breakers, catalog, config, dashboard, health, launchd, registry, relief, routes, run
 
@@ -39,10 +40,34 @@ def _cmd_status(_args) -> int:
     print(dashboard.render_live())
     print()
     print("Breakers:")
+    now = time.time()
     for job in registry.load_jobs():
         st = breaker.status(job.id)
         state = "OPEN" if st.get("quarantined") else "closed"
-        print(f"  {job.id:<28} {state:<7} fails={st.get('consecutive_failures', 0)}")
+        line = f"  {job.id:<28} {state:<7} fails={st.get('consecutive_failures', 0)}"
+        # P6: an OPEN breaker now says WHEN it retries itself, so "quarantined"
+        # is never mistaken for "dead forever" the way skill-sync's was.
+        if st.get("quarantined"):
+            if st.get("paused"):
+                line += "  paused by operator (no auto-retry; use `resume`)"
+            else:
+                cooldown = int(st.get("cooldown_seconds") or breakers.DEFAULT_COOLDOWN_SECONDS)
+                since = max(
+                    float(st.get("quarantined_at") or 0.0),
+                    float(st.get("probe_at") or 0.0),
+                )
+                if since <= 0.0:
+                    line += "  (pre-P6 state: no retry clock; use `resume`)"
+                else:
+                    remaining = int(since + cooldown - now)
+                    line += (
+                        "  probe due now"
+                        if remaining <= 0
+                        else f"  probe in {remaining // 60}m (cooldown {cooldown // 60}m)"
+                    )
+        if st.get("last") == "deferred":
+            line += f"  last=deferred(exit {st.get('last_deferred_code')})"
+        print(line)
     return 0
 
 

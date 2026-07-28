@@ -6,15 +6,24 @@ This module is the gate stack every scheduled run passes through, in order:
   1. **Global halt** — PANIC file / ``THREE_EYES_ENABLE=0`` → do nothing, exit 0.
   2. **Inert** — not active (no runtime.env) → do nothing, exit 0. This is the
      observe-first / inert-by-default guarantee at the point of execution.
-  3. **Breaker open** — job quarantined → skip, exit 0.
+  3. **Breaker open** — job quarantined → skip, exit 0. Unless the cooldown has
+     elapsed, in which case this run is the HALF-OPEN probe and proceeds (P6).
   4. **Quiet hours** — inside the window → skip, exit 0.
   5. **Run** — execute the allowlisted command under the GH-172 single-instance
-     lock + memory ceiling; record success/failure against the failure breaker.
+     lock + memory ceiling; record the outcome against the failure breaker —
+     but only if it *was* an outcome. See below.
   6. **Route** — if the command dropped a finding (``<state>/emit/<job>.json``),
      classify any missing severity and dispatch it to the job's routes.
 
 Exit codes: 0 skipped/ok, 2 config error (unknown job/command), else the guarded
-command's own code (3 instance-conflict, 4 memory-ceiling from job_guard).
+command's own code (3 instance-conflict, 4 memory-ceiling mid-run, 75 refused to
+start — all from job_guard).
+
+**A deferred run is not a failed run (GH-195 P6).** Exit 3 and exit 75 both mean
+the command never executed, so step 5 records them via ``record_deferred`` and
+leaves the failure counter untouched. Before P6 this module used ``ok = code == 0``,
+which meant three "the machine is busy" refusals could — and did — permanently
+quarantine a healthy job.
 """
 
 from __future__ import annotations
@@ -109,20 +118,30 @@ def run_job(job_id: str, *, log=print) -> int:
         return 0
 
     breaker = breakers.FailureBreaker()
-    # 3: breaker open → quarantined
+    # 3: breaker open → quarantined, unless the cooldown has elapsed and this run
+    #    gets to be the half-open probe (P6). claim_probe is atomic and returns
+    #    True at most once per cooldown, so concurrent wakes cannot both probe.
     if breaker.is_open(job.id):
-        log(f"[3eyes] {job.id} is quarantined (breaker open); skipping")
-        # Throttle (relief posture): the operator was already notified ONCE at the
-        # moment the breaker opened (step 6 below). Re-notifying on every subsequent
-        # skipped run would fire a banner every scheduling tick — a 120s job would
-        # spam one every 2 minutes. While quarantined, keep the evidence in the local
-        # findings log only; `resume` is the operator act that clears it.
-        routes.route(
-            {"source": job.id, "title": f"{job.id} quarantined", "severity": "warn",
-             "summary": "breaker open — skipped run", "text": ""},
-            ["log-only"],
-        )
-        return 0
+        if breaker.claim_probe(job.id):
+            log(f"[3eyes] {job.id} breaker half-open; taking the probe run")
+        else:
+            log(f"[3eyes] {job.id} is quarantined (breaker open); skipping")
+            # Throttle (relief posture): the operator was already notified ONCE at
+            # the moment the breaker opened (step 6 below). Re-notifying on every
+            # subsequent skipped run would fire a banner every scheduling tick — a
+            # 120s job would spam one every 2 minutes. Even the local findings log
+            # cannot absorb that: 72 of 73 live records were this single line.
+            # One notice per cooldown window is enough to show it is still parked.
+            if breaker.should_notice_skip(job.id):
+                routes.route(
+                    {"source": job.id, "title": f"{job.id} quarantined",
+                     "severity": "warn",
+                     "summary": "breaker open — skipped run (throttled: at most "
+                                "one notice per cooldown window)",
+                     "text": ""},
+                    ["log-only"],
+                )
+            return 0
 
     # 4: quiet hours
     if relief.in_quiet_hours(job.quiet_hours):
@@ -137,18 +156,29 @@ def run_job(job_id: str, *, log=print) -> int:
     except registry.RegistryError as exc:
         log(f"[3eyes] {exc}")
         return 2
-    ok = code == 0
-    opened = breaker.record(job.id, ok, job.trip_after_failures)
-    log(f"[3eyes] {job.id} finished exit={code} ok={ok}"
-        + (" — BREAKER OPENED (quarantined)" if opened else ""))
+    # P6: three outcomes, not two. A guard refusal (75) or instance conflict (3)
+    # means the command never ran — recording it as a failure is what latched
+    # skill-sync's breaker for a day off the back of an unrelated regression.
+    outcome = breakers.classify_exit(code)
+    opened = False
+    if outcome == "deferred":
+        breaker.record_deferred(job.id, code)
+        log(f"[3eyes] {job.id} deferred exit={code} (did not run; failure count unchanged)")
+    else:
+        opened = breaker.record(job.id, outcome == "ok", job.trip_after_failures)
+        log(f"[3eyes] {job.id} finished exit={code} ok={outcome == 'ok'}"
+            + (" — BREAKER OPENED (quarantined)" if opened else ""))
 
     # 6: route any finding the command emitted
     _process_emit(job)
 
     if opened:
+        cooldown_min = breaker.status(job.id).get("cooldown_seconds", 0) // 60
         routes.route(
             {"source": job.id, "title": f"{job.id} breaker opened",
-             "severity": "error", "summary": f"{job.trip_after_failures} consecutive failures",
+             "severity": "error",
+             "summary": f"{job.trip_after_failures} consecutive failures; "
+                        f"will self-retry once in {cooldown_min}m",
              "text": ""},
             [r for r in job.routes if r in ("notify", "log-only", "gh-issue")] or ["log-only"],
         )

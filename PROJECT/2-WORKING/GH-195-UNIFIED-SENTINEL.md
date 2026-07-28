@@ -10,6 +10,7 @@ status: >
   exist in the tree. P2 is REWRITTEN: Cactus-Needle was deleted on 2026-07-27 so "adopt the three
   sentinels" is unachievable as worded; the new target is the full 21-job fleet. Three new phases
   (P6 breaker semantics, P7 Gemma wiring, P8 fleet adoption) carry the remaining work.
+  P6 is COMPLETE as of 2026-07-28.
 created: 2026-07-22
 updated: 2026-07-28
 owner: Noel (operator) · Codex (implementation) · Claude Code (review/tuning)
@@ -45,7 +46,7 @@ related:
 
 | What was just completed | What's next |
 |---|---|
-| **Audit against the running system (2026-07-28).** Compared every phase claim to the live machine. Result: the safety spine works, the *value* path was never connected. Findings recorded in [Audit 2026-07-28](#audit-2026-07-28--doc-vs-running-system). Doc revised: P4 downgraded, P2 rewritten, P6/P7/P8 added. | **P6 first** — it is small and it unblocks a job that is dead right now. Then P7 (wire Gemma to something), then P8 (fleet adoption). |
+| **P6 — breaker semantics shipped (2026-07-28).** Guard refusals no longer count as failures (`job_guard`'s preflight now returns 75, not 4); breakers recover via a half-open probe with doubling backoff; quarantine skips are throttled. `skill-sync` un-latched and verified working — it was never broken. 26 new tests, 4 mutations applied to prove they bite (one exposed a test passing for the wrong reason). Preceded by the [audit](#audit-2026-07-28--doc-vs-running-system) that rewrote this doc. | **P6 QA relay with Agy**, then P7 (wire Gemma — start with P7a, the daily digest, which depends on nothing), then P8 (fleet adoption). |
 
 ## Audit 2026-07-28 — doc vs. running system
 
@@ -336,35 +337,65 @@ The registry is authored in TOML; `DASHBOARD.md` is a **generated projection** o
   `pytest utils/3-eyes/tests` → 94 passed. *Caveat (audit A1): this surface has never been exercised
   in production, because nothing has ever called `classify()`. P7 is what makes P5 real.*
 
-### P6 — breaker semantics (new)
+### P6 — breaker semantics — COMPLETE (2026-07-28)
 
-**Why now:** a job is dead on the machine as you read this, and the system that was supposed to
-notice is the system that killed it (audit A3/A4). Smallest phase here, highest immediate payoff.
+**Why it was first:** a job was dead on the machine, and the system that was supposed to notice is the
+system that killed it (audit A3/A4). Smallest phase here, highest immediate payoff.
 
-- [ ] **Guard refusals are not failures.** `run.py:140` currently does `ok = code == 0`, folding
-      `job_guard`'s exit 3 (instance conflict) and exit 4 (memory preflight refusal) into the failure
-      counter. Both mean *deferred*, not *broken*. Classify them as a third outcome — `deferred` — that
-      leaves the counter untouched. A busy machine must never be able to quarantine a healthy job.
-- [ ] **Half-open recovery.** Add a cooldown: a quarantined job becomes eligible for exactly one probe
-      run after N minutes (proposed default 60). Success closes the breaker; failure re-opens it and
-      doubles the cooldown. This is invariant 6's promised backoff, which the quarantine path never had.
-- [ ] **Quarantine must be quiet.** Today each of the 720 daily wakes of a quarantined 120 s job appends
-      a `log-only` finding. Either unload the plist on quarantine (preferred — a quarantined job should
-      stop *being scheduled*, as `breakers.py:10` already claims it does) or collapse repeats into a
-      single record with a count. Both, ideally.
-- [ ] **Purge the noise and un-latch `skill-sync`.** 72 of 73 records in `findings.jsonl` are the same
-      line. Archive the file, then `three_eyes resume skill-sync`.
-- [ ] Investigate the one-off `3-eyes: no Python with tomllib (>=3.11) found on this host` in
-      `skill-sync.err.log`. `.venv/bin/python` is 3.13 and has `tomllib`, so the shim's first candidate
-      should always hit — this fired anyway (suspect: reboot, before the volume was ready). Decide
-      whether the shim should retry rather than exit 3.
+- [x] **Guard refusals are not failures.** `job_guard` returned **4** for both "refused to start,
+      nothing ran" and "tripped mid-run, the job was killed", so a caller could not tell them apart —
+      the preflight refusal now returns **75** (`EX_TEMPFAIL`) and the mid-run trip keeps 4. New named
+      constants `EXIT_INSTANCE_CONFLICT` / `EXIT_CEILING_TRIPPED` / `EXIT_REFUSED_TO_START` and a
+      `DEFERRED_EXIT_CODES` set. `run.py` replaced `ok = code == 0` with
+      `breakers.classify_exit(code)` → `ok` / `deferred` / `fail`; deferred goes to
+      `record_deferred()`, which leaves the failure counter alone but keeps the event visible.
+- [x] **Half-open recovery.** A quarantined job becomes eligible for exactly one probe run after a
+      cooldown (default 60 min). `claim_probe()` is flock-atomic, so concurrent wakes cannot both
+      probe. Success closes the breaker and clears the clock; failure re-arms with a **doubled**
+      cooldown, capped at 24 h.
+- [x] **Quarantine is quiet.** `should_notice_skip()` throttles the skip record to one per cooldown
+      window. A quarantined 120 s job now writes ~1 record/hour instead of 30.
+- [x] **Purged the noise and un-latched `skill-sync`.** 94 identical records collapsed to one
+      (preserving the count and the time span rather than deleting the evidence); backup at
+      `findings.jsonl.bak-p6-20260728`. `three_eyes resume skill-sync` → breaker closed, and a manual
+      run confirms the job was **never broken**: `NO-OP identical content: SKILL.md`, exit 0.
+- [x] **The tomllib error was not a one-off — it fired 12 times.** Root cause: the shim's
+      `python -c 'import tomllib'` probe is a *subprocess*, and under memory pressure the fork/exec
+      itself fails (bash logs `Interrupted system call` two lines earlier). A transient condition was
+      being reported as `no Python with tomllib (>=3.11) found on this host` — a permanent-sounding
+      misconfiguration. The shim now branches on the probe's **exit status**: 1 = the interpreter ran
+      and lacks tomllib (permanent, exit 3), 126/127/signal = could not execute (retry once, then
+      exit 75). Same GH-186 EINTR family.
 
-**QA gate — P6**
-- [ ] A test drives three consecutive exit-4 guard refusals and asserts the breaker stays **closed**
-      (mutation-check it: make refusals count again, and the test must fail).
-- [ ] A test drives `trip_after_failures` real failures, advances the clock past the cooldown, and
-      asserts exactly one probe run is permitted.
-- [ ] `findings.jsonl` gains at most one record per quarantine episode, not one per wake.
+**Decision reversed during implementation: do NOT unload the plist on quarantine.** The phase plan
+preferred unloading, on the grounds that `breakers.py` already claimed a quarantined job "stops being
+scheduled". That is incompatible with half-open recovery — an unloaded job never wakes, so it can
+never take its probe and could only be revived by hand, which is the failure mode P6 exists to remove.
+The plist stays loaded and the *skip* is made cheap instead. The false docstring claim was corrected.
+
+**QA gate — P6: PASSED.** 25 new tests in `utils/3-eyes/tests/test_breaker_semantics_p6.py` +
+1 in `tests/test_job_guard_footprint.py`. Suite: 135 passed (3-Eyes 116 + job_guard 16, was 94 + 15).
+Full repo: 1719 passed, 6 pre-existing failures unrelated to this phase. `rebalance doctor` passes.
+
+- [x] Three consecutive guard refusals leave the breaker **closed** and the counter at 0.
+- [x] Exit 4 (mid-run trip) still **does** open it — the way to get this fix wrong is to excuse every
+      memory-related exit and never quarantine a genuinely runaway job.
+- [x] A deferral neither increments **nor resets** the counter.
+- [x] Exactly one probe per cooldown; a failed probe doubles it and restarts the clock; saturates at
+      the cap.
+- [x] An operator `pause` never self-heals, even with a probe due.
+- [x] 50 quarantined wakes produce **1** finding, not 50.
+- [x] The shim defers on 126/127/signal but still reports a genuinely too-old Python.
+
+**Mutation-checked** (a test that cannot fail proves nothing) — each of these was applied and the
+suite verified to go red, then reverted:
+
+| Mutation | Result |
+|---|---|
+| Restore `ok = code == 0` | 3 tests fail ✅ |
+| Delete the failed-probe re-arm | 2 tests fail ✅ |
+| Make `should_notice_skip` always true | 1 test fails ✅ |
+| Delete the `paused` guard in `claim_probe` | **survived** ❌ → test was passing for the wrong reason (pausing a *fresh* job leaves no retry clock, so `claim_probe` refused on the "no clock" branch and never reached the paused check). Rewrote it to pause an already-tripped job with a due probe; mutation now fails ✅ |
 
 ### P7 — wire Gemma to something (new)
 

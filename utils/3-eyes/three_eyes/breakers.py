@@ -6,11 +6,23 @@ Three layers, each catching a different failure:
      ``utils/job_guard.py`` (GH-172, kernel-panic-hardened). We do NOT reimplement
      it; we load it by path and wrap ``run_guarded`` so every 3-Eyes job runs its
      command tree under a flock and an RSS/available-memory watchdog.
-  2. **Per-job failure breaker** — after N consecutive failures a job's breaker
-     OPENS: it is quarantined, stops being scheduled, and the operator is notified.
-     A success (or an explicit reset) closes it again.
+  2. **Per-job failure breaker** — after N consecutive *failures* a job's breaker
+     OPENS and the job is quarantined. It recovers on its own: after a cooldown the
+     breaker goes HALF-OPEN and permits exactly one probe run. The probe succeeding
+     closes it; the probe failing re-opens it with a doubled cooldown. An explicit
+     ``reset`` also closes it, and an operator ``quarantine`` (manual pause) never
+     half-opens — a human pause stays paused until a human lifts it.
   3. **Global kill-switch** — a PANIC file or ``THREE_EYES_ENABLE=0`` halts every
      job at once (delegated to ``config.kill_switch_engaged``).
+
+**Not every non-zero exit is a failure (GH-195 P6).** ``job_guard`` returns 3 when
+another instance holds the lock and 75 when it refuses to start on a starved
+machine. In both the command *never ran* — they mean "come back later", not "this
+job is broken". Counting them as failures is what latched ``skill-sync``'s breaker
+for a day: three transient memory refusals, caused by an unrelated regression in a
+different project, permanently quarantined a perfectly healthy job. Use
+:func:`classify_exit` and route ``deferred`` outcomes to :meth:`FailureBreaker.record_deferred`,
+which deliberately leaves the failure counter alone.
 
 State (per-job failure counters, quarantine flags) lives as JSON in the state dir,
 never in the repo. All read-modify-write of that state happens under an
@@ -24,6 +36,7 @@ import fcntl
 import importlib.util
 import json
 import os
+import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
@@ -50,6 +63,38 @@ try:
     job_guard = _load_job_guard()
 except (OSError, ImportError):  # pragma: no cover - job_guard should always be present
     job_guard = None
+
+
+# --------------------------------------------------------------------------- #
+# Run outcomes (GH-195 P6)
+# --------------------------------------------------------------------------- #
+
+#: Exit codes meaning "the command never ran; retry later is the right response".
+#: Mirrors ``job_guard.DEFERRED_EXIT_CODES``; the literals are the fallback for the
+#: (defensive) case where job_guard could not be loaded, so a missing guard cannot
+#: silently turn deferrals back into failures.
+DEFERRED_EXIT_CODES: frozenset[int] = getattr(
+    job_guard, "DEFERRED_EXIT_CODES", frozenset({3, 75})
+)
+
+#: How long a quarantined job waits before it is allowed one probe run. Doubles on
+#: each failed probe, capped at :data:`MAX_COOLDOWN_SECONDS`, so a job that is
+#: genuinely broken backs off instead of retrying hourly forever (invariant 6).
+DEFAULT_COOLDOWN_SECONDS = 3600
+MAX_COOLDOWN_SECONDS = 24 * 3600
+
+
+def classify_exit(code: int) -> str:
+    """Map a guarded command's exit code to ``ok`` / ``deferred`` / ``fail``.
+
+    The whole point of P6: ``deferred`` is a third outcome, not a flavour of
+    failure. See the module docstring for why conflating them was harmful.
+    """
+    if code == 0:
+        return "ok"
+    if code in DEFERRED_EXIT_CODES:
+        return "deferred"
+    return "fail"
 
 
 # --------------------------------------------------------------------------- #
@@ -124,6 +169,10 @@ class FailureBreaker:
         """Record a run outcome under lock. Returns True if this OPENED the breaker.
 
         ``trip_after <= 0`` disables the breaker for that job (never trips).
+
+        Callers must pass only genuine ok/fail outcomes here — a *deferred* run
+        (guard refusal, instance conflict) belongs in :meth:`record_deferred`.
+        Use :func:`classify_exit` rather than deciding with ``code == 0``.
         """
         with _locked("breakers"):
             state = _load_state()
@@ -131,22 +180,117 @@ class FailureBreaker:
             if ok:
                 node["consecutive_failures"] = 0
                 node["quarantined"] = False
+                # A success closes the breaker completely: clear the half-open
+                # bookkeeping too, or the next trip would inherit a stale
+                # (already doubled) cooldown from a previous episode.
+                for key in ("quarantined_at", "cooldown_seconds", "probe_at", "skip_notice_at"):
+                    node.pop(key, None)
             else:
                 node["consecutive_failures"] = int(node.get("consecutive_failures", 0)) + 1
             node["last"] = "ok" if ok else "fail"
 
             opened = False
-            if (
+            if not ok and node.get("quarantined") and node.get("probe_at"):
+                # A HALF-OPEN PROBE FAILED. The breaker is already open, so the
+                # first-trip branch below will not fire — without this the cooldown
+                # would never grow and a permanently broken job would probe again
+                # every hour forever, which is the backoff invariant 6 promises and
+                # the plain trip logic silently skips.
+                self._rearm(node, doubled=True)
+            elif (
                 not ok
                 and trip_after > 0
                 and node["consecutive_failures"] >= trip_after
                 and not node["quarantined"]
             ):
                 node["quarantined"] = True
+                self._rearm(node, doubled=False)
                 opened = True
 
             _atomic_write(_state_path(), state)
             return opened
+
+    @staticmethod
+    def _rearm(node: dict[str, Any], *, doubled: bool) -> None:
+        """(Re)start the quarantine clock, optionally with a doubled cooldown.
+
+        Clears ``probe_at`` so the next probe is measured from now, and
+        ``skip_notice_at`` so the operator gets one fresh notice per episode.
+        """
+        previous = int(node.get("cooldown_seconds") or 0)
+        if doubled and previous:
+            cooldown = min(previous * 2, MAX_COOLDOWN_SECONDS)
+        else:
+            cooldown = previous or DEFAULT_COOLDOWN_SECONDS
+        node["cooldown_seconds"] = cooldown
+        node["quarantined_at"] = time.time()
+        node.pop("probe_at", None)
+        node.pop("skip_notice_at", None)
+
+    def record_deferred(self, job_id: str, code: int) -> None:
+        """Record that a run was DEFERRED — it never happened (GH-195 P6).
+
+        Deliberately does not touch ``consecutive_failures``: a machine that was
+        too busy to start a job says nothing about whether that job works. Kept
+        visible in the state file so ``status`` can show it, rather than being
+        silently dropped.
+        """
+        with _locked("breakers"):
+            state = _load_state()
+            node = self._job(state, job_id)
+            node["last"] = "deferred"
+            node["last_deferred_code"] = int(code)
+            node["deferred_runs"] = int(node.get("deferred_runs", 0)) + 1
+            _atomic_write(_state_path(), state)
+
+    def claim_probe(self, job_id: str, now: float | None = None) -> bool:
+        """Half-open: atomically claim the single probe run for this cooldown.
+
+        Returns True at most once per cooldown window, so concurrent wakes cannot
+        both decide they are the probe. Returns False for a *manually* paused job:
+        an operator pause is not a fault condition and must not self-heal.
+        """
+        now = time.time() if now is None else now
+        with _locked("breakers"):
+            state = _load_state()
+            node = state.get(job_id)
+            if not node or not node.get("quarantined") or node.get("paused"):
+                return False
+            cooldown = int(node.get("cooldown_seconds") or DEFAULT_COOLDOWN_SECONDS)
+            # Anchor on the most recent of "when we tripped" and "when we last
+            # probed", so a failed probe restarts the clock instead of letting
+            # every subsequent wake qualify.
+            since = max(
+                float(node.get("quarantined_at") or 0.0),
+                float(node.get("probe_at") or 0.0),
+            )
+            if since <= 0.0 or now - since < cooldown:
+                return False
+            node["probe_at"] = now
+            _atomic_write(_state_path(), state)
+            return True
+
+    def should_notice_skip(self, job_id: str, now: float | None = None) -> bool:
+        """True when a quarantined-skip is worth recording again.
+
+        Without this, a 120 s job that is quarantined appends a finding 720 times a
+        day — 72 of the 73 records in the live ``findings.jsonl`` were exactly that
+        one line, which is how the evidence channel became useless. One notice per
+        cooldown window is enough to show the job is still parked.
+        """
+        now = time.time() if now is None else now
+        with _locked("breakers"):
+            state = _load_state()
+            node = state.get(job_id)
+            if node is None:
+                return False
+            cooldown = int(node.get("cooldown_seconds") or DEFAULT_COOLDOWN_SECONDS)
+            last = float(node.get("skip_notice_at") or 0.0)
+            if last and now - last < cooldown:
+                return False
+            node["skip_notice_at"] = now
+            _atomic_write(_state_path(), state)
+            return True
 
     def reset(self, job_id: str) -> None:
         """Manually close a job's breaker (operator un-quarantine / resume)."""
@@ -156,6 +300,10 @@ class FailureBreaker:
             node["consecutive_failures"] = 0
             node["quarantined"] = False
             node["paused"] = False
+            # Clear the half-open bookkeeping: an operator resume is a clean
+            # slate, so the next trip starts from the default cooldown.
+            for key in ("quarantined_at", "cooldown_seconds", "probe_at", "skip_notice_at"):
+                node.pop(key, None)
             _atomic_write(_state_path(), state)
 
     def quarantine(self, job_id: str, reason: str = "manual pause") -> None:
