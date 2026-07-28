@@ -1,5 +1,5 @@
 # Marathon Phase gh219-lane4-footprint-guard
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-GH219-LANE4 builder=agy reviewer=codex round-cap=7 -->
@@ -204,3 +204,18 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. `REBALANCE_JOB_GUARD_MAX_FOOTPRINT_GB` is not read anywhere. The old `REBALANCE_JOB_GUARD_MAX_RSS_GB` remains usable only because the bridge still passes `max_rss_gb`; add the footprint-named setting in `utils/job_guard.py` and retain the old name as its deprecated alias so the required rename is real.
 
 **Verdict:** Changes requested
+
+### Round 4 · Reviewer · codex
+
+**Assessment:** Approved.
+
+The footprint default now enforces the 8 GB per-process contract, the synthetic
+wrapper-mode child test proves the ceiling kill path and reaping, unreadable
+`proc_pid_rusage` results are deterministically skipped and surfaced, and the
+footprint-named environment override (with deprecated RSS alias) reaches the
+constructed ceiling. The available-memory decision is concluded with a
+compressor-pressure backstop and regression coverage.
+
+Focused verification passed: `python3 -m pytest tests/test_job_guard_wiring.py tests/test_watchlist_guard.py tests/test_job_guard_footprint.py -q` — 42 passed.
+
+**Verdict:** Approved
