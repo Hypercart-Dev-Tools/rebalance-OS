@@ -108,3 +108,37 @@ def _isolate_auth_log(tmp_path_factory):
             os.environ.pop("REBALANCE_AUTH_LOG_DIR", None)
         else:
             os.environ["REBALANCE_AUTH_LOG_DIR"] = previous
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _disable_keyring():
+    """Route every keyring helper to its no-op path for the whole session.
+
+    `config.py` reads credentials with `keyring.get_password(KEYRING_SERVICE, key)`
+    (`KEYRING_SERVICE = "rebalance-os"`). On macOS that is the real login Keychain,
+    so any test that touches a config getter triggers a Security-framework
+    authorization prompt. Keychain ACLs are per-(binary, item), and there is one
+    item per credential (github / calendar / gmail / figma / sleuth / gemini), so
+    "Always Allow" grants one item to one interpreter and the next request prompts
+    again — an unattended `pytest` run stalls on a prompt loop it cannot answer.
+
+    This never surfaced in CI because CI runs on ubuntu-latest, where `keyring` has
+    no Keychain backend and `config.py`'s `except Exception  # noqa: BLE001` swallows
+    the failure. The suite was therefore only cleanly runnable on Linux, on a project
+    that requires macOS.
+
+    `REBALANCE_NO_KEYRING` is the seam `config.py:42` already provides for this. The
+    dedicated keyring tests (`test_gmail_keyring.py`, `test_sleuth_keyring.py`,
+    `test_calendar_keyring.py`, `test_config_github_token.py`) patch the `keyring`
+    module directly, so they are unaffected; tests that want the stricter hermetic
+    mode still opt in per-test via `patch.dict` (`test_lifecycle_contract.py:211`).
+    """
+    previous = os.environ.get("REBALANCE_NO_KEYRING")
+    os.environ["REBALANCE_NO_KEYRING"] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("REBALANCE_NO_KEYRING", None)
+        else:
+            os.environ["REBALANCE_NO_KEYRING"] = previous
