@@ -1151,8 +1151,26 @@ def _push_repair_actions(target_repo: Path) -> dict[str, Any]:
 
 
 def _verify_remote_content(target_repo: Path, file_rel: str, expected: str) -> bool:
-    """Return True if origin/HEAD now contains exactly the expected file content."""
-    rc, out, _ = _run_git(["show", f"origin/HEAD:{file_rel}"], cwd=target_repo)
+    """Return True if the branch just pushed now contains exactly the expected file content.
+
+    GH-233: this used to read ``origin/HEAD``, which is the remote's *default* branch — not
+    necessarily the branch ``git push`` just wrote to. Two ways that went wrong:
+
+    * **Wrong ref.** ``_commit_and_push_if_changed`` runs a bare ``git push``, which pushes the
+      current branch to its upstream. On any branch other than the remote default, the check read
+      a different branch than the one that was written — reporting a mismatch for a good push, or
+      passing because some other branch happened to match.
+    * **Missing ref.** ``origin/HEAD`` is created at clone time from the remote's HEAD. A clone of
+      an empty remote never gets one, and pushing afterwards does not create it, so
+      ``git show origin/HEAD:<path>`` fails with "invalid object name" however correct the push was.
+
+    ``@{u}`` is by definition the ref the bare push targeted, so resolving it removes both cases.
+    A missing upstream is still a genuine failure: without one there is nothing to have pushed to.
+    """
+    rc, upstream, _ = _run_git(["rev-parse", "--abbrev-ref", "@{u}"], cwd=target_repo)
+    if rc != 0 or not upstream:
+        return False
+    rc, out, _ = _run_git(["show", f"{upstream}:{file_rel}"], cwd=target_repo)
     return rc == 0 and out == expected.strip()
 
 
