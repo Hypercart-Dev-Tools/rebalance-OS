@@ -1,0 +1,20 @@
+{
+  "orchestrator_owned": [
+    "scripts/lib/scheduler_common.sh"
+  ],
+  "codex_lane": [
+    "scripts/github_sync.sh"
+  ],
+  "agy_lane": [],
+  "effective_artifacts": [
+    "scripts/github_sync.sh",
+    "scripts/lib/scheduler_common.sh"
+  ],
+  "inferred_test_artifacts": [],
+  "inferred_test_helpers": [],
+  "fs_touching_tests": [],
+  "agy_review_default": true,
+  "coupling_warning": "all artifacts share one top-level dir; treat as coupled",
+  "parallelizable": false,
+  "single_lane_only": true
+}

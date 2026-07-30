@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-201-database-path-fallback RELAY_WORKTREE_ISOLATION=1 .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact src/rebalance/paths.py,tests/test_paths.py \
+  --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k "paths or resolve_database" -q' \
+  --require-clean

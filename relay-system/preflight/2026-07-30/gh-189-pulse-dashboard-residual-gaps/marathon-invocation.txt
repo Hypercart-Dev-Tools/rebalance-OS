@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-189-pulse-dashboard-residual-gaps RELAY_WORKTREE_ISOLATION=1 .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact src/rebalance/doctor.py,scripts/pulse_web.py \
+  --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k "doctor or pulse_web" -q' \
+  --require-clean

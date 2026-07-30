@@ -1,0 +1,94 @@
+{
+  "schema": "swarm-preflight/run-candidate@1",
+  "generated_at": "2026-07-30T20:10:42Z",
+  "mode": "gh-bundle",
+  "candidate": {
+    "slug": "gh-171-sqlite-write-lock"
+  },
+  "provenance": {
+    "source_docs": [
+      "/Users/matthewtaylor/htdocs/rebalance-OS/PROJECT/2-WORKING/GH-171-SQLITE-WRITE-LOCK.md"
+    ],
+    "issues": [
+      "171"
+    ],
+    "target_root": "/Users/matthewtaylor/htdocs/rebalance-OS",
+    "branch": "development",
+    "commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "suggested_branch": "marathon/gh-171-sqlite-write-lock-2026-07-30",
+    "branch_ready": false,
+    "skip_branch_prompt": false
+  },
+  "contract": {
+    "target": {
+      "repo": ".",
+      "ref": "development"
+    },
+    "gate": ".venv/bin/python -m pytest tests/ -k \"github_scan or github_client or github_knowledge\" -q",
+    "fix_probes": [
+      {
+        "type": "grep_present",
+        "path": "src/rebalance/ingest/github_knowledge.py",
+        "pattern": "with db_connection"
+      }
+    ],
+    "artifacts": [
+      "src/rebalance/ingest/github_knowledge.py",
+      "scripts/github_sync.sh"
+    ],
+    "artifacts_new": [],
+    "remediation": {
+      "source": "issue#171",
+      "criteria": "sync_github_repo() no longer holds the write transaction open across network fetches"
+    },
+    "lanes": {
+      "agy_safe": [],
+      "orchestrator_only": []
+    }
+  },
+  "freshness": {
+    "fetch_ok": true,
+    "upstream": "origin/development",
+    "ahead": 6,
+    "behind": 0,
+    "dirty": true,
+    "stale_index_lock": false,
+    "stale_index_lock_path": null,
+    "stale_index_lock_warning": null,
+    "evaluated_ref": "development",
+    "evaluated_ref_commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "checkout_matches_ref": true,
+    "head_behind_ref": 0,
+    "candidate_state": "ready",
+    "probes": [
+      {
+        "type": "grep_present",
+        "path": "src/rebalance/ingest/github_knowledge.py",
+        "verdict": "unfixed"
+      }
+    ]
+  },
+  "readiness": {
+    "ready": true,
+    "next_action": null
+  },
+  "lane_plan": {
+    "orchestrator_owned": [],
+    "codex_lane": [
+      "src/rebalance/ingest/github_knowledge.py",
+      "scripts/github_sync.sh"
+    ],
+    "agy_lane": [],
+    "effective_artifacts": [
+      "src/rebalance/ingest/github_knowledge.py",
+      "scripts/github_sync.sh"
+    ],
+    "inferred_test_artifacts": [],
+    "inferred_test_helpers": [],
+    "fs_touching_tests": [],
+    "agy_review_default": true,
+    "coupling_warning": null,
+    "parallelizable": true,
+    "single_lane_only": false
+  }
+}

@@ -1,0 +1,101 @@
+{
+  "schema": "swarm-preflight/run-candidate@1",
+  "generated_at": "2026-07-30T20:10:43Z",
+  "mode": "gh-bundle",
+  "candidate": {
+    "slug": "gh-170-worktree-test-isolation"
+  },
+  "provenance": {
+    "source_docs": [
+      "/Users/matthewtaylor/htdocs/rebalance-OS/PROJECT/2-WORKING/GH-170-WORKTREE-TEST-ISOLATION.md"
+    ],
+    "issues": [
+      "170"
+    ],
+    "target_root": "/Users/matthewtaylor/htdocs/rebalance-OS",
+    "branch": "development",
+    "commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "suggested_branch": "marathon/gh-170-worktree-test-isolation-2026-07-30",
+    "branch_ready": false,
+    "skip_branch_prompt": false
+  },
+  "contract": {
+    "target": {
+      "repo": ".",
+      "ref": "development"
+    },
+    "gate": ".venv/bin/python -m pytest tests/ -q",
+    "fix_probes": [
+      {
+        "type": "path_absent",
+        "path": "conftest.py"
+      }
+    ],
+    "artifacts": [
+      "conftest.py",
+      "tests/conftest.py",
+      "pyproject.toml"
+    ],
+    "artifacts_new": [
+      "conftest.py"
+    ],
+    "remediation": {
+      "source": "issue#170",
+      "criteria": "pytest run inside a worktree resolves imports to that worktree's own src/, not the main checkout"
+    },
+    "lanes": {
+      "agy_safe": [],
+      "orchestrator_only": [
+        "pyproject.toml"
+      ]
+    }
+  },
+  "freshness": {
+    "fetch_ok": true,
+    "upstream": "origin/development",
+    "ahead": 6,
+    "behind": 0,
+    "dirty": true,
+    "stale_index_lock": false,
+    "stale_index_lock_path": null,
+    "stale_index_lock_warning": null,
+    "evaluated_ref": "development",
+    "evaluated_ref_commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "checkout_matches_ref": true,
+    "head_behind_ref": 0,
+    "candidate_state": "ready",
+    "probes": [
+      {
+        "type": "path_absent",
+        "path": "conftest.py",
+        "verdict": "unfixed"
+      }
+    ]
+  },
+  "readiness": {
+    "ready": true,
+    "next_action": null
+  },
+  "lane_plan": {
+    "orchestrator_owned": [
+      "pyproject.toml"
+    ],
+    "codex_lane": [
+      "conftest.py",
+      "tests/conftest.py"
+    ],
+    "agy_lane": [],
+    "effective_artifacts": [
+      "conftest.py",
+      "tests/conftest.py",
+      "pyproject.toml"
+    ],
+    "inferred_test_artifacts": [],
+    "inferred_test_helpers": [],
+    "fs_touching_tests": [],
+    "agy_review_default": true,
+    "coupling_warning": null,
+    "parallelizable": true,
+    "single_lane_only": false
+  }
+}

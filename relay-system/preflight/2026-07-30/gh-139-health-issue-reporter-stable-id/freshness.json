@@ -1,0 +1,27 @@
+{
+  "fetch_ok": true,
+  "upstream": "origin/development",
+  "ahead": 6,
+  "behind": 0,
+  "dirty": true,
+  "stale_index_lock": false,
+  "stale_index_lock_path": null,
+  "stale_index_lock_warning": null,
+  "evaluated_ref": "development",
+  "evaluated_ref_commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+  "checkout_matches_ref": true,
+  "head_behind_ref": 0,
+  "candidate_state": "ready",
+  "probes": [
+    {
+      "type": "grep_present",
+      "path": "scripts/health_issue_reporter.py",
+      "verdict": "unfixed"
+    },
+    {
+      "type": "grep_present",
+      "path": "scripts/health_issue_reporter.py",
+      "verdict": "unfixed"
+    }
+  ]
+}

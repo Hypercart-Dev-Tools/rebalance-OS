@@ -1,0 +1,94 @@
+{
+  "schema": "swarm-preflight/run-candidate@1",
+  "generated_at": "2026-07-30T20:10:37Z",
+  "mode": "gh-bundle",
+  "candidate": {
+    "slug": "gh-166-vault-ingest-lag"
+  },
+  "provenance": {
+    "source_docs": [
+      "/Users/matthewtaylor/htdocs/rebalance-OS/PROJECT/2-WORKING/GH-166-VAULT-INGEST-LAG.md"
+    ],
+    "issues": [
+      "166"
+    ],
+    "target_root": "/Users/matthewtaylor/htdocs/rebalance-OS",
+    "branch": "development",
+    "commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "suggested_branch": "marathon/gh-166-vault-ingest-lag-2026-07-30",
+    "branch_ready": false,
+    "skip_branch_prompt": true
+  },
+  "contract": {
+    "target": {
+      "repo": ".",
+      "ref": "development"
+    },
+    "gate": ".venv/bin/python -m pytest tests/ -k \"index_ops or vault_sync\" -q",
+    "fix_probes": [
+      {
+        "type": "grep_absent",
+        "path": "src/rebalance/ingest/index_ops.py",
+        "pattern": "ingest_lag"
+      }
+    ],
+    "artifacts": [
+      "src/rebalance/ingest/index_ops.py",
+      "src/rebalance/health.py"
+    ],
+    "artifacts_new": [],
+    "remediation": {
+      "source": "issue#166",
+      "criteria": "Vault ingest lag and stuck pending-embed rows are surfaced as diagnosable, degrading health signals"
+    },
+    "lanes": {
+      "agy_safe": [],
+      "orchestrator_only": []
+    }
+  },
+  "freshness": {
+    "fetch_ok": true,
+    "upstream": "origin/development",
+    "ahead": 6,
+    "behind": 0,
+    "dirty": true,
+    "stale_index_lock": false,
+    "stale_index_lock_path": null,
+    "stale_index_lock_warning": null,
+    "evaluated_ref": "development",
+    "evaluated_ref_commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "checkout_matches_ref": true,
+    "head_behind_ref": 0,
+    "candidate_state": "ready",
+    "probes": [
+      {
+        "type": "grep_absent",
+        "path": "src/rebalance/ingest/index_ops.py",
+        "verdict": "unfixed"
+      }
+    ]
+  },
+  "readiness": {
+    "ready": true,
+    "next_action": null
+  },
+  "lane_plan": {
+    "orchestrator_owned": [],
+    "codex_lane": [
+      "src/rebalance/ingest/index_ops.py",
+      "src/rebalance/health.py"
+    ],
+    "agy_lane": [],
+    "effective_artifacts": [
+      "src/rebalance/ingest/index_ops.py",
+      "src/rebalance/health.py"
+    ],
+    "inferred_test_artifacts": [],
+    "inferred_test_helpers": [],
+    "fs_touching_tests": [],
+    "agy_review_default": true,
+    "coupling_warning": "all artifacts share one top-level dir; treat as coupled",
+    "parallelizable": false,
+    "single_lane_only": true
+  }
+}

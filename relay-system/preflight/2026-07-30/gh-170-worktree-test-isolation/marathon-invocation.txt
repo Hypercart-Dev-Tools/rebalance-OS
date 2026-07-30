@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-170-worktree-test-isolation RELAY_WORKTREE_ISOLATION=1 .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact conftest.py,tests/conftest.py,pyproject.toml \
+  --pre-advance-cmd '.venv/bin/python -m pytest tests/ -q' \
+  --require-clean

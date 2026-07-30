@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-167-semantic-index-github-gap RELAY_WORKTREE_ISOLATION=1 .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact src/rebalance/ingest/semantic_index.py,src/rebalance/ingest/index_ops.py,src/rebalance/ingest/db/semantic.py \
+  --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k "semantic_index or index_ops" -q' \
+  --require-clean

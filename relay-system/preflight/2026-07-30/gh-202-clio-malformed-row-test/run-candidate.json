@@ -1,0 +1,95 @@
+{
+  "schema": "swarm-preflight/run-candidate@1",
+  "generated_at": "2026-07-30T20:10:36Z",
+  "mode": "gh-bundle",
+  "candidate": {
+    "slug": "gh-202-clio-malformed-row-test"
+  },
+  "provenance": {
+    "source_docs": [
+      "/Users/matthewtaylor/htdocs/rebalance-OS/PROJECT/2-WORKING/GH-202-CLIO-MALFORMED-ROW-TEST.md"
+    ],
+    "issues": [
+      "202"
+    ],
+    "target_root": "/Users/matthewtaylor/htdocs/rebalance-OS",
+    "branch": "development",
+    "commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "suggested_branch": "marathon/gh-202-clio-malformed-row-test-2026-07-30",
+    "branch_ready": false,
+    "skip_branch_prompt": true
+  },
+  "contract": {
+    "target": {
+      "repo": ".",
+      "ref": "development"
+    },
+    "gate": "bash test/clio-exporter.sh",
+    "fix_probes": [
+      {
+        "type": "grep_absent",
+        "path": "test/clio-exporter.sh",
+        "pattern": "malformed"
+      }
+    ],
+    "artifacts": [
+      "test/clio-exporter.sh"
+    ],
+    "artifacts_new": [],
+    "remediation": {
+      "source": "issue#202",
+      "criteria": "test/clio-exporter.sh has a fixture covering a malformed source row"
+    },
+    "lanes": {
+      "agy_safe": [
+        "test/clio-exporter.sh"
+      ],
+      "orchestrator_only": []
+    }
+  },
+  "freshness": {
+    "fetch_ok": true,
+    "upstream": "origin/development",
+    "ahead": 6,
+    "behind": 0,
+    "dirty": true,
+    "stale_index_lock": false,
+    "stale_index_lock_path": null,
+    "stale_index_lock_warning": null,
+    "evaluated_ref": "development",
+    "evaluated_ref_commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "checkout_matches_ref": true,
+    "head_behind_ref": 0,
+    "candidate_state": "ready",
+    "probes": [
+      {
+        "type": "grep_absent",
+        "path": "test/clio-exporter.sh",
+        "verdict": "unfixed"
+      }
+    ]
+  },
+  "readiness": {
+    "ready": true,
+    "next_action": null
+  },
+  "lane_plan": {
+    "orchestrator_owned": [],
+    "codex_lane": [],
+    "agy_lane": [
+      "test/clio-exporter.sh"
+    ],
+    "effective_artifacts": [
+      "test/clio-exporter.sh"
+    ],
+    "inferred_test_artifacts": [],
+    "inferred_test_helpers": [],
+    "fs_touching_tests": [
+      "test/clio-exporter.sh"
+    ],
+    "agy_review_default": true,
+    "coupling_warning": null,
+    "parallelizable": false,
+    "single_lane_only": true
+  }
+}

@@ -1,0 +1,19 @@
+{
+  "orchestrator_owned": [],
+  "codex_lane": [],
+  "agy_lane": [
+    "test/clio-exporter.sh"
+  ],
+  "effective_artifacts": [
+    "test/clio-exporter.sh"
+  ],
+  "inferred_test_artifacts": [],
+  "inferred_test_helpers": [],
+  "fs_touching_tests": [
+    "test/clio-exporter.sh"
+  ],
+  "agy_review_default": true,
+  "coupling_warning": null,
+  "parallelizable": false,
+  "single_lane_only": true
+}

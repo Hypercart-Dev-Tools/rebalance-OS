@@ -1,0 +1,108 @@
+{
+  "schema": "swarm-preflight/run-candidate@1",
+  "generated_at": "2026-07-30T20:10:34Z",
+  "mode": "gh-bundle",
+  "candidate": {
+    "slug": "gh-201-database-path-fallback"
+  },
+  "provenance": {
+    "source_docs": [
+      "/Users/matthewtaylor/htdocs/rebalance-OS/PROJECT/2-WORKING/GH-201-DATABASE-PATH-FALLBACK.md"
+    ],
+    "issues": [
+      "201"
+    ],
+    "target_root": "/Users/matthewtaylor/htdocs/rebalance-OS",
+    "branch": "development",
+    "commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "suggested_branch": "marathon/gh-201-database-path-fallback-2026-07-30",
+    "branch_ready": false,
+    "skip_branch_prompt": true
+  },
+  "contract": {
+    "target": {
+      "repo": ".",
+      "ref": "development"
+    },
+    "gate": ".venv/bin/python -m pytest tests/ -k \"paths or resolve_database\" -q",
+    "fix_probes": [
+      {
+        "type": "grep_present",
+        "path": "src/rebalance/paths.py",
+        "pattern": "def resolve_database_path"
+      },
+      {
+        "type": "path_absent",
+        "path": "tests/test_paths.py"
+      }
+    ],
+    "artifacts": [
+      "src/rebalance/paths.py",
+      "tests/test_paths.py"
+    ],
+    "artifacts_new": [
+      "tests/test_paths.py"
+    ],
+    "remediation": {
+      "source": "issue#201",
+      "criteria": "Explicit --database at a nonexistent path raises instead of silently falling back to the canonical DB"
+    },
+    "lanes": {
+      "agy_safe": [
+        "tests/test_paths.py"
+      ],
+      "orchestrator_only": []
+    }
+  },
+  "freshness": {
+    "fetch_ok": true,
+    "upstream": "origin/development",
+    "ahead": 6,
+    "behind": 0,
+    "dirty": true,
+    "stale_index_lock": false,
+    "stale_index_lock_path": null,
+    "stale_index_lock_warning": null,
+    "evaluated_ref": "development",
+    "evaluated_ref_commit": "a4d22c43e6967220b5f90b4d1872ec193a6fedf1",
+    "checkout_matches_ref": true,
+    "head_behind_ref": 0,
+    "candidate_state": "ready",
+    "probes": [
+      {
+        "type": "grep_present",
+        "path": "src/rebalance/paths.py",
+        "verdict": "unfixed"
+      },
+      {
+        "type": "path_absent",
+        "path": "tests/test_paths.py",
+        "verdict": "unfixed"
+      }
+    ]
+  },
+  "readiness": {
+    "ready": true,
+    "next_action": null
+  },
+  "lane_plan": {
+    "orchestrator_owned": [],
+    "codex_lane": [
+      "src/rebalance/paths.py"
+    ],
+    "agy_lane": [
+      "tests/test_paths.py"
+    ],
+    "effective_artifacts": [
+      "src/rebalance/paths.py",
+      "tests/test_paths.py"
+    ],
+    "inferred_test_artifacts": [],
+    "inferred_test_helpers": [],
+    "fs_touching_tests": [],
+    "agy_review_default": true,
+    "coupling_warning": null,
+    "parallelizable": true,
+    "single_lane_only": false
+  }
+}
