@@ -25,6 +25,21 @@ def _enable_guard(monkeypatch, tmp_path):
     """Re-enable the guard and isolate the lock dir from the real one."""
     monkeypatch.setenv("REBALANCE_JOB_GUARD", "1")
     monkeypatch.setenv("JOB_GUARD_LOCK_DIR", str(tmp_path / "locks"))
+    # GH-231: isolate the memory ceiling too, not just the lock dir.
+    #
+    # Without this the guard falls back to DEFAULT_MAX_COMPRESSOR_FRACTION (0.25 of physical RAM,
+    # utils/job_guard.py:132) and its preflight reads the machine's LIVE compressor usage. On a
+    # 32 GB machine that is an 8 GB ceiling; anything above it makes preflight() refuse to start,
+    # the child never launches, and the test fails as "child never acquired the lock" — a result
+    # about the machine, not about the locking these tests exist to verify.
+    #
+    # This bites hardest while the memory work in #209/#210/#215 is in flight, because that work
+    # is precisely about jobs driving the compressor to tens of GB. Invisible in CI, where the
+    # Linux runner is not under pressure.
+    #
+    # A test that means to exercise the ceiling should set this to a value that trips it, rather
+    # than relying on whatever the host happens to be doing.
+    monkeypatch.setenv("REBALANCE_JOB_GUARD_MAX_COMPRESSOR_GB", "999")
     # The module caches its load; drop it so LOCK_DIR is re-read per test.
     _job_guard._module = None
     _job_guard._load_attempted = False
