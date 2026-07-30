@@ -84,3 +84,20 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    claude, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · claude
+
+**File touched:** `test/clio-exporter.sh`
+
+**What I did:**
+- Added `malformed_row_is_dropped()` fixture function (inserted before `run_suite`)
+- Added its call inside `run_suite` after `backfill_then_targeted_repair`
+
+**Key decisions:**
+- The fixture writes 5 lines: 2 valid JSON entries flanking a truncated JSON object, a non-JSON string, and a blank line — covering the three distinct failure modes that `fromjson? // empty` silently drops
+- Asserts that both valid entries appear in the output and "not json at all" does not
+- Asserts `Synced 2 new prompt(s)` to confirm only the 2 valid rows were counted
+- Asserts the cursor advances to `total_lines` (5), documenting that malformed rows count toward the cursor even though they are dropped
+- Asserts idempotency: a second run changes nothing and syncs 0 prompts

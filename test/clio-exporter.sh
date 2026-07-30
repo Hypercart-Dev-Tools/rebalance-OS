@@ -317,6 +317,36 @@ local_time_display_keeps_utc_ids() {
   cmp -s "$out" "$case_dir/before.md" || fail "cursor reset duplicated a localized note"
 }
 
+malformed_row_is_dropped() {
+  shell=$1
+  case_dir="$TMP/malformed-$2"
+  home="$case_dir/home"
+  out="$case_dir/note.md"
+  mkdir -p "$home/.claude"
+  {
+    json_line '2026-07-20T08:00:00Z' good sA 'good before malformed'
+    printf '%s\n' '{"timestamp":"2026-07-20T08:00:30Z","repo":"bad"'
+    printf '%s\n' 'not json at all'
+    printf '%s\n' ''
+    json_line '2026-07-20T08:01:00Z' good sB 'good after malformed'
+  } > "$home/.claude/prompt-log.jsonl"
+  total_lines=$(grep -c '' "$home/.claude/prompt-log.jsonl")
+
+  run_exporter "$shell" "$home" "$out" > "$case_dir/stdout"
+  assert_contains "$out" 'good before malformed'
+  assert_contains "$out" 'good after malformed'
+  assert_not_contains "$out" 'not json at all'
+  assert_contains "$case_dir/stdout" 'Synced 2 new prompt(s)'
+  # Cursor must advance past all lines, including malformed ones.
+  state=$(cat "$home/.claude/prompt-log-to-md.state")
+  [ "$state" = "$total_lines" ] || fail "cursor $state != total_lines $total_lines"
+
+  cp "$out" "$case_dir/before.md"
+  run_exporter "$shell" "$home" "$out" > "$case_dir/second.out"
+  cmp -s "$out" "$case_dir/before.md" || fail "second run changed output after malformed rows"
+  assert_contains "$case_dir/second.out" 'Synced 0 new prompt(s)'
+}
+
 run_suite() {
   shell=$1
   key=$2
@@ -330,6 +360,7 @@ run_suite() {
   conflict_sibling "$shell" "$key"
   manifest_failure_is_nonfatal "$shell" "$key"
   backfill_then_targeted_repair "$shell" "$key"
+  malformed_row_is_dropped "$shell" "$key"
   echo "PASS: $shell"
 }
 
