@@ -78,6 +78,8 @@ The collector emits a structured report. Per active repo group (deduped by share
 ```
 ## REPO <primary worktree path>
 common_dir=… worktrees=<n>
+  pdda=yes inbox=<n> working=<n>                       # OPTIONAL — only for PDDA repos
+    working_doc=<basename> mtime=<YYYY-MM-DD HH:MM>     #   newest ≤3 active-effort docs
   - WORKTREE <path>
     kind=primary|linked branch=… fresh=<TAG> base=<trunk> behind=<n> ahead=<n> dirty=<n> age_days=<n>
     last_commit=<hash date subject>
@@ -100,6 +102,15 @@ so `ahead` = unmerged commits this branch carries and `ahead==0` = nothing unmer
 unmerged work and is therefore `SYNCED`/`MERGED`, never WARM/STALE. In the synthesis, group
 `SYNCED` with the quiet/no-action repos (it is "in sync, nothing to do", not in-flight work).
 
+**Optional PDDA annotation** (a THIRD, *advisory* axis — the repo's own declared intent). It is
+emitted **only** for repos carrying `PROJECT/PDDA.md`, and is absent otherwise — so a non-PDDA
+repo's output is byte-for-byte unchanged. Fields: `pdda=yes`, lifecycle counts `inbox=`/`working=`
+(all `*.md` under `PROJECT/1-INBOX`/`2-WORKING`), and the newest ≤3 `2-WORKING/*.md` docs with
+their `mtime`. Treat it as **look-for-but-don't-rely-on**: it is *filesystem* state, not git —
+mtime order/membership can shift on a bare touch or checkout — so it **never** affects a freshness
+tag and sits outside the determinism guarantee. Any `status:`/ROADMAP prose it leads you to is
+*declared intent that may be stale*, and never overrides a git fact.
+
 ### Step 3 — Synthesize the brief (fixed structure)
 
 Read the collector output and the signal, then produce **one** brief with these sections, in
@@ -114,10 +125,18 @@ order. Keep it tight; lead with the reconciliation, not raw dumps.
    worktrees, one detached") but do **not** frame the whole section as "worktrees" — it's git
    activity, of which worktrees are a part. `MERGED` worktrees go in a short cleanup list; `SYNCED`
    repos are "in sync, nothing to do" — fold them into a one-line count, don't itemize.
-3. **Bottom line** — reconcile the two: name the repo/branch you're truly working in right now
-   (usually the freshest ACTIVE commit, which may differ from what the signal ranks first),
-   then 1–3 concrete follow-ups (e.g. "gh-57 is relay-approved and 500 ahead — ripe to land";
-   "N rebalance-OS worktrees are merged — safe to prune per WORKTREE-SAFETY.md").
+   **Optional (only where `pdda=yes`):** you MAY append one *advisory* declared-intent line by
+   matching a `working_doc=` basename to a reported branch on the `gh-NNN` token
+   (`GH-169-*.md` ↔ `…gh-169…`), e.g. `↳ PDDA: intent doc GH-169 touched 2026-07-21 22:08
+   (advisory)`. You may open a matched doc to read its `status:`/`## Status` as declared intent —
+   labelled possibly-stale, never overriding the git freshness tag.
+3. **Bottom line** — reconcile the two (three where `pdda=yes` adds declared intent): name the
+   repo/branch you're truly working in right now (usually the freshest ACTIVE commit, which may
+   differ from what the signal ranks first), then 1–3 concrete follow-ups (e.g. "gh-57 is
+   relay-approved and 500 ahead — ripe to land"; "N rebalance-OS worktrees are merged — safe to
+   prune per WORKTREE-SAFETY.md"). When offering to prune a `MERGED` worktree of a PDDA repo,
+   cross-check its doc: a matching doc still in `PROJECT/2-WORKING/` = paperwork open (say so);
+   one already in `3-DONE/`/`3-COMPLETED/` = clean to prune.
 
 ### Step 4 — Offer, don't act
 
@@ -127,8 +146,15 @@ outward-facing action without explicit confirmation, per the guardrails above.
 
 ## Notes
 
-- Fully deterministic given tree state + window: same inputs → same report shape and tags.
+- Deterministic given tree state + window: same inputs → same **git** report shape and tags. The
+  optional PDDA annotation is the one exception — it is advisory filesystem (mtime) state, so its
+  values, order, and membership can move without a git/content change; it never feeds a tag.
+- Read-only by construction: the collector runs only `find`, read-only `git`, and read-only file
+  utilities (`ls`/`stat`/`grep`/`awk`/…). It **never** executes a repo-owned script such as
+  `pdda.sh` — the PDDA annotation is pure filesystem probing.
 - macOS-safe: the collector avoids `declare -A` (bash 3.2) and creates **no temp files**
-  (sandbox-safe; the repo list lives in a shell variable).
+  (sandbox-safe; the repo list lives in a shell variable). `pdda_mtime` is OS-selected (BSD vs GNU
+  `stat`). A bundled `test-pdda-annotation.sh` smoke-tests the PDDA annotation (happy path +
+  additivity + spaces + mtime format).
 - Fast filtering: quiet single-worktree repos (old head, clean, or ancient-dirt) are skipped;
   multi-worktree groups are always reported because topology is itself signal.
