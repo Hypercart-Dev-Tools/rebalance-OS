@@ -1,6 +1,6 @@
 ---
 title: "GH-156 P2 — non-mutating status: source/manifest/target reconciliation and loss detection"
-status: "Brief authored; phase not yet run"
+status: "Complete — phase ran and was approved; GH-156 marathon merged 2026-07-20 via PR #176."
 created: 2026-07-19
 updated: 2026-07-19
 owner: noel

@@ -200,7 +200,7 @@ trunk" hole raised during review. Dedup is by `(repo, sha)`, so branch overlap c
 Regression test added.
 
 **Tests in a worktree silently exercise the wrong code.** The editable install resolves `rebalance`
-to `/Users/noelsaw/Documents/rebalance-OS/src` — the *main* checkout — so `pytest` in a worktree
+to the *main* checkout's `src/`, not the worktree's — so `pytest` in a worktree
 imports code that is not the code under change, and passes. Every run here therefore pins
 `PYTHONPATH=$PWD/src`. This affects any worktree/marathon work in this repo, not just GH-169, and is
 worth a separate issue.

@@ -1,0 +1,36 @@
+# 3-Eyes adoption of the incumbent vault sync launcher (GH-195 P8 Wave 1).
+# Database-lock failures remain visible; this registry declaration deliberately
+# adds no suppression for them.
+
+id = "vault-sync"
+command = "vault-sync"
+description = "Run the Rebalance vault sync hourly at :15 from 06:15 through 23:15 local."
+enabled = true
+routes = ["log-only"]
+supersedes = ["com.rebalance-os.vault-sync"]
+
+[schedule.launchd]
+StartCalendarInterval = [
+  { Hour = 6, Minute = 15 },
+  { Hour = 7, Minute = 15 },
+  { Hour = 8, Minute = 15 },
+  { Hour = 9, Minute = 15 },
+  { Hour = 10, Minute = 15 },
+  { Hour = 11, Minute = 15 },
+  { Hour = 12, Minute = 15 },
+  { Hour = 13, Minute = 15 },
+  { Hour = 14, Minute = 15 },
+  { Hour = 15, Minute = 15 },
+  { Hour = 16, Minute = 15 },
+  { Hour = 17, Minute = 15 },
+  { Hour = 18, Minute = 15 },
+  { Hour = 19, Minute = 15 },
+  { Hour = 20, Minute = 15 },
+  { Hour = 21, Minute = 15 },
+  { Hour = 22, Minute = 15 },
+  { Hour = 23, Minute = 15 },
+]
+
+[breakers]
+single_instance = true
+trip_after_failures = 3

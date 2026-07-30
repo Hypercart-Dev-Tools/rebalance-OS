@@ -84,3 +84,11 @@ REPO_MAP.md
 # Per-developer VS Code editor prefs (theme colors, chat auto-approve).
 # Shared VS Code config (launch.json / tasks.json) stays tracked.
 .vscode/settings.json
+
+# Test-run artifacts. Untracked-but-not-ignored files at the repo root are treated as
+# an off-lane edit by the XYZ relay containment guard, so a builder that merely RUNS
+# the test suite in its isolated worktree fails its turn (exit 6) for doing exactly
+# what its brief required. Cost two marathon phases on 2026-07-28 before diagnosis.
+.pytest_cache/
+.coverage
+.coverage.*

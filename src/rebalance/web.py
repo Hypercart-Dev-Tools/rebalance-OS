@@ -817,6 +817,125 @@ def focus5_page(refresh: bool = False, view: str = "focus5"):
     return _page(page_title, _focus5_body(data, view=view), active="focus5", wide=True)
 
 
+# --------------------------------------------------------------------------- #
+# 3-Eyes fleet job-health tile (GH-195) — a synthetic Focus 5 roster card.
+#
+# 3-Eyes (utils/3-eyes) is the optional local job supervisor. When it is ACTIVE on
+# this machine, /focus-5.json appends ONE extra roster card summarizing whether the
+# catalogued scheduled jobs are healthy — so the "a job is failing" signal rides
+# along on the panel the operator already watches. The card renders through the
+# app's existing dynamic ForEach (no native-app change; CONTRACT.md documents the
+# additive 6th tile). It is:
+#   * additive + fully defensive — ANY failure (3-Eyes absent, import error,
+#     launchctl error) yields no card and the roster is served unchanged;
+#   * gated on 3-Eyes being active — a downstream/inert clone never shows it; and
+#   * cached (short TTL) so this read-only, frequently-polled route never spawns
+#     `launchctl list` on every request.
+# --------------------------------------------------------------------------- #
+
+_THREE_EYES_DIR = Path(__file__).resolve().parents[2] / "utils" / "3-eyes"
+_TE_HEALTH_TTL_S = 20.0
+_te_health_lock = threading.Lock()
+_te_health_cache: dict[str, Any] = {"at": -1e9, "card": None}
+
+
+def _three_eyes_health_scan() -> dict | None:
+    """Return ``three_eyes.health.scan()`` when 3-Eyes is ACTIVE here, else None.
+
+    Isolated so the import + activation gate + subprocess all live behind the one
+    try/except in the caller: a problem here must never break /focus-5.json.
+    """
+    import sys
+
+    d = str(_THREE_EYES_DIR)
+    if d not in sys.path:
+        sys.path.insert(0, d)
+    from three_eyes import config as te_config, health as te_health
+
+    if not te_config.three_eyes_active():
+        return None
+    return te_health.scan()
+
+
+def _build_three_eyes_card(report: dict) -> dict:
+    """Shape a 3-Eyes health report into a RepoCard-compatible dict (snake_case).
+
+    Mapping: the verdict rides in ``repo_name`` (the card title) and ``rank_reason``
+    (which the app shows as the always-visible subtitle when the commit timestamps
+    are null); ``is_dirty`` drives the red StatusDot when anything is failing.
+    """
+    ok = int(report.get("ok", 0))
+    failing = int(report.get("failing", 0))
+    not_loaded = int(report.get("not_loaded", 0))
+    unknown = int(report.get("unknown", 0))
+    probe_ok = bool(report.get("launchctl_available", True))
+    fail_rows = [r for r in report.get("rows", []) if "FAIL" in r.get("health", "")]
+    verdict = f"{ok} ok · {failing} failing · {not_loaded} not-loaded"
+    if not probe_ok:
+        # The probe could not run. Never render this as a clean bill of health —
+        # an unreadable fleet must look like it needs attention, not like it is green.
+        title = "3-Eyes — job health UNKNOWN"
+        why = report.get("probe_error") or "launchctl could not be consulted"
+        reason = f"3-Eyes could not read launchd job state ({why}). Health is unknown, not confirmed healthy."
+    elif failing:
+        title = f"3-Eyes — {failing} job{'s' if failing != 1 else ''} FAILING"
+        detail = "; ".join(f"{r['label']} {r['health']}" for r in fail_rows[:6])
+        reason = f"3-Eyes fleet job health — {verdict}. Failing: {detail}."
+    else:
+        title = "3-Eyes — all jobs OK"
+        reason = f"3-Eyes fleet job health — {verdict}. All catalogued jobs healthy."
+    now_iso = datetime.now(timezone.utc).isoformat()
+    path = str(_THREE_EYES_DIR)
+    return {
+        "position": 0,                      # re-stamped by the caller
+        "repo_name": title,
+        "repo_full_name": None,
+        "local_path": path,                 # unique → stable Identifiable card id
+        "remote_url": None,
+        "vscode_url": f"vscode://file{path}",
+        "rank_reason": reason,              # commitLine falls back to this → subtitle
+        "ranking_mode": "three_eyes_health",
+        "computed_at": now_iso,
+        "branch": None,
+        "upstream": None,
+        "has_upstream": None,
+        "ahead": 0,
+        "behind": 0,
+        "modified_count": failing,          # failing count in the "M" slot
+        "untracked_count": not_loaded if probe_ok else unknown,
+        "is_dirty": (failing > 0) or not probe_ok,   # red StatusDot: failing OR unreadable
+        "health_available": probe_ok,
+        "health_probed_at": now_iso,
+        "last_commit_at": None,             # null → commitLine shows rank_reason
+        "last_commit_ts": None,
+        "my_last_commit_ts": None,
+        "probed_at": now_iso,
+        "newest_pr": None,
+        "recent_activity": [],
+    }
+
+
+def _three_eyes_health_card(position: int) -> dict | None:
+    """Build the synthetic 3-Eyes health roster card, or None. Cached + defensive."""
+    now = time.monotonic()
+    with _te_health_lock:
+        if (now - _te_health_cache["at"]) >= _TE_HEALTH_TTL_S:
+            card = None
+            try:
+                report = _three_eyes_health_scan()
+                if report is not None:
+                    card = _build_three_eyes_card(report)
+            except Exception:               # never break the roster endpoint
+                logger.debug("3-Eyes health tile skipped", exc_info=True)
+                card = None
+            _te_health_cache["at"] = now
+            _te_health_cache["card"] = card
+        card = _te_health_cache["card"]
+    if card is None:
+        return None
+    return {**card, "position": position}
+
+
 @app.get("/focus-5.json")
 def focus5_json(view: str = "focus5") -> JSONResponse:
     """Read-only JSON projection of the Focus 5 roster for native/desktop clients.
@@ -850,6 +969,11 @@ def focus5_json(view: str = "focus5") -> JSONResponse:
 
     data = summarize_focus5(db, mode="dirty_first" if view == "dirty" else None)
     logger.info("focus5.json: view=%s roster=%d", view, data["summary"]["roster_size"])
+    # GH-195: append the 3-Eyes fleet-health tile when 3-Eyes is active here. Additive
+    # and defensive — None when 3-Eyes is inert/absent, leaving the roster untouched.
+    tile = _three_eyes_health_card(len(data["roster"]) + 1)
+    if tile is not None:
+        data["roster"].append(tile)
     return JSONResponse(data)
 
 

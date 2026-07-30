@@ -6,6 +6,10 @@ updated: 2026-07-21
 owner: noel
 gh_issue: 171
 roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Stop `sync_github_repo()` from
+  holding the SQLite write lock across network I/O, so a slow GitHub call can no longer
+  block every other writer for the duration of the request.
 ---
 
 # Phase 2 — stop github_sync from holding the SQLite write lock across network I/O
@@ -14,6 +18,12 @@ Part of **GH-171**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/i
 Disjoint from every other phase in this marathon. **Artifact:** `src/rebalance/ingest/github_knowledge.py`
 (`sync_github_repo()`, line 351 at time of writing; `db_connection` context manager usage at
 lines 273/400/894/955), `scripts/github_sync.sh` if it wraps transaction boundaries directly.
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Brief authored 2026-07-21 for parent GH-171; marathon plan is `PROJECT/2-WORKING/MARATHON-2026-07-21/MARATHON.md` | **Not fired.** Execute as marathon phase `p2-171-sqlite-write-lock`; disjoint write-set, so it may run in any wave. |
 
 ## The problem (measured live, 2026-07-19)
 

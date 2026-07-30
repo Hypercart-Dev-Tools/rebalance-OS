@@ -6,6 +6,10 @@ updated: 2026-07-21
 owner: noel
 gh_issue: 189
 roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Close GH-135's two residual
+  acceptance gaps left open at merge: the health-banner's bare relative age string in
+  `doctor.py`, and the un-stripped org prefixes in `render_repo_pie()`'s labels.
 ---
 
 # Phase 4 — close GH-135's 2 residual acceptance gaps
@@ -14,6 +18,12 @@ Part of **GH-189**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/i
 Disjoint from every other phase in this marathon. **Artifact:** `src/rebalance/doctor.py`
 (health-banner age string, line 1192 at time of writing), `scripts/pulse_web.py`
 (`render_repo_pie()`, line 1023, labels built at line 1039).
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Brief authored 2026-07-21 for parent GH-189; marathon plan is `PROJECT/2-WORKING/MARATHON-2026-07-21/MARATHON.md` | **Not fired.** Execute as marathon phase `p4-189-gh135-residual-gaps`; disjoint write-set, so it may run in any wave. |
 
 ## The problem
 

@@ -1,3 +1,17 @@
+---
+title: "GH-154 P2 — tokenize `web.py`"
+status: "Complete — merged to development 2026-07-19 via PR #163"
+created: 2026-07-18
+updated: 2026-07-22
+owner: Noel
+gh_issue: 154
+roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Move `web.py`'s embedded colour
+  literals onto the P0 token vocabulary, one of the three Python-embedded stylesheets that
+  together hold the ~190 hardcoded colours this effort collapses.
+---
+
 # Phase 2 — Tokenize `web.py`
 
 Part of **GH-154**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154
@@ -6,6 +20,12 @@ Independent of p1 and p3 (no shared files); runs after p0. **Artifact: `src/reba
 Depends on p0, which defined the full `:root` vocabulary and **enumerated this phase's exact
 inline-`style=` write-set** — read that list in `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md`
 before starting. Prior estimates conflicted (5, 7, 14); p0's enumeration is authoritative.
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase built, verified, and **shipped to `development` 2026-07-19 via PR #163** (`feat/theme-picker`, tip `613f77b`). | Nothing phase-local — this phase is done and merged. Runs after p0; disjoint from p1 and p3 (no shared files). |
 
 ## Write-set
 

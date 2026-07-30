@@ -19,7 +19,6 @@ from rebalance.ingest.config import (
     add_github_related_repo,
     add_health_notice_pattern,
     clear_github_token,
-    get_anthropic_api_key,
     get_config_path,
     get_focus5_hidden_repos,
     get_focus5_scan_roots,
@@ -390,8 +389,7 @@ def config_doctor() -> None:
         row("Database", False, "not found — run: rebalance refresh-index")
 
     typer.echo("\n── LLM API keys (env vars) ──────────────────")
-    row("ANTHROPIC_API_KEY", bool(get_anthropic_api_key()), "used by RepairFSM Haiku escalation")
-    row("GEMINI_API_KEY / GOOGLE_API_KEY", bool(get_gemini_api_key()), "used by dashboard narrative synthesis")
+    row("GEMINI_API_KEY / GOOGLE_API_KEY", bool(get_gemini_api_key()), "used by RepairFSM and dashboard synthesis")
 
     typer.echo("\n── Sleuth credentials ───────────────────────")
     try:

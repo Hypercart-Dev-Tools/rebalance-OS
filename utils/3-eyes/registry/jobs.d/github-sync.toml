@@ -1,0 +1,34 @@
+# 3-Eyes adoption of the incumbent GitHub sync launcher (GH-195 P8 Wave 1).
+
+id = "github-sync"
+command = "github-sync"
+description = "Run the Rebalance GitHub sync hourly at :45 from 06:45 through 23:45 local."
+enabled = true
+routes = ["log-only"]
+supersedes = ["com.rebalance-os.github-sync"]
+
+[schedule.launchd]
+StartCalendarInterval = [
+  { Hour = 6, Minute = 45 },
+  { Hour = 7, Minute = 45 },
+  { Hour = 8, Minute = 45 },
+  { Hour = 9, Minute = 45 },
+  { Hour = 10, Minute = 45 },
+  { Hour = 11, Minute = 45 },
+  { Hour = 12, Minute = 45 },
+  { Hour = 13, Minute = 45 },
+  { Hour = 14, Minute = 45 },
+  { Hour = 15, Minute = 45 },
+  { Hour = 16, Minute = 45 },
+  { Hour = 17, Minute = 45 },
+  { Hour = 18, Minute = 45 },
+  { Hour = 19, Minute = 45 },
+  { Hour = 20, Minute = 45 },
+  { Hour = 21, Minute = 45 },
+  { Hour = 22, Minute = 45 },
+  { Hour = 23, Minute = 45 },
+]
+
+[breakers]
+single_instance = true
+trip_after_failures = 3

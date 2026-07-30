@@ -61,7 +61,7 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 - Registry: `{vault_path}/Projects/00-project-registry.md`
 - Config: `temp/rbos.config` (gitignored, repo root)
 - Database: resolved from `REBALANCE_DB` env var (set in `.vscode/mcp.json`)
-- Architecture docs: `PROJECT.md`, `MCP.md`
+- Architecture docs: `ARCHITECTURE.md`, `MCP.md`, `PROJECT/PDDA.md`
 
 **Background refresh.** A launchd job (`com.rebalance-os.daily-sync`) runs [scripts/daily_sync.sh](scripts/daily_sync.sh) at 6:30 AM daily and on boot. The script invokes the same `refresh_index(scope=["all"])` orchestration, so the cron and the MCP tool share one code path. If the index looks stale, check `temp/logs/daily_sync_YYYY-MM-DD.log` before manually re-running.
 
@@ -96,7 +96,7 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 > For the *why* behind these rules, see [GUIDING-PRINCIPLES.md](./GUIDING-PRINCIPLES.md).
 
 - Code: DRY, SOLID; balance maintainability, performance, secure. Comply with framework security best practices.
-- **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document state diagram in code comments or `/docs/state-machine.md`.
+- **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document the state diagram in code comments, or in the owning `PROJECT/**` doc.
 - **Contracts**: Designate single writer per contract/schema (API response shape, DB record structure, queue message format). Changes require review from contract owner; broadcast breaking changes immediately.
 - **Pipelines**: One logical pipeline per data flow whenever possible. Avoid forking/rejoining; use filters, transforms, and side effects in sequence. If pipeline needs multiple paths, use conditional routing within single pipeline, not separate pipelines.
 - **Collectors, sources & write paths** (see `PROJECT/2-WORKING/COLLECTOR-PATH-AND-PORTABILITY-AUDIT.md`):
@@ -171,6 +171,24 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 
 - Audit deps weekly (`safety check`, Dependabot).
 - Rate limit APIs; exponential backoff on 429s.
+
+### 3-Eyes — the local job supervisor (read this before touching scheduled jobs)
+
+**3-Eyes is the sentinel system for this machine's scheduled jobs.** It supersedes the earlier
+Cactus-Needle sentinel, which was disabled on 2026-07-27 (its four `com.neochro.*` launchd agents
+are parked in `~/Library/LaunchAgents/.disabled-cactus-sentinel-2026-07-27/`). Do not reintroduce a
+second supervisor — one machine, one sentinel.
+
+- **Code:** `utils/3-eyes/` · **Plan:** [PROJECT/2-WORKING/GH-195-UNIFIED-SENTINEL.md](PROJECT/2-WORKING/GH-195-UNIFIED-SENTINEL.md)
+- **Status / inventory:** `cd utils/3-eyes && PYTHONPATH=$PWD python3 -m three_eyes status`
+- **Skill:** `/3-eyes` for job health; `/launchd-triage` for raw launchd triage beneath it
+- **Inert by default.** A clone without a gitignored `config/runtime.env` is a clean no-op —
+  "3-Eyes says nothing" on a fresh machine means *not activated*, not *nothing wrong*.
+
+**Known gap (2026-07-27): the registry does not match reality.** `registry/jobs.d/` lists
+`collector-health` and `selfcheck`, but `3eyes.skill-sync` is loaded in launchd and firing every
+120 s without a registry entry. A supervisor that doesn't know about one of its own jobs is the
+condition 3-Eyes exists to prevent — reconcile before trusting its inventory.
 
 ## Phase 0 Technical Spikes
 

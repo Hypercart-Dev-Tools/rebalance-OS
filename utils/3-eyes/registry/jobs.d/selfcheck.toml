@@ -1,0 +1,22 @@
+# 3-Eyes self-check job (GH-195).
+#
+# The always-safe demonstration job: it runs a no-op under the full gate stack
+# (halt -> active -> quiet -> breaker -> guarded run -> route) so the loop is
+# exercised end-to-end without touching anything real. Ships declared but inert —
+# nothing runs until the operator activates 3-Eyes.
+#
+# NOTE: top-level keys (id, command, routes, ...) MUST precede any [table] header —
+# in TOML a bare key after `[breakers]` would bind to that table, not the job.
+
+id = "selfcheck"
+command = "noop-selfcheck"
+description = "Hourly no-op that proves the guarded run + breaker + route loop works."
+enabled = true
+routes = ["log-only"]
+
+[schedule.launchd]
+StartInterval = 3600
+
+[breakers]
+single_instance = true
+trip_after_failures = 3

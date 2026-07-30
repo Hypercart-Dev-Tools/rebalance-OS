@@ -1,0 +1,188 @@
+# Curated annotations for the 3-Eyes master automation catalog (GH-195).
+#
+# COMMITTED — this is human curation, not machine state. The rendered CATALOG.md is
+# GENERATED from this file ⋈ this device's live `three_eyes observe`, and is
+# gitignored (it lists a specific machine's agents). Regenerate: `three_eyes catalog --write`.
+#
+# When `three_eyes catalog --check` reports an UNCLASSIFIED agent, add an
+# [agent."<launchd-label>"] block here to file it into the catalog.
+#
+# status: managed | to-adopt | observe | server | system
+#   managed  = a 3-Eyes registry job (🟢)    to-adopt = bring into the registry next (🎯)
+#   observe  = seen, no plan yet (👁)          server   = long-running service, see servers.md (⚙️)
+#   system   = vendor/OS, ignore (⚙️)
+
+system_order = ["managed", "claude", "xyz", "rebalance", "cactus-sleuth", "ga4", "hq-misc", "servers"]
+
+[system_names]
+managed = "3-Eyes (managed)"
+claude = "Claude · Skills & Prompt Logs"
+xyz = "XYZ swarm"
+rebalance = "Rebalance-OS · collectors & sync"
+cactus-sleuth = "Cactus Needle & Sleuth sentinels (the other two eyes)"
+ga4 = "GA4 → BigQuery daily pulls"
+hq-misc = "HQ · vault · misc"
+servers = "Long-running servers (details in ~/bin/servers.md)"
+
+[agent."com.rebalance-os.3eyes.collector-health"]
+system = "managed"
+desc = "Watch ingest freshness across GitHub / Slack-Sleuth / Gmail / Google Calendar / Zapier collectors — the Layer 3 → Layer 1 bridge. Freshness only; log parsing + known-issue suppression is GH-146."
+status = "managed"
+
+[agent."com.rebalance-os.3eyes.selfcheck"]
+system = "managed"
+desc = "No-op proving the guarded run → breaker → route loop"
+status = "managed"
+
+[agent."com.rebalance-os.3eyes.skill-sync"]
+system = "claude"
+desc = "Claude Skills sync (SKILL.md LWW between giant-brains-claude-skills ↔ xyz-3-agents-swarm) — ADOPTED into 3-Eyes (GH-195); replaces the retired com.local.skill-sync (was stuck exit 78)."
+status = "managed"
+
+[agent."com.claude.prompt-log-to-md"]
+system = "claude"
+desc = "CLIO: render Claude prompt logs → markdown"
+status = "to-adopt"
+
+[agent."com.xyz-3-agents-swarm.hq-marathon-scan"]
+system = "xyz"
+desc = "XYZ HQ marathon-readiness scan"
+status = "to-adopt"
+
+[agent."com.rebalance-os.daily-sync"]
+system = "rebalance"
+desc = "Full daily collector sync (GH-146: exits 0 even when degraded — parse sync_outcome)"
+status = "to-adopt"
+
+[agent."com.rebalance-os.github-sync"]
+system = "rebalance"
+desc = "Hourly GitHub collector"
+status = "to-adopt"
+
+[agent."com.rebalance-os.health-check"]
+system = "rebalance"
+desc = "Collector health probe"
+status = "to-adopt"
+
+[agent."com.rebalance-os.health-check-triage"]
+system = "rebalance"
+desc = "LLM-triage + issue-file health failures (⚠️ would double-schedule the registry collector-health job — adopt as ONE)"
+status = "to-adopt"
+
+[agent."com.rebalance-os.vault-sync"]
+system = "rebalance"
+desc = "Obsidian vault → collector"
+status = "to-adopt"
+
+[agent."com.rebalance-os.pulse-sync"]
+system = "rebalance"
+desc = "HiQS pulse regenerate"
+status = "to-adopt"
+
+[agent."com.rebalance-os.pulse-web-sync"]
+system = "rebalance"
+desc = "Pulse static web regenerate"
+status = "to-adopt"
+
+[agent."com.rebalance-os.pulse-warning-watch"]
+system = "rebalance"
+desc = "Pulse warning watcher"
+status = "to-adopt"
+
+[agent."com.rebalance-os.obsidian-daily-sync"]
+system = "rebalance"
+desc = "Obsidian daily sync"
+status = "to-adopt"
+
+[agent."com.rebalance-os.obsidian-rollover"]
+system = "rebalance"
+desc = "Obsidian daily-note rollover"
+status = "to-adopt"
+
+[agent."com.rebalance-os.pulse-server"]
+system = "servers"
+desc = "FastAPI pulse web server (:8767)"
+status = "server"
+
+[agent."com.neochro.sentinel-daemon"]
+system = "cactus-sleuth"
+desc = "Retired 2026-07-27: Cactus Needle PDDA sentinel that watched cactus PROJECT/** docs; superseded by 3-Eyes."
+status = "observe"
+
+[agent."com.neochro.sentinel-daemon.sleuth-app"]
+system = "cactus-sleuth"
+desc = "Retired 2026-07-27: Sleuth variant of the Needle sentinel; superseded by 3-Eyes."
+status = "observe"
+
+# Retired with the sentinels: both services are not loaded, and the Cactus stack they
+# served was decommissioned when 3-Eyes became this machine's sole job supervisor.
+[agent."com.neochro.needle-router"]
+system = "cactus-sleuth"
+desc = "Retired 2026-07-27: Cactus Sentinel routing shim (:8082); superseded by 3-Eyes."
+status = "observe"
+
+[agent."com.neochro.cactus-serve"]
+system = "cactus-sleuth"
+desc = "Retired 2026-07-27: Cactus Needle SLM OpenAI server (:8081); superseded by 3-Eyes."
+status = "observe"
+
+[agent."com.neochro.ga-pull-binoid"]
+system = "ga4"
+desc = "GA4 → BigQuery pull, Binoid"
+status = "to-adopt"
+
+[agent."com.neochro.ga-pull-bounce"]
+system = "ga4"
+desc = "GA4 → BigQuery pull, Bounce"
+status = "to-adopt"
+
+[agent."com.neochro.ga-pull-bloomz"]
+system = "ga4"
+desc = "GA4 → BigQuery pull, Bloomz"
+status = "to-adopt"
+
+[agent."com.neochro.hq-rollup"]
+system = "hq-misc"
+desc = "HQ ROADMAP rollup → Obsidian (via agy)"
+status = "to-adopt"
+
+[agent."com.neochro.servers-monitor"]
+system = "hq-misc"
+desc = "Port/service conflict monitor (→ Resend email)"
+status = "to-adopt"
+
+[agent."com.user.git-pulse"]
+system = "hq-misc"
+desc = "Git Pulse Sync — hourly git activity sync"
+status = "to-adopt"
+priority = 2
+
+[agent."com.user.stickies2obsidian"]
+system = "hq-misc"
+desc = "macOS Stickies → Obsidian"
+status = "to-adopt"
+
+[agent."com.neochro.vscode-mem-attribute"]
+system = "hq-misc"
+desc = "VS Code per-window RSS sampler → ~/Library/Logs/vscode-mem/*.csv (60s, daily rotation). Continuous KeepAlive logger, NOT a scheduled findings job — deliberately observe-only, see README-mem-forensics.md."
+status = "observe"
+
+[agent."com.neochro.sys-mem-attribute"]
+system = "hq-misc"
+desc = "System-wide RSS sampler → daily rotated CSVs. Continuous KeepAlive logger, NOT a scheduled findings job — observe-only like com.neochro.vscode-mem-attribute."
+status = "observe"
+
+[agent."com.neochro.linkding-web"]
+system = "servers"
+desc = "linkding Django server (:8090)"
+status = "server"
+
+[agent."com.neochro.linkding-tasks"]
+system = "servers"
+desc = "linkding huey worker"
+status = "server"
+
+[agent."com.neochro.linkding-tunnel"]
+system = "servers"
+desc = "linkding Cloudflare tunnel → linkding.neochro.me"
+status = "server"

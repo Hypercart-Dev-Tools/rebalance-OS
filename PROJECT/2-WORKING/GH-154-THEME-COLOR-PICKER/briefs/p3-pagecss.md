@@ -1,3 +1,17 @@
+---
+title: "GH-154 P3 — tokenize `PAGE_CSS` and the canvas palettes"
+status: "Complete — merged to development 2026-07-19 via PR #163"
+created: 2026-07-18
+updated: 2026-07-22
+owner: Noel
+gh_issue: 154
+roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Move `pulse_web.py`'s `PAGE_CSS`
+  and its canvas palettes onto the P0 token vocabulary — the last of the three
+  Python-embedded stylesheets, and the one feeding the statically-built `/` route.
+---
+
 # Phase 3 — Tokenize `PAGE_CSS` and the canvas palettes
 
 Part of **GH-154**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/154
@@ -6,6 +20,12 @@ Independent of p1 and p2 (no shared files); runs after p0. **Artifact: `scripts/
 The largest phase: **101 literals across ~690 lines**, plus 7 inline `style=` attributes, plus the
 two Chart.js canvases. Depends on p0's `:root` vocabulary — read the `RB_TOKENS_CSS` docstring and
 `PROJECT/2-WORKING/GH-154-THEME-COLOR-PICKER.md` first.
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase built, verified, and **shipped to `development` 2026-07-19 via PR #163** (`feat/theme-picker`, tip `613f77b`). | Nothing phase-local — this phase is done and merged. Runs after p0; disjoint from p1 and p2 (no shared files). |
 
 ## Write-set
 

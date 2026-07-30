@@ -1,0 +1,60 @@
+# Machine-local command allowlist (GH-195) — GITIGNORED overlay.
+#
+# Copy to `commands.local.allow` (no `.example`) and add machine-specific commands
+# whose exec is an ABSOLUTE path outside rebalance-OS (so it can't be committed to
+# the shared `commands.allow`). Merged on top of `commands.allow` at runtime when
+# `include_local=True`; the committed DASHBOARD.md never reads this file.
+#
+# Same schema as commands.allow: each entry needs an `exec`; `args` + `description`
+# are optional. Absolute paths pass through unchanged (only relative paths resolve
+# against the repo root). Adding an entry here is still an operator act.
+
+# [commands.skill-sync]
+# exec = "/bin/bash"
+# args = ["/Users/you/path/to/skill-sync.sh"]
+# description = "Adopted from com.local.skill-sync — bidirectional SKILL.md sync."
+
+# Wave 3 adoption template. Replace every `/ABSOLUTE/PATH/...` placeholder with
+# this machine's real path after copying this file to `commands.local.allow`.
+# The three GA pulls deliberately have separate commands: command arguments are
+# fixed by the allowlist, so one command cannot safely vary `--brand` per job.
+
+[commands.prompt-log-to-md]
+exec = "/ABSOLUTE/PATH/.claude/hooks/prompt-log-to-md.sh"
+args = ["/ABSOLUTE/PATH/0. Claude Prompts.md"]
+description = "Render local Claude prompt logs into the configured Markdown note."
+
+[commands.ga-pull-binoid]
+exec = "/ABSOLUTE/PATH/Documents/GH Repos/WP-DB-Toolkit/.venv/bin/python3"
+args = ["/ABSOLUTE/PATH/Documents/GH Repos/WP-DB-Toolkit/vector/server/sources/ga/pull_aggregates.py", "--brand", "binoid"]
+description = "Run the Binoid GA aggregate pull from the local WP-DB-Toolkit checkout."
+
+[commands.ga-pull-bounce]
+exec = "/ABSOLUTE/PATH/Documents/GH Repos/WP-DB-Toolkit/.venv/bin/python3"
+args = ["/ABSOLUTE/PATH/Documents/GH Repos/WP-DB-Toolkit/vector/server/sources/ga/pull_aggregates.py", "--brand", "bounce"]
+description = "Run the Bounce GA aggregate pull from the local WP-DB-Toolkit checkout."
+
+[commands.ga-pull-bloomz]
+exec = "/ABSOLUTE/PATH/Documents/GH Repos/WP-DB-Toolkit/.venv/bin/python3"
+args = ["/ABSOLUTE/PATH/Documents/GH Repos/WP-DB-Toolkit/vector/server/sources/ga/pull_aggregates.py", "--brand", "bloomz"]
+description = "Run the Bloomz GA aggregate pull from the local WP-DB-Toolkit checkout."
+
+[commands.hq-rollup]
+exec = "/bin/bash"
+args = ["-l", "-c", "\"/ABSOLUTE/PATH/Documents/GH Repos/xyz-3-agents-swarm/utils/hq/rollup.sh\""]
+description = "Run the xyz-3-agents-swarm HQ rollup through its required login shell."
+
+[commands.servers-monitor]
+exec = "/bin/bash"
+args = ["/ABSOLUTE/PATH/Documents/GH Repos/AI-DDTK/tools/servers-monitor.sh"]
+description = "Run the local AI-DDTK server and port monitor."
+
+[commands.git-pulse]
+exec = "/ABSOLUTE/PATH/bin/git-pulse"
+args = []
+description = "Run the machine-local Git Pulse collector."
+
+[commands.hq-marathon-scan]
+exec = "/bin/bash"
+args = ["/ABSOLUTE/PATH/Documents/GH Repos/xyz-3-agents-swarm/utils/hq/hourly-global-scan.sh"]
+description = "Run the xyz-3-agents-swarm hourly HQ marathon scan."

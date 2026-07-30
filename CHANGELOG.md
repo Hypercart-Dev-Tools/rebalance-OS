@@ -6,6 +6,258 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.1] - 2026-07-26
+
+### Changed
+- **The cross-repo triage command is now named for what it does, not for one of the
+  repos it looks at.** The original name implied it only served the agent-harness
+  project, when the method is general: give it any set of related repositories and it
+  reports which open issues would unblock the most work across them. The default set
+  is unchanged, and the repositories are now passed in rather than assumed, so the
+  command works for any suite. Also relaxed an internal assumption so it degrades to
+  GitHub-only inputs when the local signal tooling is unavailable.
+
+## [0.68.0] - 2026-07-26
+
+### Added
+- **A cross-repo triage command that answers "what should I fix first?"** across the
+  three connected suites — the agent harness, the signal layer, and the doc-governance
+  lifecycle. Instead of ranking by severity or issue count, it builds a graph of which
+  open issues other open issues point at, groups issues that turn out to share a single
+  underlying cause, and reports what closing each one would unblock. It is read-only:
+  it never edits, closes, or pushes anything.
+
+  Two habits are built in because both caught real errors while the method was being
+  worked out. Every candidate is checked against GitHub itself before it is reported —
+  an issue recorded as "fixed on a branch" may still be open with the branch unmerged,
+  and a metric that looks impossible usually is. And any measurement that disagrees
+  with reality is treated as a finding in its own right rather than quietly passed
+  along; that is how the merge-count defect below was found.
+
+### Fixed
+- **Memory readings for background jobs were measured with the wrong ruler.** The job
+  watchdog judged a job by memory currently held in RAM, which on this platform excludes
+  anything the system has compressed or swapped out. Two scheduled jobs each grew to
+  roughly forty-six gigabytes while reporting about thirty megabytes, so no ceiling could
+  ever trip, and the machine ran out of memory instead. The forensic tooling now reads the
+  figure that includes compressed pages, records which measurement it used for every
+  sample, and captures the free-memory, swap and disk context that explains a stall. The
+  watchdog fix itself is tracked separately and not included here.
+
+## [0.67.4] - 2026-07-24
+
+### Fixed
+- **The command-line interface would not start at all.** Removing the Anthropic
+  API key dependency left two modules still importing a helper that no longer
+  existed, so every command — including the health check operators are asked to
+  run before committing — failed immediately with an import error instead of
+  running. The stale references are gone and the health check passes again. The
+  removed helper was already unused; the Gemini key lookup that replaced it was
+  in place.
+
+## [0.67.3] - 2026-07-24
+
+### Added
+- **Editable local Gemma instructions for 3-Eyes (GH-195).** The classifier now
+  loads `gemma_system_instructions.md` from beside its runtime package and sends
+  it as Ollama's `system` message. The instructions define a safety-first local
+  observability role, evidence and uncertainty rules, severity definitions,
+  escalation boundaries, and a JSON-only response contract. A missing or empty
+  file fails closed rather than calling the model without those controls.
+
+### Changed
+- **3-Eyes is explicitly optional and experimental.** Its README and operational
+  spec now point Codex, Claude Code, and human operators to the one prompt-tuning
+  surface; the classifier also honors the operator-local `THREE_EYES_MODEL`
+  setting.
+- **PDDA lifecycle reconciled for GH-195.** The active design record now lives in
+  `PROJECT/2-WORKING`, has current status and phase coverage, and its ROADMAP
+  pointer reflects the Gemma instruction surface.
+
+### Tests
+- **3-Eyes suite:** 94 passed, including a classifier integration test that
+  asserts the editable instructions and configured model reach the Ollama payload.
+
+## [0.67.2] - 2026-07-22
+
+### Fixed
+- **GH-154 was recorded as unmerged; it shipped on 2026-07-19.** The 0.67.1 pass corrected
+  ROADMAP's stale "Planning — no code written" claim, but replaced it with a second wrong
+  claim — "built and verified, branch unmerged" — by trusting the GH-154 doc's own
+  `status:` field for the merge half while only verifying the build half. `feat/theme-picker`
+  merged to `development` on 2026-07-19 via **PR #163** (tip `613f77b`, merge `0970d3f`);
+  `git merge-base --is-ancestor` confirms it, and the `/settings` route with its preset grid
+  is present in `web.py` on `development`. Corrected in all six places the claim had spread:
+  the GH-154 parent doc's `status:` field and Status table, its five phase briefs, the
+  ROADMAP ledger entry, and the ROADMAP Status table.
+- **Method note.** The 0.67.1 pass verified "is the code built?" with git and took "is it
+  merged?" from prose. A doc's own status field is not evidence about the branch it
+  describes — both halves needed `git`/`gh`. The remaining GH-154 items (legacy-alias
+  retirement, first-paint CDP check, light-theme visual pass) are **post-merge** work, not
+  blockers to a merge.
+
+## [0.67.1] - 2026-07-22
+
+### Fixed
+- **PDDA doc hygiene: 30 errors → 0.** The deterministic suite now passes clean across
+  frontmatter, status-table, hardcoded-paths, roadmap, roadmap-coverage, changelog,
+  releases, and governance.
+  - **5 GH-154 phase briefs** had no YAML frontmatter at all — added the required
+    contract (`title`/`status`/`created`/`updated`/`owner`/`goal`) plus `gh_issue`,
+    `roadmap_exempt: true`, and a `## Status` table, matching the GH-146 brief precedent.
+  - **5 MARATHON-2026-07-21 phase briefs** were missing `goal` and a `## Status` table.
+  - **GH-136** was missing `owner` and a `## Status` table.
+  - **GH-169** carried an absolute `/Users/...` path inside a lessons note; reworded to a
+    repo-relative description that keeps the lesson.
+  - **GH-155** (closed 2026-07-19) was an unparked `1-INBOX` capture; now has a ROADMAP
+    queue entry recording that GH-169 absorbed its remaining scope.
+
+### Changed
+- **Two stale claims corrected against evidence, not prose.**
+  - `GH-136`'s frontmatter said Day 0/Day 1 were "complete on branch marathon/2026-07-17,
+    unmerged". PR #143 merged 2026-07-18 and `09be427` is an ancestor of `development` —
+    both verified — so the doc was wrong and ROADMAP was right.
+  - `GH-154` was recorded in ROADMAP as "Planning — no code written". P0–P5 are in fact
+    built, verified, and **merged to `development` 2026-07-19 via PR #163**
+    (`feat/theme-picker`, tip `613f77b`) — the `/settings` route and preset grid are live
+    there. See 0.67.2 for the follow-on correction: the first pass at this fix said
+    "built but unmerged", which was also wrong.
+
+### Notes
+- `owner:` values across `PROJECT/**` are inconsistent — 8 distinct spellings including
+  `noel`, `Noel`, `Noel Saw`, `noel@neochro.me`, plus the template placeholder
+  `Name or agent` and a stray `GitHub Copilot`. Docs touched here use `Noel`. Normalizing
+  the rest is deliberately left as a separate, opt-in sweep.
+- `issue-doc-sync` warns rose 15 → 20 as newly-frontmattered briefs became eligible for
+  comparison against live GitHub issue state. Warn-only by design.
+
+## [0.67.0] - 2026-07-22
+
+### Fixed
+- **3-Eyes fleet health called a running server "failing" (GH-195, GH-146 bug class).**
+  `health.py` read only the *status* column of `launchctl list` and ignored the *PID*
+  column, so `com.rebalance-os.pulse-server` — alive on PID 35845 — reported
+  `FAIL(exit -15)` because a *previous* instance had been SIGTERMed by a restart. Since
+  restarting the pulse-server is a routine operation, the fleet showed a permanent
+  phantom failure. Liveness now comes from the PID column: a job with a live PID is
+  `ok`, and the prior exit code is still surfaced (`running; prior exit -15`) rather
+  than hidden. This is the same misread `doctor._check_launchd` was fixed for in
+  GH-146, reproduced in 3-Eyes' own health module.
+- **A health probe that could not run reported a confident answer.** Inside a sandboxed
+  shell `launchctl list` exits 1 with no output; `_launchctl_list()` never checked
+  `returncode`, so it returned `{}` and every catalogued job fell through to
+  `not-loaded` — "0 ok · 0 FAILING · 29 not-loaded", indistinguishable from a real
+  dormant fleet. It now raises `LaunchctlUnavailable`, and `scan()` reports a distinct
+  `unknown` state with the reason attached.
+- **The Focus 5 Float tile rendered an unreadable fleet as green.** Because the tile
+  keyed on `failing == 0`, an unavailable probe produced the card *"3-Eyes — all jobs
+  OK"* on the operator's primary panel while nothing at all was known. It now renders
+  *"3-Eyes — job health UNKNOWN"* with `is_dirty` set, so an unreadable fleet looks
+  like it needs attention instead of a clean bill of health.
+
+### Added
+- **Adoption guard: `supersedes` (GH-195).** A registry job may now declare the legacy
+  launchd labels it replaces, and `install` refuses while any of them is still loaded.
+  `collector-health` declares `com.rebalance-os.health-check` and
+  `health-check-triage`; both run `scripts/health_issue_reporter.py`, so installing it
+  against the live incumbents would have stood up a *second* GitHub-issue emitter and
+  reproduced the duplicate-issue defect that #139 was closed by deleting. The check is
+  **fail-closed** — only a positive `not-loaded` clears the gate, so an unreadable
+  probe blocks the install rather than waving it through.
+
+### Tests
+- +10 cases (93 total): PID-beats-prior-SIGTERM liveness, `unknown`-not-healthy on an
+  unreachable probe, non-zero-exit raises rather than returning empty, PID/status
+  column parsing, `supersedes` parsing/defaults, the shipped `collector-health`
+  declaration, and four install-guard cases including the fail-closed `unknown` path
+  and a no-probe-when-empty assertion.
+
+### Operational
+- The three `com.neochro.ga-pull-*` agents (binoid/bloomz/bounce) were **booted out and
+  disabled** on the Mac Studio. They had failed on all 85 runs since 2026-04-24 with
+  `ModuleNotFoundError: No module named 'wpdbtk'` — a `sys.path` problem, not a missing
+  package (the script is invoked by absolute path, so the repo-root package is
+  invisible; `WorkingDirectory` does not put CWD on `sys.path`). Tracked in
+  [BinoidCBD/LTVera-Pandas#70](https://github.com/BinoidCBD/LTVera-Pandas/issues/70);
+  plists and logs were left in place, and `launchctl enable` reverses it.
+- Fleet health after both fixes: **25 ok · 0 FAILING · 4 not-loaded** (was reported as
+  24 ok · 4 FAILING · 1 not-loaded, of which 1 was a phantom).
+
+## [0.66.0] - 2026-07-22
+
+### Added
+- **3-Eyes — first real adoption + machine-local registry overlay (GH-195).**
+  - **Machine-local overlay** — gitignored `registry/jobs.local.d/*.toml` and
+    `registry/commands.local.allow` let an adopted automation whose command is an
+    *absolute, machine-specific path* (outside rebalance-OS) enter 3-Eyes without
+    leaking that path into the committed registry. Runtime (`run`/`status`/`list`/
+    `health`/`catalog`) reads the overlay (`include_local=True`); the committed,
+    fleet-portable `DASHBOARD.md` renders committed-only (`include_local=False`) so
+    a downstream clone never inherits another machine's jobs. `.example` + a
+    `jobs.local.d/README.md` document the mechanism.
+  - **Adopted `skill-sync`** (the Claude Skills `SKILL.md` LWW sync) as the first
+    managed job. Its ad-hoc `com.local.skill-sync` LaunchAgent had been failing at
+    the launchd layer (`exit 78 EX_CONFIG`, no run since 2026-07-08) though the
+    script itself was healthy; 3-Eyes renders a fresh `com.rebalance-os.3eyes.skill-sync`
+    plist and the stale plist is retired so nothing double-schedules — one move
+    fixes the failure and completes the adoption.
+
+- **Focus 5 Float — 3-Eyes job-health tile (GH-195).** `GET /focus-5.json`
+  (`src/rebalance/web.py`) now appends ONE synthetic roster card summarizing 3-Eyes
+  fleet job health — a red status dot + `"3-Eyes — N jobs FAILING"` when any
+  catalogued job is failing, healthy otherwise — so the failure signal rides on the
+  panel the operator already watches. It renders through the app's existing dynamic
+  roster (no native-app change; documented in `Focus5Float/CONTRACT.md`). Additive +
+  defensive (never breaks the endpoint), gated on 3-Eyes being active (a downstream/
+  inert clone never shows it), and short-TTL cached so the polled route never spawns
+  `launchctl list` per request. `summary.roster_size` stays repo-only.
+
+### Changed
+- **3-Eyes notify throttle** — a job that is *already* quarantined now re-routes only
+  to `log-only` on each skipped run instead of re-firing a `notify` banner every
+  scheduling tick (a 120s job would otherwise banner every 2 minutes). The operator
+  is still banner-alerted once, at the moment the breaker opens.
+
+### Tests
+- +8 cases (83 total): machine-local overlay load/exclude/validate/dashboard-isolation
+  and the quarantine re-notify throttle.
+
+### Operational status
+- **3-Eyes is now ACTIVE on Noel's Mac Studio** — this is a device-local activation, not
+  a repo default: it rides the gitignored `config/runtime.env`, so every other clone stays
+  inert. It manages `com.rebalance-os.3eyes.skill-sync` (plus the `selfcheck` demo job),
+  the stale ad-hoc `com.local.skill-sync` LaunchAgent is retired, and the Focus 5 Float
+  fleet-health tile is live. The committed `collector-health` job is registered but not
+  yet installed; everything else in the catalog is observed, not managed.
+- **Continuity check:** `cd utils/3-eyes && PYTHONPATH=$PWD python3 -m three_eyes status`.
+  **Deactivate on a device:** remove/edit `config/runtime.env` (or `THREE_EYES_ENABLE=0`);
+  **retire a managed plist:** `python -m three_eyes uninstall <job>`.
+- **Known quirk:** `three_eyes health` shells out to `launchctl list`, which a sandboxed
+  shell blocks — it then reports *every* job `not-loaded`. Re-run it unsandboxed before
+  concluding anything about fleet health.
+
+## [0.65.0] - 2026-07-22
+
+### Added
+- **3-Eyes — unified local job supervisor (GH-195)** in `utils/3-eyes/`. One
+  optional, Python-first system that unifies the three sentinels we run today (XYZ
+  debug flywheel, Cactus Needle PDDA sentinel, Rebalance collector-health) under a
+  single TOML registry, one set of circuit breakers + pressure-relief valves, one
+  generated dashboard, and one way to talk to jobs (CLI + MCP + Claude skills).
+  - **Inert by default** — with no gitignored `config/runtime.env` (or
+    `THREE_EYES_ENABLE!=1`) it is a clean no-op: zero network / ollama / gh /
+    launchd / cron. Proven by `tests/test_inert_by_default.py` (egress primitives
+    stubbed to fail loudly). Two hard kill-switches: `THREE_EYES_ENABLE=0`, PANIC file.
+  - **Registry is the source of truth** — launchd/cron entries render from the TOML;
+    `DASHBOARD.md` is a deterministic generated projection kept honest by
+    `python -m three_eyes.dashboard --check` in CI + a `regen-dashboard` pre-commit hook.
+  - **Safety** — circuit breakers wrap the existing `utils/job_guard.py` (GH-172
+    single-instance flock + memory ceiling) and add a per-job failure breaker;
+    relief valves add daily/per-run LLM budgets, quiet-hours, and backoff. A
+    `commands.allow` allowlist means no free-form command execution.
+  - Egress confined to two boundary modules (`classify.py` ollama, `routes.py` gh),
+    enforced by a static-guard test. 51 pytest cases, wired into CI.
+
 ## [0.64.2] - 2026-07-21
 
 ### Fixed

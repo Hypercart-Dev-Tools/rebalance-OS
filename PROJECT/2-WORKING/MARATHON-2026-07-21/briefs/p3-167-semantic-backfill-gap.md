@@ -6,6 +6,10 @@ updated: 2026-07-21
 owner: noel
 gh_issue: 167
 roadmap_exempt: true
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). Characterize and close the
+  302-document gap between the github document corpus and the semantic index, so
+  semantic search stops silently missing documents the collector already stored.
 ---
 
 # Phase 3 — characterize and close the 302-document semantic-index gap
@@ -14,6 +18,12 @@ Part of **GH-167**. Issue: https://github.com/Hypercart-Dev-Tools/rebalance-OS/i
 Disjoint from every other phase in this marathon. **Artifact:** `src/rebalance/ingest/semantic_index.py`
 (`backfill_semantic_documents()`, line 484 at time of writing), `src/rebalance/ingest/index_ops.py`
 (`github_documents_missing_from_semantic` drift computation, line 633).
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Brief authored 2026-07-21 for parent GH-167; marathon plan is `PROJECT/2-WORKING/MARATHON-2026-07-21/MARATHON.md` | **Not fired.** Execute as marathon phase `p3-167-semantic-backfill-gap`; disjoint write-set, so it may run in any wave. |
 
 ## The problem
 

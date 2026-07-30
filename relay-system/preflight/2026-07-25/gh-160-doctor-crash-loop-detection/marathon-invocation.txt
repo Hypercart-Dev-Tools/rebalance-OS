@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-160-doctor-crash-loop-detection .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact src/rebalance/doctor.py,tests/test_launchd_predicate.py \
+  --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k "doctor or launchd_predicate" -q' \
+  --require-clean

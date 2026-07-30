@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rebalance-os"
-version = "0.61.0"
+version = "0.68.1"
 description = "Local-first workday operating system with MCP tools and Obsidian ingest"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -14,7 +14,9 @@ dependencies = [
   "pydantic>=2.8.0",
   "PyYAML>=6.0.1",
   "questionary>=2.0.1",
-  "mcp>=1.0.0",
+  # Capped at <2: mcp 2.0.0 removed mcp.server.fastmcp, which src/rebalance/mcp/
+  # imports in 8 modules. See GH-225.
+  "mcp>=1.0.0,<2",
   "sqlite-vec>=0.1.6",
   "keyring>=25.0.0",
 ]
