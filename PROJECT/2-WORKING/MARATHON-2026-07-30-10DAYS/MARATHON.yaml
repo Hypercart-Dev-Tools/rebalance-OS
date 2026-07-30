@@ -1,0 +1,93 @@
+# MARATHON.yaml — the 10 lanes from MARATHON-PLAN-2026-07-30.md, as marathon.sh phases.
+#
+# Derived from PROJECT/2-WORKING/MARATHON-PLAN-2026-07-30.md and the preflight packets under
+# relay-system/preflight/2026-07-30/. Every lane exited 0 (ready) on 2026-07-30 against the
+# vendored harness at source_commit dcc8507.
+#
+# SEQUENCING. marathon.sh runs phases STRICTLY ONE AT A TIME (GH-241); depends_on constrains
+# order, it does not create concurrency. The plan document's "waves" describe which lanes COULD
+# safely overlap and are therefore advisory here — they are why no depends_on is needed between
+# same-wave lanes, not a statement that they run together. Order below is the plan's own ranking
+# (score ascending), which is also its wave order.
+#
+# GATE. marathon.sh takes ONE --pre-advance-cmd for the whole run; there is no per-phase gate
+# field. The packets recommend a DIFFERENT, issue-scoped gate per lane (ten of them, nine pytest
+# -k filters plus one shell script), so no single command reproduces them. The only command broad
+# enough to cover every lane is the full suite:
+#
+#     .venv/bin/python -m pytest tests/ -q
+#
+# which is currently RED — 5 failed / 1587 passed, tracked as GH-231 (3, verified one-line fix)
+# and GH-233 (2, undiagnosed). A red global gate fails phase 1 and halts the chain, so this plan
+# CANNOT be fired as a multi-phase run until the suite is green.
+#
+# Until then, fire lanes individually with marathon-drive.sh using each packet's own scoped gate —
+# which is exactly what each packet's marathon-invocation.txt already prints.
+#
+# Dry-run before firing:
+#   .xyz/relay-automation/marathon.sh --plan PROJECT/2-WORKING/MARATHON-2026-07-30-10DAYS/MARATHON.yaml \
+#     --pre-advance-cmd '.venv/bin/python -m pytest tests/ -q' --dry-run
+
+name: 10days-2026-07-30
+
+phases:
+  - id: p1-gh189
+    name: "GH-189 — pulse dashboard: 2 residual presentation gaps"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-189-pulse-dashboard-residual-gaps/packet.md
+    artifact: src/rebalance/doctor.py,scripts/pulse_web.py
+
+  - id: p2-gh201
+    name: "GH-201 — explicit --database at a nonexistent path silently falls back"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-201-database-path-fallback/packet.md
+    artifact: src/rebalance/paths.py,tests/test_paths.py
+
+  - id: p3-gh202
+    name: "GH-202 — CLIO projection: no malformed-source-row test"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-202-clio-malformed-row-test/packet.md
+    artifact: test/clio-exporter.sh
+
+  - id: p4-gh166
+    name: "GH-166 — vault ingest lag and stuck pending-embed chunks"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-166-vault-ingest-lag/packet.md
+    artifact: src/rebalance/ingest/index_ops.py,src/rebalance/health.py
+
+  - id: p5-gh139
+    name: "GH-139 — health_issue_reporter dedupes on title"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-139-health-issue-reporter-stable-id/packet.md
+    artifact: scripts/health_issue_reporter.py,tests/test_health_issue_reporter.py
+
+  - id: p6-gh171
+    name: "GH-171 — github_sync holds the SQLite write lock across network I/O"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-171-sqlite-write-lock/packet.md
+    artifact: src/rebalance/ingest/github_knowledge.py,scripts/github_sync.sh
+
+  # kernel zone — the plan caps kernel at 1 per wave; serial execution satisfies that trivially.
+  - id: p7-gh170
+    name: "GH-170 — tests in a git worktree silently import the main checkout"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-170-worktree-test-isolation/packet.md
+    artifact: conftest.py,tests/conftest.py,pyproject.toml
+
+  - id: p8-gh160
+    name: "GH-160 — doctor: a crash-looping KeepAlive daemon reports OK"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-160-doctor-crash-loop-detection/packet.md
+    artifact: src/rebalance/doctor.py,tests/test_launchd_predicate.py
+
+  - id: p9-gh167
+    name: "GH-167 — 302 GitHub documents fetched but never projected into the semantic index"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-167-semantic-index-github-gap/packet.md
+    artifact: src/rebalance/ingest/semantic_index.py,src/rebalance/ingest/index_ops.py,src/rebalance/ingest/db/semantic.py
+
+  - id: p10-gh186
+    name: "GH-186 — scheduler jobs crash on a rare CPython EINTR at bootstrap"
+    reviewer: agy
+    brief: relay-system/preflight/2026-07-30/gh-186-scheduler-eintr-crash/packet.md
+    artifact: scripts/github_sync.sh,scripts/lib/scheduler_common.sh
