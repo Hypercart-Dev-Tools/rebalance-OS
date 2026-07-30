@@ -72,6 +72,39 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ---
 
+### Round 1 · Builder · claude
+
+**Files touched:** `src/rebalance/ingest/index_ops.py`, `src/rebalance/health.py`
+
+**What was done:**
+
+**GH-166 Fix 1 — Vault ingest lag surfaced as a degrading health signal:**
+
+- Added `_safe_vault_ingest_lag(conn)` helper that queries `MAX((julianday('now') - julianday(last_modified)) * 24 * 60)` across `vault_files WHERE last_modified > ingested_at` — returns the age in minutes of the most out-of-date unsynced file, 0 when all files are current.
+- Added `"ingest_lag_minutes"` field to the vault source payload in `get_index_status()`.
+- Extended `_SIGNAL_HEALTH_RULES["vault"]` with `lag_key="ingest_lag_minutes"`, `lag_warn_minutes=120` (2 missed hourly cycles), `lag_degraded_minutes=240`.
+- Extended `_derive_signal_health()` with a lag-check block after the content-predicate check: only overrides an `ok` verdict (a source already flagged by freshness/zero-rows keeps its existing verdict).
+
+**GH-166 Fix 2 — Stuck pending-embed rows distinguished from in-flight tail:**
+
+- Added module-level constant `_STUCK_EMBED_THRESHOLD_HOURS = 4`.
+- Added `drift["semantic_documents_stuck_embed"]` in `get_index_status()`: count of `semantic_documents` rows where `(embedded_hash IS NULL OR embedded_hash != content_hash) AND julianday(updated_at) < julianday('now', '-4 hours')`. A row is stuck when updated_at is older than the threshold yet it hasn't been embedded — the embedder ran at least once since that update and didn't pick it up.
+- Also records `drift["semantic_documents_stuck_embed_threshold_hours"]` so callers know the threshold used.
+
+**`health.py` — signal_health surfaced in the doctor verdict:**
+
+- Added `signal_health_as_checks(status)` (public): converts `freshness.signal_health` degraded/warn entries to `signal:<source>` Check objects (FAIL for degraded, WARN for warn).
+- Modified `compute_health_status` to merge `signal_health_as_checks(status)` into the check list before running `ordered_problem_checks`, so vault ingest lag and similar metrics affect the health verdict without changes to doctor.py.
+
+**Key decisions:**
+- Lag threshold 120min (warn) / 240min (degraded): sized to the hourly ingest cadence — 2h means 2 missed cycles, 4h means clearly stuck.
+- `signal:` prefix on check names distinguishes synthetic checks from doctor credential checks and lets them be demoted to notices via `notice_patterns`.
+- Lag check only fires when existing verdict is `ok` — fresher, stronger signals (stale ingested_at, zero rows) are not superseded.
+
+**Tests:** 26 `test_index_ops` + 2 `test_index_ops_migration_gate` pass; 15 `test_health` pass.
+
+---
+
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/ingest/index_ops.py,src/rebalance/health.py. REVIEW THE WHOLE FILE, NOT JUST THE DIFF (GH-268): a beta test had this loop reach 'Approved' in two rounds while an independent audit of the same branch found 20 issues (1 critical, 4 high) — every one of them in the pre-existing code the change sat on, which nobody had read. Pre-existing defects in a file you are touching are IN SCOPE; say so explicitly if you find none. DECLARE IT: your review block MUST contain a literal 'swept file: yes' or 'swept file: no' line — without it a reviewer that skipped the sweep is indistinguishable in the transcript from one that did it and found nothing, which is exactly how those 20 issues stayed invisible.

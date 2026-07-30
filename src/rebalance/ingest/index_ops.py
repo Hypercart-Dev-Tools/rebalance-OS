@@ -191,8 +191,21 @@ def _safe_count_where(conn: Any, table: str, where: str) -> int | None:
         return None
 
 
+_STUCK_EMBED_THRESHOLD_HOURS = 4  # rows pending embed longer than this are considered stuck (GH-166)
+
 _SIGNAL_HEALTH_RULES: dict[str, dict[str, Any]] = {
-    "vault": {"freshness_key": "last_ingested_at", "window_days": 7, "zero_status": "degraded"},
+    "vault": {
+        "freshness_key": "last_ingested_at",
+        "window_days": 7,
+        "zero_status": "degraded",
+        # GH-166: a 7-day freshness window is too coarse to catch a 51-90min
+        # ingest lag. The lag_key field names a per-row metric in the vault
+        # source payload (ingest_lag_minutes = age of the most-behind unsynced
+        # file). Thresholds: 2h = warn (2 missed hourly cycles), 4h = degraded.
+        "lag_key": "ingest_lag_minutes",
+        "lag_warn_minutes": 120,
+        "lag_degraded_minutes": 240,
+    },
     "github": {
         "freshness_key": "activity_last_scanned_at",
         "window_days": 7,
@@ -390,6 +403,28 @@ def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[
                         "reason": f"{pct}% of recent rows lack {label}",
                     }
 
+        # GH-166 ingest-lag check: the 7-day freshness window is too coarse
+        # to detect a 51-90min vault drift. When the rule declares a lag_key,
+        # that field in the source payload holds the minutes of the longest
+        # unsynced modification. Only overrides an ok verdict — a source
+        # already degraded/warn by freshness keeps its existing verdict.
+        lag_key = rule.get("lag_key")
+        if lag_key and status_entry["status"] == "ok":
+            lag_val = source_payload.get(lag_key)
+            if isinstance(lag_val, int) and lag_val > 0:
+                lag_degraded = int(rule.get("lag_degraded_minutes", 240))
+                lag_warn = int(rule.get("lag_warn_minutes", 120))
+                if lag_val >= lag_degraded:
+                    status_entry = {
+                        "status": "degraded",
+                        "reason": f"ingest_lag {lag_val}min exceeds degraded threshold {lag_degraded}min",
+                    }
+                elif lag_val >= lag_warn:
+                    status_entry = {
+                        "status": "warn",
+                        "reason": f"ingest_lag {lag_val}min exceeds warn threshold {lag_warn}min",
+                    }
+
         signal_health[source_name] = status_entry
 
     return signal_health
@@ -401,6 +436,30 @@ def _apple_reminders_health_status(database_path: Path) -> str | None:
     try:
         from rebalance.ingest.apple_reminders import apple_reminders_health
         return apple_reminders_health(database_path).get("status")
+    except Exception:
+        return None
+
+
+def _safe_vault_ingest_lag(conn: Any) -> int | None:
+    """Age in whole minutes of the most out-of-date unsynced vault file.
+
+    GH-166: a vault file with ``last_modified > ingested_at`` has been
+    modified since it was last ingested. The maximum such age is how long the
+    most-behind file has been waiting for a re-ingest. Returns 0 when all
+    files are current (no file has ``last_modified > ingested_at``), None if
+    the query fails so the caller can distinguish zero lag from a probe error.
+    """
+    try:
+        row = conn.execute(
+            """
+            SELECT CAST(
+                MAX((julianday('now') - julianday(last_modified)) * 24 * 60) AS INTEGER
+            )
+            FROM vault_files
+            WHERE last_modified > ingested_at
+            """
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
     except Exception:
         return None
 
@@ -465,6 +524,10 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "recent_row_count_7d": _safe_count_where(
                 conn, "vault_files", "julianday(last_modified) >= julianday('now', '-7 days')"
             ) or 0,
+            # GH-166: age in minutes of the most out-of-date unsynced file.
+            # Non-zero only when at least one file has last_modified > ingested_at
+            # (i.e. was modified after its last ingest and is due for re-ingest).
+            "ingest_lag_minutes": _safe_vault_ingest_lag(conn),
         }
 
         payload["sources"]["github"] = {
@@ -644,6 +707,27 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             drift["semantic_documents_pending_embed"] = int(pending_embed)
         except Exception:
             drift["semantic_documents_pending_embed"] = None
+
+        # GH-166: distinguish stuck pending-embed rows (waiting longer than
+        # _STUCK_EMBED_THRESHOLD_HOURS) from an in-flight run's normal tail.
+        # A row is stuck when updated_at is older than the threshold yet it
+        # has not been embedded — the embedder ran at least once since that
+        # update and chose not to pick it up, which is the diagnosable signal.
+        try:
+            stuck_row = conn.execute(
+                """
+                SELECT COUNT(*) FROM semantic_documents
+                WHERE (embedded_hash IS NULL OR embedded_hash != content_hash)
+                  AND julianday(updated_at) < julianday('now', ?)
+                """,
+                (f"-{_STUCK_EMBED_THRESHOLD_HOURS} hours",),
+            ).fetchone()
+            drift["semantic_documents_stuck_embed"] = (
+                int(stuck_row[0]) if stuck_row and stuck_row[0] is not None else 0
+            )
+        except Exception:
+            drift["semantic_documents_stuck_embed"] = None
+        drift["semantic_documents_stuck_embed_threshold_hours"] = _STUCK_EMBED_THRESHOLD_HOURS
 
         # GH-169 Phase 3: commit-corpus completeness, anchored on the remote.
         # Cheap (local git + one ls-remote per repo, no REST API) so it can run

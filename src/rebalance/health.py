@@ -195,6 +195,37 @@ def _bucket_label(count: int, name: str) -> str:
     return f"{count} {name}{'' if count == 1 else 's'}"
 
 
+def signal_health_as_checks(status: dict[str, Any]) -> list[Check]:
+    """Convert signal_health entries from the index-status snapshot to Check objects.
+
+    GH-166: vault ingest lag and other signal-health metrics live in
+    ``freshness.signal_health`` from ``get_index_status()``. This converts
+    degraded/warn entries to ``signal:<source>`` Check objects so they
+    participate in the ``compute_health_status`` verdict alongside doctor checks,
+    without requiring changes to doctor.py.
+
+    Only ``degraded`` and ``warn`` entries emit a Check; ``ok`` entries are
+    silent. A ``degraded`` signal maps to a FAIL Check (ERROR severity); a
+    ``warn`` signal maps to a WARN Check (WARNING severity). Check names use
+    the ``signal:`` prefix so they are distinct from doctor credential checks
+    and their WARN forms can be demoted to notices via ``notice_patterns``.
+    """
+    out: list[Check] = []
+    signal_health = (status.get("freshness") or {}).get("signal_health") or {}
+    for source_name, sh in signal_health.items():
+        if not isinstance(sh, dict):
+            continue
+        sh_status = sh.get("status")
+        if sh_status not in {"warn", "degraded"}:
+            continue
+        reason = sh.get("reason") or f"{source_name} signal health check failed"
+        if sh_status == "degraded":
+            out.append(Check(f"signal:{source_name}", FAIL, reason))
+        else:
+            out.append(Check(f"signal:{source_name}", WARN, reason))
+    return out
+
+
 def compute_health_status(
     checks: list[Check],
     status: dict[str, Any],
@@ -216,7 +247,12 @@ def compute_health_status(
         except Exception:  # noqa: BLE001 — never let config break the verdict
             notice_patterns = []
 
-    visible = ordered_problem_checks(checks, status, now)
+    # GH-166: merge signal_health entries (vault ingest lag, etc.) as synthetic
+    # checks so they participate in the verdict without requiring changes to
+    # doctor.py. Signal checks are appended after the caller-supplied checks so
+    # existing doctor checks retain their ordering priority.
+    all_checks = list(checks) + signal_health_as_checks(status)
+    visible = ordered_problem_checks(all_checks, status, now)
     problems: list[Check] = []
     notices: list[Check] = []
     for check in visible:
