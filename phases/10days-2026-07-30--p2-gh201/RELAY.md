@@ -1,5 +1,5 @@
 # Marathon Phase p2-gh201
-STATUS: Open
+STATUS: Approved
 NEXT: claude
 
 <!-- marathon-drive: task=MARATHON-P2-GH201-TURN builder=claude reviewer=agy round-cap=5 -->
@@ -106,3 +106,20 @@ All 12 tests pass (`pytest tests/test_paths.py` with worktree src on PYTHONPATH)
 - Raise immediately with a single-candidate list (only `--database flag`) rather than appending to the broader chain, so the error message is focused on what the operator actually typed.
 - If explicit IS found, return it directly (skipping all other layers) — this was already the implicit intent and is now explicit.
 - Acceptance criterion "callers that legitimately want fallback-to-canonical keep working" is satisfied because the only change in behaviour is when `explicit` is non-None; the entire fallback chain is unchanged when `explicit` is None.
+
+---
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+swept file: yes
+
+**Review Summary:**
+- Verified implementation of explicit `--database` non-existent path behavior in `src/rebalance/paths.py`: `resolve_database_path()` short-circuits when `explicit` is provided, raising `DatabaseNotFoundError` immediately if the file does not exist, without falling back to lower priority layers.
+- Verified fallback chain remains intact when `explicit` is `None`.
+- Reviewed all test cases in `tests/test_paths.py`: all 12 tests pass cleanly (`.venv/bin/python -m pytest tests/test_paths.py`).
+- Conducted full-file sweep of `src/rebalance/paths.py` and `tests/test_paths.py` (swept file: yes); no pre-existing defects found.
+
+relay closed, no further turn needed
+
