@@ -154,8 +154,22 @@ class TestPulseSelfRepair:
 
             # Verify the content actually landed on the remote — not silently dropped.
             # Must stay inside the with-block: tempdir is cleaned up on exit.
+            #
+            # GH-233: read the branch that was actually pushed (@{u}), not origin/HEAD. The remote
+            # here is created with `git init --bare` and cloned while still empty, and a clone of an
+            # empty remote never gets an origin/HEAD symref — pushing afterwards does not create one
+            # either. `git show origin/HEAD:pulse.md` therefore fails with "invalid object name"
+            # regardless of whether the push worked, which is a property of the fixture rather than
+            # of the code under test. `@{u}` is the ref the bare `git push` targeted.
+            upstream = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "@{u}"],
+                cwd=str(local),
+                capture_output=True,
+                text=True,
+                check=True,
+            ).stdout.strip()
             remote_content = subprocess.run(
-                ["git", "show", "origin/HEAD:pulse.md"],
+                ["git", "show", f"{upstream}:pulse.md"],
                 cwd=str(local),
                 capture_output=True,
                 text=True,
