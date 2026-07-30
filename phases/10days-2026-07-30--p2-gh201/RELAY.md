@@ -84,3 +84,25 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    claude, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · claude
+
+**Files touched:** `src/rebalance/paths.py`, `tests/test_paths.py`
+
+**What changed:**
+
+`resolve_database_path()` previously treated `explicit` as candidate #1 in the shared ordered list, letting the loop fall through to canonical/env/config/walk-up layers when the explicit path didn't exist. Fixed by short-circuiting at the top of the function: if `explicit` is non-None and the resolved path does not exist, raise `DatabaseNotFoundError` immediately with only that candidate — no fallback, no silent success.
+
+Created `tests/test_paths.py` (new file per GH-201 contract):
+- `TestExplicitPath` — four tests: nonexistent explicit raises immediately; regression guard that a present canonical DB is NOT returned when explicit is wrong; existing explicit returned directly; explicit ignores env var.
+- `TestFallbackChain` — five tests covering env var priority, canonical, user config, walk-up, and the all-absent raises path.
+- `TestDatabaseNotFoundError` — three tests: candidates stored on the exception, message lists paths/sources, is-a FileNotFoundError.
+
+All 12 tests pass (`pytest tests/test_paths.py` with worktree src on PYTHONPATH).
+
+**Key decisions:**
+- Raise immediately with a single-candidate list (only `--database flag`) rather than appending to the broader chain, so the error message is focused on what the operator actually typed.
+- If explicit IS found, return it directly (skipping all other layers) — this was already the implicit intent and is now explicit.
+- Acceptance criterion "callers that legitimately want fallback-to-canonical keep working" is satisfied because the only change in behaviour is when `explicit` is non-None; the entire fallback chain is unchanged when `explicit` is None.
