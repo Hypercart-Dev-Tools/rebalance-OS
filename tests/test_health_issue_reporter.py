@@ -108,6 +108,41 @@ class TestOccurrenceCounter(unittest.TestCase):
         self.assertIn("run refresh", body)
         self.assertIn("rebalance-doctor", body)
 
+    def test_issue_body_embeds_check_id_marker(self) -> None:
+        body = hr._issue_body("my-check", "fail", "detail text", "fix hint", "rebalance-doctor")
+        self.assertIn("<!-- check-id: my-check -->", body)
+
+    def test_parse_stable_id_from_body(self) -> None:
+        body = hr._issue_body("my-check", "fail", "d", "h", "s")
+        self.assertEqual(hr._parse_stable_id(body), "my-check")
+
+    def test_parse_stable_id_returns_none_for_legacy_body(self) -> None:
+        body = "> **Seen:** 1× · Last: ...\n## heading\n**Status:** `FAIL`"
+        self.assertIsNone(hr._parse_stable_id(body))
+
+    def test_refresh_issue_body_updates_detail_and_counter(self) -> None:
+        ts = _now_str()
+        body = hr._issue_body("check-a", "fail", "old detail", "old hint", "rebalance-doctor")
+        new_body = hr.refresh_issue_body(body, 2, ts, new_detail="new detail", new_hint="new hint")
+        self.assertIn("new detail", new_body)
+        self.assertNotIn("old detail", new_body)
+        self.assertIn("new hint", new_body)
+        self.assertNotIn("old hint", new_body)
+        self.assertIn("> **Seen:** 2×", new_body)
+
+    def test_refresh_issue_body_removes_hint_when_empty(self) -> None:
+        ts = _now_str()
+        body = hr._issue_body("check-a", "fail", "detail", "old hint", "rebalance-doctor")
+        new_body = hr.refresh_issue_body(body, 2, ts, new_detail="detail", new_hint="")
+        self.assertNotIn("**Hint:**", new_body)
+
+    def test_refresh_issue_body_inserts_hint_when_missing(self) -> None:
+        ts = _now_str()
+        body = hr._issue_body("check-a", "fail", "detail", "", "rebalance-doctor")
+        self.assertNotIn("**Hint:**", body)
+        new_body = hr.refresh_issue_body(body, 2, ts, new_detail="detail", new_hint="run fix")
+        self.assertIn("**Hint:** run fix", new_body)
+
 
 # ===========================================================================
 # 2. Quota management
@@ -471,6 +506,27 @@ class TestGitHubInteraction(unittest.TestCase):
         # Exactly one PATCH call was made.
         methods = [c[0] for c in patched_calls]
         self.assertEqual(methods, ["PATCH"])
+
+    def test_list_health_issues_keys_by_stable_id(self) -> None:
+        """Issues with an embedded check-id marker are keyed by that id, not the full title."""
+        body = hr._issue_body("check-name", "fail", "d", "h", "s")
+        mock_issues = [{"title": "health: check-name", "number": 1, "body": body}]
+
+        with patch.object(hr, "_request", return_value=mock_issues):
+            result = hr.list_health_issues("token", "org/repo", state="open")
+
+        self.assertIn("check-name", result)
+        self.assertNotIn("health: check-name", result)
+
+    def test_list_health_issues_falls_back_for_legacy_issues(self) -> None:
+        """Legacy issues (no check-id marker) are keyed by the check name from the title."""
+        mock_issues = [{"title": "health: old-check", "number": 2, "body": "no marker here"}]
+
+        with patch.object(hr, "_request", return_value=mock_issues):
+            result = hr.list_health_issues("token", "org/repo", state="open")
+
+        self.assertIn("old-check", result)
+        self.assertNotIn("health: old-check", result)
 
     def test_close_issue_posts_comment_then_patches_state(self) -> None:
         calls = []
