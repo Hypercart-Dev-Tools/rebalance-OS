@@ -1,5 +1,5 @@
 # Marathon Phase p1-gh189
-STATUS: Open
+STATUS: Approved
 NEXT: claude
 
 <!-- marathon-drive: task=MARATHON-P1-GH189-TURN builder=claude reviewer=agy round-cap=5 -->
@@ -109,3 +109,21 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    claude, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+swept file: yes
+
+**Review summary:**
+- Verified `src/rebalance/doctor.py`: `_check_pulse_collectors()` now computes and formats an absolute-anchored timestamp using `format_timestamp(derived, tz=local_tz())` alongside the relative age label.
+- Verified `scripts/pulse_web.py`: `render_repo_pie()` uses `_repo_short_name()` for repo pie chart labels (org prefix stripped).
+- Re-used existing timestamp and string helpers (`format_timestamp`, `_repo_short_name`); no redundant time modules or regexes added.
+- Performed a full file sweep of `src/rebalance/doctor.py` and `scripts/pulse_web.py`: 0 pre-existing defects found.
+- All target unit tests (`pytest -k "doctor or pulse_web"`) pass cleanly (81 passed).
+
+relay closed, no further turn needed
+
