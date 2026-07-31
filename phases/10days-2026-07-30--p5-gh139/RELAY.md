@@ -54,6 +54,10 @@ XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-139-health-issue-reporter-stable-id 
 - `marathon-invocation.txt` — the invocation hint above
 
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+
 ---
 
 ▶ TAKE YOUR TURN (claude — BUILDER role)
