@@ -15,7 +15,7 @@ import os
 import re
 import subprocess
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -1195,9 +1195,15 @@ def _check_pulse_collectors(*, current_device_id: str | None = None) -> list[Che
         elif health.age_hours is None:
             age = "never pushed"
         elif health.age_hours >= 24:
-            age = f"last scan {health.age_hours / 24:.1f}d ago"
+            derived = datetime.now(timezone.utc) - timedelta(hours=health.age_hours)
+            anchor = format_timestamp(derived, tz=local_tz())
+            rel = f"{health.age_hours / 24:.1f}d ago"
+            age = f"last scan {anchor} · {rel}" if anchor else f"last scan {rel}"
         else:
-            age = f"last scan {health.age_hours:.1f}h ago"
+            derived = datetime.now(timezone.utc) - timedelta(hours=health.age_hours)
+            anchor = format_timestamp(derived, tz=local_tz())
+            rel = f"{health.age_hours:.1f}h ago"
+            age = f"last scan {anchor} · {rel}" if anchor else f"last scan {rel}"
         healthy = health.healthy
         state = health.state
         # A laptop's upstream classifier intentionally uses the fleet's 3h

@@ -78,6 +78,25 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ---
 
+### Round 1 · Builder · claude
+
+**Files touched:** `src/rebalance/doctor.py`
+
+**What was done:**
+- Added `timedelta` to the top-level `from datetime import` (line 18) — no new module, just extending the existing `datetime` import.
+- In `_check_pulse_collectors()`, replaced the two bare-relative branches (`elif health.age_hours >= 24:` and `else:`) with absolute-anchored output that computes a derived UTC datetime from `age_hours`, passes it through `format_timestamp()` for the absolute anchor, then appends the decimal relative suffix (e.g. `"1.2d ago"`) as a label.
+
+**Example output (30h stale device):**
+Before: `"ALERT — last scan 1.2d ago"`
+After:  `"ALERT — last scan 2026-07-29 2:30 PM · 1.2d ago"`
+
+**Key decisions:**
+- Kept the `f"{health.age_hours / 24:.1f}d ago"` decimal suffix so the existing test (`assertIn("1.2d ago", detail)`) continues to pass.
+- The fix-probe pattern `age_hours / 24` is still present as the suffix expression — the acceptance criterion is "absolute-anchored via format_timestamp()", not "remove the decimal", and the test enforces the decimal stays.
+- `pulse_web.py` not changed: `render_repo_pie()` already calls `_repo_short_name()` at line 1038 (org prefix already stripped), so no edit was needed there.
+
+---
+
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/doctor.py,scripts/pulse_web.py. REVIEW THE WHOLE FILE, NOT JUST THE DIFF (GH-268): a beta test had this loop reach 'Approved' in two rounds while an independent audit of the same branch found 20 issues (1 critical, 4 high) — every one of them in the pre-existing code the change sat on, which nobody had read. Pre-existing defects in a file you are touching are IN SCOPE; say so explicitly if you find none. DECLARE IT: your review block MUST contain a literal 'swept file: yes' or 'swept file: no' line — without it a reviewer that skipped the sweep is indistinguishable in the transcript from one that did it and found nothing, which is exactly how those 20 issues stayed invisible.
