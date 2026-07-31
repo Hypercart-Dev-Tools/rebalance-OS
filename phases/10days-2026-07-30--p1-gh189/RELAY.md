@@ -54,6 +54,11 @@ XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-189-pulse-dashboard-residual-gaps RE
 - `marathon-invocation.txt` — the invocation hint above
 
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/matthewtaylor/htdocs/rebalance-OS/phases/10days-2026-07-30--p1-gh189/ESCALATION.md): `pre-advance-failed`. Read it before re-guessing.
+
 ---
 
 ▶ TAKE YOUR TURN (claude — BUILDER role)
