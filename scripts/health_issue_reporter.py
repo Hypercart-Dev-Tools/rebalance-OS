@@ -12,17 +12,8 @@ the full check results, every LLM call + response, and every GitHub action taken
 
 De-duplication
 --------------
-Issues are matched by a stable ``<!-- rebalance-check-id: <check-name> -->`` comment
-embedded in the issue body (GH-139). A renamed check continues to match its existing
-open issue instead of orphaning it and filing a twin.
-
-Legacy issues (filed before this change) have no check-id comment and fall back to
-title matching (``health: <check-name>``). Pre-existing duplicate issues from the
-6-issue/3-machine incident should be closed manually by the operator — the reporter
-will match the canonical space-spelled issues (``pulse collector:<device>``) going
-forward.
-
-- Already **open**: refresh the detail block and increment the occurrence counter.
+Issues are matched by stable title (``health: <check-name>``).
+- Already **open**: skip silently.
 - Recently **closed** (within --dedup-days, default 30): add a comment noting
   the recurrence instead of opening a new issue.
 - Older closed / never filed: file a new issue.
@@ -242,9 +233,7 @@ def list_health_issues(token: str, repo: str, state: str = "open",
         if not isinstance(results, list) or not results:
             break
         for issue in results:
-            check_id = _extract_check_id(issue.get("body") or "")
-            key = check_id if check_id is not None else issue["title"]
-            issues[key] = issue
+            issues[issue["title"]] = issue
         page += 1
     return issues
 
@@ -284,17 +273,9 @@ def close_issue(token: str, repo: str, number: int, comment: str, dry_run: bool)
 # The body text below the counter line is never touched.
 # ---------------------------------------------------------------------------
 
-_CHECK_ID_RE = re.compile(r"<!-- rebalance-check-id: ([^\n>]+) -->")
-
 _OCCURRENCE_RE = re.compile(
     r"^> \*\*Seen:\*\* (\d+)× · Last: [^\n]*\n?", re.MULTILINE
 )
-
-
-def _extract_check_id(body: str) -> str | None:
-    """Return the stable check id embedded as an HTML comment, or None for legacy bodies."""
-    m = _CHECK_ID_RE.search(body or "")
-    return m.group(1).strip() if m else None
 
 
 def parse_occurrence_count(body: str) -> int:
@@ -312,23 +293,12 @@ def set_occurrence_count(body: str, count: int, last_seen: str,
 
 
 def update_issue_body(
-    token: str, repo: str, number: int, new_body: str, dry_run: bool,
+    token: str, repo: str, number: int, new_body: str, dry_run: bool
 ) -> None:
     if dry_run:
         print(f"  [dry-run] would update body of issue #{number}")
         return
     _request("PATCH", f"/repos/{repo}/issues/{number}", token, {"body": new_body})
-
-
-_DETAIL_BLOCK_RE = re.compile(r"\*\*Detail:\*\*\n```\n(.*?)\n```", re.DOTALL)
-
-
-def _refresh_detail_block(body: str, new_detail: str) -> str:
-    """Replace the **Detail:** fenced block with new_detail; no-op if no block found."""
-    new_block = f"**Detail:**\n```\n{new_detail}\n```"
-    if _DETAIL_BLOCK_RE.search(body or ""):
-        return _DETAIL_BLOCK_RE.sub(lambda _: new_block, body, count=1)
-    return body
 
 
 # ---------------------------------------------------------------------------
@@ -353,7 +323,6 @@ def _issue_body(check_name: str, status: str, detail: str, hint: str, source: st
         "Close this issue once the underlying problem is resolved — "
         "the script will re-open it if the check fails again.*"
     )
-    parts.append(f"\n<!-- rebalance-check-id: {check_name} -->")
     return "\n".join(parts)
 
 
@@ -641,21 +610,19 @@ def main() -> int:
 
     for check in checks:
         title = f"{ISSUE_TITLE_PREFIX} {check['name']}"
-        # Prefer stable check-id lookup; fall back to title for legacy issues (GH-139).
-        already_open = open_issues.get(check["name"]) or open_issues.get(title)
-        recently_was_closed = recently_closed.get(check["name"]) or recently_closed.get(title)
+        already_open = open_issues.get(title)
+        recently_was_closed = recently_closed.get(title)
 
         if check["status"] in min_level:
             if already_open:
-                # Refresh detail block and increment the occurrence counter.
+                # Increment the occurrence counter in the issue body.
                 current_body = already_open.get("body") or ""
                 new_count = parse_occurrence_count(current_body) + 1
                 new_body = set_occurrence_count(current_body, new_count, now_str,
                                                 device=DEVICE_NAME)
-                new_body = _refresh_detail_block(new_body, check["detail"])
                 update_issue_body(token, args.repo, already_open["number"], new_body, args.dry_run)
                 print(f"  SEEN×{new_count:<3} {check['status'].upper():4}  {check['name']}  "
-                      f"(#{already_open['number']} open, counter+detail updated)")
+                      f"(#{already_open['number']} open, counter updated)")
                 run_log.add_action("seen-increment", check["name"], already_open["number"])
                 skipped += 1
                 continue
