@@ -12,18 +12,11 @@ the full check results, every LLM call + response, and every GitHub action taken
 
 De-duplication
 --------------
-Issues are keyed by a stable check-id (``<!-- check-id: {name} -->`` embedded
-in the issue body), not the display title.  Legacy issues without that marker
-are matched by the check name extracted from the title as a fallback.
-- Already **open**: refresh the Detail block and increment the occurrence counter.
+Issues are matched by stable title (``health: <check-name>``).
+- Already **open**: skip silently.
 - Recently **closed** (within --dedup-days, default 30): add a comment noting
   the recurrence instead of opening a new issue.
 - Older closed / never filed: file a new issue.
-
-Migration: issues filed before this change carry no embedded id and are matched
-by title fallback.  Orphaned or duplicate issues from the original
-6-issue/3-machine incident are left as an operator cleanup step — close them
-manually; future runs will not re-open stale titles.
 
 LLM triage (``--llm-triage``)
 ------------------------------
@@ -240,9 +233,7 @@ def list_health_issues(token: str, repo: str, state: str = "open",
         if not isinstance(results, list) or not results:
             break
         for issue in results:
-            stable_id = _parse_stable_id(issue.get("body") or "")
-            key = stable_id if stable_id else _title_to_check_name(issue["title"])
-            issues[key] = issue
+            issues[issue["title"]] = issue
         page += 1
     return issues
 
@@ -285,9 +276,6 @@ def close_issue(token: str, repo: str, number: int, comment: str, dry_run: bool)
 _OCCURRENCE_RE = re.compile(
     r"^> \*\*Seen:\*\* (\d+)× · Last: [^\n]*\n?", re.MULTILINE
 )
-_STABLE_ID_RE = re.compile(r"<!--\s*check-id:\s*(.*?)\s*-->")
-_DETAIL_RE = re.compile(r"(\*\*Detail:\*\*\n```\n).*?(\n```)", re.DOTALL)
-_HINT_RE = re.compile(r"\n\*\*Hint:\*\* [^\n]*")
 
 
 def parse_occurrence_count(body: str) -> int:
@@ -302,36 +290,6 @@ def set_occurrence_count(body: str, count: int, last_seen: str,
     if _OCCURRENCE_RE.search(body or ""):
         return _OCCURRENCE_RE.sub(new_line, body, count=1)
     return new_line + (body or "")
-
-
-def _parse_stable_id(body: str) -> str | None:
-    """Return the check-id embedded by _issue_body(), or None for legacy issues."""
-    m = _STABLE_ID_RE.search(body or "")
-    return m.group(1) if m else None
-
-
-def _title_to_check_name(title: str) -> str:
-    """Fallback: extract check name from 'health: <name>' for legacy issues."""
-    prefix = ISSUE_TITLE_PREFIX + " "
-    return title[len(prefix):] if title.startswith(prefix) else title
-
-
-def refresh_issue_body(body: str, count: int, last_seen: str,
-                       new_detail: str, new_hint: str, device: str = "") -> str:
-    """Update occurrence counter AND refresh Detail/Hint blocks on a repeat sighting."""
-    body = set_occurrence_count(body, count, last_seen, device=device)
-    body = _DETAIL_RE.sub(
-        lambda m: m.group(1) + new_detail + m.group(2), body, count=1
-    )
-    if new_hint:
-        new_hint_text = f"\n**Hint:** {new_hint}"
-        if _HINT_RE.search(body):
-            body = _HINT_RE.sub(lambda _: new_hint_text, body, count=1)
-        elif "\n---\n" in body:
-            body = body.replace("\n---\n", f"{new_hint_text}\n---\n", 1)
-    else:
-        body = _HINT_RE.sub("", body)
-    return body
 
 
 def update_issue_body(
@@ -365,7 +323,6 @@ def _issue_body(check_name: str, status: str, detail: str, hint: str, source: st
         "Close this issue once the underlying problem is resolved — "
         "the script will re-open it if the check fails again.*"
     )
-    parts.append(f"\n<!-- check-id: {check_name} -->")
     return "\n".join(parts)
 
 
@@ -653,23 +610,19 @@ def main() -> int:
 
     for check in checks:
         title = f"{ISSUE_TITLE_PREFIX} {check['name']}"
-        already_open = open_issues.get(check["name"])
-        recently_was_closed = recently_closed.get(check["name"])
+        already_open = open_issues.get(title)
+        recently_was_closed = recently_closed.get(title)
 
         if check["status"] in min_level:
             if already_open:
-                # Refresh the Detail block and increment the occurrence counter.
+                # Increment the occurrence counter in the issue body.
                 current_body = already_open.get("body") or ""
                 new_count = parse_occurrence_count(current_body) + 1
-                new_body = refresh_issue_body(
-                    current_body, new_count, now_str,
-                    new_detail=check["detail"],
-                    new_hint=check.get("hint", ""),
-                    device=DEVICE_NAME,
-                )
+                new_body = set_occurrence_count(current_body, new_count, now_str,
+                                                device=DEVICE_NAME)
                 update_issue_body(token, args.repo, already_open["number"], new_body, args.dry_run)
                 print(f"  SEEN×{new_count:<3} {check['status'].upper():4}  {check['name']}  "
-                      f"(#{already_open['number']} open, detail+counter refreshed)")
+                      f"(#{already_open['number']} open, counter updated)")
                 run_log.add_action("seen-increment", check["name"], already_open["number"])
                 skipped += 1
                 continue
