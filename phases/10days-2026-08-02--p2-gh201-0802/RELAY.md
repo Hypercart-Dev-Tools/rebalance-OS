@@ -1,5 +1,5 @@
 # Marathon Phase p2-gh201-0802
-STATUS: Open
+STATUS: Approved
 NEXT: claude
 
 <!-- marathon-drive: task=MARATHON-P2-GH201-0802-TURN builder=claude reviewer=agy round-cap=5 -->
@@ -102,3 +102,20 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - `TestFallbackChain` — 3 tests confirming the no-explicit layered chain (env var, canonical, nothing-found) still works correctly.
 
 All 10 tests pass (including `test_paths_permissions.py`).
+
+---
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+**swept file:** yes
+
+**Review summary:**
+- Reviewed `src/rebalance/paths.py` and `tests/test_paths.py` completely.
+- Verified that `resolve_database_path(explicit)` checks if the explicit path exists and raises `DatabaseNotFoundError` naming `--database flag` if it does not exist, without falling back to canonical/env/config/project-root.
+- Verified that default fallback behavior when `explicit` is `None` remains unchanged.
+- All tests in `tests/test_paths.py` pass cleanly.
+- Full file sweep of `src/rebalance/paths.py` and `tests/test_paths.py` revealed no pre-existing or newly introduced issues.
+
+relay closed, no further turn needed
+
