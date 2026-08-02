@@ -1,0 +1,21 @@
+{
+  "orchestrator_owned": [],
+  "codex_lane": [
+    "src/rebalance/ingest/semantic_index.py",
+    "src/rebalance/ingest/index_ops.py",
+    "src/rebalance/ingest/db/semantic.py"
+  ],
+  "agy_lane": [],
+  "effective_artifacts": [
+    "src/rebalance/ingest/semantic_index.py",
+    "src/rebalance/ingest/index_ops.py",
+    "src/rebalance/ingest/db/semantic.py"
+  ],
+  "inferred_test_artifacts": [],
+  "inferred_test_helpers": [],
+  "fs_touching_tests": [],
+  "agy_review_default": true,
+  "coupling_warning": "all artifacts share one top-level dir; treat as coupled",
+  "parallelizable": false,
+  "single_lane_only": true
+}

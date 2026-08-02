@@ -1,0 +1,7 @@
+XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-171-sqlite-write-lock RELAY_WORKTREE_ISOLATION=1 .xyz/relay-automation/marathon-drive.sh \
+  --phase-brief <packet>/packet.md \
+  --reviewer agy \
+  --builder codex \
+  --artifact src/rebalance/ingest/github_knowledge.py,scripts/github_sync.sh \
+  --pre-advance-cmd '.venv/bin/python -m pytest tests/ -k "github_scan or github_client or github_knowledge" -q' \
+  --require-clean

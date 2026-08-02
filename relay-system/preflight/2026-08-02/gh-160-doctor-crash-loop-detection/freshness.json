@@ -1,0 +1,22 @@
+{
+  "fetch_ok": true,
+  "upstream": "origin/development",
+  "ahead": 2,
+  "behind": 0,
+  "dirty": true,
+  "stale_index_lock": false,
+  "stale_index_lock_path": null,
+  "stale_index_lock_warning": null,
+  "evaluated_ref": "development",
+  "evaluated_ref_commit": "5b992a281ff1d46a71bd9af6643343f617384c0e",
+  "checkout_matches_ref": true,
+  "head_behind_ref": 0,
+  "candidate_state": "ready",
+  "probes": [
+    {
+      "type": "grep_present",
+      "path": "src/rebalance/doctor.py",
+      "verdict": "unfixed"
+    }
+  ]
+}

@@ -1,0 +1,111 @@
+# MARATHON.yaml — the 10 lanes from MARATHON-PLAN-2026-07-30.md, as marathon.sh phases.
+#
+# Regenerated 2026-08-02. Supersedes PROJECT/2-WORKING/MARATHON-2026-07-30-10DAYS/MARATHON.yaml,
+# which now exists only on the research/marathon-2026-07-30-results branch: the 2026-07-30 run's
+# commits were rolled off development, and its packets went with them. Every lane below was
+# re-preflighted today against the CURRENT vendored harness (source_commit d017e61) and exited 0
+# (ready) — packets under relay-system/preflight/2026-08-02/.
+#
+# SEQUENCING. marathon.sh runs phases STRICTLY ONE AT A TIME (GH-241); depends_on constrains
+# order, it does not create concurrency. The plan document's "waves" describe which lanes COULD
+# safely overlap and are therefore advisory here — they are why no depends_on is needed between
+# same-wave lanes, not a statement that they run together. Order below is the plan's own ranking
+# (score ascending), which is also its wave order.
+#
+# GATE — CHANGED SINCE 2026-07-30. marathon.sh takes ONE --pre-advance-cmd for the whole run;
+# there is no per-phase gate field, and the packets' issue-scoped gates cannot be reproduced by a
+# single command. The only command broad enough to cover every lane is the full suite:
+#
+#     .venv/bin/python -m pytest tests/ -q
+#
+# The 2026-07-30 plan could not fire as a multi-phase run because that suite was RED (5 failed,
+# GH-231 + GH-233). Both fixes are now on development (c86ea34, 5b992a2) and the suite is GREEN —
+# 1592 passed, 15 skipped, 10 xfailed, verified 2026-08-02. The global gate is therefore viable
+# for the first time, and this plan CAN be fired as a chain.
+#
+# A red gate still halts the chain at the failing phase. Lanes after a halt do not run; re-fire
+# from the remaining phases after triaging the failure.
+#
+# GATE GUARD (XYZ GH-390). The gate executes code a builder wrote seconds earlier. On 2026-07-30
+# a generated constant-mock test drove an unbounded pagination loop in this repo's
+# health_issue_reporter (rebalance GH-236) and panicked the host twice — the p5-gh139 lane below
+# is the same lane that did it, and that bug is deliberately still unfixed here so this run
+# exercises the guard. The vendored harness now caps the gate on wall-clock, CPU (ulimit -t), and
+# process-group RSS, and reports a resource kill as `gate-killed` rather than `pre-advance-failed`
+# so it is never mistaken for the change having failed review.
+#
+# Dry-run before firing:
+#   .xyz/relay-automation/marathon.sh --plan PROJECT/2-WORKING/MARATHON-2026-08-02-10DAYS/MARATHON.yaml \
+#     --pre-advance-cmd '.venv/bin/python -m pytest tests/ -q' --dry-run
+
+name: 10days-2026-08-02
+
+phases:
+  - id: p1-gh189-0802
+    name: "GH-189 — pulse dashboard: 2 residual presentation gaps"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-189-pulse-dashboard-residual-gaps/packet.md
+    artifact: src/rebalance/doctor.py,scripts/pulse_web.py
+
+  - id: p2-gh201-0802
+    name: "GH-201 — explicit --database at a nonexistent path silently falls back"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-201-database-path-fallback/packet.md
+    artifact: src/rebalance/paths.py,tests/test_paths.py
+
+  - id: p3-gh202-0802
+    name: "GH-202 — CLIO projection: no malformed-source-row test"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-202-clio-malformed-row-test/packet.md
+    artifact: test/clio-exporter.sh
+
+  - id: p4-gh166-0802
+    name: "GH-166 — vault ingest lag and stuck pending-embed chunks"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-166-vault-ingest-lag/packet.md
+    artifact: src/rebalance/ingest/index_ops.py,src/rebalance/health.py
+
+  - id: p5-gh139-0802
+    name: "GH-139 — health_issue_reporter dedupes on title"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-139-health-issue-reporter-stable-id/packet.md
+    artifact: scripts/health_issue_reporter.py,tests/test_health_issue_reporter.py
+
+  - id: p6-gh171-0802
+    name: "GH-171 — github_sync holds the SQLite write lock across network I/O"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-171-sqlite-write-lock/packet.md
+    artifact: src/rebalance/ingest/github_knowledge.py,scripts/github_sync.sh
+
+  # kernel zone — the plan caps kernel at 1 per wave; serial execution satisfies that trivially.
+  - id: p7-gh170-0802
+    name: "GH-170 — tests in a git worktree silently import the main checkout"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-170-worktree-test-isolation/packet.md
+    artifact: conftest.py,tests/conftest.py,pyproject.toml
+
+  - id: p8-gh160-0802
+    name: "GH-160 — doctor: a crash-looping KeepAlive daemon reports OK"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-160-doctor-crash-loop-detection/packet.md
+    artifact: src/rebalance/doctor.py,tests/test_launchd_predicate.py
+
+  - id: p9-gh167-0802
+    name: "GH-167 — 302 GitHub documents fetched but never projected into the semantic index"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-167-semantic-index-github-gap/packet.md
+    artifact: src/rebalance/ingest/semantic_index.py,src/rebalance/ingest/index_ops.py,src/rebalance/ingest/db/semantic.py
+
+  - id: p10-gh186-0802
+    name: "GH-186 — scheduler jobs crash on a rare CPython EINTR at bootstrap"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-186-scheduler-eintr-crash/packet.md
+    artifact: scripts/github_sync.sh,scripts/lib/scheduler_common.sh
+
+# PHASE IDS carry an -0802 suffix deliberately. The tick coordination ledger lives in .tick/,
+# which is gitignored — so rolling the 2026-07-30 run's commits off development did NOT roll back
+# its task state. MARATHON-P1..P4-GH***-TURN are still `done` and MARATHON-P5-GH139-TURN is still
+# `open` from that run, and a spent id is permanently unclaimable ("only the claiming agent can
+# mutate it"), which halts the phase before any turn runs. marathon.sh --retry rewrites one
+# phase's id; five were spent here, so the ids are freshened in the plan instead. Verified unused
+# via `tick info` before firing.
