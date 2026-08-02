@@ -12,8 +12,16 @@ the full check results, every LLM call + response, and every GitHub action taken
 
 De-duplication
 --------------
-Issues are matched by stable title (``health: <check-name>``).
-- Already **open**: skip silently.
+Issues are matched by a stable check-id embedded in the issue body
+(``<!-- check-id: <check-name> -->``).  This key is independent of the
+human-facing title, so a title-format change or display-name rename does not
+orphan an existing open issue.  Legacy issues that pre-date the marker are
+matched by the title-derived key (``health: <check-name>`` → ``<check-name>``)
+as a fallback; the marker is written on the next body update so they are
+upgraded automatically.  Duplicate issues created before this change (e.g. the
+6-issue/3-machine incident from the duplicate emitter) must be closed by the
+operator — they have no embedded marker and cannot be automatically reconciled.
+- Already **open**: increment occurrence counter and refresh detail block.
 - Recently **closed** (within --dedup-days, default 30): add a comment noting
   the recurrence instead of opening a new issue.
 - Older closed / never filed: file a new issue.
@@ -233,7 +241,7 @@ def list_health_issues(token: str, repo: str, state: str = "open",
         if not isinstance(results, list) or not results:
             break
         for issue in results:
-            issues[issue["title"]] = issue
+            issues[_extract_check_key(issue)] = issue
         page += 1
     return issues
 
@@ -277,6 +285,9 @@ _OCCURRENCE_RE = re.compile(
     r"^> \*\*Seen:\*\* (\d+)× · Last: [^\n]*\n?", re.MULTILINE
 )
 
+_CHECK_ID_RE = re.compile(r"<!-- check-id: ([^\n]+?) -->")
+_DETAIL_BLOCK_RE = re.compile(r"\*\*Detail:\*\*\n```\n.*?\n```", re.DOTALL)
+
 
 def parse_occurrence_count(body: str) -> int:
     m = _OCCURRENCE_RE.search(body or "")
@@ -302,6 +313,47 @@ def update_issue_body(
 
 
 # ---------------------------------------------------------------------------
+# Stable check-id helpers
+# ---------------------------------------------------------------------------
+
+def _parse_check_id(body: str) -> str:
+    """Return the stable check-id embedded in the issue body, or '' if absent."""
+    m = _CHECK_ID_RE.search(body or "")
+    return m.group(1) if m else ""
+
+
+def _extract_check_key(issue: dict) -> str:
+    """Derive a stable lookup key from a GitHub issue dict.
+
+    Prefers the embedded ``<!-- check-id: ... -->`` marker; falls back to
+    stripping the ``health: `` prefix from the title for legacy issues.
+    """
+    check_id = _parse_check_id(issue.get("body") or "")
+    if check_id:
+        return check_id
+    title = issue.get("title", "")
+    prefix = ISSUE_TITLE_PREFIX + " "
+    if title.startswith(prefix):
+        return title[len(prefix):]
+    return title
+
+
+def refresh_detail_in_body(body: str, detail: str) -> str:
+    """Replace the fenced detail block in an issue body with fresh content."""
+    new_block = f"**Detail:**\n```\n{detail}\n```"
+    if _DETAIL_BLOCK_RE.search(body or ""):
+        return _DETAIL_BLOCK_RE.sub(new_block, body, count=1)
+    return body
+
+
+def _ensure_check_id_marker(body: str, check_name: str) -> str:
+    """Append a check-id marker if the body lacks one (upgrades legacy issues)."""
+    if _CHECK_ID_RE.search(body or ""):
+        return body
+    return (body or "") + f"\n<!-- check-id: {check_name} -->"
+
+
+# ---------------------------------------------------------------------------
 # Issue body builder
 # ---------------------------------------------------------------------------
 
@@ -321,7 +373,8 @@ def _issue_body(check_name: str, status: str, detail: str, hint: str, source: st
     parts.append(
         "\n---\n*Auto-filed by `scripts/health_issue_reporter.py`. "
         "Close this issue once the underlying problem is resolved — "
-        "the script will re-open it if the check fails again.*"
+        "the script will re-open it if the check fails again.*\n"
+        f"<!-- check-id: {check_name} -->"
     )
     return "\n".join(parts)
 
@@ -610,19 +663,22 @@ def main() -> int:
 
     for check in checks:
         title = f"{ISSUE_TITLE_PREFIX} {check['name']}"
-        already_open = open_issues.get(title)
-        recently_was_closed = recently_closed.get(title)
+        # Look up by stable check-id (embedded in body); legacy issues fall back to title-strip.
+        already_open = open_issues.get(check['name'])
+        recently_was_closed = recently_closed.get(check['name'])
 
         if check["status"] in min_level:
             if already_open:
-                # Increment the occurrence counter in the issue body.
+                # Increment counter, refresh detail block, and ensure check-id marker present.
                 current_body = already_open.get("body") or ""
                 new_count = parse_occurrence_count(current_body) + 1
                 new_body = set_occurrence_count(current_body, new_count, now_str,
                                                 device=DEVICE_NAME)
+                new_body = refresh_detail_in_body(new_body, check["detail"])
+                new_body = _ensure_check_id_marker(new_body, check["name"])
                 update_issue_body(token, args.repo, already_open["number"], new_body, args.dry_run)
                 print(f"  SEEN×{new_count:<3} {check['status'].upper():4}  {check['name']}  "
-                      f"(#{already_open['number']} open, counter updated)")
+                      f"(#{already_open['number']} open, counter+detail updated)")
                 run_log.add_action("seen-increment", check["name"], already_open["number"])
                 skipped += 1
                 continue
