@@ -2,7 +2,7 @@
 STATUS: Open
 NEXT: claude
 
-<!-- marathon-drive: task=MARATHON-P1-GH189-0802-TURN-3 builder=claude reviewer=agy round-cap=5 -->
+<!-- marathon-drive: task=MARATHON-P1-GH189-0802-TURN-4 builder=claude reviewer=agy round-cap=5 -->
 
 ## Phase Brief
 
@@ -54,7 +54,7 @@ XYZ_HARNESS_CONTEXT=swarm XYZ_SESSION_ID=gh-189-pulse-dashboard-residual-gaps RE
 - `marathon-invocation.txt` — the invocation hint above
 
 
-## Debug mantra (auto-triggered — 2 prior attempt(s) on this phase did not reach Approved)
+## Debug mantra (auto-triggered — 3 prior attempt(s) on this phase did not reach Approved)
 
 Before trying again, read /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
 Last recorded reason (/Users/matthewtaylor/htdocs/rebalance-OS/phases/10days-2026-08-02--p1-gh189-0802/ESCALATION.md): `pre-advance-failed`. Read it before re-guessing.
@@ -67,9 +67,9 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 1. Implement the brief by creating/editing the artifact file(s): src/rebalance/doctor.py,scripts/pulse_web.py
 2. Append a build block to this relay file: `### Round N · Builder · claude` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick
-   - /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick claim MARATHON-P1-GH189-0802-TURN-3 --agent claude --paths "phases/10days-2026-08-02--p1-gh189-0802/RELAY.md,src/rebalance/doctor.py,scripts/pulse_web.py"
-   - /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick ping MARATHON-P1-GH189-0802-TURN-3 --agent claude
-   - /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick release MARATHON-P1-GH189-0802-TURN-3 --agent claude --to agy
+   - /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick claim MARATHON-P1-GH189-0802-TURN-4 --agent claude --paths "phases/10days-2026-08-02--p1-gh189-0802/RELAY.md,src/rebalance/doctor.py,scripts/pulse_web.py"
+   - /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick ping MARATHON-P1-GH189-0802-TURN-4 --agent claude
+   - /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick release MARATHON-P1-GH189-0802-TURN-4 --agent claude --to agy
 4. Edit ONLY these paths: phases/10days-2026-08-02--p1-gh189-0802/RELAY.md and src/rebalance/doctor.py,scripts/pulse_web.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 5. HAND OFF EXPLICITLY (GH-268): after releasing the token, end your turn by naming who acts next —
    "handing off to agy — agy, take your turn." A turn that ends without that line
@@ -82,8 +82,8 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/doctor.py,scripts/pulse_web.py. REVIEW THE WHOLE FILE, NOT JUST THE DIFF (GH-268): a beta test had this loop reach 'Approved' in two rounds while an independent audit of the same branch found 20 issues (1 critical, 4 high) — every one of them in the pre-existing code the change sat on, which nobody had read. Pre-existing defects in a file you are touching are IN SCOPE; say so explicitly if you find none. DECLARE IT: your review block MUST contain a literal 'swept file: yes' or 'swept file: no' line — without it a reviewer that skipped the sweep is indistinguishable in the transcript from one that did it and found nothing, which is exactly how those 20 issues stayed invisible.
 1. Append a review block: `### Round N · Reviewer · agy` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick release MARATHON-P1-GH189-0802-TURN-3 --agent agy --to claude
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick done MARATHON-P1-GH189-0802-TURN-3 --agent agy
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick release MARATHON-P1-GH189-0802-TURN-4 --agent agy --to claude
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick done MARATHON-P1-GH189-0802-TURN-4 --agent agy
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/matthewtaylor/htdocs/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/10days-2026-08-02--p1-gh189-0802/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
 5. HAND OFF EXPLICITLY (GH-268): end your turn by naming who acts next — "handing off to claude —
