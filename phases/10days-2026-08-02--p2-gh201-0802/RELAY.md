@@ -84,3 +84,21 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    claude, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · claude
+
+**Files touched:** `src/rebalance/paths.py`, `tests/test_paths.py`
+
+**What changed:**
+
+`resolve_database_path()` previously put the `explicit` path into a candidates list alongside the canonical DB and env-var paths, then iterated looking for the first existing file. If the explicit path didn't exist, the loop silently fell through to the next candidate — typically resolving the canonical DB without any warning (GH-201).
+
+**Fix:** When `explicit` is not `None`, resolve and check it immediately. If it exists, return it directly (short-circuit, no other layers tried). If it doesn't exist, raise `DatabaseNotFoundError` with just that one candidate, so the error message names `--database flag` unambiguously. No fallback occurs.
+
+**Tests created (`tests/test_paths.py`):**
+- `TestExplicitPath` — 5 tests covering: explicit-existing returns, explicit-missing raises, error message names the flag, no fallback to canonical when explicit is missing, candidates list contains only the explicit path.
+- `TestFallbackChain` — 3 tests confirming the no-explicit layered chain (env var, canonical, nothing-found) still works correctly.
+
+All 10 tests pass (including `test_paths_permissions.py`).

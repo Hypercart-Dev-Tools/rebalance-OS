@@ -164,11 +164,17 @@ def resolve_database_path(explicit: Path | None = None) -> Path:
 
     Returns an existing absolute path, or raises ``DatabaseNotFoundError``
     with a message naming every layer that was tried.
-    """
-    candidates: list[tuple[Path, str]] = []
 
+    When ``explicit`` is provided (e.g., from ``--database``), the path MUST
+    exist; no fallback to other layers occurs (GH-201).
+    """
     if explicit is not None:
-        candidates.append((Path(explicit).expanduser().resolve(), "--database flag"))
+        explicit_path = Path(explicit).expanduser().resolve()
+        if not explicit_path.exists():
+            raise DatabaseNotFoundError([(explicit_path, "--database flag")])
+        return explicit_path
+
+    candidates: list[tuple[Path, str]] = []
 
     env_value = os.environ.get("REBALANCE_DB")
     if env_value:
