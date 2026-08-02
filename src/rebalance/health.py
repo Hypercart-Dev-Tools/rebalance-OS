@@ -195,6 +195,38 @@ def _bucket_label(count: int, name: str) -> str:
     return f"{count} {name}{'' if count == 1 else 's'}"
 
 
+_SIGNAL_HEALTH_EXTRA_KEYS: tuple[str, ...] = ("semantic_embed",)
+"""signal_health keys that have no corresponding doctor check and should be
+surfaced as synthesized Check objects. GH-166: semantic_embed is the first
+such key (stuck pending-embed rows). Vault ingest lag is surfaced via the
+existing signal_health["vault"] entry (same key as doctor's "vault data"
+freshness check) and is not duplicated here."""
+
+
+def signal_health_as_checks(status: dict[str, Any]) -> list[Check]:
+    """Convert extra signal_health entries to Check objects.
+
+    Only entries listed in ``_SIGNAL_HEALTH_EXTRA_KEYS`` are converted —
+    those that have no corresponding doctor check and would otherwise be
+    invisible to the reconciled health verdict. Callers merge the result
+    with their doctor checks before calling ``compute_health_status``.
+    GH-166.
+    """
+    checks: list[Check] = []
+    signal_health = (status.get("freshness") or {}).get("signal_health") or {}
+    for key in _SIGNAL_HEALTH_EXTRA_KEYS:
+        entry = signal_health.get(key)
+        if not entry:
+            continue
+        st = entry.get("status")
+        reason = entry.get("reason", "")
+        if st == "degraded":
+            checks.append(Check(f"signal:{key}", FAIL, reason, severity=ERROR))
+        elif st == "warn":
+            checks.append(Check(f"signal:{key}", WARN, reason))
+    return checks
+
+
 def compute_health_status(
     checks: list[Check],
     status: dict[str, Any],

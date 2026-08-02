@@ -191,6 +191,32 @@ def _safe_count_where(conn: Any, table: str, where: str) -> int | None:
         return None
 
 
+def _safe_vault_ingest_lag_seconds(conn: Any) -> int | None:
+    """Return how many seconds vault files are ahead of the last ingest.
+
+    Positive when MAX(last_modified) > MAX(ingested_at), meaning the ingest
+    has not yet caught up to the newest vault file. Zero when ingest is
+    current. None when the query fails (table absent, empty, etc.).
+    GH-166.
+    """
+    try:
+        row = conn.execute(
+            """
+            SELECT CASE
+                WHEN MAX(last_modified) > MAX(ingested_at)
+                THEN CAST(
+                    (julianday(MAX(last_modified)) - julianday(MAX(ingested_at))) * 86400
+                AS INTEGER)
+                ELSE 0
+            END
+            FROM vault_files
+            """
+        ).fetchone()
+        return int(row[0]) if row and row[0] is not None else 0
+    except Exception:
+        return None
+
+
 _SIGNAL_HEALTH_RULES: dict[str, dict[str, Any]] = {
     "vault": {"freshness_key": "last_ingested_at", "window_days": 7, "zero_status": "degraded"},
     "github": {
@@ -390,6 +416,24 @@ def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[
                         "reason": f"{pct}% of recent rows lack {label}",
                     }
 
+        # GH-166: vault ingest-lag override. A 7-day freshness window on
+        # last_ingested_at does not catch same-day content drift. When vault
+        # files are newer than the last ingest run, surface the lag directly
+        # so it degrades health before the 7-day window would notice.
+        if source_name == "vault" and status_entry["status"] == "ok":
+            lag = source_payload.get("ingest_lag_seconds")
+            if isinstance(lag, int) and lag > 0:
+                if lag > 4 * 3600:
+                    status_entry = {
+                        "status": "degraded",
+                        "reason": f"vault ingest is {lag // 3600}h behind the newest file",
+                    }
+                elif lag > 2 * 3600:
+                    status_entry = {
+                        "status": "warn",
+                        "reason": f"vault ingest is {lag // 60}m behind the newest file",
+                    }
+
         signal_health[source_name] = status_entry
 
     return signal_health
@@ -465,6 +509,7 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             "recent_row_count_7d": _safe_count_where(
                 conn, "vault_files", "julianday(last_modified) >= julianday('now', '-7 days')"
             ) or 0,
+            "ingest_lag_seconds": _safe_vault_ingest_lag_seconds(conn),
         }
 
         payload["sources"]["github"] = {
@@ -645,6 +690,21 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
         except Exception:
             drift["semantic_documents_pending_embed"] = None
 
+        # GH-166: distinguish genuinely stuck rows from the normal in-flight
+        # embedding tail. A row pending embed for >2h has survived at least two
+        # launchd embedding cycles and is not simply in-flight.
+        try:
+            stuck_embed = conn.execute(
+                """
+                SELECT COUNT(*) FROM semantic_documents
+                WHERE (embedded_hash IS NULL OR embedded_hash != content_hash)
+                  AND julianday('now') - julianday(updated_at) > 2.0 / 24.0
+                """
+            ).fetchone()[0]
+            drift["semantic_documents_stuck_embed"] = int(stuck_embed)
+        except Exception:
+            drift["semantic_documents_stuck_embed"] = None
+
         # GH-169 Phase 3: commit-corpus completeness, anchored on the remote.
         # Cheap (local git + one ls-remote per repo, no REST API) so it can run
         # on every status call. Reported as three separate quantities that are
@@ -670,7 +730,19 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
         except Exception as exc:  # never let a coverage probe break status
             drift["commit_coverage"] = {"error": str(exc)}
 
-        payload["freshness"] = {**drift, "signal_health": _derive_signal_health(payload["sources"])}
+        signal_health = _derive_signal_health(payload["sources"])
+        # GH-166: surface stuck pending-embed rows as a separate health signal
+        # so dashboards can distinguish a stalled embedder from a brief in-flight tail.
+        stuck = drift.get("semantic_documents_stuck_embed")
+        if isinstance(stuck, int):
+            if stuck > 0:
+                signal_health["semantic_embed"] = {
+                    "status": "degraded",
+                    "reason": f"{stuck} semantic document(s) stuck in pending-embed queue (>2h)",
+                }
+            else:
+                signal_health["semantic_embed"] = {"status": "ok"}
+        payload["freshness"] = {**drift, "signal_health": signal_health}
 
     return payload
 

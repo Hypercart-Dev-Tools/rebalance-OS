@@ -72,6 +72,33 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ---
 
+### Round 1 · Builder · claude
+
+**Files touched:** `src/rebalance/ingest/index_ops.py`, `src/rebalance/health.py`
+
+**What was done:**
+
+1. **Vault ingest lag (`index_ops.py`):**
+   - Added `_safe_vault_ingest_lag_seconds(conn)` — queries `MAX(last_modified) - MAX(ingested_at)` in seconds; returns a positive integer when vault files are newer than the last ingest run, zero when current, None on failure.
+   - Added `ingest_lag_seconds` to the vault source payload in `get_index_status()`.
+   - Added a vault-lag override in `_derive_signal_health()` after the existing content-predicate block: warns when lag >2h (120+ minutes), degrades when lag >4h. Only fires when the existing freshness check already reported `ok`, so a stale 7-day vault still shows the stale reason rather than a lag reason.
+
+2. **Stuck pending-embed rows (`index_ops.py`):**
+   - Added `semantic_documents_stuck_embed` to the drift section: counts `semantic_documents` rows where `embedded_hash IS NULL OR embedded_hash != content_hash` AND `updated_at` is >2h old. Rows younger than 2h are treated as in-flight normal tail.
+   - Updated the `payload["freshness"]` assembly to build `signal_health` incrementally, then inject `signal_health["semantic_embed"]` — `degraded` with a count+reason when stuck > 0, `ok` otherwise.
+
+3. **`health.py`:**
+   - Added `_SIGNAL_HEALTH_EXTRA_KEYS` tuple listing signal_health keys that have no corresponding doctor check (`semantic_embed` is the first).
+   - Added `signal_health_as_checks(status)` — converts those extra entries to `Check(FAIL/WARN)` objects. Callers can merge these with doctor checks before calling `compute_health_status` so the reconciled health verdict reflects the stuck-embed signal.
+
+**Key decisions:**
+- Lag thresholds (warn >2h, degraded >4h) are conservative relative to the hourly launchd cadence: a 2h lag means 2 missed cycles, 4h means 4 cycles.
+- The stuck-embed threshold (2h) matches the same reasoning: an in-flight embedding run completes well within an hour under normal conditions.
+- `signal_health["semantic_embed"]` is a new key (not one doctor already checks), so `signal_health_as_checks` only converts keys in `_SIGNAL_HEALTH_EXTRA_KEYS` to avoid double-reporting vault/github/email.
+- All 26 existing `index_ops` and `index_ops_migration_gate` tests pass.
+
+---
+
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/ingest/index_ops.py,src/rebalance/health.py. REVIEW THE WHOLE FILE, NOT JUST THE DIFF (GH-268): a beta test had this loop reach 'Approved' in two rounds while an independent audit of the same branch found 20 issues (1 critical, 4 high) — every one of them in the pre-existing code the change sat on, which nobody had read. Pre-existing defects in a file you are touching are IN SCOPE; say so explicitly if you find none. DECLARE IT: your review block MUST contain a literal 'swept file: yes' or 'swept file: no' line — without it a reviewer that skipped the sweep is indistinguishable in the transcript from one that did it and found nothing, which is exactly how those 20 issues stayed invisible.
