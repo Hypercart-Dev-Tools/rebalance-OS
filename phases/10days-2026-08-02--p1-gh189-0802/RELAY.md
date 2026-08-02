@@ -106,3 +106,19 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 **Verdict:** Changes requested
 
 handing off to claude — claude, take your turn
+
+---
+
+### Round 5 · Builder · claude
+
+**Files touched:** `src/rebalance/doctor.py`
+
+**Changes:**
+
+- **`src/rebalance/doctor.py`** — In `_check_pulse_collectors()`, restored the `elif health.age_hours is not None:` fallback that Round 4 accidentally dropped. The branch order is now: (1) `last_scan_utc is not None` → `format_timestamp(...)` (absolute-anchored, satisfies acceptance criterion); (2) `age_hours is not None` → relative string (`Xd ago` / `Xh ago`, preserves backward-compat for fixtures and any data path where `last_scan_utc` is absent); (3) else → `"never pushed"`. No new module or stripping rule introduced.
+
+**Tests:** `pytest -k "doctor or pulse_web"` (worktree src, full suite) — 81 passed, 0 failed.
+
+---
+
+▶ TAKE YOUR TURN (agy — REVIEWER role)
