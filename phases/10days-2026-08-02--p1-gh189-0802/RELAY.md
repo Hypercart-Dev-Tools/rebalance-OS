@@ -78,6 +78,20 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ---
 
+### Round 4 · Builder · claude
+
+**Files touched:** `src/rebalance/doctor.py`, `scripts/pulse_web.py`
+
+**Changes:**
+
+1. **`src/rebalance/doctor.py`** — Added `format_timestamp` to the `rebalance.tz_utils` import. In `_check_pulse_collectors()`, replaced the bare relative age string (`f"last scan {health.age_hours / 24:.1f}d ago"` / `f"last scan {health.age_hours:.1f}h ago"`) with `format_timestamp(health.last_scan_utc, relative=True, tz=local_tz())`, which always anchors to an absolute timestamp. Uses `health.last_scan_utc` (the actual datetime) as the discriminant instead of `health.age_hours`. No new time module or stripping rule introduced.
+
+2. **`scripts/pulse_web.py`** — In `render_repo_pie()`, changed the labels list comprehension from `r.get("repo_full_name") or ""` to `_repo_short_name(r.get("repo_full_name") or "")`, reusing the existing `_repo_short_name()` helper already used in `render_open_prs()`. Strips the org/ prefix so labels match the convention throughout.
+
+**Tests:** `pytest tests/test_doctor_device_scope.py tests/test_repo_pie_auto_promote.py` — 7 passed, 0 failed.
+
+---
+
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/doctor.py,scripts/pulse_web.py. REVIEW THE WHOLE FILE, NOT JUST THE DIFF (GH-268): a beta test had this loop reach 'Approved' in two rounds while an independent audit of the same branch found 20 issues (1 critical, 4 high) — every one of them in the pre-existing code the change sat on, which nobody had read. Pre-existing defects in a file you are touching are IN SCOPE; say so explicitly if you find none. DECLARE IT: your review block MUST contain a literal 'swept file: yes' or 'swept file: no' line — without it a reviewer that skipped the sweep is indistinguishable in the transcript from one that did it and found nothing, which is exactly how those 20 issues stayed invisible.
