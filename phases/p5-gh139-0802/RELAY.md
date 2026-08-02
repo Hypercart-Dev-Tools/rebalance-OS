@@ -1,5 +1,5 @@
 # Marathon Phase p5-gh139-0802
-STATUS: Open
+STATUS: Approved
 NEXT: claude
 
 <!-- marathon-drive: task=MARATHON-P5-GH139-0802-TURN builder=claude reviewer=agy round-cap=5 -->
@@ -119,3 +119,23 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    claude, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+**Files reviewed:** `scripts/health_issue_reporter.py`, `tests/test_health_issue_reporter.py`
+
+**Assessment:**
+- Reviewed full source file (`scripts/health_issue_reporter.py`) and full test file (`tests/test_health_issue_reporter.py`).
+- Stable check-id deduplication mechanism (`<!-- check-id: ... -->`) is correctly implemented in `scripts/health_issue_reporter.py`.
+- On repeat sightings, both occurrence counter and detail block are updated via `set_occurrence_count`, `refresh_detail_in_body`, and `_ensure_check_id_marker`.
+- In `tests/test_health_issue_reporter.py`, fixed a test bug in `test_list_health_issues_keys_by_stable_id` where `"page=1"` substring matched `"per_page=100"`, which previously caused pagination mocking to loop infinitely.
+- Full file sweep performed: no pre-existing or newly introduced defects found in `scripts/health_issue_reporter.py`.
+- Verification: `.venv/bin/python -m pytest tests/ -k health_issue_reporter -q` ran with 70 passed, 10 skipped, 0 failures.
+
+**Verdict:** Approved
+
+relay closed, no further turn needed

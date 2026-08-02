@@ -933,7 +933,7 @@ class TestStableCheckId(unittest.TestCase):
         ]
 
         def _fake_request(method, path, token, payload=None):
-            if "page=1" in path:
+            if "&page=1" in path or "?page=1" in path:
                 return raw_issues
             return []
 
