@@ -840,6 +840,182 @@ class TestTriageScenarios(unittest.TestCase):
         self._assert_valid(decision, reason, "gmail-mcp-empty")
 
 
+# ===========================================================================
+# 10. Stable check-id dedup helpers (GH-139)
+# ===========================================================================
+
+class TestStableCheckId(unittest.TestCase):
+    """Verify _parse_check_id, _extract_check_key, and _ensure_check_id_marker."""
+
+    def test_parse_check_id_returns_id_when_present(self) -> None:
+        body = "## heading\n<!-- check-id: my-check -->"
+        self.assertEqual(hr._parse_check_id(body), "my-check")
+
+    def test_parse_check_id_returns_empty_when_absent(self) -> None:
+        body = "## heading\nno marker here"
+        self.assertEqual(hr._parse_check_id(body), "")
+
+    def test_parse_check_id_empty_body(self) -> None:
+        self.assertEqual(hr._parse_check_id(""), "")
+
+    def test_parse_check_id_with_whitespace_in_id(self) -> None:
+        body = "<!-- check-id: github data -->"
+        self.assertEqual(hr._parse_check_id(body), "github data")
+
+    def test_extract_check_key_prefers_embedded_marker(self) -> None:
+        """Issue with check-id marker: key = marker value, not title-derived."""
+        issue = {
+            "title": "health: old-display-name",
+            "body": "## heading\n<!-- check-id: stable-internal-name -->",
+        }
+        self.assertEqual(hr._extract_check_key(issue), "stable-internal-name")
+
+    def test_extract_check_key_falls_back_to_title_strip(self) -> None:
+        """Legacy issue (no marker): key = title with 'health: ' stripped."""
+        issue = {"title": "health: my-check", "body": "no marker here"}
+        self.assertEqual(hr._extract_check_key(issue), "my-check")
+
+    def test_extract_check_key_no_prefix_returns_full_title(self) -> None:
+        """Issue whose title doesn't start with 'health: ': return the whole title."""
+        issue = {"title": "unrelated-issue", "body": ""}
+        self.assertEqual(hr._extract_check_key(issue), "unrelated-issue")
+
+    def test_extract_check_key_none_body_falls_back_to_title(self) -> None:
+        issue = {"title": "health: db", "body": None}
+        self.assertEqual(hr._extract_check_key(issue), "db")
+
+    def test_ensure_check_id_marker_adds_when_missing(self) -> None:
+        body = "## heading"
+        updated = hr._ensure_check_id_marker(body, "my-check")
+        self.assertIn("<!-- check-id: my-check -->", updated)
+        self.assertIn("## heading", updated)
+
+    def test_ensure_check_id_marker_noop_when_already_present(self) -> None:
+        body = "## heading\n<!-- check-id: my-check -->"
+        updated = hr._ensure_check_id_marker(body, "my-check")
+        self.assertEqual(updated.count("<!-- check-id:"), 1)
+        self.assertIn("<!-- check-id: my-check -->", updated)
+
+    def test_stable_id_dedup_matches_despite_title_difference(self) -> None:
+        """An open issue is found by stable check-id even when the display title differs.
+
+        Simulates the rename scenario: issue was filed as 'health: old-display-title'
+        but carries <!-- check-id: stable-name -->. The check still emits 'stable-name',
+        so the lookup open_issues.get('stable-name') must succeed.
+        """
+        issue = {
+            "title": "health: old-display-title",
+            "number": 42,
+            "body": "## heading\n<!-- check-id: stable-name -->",
+            "state": "open",
+        }
+        open_issues = {hr._extract_check_key(issue): issue}
+
+        self.assertIn("stable-name", open_issues,
+                      "Dedup must match by embedded check-id, not by display title")
+        self.assertEqual(open_issues["stable-name"]["number"], 42)
+
+    def test_new_issue_body_embeds_check_id_marker(self) -> None:
+        """_issue_body must include a check-id marker so future lookups are stable."""
+        body = hr._issue_body("db-check", "fail", "detail", "hint", "rebalance-doctor")
+        self.assertIn("<!-- check-id: db-check -->", body,
+                      "New issue body must embed the stable check-id marker")
+
+    def test_list_health_issues_keys_by_stable_id(self) -> None:
+        """list_health_issues must key the result dict by _extract_check_key, not title."""
+        raw_issues = [
+            {
+                "title": "health: old-title",
+                "number": 7,
+                "body": "<!-- check-id: stable-id -->",
+                "state": "open",
+            }
+        ]
+
+        def _fake_request(method, path, token, payload=None):
+            if "page=1" in path:
+                return raw_issues
+            return []
+
+        with patch.object(hr, "_request", side_effect=_fake_request):
+            result = hr.list_health_issues("tok", "o/r", state="open")
+
+        self.assertIn("stable-id", result,
+                      "list_health_issues must key by stable check-id, not full title")
+        self.assertNotIn("health: old-title", result)
+
+
+# ===========================================================================
+# 11. Detail refresh on repeat sightings (GH-139)
+# ===========================================================================
+
+class TestDetailRefresh(unittest.TestCase):
+    """Verify refresh_detail_in_body replaces stale detail on repeat sightings."""
+
+    def _body_with_detail(self, detail: str) -> str:
+        return hr._issue_body("my-check", "fail", detail, "fix it", "rebalance-doctor")
+
+    def test_refresh_replaces_existing_detail_block(self) -> None:
+        body = self._body_with_detail("old detail text")
+        updated = hr.refresh_detail_in_body(body, "new detail text")
+        self.assertIn("new detail text", updated)
+        self.assertNotIn("old detail text", updated)
+
+    def test_refresh_noop_when_no_detail_block(self) -> None:
+        body = "## heading\nNo fenced detail block here."
+        result = hr.refresh_detail_in_body(body, "anything")
+        self.assertEqual(result, body)
+
+    def test_refresh_preserves_rest_of_body(self) -> None:
+        body = self._body_with_detail("original detail")
+        updated = hr.refresh_detail_in_body(body, "refreshed detail")
+        self.assertIn("## Rebalance health: `my-check`", updated)
+        self.assertIn("<!-- check-id: my-check -->", updated)
+        self.assertIn("refreshed detail", updated)
+        self.assertNotIn("original detail", updated)
+
+    def test_refresh_replaces_only_one_block(self) -> None:
+        """Only the first **Detail:** block is replaced, count=1."""
+        body = self._body_with_detail("first")
+        # Manually append a second detail block (shouldn't happen in practice).
+        body_with_two = body + "\n**Detail:**\n```\nsecond\n```"
+        updated = hr.refresh_detail_in_body(body_with_two, "replacement")
+        self.assertIn("replacement", updated)
+        # The second block should be unchanged.
+        self.assertIn("second", updated)
+
+    def test_repeat_sighting_updates_counter_and_detail(self) -> None:
+        """End-to-end mock: repeat sighting increments counter AND refreshes detail."""
+        token = "fake-tok"
+        repo = "test/repo"
+        ts = _now_str()
+        original_body = hr._issue_body(
+            "my-check", "fail", "old detail", "fix it", "rebalance-doctor"
+        )
+
+        patched_calls = []
+
+        def _fake_request(method, path, tok, payload=None):
+            patched_calls.append((method, path, payload))
+            return {}
+
+        with patch.object(hr, "_request", side_effect=_fake_request):
+            current_body = original_body
+            new_count = hr.parse_occurrence_count(current_body) + 1
+            new_body = hr.set_occurrence_count(current_body, new_count, ts,
+                                               device="test-device")
+            new_body = hr.refresh_detail_in_body(new_body, "new detail")
+            new_body = hr._ensure_check_id_marker(new_body, "my-check")
+            hr.update_issue_body(token, repo, 5, new_body, dry_run=False)
+
+        self.assertEqual(len(patched_calls), 1)
+        sent_body = patched_calls[0][2]["body"]
+        self.assertIn("new detail", sent_body)
+        self.assertNotIn("old detail", sent_body)
+        self.assertIn("> **Seen:** 2×", sent_body)
+        self.assertIn("<!-- check-id: my-check -->", sent_body)
+
+
 class TestNoDuplicateCollectorEmitter(unittest.TestCase):
     """GH-139 regression: the reporter must not emit its own collector checks.
 

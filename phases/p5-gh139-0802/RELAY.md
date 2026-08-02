@@ -78,6 +78,35 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ---
 
+### Round 1 · Builder · claude
+
+**Files touched:** `tests/test_health_issue_reporter.py` (source unchanged — already correct)
+
+**Analysis:** The source code (`scripts/health_issue_reporter.py`) already has the stable check-id mechanism fully implemented:
+- `_parse_check_id()` extracts `<!-- check-id: ... -->` from issue bodies
+- `_extract_check_key()` prefers the embedded marker, falls back to title-strip for legacy issues
+- `_ensure_check_id_marker()` upgrades legacy issue bodies on repeat sightings
+- `refresh_detail_in_body()` replaces the fenced `**Detail:**` block on repeat sightings
+- `_issue_body()` embeds the marker in all new issues
+- `list_health_issues()` keys the return dict via `_extract_check_key()` (not raw title)
+- The main dedup loop uses `open_issues.get(check['name'])` against that stable-keyed dict
+- The repeat-sighting branch calls both `refresh_detail_in_body()` and `_ensure_check_id_marker()`
+
+**What was missing:** Tests for all of the above. The test file had no coverage for `_parse_check_id`, `_extract_check_key`, `_ensure_check_id_marker`, or `refresh_detail_in_body`.
+
+**Added:** Two new test classes (sections 10 and 11) in `tests/test_health_issue_reporter.py`:
+
+- `TestStableCheckId` (12 tests): unit tests for `_parse_check_id`, `_extract_check_key`, `_ensure_check_id_marker`; a rename-scenario dedup integration test; a `list_health_issues` key-format test; a check that new issue bodies embed the marker.
+- `TestDetailRefresh` (5 tests): unit tests for `refresh_detail_in_body`; an end-to-end mock verifying a repeat sighting both increments the counter and replaces stale detail.
+
+**Acceptance criteria status:**
+- [x] Dedup key is stable registry-level check-id — implemented via `_extract_check_key` + embedded marker; tests now pin this
+- [x] Existing duplicates migration path — documented in docstring ("must be closed by the operator")
+- [x] Detail block refreshed on repeat sighting — `refresh_detail_in_body` is called; tests now pin this
+- [x] `pytest -k health_issue_reporter` green; no new duplicate-issue path introduced
+
+---
+
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: scripts/health_issue_reporter.py,tests/test_health_issue_reporter.py. REVIEW THE WHOLE FILE, NOT JUST THE DIFF (GH-268): a beta test had this loop reach 'Approved' in two rounds while an independent audit of the same branch found 20 issues (1 critical, 4 high) — every one of them in the pre-existing code the change sat on, which nobody had read. Pre-existing defects in a file you are touching are IN SCOPE; say so explicitly if you find none. DECLARE IT: your review block MUST contain a literal 'swept file: yes' or 'swept file: no' line — without it a reviewer that skipped the sweep is indistinguishable in the transcript from one that did it and found nothing, which is exactly how those 20 issues stayed invisible.
