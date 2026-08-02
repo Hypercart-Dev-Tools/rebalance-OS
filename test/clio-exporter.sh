@@ -317,6 +317,25 @@ local_time_display_keeps_utc_ids() {
   cmp -s "$out" "$case_dir/before.md" || fail "cursor reset duplicated a localized note"
 }
 
+malformed_rows_are_dropped() {
+  shell=$1
+  case_dir="$TMP/malformed-$2"
+  home="$case_dir/home"
+  out="$case_dir/note.md"
+  mkdir -p "$home/.claude"
+  {
+    json_line '2026-07-19T15:00:00Z' malfx sA 'valid before malformed'
+    printf 'not-json-at-all\n'
+    printf '{"timestamp":"2026-07-19T15:01:00Z"\n'
+    json_line '2026-07-19T15:03:00Z' malfx sB 'valid after malformed'
+  } > "$home/.claude/prompt-log.jsonl"
+
+  run_exporter "$shell" "$home" "$out" > "$case_dir/stdout" || fail "exporter crashed on malformed rows"
+  assert_contains "$out" 'valid before malformed'
+  assert_contains "$out" 'valid after malformed'
+  assert_not_contains "$out" 'not-json-at-all'
+}
+
 run_suite() {
   shell=$1
   key=$2
@@ -330,6 +349,7 @@ run_suite() {
   conflict_sibling "$shell" "$key"
   manifest_failure_is_nonfatal "$shell" "$key"
   backfill_then_targeted_repair "$shell" "$key"
+  malformed_rows_are_dropped "$shell" "$key"
   echo "PASS: $shell"
 }
 

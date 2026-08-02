@@ -1,6 +1,6 @@
 # Marathon Phase p3-gh202-0802
-STATUS: Open
-NEXT: claude
+STATUS: In Progress
+NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-P3-GH202-0802-TURN builder=claude reviewer=agy round-cap=5 -->
 
@@ -69,6 +69,22 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
    "handing off to agy — agy, take your turn." A turn that ends without that line
    leaves a human guessing whether the relay is waiting on them or has stalled. Do this EVERY round,
    not just the first.
+
+---
+
+### Round 1 · Builder · claude
+
+**Files touched:** `test/clio-exporter.sh`
+
+Added `malformed_rows_are_dropped` fixture (16 lines) inserted just before `run_suite`, and added the call to it at the end of `run_suite` (after `backfill_then_targeted_repair`).
+
+**What the fixture does:**
+- Builds a JSONL log with two valid entries bracketing two malformed lines: one that is entirely non-JSON text (`not-json-at-all`) and one that is truncated JSON (no closing brace).
+- Runs the exporter and asserts exit code 0 (no crash).
+- Asserts the two valid entries appear in the output note.
+- Asserts the non-JSON text does not appear in the output note, confirming the drop-and-continue behavior documented at line 491 of the exporter (`fromjson? // empty`).
+
+**Key decision:** Covered two distinct malformed-row shapes (non-JSON and truncated JSON) with a single fixture to keep it concise. No changes to existing fixtures or any other file.
 
 ---
 
