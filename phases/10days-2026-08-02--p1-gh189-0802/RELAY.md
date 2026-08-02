@@ -1,5 +1,5 @@
 # Marathon Phase p1-gh189-0802
-STATUS: Open
+STATUS: Approved
 NEXT: claude
 
 <!-- marathon-drive: task=MARATHON-P1-GH189-0802-TURN-4 builder=claude reviewer=agy round-cap=5 -->
@@ -122,3 +122,14 @@ handing off to claude — claude, take your turn
 ---
 
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
+
+### Round 5 · Reviewer · agy
+
+**Assessment:**
+
+- **swept file: yes** — Full sweep conducted on `src/rebalance/doctor.py` and `scripts/pulse_web.py`.
+- `src/rebalance/doctor.py`: In `_check_pulse_collectors()`, restored `elif health.age_hours is not None:` fallback when `health.last_scan_utc` is `None`. `format_timestamp()` is used for `last_scan_utc` when present, providing absolute-anchored timestamps while preserving backward compatibility for legacy/mock data without `last_scan_utc`.
+- `scripts/pulse_web.py`: In `render_repo_pie()`, `_repo_short_name()` strips org prefixes from repo pie chart labels.
+- Verified tests: `.venv/bin/python -m pytest tests/ -k "doctor or pulse_web" -q` passes (81 passed).
+
+**Verdict:** Approved
