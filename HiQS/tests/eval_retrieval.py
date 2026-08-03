@@ -18,11 +18,13 @@ import subprocess
 import sys
 import time
 from typing import Any
+from unittest.mock import patch
 
 from hiqs.db import db_connection
-from hiqs.docs_index import get_default_embedder
+from hiqs.docs_index import get_default_embedder, get_embed_text
+from hiqs.events import log_event
 from hiqs.plugins import Doc
-from hiqs.search import _fts_search, _vec_search, search
+from hiqs.search import _fts_search, _vec_search, cap_per_document, rrf_fuse
 
 
 def _utc_now() -> str:
@@ -191,12 +193,18 @@ def evaluate_retrieval(
     model_name: str = "all-MiniLM-L6-v2",
     embedder: Any | None = None,
 ) -> dict[str, Any]:
-    """Evaluate retrieval queries across FTS-only, vector-only, and fused legs."""
+    """Evaluate retrieval queries across FTS-only, vector-only, and fused legs without side-effects."""
     if embedder is None:
         try:
             embedder = get_default_embedder(model_name)
-        except Exception:
-            embedder = None
+        except Exception as err:
+            raise RuntimeError(
+                f"Offline model '{model_name}' is unavailable: {err}. No network downloads allowed during evaluation (§6.3)."
+            )
+        if embedder is None:
+            raise RuntimeError(
+                f"Offline model '{model_name}' is unavailable. No network downloads allowed during evaluation (§6.3)."
+            )
 
     fts_recalls, fts_mrrs = [], []
     vec_recalls, vec_mrrs = [], []
@@ -232,16 +240,17 @@ def evaluate_retrieval(
         if vec_hits:
             vec_top_hits[q_id] = vec_hits[0].id
 
-        connection.commit()
+        # Fused leg (executed directly on connection without calling search() to avoid writing search telemetry to default DB)
+        fts_hits_50 = _fts_search(connection, q_text, limit=50)
+        vec_hits_50: list[Doc] = []
+        if embedder is not None:
+            try:
+                vec_hits_50 = _vec_search(connection, q_text, model_name, embedder, limit=50)
+            except Exception:
+                vec_hits_50 = []
+        fused = rrf_fuse(fts_hits_50, vec_hits_50, k=60)
+        fused_hits = cap_per_document(fused, max_chunks=2)[:10]
 
-        # Fused leg
-        fused_hits = search(
-            q_text,
-            limit=10,
-            connection=connection,
-            model_name=model_name,
-            embedder=embedder,
-        )
         rec, mrr = score_single_query(targets, fused_hits)
         fused_recalls.append(rec)
         fused_mrrs.append(mrr)
@@ -266,32 +275,45 @@ def evaluate_retrieval(
 
 
 def compute_paired_disagreement_set(
-    eval_res1: dict[str, Any],
-    eval_res2: dict[str, Any],
+    eval_res1_or_list: dict[str, Any] | list[dict[str, Any]],
+    eval_res2: dict[str, Any] | None = None,
     leg: str = "fused",
 ) -> list[dict[str, Any]]:
-    """Emit every query where two models/evaluations return a different top hit."""
-    m1_name = eval_res1.get("model", "model1")
-    m2_name = eval_res2.get("model", "model2")
-    m1_hits = eval_res1.get("top_hits", {}).get(leg, {})
-    m2_hits = eval_res2.get("top_hits", {}).get(leg, {})
+    """Emit every query where any two models return a different top hit."""
+    if isinstance(eval_res1_or_list, list):
+        results = eval_res1_or_list
+    elif isinstance(eval_res1_or_list, dict):
+        if eval_res2 is None:
+            return []
+        results = [eval_res1_or_list, eval_res2]
+    else:
+        return []
 
-    all_qids = sorted(set(m1_hits.keys()) | set(m2_hits.keys()))
-    disagreements = []
+    disagreements: list[dict[str, Any]] = []
+    n = len(results)
+    for i in range(n):
+        for j in range(i + 1, n):
+            r1 = results[i]
+            r2 = results[j]
+            m1_name = r1.get("model", f"model_{i+1}")
+            m2_name = r2.get("model", f"model_{j+1}")
+            m1_hits = r1.get("top_hits", {}).get(leg, {})
+            m2_hits = r2.get("top_hits", {}).get(leg, {})
 
-    for q_id in all_qids:
-        h1 = m1_hits.get(q_id, "None")
-        h2 = m2_hits.get(q_id, "None")
-        if h1 != h2:
-            disagreements.append(
-                {
-                    "query_id": q_id,
-                    "model1": m1_name,
-                    "model1_top_hit": h1,
-                    "model2": m2_name,
-                    "model2_top_hit": h2,
-                }
-            )
+            all_qids = sorted(set(m1_hits.keys()) | set(m2_hits.keys()))
+            for q_id in all_qids:
+                h1 = m1_hits.get(q_id, "None")
+                h2 = m2_hits.get(q_id, "None")
+                if h1 != h2:
+                    disagreements.append(
+                        {
+                            "query_id": q_id,
+                            "model1": m1_name,
+                            "model1_top_hit": h1,
+                            "model2": m2_name,
+                            "model2_top_hit": h2,
+                        }
+                    )
     return disagreements
 
 
@@ -299,24 +321,13 @@ def capture_costs(
     connection: sqlite3.Connection,
     model_name: str,
     embedder: Any | None = None,
-    sample_texts: list[str] | None = None,
 ) -> dict[str, float]:
     """Capture runtime cost metrics per model by timing full corpus re-embedding."""
-    texts: list[str] = []
-    if sample_texts:
-        texts = sample_texts
-    else:
-        try:
-            rows = connection.execute("SELECT body FROM docs").fetchall()
-            texts = [r[0] for r in rows if r[0]]
-        except Exception:
-            pass
-
-    if not texts:
-        texts = ["sample text for cost capture timing"]
+    rows = connection.execute("SELECT title, body FROM docs").fetchall()
+    texts: list[str] = [get_embed_text(r[0] or "", r[1] or "") for r in rows]
 
     t0 = time.perf_counter()
-    if embedder is not None:
+    if embedder is not None and texts:
         if hasattr(embedder, "encode"):
             embedder.encode(texts)
         elif callable(embedder):
@@ -392,6 +403,24 @@ def evaluate_gates(
     }
 
 
+def _log_eval_completed(connection: sqlite3.Connection, payload: dict[str, Any]) -> None:
+    """Route completion event through hiqs.events.log_event while targeting connection."""
+    import hiqs.events
+
+    class _NonClosingConn:
+        def __init__(self, conn: sqlite3.Connection):
+            self._conn = conn
+        def execute(self, *args, **kwargs):
+            return self._conn.execute(*args, **kwargs)
+        def commit(self):
+            return self._conn.commit()
+        def close(self):
+            pass
+
+    with patch("hiqs.events.db_connection", return_value=_NonClosingConn(connection)):
+        hiqs.events.log_event("eval.completed", "search", "ok", payload)
+
+
 def run_eval_and_log(
     connection: sqlite3.Connection,
     committed_path: str | Path,
@@ -412,21 +441,6 @@ def run_eval_and_log(
 
     eval_results: list[dict[str, Any]] = []
     costs_list: list[dict[str, float]] = []
-
-    # Ensure events table exists
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS events (
-            rowid INTEGER PRIMARY KEY AUTOINCREMENT,
-            ts TEXT NOT NULL,
-            kind TEXT NOT NULL,
-            source TEXT NOT NULL,
-            status TEXT NOT NULL,
-            payload_json TEXT NOT NULL
-        )
-        """
-    )
-    connection.commit()
 
     for m in models:
         m_embedder = None
@@ -460,50 +474,56 @@ def run_eval_and_log(
             "legs": res,
         }
 
-        connection.execute(
-            "INSERT INTO events(ts, kind, source, status, payload_json) VALUES (?, ?, ?, ?, ?)",
-            (_utc_now(), "eval.completed", "search", "ok", json.dumps(payload_single, sort_keys=True)),
-        )
-        connection.commit()
+        _log_eval_completed(connection, payload_single)
+
+    disagreements = compute_paired_disagreement_set(eval_results, leg="fused")
+
+    # Selection & Gate evaluation across models
+    winning_idx = 0
+    if len(eval_results) >= 2:
+        for challenger_idx in range(1, len(eval_results)):
+            gate_eval = evaluate_gates(
+                fused_recall_at_10=eval_results[winning_idx]["fused"]["recall_at_10"],
+                fts_recall_at_10=eval_results[winning_idx]["fts_only"]["recall_at_10"],
+                challenger_scores=eval_results[challenger_idx]["fused"],
+                incumbent_scores=eval_results[winning_idx]["fused"],
+            )
+            if gate_eval["winner"] == "challenger":
+                winning_idx = challenger_idx
+
+    winning_res = eval_results[winning_idx]
+    winning_costs = costs_list[winning_idx]
+
+    final_gates = evaluate_gates(
+        fused_recall_at_10=winning_res["fused"]["recall_at_10"],
+        fts_recall_at_10=winning_res["fts_only"]["recall_at_10"],
+        challenger_scores=winning_res["fused"] if winning_idx != 0 else None,
+        incumbent_scores=eval_results[0]["fused"] if winning_idx != 0 else None,
+    )
+    if winning_idx != 0:
+        final_gates["winner"] = winning_res["model"]
+    else:
+        final_gates["winner"] = "incumbent"
 
     git_sha = get_git_sha()
-    disagreements: list[dict[str, Any]] = []
-    if len(eval_results) >= 2:
-        disagreements = compute_paired_disagreement_set(
-            eval_results[0], eval_results[1], leg="fused"
-        )
-        gates = evaluate_gates(
-            fused_recall_at_10=eval_results[0]["fused"]["recall_at_10"],
-            fts_recall_at_10=eval_results[0]["fts_only"]["recall_at_10"],
-            challenger_scores=eval_results[1]["fused"],
-            incumbent_scores=eval_results[0]["fused"],
-        )
-    else:
-        gates = evaluate_gates(
-            fused_recall_at_10=eval_results[0]["fused"]["recall_at_10"],
-            fts_recall_at_10=eval_results[0]["fts_only"]["recall_at_10"],
-        )
-
-    primary_res = eval_results[0]
-    primary_costs = costs_list[0]
 
     return {
-        "model": primary_res["model"],
-        "recall_at_10": float(round(primary_res["fused"]["recall_at_10"], 4)),
-        "mrr_at_10": float(round(primary_res["fused"]["mrr_at_10"], 4)),
+        "model": winning_res["model"],
+        "recall_at_10": float(round(winning_res["fused"]["recall_at_10"], 4)),
+        "mrr_at_10": float(round(winning_res["fused"]["mrr_at_10"], 4)),
         "n_queries": len(queries),
         "queryset_sha": queryset_sha,
-        "embed_ms": float(round(primary_costs["embed_ms"], 2)),
-        "index_mb": float(round(primary_costs["index_mb"], 2)),
-        "peak_rss_mb": float(round(primary_costs["peak_rss_mb"], 2)),
+        "embed_ms": float(round(winning_costs["embed_ms"], 2)),
+        "index_mb": float(round(winning_costs["index_mb"], 2)),
+        "peak_rss_mb": float(round(winning_costs["peak_rss_mb"], 2)),
         "git_sha": git_sha,
         "legs": {
-            "fused": primary_res["fused"],
-            "fts_only": primary_res["fts_only"],
-            "vector_only": primary_res["vector_only"],
+            "fused": winning_res["fused"],
+            "fts_only": winning_res["fts_only"],
+            "vector_only": winning_res["vector_only"],
         },
         "paired_disagreements": disagreements,
-        "gates": gates,
+        "gates": final_gates,
         "eval_results": eval_results,
     }
 

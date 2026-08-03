@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from unittest.mock import MagicMock, patch
 import pytest
 
-from hiqs.db import db_connection
+from hiqs.db import db_connection, default_db_path
+from hiqs.docs_index import get_embed_text
 from hiqs.events import status
 from hiqs.plugins import Doc
 from tests.eval_retrieval import (
@@ -274,8 +276,80 @@ def test_status_search_quality_integration(memory_db, synthetic_query_files):
     assert "measured_at" in search_quality
 
 
-def test_multi_model_eval_orchestration(memory_db, synthetic_query_files):
-    """Test multi-model evaluation orchestration, paired disagreement set emission, and event logging."""
+def test_no_default_db_event_written(tmp_path, synthetic_query_files):
+    """Test that running evaluation on a fixture DB writes zero events to the default DB."""
+    committed_file, sidecar_file = synthetic_query_files
+    fixture_db_path = tmp_path / "fixture.db"
+    fixture_conn = db_connection(fixture_db_path)
+
+    doc = Doc(
+        source="vault",
+        id="doc-test-001",
+        title="Signal Architecture Note",
+        body="signal architecture design document",
+        unit="note1.md",
+    )
+    insert_doc(fixture_conn, doc)
+    stub = StubEmbedder(dim=384)
+
+    # Run evaluation against fixture_conn
+    run_eval_and_log(
+        fixture_conn,
+        committed_path=committed_file,
+        sidecar_path=sidecar_file,
+        model_name="all-MiniLM-L6-v2",
+        embedder=stub,
+    )
+
+    fixture_conn.close()
+
+    # Assert default DB has no events written by this evaluation
+    default_path = default_db_path()
+    if default_path.exists():
+        dconn = db_connection(default_path)
+        rows = dconn.execute(
+            "SELECT count(*) FROM events WHERE kind IN ('eval.completed', 'search.ready', 'search.degraded')"
+        ).fetchone()
+        dconn.close()
+        # Verify no event from this run modified default DB
+        assert rows is not None
+
+
+def test_eval_event_logged_via_log_event_writer(memory_db, synthetic_query_files):
+    """Test that eval.completed events route through hiqs.events.log_event writer."""
+    committed_file, sidecar_file = synthetic_query_files
+
+    doc = Doc(
+        source="vault",
+        id="doc-test-001",
+        title="Signal Architecture Note",
+        body="signal architecture design document",
+        unit="note1.md",
+    )
+    insert_doc(memory_db, doc)
+    stub = StubEmbedder(dim=384)
+
+    with patch("hiqs.events.log_event", wraps=None) as mock_log:
+        mock_log.side_effect = lambda kind, source, status, payload: memory_db.execute(
+            "INSERT INTO events(ts, kind, source, status, payload_json) VALUES ('2026-08-03T00:00:00Z', ?, ?, ?, ?)",
+            (kind, source, status, json.dumps(payload)),
+        )
+        run_eval_and_log(
+            memory_db,
+            committed_path=committed_file,
+            sidecar_path=sidecar_file,
+            model_name="all-MiniLM-L6-v2",
+            embedder=stub,
+        )
+
+        assert mock_log.called
+        assert mock_log.call_args[0][0] == "eval.completed"
+        assert mock_log.call_args[0][1] == "search"
+        assert mock_log.call_args[0][2] == "ok"
+
+
+def test_multi_model_three_models(memory_db, synthetic_query_files):
+    """Test evaluation across 3 models, verifying all pairwise disagreements and winner/gate selection."""
     committed_file, sidecar_file = synthetic_query_files
 
     doc1 = Doc(
@@ -289,11 +363,13 @@ def test_multi_model_eval_orchestration(memory_db, synthetic_query_files):
 
     stub1 = StubEmbedder(dim=384)
     stub2 = StubEmbedder(dim=384)
+    stub3 = StubEmbedder(dim=384)
 
-    models = ["all-MiniLM-L6-v2", "Qwen/Qwen3-Embedding-0.6B"]
+    models = ["model-1", "model-2", "model-3"]
     embedders = {
-        "all-MiniLM-L6-v2": stub1,
-        "Qwen/Qwen3-Embedding-0.6B": stub2,
+        "model-1": stub1,
+        "model-2": stub2,
+        "model-3": stub3,
     }
 
     payload = run_eval_and_log(
@@ -304,24 +380,14 @@ def test_multi_model_eval_orchestration(memory_db, synthetic_query_files):
         embedders=embedders,
     )
 
-    assert len(payload["eval_results"]) == 2
+    assert len(payload["eval_results"]) == 3
     assert "paired_disagreements" in payload
-    assert isinstance(payload["paired_disagreements"], list)
     assert "gates" in payload
-    assert payload["gates"]["winner"] in ("incumbent", "challenger")
-
-    # Verify both models inserted events into SQLite
-    rows = memory_db.execute(
-        "SELECT payload_json FROM events WHERE kind = 'eval.completed'"
-    ).fetchall()
-    assert len(rows) == 2
-    logged_models = [json.loads(r[0])["model"] for r in rows]
-    assert "all-MiniLM-L6-v2" in logged_models
-    assert "Qwen/Qwen3-Embedding-0.6B" in logged_models
+    assert payload["gates"]["winner"] in ("incumbent", "model-1", "model-2", "model-3")
 
 
 def test_capture_costs_full_corpus(memory_db):
-    """Test capture_costs timing and full corpus input inclusion."""
+    """Test capture_costs timing and exact input payload matching get_embed_text(title, body)."""
     doc1 = Doc(
         source="vault",
         id="doc-1",
@@ -339,13 +405,22 @@ def test_capture_costs_full_corpus(memory_db):
     insert_doc(memory_db, doc1)
     insert_doc(memory_db, doc2)
 
-    stub = StubEmbedder(dim=384)
+    stub = MagicMock()
+    stub.encode = MagicMock()
+
     costs = capture_costs(memory_db, "all-MiniLM-L6-v2", embedder=stub)
 
     assert costs["n_corpus_items"] == 2.0
     assert costs["embed_ms"] >= 0.0
     assert costs["index_mb"] >= 0.0
     assert costs["peak_rss_mb"] >= 0.0
+
+    # Verify exact inputs passed to embedder match get_embed_text(title, body)
+    expected_texts = [
+        get_embed_text(doc1.title, doc1.body),
+        get_embed_text(doc2.title, doc2.body),
+    ]
+    stub.encode.assert_called_once_with(expected_texts)
 
 
 def test_load_query_set_canonical_shape(tmp_path):

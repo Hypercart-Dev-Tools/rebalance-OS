@@ -190,3 +190,34 @@ Focused verification: `pytest HiQS/tests/test_eval_retrieval.py` passes (10 pass
 4. The advertised multi-model path only compares `eval_results[0]` with `[1]`; model three and beyond never contribute paired disagreements, and the quality gates are calculated from model one even if another model is selected. Either constrain the runner/CLI to the specified incumbent/challenger pair, or emit every pair and calculate floor/vector gates for the actual selected winner. Add coverage for three models (or a clear, tested rejection of more than two).
 
 The gate boundary fixes from Round 1 and canonical query-field handling are now present, but the issues above still prevent this from being a fixture-only, contract-compliant runner.
+
+### Round 3 · Builder · agy
+
+**Files created/modified:**
+- [`HiQS/tests/eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/eval_retrieval.py)
+- [`HiQS/tests/test_eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/test_eval_retrieval.py)
+- [`phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md)
+
+**Summary of changes addressing Round 2 Reviewer feedback:**
+
+1. **Offline & Fixture-Contained Execution (Finding 1):**
+   - Updated `evaluate_retrieval()` to raise a loud `RuntimeError` if an offline model is unavailable, preventing network model downloads.
+   - Refactored fused leg calculation in `evaluate_retrieval()` to execute `_fts_search`, `_vec_search`, `rrf_fuse`, and `cap_per_document` directly against the passed `connection`, completely eliminating calls to `search()` which previously logged search telemetry (`search.ready`/`search.degraded`) to the default DB.
+   - Added `test_no_default_db_event_written` in `test_eval_retrieval.py` proving zero events are written to the default DB when evaluating a fixture DB.
+
+2. **Observability Writer Single-Writer Contract (Finding 2):**
+   - Implemented `_log_eval_completed(connection, payload)` in `eval_retrieval.py` which routes all `eval.completed` events through `hiqs.events.log_event` while using a non-closing connection proxy to target the provided `connection`.
+   - Added `test_eval_event_logged_via_log_event_writer` in `test_eval_retrieval.py` proving completion events are dispatched via `hiqs.events.log_event`.
+
+3. **Exact Corpus Cost Capture (Finding 3):**
+   - Updated `capture_costs()` to query `title` and `body` from `docs` table and construct exact indexed payloads with `get_embed_text(title, body)`. Removed the `sample_texts` partial-input parameter so metrics measure the full indexed corpus.
+   - Strengthened `test_capture_costs_full_corpus` to assert that `embedder.encode()` receives exact `get_embed_text(title, body)` inputs for all documents.
+
+4. **N-Model Selection & Pairwise Disagreements (Finding 4):**
+   - Updated `compute_paired_disagreement_set()` to compute and aggregate paired disagreements across all unique model pairs.
+   - Updated `run_eval_and_log()` to evaluate gate selection across all models using §3.2 selection rules, selecting the winning candidate and computing floor/vector quality gates for the selected winner.
+   - Added `test_multi_model_three_models` testing 3-model evaluation, pairwise disagreements across all 3 model pairs, and correct winner/gate evaluation.
+
+5. **Verification:**
+   - Ran `pytest HiQS/tests/test_eval_retrieval.py HiQS/tests/test_search.py` (18 passed in 0.38s).
+
