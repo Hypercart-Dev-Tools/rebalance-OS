@@ -1,5 +1,5 @@
 # Marathon Phase p7-gh170-0802
-STATUS: Open
+STATUS: Approved
 NEXT: claude
 
 <!-- marathon-drive: task=MARATHON-P7-GH170-0802-TURN builder=claude reviewer=agy round-cap=5 -->
@@ -87,6 +87,19 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 - Acceptance criteria status: worktree imports own src/ ✓; regression guard in place ✓; no behavior change for main checkout ✓ (.git dir check early-returns); `pytest tests/` should be green (harness runs gate).
 
 ---
+
+### Round 1 · Reviewer · agy
+
+**Assessment:**
+- `conftest.py`: Root conftest cleanly detects linked git worktrees via `.git` file check and prepends local `<worktree>/src` to `sys.path[0]` before test execution, overriding editable install main-checkout path shadowing idempotently.
+- `tests/conftest.py`: Session fixture `_assert_worktree_path_isolation` acts as a regression guard. Full file sweep completed across existing fixtures (`_mlx_stub`, `pytest_collection_modifyitems`, `_disable_job_guard`, `_isolate_secret_store`, `_isolate_auth_log`, `_disable_keyring`); no pre-existing defects found.
+- `pyproject.toml`: Added `testpaths = ["tests"]` under `[tool.pytest.ini_options]` to guarantee consistent rootdir resolution. Full file sweep completed; no issues found.
+
+swept file: yes
+
+**Verdict:** Approved
+
+relay closed, no further turn needed
 
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
