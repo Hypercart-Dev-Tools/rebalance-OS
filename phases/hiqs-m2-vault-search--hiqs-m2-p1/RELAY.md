@@ -1,6 +1,6 @@
 # Marathon Phase hiqs-m2-p1
 STATUS: Open
-NEXT: agy
+NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M2-P1-TURN builder=agy reviewer=codex round-cap=7 -->
 
@@ -92,3 +92,16 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    agy, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · agy
+
+- Implemented `HiQS/hiqs/sources/vault.py`:
+  - Defined `SOURCE = Source(name="vault", fetch=fetch, docs=docs)`.
+  - Implemented `fetch` for hash-delta incremental ingest into `vault_files(path, content_hash, mtime, content)`.
+  - Implemented `docs` for chunking notes by heading, emitting `Doc` with file-scoped chunk IDs `vault:<rel_path>:<heading-hash>` and `author=""`.
+  - Added `is_generated_file` exclusion helper to exclude hidden and generated files (`.git`, `.obsidian`, `.tmp`, `.gen.md`, `.DS_Store`, etc.) by construction (L5).
+  - Ensured vault path is resolved dynamically from `config` without hardcoding (L11).
+  - Ensured unreadable file errors land in `SyncReport.errors` without touching existing DB rows or advancing watermark state (L15, L19).
+- Created `HiQS/hiqs/sources/__init__.py` exporting `VAULT_SOURCE`.
+- Implemented unit tests in `HiQS/tests/test_vault.py` covering idempotence, 6-key counts, chunking by heading, chunk ID scoping, heading rename/deletion chunk ID generation, error handling/L19 watermark integrity, generated file exclusion, and dynamic config path resolution.
+
