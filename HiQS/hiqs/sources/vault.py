@@ -32,19 +32,25 @@ EXCLUDED_FILE_EXTENSIONS = {
 }
 
 
-def is_generated_file(path: Path | str) -> bool:
+def is_generated_file(path: Path | str, base_path: Path | str | None = None) -> bool:
     """Return True if path represents a generated, temporary, or hidden system file.
 
     v1 writes nothing to the vault; this exclusion helper guarantees generated
     files are excluded from ingest by construction (L5).
     """
     path_obj = Path(path)
+    if base_path is not None:
+        try:
+            path_obj = path_obj.relative_to(base_path)
+        except ValueError:
+            pass
+
     for part in path_obj.parts[:-1]:
         if part in EXCLUDED_DIR_NAMES or (part.startswith(".") and len(part) > 1):
             return True
 
     name = path_obj.name
-    if name in EXCLUDED_DIR_NAMES or name.startswith("."):
+    if name in EXCLUDED_DIR_NAMES or (name.startswith(".") and len(name) > 1):
         return True
 
     if path_obj.suffix in EXCLUDED_FILE_EXTENSIONS:
@@ -114,15 +120,17 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
         for row in connection.execute("SELECT path, content_hash, mtime FROM vault_files").fetchall()
     }
 
+    seen_paths: set[str] = set()
+
     for root, dirs, files in os.walk(vault_path):
         root_path = Path(root)
-        dirs[:] = [d for d in dirs if not is_generated_file(root_path / d)]
+        dirs[:] = [d for d in dirs if not is_generated_file(root_path / d, base_path=vault_path)]
 
         for filename in files:
             file_path = root_path / filename
             rel_path = file_path.relative_to(vault_path).as_posix()
 
-            if is_generated_file(file_path) or file_path.suffix.lower() != ".md":
+            if is_generated_file(file_path, base_path=vault_path) or file_path.suffix.lower() != ".md":
                 counts["skipped"] += 1
                 continue
 
@@ -135,6 +143,8 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                 # L19: Watermark/mtime state does NOT advance for a file whose read failed.
                 # Existing row in vault_files remains untouched!
                 continue
+
+            seen_paths.add(rel_path)
 
             mtime_str = str(st.st_mtime)
             content_hash = hashlib.sha256(content_bytes).hexdigest()
@@ -158,6 +168,14 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                         (rel_path, content_hash, mtime_str, content_str),
                     )
                 counts["inserted"] += 1
+
+    # Reconcile vanished files ONLY after a complete walk with zero errors (rule 5 / L15).
+    if not errors:
+        vanished = set(existing.keys()) - seen_paths
+        for rel_path in sorted(vanished):
+            with connection:
+                connection.execute("DELETE FROM vault_files WHERE path = ?", (rel_path,))
+            counts["pruned"] += 1
 
     return SyncReport(counts=counts, errors=errors)
 

@@ -119,3 +119,15 @@ Focused verification: `pytest -q tests/test_vault.py` — 6 passed.
 The heading rename/deletion test currently proves only that `SOURCE.docs()` recomputes the current iterable. It does not prove the acceptance requirement that the old projected row is removed and the replacement is present atomically. Once the projection seam exists that is a projection-level assertion; for this source test, make the raw-to-docs contract explicit and add coverage that no stale raw source unit survives a complete scan.
 
 **Verdict:** Changes requested
+
+### Round 2 · Builder · agy
+
+- Addressed Reviewer feedback in `HiQS/hiqs/sources/vault.py`:
+  - **Vanished File Unit Reconciliation:** Updated `fetch()` to track all processed note paths during the walk. Upon an error-free walk (`errors` is empty), vanished file rows are deleted from `vault_files` and `counts["pruned"]` is incremented per vanished file unit. If any error occurs mid-walk, vanished file rows are preserved untouched to avoid wiping corpus on transient read failures (rule 5 / L15).
+  - **Hidden Vault Root Fix:** Updated `is_generated_file(path, base_path=None)` to evaluate paths relative to `vault_path` (when `base_path` is passed). Valid vault paths containing hidden ancestor directories (e.g. `/path/.vault`) no longer filter out all notes.
+- Updated `HiQS/tests/test_vault.py`:
+  - Added `test_vault_file_removal_and_prune_reconciliation` asserting raw `vault_files` row deletion, `counts["pruned"] == 1`, and updated `docs()` state.
+  - Added `test_vault_hidden_vault_path_ingestion` verifying note ingestion inside hidden vault root paths.
+  - Added `test_vault_pruning_skipped_when_walk_has_errors` verifying that vanished file rows are preserved when `fetch()` encounters errors mid-walk.
+- All 9 unit tests in `pytest HiQS/tests/test_vault.py` pass cleanly.
+
