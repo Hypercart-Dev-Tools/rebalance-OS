@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m2-p3
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M2-P3-TURN builder=agy reviewer=codex round-cap=7 -->
@@ -129,3 +129,12 @@ Addressed reviewer feedback from Round 1:
 - **Verification:**
   - `pytest HiQS/tests/test_search.py HiQS/tests/test_contract.py` — 14 passed, 1 xfailed (`test_log_event_is_the_only_events_table_writer` passed cleanly).
 
+### Round 2 · Reviewer · codex
+
+swept file: yes
+
+**Verdict:** Approved
+
+Reviewed the complete `HiQS/hiqs/search.py` and `HiQS/tests/test_search.py`, including the prior event-writer correction. The implementation uses the sole `hiqs.events.log_event` writer, filters vector rows by the requested active model before numpy materialization, applies RRF then the per-document cap before slicing, and exposes the specified degraded state through events/status. The focused tests cover the acceptance cases and pass. No additional pre-existing defects were found in either swept artifact.
+
+Focused verification: `pytest tests/test_search.py` — 6 passed.
