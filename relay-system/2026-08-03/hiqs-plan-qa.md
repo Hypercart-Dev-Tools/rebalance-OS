@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-03.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 2 / 4
 
@@ -197,7 +197,34 @@ Recorded so the next reviewer can grade it rather than discover it:
 errors / 0 warns**; `roadmap-coverage` 7 errors, all pre-existing and unrelated to this doc.
 No code exists yet, so there is no suite to run.
 
-**Open for r2:** whether §7.1's n≈25 is adequate now that its gates are stated in items; whether
-the four counterpart invariants in §18.3 need their own detectors or whether phase gates suffice.
+## Round 2 — Reviewer (agy)
+
+**Verdict:** Changes requested
+
+### Definition of Done Evaluation
+
+#### 1. Are the per-phase QA gates observable and binary?
+- `[Pass]` Phase 0 gate ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1427-1438](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1427-L1438)), Phase 1 gate ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1472-1482](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1472-L1482)), Phase 2 gate ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1494-1503](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1494-L1503)), Phase 4 gate ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1543-1552](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1543-L1552)), and Phase 5 gate ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1564-1571](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1564-L1571)) all contain explicit, binary criteria with numeric thresholds (e.g. `≤100 API calls`, `≤500 MB peak RSS`, exact error vocabulary).
+- `[Blocker]` Contradiction between §7.1 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L611-620](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L611-L620)) and Phase 3 QA Gate Item 1 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1522](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1522)). In §7.1, restating the tenet was explicitly demoted and forbidden as a way to close a failing obligation coverage gate (`"These block; they are not resolvable by editing the claim... The tenet restatement is a consequence, not an alternative."`). However, Phase 3 QA Gate Item 1 at line 1522 still states: `"A failed coverage gate is closed by fixing the projections or by restating the tenet — never by shipping the claim unmeasured"`, re-introducing the self-justifying bypass into the phase checklist.
+  - **Concrete Fix**: Update Phase 3 QA Gate Item 1 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1522](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1522)) to match §7.1: `"A failed coverage gate blocks Phase 3 exit until resolved by projection fixes or explicit operator override in CHANGELOG + tenet rewording."`
+
+#### 2. Is §7.1's ranking detector as un-flatterable as §6.3's?
+- `[Pass]` §7.1 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L575-585](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L575-L585)) requires operator top-5 judgments to be authored and committed *before* seeing HiQS output, preventing answer-key contamination.
+- `[Should]` §7.1 lacks an absolute floor gate for top-5 overlap, unlike §6.3's floor gate (`recall@10 ≥ 0.60`, [PROJECT/2-WORKING/HIQS-PROJECT.md:L476](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L476)). §7.1 requires only "beats recency by ≥ 1 item" ([PROJECT/2-WORKING/HIQS-PROJECT.md:L607](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L607)). If recency achieves 1/5 overlap, ranking could achieve 2/5 (40%) and pass despite low overall accuracy.
+  - **Concrete Fix**: Add an absolute floor gate to §7.1 table ([PROJECT/2-WORKING/HIQS-PROJECT.md:L607](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L607)): `"Top-5 overlap ≥ 3/5 (60%) on average across snapshots"`, failing which Phase 3 does not exit.
+
+#### 3. Does §18's dogfooding audit hold up?
+- `[Pass]` §18.1 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1053-1060](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1053-L1060)) and §18.2 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1066-1084](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1066-L1084)) accurately distinguish incident vs decision attribution and soundly demonstrate how process-side omissions (lack of obligation ordering and decision attribution) directly produced matching product-side schema gaps.
+- `[Pass]` §18.5 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1162-1172](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1162-L1172)) honestly discloses the open process ranking gap while correctly respecting the repo governance boundary established in §16 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L972-995](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L972-L995)).
+
+#### 4. Internal contradictions after today's schema additions.
+- `[Nit]` Query filtering in `docs_vec` (§6.1 [PROJECT/2-WORKING/HIQS-PROJECT.md:L395](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L395) & §9 [PROJECT/2-WORKING/HIQS-PROJECT.md:L703-708](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L703-L708)). `docs_vec` uses composite PK `(doc_id, model)` so 384-dim (MiniLM) and 1024-dim (Qwen3) vectors coexist. A naive query without `WHERE model = ?` will retrieve mixed-dimension vector BLOBs into memory, causing shape mismatch crashes in numpy dot product calculations.
+  - **Concrete Fix**: Specify in §6.1 (line 395) that the vector leg SQL query explicitly filters `WHERE model = active_model`.
+
+#### 5. The strongest counter-argument.
+- `[Should]` **Missing interactive OAuth CLI subcommand (`hiqs auth`) for headless launchd execution.** §3.1 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L173](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L173)) and §11 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L759](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L759)) restrict CLI subcommands to `refresh`, `status`, `search`, `ask`, `serve`. Google Calendar plugin (`calendar.py`, Phase 3) uses Google OAuth. When `auth_expired` occurs during unattended 2-hourly background `launchd` execution (Phase 4, [PROJECT/2-WORKING/HIQS-PROJECT.md:L1538](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1538)), background jobs cannot initiate browser auth. The plan lacks a specced CLI subcommand for the operator to trigger interactive OAuth authentication to refresh keyring tokens.
+  - **Concrete Fix**: Include `auth` in `hiqs` CLI subcommand list (§3.1 line 173, §11 line 759) for interactive source token authorization (`hiqs auth <source>`).
+- `[Should]` **Single-document chunk flooding in hybrid search RRF fusion.** Chunking vault notes by heading ([PROJECT/2-WORKING/HIQS-PROJECT.md:L406-409](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L406-L409)) means a search query matching multiple headings of one long note returns multiple chunk IDs in both FTS5 and vector legs (§6.1 [PROJECT/2-WORKING/HIQS-PROJECT.md:L392-398](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L392-L398)). Without a post-RRF per-document chunk limit before `[:limit]`, top-10 search results returned to `ask()` will be flooded by chunks from a single document, starving other relevant notes.
+  - **Concrete Fix**: In §6.1 (line 397), add a post-RRF diversity filter: cap at ≤2 chunks per source document (`rel_path`) before slicing `[:limit]`.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
