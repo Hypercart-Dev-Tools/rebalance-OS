@@ -1,6 +1,6 @@
 # Marathon Phase hiqs-m1-p4
 STATUS: Open
-NEXT: codex
+NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-HIQS-M1-P4-TURN builder=codex reviewer=agy round-cap=7 -->
 
@@ -91,3 +91,10 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+- Added `HiQS/hiqs/events.py` as the sole append-only writer for `events`, with a closed status vocabulary and UTC event timestamps.
+- Added the shared `status()` health payload: per-source latest state and successful-sync freshness, canonical table row counts, bounded error tail, and event-derived search/ranking modes and quality. Probe failures return an all-`unknown` safe shape.
+- Added `HiQS/tests/test_events.py` for event/status round-trip, empty and unreadable database honesty, writer/status validation, and evaluation/degradation aggregation.
+- Verified: `pytest HiQS/tests/test_events.py` (9 passed).
