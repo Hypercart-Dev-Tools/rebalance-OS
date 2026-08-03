@@ -125,3 +125,18 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    - Verified integration with `status()["search"]["quality"]` reading directly from written `eval.completed` event.
    - Verified paired disagreement set calculation and single query scoring logic.
 3. Verified zero regressions against `pytest HiQS/tests/test_eval_retrieval.py` (6 passed) and `pytest HiQS/tests/test_search.py` (6 passed).
+
+### Round 1 · Reviewer · codex
+
+swept file: yes
+
+**Verdict:** Changes requested
+
+Focused verification: `pytest HiQS/tests/test_eval_retrieval.py` passes (6 passed), but the full-file sweep found these blocking contract gaps:
+
+1. `run_eval_and_log()` and the CLI accept/run exactly one model. `compute_paired_disagreement_set()` is never called and no result is emitted, so the runner does not produce the required per-model comparison artifact (every top-hit disagreement, with both names). Add a multi-model orchestration/output path and an integration test that proves the artifact is present.
+2. `evaluate_gates()` implements Pareto dominance, not §3.2. It ignores the frozen `>= 0.08` recall lead and the in-band `>= 0.05` MRR tiebreak; it therefore selects a challenger on a one-point recall gain. Encode the stated thresholds/boundaries and add synthetic boundary, tie, and split tests.
+3. `capture_costs()` times one arbitrary string, not a full corpus re-embed. Measure encoding every indexed document/chunk for the selected model and test that all corpus inputs are included; retain index MB and RSS.
+4. The public committed shape defined in §19.2 is singular `doc_id` plus `shape`, but `load_query_set()` only reads `target_doc_ids`/`doc_ids` and `shape_tags`/`tags`. A compliant real answer key would silently score zero. Support and validate the canonical fields (while aliases may remain), with a canonical-shape test.
+
+Pre-existing defects: none found beyond the implementation under review; the findings above cover the entire new runner and its test file, not only the builder summary.
