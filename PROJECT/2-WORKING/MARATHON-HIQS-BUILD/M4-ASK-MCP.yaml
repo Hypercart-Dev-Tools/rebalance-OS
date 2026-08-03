@@ -35,7 +35,7 @@ phases:
     name: "ask.py — context gather, attestation, the deterministic Ranker"
     reviewer: codex
     brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m4-p2-ask-ranker.md
-    artifact: HiQS/hiqs/ask.py,HiQS/tests/test_ask.py
+    artifact: HiQS/hiqs/ask.py,HiQS/tests/test_ask.py,HiQS/tests/test_contract.py
     turn_timeout_s: 1800
     depends_on: hiqs-m4-p1
     max_review_rounds: 3

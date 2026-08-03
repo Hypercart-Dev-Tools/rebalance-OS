@@ -22,7 +22,14 @@
 # correctly refused to edit outside its allowlist. Neither could yield, so 7 rounds burned. A phase
 # whose deliverable names an artifact it may not write is an unsatisfiable phase.
 # Sequential execution (GH-241) makes sharing this one file across phases safe.
-#   p2  HiQS/hiqs/docs_index.py, HiQS/tests/test_docs_index.py
+#   p2  HiQS/hiqs/docs_index.py, HiQS/tests/test_docs_index.py, HiQS/tests/test_contract.py
+#
+# test_contract.py IS ON p2's ALLOWLIST DELIBERATELY. M1 p6 forward-declared the sole-writer
+# contract as xfail(strict=True). Strict is the right call — it makes the marker self-retiring, so
+# the contract going live cannot be ignored. But it also means that the moment p2 builds the
+# projection, the test XPASSes and the whole suite goes RED until someone removes the marker. Only
+# p2 knows it went live, so only p2 can retire it. Without this path p2 is unsatisfiable: it cannot
+# pass its own pre-advance gate no matter what it writes. (Same shape as p1/pyproject.toml.)
 #   p3  HiQS/hiqs/search.py, HiQS/tests/test_search.py
 #   p4  HiQS/tests/eval_retrieval.py, HiQS/tests/test_eval_retrieval.py
 #
@@ -50,10 +57,13 @@ phases:
     name: "docs_index.py — projection, within-unit reconciliation, delta embed"
     reviewer: codex
     brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p2-docs-index.md
-    artifact: HiQS/hiqs/docs_index.py,HiQS/tests/test_docs_index.py
+    artifact: HiQS/hiqs/docs_index.py,HiQS/tests/test_docs_index.py,HiQS/tests/test_contract.py
     turn_timeout_s: 1800
     depends_on: hiqs-m2-p1
-    max_review_rounds: 3
+    # 5, not 3: the first run's rounds 2/4/6 each surfaced DIFFERENT real defects and round 7
+    # delivered the fixes with no reviewer turn left to approve them. The cap clipped a
+    # converging review, it did not contain a runaway one.
+    max_review_rounds: 5
 
   - id: hiqs-m2-p3
     name: "search.py — FTS5 + model-filtered cosine + RRF + per-doc cap"
