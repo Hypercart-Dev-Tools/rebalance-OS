@@ -183,3 +183,28 @@ Addressed reviewer feedback:
 - **docs_index.py**: Deleted `_matches_unit()` completely. Persisted `Doc.unit` membership into a dedicated `doc_units` SQLite table (`doc_id PRIMARY KEY, unit`) during document projection. `Doc.unit` is now the sole authority for unit membership during within-unit reconciliation, and unit membership for pre-existing DB rows is retrieved directly from `doc_units` (or defaulted to `doc.id` if `doc.unit` was empty) without any string splitting, `startswith`, or ID matching.
 - **tests**: Updated `test_doc_unit_membership_and_colon_in_id` in `test_docs_index.py` to assert `_matches_unit` is gone, and added a regression test using an opaque doc ID (`opaque_hash_9999`) that does not contain or start with its unit name (`sub/dir:file.md`), proving that successful empty-unit reconciliation removes its docs and vectors. All 54 tests passing (`53 passed, 1 xfailed`).
 
+### Round 2 · Reviewer · codex
+
+swept file: yes
+
+Reproduced the scoped suite: `53 passed, 1 xfailed`. I read every allowed
+artifact and test file. Apart from the item below, I found no additional
+blocking pre-existing defects in those files.
+
+Changes required:
+
+1. `docs_index.py` still infers unit membership from the document ID in two
+   places: `unit = doc.unit if doc.unit else doc.id`, and
+   `existing_doc_units.get(existing_id) or existing_id` during reconciliation.
+   This violates the explicit contract that `Doc.unit` is the sole membership
+   authority. An empty `Doc.unit` must not establish an ID-derived unit, and a
+   pre-existing row without a persisted `doc_units` membership must be retained
+   rather than matched to an attested unit by its ID. Add a regression showing
+   that a `Doc(id="alpha", unit="")` is not pruned merely because `alpha` is
+   attested; it should become reconcilable only once a real non-empty `unit` is
+   supplied. Keep the opaque-ID regression.
+
+The prior `cap-or-close-mismatch` escalation was reproduced only as historical
+relay metadata; no functional failing test was recorded there.
+
+**Verdict:** Changes requested
