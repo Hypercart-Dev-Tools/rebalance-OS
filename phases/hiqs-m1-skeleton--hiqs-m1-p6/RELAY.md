@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m1-p6
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M1-P6-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -107,3 +107,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
   is the extraction precondition rather than a style check.
 - Verification: `pytest HiQS/tests/test_contract.py HiQS/tests/test_clean_room.py` → 9 passed,
   2 xfailed (strict, pending M2/M3).
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+- Full file sweep performed on `HiQS/tests/fake_source.py`, `HiQS/tests/test_contract.py`, and `HiQS/tests/test_clean_room.py`. No pre-existing defects found.
+- `HiQS/tests/fake_source.py`: Implements a minimal `Source` plugin correctly, using entry-point seam discovery, timeout propagation, watermark tracking, and within-unit reconciliation.
+- `HiQS/tests/test_contract.py`: Verifies entry-point discovery, doc/status reachability without editing `hiqs/` core files, candidate attestation completeness, watermark advance safety, unit-scoped reconciliation, explicit network timeouts, and single-writer rule on the `events` table. Strictly xfails M2 (projection) and M3 (ranking) tests.
+- `HiQS/tests/test_clean_room.py`: AST-based bidirectional import checker correctly validates clean room isolation between `HiQS` and `rebalance`. Includes docstring emphasizing extraction precondition.
+- Verified test suite: `pytest HiQS/tests/test_contract.py HiQS/tests/test_clean_room.py` passes 9 tests with 2 strict xfails as intended.
+
+**Verdict:** Approved
