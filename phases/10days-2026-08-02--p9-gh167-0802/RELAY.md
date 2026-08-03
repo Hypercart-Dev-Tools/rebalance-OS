@@ -1,6 +1,6 @@
 # Marathon Phase p9-gh167-0802
-STATUS: Open
-NEXT: claude
+STATUS: Approved
+NEXT: none
 
 <!-- marathon-drive: task=MARATHON-P9-GH167-0802-TURN builder=claude reviewer=agy round-cap=5 -->
 
@@ -108,3 +108,22 @@ The 302 "missing" documents in `github_documents_missing_from_semantic` were ove
 - The `seen_source_pks.add(source_pk)` call is inside the try block — if the row is malformed we don't want it counted as "seen" for deletion reconciliation purposes.
 - `db/semantic.py` is unchanged; `github_documents_for_semantic()` already had the correct filter.
 - Did not run the full gate per brief instructions. Verified all 3 artifact files parse cleanly via `ast.parse`.
+
+---
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+swept file: yes
+
+**Review Summary:**
+- **Code Audit:** Swept `src/rebalance/ingest/semantic_index.py`, `src/rebalance/ingest/index_ops.py`, and `src/rebalance/ingest/db/semantic.py` in full. No pre-existing or new defects found.
+- **Verification:**
+  1. `index_ops.py`: The `github_documents_missing_from_semantic` drift check in `get_index_status()` correctly applies `LOWER(gd.repo_full_name) NOT IN (...)` with `get_github_ignored_repos()`, eliminating ignored-repo false positives.
+  2. `semantic_index.py`: Malformed rows in `sync_github_documents()` are cleanly handled via `try/except Exception`, logging `source_pk` and reason before continuing.
+  3. `db/semantic.py`: Reviewed and verified existing query logic.
+- **Tests:** Targeted pytest suite (`.venv/bin/python -m pytest tests/ -k "semantic_index or index_ops" -q`) passed cleanly (37 passed).
+
+relay closed, no further turn needed
+
