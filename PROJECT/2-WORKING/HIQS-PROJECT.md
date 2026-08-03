@@ -42,7 +42,7 @@ phases: 6
 
 | What was just completed | What's next |
 |---|---|
-| Plan rev 5 authored and promoted to `2-WORKING` 2026-08-03, with the rev-4 eval gate rewritten to be falsifiable (n raised to 60–75, paired disagreement set made the primary artifact, ground-truth protocol written, query set frozen, FTS-only baseline promoted to a decision, split-decision rule, cost axis, floor + truncation gates). Codebase location settled: HiQS ships **inside this repo at `HiQS/`**, not as a separate repository, so the plan doc and the code it governs live under one `git log`. PDDA compliance sections added (frontmatter, this table, table of contents, per-phase QA gates, §16 boundary note). The standalone anti-patterns ledger was **verified against `CHANGELOG.md` and folded in** — six-cluster failure-mode taxonomy at the head of the Lessons section, seven incidents L1–L15 missed added as **L16–L22**, and two new plugin rules (§5.7 explicit network timeout, §5.8 watermark advances only on a completed fetch); source archived to `PROJECT/4-MISC/HiQS-ANTI-PATTERNS.md`. **The four tenets were then audited against the plan itself and two failed**: ATTESTED had no `author` field and RANKED had no obligation model and no detector — so `author`/`owed_by`/`due` landed on `Doc`/`Candidate`, `activity_at` split from `updated_at` (L20), `source_age_s`/`source_status` landed on `RankedAction`, §7.1 added a frozen ranking-judgment set with three gates, §2's non-negotiable was widened from *retrieval*-quality to all quality claims, and **§18 records the dogfooding audit in both directions**. An **agy relay review (r1, Changes requested)** then found 3 Blockers + 2 Shoulds, all accepted and applied: `Doc` was missing `source` (a pre-rev-5 mismatch with §9); §7.1's obligation gate was self-justifying — its failure could be discharged by rewording the tenet, so it now **blocks**, with restatement demoted to a consequence of an explicit override; and **"never auto-delete" was silently corrupting the corpus** — chunk-by-heading plus no pruning means a renamed heading orphans its old `docs`/`docs_vec` rows forever, so rule 2 is now within-unit reconciliation, never across units and never on a failed fetch. Three unfalsifiable gate items got numbers. Cross-model review (Qwen) added the coverage boundary: the four tenets cover **neither** cluster D (resource) **nor** E (scope accretion), so **§18.3** names four counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL) and **L23** records the incumbent reintroducing an already-fixed defect because the lesson was prose. **No code written.** | **Open the GitHub issue** to satisfy the issue-first SOP (`gh_issue: TBA` today), then run **Phase 0 — Skeleton**: scaffold `HiQS/`, `db.py`, `config.py`, `plugins.py`, `events.py`, and the fake-plugin contract test. Exit when `hiqs status` on an empty DB returns structured JSON and a fake event lands in `events`. |
+| Plan rev 5 authored and promoted to `2-WORKING` 2026-08-03, with the rev-4 eval gate rewritten to be falsifiable (n raised to 60–75, paired disagreement set made the primary artifact, ground-truth protocol written, query set frozen, FTS-only baseline promoted to a decision, split-decision rule, cost axis, floor + truncation gates). Codebase location settled: HiQS ships **inside this repo at `HiQS/`**, not as a separate repository, so the plan doc and the code it governs live under one `git log`. PDDA compliance sections added (frontmatter, this table, table of contents, per-phase QA gates, §16 boundary note). The standalone anti-patterns ledger was **verified against `CHANGELOG.md` and folded in** — six-cluster failure-mode taxonomy at the head of the Lessons section, seven incidents L1–L15 missed added as **L16–L22**, and two new plugin rules (§5.7 explicit network timeout, §5.8 watermark advances only on a completed fetch); source archived to `PROJECT/4-MISC/HiQS-ANTI-PATTERNS.md`. **The four tenets were then audited against the plan itself and two failed**: ATTESTED had no `author` field and RANKED had no obligation model and no detector — so `author`/`owed_by`/`due` landed on `Doc`/`Candidate`, `activity_at` split from `updated_at` (L20), `source_age_s`/`source_status` landed on `RankedAction`, §7.1 added a frozen ranking-judgment set with three gates, §2's non-negotiable was widened from *retrieval*-quality to all quality claims, and **§18 records the dogfooding audit in both directions**. An **agy relay review (r1, Changes requested)** then found 3 Blockers + 2 Shoulds, all accepted and applied: `Doc` was missing `source` (a pre-rev-5 mismatch with §9); §7.1's obligation gate was self-justifying — its failure could be discharged by rewording the tenet, so it now **blocks**, with restatement demoted to a consequence of an explicit override; and **"never auto-delete" was silently corrupting the corpus** — chunk-by-heading plus no pruning means a renamed heading orphans its old `docs`/`docs_vec` rows forever, so rule 2 is now within-unit reconciliation, never across units and never on a failed fetch. Three unfalsifiable gate items got numbers. Cross-model review (Qwen) added the coverage boundary: the four tenets cover **neither** cluster D (resource) **nor** E (scope accretion), so **§18.3** names four counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL) and **L23** records the incumbent reintroducing an already-fixed defect because the lesson was prose. **r2 found 1 Blocker + 3 Shoulds + 1 Nit, all applied**: r1's own gate fix had propagated to §7.1 but not to the Phase 3 checklist (the exact drift class this plan warns about); §7.1's gates were all relative, so an absolute **floor of 3/5 top-5 overlap** was added; `docs_vec` reads must filter `WHERE model = <active>` or mixed 384/1024-dim vectors crash the cosine; **`hiqs auth <source>` added as a 6th subcommand** (~40 LOC, recorded not absorbed) because an unattended launchd job cannot complete a browser OAuth flow; and a **2-chunk-per-document cap** after RRF stops one long note flooding the top-10. **No code written.** | **Open the GitHub issue** to satisfy the issue-first SOP (`gh_issue: TBA` today), then run **Phase 0 — Skeleton**: scaffold `HiQS/`, `db.py`, `config.py`, `plugins.py`, `events.py`, and the fake-plugin contract test. Exit when `hiqs status` on an empty DB returns structured JSON and a fake event lands in `events`. |
 
 ## Table of contents
 
@@ -173,8 +173,18 @@ rationale in the CHANGELOG. A measured decision changes when the number changes.
 3. **v1 sources:** Obsidian vault, GitHub, Google Calendar — shipped as the
    first three plugins.
 
-4. **Surfaces:** MCP (4 tools) + CLI (4 core subcommands + `serve`) + one
-   baseline web page showing the next-actions ranking.
+4. **Surfaces:** MCP (4 tools) + CLI (4 core subcommands + `serve` + `auth`) +
+   one baseline web page showing the next-actions ranking.
+
+   `auth` was added 2026-08-03 in review, and the reason is a real operational
+   hole rather than a nice-to-have: Calendar uses OAuth, tokens expire, and the
+   only runner is an unattended 2-hourly launchd job that **cannot open a
+   browser**. Without an interactive re-authorization path the specced failure
+   mode is a source that goes `error` with no operator action available except
+   reading the plan and improvising one. `hiqs auth <source>` is that path —
+   interactive, operator-invoked, writes to keyring. Honest budget note, per the
+   SMALL invariant (§18.3): this is a **6th subcommand and ~40 LOC** the plan did
+   not have, recorded here rather than absorbed quietly.
 
 5. **Ranking:** deterministic, attested, ~40 LOC. No LLM in the ranking path.
    An LLM ranker is just another `Ranker` behind the same signature later.
@@ -392,10 +402,27 @@ operator confirmation. This is the sentinel hook; see §7 and Lesson L10.
 ```python
 search(query, limit=10):
     fts  = FTS5 BM25, top 50                       # stdlib, exact/keyword leg
-    vec  = numpy cosine over doc vectors, top 50   # sentence-transformers, semantic leg
+    vec  = numpy cosine over doc vectors, top 50   # WHERE model = <active>  ← see below
     hits = RRF-fuse(fts, vec, k=60)                # ~15 lines
+    hits = cap_per_document(hits, max_chunks=2)    # diversity, before the slice
     return (RERANKER or identity)(query, hits)[:limit]
 ```
+
+Two details in that path are load-bearing, both found in review 2026-08-03:
+
+- **The vector leg MUST filter `WHERE model = <active>`.** `docs_vec`'s composite
+  PK exists so a 384-dim and a 1024-dim model can coexist (§9) — which means an
+  unfiltered `SELECT` loads BLOBs of two different widths into one array and the
+  cosine dot-product raises on shape mismatch. The feature that makes the Phase 1
+  comparison free is the same feature that breaks a naive read, so the filter is
+  part of the contract, not an optimization.
+- **Cap chunks per source document before slicing to `limit`.** Chunking by
+  heading means one long note can match on five headings and occupy the entire
+  top-10 in *both* legs, so RRF fuses two lists that agree on the same document
+  and starves every other note. `max_chunks=2` per `rel_path`, applied after the
+  fuse and before the slice. This is measurable rather than assumed: it should
+  raise recall of *distinct* documents on the §6.3 eval, and if it doesn't, the
+  cap is wrong and the number moves with a recorded measurement.
 
 - Vectors stored as BLOBs in `docs_vec(doc_id, model, dim, vec)`, primary key
   `(doc_id, model)` — see §9. Brute-force numpy cosine.
@@ -604,9 +631,18 @@ smaller than its own instrument's resolution launders judgment as evidence.
 
 | Gate | Rule | If it fails |
 |---|---|---|
+| **Floor** | top-5 overlap **≥3/5 on average** across snapshots | Phase 3 does not exit. Below this the fault is the *candidate set or the obligation fields*, not the ranker's weights — the same diagnosis §6.3's floor makes about chunking, one layer over. Tuning the ranker against a starved candidate pool is treating a symptom |
 | Beats recency | top-5 overlap beats a recency-only baseline by ≥1 item on average | the obligation terms are not earning their complexity — cut them and ship recency, honestly labelled |
 | Obligation coverage | ≥50% of top-5 items carry `owed_by` or `due` | **Phase 3 does not exit.** Fix the source projections and re-score |
 | Staleness leakage | 0 items in the top-5 from a source whose `source_status` is `error` | fix the ranker's freshness read before anything else |
+
+The floor exists because "beats recency by ≥1 item" is a *relative* gate and a
+relative gate alone can pass on a bad absolute: if recency scores 1/5, a ranker
+at 2/5 clears it while getting 60% of your mornings wrong (added 2026-08-03 —
+§6.3 had this floor from the start and §7.1 shipped without it). 3/5 is a stated
+number rather than a judgment word, and like the Phase 2 refresh ceiling it is
+tunable **once real figures exist** — moving it is a CHANGELOG line with the
+measurement that justified it, never a quiet edit when a run comes in under.
 
 **These block; they are not resolvable by editing the claim** (corrected
 2026-08-03 — an earlier draft offered "fix the projections **or** restate the
@@ -721,8 +757,11 @@ query time. Connection: WAL, foreign keys, 30 s `busy_timeout`.
 
 - **MCP (product surface, standard JSON-RPC):** `refresh` · `status` ·
   `search` · `ask`. All structured JSON, all attested.
-- **CLI:** `hiqs refresh | status | search | ask` (+ `hiqs serve`).
-  `status --json` for scripts and agents.
+- **CLI:** `hiqs refresh | status | search | ask` (+ `hiqs serve`, `hiqs auth`).
+  `status --json` for scripts and agents. `hiqs auth <source>` is the only
+  interactive command — it exists because the scheduled runner cannot complete a
+  browser OAuth flow, and `status` names it in the remediation text when a
+  source reports `auth_expired`.
 - **Web baseline:** `hiqs serve` → one localhost page on 127.0.0.1:8790:
   next-actions ranking with receipts at top, per-source health strip, last-sync
   line, search mode + last measured quality. Server-rendered, meta-refresh,
@@ -756,7 +795,7 @@ HiQS/                 ← repo-relative root; the only tree HiQS writes
   pyproject.toml      own package, entry-point group `hiqs.sources`
   README.md · ARCHITECTURE.md · SPEC.md · CHANGELOG.md · AGENTS.md
   hiqs/
-    __main__.py       CLI: refresh | status | search | ask | serve      ~140
+    __main__.py       CLI: refresh|status|search|ask|serve|auth         ~180
     db.py             connection, schema, upsert helper                 ~130
     config.py         one JSON config + secrets (keyring → 0600 file)   ~130
     plugins.py        Source contract + entry-point discovery + walk    ~100
@@ -1448,7 +1487,7 @@ Binary and observable; all must pass before Phase 1 starts.
 
 - [ ] `vault.py` — walk `.md`, hash delta, chunk by heading
 - [ ] `docs_index.py` — raw → `docs` projection, delta-only embedding keyed by content hash
-- [ ] `search.py` — FTS5 BM25 leg, numpy cosine leg, RRF fuse (k=60), `Reranker` hook wired to `None`
+- [ ] `search.py` — FTS5 BM25 leg, numpy cosine leg (**filtered `WHERE model = <active>`** — mixed widths in one array raise), RRF fuse (k=60), per-document cap of 2 chunks before the slice, `Reranker` hook wired to `None`
 - [ ] `status.search.mode` reports `hybrid` / `fts_only` / `unknown`; a degrade writes a `search.degraded` event
 - [ ] Histogram chunk lengths in word-pieces; add a chunk cap to `vault.py` if >5% exceed 256
 - [ ] Author 60–75 eval queries from memory and intent, before consulting the index
@@ -1476,6 +1515,8 @@ Binary and observable; all must pass before Phase 1 starts.
 - [ ] **Vector-leg justification.** Fused beats FTS-only by ≥10 points recall@10, or the vector leg (and torch) moves to §14 and v1 ships FTS-only. This gate is allowed to *delete a dependency* — it is not a formality.
 - [ ] **Truncation.** ≥95% of chunks fit the shipped model's context, or a chunk cap landed in `vault.py` and everything was re-scored after it.
 - [ ] **Reproducibility (DRY of evidence).** `eval_retrieval.py` is offline, fixture-backed, and re-runnable; a second run on the same DB and query set reproduces the same recall/MRR figures. A number nobody can reproduce is not a measurement.
+- [ ] **Both models resident, no crash.** With MiniLM (384) and Qwen3 (1024) vectors coexisting in `docs_vec`, a search returns correct results for each — proving the `WHERE model` filter holds. The head-to-head comparison is the whole point of the composite PK, so the read path must survive it (§6.1).
+- [ ] **Chunk diversity.** A query matching several headings of one long note returns at most 2 chunks from it in the top-10; other relevant notes are not starved (§6.1).
 - [ ] **Observability.** Every scored run left an `eval.completed` row carrying `{model, recall_at_10, mrr_at_10, n_queries, queryset_sha, embed_ms, index_mb, peak_rss_mb, git_sha}`; `status.search.quality` reads from that row, not from a constant.
 - [ ] **Degrade honesty.** Forcing the model unavailable makes `status.search.mode` report `fts_only` **and** writes a `search.degraded` event. Verified by test, not by inspection — this is L8's structural fix.
 - [ ] **Memory injection (spike requirement).** §17 carries the winner, the loser's scores, the disagreement set with the operator's read of it, the cost figures, and what the result changes about Phases 2–5. An unwritten "we'll know after the eval" left dangling is itself a gate failure.
@@ -1505,6 +1546,7 @@ Binary and observable; all must pass before Phase 1 starts.
 ## Phase 3 — Calendar, ask, MCP
 
 - [ ] `calendar.py` — OAuth read-only, window upsert
+- [ ] `hiqs auth <source>` — the interactive re-authorization path a launchd job cannot perform; writes to keyring, and `status` names it in the remediation text on `auth_expired`
 - [ ] `ask.py` — context gather + attestation + deterministic `Ranker` (~40 LOC)
 - [ ] `mcp_server.py` — `refresh` · `status` · `search` · `ask`, thin wrappers
 - [ ] `RankedAction` carries `author`, `owed_by`, `due`, `source_age_s`, `source_status`
@@ -1519,7 +1561,7 @@ Binary and observable; all must pass before Phase 1 starts.
 
 ### QA gate — Phase 3
 
-- [ ] **RANKED is measured, not asserted (§7.1).** The frozen judgment set is committed, scored, and its three gates checked. Top-5 overlap beats a recency-only baseline; obligation coverage ≥50%; zero top-5 items from an `error` source. A failed coverage gate is closed by fixing the projections **or by restating the tenet** — never by shipping the claim unmeasured (§2).
+- [ ] **RANKED is measured, not asserted (§7.1).** The frozen judgment set is committed and scored, and all four gates pass: floor (top-5 overlap ≥3/5 average), beats-recency (≥1 item over a recency-only baseline), obligation coverage (≥50%), staleness leakage (zero top-5 items from an `error` source). **A failed gate blocks Phase 3 exit until the projections are fixed and it is re-scored.** The only other way past it is an explicit operator override, which costs the tenet reword everywhere the claim appears *plus* a CHANGELOG entry carrying the failing numbers — an override is not a way to close the gate, it is a recorded decision to ship over it. Shipping the claim unmeasured is unavailable in every branch (§2).
 - [ ] **Recency means activity, not metadata (L20).** A test asserts that a row whose only change is a label or assignee edit does not move in the ranking. `updated_at` is a sync watermark; `activity_at` is the ranking input, and confusing them is a silent-quality bug.
 - [ ] **Freshness rides on the item (FRESH).** Every `RankedAction` carries `source_age_s` and `source_status`; a stale source's item cannot render as current. Unmeasured is `-1` / `unknown`, never a default that reads healthy.
 - [ ] **ATTESTED is total, all four receipts.** Every ranked item carries source, **author**, time, and link — as fields. A receipt reachable only by parsing `evidence` prose fails this gate; `""` is permitted only where the source genuinely cannot know, and is never a guess.
@@ -1545,6 +1587,7 @@ Binary and observable; all must pass before Phase 1 starts.
 - [ ] **One server, one port, one page (L10).** Exactly one route table exists in the codebase; a grep for a second `http.server` handler returns nothing. The web page renders the persisted ranking — it does not re-rank.
 - [ ] **Surface parity.** The web page and the MCP `ask` tool return the same ordered ranking for the same DB state, asserted by a test, not by looking at both.
 - [ ] **Unattended honesty.** After a week of 2-hourly runs, every gap in the data is explained by an `events` row. A miss with no event is an observability defect, not an operations anecdote (L6).
+- [ ] **Every failure has an operator action.** Expire the calendar token deliberately, then confirm: the run reports `auth_expired`, `status` names `hiqs auth calendar` as the remedy, and running it restores the source. A failure whose only remedy is improvisation is not specced — an unattended runner that cannot open a browser needs an interactive path to exist before it is needed, not after (Decision 4).
 - [ ] **Path portability (L11).** Zero absolute user paths in `HiQS/**` or in the installed job; the plist/crontab is rendered per-machine from a template. The DB path is verified to sit outside any TCC-protected folder on the actual device.
 - [ ] **Job hygiene (L12).** Exactly one scheduled job. If a second is ever proposed, it goes through §14 with a stated trigger — the fleet is the failure mode, not the solution.
 - [ ] **Secrets at rest.** Keyring is confirmed *live* (write, then read back in a fresh process) rather than assumed — a keyring write that silently no-ops and still prints success is a known real failure mode in this repo's history.

@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-03.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 2 / 4
+ROUND: 3 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -226,5 +226,66 @@ No code exists yet, so there is no suite to run.
   - **Concrete Fix**: Include `auth` in `hiqs` CLI subcommand list (§3.1 line 173, §11 line 759) for interactive source token authorization (`hiqs auth <source>`).
 - `[Should]` **Single-document chunk flooding in hybrid search RRF fusion.** Chunking vault notes by heading ([PROJECT/2-WORKING/HIQS-PROJECT.md:L406-409](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L406-L409)) means a search query matching multiple headings of one long note returns multiple chunk IDs in both FTS5 and vector legs (§6.1 [PROJECT/2-WORKING/HIQS-PROJECT.md:L392-398](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L392-L398)). Without a post-RRF per-document chunk limit before `[:limit]`, top-10 search results returned to `ask()` will be flooded by chunks from a single document, starving other relevant notes.
   - **Concrete Fix**: In §6.1 (line 397), add a post-RRF diversity filter: cap at ≤2 chunks per source document (`rel_path`) before slicing `[:limit]`.
+
+## Round 2 — Producer (claude-a)
+
+**Disposition: all 5 findings accepted and implemented.** No declines. The Blocker was my own
+r1 inconsistency; two of the Shoulds are operational holes the plan genuinely had.
+
+- **B1 — Phase 3 gate still carried the "or restating the tenet" bypass — IMPLEMENTED.** Correct,
+  and my error: r1 fixed §7.1 and left the Phase 3 checklist item reintroducing the exact bypass
+  §7.1 had just closed. Precisely the drift class the plan warns about — one canonical statement
+  edited in one of its two places. The gate item now mirrors §7.1: a failed gate **blocks Phase 3
+  exit**, and an override is a *recorded decision to ship over it* (tenet reword everywhere + a
+  CHANGELOG entry with the failing numbers), never a way to close it. Also updated it to check all
+  four gates, since it named three.
+
+- **S1 — §7.1 had no absolute floor — IMPLEMENTED at the proposed 3/5.** The reasoning is right and
+  the arithmetic is the point: "beats recency by ≥1 item" is purely relative, so a recency baseline
+  of 1/5 lets a ranker pass at 2/5 while getting 60% of mornings wrong. §6.3 has carried a floor
+  from the start; §7.1 shipped without one. The failure branch is framed diagnostically to match
+  §6.3's ("below this the fault is the candidate set or the obligation fields, not the ranker's
+  weights"), and the number is explicitly tunable **once real figures exist** — moving it costs a
+  CHANGELOG line with the measurement, not a quiet edit when a run comes in under.
+
+- **Nit — `docs_vec` mixed-dimension read — IMPLEMENTED.** Graded a Nit, treated as a crash bug: the
+  composite PK exists precisely so 384-dim and 1024-dim vectors coexist, so an unfiltered `SELECT`
+  loads two widths into one array and the dot product raises. The feature enabling the Phase 1
+  head-to-head is the same feature that breaks a naive read, so `WHERE model = <active>` is now in
+  the §6.1 path, in the Phase 1 checklist, and pinned by a gate item that searches with both models
+  resident.
+
+- **S2 — no `hiqs auth` subcommand — IMPLEMENTED.** A real operational hole. Calendar uses OAuth,
+  tokens expire, and the only runner is an unattended launchd job that cannot open a browser — so
+  the specced failure mode was a source going `error` with no operator action available. Added as a
+  6th subcommand across Decision 4, §10, §11, and the Phase 3 checklist, with a Phase 4 gate item
+  that expires a token deliberately and verifies the remedy path end to end. Budget impact recorded
+  rather than absorbed (**6th subcommand, ~40 LOC**, `__main__.py` 140 → 180) — that is the SMALL
+  invariant from §18.3 doing its job on its first real test.
+
+- **S3 — single-document chunk flooding — IMPLEMENTED.** Correct: chunk-by-heading means one long
+  note can match on five headings and occupy the top-10 in *both* legs, so RRF fuses two lists that
+  agree on the same document and starves everything else. Added `cap_per_document(max_chunks=2)`
+  after the fuse and before the slice, plus a Phase 1 gate item. Made falsifiable rather than
+  assumed: it should raise recall of *distinct* documents on the §6.3 eval, and if it doesn't, the
+  cap is wrong and the number moves with a recorded measurement.
+
+### Verification
+
+`utils/pdda/pdda.sh` — frontmatter, status-table, hardcoded-paths, governance all **0 errors /
+0 warns**; `roadmap-coverage` 7 errors, all pre-existing and unrelated. No code exists yet.
+
+### Note on the two rounds
+
+r1 and r2 found different classes, which is the argument for the second round: r1 found a
+corpus-corrupting rule and a self-justifying gate; r2 found the *incomplete propagation* of r1's own
+fix plus two operational holes (OAuth recovery, chunk flooding) that only surface when you trace a
+path end to end. Three of the six substantive findings across both rounds are instances of the same
+meta-pattern the plan is built around — a state that reports success while degrading: orphaned
+chunks, mixed-width vectors, and a source stuck in `auth_expired` with no remedy.
+
+**Open for r3, if run:** whether the 3/5 floor and the 2-chunk cap survive contact with real
+figures; whether §18.3's four counterpart invariants need detectors of their own or whether the
+phase gates that now carry them suffice.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

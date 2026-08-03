@@ -51,6 +51,47 @@
   fetch it describes actually completed. The source document is retained as provenance
   under PROJECT/4-MISC with a pointer to what superseded it.
 
+### Fixed
+- **A two-round headless review of the plan found six substantive defects, all fixed.**
+  The plan was driven through the relay harness with an independent model as reviewer.
+  Worth recording because the rounds found *different classes*, which is the argument
+  for not stopping at one.
+
+  The most consequential was a rule that would have corrupted the search corpus while
+  reporting success. Notes are split into chunks by heading, and the plugin contract
+  said never to delete. Renaming or removing a heading therefore emitted a new chunk
+  and orphaned the old rows permanently, where they would keep matching queries and
+  keep surfacing in results — retrieval decaying from content that no longer exists,
+  while the sync returned success, health read fine, the counts stayed honest, and
+  every payload stayed well-formed. The planned quality evaluation could not have
+  caught it either, since a frozen question set scored against a fresh index has no
+  orphans yet. The rule is now scoped: reconcile within a unit that fetched
+  successfully, never across units and never after a failure, with the pruned count
+  reported and an implausible prune raised as a warning. The half of the old rule that
+  earns its keep is intact — a source returning nothing transiently still cannot empty
+  the corpus.
+
+  Two gates were unfalsifiable. One offered to close a failing check by rewording what
+  the check measured, which is the same defect the plan had just finished removing from
+  its other evaluation, reintroduced one section later; it now blocks, and rewording is
+  demoted to a recorded consequence of an explicit override. The other was purely
+  relative — "beat a simple baseline by one item" — which passes a poor absolute result
+  whenever the baseline is also poor, so an absolute floor was added alongside it.
+
+  The second round found that the first round's own fix had been applied in one of the
+  two places it needed to be, plus two operational holes that only appear when a path is
+  traced end to end: no way for an operator to re-authorize an expired credential, on a
+  system whose only runner is an unattended background job that cannot open a browser;
+  and no limit on how many chunks of one document may occupy a result page, so a single
+  long note could crowd out everything else. A sixth finding, filed as a nit, was really
+  a crash: the schema deliberately lets two embedding models coexist, and reading them
+  without filtering to one mixes incompatible vector widths in a single array.
+
+  Three of the six are the same meta-pattern the plan is built to prevent — a state
+  that reports success while degrading. That a plan written specifically against that
+  pattern still contained three instances of it is the honest result here, and the
+  reason the review happened before any code was written rather than after.
+
 ## [0.68.1] - 2026-07-26
 
 ### Changed
