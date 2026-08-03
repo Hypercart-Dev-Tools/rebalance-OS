@@ -210,44 +210,6 @@ def test_vault_path_resolution_from_config(tmp_path):
         connection.close()
 
 
-def test_vault_file_removal_and_prune_reconciliation(tmp_path):
-    """Removing a vault note file on disk prunes its vault_files row and chunk docs."""
-    vault_dir = tmp_path / "vault"
-    vault_dir.mkdir()
-
-    note1 = vault_dir / "note1.md"
-    note2 = vault_dir / "note2.md"
-    note1.write_text("# Note 1\nContent 1.", encoding="utf-8")
-    note2.write_text("# Note 2\nContent 2.", encoding="utf-8")
-
-    db_path = tmp_path / "hiqs.db"
-    connection = db_connection(db_path)
-
-    try:
-        report1 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        assert report1.counts["inserted"] == 2
-        assert report1.counts["pruned"] == 0
-
-        # Remove note2 from disk
-        note2.unlink()
-
-        report2 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        assert report2.counts["pruned"] == 1
-        assert report2.counts["unchanged"] == 1
-        assert report2.errors == []
-
-        # Verify raw table state: note2.md must be deleted from vault_files
-        rows = connection.execute("SELECT path FROM vault_files ORDER BY path").fetchall()
-        assert [r[0] for r in rows] == ["note1.md"]
-
-        # Verify docs() projection state
-        docs = list(SOURCE.docs(connection))
-        assert len(docs) == 1
-        assert docs[0].id.startswith("vault:note1.md:")
-    finally:
-        connection.close()
-
-
 def test_vault_hidden_vault_path_ingestion(tmp_path):
     """A vault whose root path is hidden (e.g. /path/.my_vault) ingests valid notes."""
     hidden_vault = tmp_path / ".my_hidden_vault"
@@ -271,48 +233,31 @@ def test_vault_hidden_vault_path_ingestion(tmp_path):
         connection.close()
 
 
-def test_vault_pruning_skipped_when_walk_has_errors(tmp_path, monkeypatch):
-    """When fetch encounters read errors, vanished files are preserved to prevent corpus wiping (L15)."""
+def test_vault_walk_onerror_populates_errors(tmp_path, monkeypatch):
+    """Directory listing errors during os.walk populate SyncReport.errors via onerror callback."""
+    import os
+
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir()
-
-    good_path = vault_dir / "good.md"
-    bad_path = vault_dir / "bad.md"
-    vanished_path = vault_dir / "vanished.md"
-
-    good_path.write_text("# Good Note\nGood content.", encoding="utf-8")
-    bad_path.write_text("# Bad Note\nBad content.", encoding="utf-8")
-    vanished_path.write_text("# Vanished Note\nVanished content.", encoding="utf-8")
+    (vault_dir / "note.md").write_text("# Note\nContent", encoding="utf-8")
 
     db_path = tmp_path / "hiqs.db"
     connection = db_connection(db_path)
 
     try:
-        # Step 1: Initial ingest
-        report1 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        assert report1.counts["inserted"] == 3
+        orig_walk = os.walk
 
-        # Step 2: Remove vanished.md AND make bad.md unreadable
-        vanished_path.unlink()
+        def mock_walk(top, topdown=True, onerror=None, followlinks=False):
+            if onerror:
+                onerror(PermissionError("Permission denied reading directory"))
+            return orig_walk(top, topdown=topdown, onerror=onerror, followlinks=followlinks)
 
-        orig_read_bytes = Path.read_bytes
+        monkeypatch.setattr(os, "walk", mock_walk)
 
-        def mock_read_bytes(path_obj):
-            if path_obj.name == "bad.md":
-                raise PermissionError("Permission denied: bad.md")
-            return orig_read_bytes(path_obj)
-
-        monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
-
-        report2 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        assert report2.counts["rejected"] == 1
-        assert len(report2.errors) == 1
-        assert report2.counts["pruned"] == 0  # Pruning MUST be skipped due to error
-
-        # Verify vanished.md is STILL present in vault_files DB table
-        rows = connection.execute("SELECT path FROM vault_files ORDER BY path").fetchall()
-        paths = [r[0] for r in rows]
-        assert "vanished.md" in paths
+        report = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+        assert len(report.errors) == 1
+        assert "Directory walk error: Permission denied reading directory" in report.errors[0]
     finally:
         connection.close()
+
 

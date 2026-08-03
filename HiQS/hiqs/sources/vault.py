@@ -120,9 +120,10 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
         for row in connection.execute("SELECT path, content_hash, mtime FROM vault_files").fetchall()
     }
 
-    seen_paths: set[str] = set()
+    def _on_walk_error(os_err: OSError) -> None:
+        errors.append(f"Directory walk error: {os_err}")
 
-    for root, dirs, files in os.walk(vault_path):
+    for root, dirs, files in os.walk(vault_path, onerror=_on_walk_error):
         root_path = Path(root)
         dirs[:] = [d for d in dirs if not is_generated_file(root_path / d, base_path=vault_path)]
 
@@ -143,8 +144,6 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                 # L19: Watermark/mtime state does NOT advance for a file whose read failed.
                 # Existing row in vault_files remains untouched!
                 continue
-
-            seen_paths.add(rel_path)
 
             mtime_str = str(st.st_mtime)
             content_hash = hashlib.sha256(content_bytes).hexdigest()
@@ -168,14 +167,6 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                         (rel_path, content_hash, mtime_str, content_str),
                     )
                 counts["inserted"] += 1
-
-    # Reconcile vanished files ONLY after a complete walk with zero errors (rule 5 / L15).
-    if not errors:
-        vanished = set(existing.keys()) - seen_paths
-        for rel_path in sorted(vanished):
-            with connection:
-                connection.execute("DELETE FROM vault_files WHERE path = ?", (rel_path,))
-            counts["pruned"] += 1
 
     return SyncReport(counts=counts, errors=errors)
 

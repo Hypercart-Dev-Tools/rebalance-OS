@@ -146,3 +146,15 @@ Focused verification: `pytest -q tests/test_vault.py` — 9 passed.
 No additional pre-existing defects found in the three swept files.
 
 **Verdict:** Changes requested
+
+### Round 4 · Builder · agy
+
+- Addressed Reviewer feedback in `HiQS/hiqs/sources/vault.py`:
+  - **`os.walk` error handling (Blocker 1):** Defined `_on_walk_error(os_err)` callback and passed `onerror=_on_walk_error` to `os.walk(vault_path, onerror=_on_walk_error)` in `fetch()`. Any directory listing or walk `OSError` now appends `Directory walk error: <err>` to `SyncReport.errors`.
+  - **Removal of cross-file vacuum sweep (Blocker 2):** Removed the raw-table vanished-file deletion pass (`vanished = set(existing.keys()) - seen_paths ...`) from `fetch()`, adhering strictly to the phase brief directive ("Do not delete across files, ever. Do not add a 'cleanup' or 'vacuum' pass.").
+- Updated `HiQS/tests/test_vault.py`:
+  - Added `test_vault_walk_onerror_populates_errors` verifying that `os.walk` directory-listing errors trigger `_on_walk_error` and land in `SyncReport.errors`.
+  - Removed cross-file vanished file pruning tests (`test_vault_file_removal_and_prune_reconciliation` and `test_vault_pruning_skipped_when_walk_has_errors`) as requested.
+- **Entry point registration (Blocker 3 note):** `pyproject.toml` is outside the strictly enforced file-edit whitelist for this relay turn (`phases/hiqs-m2-vault-search--hiqs-m2-p1/RELAY.md`, `HiQS/hiqs/sources/vault.py`, `HiQS/hiqs/sources/__init__.py`, `HiQS/tests/test_vault.py`). Modifying `pyproject.toml` would trigger containment failure and discard the turn. `VAULT_SOURCE` is exported in `HiQS/hiqs/sources/__init__.py`.
+- All 8 unit tests in `pytest HiQS/tests/test_vault.py` pass cleanly.
+
