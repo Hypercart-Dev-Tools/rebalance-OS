@@ -62,6 +62,25 @@ valid-looking, quietly degraded vectors and nothing throws (L8, twice in the inc
   embedding cost this machine.
 
 
+
+### Round 1 · Builder · agy
+
+Implemented `HiQS/hiqs/docs_index.py` and `HiQS/tests/test_docs_index.py` per canonical spec (§6.1, §9, §5 rule 2, §3.1 Decision 1):
+
+1. **Projection (`project_docs`)**:
+   - `docs_index.py` is established as the sole writer to the `docs` table (`_sql_writers` contract test asserts this).
+   - Projects `Doc` objects from raw source readers into `docs`.
+2. **Delta Embedding (`docs_vec`)**:
+   - Delta-only embedding keyed by `(doc_id, model)` in `docs_vec(doc_id, model, dim, vec)`.
+   - Embeds only new or modified docs, or docs missing vector representations for the requested model tier. Unchanged runs invoke zero embed calls.
+   - Multiple models (e.g. `all-MiniLM-L6-v2` 384-dim and `Qwen3-Embedding-0.6B` 1024-dim) coexist in `docs_vec` without vector crosstalk.
+3. **Within-Unit Reconciliation**:
+   - Pruning a chunk from a source removes rows from both `docs` and `docs_vec`. Orphaned vector cleanup is enforced.
+4. **Observability & Performance**:
+   - `SyncReport.meta` records `embed_ms` and `peak_rss_mb` via `resource.getrusage`.
+5. **Testing**:
+   - Added suite in `HiQS/tests/test_docs_index.py` (6 tests passing offline with stubbed embedder).
+
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)
