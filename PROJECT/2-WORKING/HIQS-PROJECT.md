@@ -519,16 +519,60 @@ can't flatter the incumbent, so the protocol is part of the spec.
 - A handful of known-hard queries where you expect *both* legs to struggle. An
   eval where everything passes measures nothing.
 
-**Ground-truth protocol (order matters, and this is the part that silently
-invalidates everything if skipped)**
+**Amended 2026-08-03 — the operator does not author an answer key.** The protocol
+below originally required resolving every query to known-good `doc_id`s up front.
+The operator's objection killed it, and it is correct: *"If I knew the answers I
+wouldn't be building the system."* Requiring a pre-authored answer key is only
+tractable for questions you can already answer, which selects precisely the
+queries that do not need the system — a biased set, expensively produced.
 
-1. Write the query from memory and intent — "the note where I decided to use
-   BigQuery as the analytical venue" — before touching the index.
-2. Resolve it to a `doc_id` by **filename or `grep`**, never by running
-   `search()`. Ground truth built from search output encodes the current
-   model's bias into the answer key, and that model then wins by construction.
-3. If you cannot find the target by grep, the query is dropped, not softened.
-   A query whose answer you can't independently locate has no ground truth.
+The deeper error was metric choice, not effort. Checkpoint A decides **which of
+two models is better**, a *relative* question, yet the gate was written on
+`recall@10`, an *absolute* metric that cannot be computed without ground truth.
+§6.3 already named the **paired disagreement set** as the primary signal, and
+that needs no answer key at all. The gate now rests on it.
+
+**What the operator actually does — recognition, not recall**
+
+1. Write the queries. **No answers.** Real questions, in the words you would
+   really use, before touching the index. Seed set captured from the operator
+   2026-08-03 and kept as literal fixtures, because they are evidence of real
+   query shape (see §6.4):
+   - *"What did I work on yesterday from 9 AM to 11 AM?"*
+   - *"What did we decide on with XYZ to phase out the Bash scripts on which GH
+     issue?"*
+   - *"What tasks did I work on the Binoid repo project?"*
+2. Both models run every query. The runner emits the disagreement set.
+3. For each disagreeing query the operator sees **both result sets, unlabelled**,
+   and picks better / worse / tie. Blind, so brand preference cannot leak in.
+4. **The winner is decided on pairwise preference**, not recall. Judging asks only
+   that you *recognise* a better answer when two are side by side — a categorically
+   easier task than *recalling* one from memory, and the only one honestly
+   available here.
+5. **Ground truth accumulates as a by-product.** Whenever a result set contains
+   something the operator recognises as genuinely right, that `doc_id` is recorded.
+   Over a few rounds this grows into a real answer key that was *earned* rather
+   than pre-declared — and from that point `recall@10` becomes computable and can
+   return as a tracked metric. It is not a precondition for the Checkpoint A
+   decision.
+
+**What this costs, stated honestly.** No absolute recall figure at Checkpoint A.
+Nothing in the model decision depends on one: every rule in §6.3's decision
+procedure is a comparison between two models. Any claim needing an absolute number
+reports `unknown` until the accumulated key supports it — which is the §8 rule
+applied to this document's own gate.
+
+**Anti-flattery rules that still bind.** These were the point of the original
+protocol and survive unchanged:
+- Queries are written **before** seeing any output, and frozen.
+- A query is never edited after its scores are visible. Additions start a new
+  frozen version and require re-running every model.
+- Judging is **blind to which model produced which set**.
+- A `doc_id` recorded in step 5 is recorded because the operator recognised it as
+  correct, never because it ranked first.
+
+Then, as before:
+
 4. Commit and **freeze** the file. Its SHA is recorded in every
    `eval.completed` event. Queries added after scores are visible turn an eval
    into a justification, so additions start a new frozen version and require
@@ -567,6 +611,101 @@ changes the plan. §14's torch row depends on it: without a stated margin,
 `unknown` — never assumed good.
 
 Cost is contained: this lives in the test budget, not the ≤3,000 LOC core.
+
+### 6.4 Query shapes the seed questions expose (added 2026-08-03)
+
+Asking the operator for real questions instead of an answer key paid for itself
+immediately: all three seed questions need retrieval capabilities the plan did not
+have. They are recorded here because **an eval that cannot express these shapes
+would score the system on the wrong thing**, and Checkpoint A would then measure a
+model against queries nobody asks.
+
+Each is stated as a shape, a gap, and where it lands. None is a v1 blocker except
+where marked.
+
+**Q3 — project affinity. `"What tasks did I work on the Binoid repo project?"`**
+
+The gap, in the operator's words: *"repo queries need affinity repos (same
+client/related projects) so a broad question can cast a wider net if an operator
+does not ask a precise question."* §9's `projects(name, aliases_json, repos_json)`
+maps one project to its own repos and aliases. It has no notion of **sibling**
+projects, so a deliberately broad question returns a thin, precise answer — which
+reads as "not much happened" when the truth is "you asked narrowly."
+
+This is a **recall** failure that presents as a **content** failure, which puts it
+in cluster B: the measurement (few results) is trusted as the thing measured (few
+tasks). That is why it is specified now rather than after scoring.
+
+*Mechanism — take the incumbent's idea, not its code.* `project_inference.py`
+already derives affinity from GitHub owner and name tokens
+(`_build_repo_aliases`, `_owner_brand_aliases`, `_owner_group_key`) and it works.
+It is also 981 LOC of accreted heuristics, and `_owner_group_key` only fires for
+owners whose name ends in `team|cbd` — a **client vertical hardcoded into a
+regex**, which is both a portability failure and exactly the kind of string §19.2
+must keep out of a public repo. HiQS reimplements the idea in the clean room:
+
+- **Same GitHub organisation is the primary affinity edge**, and it is free — the
+  owner is already on every `github_items` row. No inference, no heuristic.
+- **Name-token overlap is the secondary edge**, over a generic-token stoplist.
+- **Issue-title matching is the third**, per the operator's suggestion: a query
+  term appearing in issue titles across sibling repos widens the net.
+- **Affinity widens, it never narrows.** A precise query must return exactly what
+  it returns today; affinity only adds siblings *below* the direct hits, and every
+  added row is labelled with the edge that pulled it in. An affinity edge is a
+  claim, so it carries its receipt like any other (ATTESTED).
+- **No client names in code.** Grouping is derived from data at runtime, never
+  from a literal in a regex. Pinned by a test that greps the module for the
+  operator's known client and project names and fails on a hit — the §19.2 gate
+  applied at the source rather than at extraction.
+
+*Lands in:* a new column or side table alongside `projects` (§9), consumed by
+`search()` as a post-fusion widening step. **Phase 2**, with GitHub — it needs
+`github_items.repo` populated, and specifying it before then is speculative.
+
+**Q1 — time-window retrieval. `"What did I work on yesterday from 9 AM to 11 AM?"`**
+
+Not a topical search at all. It is *"return everything from any source whose event
+time falls in this window, ordered by time"* — a different access path from
+BM25+cosine, and one no amount of retrieval quality delivers.
+
+The data exists: `activity_at`, `Doc.ts`, `calendar_events.start/end`,
+`Candidate.ts`. There is no path that reads them as a **range across sources**.
+FTS5 and cosine both rank by similarity, and "yesterday 9–11am" has no similarity
+signal — the words do not appear in the answer.
+
+*Consequence for the eval:* a time-window query cannot be scored by recall@10
+against a topical index, so **these are tagged as a separate shape and excluded
+from the model comparison**. Scoring a retrieval model on a query no retrieval
+model can answer would penalise both equally and add noise to a decision that is
+already close. They still belong in the query set as a capability gap the eval
+*reports* rather than *scores*.
+
+*Lands in:* §7's `ask()` seam as a time-range branch, **Phase 3**, once calendar
+is in and there is more than one clock to reconcile.
+
+**Q2 — cross-source linking. `"What did we decide on with XYZ to phase out the
+Bash scripts on which GH issue?"`**
+
+Two joined asks: find a decision (which lives in a note), then name the artifact
+carrying it (which lives in GitHub). Retrieval can surface the note. Nothing today
+carries the edge *note → issue*.
+
+Partly a chunking question and partly an extraction one. The honest v1 answer is
+that HiQS returns the note **and** any GitHub item whose number or URL appears in
+that note's text — a literal reference match, not entity extraction. That is a
+small, deterministic win and it is most of the value; inferring an unstated link
+is not v1 work.
+
+*Lands in:* the projection, **Phase 2**. A reference is a link, so it is a receipt,
+so it is a field — not something re-derived at query time (D5 in
+`HiQS/GUIDING-PRINCIPLES.md`).
+
+**What all three have in common.** Each is a *retrieval-path* gap, not a ranking
+gap. The plan's quality machinery — §6.3, §7.1 — measures how well the system
+orders what it found. None of it detects a question the system cannot reach an
+answer to at all. §6.3's gates therefore report **coverage by query shape**
+alongside recall, so a shape scoring zero is visible as a missing capability rather
+than averaged away as a weak model.
 
 ## 7. AI-native seams (one signature, one implementation today)
 
@@ -765,7 +904,7 @@ CREATE TABLE events(
 This table is the sentinel substrate: a future observer LLM reads structured,
 attested history — nothing else needs to change for it to exist.
 
-## 9. Schema — 8 tables total (rebalance-OS ships ~35)
+## 9. Schema — 9 tables total (rebalance-OS ships ~35)
 
 ```
 vault_files       path, content_hash, mtime
@@ -776,8 +915,18 @@ calendar_events   id, summary, start, end, project, organizer, attendees_json
 docs              source, id, title, body, url, ts, project, author  + FTS5 index
 docs_vec          doc_id, model, dim, vec BLOB                 PK (doc_id, model)
 projects          name, aliases_json, repos_json               (config projection)
+project_affinity  project_a, project_b, edge, weight           PK (project_a, project_b, edge)
 events            ts, kind, source, status, payload_json       ← observability spine
 ```
+
+**`project_affinity` — sibling projects, added 2026-08-03 (Phase 2).** Nine tables
+now, not eight; the budget line moves rather than the table being squeezed into
+`projects`, because this is a *many-to-many* relation and `repos_json` is a list on
+one row. §6.4 has the reasoning; the schema note is that `edge` records **why** two
+projects are siblings — `same_org`, `name_token`, `issue_title` — so an affinity
+hit arrives with its receipt and a bad edge class can be disabled without a
+re-derivation. Symmetric pairs are stored once, canonicalised `project_a <
+project_b`. `weight` orders the widening, never the direct hits.
 
 **`updated_at` is stored but never ranked on (added 2026-08-03).** L20 is
 explicit that `updated_at` is bumped by label, assignee, and edit activity that
@@ -1723,10 +1872,15 @@ Binary and observable; all must pass before Phase 1 starts.
 - [ ] Project `author`, `assignee`, and `activity_at` — the last event that *happened*, never `updated_at` (L20)
 - [ ] Map `assignee` / requested-reviewer → `Candidate.owed_by`; milestone or stated deadline → `due`; leave `""` when unknown, never guess
 - [ ] Peak RSS and API call counts recorded in `SyncReport.meta`
+- [ ] **`project_affinity` populated (§6.4, §9).** Sibling edges derived at runtime from data: `same_org` from the owner already on every row, `name_token` over a generic stoplist, `issue_title` from query-term hits across sibling repos. Each row records its `edge`.
+- [ ] **Affinity widens, never narrows.** Siblings are appended *below* direct hits and labelled with the edge that pulled them in; a precise query returns byte-identical results to affinity-off. Pinned by a test.
+- [ ] **No client or project literal in code.** A test greps the affinity module for the operator's known client and project names and fails on a hit — §19.2's disclosure gate enforced at the source, not at extraction. (The incumbent's `_owner_group_key` hardcodes a client vertical in a regex; that is the defect being avoided, not copied.)
+- [ ] **Reference linking (§6.4, Q2).** The projection records GitHub numbers/URLs literally present in a note's text as an edge — a receipt in a field, not a query-time re-derivation (D5). Literal matches only; inferring an unstated link is not v1.
 - [ ] Exit: GitHub candidates appear attested in a dry ranking; contract test still green
 
 ### QA gate — Phase 2
 
+- [ ] **A broad query beats a narrow one on coverage (§6.4, Q3).** The operator's seed question — *"What tasks did I work on the Binoid repo project?"* — returns work from sibling repos in the same org, not only the exactly-named one. Recorded as a coverage figure, because a recall failure here presents as "not much happened" and is trusted as content (cluster B).
 - [ ] **Zero core edits.** Adding GitHub touched only `sources/github.py` and one entry-point line. Any file changed under `HiQS/hiqs/*.py` to make GitHub work is a plugin-contract defect (L2), fixed in the contract rather than absorbed here.
 - [ ] **Attestation is total.** Every emitted `Candidate` carries a non-empty `source`, `evidence`, and `why`. A bare candidate fails the test — receipts are the product, not decoration.
 - [ ] **Idempotence.** Two consecutive `refresh` runs over an unchanged window produce zero inserts and zero updates; `SyncReport.counts` distinguishes inserted / updated / unchanged / skipped / rejected. Never auto-delete (L15).
@@ -1857,7 +2011,17 @@ Not gated on Phase 5, which is on-demand-only and may never run.
 
 ---
 
-*Plan owner: the operator. Next step: open the GitHub issue on
+*Plan owner: the operator. **Phases 0 and 1 are built, reviewed and green** —
+1,499 LOC core, 107 tests passing, via marathons M1 and M2 (2026-08-03).*
+
+*Next step: **operator checkpoint A**, amended — write the queries, judge the
+paired disagreement set blind, and let the answer key accumulate from what you
+recognise (§6.3, amended 2026-08-03). The vector-leg gate there can remove torch
+from the plan and reshape Phases 3–4, so M3 does not fire before it. §6.4 records
+three retrieval-path gaps the operator's own seed questions exposed — project
+affinity, time-window retrieval, and cross-source reference linking — two of which
+land in Phase 2 and must be specified before it is built.*
+
+*Still open: the GitHub issue belongs on
 [`HiQS-Suite/HiQS`](https://github.com/HiQS-Suite/HiQS) (issue-first SOP; not this
-repo — it is being archived), then Phase 0 skeleton in `HiQS/` — `plugins.py`,
-`events.py`, `db.py`, the contract test, and the clean-room import pin.*
+repo — it is being archived).*
