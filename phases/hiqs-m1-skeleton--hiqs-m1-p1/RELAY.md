@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m1-p1
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M1-P1-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -106,3 +106,20 @@ Implemented the self-contained HiQS package scaffold in the permitted files.
 - Added version-only package initialization and the frozen `Source`, `SyncReport`, `Doc`, and `Candidate` contract records. `SyncReport` explicitly documents all six reconciliation count keys, including `pruned`.
 - Added stdlib entry-point discovery (`discover_sources`) and focused tests for field order/defaults, frozen mutation rejection, the reconciliation key, and clean discovery behavior.
 - Added subtree-local test path setup. Verified with `HiQS/.venv/bin/python -m pytest HiQS/tests/test_plugins.py -q` — 7 passed.
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+Reviewed all five artifacts on disk in full (`HiQS/pyproject.toml`, `HiQS/hiqs/__init__.py`, `HiQS/hiqs/plugins.py`, `HiQS/tests/conftest.py`, `HiQS/tests/test_plugins.py`) against `PROJECT/2-WORKING/HIQS-PROJECT.md` §5 & §11.
+
+- Dataclasses (`Source`, `SyncReport`, `Doc`, `Candidate`) are `@dataclass(frozen=True)` with exact field names, order, and defaults matching §5.
+- `SyncReport.counts` docstring documents all six reconciliation keys including `pruned`.
+- `discover_sources()` uses stdlib `importlib.metadata` entry-point discovery.
+- `HiQS/pyproject.toml` defines standalone `hiqs` package with the exact 4 top-level dependencies + `pytest` dev extra.
+- `HiQS/tests/test_plugins.py` verifies field ordering, frozen immutability, default values, docstring key documentation, and clean discovery behavior.
+- Executed `HiQS/.venv/bin/python -m pytest HiQS/tests/test_plugins.py -q` — 7 passed cleanly.
+- Full file sweep found zero pre-existing or introduced defects.
+
+**Verdict:** Approved
+
