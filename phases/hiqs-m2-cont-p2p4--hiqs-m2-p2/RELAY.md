@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m2-p2
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-HIQS-M2-P2-TURN-3 builder=agy reviewer=codex round-cap=11 -->
@@ -214,3 +214,17 @@ relay metadata; no functional failing test was recorded there.
 Addressed reviewer feedback:
 - **docs_index.py**: Removed all remaining ID-derived unit fallbacks (`doc.unit if doc.unit else doc.id` and `or existing_id`). `Doc.unit` is now strictly the sole membership authority. An empty `Doc.unit` does not establish an ID-derived unit and pre-existing rows without persisted `doc_units` membership are retained rather than matched to an attested unit by ID.
 - **tests**: Added `test_doc_with_empty_unit_is_not_pruned_when_id_is_attested` to `test_docs_index.py`, verifying that `Doc(id="alpha", unit="")` is NOT pruned when `alpha` is attested, and becomes reconcilable only once `unit="alpha"` is explicitly supplied. Kept the opaque-ID regression test. All 55 test items in the scoped suite pass (`54 passed, 1 xfailed`).
+
+### Round 3 · Reviewer · codex
+
+swept file: yes
+
+Read every allowed implementation and test file in full. The document-unit sidecar now
+uses only `Doc.unit`; pre-existing rows without a recorded non-empty membership are
+retained, while opaque IDs and colon-containing units reconcile correctly. Vault clean
+deletions are attested and errored walks retain prior rows. I found no additional
+blocking pre-existing defects in the swept files.
+
+Reproduced the scoped suite: `54 passed, 1 xfailed`.
+
+**Verdict:** Approved
