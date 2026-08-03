@@ -79,12 +79,17 @@ def project_docs(
     }
     errors: list[str] = []
 
-    t0 = time.perf_counter()
+    existing_global_docs: dict[str, set[str]] = {}
+    for doc_id, src_name in connection.execute("SELECT id, source FROM docs").fetchall():
+        existing_global_docs.setdefault(doc_id, set()).add(src_name)
 
-    existing_global_docs = {
-        row[0]: row[1]
-        for row in connection.execute("SELECT id, source FROM docs").fetchall()
-    }
+    for doc_id, src_set in existing_global_docs.items():
+        if len(src_set) > 1:
+            sources_str = ", ".join(sorted(src_set))
+            raise ValueError(
+                f"Existing database contains duplicate doc ID '{doc_id}' across multiple sources ({sources_str})"
+            )
+
     seen_in_batch: dict[str, str] = {}
 
     docs_to_embed: list[Doc] = []
@@ -135,9 +140,10 @@ def project_docs(
                     )
             seen_in_batch[doc.id] = source.name
 
-            if doc.id in existing_global_docs and existing_global_docs[doc.id] != source.name:
+            if doc.id in existing_global_docs and source.name not in existing_global_docs[doc.id]:
+                other_src = next(iter(existing_global_docs[doc.id]))
                 raise ValueError(
-                    f"Doc ID '{doc.id}' from source '{source.name}' collides with existing doc from source '{existing_global_docs[doc.id]}'"
+                    f"Doc ID '{doc.id}' from source '{source.name}' collides with existing doc from source '{other_src}'"
                 )
 
             scanned_doc_ids.add(doc.id)
@@ -173,13 +179,17 @@ def project_docs(
         counts["pruned"] += len(to_prune)
 
     # Delta embedding before DB mutations so failures leave DB state unchanged
+    embed_ms: float = 0.0
     vec_data: list[tuple[str, str, int, bytes]] = []
     if docs_to_embed:
         if embedder is None:
             embedder = get_default_embedder(model_name)
 
         texts = [f"{d.title}\n{d.body}" if d.title else d.body for d in docs_to_embed]
+        t0 = time.perf_counter()
         raw_vectors = _encode_texts(embedder, texts)
+        t1 = time.perf_counter()
+        embed_ms = round((t1 - t0) * 1000, 2)
 
         if raw_vectors is None or not hasattr(raw_vectors, "__len__"):
             raise ValueError("Encoder result is not a valid sequence")
@@ -223,10 +233,7 @@ def project_docs(
             )
         connection.execute("DELETE FROM docs_vec WHERE doc_id NOT IN (SELECT id FROM docs)")
 
-    t1 = time.perf_counter()
-    embed_ms = round((t1 - t0) * 1000, 2)
     peak_rss_mb = get_peak_rss_mb()
-
     meta = {"embed_ms": embed_ms, "peak_rss_mb": peak_rss_mb}
     return SyncReport(counts=counts, errors=errors, meta=meta)
 

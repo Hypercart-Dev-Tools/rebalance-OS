@@ -36,7 +36,11 @@ def _sql_writers(table: str) -> set[tuple[str, str]]:
             continue
 
         rel_path = py_file.relative_to(pkg_path.parent).as_posix()
-        for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
+        for function in (
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        ):
             for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
                 call_args = call.args + [kw.value for kw in call.keywords]
                 for argument in call_args:
@@ -353,4 +357,91 @@ def test_vector_serialization_roundtrip():
     assert dim == 4
     recovered = deserialize_vector(blob)
     assert pytest.approx(recovered) == vec
+
+
+def test_sql_writers_detects_async_function():
+    """Assert _sql_writers AST scan catches async def functions writing to target table."""
+    code = """
+async def async_writer():
+    cursor.execute("INSERT INTO docs (id) VALUES ('1')")
+"""
+    tree = ast.parse(code)
+    pattern = re.compile(r"\bINSERT\s+INTO\s+docs\b", re.IGNORECASE)
+    writers = set()
+    for function in (
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
+        for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
+            call_args = call.args + [kw.value for kw in call.keywords]
+            for argument in call_args:
+                if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
+                    if pattern.search(argument.value):
+                        writers.add(function.name)
+    assert writers == {"async_writer"}
+
+
+def test_preexisting_corrupt_db_duplicate_doc_id_raises_and_preserves(tmp_path):
+    """Assert existing database containing duplicate doc ID across sources raises and preserves DB rows."""
+    conn = db_connection(tmp_path / "hiqs.db")
+
+    conn.execute(
+        "INSERT INTO docs (source, id, title, body, url, ts, project, author) VALUES ('srcA', 'corrupt:1', 'T1', 'B1', '', '', '', '')"
+    )
+    conn.execute(
+        "INSERT INTO docs (source, id, title, body, url, ts, project, author) VALUES ('srcB', 'corrupt:1', 'T2', 'B2', '', '', '', '')"
+    )
+    conn.commit()
+
+    doc1 = Doc(source="srcA", id="corrupt:1", title="T1", body="B1")
+    s1 = MockSource("srcA", [doc1])
+
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
+
+    with pytest.raises(
+        ValueError, match="Existing database contains duplicate doc ID 'corrupt:1' across multiple sources"
+    ):
+        project_docs(conn, sources=[s1], embedder=mock_embedder)
+
+    rows = conn.execute("SELECT source, id FROM docs WHERE id = 'corrupt:1' ORDER BY source").fetchall()
+    assert len(rows) == 2
+    assert rows == [("srcA", "corrupt:1"), ("srcB", "corrupt:1")]
+
+    conn.close()
+
+
+def test_embed_ms_times_only_encode_and_reports_zero_when_no_encode(tmp_path, monkeypatch):
+    """Assert embed_ms measures only encode() duration and returns 0 when no encoding runs."""
+    conn = db_connection(tmp_path / "hiqs.db")
+
+    doc1 = Doc(source="mock", id="mock:1", title="Title", body="Body")
+    source = MockSource("mock", [doc1])
+
+    clock = [100.0]
+
+    def mock_perf_counter():
+        return clock[0]
+
+    monkeypatch.setattr("time.perf_counter", mock_perf_counter)
+
+    def mock_encode(texts):
+        clock[0] += 0.075  # 75 ms spent inside encode
+        return [[0.1] * 384]
+
+    mock_embedder = MagicMock()
+    mock_embedder.encode.side_effect = mock_encode
+
+    clock[0] += 5.0  # Simulate time spent outside encode
+
+    report1 = project_docs(conn, sources=[source], embedder=mock_embedder)
+    assert report1.meta["embed_ms"] == 75.0
+
+    mock_embedder.encode.reset_mock()
+    report2 = project_docs(conn, sources=[source], embedder=mock_embedder)
+    assert report2.meta["embed_ms"] == 0.0
+
+    conn.close()
+
 
