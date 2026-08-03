@@ -117,3 +117,12 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Aside from those findings, I swept all scoped artifact files, including their pre-existing code, and found no additional issues.
 
 **Verdict:** Changes requested
+
+### Round 3 · Builder · agy
+
+- **Files touched:**
+  - `HiQS/hiqs/sources/vault.py`: Implemented source-owned `vault_chunks(path, chunk_id, title, body)` table for persisting and reconciling derived chunk rows within-unit during `fetch()` transactions; updated `_ensure_schema` to inspect table columns via `PRAGMA table_info` before executing `ALTER TABLE` to avoid blindly suppressing non-duplicate schema/DB errors.
+  - `HiQS/tests/test_vault.py`: Updated `test_vault_heading_rename_and_deletion_chunk_ids` to assert directly against persisted `vault_chunks` rows in SQLite, verifying that heading renames, heading deletions, and note unlinks reconcile old chunk rows in the database within the transaction; added `test_ensure_schema_adds_content_column_when_missing`.
+  - `HiQS/hiqs/sources/__init__.py`: Verified clean exports.
+  - `HiQS/pyproject.toml`: Verified entry point registration.
+

@@ -119,7 +119,7 @@ def test_vault_docs_chunking_and_id_shape(tmp_path):
 
 
 def test_vault_heading_rename_and_deletion_chunk_ids(tmp_path):
-    """Renaming or deleting a heading produces distinct chunk IDs."""
+    """Renaming or deleting a heading reconciles stored chunk rows in vault_chunks in the same transaction."""
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir()
 
@@ -138,6 +138,13 @@ def test_vault_heading_rename_and_deletion_chunk_ids(tmp_path):
         ids_run1 = {doc.id for doc in docs_run1}
         assert len(ids_run1) == 2
 
+        # Assert persisted rows in vault_chunks raw table match run 1 docs
+        persisted_ids_run1 = {
+            row[0]
+            for row in connection.execute("SELECT chunk_id FROM vault_chunks WHERE path = 'topic.md'").fetchall()
+        }
+        assert persisted_ids_run1 == ids_run1
+
         # Rename Heading Original and Delete Heading To Delete
         note_path.write_text(
             "# Heading Renamed\n\nContent original.",
@@ -149,14 +156,51 @@ def test_vault_heading_rename_and_deletion_chunk_ids(tmp_path):
         ids_run2 = {doc.id for doc in docs_run2}
         assert len(ids_run2) == 1
 
-        # Old IDs must not be present in run 2 docs
+        # Assert persisted rows in vault_chunks raw table reflect the within-unit reconciliation
+        persisted_ids_run2 = {
+            row[0]
+            for row in connection.execute("SELECT chunk_id FROM vault_chunks WHERE path = 'topic.md'").fetchall()
+        }
+        assert persisted_ids_run2 == ids_run2
+
+        # Old IDs must be deleted from vault_chunks DB table
         assert ids_run1.isdisjoint(ids_run2)
+        assert ids_run1.isdisjoint(persisted_ids_run2)
 
         # Hash of "Heading Renamed"
         expected_hash = hashlib.sha256(b"Heading Renamed").hexdigest()[:12]
         assert f"vault:topic.md:{expected_hash}" in ids_run2
+
+        # Delete note_path and assert vault_chunks rows are pruned in DB
+        note_path.unlink()
+        SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+        remaining_chunks = connection.execute("SELECT chunk_id FROM vault_chunks WHERE path = 'topic.md'").fetchall()
+        assert len(remaining_chunks) == 0
     finally:
         connection.close()
+
+
+def test_ensure_schema_adds_content_column_when_missing(tmp_path):
+    """Assert _ensure_schema adds missing content column and vault_chunks table cleanly."""
+    from hiqs.sources.vault import _ensure_schema
+
+    db_path = tmp_path / "legacy.db"
+    import sqlite3
+
+    conn = sqlite3.connect(db_path)
+    try:
+        # Create legacy table without content column
+        conn.execute("CREATE TABLE vault_files(path TEXT PRIMARY KEY, content_hash TEXT NOT NULL, mtime TEXT NOT NULL)")
+        _ensure_schema(conn)
+
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(vault_files)").fetchall()]
+        assert "content" in cols
+
+        chunk_cols = [r[1] for r in conn.execute("PRAGMA table_info(vault_chunks)").fetchall()]
+        assert "chunk_id" in chunk_cols
+    finally:
+        conn.close()
+
 
 
 def test_vault_unreadable_file_handling(tmp_path, monkeypatch):

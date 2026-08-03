@@ -76,7 +76,7 @@ def _resolve_vault_path(config: Mapping[str, Any] | Any) -> Path | None:
 
 
 def _ensure_schema(connection: Any) -> None:
-    """Ensure vault_files raw table exists with required columns."""
+    """Ensure vault_files and vault_chunks raw tables exist with required columns."""
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS vault_files(
@@ -87,10 +87,26 @@ def _ensure_schema(connection: Any) -> None:
         )
         """
     )
-    try:
+    columns = {
+        row[1]
+        for row in connection.execute("PRAGMA table_info(vault_files)").fetchall()
+    }
+    if "content" not in columns:
         connection.execute("ALTER TABLE vault_files ADD COLUMN content TEXT")
-    except Exception:
-        pass
+
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS vault_chunks(
+          path TEXT NOT NULL,
+          chunk_id TEXT PRIMARY KEY,
+          title TEXT NOT NULL,
+          body TEXT NOT NULL
+        )
+        """
+    )
+    connection.execute(
+        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_path ON vault_chunks(path)"
+    )
 
 
 def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
@@ -155,6 +171,12 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
             if rel_path in existing:
                 old_hash, _old_mtime = existing[rel_path]
                 if old_hash == content_hash:
+                    chunk_cnt = connection.execute(
+                        "SELECT COUNT(*) FROM vault_chunks WHERE path = ?", (rel_path,)
+                    ).fetchone()[0]
+                    if chunk_cnt == 0 and content_str:
+                        with connection:
+                            _update_file_chunks(connection, rel_path, content_str)
                     counts["unchanged"] += 1
                 else:
                     with connection:
@@ -162,6 +184,7 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                             "UPDATE vault_files SET content_hash = ?, mtime = ?, content = ? WHERE path = ?",
                             (content_hash, mtime_str, content_str, rel_path),
                         )
+                        _update_file_chunks(connection, rel_path, content_str)
                     counts["updated"] += 1
             else:
                 with connection:
@@ -169,6 +192,7 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                         "INSERT INTO vault_files (path, content_hash, mtime, content) VALUES (?, ?, ?, ?)",
                         (rel_path, content_hash, mtime_str, content_str),
                     )
+                    _update_file_chunks(connection, rel_path, content_str)
                 counts["inserted"] += 1
 
     # Within-unit reconciliation (§5 rule 2): if no fetch errors occurred, prune files deleted from disk.
@@ -177,10 +201,10 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
         if to_prune:
             with connection:
                 connection.executemany("DELETE FROM vault_files WHERE path = ?", [(p,) for p in to_prune])
+                connection.executemany("DELETE FROM vault_chunks WHERE path = ?", [(p,) for p in to_prune])
             counts["pruned"] += len(to_prune)
 
     return SyncReport(counts=counts, errors=errors)
-
 
 
 def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:
@@ -281,6 +305,17 @@ def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:
     return result
 
 
+def _update_file_chunks(connection: Any, rel_path: str, content: str) -> None:
+    """Helper to update source-owned vault_chunks table for a given path within a transaction."""
+    chunks = _chunk_markdown_content(content, rel_path)
+    connection.execute("DELETE FROM vault_chunks WHERE path = ?", (rel_path,))
+    if chunks:
+        connection.executemany(
+            "INSERT INTO vault_chunks (path, chunk_id, title, body) VALUES (?, ?, ?, ?)",
+            [(rel_path, doc.id, doc.title, doc.body) for doc in chunks],
+        )
+
+
 def docs(connection: Any) -> Iterable[Doc]:
     """Expose vault note chunks through the public document-provider contract.
 
@@ -288,12 +323,31 @@ def docs(connection: Any) -> Iterable[Doc]:
     Doc.author is "" for vault notes (they are the operator's own).
     """
     _ensure_schema(connection)
-    rows = connection.execute("SELECT path, content FROM vault_files ORDER BY path").fetchall()
-    documents: list[Doc] = []
-    for rel_path, content in rows:
-        if content:
-            documents.extend(_chunk_markdown_content(content, rel_path))
-    return documents
+    chunk_rows = connection.execute(
+        "SELECT chunk_id, title, body FROM vault_chunks ORDER BY path, chunk_id"
+    ).fetchall()
+
+    if not chunk_rows:
+        rows = connection.execute("SELECT path, content FROM vault_files ORDER BY path").fetchall()
+        documents: list[Doc] = []
+        for rel_path, content in rows:
+            if content:
+                documents.extend(_chunk_markdown_content(content, rel_path))
+        return documents
+
+    return [
+        Doc(
+            source="vault",
+            id=chunk_id,
+            title=title,
+            body=body,
+            url="",
+            ts="",
+            project="",
+            author="",
+        )
+        for chunk_id, title, body in chunk_rows
+    ]
 
 
 SOURCE = Source(
