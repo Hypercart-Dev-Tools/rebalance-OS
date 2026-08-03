@@ -69,19 +69,6 @@ def _encode_texts(embedder: Any, texts: list[str]) -> Any:
     raise TypeError(f"Embedder must have an encode method, got {type(embedder)}")
 
 
-def _matches_unit(unit: str, doc_id: str, source_name: str, doc_unit_map: dict[str, str]) -> bool:
-    """Check if doc_id belongs to unit."""
-    if doc_id in doc_unit_map:
-        return doc_unit_map[doc_id] == unit
-    if doc_id == unit:
-        return True
-    if doc_id.startswith(f"{source_name}:{unit}:"):
-        return True
-    if doc_id.startswith(f"{unit}:"):
-        return True
-    return False
-
-
 def project_docs(
     connection: sqlite3.Connection,
     sources: Iterable[Source] | None = None,
@@ -93,6 +80,10 @@ def project_docs(
 
     This function is the SOLE writer to the `docs` table (§5 rule 1).
     """
+    connection.execute(
+        "CREATE TABLE IF NOT EXISTS doc_units (doc_id TEXT PRIMARY KEY, unit TEXT NOT NULL)"
+    )
+
     if sources is None:
         sources = discover_sources()
 
@@ -123,6 +114,7 @@ def project_docs(
     inserts: list[tuple[str, str, str, str, str, str, str, str]] = []
     updates: list[tuple[str, str, str, str, str, str, str, str]] = []
     prunes: list[tuple[str, str]] = []
+    doc_units_to_upsert: list[tuple[str, str]] = []
 
     invalidated_vec_doc_ids: list[str] = []
 
@@ -141,6 +133,12 @@ def project_docs(
             (source.name,),
         ).fetchall()
         existing_map = {row[0]: row[1:] for row in existing_rows}
+
+        existing_units_rows = connection.execute(
+            "SELECT doc_id, unit FROM doc_units WHERE doc_id IN (SELECT id FROM docs WHERE source = ?)",
+            (source.name,),
+        ).fetchall()
+        existing_doc_units = {r[0]: r[1] for r in existing_units_rows}
 
         existing_vec_ids = {
             r[0]
@@ -182,6 +180,7 @@ def project_docs(
             unit = doc.unit if doc.unit else doc.id
             doc_unit_map[doc.id] = unit
             scanned_doc_ids_by_unit.setdefault(unit, set()).add(doc.id)
+            doc_units_to_upsert.append((doc.id, unit))
 
             new_tuple = (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author)
 
@@ -216,11 +215,10 @@ def project_docs(
         if attested_units:
             to_prune: list[str] = []
             for existing_id in existing_map:
-                for unit in attested_units:
-                    if _matches_unit(unit, existing_id, source.name, doc_unit_map):
-                        if existing_id not in scanned_doc_ids_by_unit.get(unit, set()):
-                            to_prune.append(existing_id)
-                        break
+                existing_unit = doc_unit_map.get(existing_id) or existing_doc_units.get(existing_id) or existing_id
+                if existing_unit in attested_units:
+                    if existing_id not in scanned_doc_ids_by_unit.get(existing_unit, set()):
+                        to_prune.append(existing_id)
 
             for doc_id in to_prune:
                 prunes.append((source.name, doc_id))
@@ -255,6 +253,11 @@ def project_docs(
 
     # Single atomic transaction for all DB mutations
     with connection:
+        if doc_units_to_upsert:
+            connection.executemany(
+                "INSERT OR REPLACE INTO doc_units (doc_id, unit) VALUES (?, ?)",
+                doc_units_to_upsert,
+            )
         if inserts:
             connection.executemany(
                 "INSERT INTO docs (source, id, title, body, url, ts, project, author) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -274,6 +277,10 @@ def project_docs(
                 "DELETE FROM docs_vec WHERE doc_id = ?",
                 [(p[1],) for p in prunes],
             )
+            connection.executemany(
+                "DELETE FROM doc_units WHERE doc_id = ?",
+                [(p[1],) for p in prunes],
+            )
         if invalidated_vec_doc_ids:
             connection.executemany(
                 "DELETE FROM docs_vec WHERE doc_id = ?",
@@ -285,6 +292,7 @@ def project_docs(
                 vec_data,
             )
         connection.execute("DELETE FROM docs_vec WHERE doc_id NOT IN (SELECT id FROM docs)")
+        connection.execute("DELETE FROM doc_units WHERE doc_id NOT IN (SELECT id FROM docs)")
 
     peak_rss_mb = get_peak_rss_mb()
     meta = {"embed_ms": embed_ms, "peak_rss_mb": peak_rss_mb}

@@ -745,11 +745,13 @@ def test_source_with_no_attestation_prunes_nothing(tmp_path):
 
 
 def test_doc_unit_membership_and_colon_in_id(tmp_path):
-    """Assert unit membership comes from Doc.unit, including for an ID with colons, and get_doc_unit is gone."""
+    """Assert unit membership comes from Doc.unit (sole authority), get_doc_unit & _matches_unit are gone, and opaque colon IDs decouple from unit derivation."""
     assert not hasattr(docs_index, "get_doc_unit")
+    assert not hasattr(docs_index, "_matches_unit")
 
     conn = db_connection(tmp_path / "hiqs.db")
-    doc1 = Doc(source="custom", id="sub/dir:file.md:chunk1", title="T1", body="B1", unit="sub/dir:file.md")
+    # Opaque ID that does NOT begin with its unit name
+    doc1 = Doc(source="custom", id="opaque_hash_9999", title="T1", body="B1", unit="sub/dir:file.md")
     source = MockSource("custom", [doc1])
     mock_embedder = MagicMock()
     mock_embedder.encode.return_value = [[0.1] * 384]
@@ -757,6 +759,7 @@ def test_doc_unit_membership_and_colon_in_id(tmp_path):
     report_sync1 = SyncReport(counts={}, units_ok=("sub/dir:file.md",))
     project_docs(conn, sources=[source], embedder=mock_embedder, reports={"custom": report_sync1})
     assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 1
 
     # Now empty source for sub/dir:file.md unit
     source_empty = MockSource("custom", [])
@@ -764,5 +767,6 @@ def test_doc_unit_membership_and_colon_in_id(tmp_path):
     rep2 = project_docs(conn, sources=[source_empty], embedder=mock_embedder, reports={"custom": report_sync2})
     assert rep2.counts["pruned"] == 1
     assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 0
 
     conn.close()

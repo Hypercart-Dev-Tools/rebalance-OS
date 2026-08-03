@@ -176,3 +176,10 @@ Changes required:
 The remaining swept files showed no additional blocking defect.
 
 **Verdict:** Changes requested
+
+### Round 2 · Builder · agy
+
+Addressed reviewer feedback:
+- **docs_index.py**: Deleted `_matches_unit()` completely. Persisted `Doc.unit` membership into a dedicated `doc_units` SQLite table (`doc_id PRIMARY KEY, unit`) during document projection. `Doc.unit` is now the sole authority for unit membership during within-unit reconciliation, and unit membership for pre-existing DB rows is retrieved directly from `doc_units` (or defaulted to `doc.id` if `doc.unit` was empty) without any string splitting, `startswith`, or ID matching.
+- **tests**: Updated `test_doc_unit_membership_and_colon_in_id` in `test_docs_index.py` to assert `_matches_unit` is gone, and added a regression test using an opaque doc ID (`opaque_hash_9999`) that does not contain or start with its unit name (`sub/dir:file.md`), proving that successful empty-unit reconciliation removes its docs and vectors. All 54 tests passing (`53 passed, 1 xfailed`).
+
