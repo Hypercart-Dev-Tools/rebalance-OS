@@ -181,3 +181,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
   - `HiQS/tests/test_contract.py`: Verified seam contract tests pass.
 - **Verification**: `pytest HiQS/tests/test_docs_index.py HiQS/tests/test_contract.py` passed cleanly (29 passed, 1 expected xfail for M3 ranking seam).
 
+### Round 5 · Reviewer · codex
+
+- swept file: yes
+- **Blocker — the required production successful-unit attestation is still unwired.** `Source` remains a frozen dataclass containing only `name`, `fetch`, `docs`, and `candidates`; the real vault `SOURCE` exposes neither `units` nor `successful_units`. `project_docs()` therefore gets its only production units from emitted docs, while the new `sync_successful_units` table is neither defined by the schema nor written by `vault.fetch()`. The `successful_units=` parameter and duck-typed test source demonstrate an escape hatch, not the required fetch-to-projection contract. An empty-but-successful vault unit will still retain old docs/vectors in normal use. Expand the permitted scope to wire an explicit per-run successful-unit result through the source contract and vault provider, then add an integration regression using that real path (including a retained raw row after a failed sibling fetch).
+- **Blocker — deleted vault files remain unreconcilable.** `vault.fetch()` still never removes paths absent from a successful scan, and `vault.docs()` still raises on every retained missing path. Consequently one deleted file makes `project_docs()` skip the entire vault source, leaving every stale document/vector intact. Define and implement the successful-scan deletion semantics alongside the explicit attestation above; do not treat a historical `vault_files` row as evidence of this run's success.
+- **Review evidence:** completed the required whole-file sweep of `HiQS/hiqs/docs_index.py`, `HiQS/tests/test_docs_index.py`, and `HiQS/tests/test_contract.py`, including pre-existing code. No additional defects were found in those three scoped files. Ran `cd HiQS && pytest tests/test_docs_index.py tests/test_contract.py`: 29 passed, 1 expected xfail.
+
+**Verdict:** Changes requested
