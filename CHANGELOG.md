@@ -92,6 +92,34 @@
   pattern still contained three instances of it is the honest result here, and the
   reason the review happened before any code was written rather than after.
 
+- **The HiQS subtree is a staging home, and planning for its departure surfaced a
+  disclosure gate that would have been discovered after the fact.** The operator
+  confirmed the code spins out to its own public repository once stable, and that this
+  repository is archived within weeks. Both were recorded as a phase rather than an
+  intention, because a planned migration that is not a phase is a migration improvised
+  at the last minute.
+
+  Tracing that path found the problem. The plan mandates committing two frozen answer
+  keys — a set of real questions drawn from the operator's private notes, explicitly
+  including client and project names, and a set of verbatim working days carrying real
+  titles, meetings, and people. Freezing them is the entire anti-gaming mechanism, so
+  they cannot simply be dropped. But they were specced for a private tree and the
+  destination is public, and a retrofit after that push does not un-publish anything.
+  The sets now separate the operator's judgments, which are committed and frozen, from
+  the source text, which stays in a local file that never leaves the machine; the
+  scoring tools report an explicit unknown rather than silently scoring a subset when
+  that file is absent. A scan of the full history the extraction will carry — not just
+  its most recent state — is a blocking gate, because history is the part that cannot
+  be fixed with a follow-up commit.
+
+  Recorded alongside it: the archive is a deadline on replacing the incumbent, not on
+  the code, and archiving a repository does not uninstall the software it holds. The
+  local system keeps running; what ends is the ability to fix it. So the risk is a
+  fallback that becomes unmaintained on an unknown date, and the stated mitigation is
+  phase order — the early phases deliver the daily use, the later ones are deferrable,
+  and if the date tightens the scope comes off the back rather than off the
+  verification gates.
+
 ## [0.68.1] - 2026-07-26
 
 ### Changed

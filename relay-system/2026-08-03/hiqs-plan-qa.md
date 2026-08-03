@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-03.
 -->
 
-NEXT: Reviewer
-STATUS: Open
-ROUND: 3 / 4
+NEXT: —
+STATUS: Closed
+ROUND: 2 / 4 (closed at r2)
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -287,5 +287,38 @@ chunks, mixed-width vectors, and a source stuck in `auth_expired` with no remedy
 **Open for r3, if run:** whether the 3/5 floor and the 2-chunk cap survive contact with real
 figures; whether §18.3's four counterpart invariants need detectors of their own or whether the
 phase gates that now carry them suffice.
+
+## Close — Producer (claude-a), operator-authorized
+
+VERDICT: PARKED
+Basis: 6/6 reviewer findings implemented across r1–r2 (2+1 Blockers, 3 Shoulds, 1 Nit; 0 declined), closed on operator instruction at r2. PARKED, not PASS: the Reviewer never issued an `Approved` verdict, and asserting one the reviewer did not give is the L22 failure this plan names — a doc's own status field is not evidence. Two items are parked for real measurement, not for another reading.
+
+**STATUS: Closed.** Closed by the operator, not carried to an Approved verdict — recorded honestly
+rather than dressed up, since the protocol reserves `Approved` for the Reviewer and agy never issued
+one.
+
+**Outcome across two rounds:** 6 substantive findings (2 Blockers r1, 1 Blocker r2, 3 Shoulds,
+1 Nit), **all accepted, all implemented, zero declined.** 9 `[Pass]` findings recorded with
+citations.
+
+**Why closed at r2 rather than driven to Approved.** The two items left open are the §7.1 floor
+(3/5 top-5 overlap) and the §6.1 chunk cap (2 per document). Neither is resolvable by another
+reading of the same prose — both are numbers that need contact with a real vault and a real
+morning's candidate set, which do not exist yet because no code does. A third round would re-read
+what r2 already read and produce a verdict on the same evidence. The correct next reviewer for
+those two numbers is the Phase 1 and Phase 3 evals, and both are written to move a threshold only
+with a recorded measurement.
+
+**What the two rounds bought, stated plainly:** three of the six findings are the same meta-pattern
+this plan is built to prevent — a state that reports success while degrading (orphaned chunks,
+mixed-width vectors, a source stuck in `auth_expired` with no remedy). A plan written specifically
+against that pattern still shipped three instances of it into review. That is the value of the
+exercise and the reason it ran before any code existed.
+
+**Superseded scope note.** After this relay closed, the operator confirmed `HiQS/` is a staging
+home: the code spins out to `HiQS-Suite/HiQS` (public, created 2026-08-03) once stable, and
+rebalance-OS is archived within weeks. That work is tracked as the plan's new Phase 6 and was not
+in this relay's Definition of Done — a future review should grade it fresh rather than assume this
+thread covered it.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

@@ -29,7 +29,8 @@ context_tags: [hiqs, rebuild, search, embeddings, plugins, observability, clean-
 effort: 5
 complexity: 4
 risk: 3
-phases: 6
+phases: 7
+spin_out_target: "https://github.com/HiQS-Suite/HiQS"
 ---
 
 # HiQS — Clean-Room Project Plan
@@ -42,7 +43,7 @@ phases: 6
 
 | What was just completed | What's next |
 |---|---|
-| Plan rev 5 authored and promoted to `2-WORKING` 2026-08-03, with the rev-4 eval gate rewritten to be falsifiable (n raised to 60–75, paired disagreement set made the primary artifact, ground-truth protocol written, query set frozen, FTS-only baseline promoted to a decision, split-decision rule, cost axis, floor + truncation gates). Codebase location settled: HiQS ships **inside this repo at `HiQS/`**, not as a separate repository, so the plan doc and the code it governs live under one `git log`. PDDA compliance sections added (frontmatter, this table, table of contents, per-phase QA gates, §16 boundary note). The standalone anti-patterns ledger was **verified against `CHANGELOG.md` and folded in** — six-cluster failure-mode taxonomy at the head of the Lessons section, seven incidents L1–L15 missed added as **L16–L22**, and two new plugin rules (§5.7 explicit network timeout, §5.8 watermark advances only on a completed fetch); source archived to `PROJECT/4-MISC/HiQS-ANTI-PATTERNS.md`. **The four tenets were then audited against the plan itself and two failed**: ATTESTED had no `author` field and RANKED had no obligation model and no detector — so `author`/`owed_by`/`due` landed on `Doc`/`Candidate`, `activity_at` split from `updated_at` (L20), `source_age_s`/`source_status` landed on `RankedAction`, §7.1 added a frozen ranking-judgment set with three gates, §2's non-negotiable was widened from *retrieval*-quality to all quality claims, and **§18 records the dogfooding audit in both directions**. An **agy relay review (r1, Changes requested)** then found 3 Blockers + 2 Shoulds, all accepted and applied: `Doc` was missing `source` (a pre-rev-5 mismatch with §9); §7.1's obligation gate was self-justifying — its failure could be discharged by rewording the tenet, so it now **blocks**, with restatement demoted to a consequence of an explicit override; and **"never auto-delete" was silently corrupting the corpus** — chunk-by-heading plus no pruning means a renamed heading orphans its old `docs`/`docs_vec` rows forever, so rule 2 is now within-unit reconciliation, never across units and never on a failed fetch. Three unfalsifiable gate items got numbers. Cross-model review (Qwen) added the coverage boundary: the four tenets cover **neither** cluster D (resource) **nor** E (scope accretion), so **§18.3** names four counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL) and **L23** records the incumbent reintroducing an already-fixed defect because the lesson was prose. **r2 found 1 Blocker + 3 Shoulds + 1 Nit, all applied**: r1's own gate fix had propagated to §7.1 but not to the Phase 3 checklist (the exact drift class this plan warns about); §7.1's gates were all relative, so an absolute **floor of 3/5 top-5 overlap** was added; `docs_vec` reads must filter `WHERE model = <active>` or mixed 384/1024-dim vectors crash the cosine; **`hiqs auth <source>` added as a 6th subcommand** (~40 LOC, recorded not absorbed) because an unattended launchd job cannot complete a browser OAuth flow; and a **2-chunk-per-document cap** after RRF stops one long note flooding the top-10. **No code written.** | **Open the GitHub issue** to satisfy the issue-first SOP (`gh_issue: TBA` today), then run **Phase 0 — Skeleton**: scaffold `HiQS/`, `db.py`, `config.py`, `plugins.py`, `events.py`, and the fake-plugin contract test. Exit when `hiqs status` on an empty DB returns structured JSON and a fake event lands in `events`. |
+| Plan rev 5 authored and promoted to `2-WORKING` 2026-08-03, with the rev-4 eval gate rewritten to be falsifiable (n raised to 60–75, paired disagreement set made the primary artifact, ground-truth protocol written, query set frozen, FTS-only baseline promoted to a decision, split-decision rule, cost axis, floor + truncation gates). Codebase location settled: HiQS ships **inside this repo at `HiQS/`**, not as a separate repository, so the plan doc and the code it governs live under one `git log`. PDDA compliance sections added (frontmatter, this table, table of contents, per-phase QA gates, §16 boundary note). The standalone anti-patterns ledger was **verified against `CHANGELOG.md` and folded in** — six-cluster failure-mode taxonomy at the head of the Lessons section, seven incidents L1–L15 missed added as **L16–L22**, and two new plugin rules (§5.7 explicit network timeout, §5.8 watermark advances only on a completed fetch); source archived to `PROJECT/4-MISC/HiQS-ANTI-PATTERNS.md`. **The four tenets were then audited against the plan itself and two failed**: ATTESTED had no `author` field and RANKED had no obligation model and no detector — so `author`/`owed_by`/`due` landed on `Doc`/`Candidate`, `activity_at` split from `updated_at` (L20), `source_age_s`/`source_status` landed on `RankedAction`, §7.1 added a frozen ranking-judgment set with three gates, §2's non-negotiable was widened from *retrieval*-quality to all quality claims, and **§18 records the dogfooding audit in both directions**. An **agy relay review (r1, Changes requested)** then found 3 Blockers + 2 Shoulds, all accepted and applied: `Doc` was missing `source` (a pre-rev-5 mismatch with §9); §7.1's obligation gate was self-justifying — its failure could be discharged by rewording the tenet, so it now **blocks**, with restatement demoted to a consequence of an explicit override; and **"never auto-delete" was silently corrupting the corpus** — chunk-by-heading plus no pruning means a renamed heading orphans its old `docs`/`docs_vec` rows forever, so rule 2 is now within-unit reconciliation, never across units and never on a failed fetch. Three unfalsifiable gate items got numbers. Cross-model review (Qwen) added the coverage boundary: the four tenets cover **neither** cluster D (resource) **nor** E (scope accretion), so **§18.3** names four counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL) and **L23** records the incumbent reintroducing an already-fixed defect because the lesson was prose. **r2 found 1 Blocker + 3 Shoulds + 1 Nit, all applied**: r1's own gate fix had propagated to §7.1 but not to the Phase 3 checklist (the exact drift class this plan warns about); §7.1's gates were all relative, so an absolute **floor of 3/5 top-5 overlap** was added; `docs_vec` reads must filter `WHERE model = <active>` or mixed 384/1024-dim vectors crash the cosine; **`hiqs auth <source>` added as a 6th subcommand** (~40 LOC, recorded not absorbed) because an unattended launchd job cannot complete a browser OAuth flow; and a **2-chunk-per-document cap** after RRF stops one long note flooding the top-10. Relay closed at r2 (`VERDICT: PARKED` — all findings fixed; the reviewer never issued `Approved`, so none is claimed). **Then the operator confirmed the spin-out**: `HiQS/` is a **staging home**, extracted to [`HiQS-Suite/HiQS`](https://github.com/HiQS-Suite/HiQS) (public, empty, created 2026-08-03) once stable, with rebalance-OS archived within weeks — added as **§19 + a real Phase 6**, which surfaced the **public-repo disclosure gate**: the frozen eval sets are built from a private vault and explicitly include client names, and were specced to be committed into what becomes a public repo. **No code written.** | **Open the GitHub issue on [`HiQS-Suite/HiQS`](https://github.com/HiQS-Suite/HiQS), not here** — an archived repo's issues freeze, and PDDA's `source:` URL disambiguates a foreign-repo issue (§19.3). Then run **Phase 0 — Skeleton**: scaffold `HiQS/`, `db.py`, `config.py`, `plugins.py`, `events.py`, the fake-plugin contract test, and the clean-room import pin — which is now the **extraction precondition**, not just a purity check. Exit when `hiqs status` on an empty DB returns structured JSON and a fake event lands in `events`. |
 
 ## Table of contents
 
@@ -55,11 +56,13 @@ phases: 6
 | **3** | [Phase 3 — Calendar, ask, MCP](#phase-3--calendar-ask-mcp) | `calendar.py`, `ask.py`, MCP server, `Ranker` | [QA gate — Phase 3](#qa-gate--phase-3) |
 | **4** | [Phase 4 — Surfaces and ops](#phase-4--surfaces-and-ops) | `web.py`, one launchd job, keyring hardening | [QA gate — Phase 4](#qa-gate--phase-4) |
 | **5** | [Phase 5 — On demand only](#phase-5--on-demand-only) | extra plugins, LLM seams, sentinel, writes | [QA gate — Phase 5](#qa-gate--phase-5) |
+| **6** | [Phase 6 — Extraction](#phase-6--extraction-to-hiqs-suitehiqs) | spin-out to `HiQS-Suite/HiQS`; plan doc travels; incumbent archived | [QA gate — Phase 6](#qa-gate--phase-6) |
 | — | [Standing hygiene](#standing-hygiene) | cross-phase invariants | continuous |
 | — | [§7.1 Ranking quality](#71-ranking-quality--the-second-detector) | the frozen judgment set + 3 gates behind the RANKED tenet | checked in the Phase 3 gate |
 | — | [§16 PDDA compliance](#16-pdda-compliance-and-the-governance-boundary) | how this doc and `HiQS/` relate to repo governance | n/a |
 | — | [§17 Phase findings (memory injection)](#17-phase-findings-memory-injection) | durable spike/discovery findings | filled per phase |
 | — | [§18 Tenets & self/meta compliance](#18-hiqs-tenets--selfmeta-compliance--dogfooding) | the four tenets audited against both product and process, **plus the four failure classes they cannot see** ([§18.3](#183-the-four-tenets-are-not-the-whole-safety-surface)) | re-run at §13 cutover |
+| — | [§19 Extraction & the archive](#19-extraction-to-hiqs-suitehiqs-and-the-rebalance-os-archive) | `HiQS/` is a staging home; spin-out to `HiQS-Suite/HiQS`, the **public-repo disclosure gate**, where governance goes when this repo is archived | Phase 6 |
 
 **Why "HiQS":** in rebalance-OS, HiQS was the name of the unified work-signal
 pipeline — one bundle across all sources, one ranked verdict, every action
@@ -195,6 +198,11 @@ rationale in the CHANGELOG. A measured decision changes when the number changes.
 
 7. **Fresh DB, no migration.** Old rebalance-OS runs untouched alongside
    until HiQS covers the daily use. Clean room by construction.
+
+   One correction now that the incumbent's archive is planned (§19.4):
+   **archiving the repo does not uninstall the software.** The local install
+   keeps running, its jobs keep firing, its DB keeps filling. What ends is the
+   ability to *fix* it — so the fallback becomes unmaintained, not absent.
 
 ### 3.2 Measured — decided by the Phase 1 eval, not by estimate
 
@@ -486,6 +494,13 @@ invalidates everything if skipped)**
    `eval.completed` event. Queries added after scores are visible turn an eval
    into a justification, so additions start a new frozen version and require
    re-running every model.
+5. **Split public from private from the start** (§19.2). The committed file
+   carries opaque ids, `doc_id`s, and shape tags; the natural-language query
+   text and note titles live in a gitignored local sidecar. This set is drawn
+   from a private vault and explicitly includes client and project names, and
+   `HiQS/` is extracted to a **public** repo at Phase 6 — retrofitting the split
+   after that push does not un-publish anything. Freezing still covers both
+   files; the recorded SHA spans them.
 
 **Runner — `tests/eval_retrieval.py`**
 
@@ -611,6 +626,12 @@ measures the output's persuasiveness, not the ranking.*
    `rank.evaluated` event, and no run may score against an uncommitted set.
    Snapshots added after any score is visible start a new frozen version and
    require re-scoring every ranker.
+5. **Public/private split, same as §6.3 step 5** (§19.2). These snapshots are
+   verbatim working days — real PR titles, real meeting summaries, real people —
+   and the repo goes public at Phase 6. Committed file carries opaque ids and the
+   operator's pairwise judgments; the candidate text lives in a gitignored
+   sidecar. The runner reports a loud `unknown` when the sidecar is absent rather
+   than silently scoring a subset.
 
 n≈25 is small, and the plan says so rather than implying otherwise: it can
 resolve a whole-item difference in top-5 overlap and cannot resolve a few
@@ -775,9 +796,12 @@ One server, one port, one page. The old dual-server route-drift class of bug
 ## 11. File tree, LOC budget, dependencies
 
 **Where the code lives (settled 2026-08-03):** HiQS is built **inside this repo** at
-`HiQS/`, not as a separate repository. The plan doc and the code it governs
-then share one `git log`, one PR flow, and one CHANGELOG cadence, and the clean-room property
-is preserved by an import rule rather than a repo boundary:
+`HiQS/` — a **staging home, not a permanent one.** It is extracted to
+`HiQS-Suite/HiQS` once stable and proven ([§19](#19-extraction-to-hiqs-suitehiqs-and-the-rebalance-os-archive),
+Phase 6). Building here first buys one `git log`, one PR flow, and one CHANGELOG
+cadence during the build; the clean-room property is preserved by an import rule
+rather than a repo boundary, and that rule is also what makes the later
+extraction a **move rather than a port**:
 
 - `HiQS/` has its **own `pyproject.toml`** and is installed as its own package (editable install
   from that directory). It is not a subpackage of the incumbent and does not appear in the
@@ -787,6 +811,10 @@ is preserved by an import rule rather than a repo boundary:
   "clean room" is a check, not a promise.
 - The **database never lives in the repo** — it stays at the canonical app-data path (§13). Only
   source, tests, and fixtures live under `HiQS/`.
+- **Nothing HiQS needs may live above `HiQS/`.** No shared `conftest.py`, no
+  root CI step it depends on, no `scripts/` helper, no config outside the
+  subtree. Self-containment is what makes `git subtree split` sufficient; a
+  single upward dependency turns Phase 6 into a rewrite with a deadline.
 - `HiQS/`'s own five docs (§11 below) are product docs for the eventual standalone extraction;
   the repo-root governance docs still govern this plan. See [§16](#16-pdda-compliance-and-the-governance-boundary).
 
@@ -848,6 +876,7 @@ The exit checks here are the one-line summary; the gates are the contract.
 | **3 — Calendar + ask + MCP** | `calendar.py`, `ask.py`, MCP server, Ranker | morning briefing in Claude: meetings + commits + notes in one shot, all receipts present | [gate](#qa-gate--phase-3) |
 | **4 — Surfaces + ops** | `web.py`, one launchd job, keyring hardening | web page shows the same ranking MCP returns; a week unattended, `events` explains any miss | [gate](#qa-gate--phase-4) |
 | **5 — On demand only** | email/slack/figma plugins · Synthesizer/Ranker/Reranker LLMs · sentinel · writes | each lands through its seam, each has a trigger in §14 | [gate](#qa-gate--phase-5) |
+| **6 — Extraction** | `HiQS/` → `HiQS-Suite/HiQS`; plan doc travels; rebalance-OS archived | the new repo stands alone: clone, install, test, run — with no reference back, and nothing private in the history | [gate](#qa-gate--phase-6) |
 
 **Phase 1 gate.** Ordered — the preconditions exist so that scoring can't be
 contaminated by work done after seeing results.
@@ -891,6 +920,12 @@ contaminated by work done after seeing results.
   a vault path under version control.
 - rebalance-OS keeps running untouched; both systems read the same upstream
   sources with separate credentials stores. No migration, nothing to break.
+- **The incumbent's archive is a deadline on this criterion, not on the code.**
+  Reaching "done" before the archive means none of it matters; missing it means
+  choosing between an unmaintained fallback and an unfinished replacement
+  (§19.4). The mitigation is phase order — Phases 0–3 deliver the daily use;
+  Phase 4's surfaces and Phase 5's extras are the deferrable part. Cut from the
+  back, never from the eval gates.
 - **Done =** one morning where you never open rebalance-OS: the web page shows
   your day's ranking with receipts, Claude answers "what did I decide about X"
   from the local corpus via MCP, and `status` is green — with `search.quality`
@@ -1015,6 +1050,15 @@ by [`PROJECT/PDDA.md`](../PDDA.md) — frontmatter, the exact two-column `## Sta
 table, a table of contents listing every phase, a QA gate after every phase,
 spike findings written back into the doc, repo-relative paths only, and a
 `ROADMAP.md` pointer. All of those are present above.
+
+**This governance is time-limited, and the end state is written down** rather
+than left to be improvised: rebalance-OS is archived within weeks, so at Phase 6
+the plan doc travels to `HiQS-Suite/HiQS` and sheds PDDA at that boundary — which
+is §14's deletion ledger taking effect, not a contradiction of it. PDDA governs
+the *work*; the work ends when the product ships. See
+[§19.3](#193-where-governance-goes-when-the-repo-is-archived) for the full
+disposition, including where the tracking issue is filed and what happens to the
+cross-repo links.
 
 **The boundary, stated plainly, because §14 looks like it contradicts this.**
 §14's deletion ledger retires "PDDA, audit_modules, roadmap ledger" — that is a
@@ -1208,6 +1252,116 @@ product just fixed. This is recorded rather than fixed here because it belongs
 to the repo's governance layer, not to HiQS's build, and inventing a parallel
 mechanism inside this plan would be the §14 governance-machinery trap. Named so
 it is a known gap rather than an unexamined one.
+
+## 19. Extraction to `HiQS-Suite/HiQS`, and the rebalance-OS archive
+
+**`HiQS/` is a staging home, not a permanent one** (confirmed by the operator
+2026-08-03). Once the code is stable and proven over several days of real use, it
+is extracted to **`https://github.com/HiQS-Suite/HiQS`** — which exists today,
+**public**, empty, created 2026-08-03. Separately, **rebalance-OS is archived
+within weeks**, no firm date.
+
+Both facts are load-bearing and neither is a footnote, so they get a phase
+([Phase 6](#phase-6--extraction-to-hiqs-suitehiqs)) rather than an intention.
+A planned migration that is not a phase is a migration improvised at 11pm.
+
+### 19.1 What the two facts change
+
+| Fact | Consequence for this plan |
+|---|---|
+| Code spins out to its own repo | The clean-room import test (Phase 0) stops being a purity property and becomes the **extraction precondition**. If `HiQS/**` imports nothing from the incumbent, extraction is `git subtree split` — a move. If it imports anything, extraction is a port, and a port is a rewrite with a deadline |
+| Target repo is **public** | Everything under `HiQS/` becomes world-readable at extraction. §19.2 is the consequence, and it is the one most likely to be discovered after the push rather than before |
+| rebalance-OS is archived | This doc's governance home disappears (§16), its `ROADMAP.md` pointer freezes, and the root `CHANGELOG.md` stops being the end-of-iteration record. §19.3 |
+| Archive has no firm date | The incumbent stops being a *maintained* fallback on an unknown date. §19.4 |
+
+### 19.2 The public-repo disclosure gate — the non-obvious one
+
+The plan mandates committing two artifacts built **from the operator's private
+vault and real working days**:
+
+- `tests/eval_queries.json` (§6.3) — 60–75 real vault queries, explicitly
+  including **"≥10 private-jargon queries (`git-pulse`, `Luggage`,
+  `Cross Country`, client and project names)"**, each resolved to a real
+  `doc_id`. Committed and frozen by design.
+- `tests/eval_ranking.json` (§7.1) — 20–30 **verbatim daily candidate sets**:
+  real PR titles, real meeting summaries, real obligations, real people.
+
+Both are load-bearing (frozen answer keys are the whole anti-gaming mechanism)
+and both are, as specced, a client-data disclosure the moment the repo goes
+public. Nothing in §6.3 or §7.1 noticed, because they were written for a private
+tree.
+
+**Rule:** the frozen sets are **real but not public**. Concretely —
+
+- The committed files carry **stable opaque ids and the operator's judgments**,
+  never the source text. A query becomes `{"id": "q-041", "doc_id": "...",
+  "shape": "asymmetric|jargon|exact-phrase|hard"}`; the natural-language query
+  and the note title live in a local sidecar that is **gitignored and never
+  extracted**.
+- The eval runner reads the sidecar when present and **skips with a loud
+  `unknown`** when it isn't — never silently scoring a subset, which would be a
+  cluster-A failure in the measurement layer.
+- The SHA recorded in `eval.completed` / `rank.evaluated` covers **both** files,
+  so freezing still means what §6.3 says it means.
+- A pre-extraction scan for vault paths, client names, tokens, and absolute home
+  directories is a **blocking** Phase 6 gate item, run against the full history
+  that `subtree split` will carry — not just the tip. History is the part people
+  forget, and it is the part that cannot be fixed with a follow-up commit.
+
+This gate is why Phase 6 exists as a phase. It is discovered by *tracing the
+path*, exactly like the OAuth hole r2 found — and like that one, it is invisible
+if you only read the sections separately.
+
+### 19.3 Where governance goes when the repo is archived
+
+§16 says this plan is governed by rebalance-OS's PDDA while HiQS is built here.
+That is now explicitly **time-limited**, and the end state is written down rather
+than left to be improvised when the archive happens:
+
+- **The plan doc travels with the code.** At Phase 6 it moves to
+  `HiQS-Suite/HiQS` as `docs/PLAN.md` (or is retired into `CHANGELOG.md` if the
+  build is complete), and it **sheds PDDA at that boundary** — which is not a
+  contradiction, it is §14's deletion ledger finally taking effect. PDDA governed
+  the *work*; the work ends when the product ships.
+- **The archived copy stays valid as provenance.** An archived repo is
+  read-only, not deleted. `PROJECT/2-WORKING/HIQS-PROJECT.md` remains the record
+  of how HiQS was designed, and the new repo's `docs/PLAN.md` opens with a link
+  back to it.
+- **Before the archive**, this doc moves to `PROJECT/3-COMPLETED/` with the
+  `## Lessons Learned (For Future Agents)` section §16 already requires. A doc
+  frozen in `2-WORKING` by an archive is a stale signal with no one left to
+  flag it.
+- **Cross-repo links rot.** `related:` points at `GH-125-HIQS-PIPELINE.md` and
+  others in this repo. At extraction they become citations ("see rebalance-OS
+  `PROJECT/…`"), not links, since a relative path across a repo boundary is a
+  dead link that looks live.
+- **The GitHub issue goes to `HiQS-Suite/HiQS`, not here.** An archived repo's
+  issues are frozen, so filing HiQS's tracking issue against a repo that is about
+  to be archived buries it. PDDA already permits this: a foreign-repo issue is
+  disambiguated by the `source:` URL, which is why that field exists.
+
+### 19.4 The archive is a deadline, and the honest read of it
+
+Decision 7 says the incumbent "runs untouched alongside until HiQS covers the
+daily use." That stays true with one correction: **archiving a repo does not
+uninstall the software.** The local rebalance-OS keeps running, its launchd jobs
+keep firing, its DB keeps filling. What ends is the ability to *fix* it.
+
+So the risk is not "the fallback disappears," it is "the fallback becomes
+unmaintained on an unknown date." Stated plainly because it is the one thing in
+this plan that a schedule can break:
+
+- If HiQS reaches §13's done-criterion before the archive, nothing here matters.
+- If it doesn't, and the incumbent breaks after the archive, the operator is
+  choosing between an unmaintained system and an unfinished one. Unarchiving is
+  trivial, which is why this is Costly and not a one-way door — `risk: 3` is
+  unchanged and this is why.
+- **The mitigation is phase order, not heroics.** Phases 0–3 deliver the
+  MCP/`ask` path, which is the daily use. Phase 4's surfaces and Phase 5's
+  extras are genuinely deferrable. If the archive date firms up and is tight,
+  cut scope from the back — that is what §14's deletion ledger is for, and it is
+  a better answer than compressing the eval gates, which are the only thing
+  standing between this plan and the incumbent's 68 versions of scar tissue.
 
 ---
 
@@ -1613,6 +1767,32 @@ re-add trigger has actually fired, and each lands through an existing seam.
 - [ ] **No generated-output feedback (L5).** Anything HiQS writes back is excluded from its own ingest by construction, not by a filename convention someone has to remember.
 - [ ] **Deploy check:** per item — a write op or a sentinel touches the operator's real data and must be verified live under confirmation prompts before it runs unattended.
 
+## Phase 6 — Extraction to `HiQS-Suite/HiQS`
+
+Runs when the code is stable and proven over several days of real use (§19).
+Not gated on Phase 5, which is on-demand-only and may never run.
+
+- [ ] Confirm the clean-room test is green — this is the precondition that makes extraction a move rather than a port
+- [ ] Confirm `HiQS/` is self-contained: no shared `conftest.py`, no root-level CI step, no `scripts/` helper, no config outside the subtree. Anything HiQS needs that lives above it must move in **first**, as its own commit
+- [ ] Rewrite `tests/eval_queries.json` and `tests/eval_ranking.json` to opaque-id form; move the natural-language text and note titles to a gitignored local sidecar (§19.2)
+- [ ] Confirm the eval runners read the sidecar when present and report a loud `unknown` when absent — never a silently-scored subset
+- [ ] Scan the **full history** `subtree split` will carry for vault paths, client names, tokens, and absolute home directories — not just the tip
+- [ ] `git subtree split --prefix=HiQS -b hiqs-extract` and push to `HiQS-Suite/HiQS`, preserving commit history for those paths
+- [ ] Move this plan doc to the new repo as `docs/PLAN.md`, shedding PDDA at the boundary (§14 taking effect); open it with a link back to the archived original
+- [ ] Convert `related:` cross-repo links to citations — a relative path across a repo boundary is a dead link that looks live
+- [ ] File/transfer the tracking issue to `HiQS-Suite/HiQS`; the archived repo's issues freeze
+- [ ] Move `PROJECT/2-WORKING/HIQS-PROJECT.md` → `PROJECT/3-COMPLETED/` with `## Lessons Learned (For Future Agents)` appended, **before** the archive
+- [ ] Update `ROADMAP.md` to point at the new repo rather than the working doc
+
+### QA gate — Phase 6
+
+- [ ] **It stands alone, proven by doing it.** Clone `HiQS-Suite/HiQS` to a fresh directory on a machine that has never held rebalance-OS: `pip install -e .`, run the suite, run `hiqs status`. All three succeed with no reference back. A "should work" here is worth nothing — the failure mode of an extraction is a dependency nobody noticed, and the only detector is a clean clone.
+- [ ] **Nothing private in the history (blocking).** The scan above is clean across every commit `subtree split` carried, not just the tip. History is the part that cannot be fixed with a follow-up commit — and this repo's own L11 is what a leaked absolute path costs.
+- [ ] **The frozen sets are still frozen.** Post-extraction, `eval_retrieval.py` and `eval_ranking.py` reproduce the same figures from the opaque ids plus the local sidecar. If the anonymization changed a score, the anonymization is wrong; a frozen answer key that moves is not frozen.
+- [ ] **History preserved.** `git log` in the new repo shows the real commit history for `HiQS/**`, not one squashed import. The provenance is the point — this plan's whole method is traceability.
+- [ ] **No orphaned pointer.** `ROADMAP.md` and this doc's `3-COMPLETED` copy both point at the new repo; the new repo points back at the archived original. Neither side is a dead end.
+- [ ] **Deploy check:** **yes** — the launchd job and config path move with the operator's install. Confirm the scheduled job still fires against the extracted package before the incumbent is archived, not after.
+
 ## Standing hygiene
 
 - [ ] Re-run the retrieval eval whenever the embedding model, chunking strategy, or fusion constant changes
@@ -1628,6 +1808,7 @@ re-add trigger has actually fired, and each lands through an existing seam.
 
 ---
 
-*Plan owner: the operator. Next step: open the GitHub issue (issue-first SOP), then
-Phase 0 skeleton in `HiQS/` — `plugins.py`, `events.py`, `db.py`,
-the contract test, and the clean-room import pin.*
+*Plan owner: the operator. Next step: open the GitHub issue on
+[`HiQS-Suite/HiQS`](https://github.com/HiQS-Suite/HiQS) (issue-first SOP; not this
+repo — it is being archived), then Phase 0 skeleton in `HiQS/` — `plugins.py`,
+`events.py`, `db.py`, the contract test, and the clean-room import pin.*
