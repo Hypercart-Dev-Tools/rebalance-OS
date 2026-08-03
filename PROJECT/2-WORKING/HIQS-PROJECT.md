@@ -1021,6 +1021,8 @@ HiQS/                 ← repo-relative root; the only tree HiQS writes
       github.py       activity scan + artifact sync (stdlib urllib)     ~250
       calendar.py     OAuth read, window upsert                         ~180
     docs_index.py     raw → docs projection + embed (delta, lazy model) ~130
+    affinity.py       sibling-project edges (same_org|name_token|       ~80
+                      issue_title); widens search, never narrows (§6.4)
     search.py         FTS5 + numpy cosine + RRF + Reranker hook         ~95
     ask.py            context gather + attestation + Ranker             ~180
     web.py            ONE page, stdlib http.server, zero JS             ~150
@@ -1029,7 +1031,7 @@ HiQS/                 ← repo-relative root; the only tree HiQS writes
                       plugin contract test                              ~700
                       test_clean_room.py (import-boundary pin)          ~20
                       eval_retrieval.py + eval_queries.json             ~80
-                                                     core ≈ 1,700–1,900
+                                                     core ≈ 1,780–1,980
 ```
 
 **Deps (4 top-level):** `mcp` · `sentence-transformers` · `google-auth-oauthlib`
