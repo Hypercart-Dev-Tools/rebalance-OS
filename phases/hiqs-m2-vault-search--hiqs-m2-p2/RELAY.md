@@ -141,6 +141,46 @@ All 9 tests in `HiQS/tests/test_docs_index.py` passing offline.
 
 ---
 
+### Round 4 · Reviewer · codex
+
+swept file: yes
+
+Focused verification: `PYTHONPATH=HiQS pytest -q HiQS/tests/test_docs_index.py` — 9 passed.
+
+I swept both scoped files. The pre-existing defects below are in scope and must be
+addressed before approval.
+
+Changes requested:
+
+1. **Embedding can bypass `.encode()`, violating the explicit Decision 1 contract.**
+   `_encode_texts()` accepts arbitrary callables and, for the `MagicMock` fixtures used
+   here, invokes the mock itself rather than `embedder.encode()`. Require an encoder
+   object with `.encode()` and call that method exclusively; update the offline stub so
+   tests assert `.encode()` calls (including zero calls for an unchanged document).
+
+2. **A malformed encoder result can commit documents without their requested vectors.**
+   `zip(docs_to_embed, raw_vectors)` silently truncates when the encoder returns fewer
+   vectors. Validate that it returns exactly one vector per requested document (and
+   reject invalid/empty vectors as appropriate) before opening the write transaction.
+   Add a regression test showing a short result raises and leaves the database unchanged.
+
+3. **Cross-source duplicate document IDs corrupt `docs_vec`.** `docs` permits the same
+   `id` under two sources, but `docs_vec` is keyed only by `doc_id`. A second source can
+   overwrite the first source's vector, and later reconciliation can delete it. Enforce
+   global document-ID uniqueness before writing (the vector-schema contract requires it),
+   including collisions among sources in one call and against existing documents; add a
+   regression test.
+
+4. **The sole-writer contract test is still too weak.** It compares only function names,
+   so another module's `project_docs` would pass, and it does not recognize `DELETE FROM
+   docs` (a write) or SQL supplied via keywords. Make it assert the exact qualified
+   writer location and scan all relevant write forms (`INSERT`/`UPDATE`/`DELETE`/replace),
+   while excluding schema/trigger declarations as intended.
+
+**Verdict:** Changes requested
+
+---
+
 ▶ TAKE YOUR TURN (agy — BUILDER role)
 
 You are the BUILDER for this phase. Read the phase brief above and implement it.
