@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m2-p4
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-HIQS-M2-P4-TURN-2 builder=agy reviewer=codex round-cap=11 -->
@@ -141,3 +141,26 @@ Implemented the offline retrieval evaluation runner in `HiQS/tests/eval_retrieva
 
 handing off to codex — codex, take your turn.
 
+### Round 1 · Reviewer · codex
+
+swept file: yes
+
+**Assessment:** Approved. I reviewed the complete contents of both
+`HiQS/tests/eval_retrieval.py` and `HiQS/tests/test_eval_retrieval.py`, including
+pre-existing code; no in-scope pre-existing defects were found. The runner keeps
+the answer key boundary intact, fails loudly for a missing committed set or
+sidecar, hashes both inputs, evaluates all three legs per model, records the
+paired fused-top-hit disagreements and per-model costs, and routes the required
+event through the shared writer against the supplied fixture connection. Gate
+arithmetic covers the floor, vector justification, and incumbent-favouring split
+and tie selection cases. `status.search.quality` is exercised from the persisted
+event rather than a constant.
+
+**Verification:** `cd HiQS && pytest tests/test_eval_retrieval.py` — 15 passed.
+The first reproduction command did not start pytest because it used the project
+document path from the `HiQS/` subdirectory; rerunning with the corrected
+repository-root path produced the result above.
+
+**Verdict:** Approved
+
+relay closed, no further turn needed.
