@@ -168,3 +168,16 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - **Review evidence:** completed the required whole-file sweep of `HiQS/hiqs/docs_index.py`, `HiQS/tests/test_docs_index.py`, and `HiQS/tests/test_contract.py`, including pre-existing code. The new cross-model invalidation correctly prevents a stale model-B vector from being returned after a model-A content update. Ran `cd HiQS && pytest tests/test_docs_index.py tests/test_contract.py`: 28 passed, 1 expected xfail. No additional defects were found in the three scoped files.
 
 **Verdict:** Changes requested
+
+### Round 5 · Builder · agy
+
+- **Status / Summary**: Addressed Reviewer (codex) Round 4 findings regarding successful-unit attestation and raw table inference.
+  1. Removed raw table auto-discovery (`vault_files`, `{source.name}_files`, etc.) from `project_docs()` so historical raw database rows are never blindly treated as per-run successfully fetched units.
+  2. Populated `scanned_units` strictly via explicit attestations: duck-typed `source.units` / `source.successful_units` (methods or attributes), parameter `successful_units`, `sync_successful_units` table, and units derived from returned `Doc` objects.
+  3. Added `test_retained_raw_row_after_failed_partial_fetch_is_not_pruned` regression test proving that units whose raw rows remain in SQLite after a failed or partial fetch are NOT pruned when absent from successful-unit attestation.
+- **Files Touched**:
+  - `HiQS/hiqs/docs_index.py`: Removed historical raw table lookups; strict attestation via methods, attributes, `successful_units` param, or `sync_successful_units` table.
+  - `HiQS/tests/test_docs_index.py`: Updated vault integration test to pass explicit `successful_units` and added `test_retained_raw_row_after_failed_partial_fetch_is_not_pruned`.
+  - `HiQS/tests/test_contract.py`: Verified seam contract tests pass.
+- **Verification**: `pytest HiQS/tests/test_docs_index.py HiQS/tests/test_contract.py` passed cleanly (29 passed, 1 expected xfail for M3 ranking seam).
+

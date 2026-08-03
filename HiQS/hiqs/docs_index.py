@@ -170,54 +170,38 @@ def project_docs(
         scanned_units: set[str] = set()
         scanned_doc_ids_by_unit: dict[str, set[str]] = {}
 
-        if hasattr(source, "units") and callable(getattr(source, "units")):
-            try:
-                units_res = source.units(connection)
-                if units_res is not None:
-                    scanned_units.update(units_res)
-            except Exception as err:
-                errors.append(f"Error fetching units for source '{source.name}': {err}")
-        elif hasattr(source, "successful_units") and callable(getattr(source, "successful_units")):
-            try:
-                units_res = source.successful_units(connection)
-                if units_res is not None:
-                    scanned_units.update(units_res)
-            except Exception as err:
-                errors.append(f"Error fetching units for source '{source.name}': {err}")
+        if hasattr(source, "units"):
+            units_attr = getattr(source, "units")
+            if callable(units_attr):
+                try:
+                    units_res = units_attr(connection)
+                    if units_res is not None:
+                        scanned_units.update(units_res)
+                except Exception as err:
+                    errors.append(f"Error fetching units for source '{source.name}': {err}")
+            elif isinstance(units_attr, (set, list, tuple)):
+                scanned_units.update(units_attr)
 
-        if source.name == "vault" or "vault_files" in existing_tables:
+        if hasattr(source, "successful_units"):
+            s_units_attr = getattr(source, "successful_units")
+            if callable(s_units_attr):
+                try:
+                    units_res = s_units_attr(connection)
+                    if units_res is not None:
+                        scanned_units.update(units_res)
+                except Exception as err:
+                    errors.append(f"Error fetching units for source '{source.name}': {err}")
+            elif isinstance(s_units_attr, (set, list, tuple)):
+                scanned_units.update(s_units_attr)
+
+        if "sync_successful_units" in existing_tables:
             try:
-                vault_paths = [
-                    r[0] for r in connection.execute("SELECT path FROM vault_files").fetchall()
-                ]
-                scanned_units.update(vault_paths)
+                rows = connection.execute(
+                    "SELECT unit FROM sync_successful_units WHERE source = ?", (source.name,)
+                ).fetchall()
+                scanned_units.update(r[0] for r in rows)
             except Exception:
                 pass
-
-        for tbl_suffix in ("files", "records"):
-            tbl_name = f"{source.name}_{tbl_suffix}"
-            if tbl_name in existing_tables:
-                try:
-                    cols = [
-                        info[1]
-                        for info in connection.execute(f"PRAGMA table_info('{tbl_name}')").fetchall()
-                    ]
-                    if "path" in cols:
-                        scanned_units.update(
-                            r[0]
-                            for r in connection.execute(
-                                f"SELECT DISTINCT path FROM {tbl_name}"
-                            ).fetchall()
-                        )
-                    elif "unit" in cols:
-                        scanned_units.update(
-                            r[0]
-                            for r in connection.execute(
-                                f"SELECT DISTINCT unit FROM {tbl_name}"
-                            ).fetchall()
-                        )
-                except Exception:
-                    pass
 
         if successful_units is not None:
             if isinstance(successful_units, dict):

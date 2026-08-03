@@ -637,7 +637,7 @@ def test_document_content_change_invalidates_all_model_vectors_until_reencoded(t
 
 
 def test_vault_source_successful_empty_unit_pruning_integration(tmp_path, monkeypatch):
-    """Assert real vault source auto-reconciles empty fetched units via vault_files table."""
+    """Assert real vault source auto-reconciles empty fetched units when passed in successful_units."""
     from hiqs.sources import vault
     from hiqs.sources.vault import fetch as vault_fetch, SOURCE as VAULT_SOURCE
 
@@ -659,7 +659,12 @@ def test_vault_source_successful_empty_unit_pruning_integration(tmp_path, monkey
     vault_fetch(conn, config)
     mock_embedder = MagicMock()
     mock_embedder.encode.side_effect = lambda texts: [[0.1] * 384 for _ in texts]
-    project_docs(conn, sources=[VAULT_SOURCE], embedder=mock_embedder)
+    project_docs(
+        conn,
+        sources=[VAULT_SOURCE],
+        embedder=mock_embedder,
+        successful_units={"vault": ["note1.md", "note2.md"]},
+    )
 
     assert conn.execute("SELECT COUNT(*) FROM docs WHERE id LIKE 'vault:note1.md:%'").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM docs WHERE id LIKE 'vault:note2.md:%'").fetchone()[0] == 1
@@ -668,7 +673,12 @@ def test_vault_source_successful_empty_unit_pruning_integration(tmp_path, monkey
     # Now make note1.md empty (0 chunks), while note2.md stays unchanged
     file1.write_text("")
     vault_fetch(conn, config)
-    project_docs(conn, sources=[VAULT_SOURCE], embedder=mock_embedder)
+    project_docs(
+        conn,
+        sources=[VAULT_SOURCE],
+        embedder=mock_embedder,
+        successful_units={"vault": ["note1.md", "note2.md"]},
+    )
 
     # note1.md chunks and vectors must be pruned! note2.md stays.
     assert conn.execute("SELECT COUNT(*) FROM docs WHERE id LIKE 'vault:note1.md:%'").fetchone()[0] == 0
@@ -676,6 +686,54 @@ def test_vault_source_successful_empty_unit_pruning_integration(tmp_path, monkey
     assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 1
 
     conn.close()
+
+
+def test_retained_raw_row_after_failed_partial_fetch_is_not_pruned(tmp_path):
+    """Assert a unit whose raw row is retained in DB after a failed/partial fetch is NOT pruned when absent from successful units attestation."""
+    conn = db_connection(tmp_path / "hiqs.db")
+
+    # Seed vault_files raw tracking table with historical rows
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS vault_files(path TEXT PRIMARY KEY, content_hash TEXT NOT NULL, mtime TEXT NOT NULL)"
+    )
+    conn.execute("INSERT INTO vault_files VALUES ('u1.md', 'hash1', 'mtime1')")
+    conn.execute("INSERT INTO vault_files VALUES ('u2_failed.md', 'hash2', 'mtime2')")
+    conn.commit()
+
+    doc_u1 = Doc(source="vault", id="vault:u1.md:chunk1", title="U1", body="Body 1")
+    doc_u2 = Doc(source="vault", id="vault:u2_failed.md:chunk1", title="U2", body="Body 2")
+
+    source_init = MockSource("vault", [doc_u1, doc_u2])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384]
+
+    # Initial projection
+    project_docs(conn, sources=[source_init], embedder=mock_embedder)
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 2
+
+    # Second sync: u2_failed.md fetch failed (so u2_failed.md is NOT in successful_units).
+    # u1.md fetch succeeded.
+    source_sync2 = MockSource("vault", [doc_u1])
+    mock_embedder.encode.reset_mock()
+
+    report_sync2 = project_docs(
+        conn,
+        sources=[source_sync2],
+        embedder=mock_embedder,
+        successful_units={"vault": ["u1.md"]},  # u2_failed.md is NOT in successful_units!
+    )
+
+    # u2_failed.md must NOT be pruned despite vault_files raw table entry existing!
+    assert report_sync2.counts["pruned"] == 0
+    remaining_docs = [r[0] for r in conn.execute("SELECT id FROM docs ORDER BY id").fetchall()]
+    assert remaining_docs == ["vault:u1.md:chunk1", "vault:u2_failed.md:chunk1"]
+
+    remaining_vecs = [r[0] for r in conn.execute("SELECT doc_id FROM docs_vec ORDER BY doc_id").fetchall()]
+    assert remaining_vecs == ["vault:u1.md:chunk1", "vault:u2_failed.md:chunk1"]
+
+    conn.close()
+
 
 
 
