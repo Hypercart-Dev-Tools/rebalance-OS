@@ -1,0 +1,73 @@
+# MARATHON.yaml — resume: the five lanes MARATHON.yaml never reached.
+#
+# marathon.sh has no --from/--resume flag and runs every phase in the plan it is
+# given, so resuming means a plan containing only the remaining lanes. Re-firing the
+# full MARATHON.yaml would restart at p1, whose task id is spent, and halt there.
+# (Same convention as MARATHON-RESUME.yaml under GH-195-P8 and GH-146.)
+#
+# STATE THIS RESUMES FROM. The 2026-08-02 chain completed p1/p2/p3 and halted at p4
+# when the reviewer turn was failed by the worktree isolation check; p5 was then driven
+# directly via marathon-drive.sh and completed. p6-p10 were never started: task ids
+# unused, packets present, attempt counters at zero. No --force or --retry needed.
+#
+# p4-gh166-0802 is deliberately NOT resumed here. Its builder change is committed and
+# the full suite is green with it in the tree, but its relay was never formally closed.
+# Re-running it would need --retry (its task id is spent) and would rebuild work that
+# already landed. Close it out separately rather than folding it into this chain.
+#
+# turn_timeout_s: 900 ON EVERY PHASE — the omission that cost the 2026-08-02 run. The
+# original plan carried no turn_timeout_s, so every phase silently ran at the 600s
+# default while every packet recommends 900 ("a build that also edits tests needs
+# headroom over the 300s default"). p5 was killed at exactly 600s with no artifact.
+# Raising CLAUDE_MAX_TURNS without this only moves the ceiling: the builder stops dying
+# at the turn cap and starts dying at the wall clock.
+#
+# LANE COLLISION, DELIBERATELY LEFT IN. p6 and p10 both declare
+# `scripts/github_sync.sh`. marathon.sh runs phases strictly one at a time (GH-241), so
+# p10 will see p6's edits to that file. That is the intended behaviour for a serial
+# chain and nothing has exercised it yet — leaving it in is the point, not an oversight.
+#
+# Fire:
+#   CLAUDE_MAX_TURNS=30 CLAUDE_MAX_BUDGET=5.00 RELAY_WORKTREE_ISOLATION=1 \
+#     .xyz/relay-automation/marathon.sh \
+#       --plan PROJECT/2-WORKING/MARATHON-2026-08-02-10DAYS/MARATHON-RESUME-P6-P10.yaml \
+#       --builder claude --pre-advance-cmd '.venv/bin/python -m pytest tests/ -q'
+
+name: 10days-2026-08-02
+
+phases:
+  - id: p6-gh171-0802
+    name: "GH-171 — github_sync holds the SQLite write lock across network I/O"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-171-sqlite-write-lock/packet.md
+    artifact: src/rebalance/ingest/github_knowledge.py,scripts/github_sync.sh
+    turn_timeout_s: 900
+
+  # kernel zone — the plan caps kernel at 1 per wave; serial execution satisfies that trivially.
+  - id: p7-gh170-0802
+    name: "GH-170 — tests in a git worktree silently import the main checkout"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-170-worktree-test-isolation/packet.md
+    artifact: conftest.py,tests/conftest.py,pyproject.toml
+    turn_timeout_s: 900
+
+  - id: p8-gh160-0802
+    name: "GH-160 — doctor: a crash-looping KeepAlive daemon reports OK"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-160-doctor-crash-loop-detection/packet.md
+    artifact: src/rebalance/doctor.py,tests/test_launchd_predicate.py
+    turn_timeout_s: 900
+
+  - id: p9-gh167-0802
+    name: "GH-167 — 302 GitHub documents fetched but never projected into the semantic index"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-167-semantic-index-github-gap/packet.md
+    artifact: src/rebalance/ingest/semantic_index.py,src/rebalance/ingest/index_ops.py,src/rebalance/ingest/db/semantic.py
+    turn_timeout_s: 900
+
+  - id: p10-gh186-0802
+    name: "GH-186 — scheduler jobs crash on a rare CPython EINTR at bootstrap"
+    reviewer: agy
+    brief: relay-system/preflight/2026-08-02/gh-186-scheduler-eintr-crash/packet.md
+    artifact: scripts/github_sync.sh,scripts/lib/scheduler_common.sh
+    turn_timeout_s: 900
