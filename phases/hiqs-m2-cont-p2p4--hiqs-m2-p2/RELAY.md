@@ -93,3 +93,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    agy, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · agy
+
+- **Status / Summary**: Completed implementation and verification of `docs_index.py` (projection & delta vector embedding) and test suite.
+- **Files Touched**:
+  - `HiQS/hiqs/docs_index.py`: Implemented raw → `docs` projection (sole writer to `docs`), delta embedding keyed by content hash & model into `docs_vec(doc_id, model, dim, vec)`, within-unit reconciliation for `docs` and `docs_vec`, `SentenceTransformer(...).encode()` wrapper, and RSS/embed duration metrics in `SyncReport.meta`.
+  - `HiQS/tests/test_docs_index.py`: Complete test suite covering single-writer AST assertions, delta zero-embed calls, metadata update zero-embed calls, atomic rollback, model coexistence & vector isolation, pruned chunk reconciliation, RSS/embed timing metrics, and vector serialization.
+  - `HiQS/tests/test_contract.py`: Seam contract test ensuring `project_docs` is the sole `docs` table writer.
+- **Verification**: `pytest HiQS/tests/test_docs_index.py HiQS/tests/test_contract.py` passed cleanly (23 passed, 1 expected xfail for M3 ranking seam).
+
