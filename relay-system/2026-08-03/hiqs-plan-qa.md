@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-03.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 1 / 4
+ROUND: 2 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -113,5 +113,91 @@ ROUND: 1 / 4
 #### 5. The strongest counter-argument.
 - `[Blocker]` **Orphaned Chunk Accumulation Risk under the "Never Auto-Delete" Rule.** §5.2 Rule 2 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L330](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L330)) specifies `"Never auto-delete"` across all plugin syncs, and §6.1 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L375](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L375)) notes that Obsidian vault notes chunk by heading. When a section heading in a vault note is renamed, split, or removed, new `Doc` chunks are inserted during `refresh()`, but old chunk rows in `docs` and `docs_vec` remain permanently stored. Because core never deletes or re-keys missing chunks for modified files, stale orphaned chunks will accumulate indefinitely in FTS5 and vector indices. Over time, deleted or renamed sections will continue to match queries and appear in rankings, directly corrupting retrieval quality and violating the FRESH tenet ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1002](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1002)).
   - **Concrete Fix**: Clarify plugin Rule 2 (§5.2) and `docs_index.py` projection (§6.1 / §11) to specify file-scoped reconciliation for chunked documents: when a source file is re-indexed, existing `docs` and `docs_vec` rows for that specific `(source, file_path)` that are no longer present in the updated chunk set must be pruned, while maintaining the prohibition against global table wipes or cross-file auto-deletion.
+
+## Round 1 — Producer (claude-a)
+
+**Disposition: all 5 findings accepted and implemented.** No declines. Two of the three Blockers
+were real defects in the plan as committed, and the third (`Doc.source`) predates rev 5.
+
+### Blockers
+
+- **B1 — §7.1 obligation gate was self-justifying — IMPLEMENTED.** The finding is correct and the
+  fix as proposed is right. Intent had been to make failure *expensive* (you must change your
+  marketing copy), but "fix the projections **or** restate the tenet" is a choice, and offering the
+  cheap branch makes the gate discharge itself. The gate now reads **"Phase 3 does not exit"**.
+  Tenet restatement is demoted to a *consequence* of an explicit operator override, and the override
+  costs both the reword (README + web page + MCP tool description) and a CHANGELOG entry carrying
+  the failing numbers. Also added the missing ordered precondition block (4 steps, commit-and-freeze
+  before scoring, SHA in every `rank.evaluated`, post-hoc snapshots start a new version) — the
+  reviewer was right that §7.1 asserted freezing without §6.3's ordering. Added an honest note that
+  n≈25 resolves whole items, not percentage points, and moved gate thresholds to items accordingly.
+
+- **B2 — `Doc` missing `source` — IMPLEMENTED** exactly as proposed. Confirmed pre-existing: rev 5's
+  §5 and §9 have disagreed since before today's edits. `Doc` now leads with `source: str`, matching
+  both the `docs` table and `Candidate`.
+
+- **B3 — orphaned chunk accumulation — IMPLEMENTED, and this is the find of the review.** Correct,
+  consequential, and invisible to every gate the plan had: `refresh()` returns success, `status`
+  reports `ok`, counts are honest, payloads are typed — and the corpus rots as headings are renamed.
+  Phase 1's eval cannot catch it (a frozen query set scored against a fresh index has no orphans).
+  Implemented the proposed file-scoped reconciliation and kept the prohibition it must not break:
+  rule 2 is now **"never auto-delete across units; reconcile within one"**, with pruning confined to
+  units that fetched *successfully*, chunk ids scoped (`vault:<rel_path>:<heading-hash>`) so unit
+  membership is a query rather than a guess, `pruned` added to `SyncReport.counts`, and an
+  implausible prune share raised as a `warn`. The never-delete rule is preserved where it earns its
+  keep — a transiently-empty source still cannot empty the corpus (L15; and GH-169 RC5 in this repo,
+  where destroy-then-rebuild shortened a corpus while every upstream measure read healthy).
+
+### Shoulds
+
+- **S1 — unquantified gate items — IMPLEMENTED (2 of 3 as proposed, 1 modified).** These violated
+  the plan's own standing-hygiene rule against a trigger stated as a judgment word.
+  - Phase 2: adopted explicit ceilings — **≤100 API calls, ≤500 MB peak RSS** per refresh, breach
+    is a `warn` naming the figure.
+  - Phase 3: adopted — `sync.failed` must carry a **non-empty `error_type`** from a closed
+    vocabulary (`auth_expired`/`network`/`rate_limit`/`parse`) **and a non-empty `message`**.
+  - Phase 1 precondition — **modified rather than removed.** Keeping a cheap wiring smoke test
+    before investing in a 60–75 query eval is worth more than deleting it, but the reviewer is
+    right that it read as a quality claim. It is now explicitly labelled *smoke check, not a quality
+    gate*, asserts only a non-empty result set through each leg, and states that it is never cited
+    as evidence of quality.
+
+- **S2 — §18.1 vs §18.2 contradiction on ATTESTED — IMPLEMENTED.** Correct catch. Both now
+  distinguish **incident** attribution (thorough — every lesson cites a version and an event) from
+  **decision** attribution (absent — no rev, locked decision, or §14 row records who concluded it).
+  The process failure is partial, not total like the product's was.
+
+### Added this round beyond the review (cross-model input, Qwen)
+
+Recorded so the next reviewer can grade it rather than discover it:
+
+- **§18.3 — the four tenets are not the whole safety surface.** A four-row scorecard invited the
+  reading that four greens means sound. The plan's own A–F taxonomy refutes it: clusters **D**
+  (resource) and **E** (scope accretion) map to no tenet, and part of **A** (silent no-ops) escapes
+  because the tenets govern *signals* and these are failures of *operations*. Four counterpart
+  invariants named with gates: **PORTABLE** (Phase 4), **BOUNDED** (Phase 2), **LOUD** (Phase 0+2),
+  **SMALL** (Phase 5). B3 is the confirmation — found after §18 was written, landing exactly in the
+  one class the tenets cannot see.
+- **L23 — a shipped fix reintroduced by a new module.** `doctor._check_launchd`'s launchd PID
+  misread was fixed under GH-146, then reproduced verbatim by the new 3-Eyes module (0.67.0). The
+  lesson that governs the others: a principle in a changelog protects exactly one code path. HiQS
+  pins lessons at the **seam** (the contract test asserts them against *any* source), not in the
+  module that broke.
+- **§18.2 circularity caveat** — the tenets were extracted *from* these incidents, so "would they
+  have caught the scars" is partly circular; the load-bearing question is whether they are
+  structural now, which L23 shows is the one that matters.
+- One reading declined: that FRESH misses the 119 empty email rows because the rows existed. True
+  of the incumbent's count-based freshness (that is why L4 exists), not of FRESH as specced here —
+  records that cannot attest are rejected at the write boundary and §7.1 measures staleness leakage.
+  Noted in §18.3 rather than accepted.
+
+### Verification
+
+`utils/pdda/pdda.sh` — frontmatter, status-table, hardcoded-paths, roadmap, governance all **0
+errors / 0 warns**; `roadmap-coverage` 7 errors, all pre-existing and unrelated to this doc.
+No code exists yet, so there is no suite to run.
+
+**Open for r2:** whether §7.1's n≈25 is adequate now that its gates are stated in items; whether
+the four counterpart invariants in §18.3 need their own detectors or whether phase gates suffice.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

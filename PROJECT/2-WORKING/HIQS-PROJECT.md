@@ -42,7 +42,7 @@ phases: 6
 
 | What was just completed | What's next |
 |---|---|
-| Plan rev 5 authored and promoted to `2-WORKING` 2026-08-03, with the rev-4 eval gate rewritten to be falsifiable (n raised to 60–75, paired disagreement set made the primary artifact, ground-truth protocol written, query set frozen, FTS-only baseline promoted to a decision, split-decision rule, cost axis, floor + truncation gates). Codebase location settled: HiQS ships **inside this repo at `HiQS/`**, not as a separate repository, so the plan doc and the code it governs live under one `git log`. PDDA compliance sections added (frontmatter, this table, table of contents, per-phase QA gates, §16 boundary note). The standalone anti-patterns ledger was **verified against `CHANGELOG.md` and folded in** — six-cluster failure-mode taxonomy at the head of the Lessons section, seven incidents L1–L15 missed added as **L16–L22**, and two new plugin rules (§5.7 explicit network timeout, §5.8 watermark advances only on a completed fetch); source archived to `PROJECT/4-MISC/HiQS-ANTI-PATTERNS.md`. **The four tenets were then audited against the plan itself and two failed**: ATTESTED had no `author` field and RANKED had no obligation model and no detector — so `author`/`owed_by`/`due` landed on `Doc`/`Candidate`, `activity_at` split from `updated_at` (L20), `source_age_s`/`source_status` landed on `RankedAction`, §7.1 added a frozen ranking-judgment set with three gates, §2's non-negotiable was widened from *retrieval*-quality to all quality claims, and **§18 records the dogfooding audit in both directions**. **No code written.** | **Open the GitHub issue** to satisfy the issue-first SOP (`gh_issue: TBA` today), then run **Phase 0 — Skeleton**: scaffold `HiQS/`, `db.py`, `config.py`, `plugins.py`, `events.py`, and the fake-plugin contract test. Exit when `hiqs status` on an empty DB returns structured JSON and a fake event lands in `events`. |
+| Plan rev 5 authored and promoted to `2-WORKING` 2026-08-03, with the rev-4 eval gate rewritten to be falsifiable (n raised to 60–75, paired disagreement set made the primary artifact, ground-truth protocol written, query set frozen, FTS-only baseline promoted to a decision, split-decision rule, cost axis, floor + truncation gates). Codebase location settled: HiQS ships **inside this repo at `HiQS/`**, not as a separate repository, so the plan doc and the code it governs live under one `git log`. PDDA compliance sections added (frontmatter, this table, table of contents, per-phase QA gates, §16 boundary note). The standalone anti-patterns ledger was **verified against `CHANGELOG.md` and folded in** — six-cluster failure-mode taxonomy at the head of the Lessons section, seven incidents L1–L15 missed added as **L16–L22**, and two new plugin rules (§5.7 explicit network timeout, §5.8 watermark advances only on a completed fetch); source archived to `PROJECT/4-MISC/HiQS-ANTI-PATTERNS.md`. **The four tenets were then audited against the plan itself and two failed**: ATTESTED had no `author` field and RANKED had no obligation model and no detector — so `author`/`owed_by`/`due` landed on `Doc`/`Candidate`, `activity_at` split from `updated_at` (L20), `source_age_s`/`source_status` landed on `RankedAction`, §7.1 added a frozen ranking-judgment set with three gates, §2's non-negotiable was widened from *retrieval*-quality to all quality claims, and **§18 records the dogfooding audit in both directions**. An **agy relay review (r1, Changes requested)** then found 3 Blockers + 2 Shoulds, all accepted and applied: `Doc` was missing `source` (a pre-rev-5 mismatch with §9); §7.1's obligation gate was self-justifying — its failure could be discharged by rewording the tenet, so it now **blocks**, with restatement demoted to a consequence of an explicit override; and **"never auto-delete" was silently corrupting the corpus** — chunk-by-heading plus no pruning means a renamed heading orphans its old `docs`/`docs_vec` rows forever, so rule 2 is now within-unit reconciliation, never across units and never on a failed fetch. Three unfalsifiable gate items got numbers. Cross-model review (Qwen) added the coverage boundary: the four tenets cover **neither** cluster D (resource) **nor** E (scope accretion), so **§18.3** names four counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL) and **L23** records the incumbent reintroducing an already-fixed defect because the lesson was prose. **No code written.** | **Open the GitHub issue** to satisfy the issue-first SOP (`gh_issue: TBA` today), then run **Phase 0 — Skeleton**: scaffold `HiQS/`, `db.py`, `config.py`, `plugins.py`, `events.py`, and the fake-plugin contract test. Exit when `hiqs status` on an empty DB returns structured JSON and a fake event lands in `events`. |
 
 ## Table of contents
 
@@ -59,7 +59,7 @@ phases: 6
 | — | [§7.1 Ranking quality](#71-ranking-quality--the-second-detector) | the frozen judgment set + 3 gates behind the RANKED tenet | checked in the Phase 3 gate |
 | — | [§16 PDDA compliance](#16-pdda-compliance-and-the-governance-boundary) | how this doc and `HiQS/` relate to repo governance | n/a |
 | — | [§17 Phase findings (memory injection)](#17-phase-findings-memory-injection) | durable spike/discovery findings | filled per phase |
-| — | [§18 Tenets & self/meta compliance](#18-hiqs-tenets--selfmeta-compliance--dogfooding) | the four tenets audited against both product and process | re-run at §13 cutover |
+| — | [§18 Tenets & self/meta compliance](#18-hiqs-tenets--selfmeta-compliance--dogfooding) | the four tenets audited against both product and process, **plus the four failure classes they cannot see** ([§18.3](#183-the-four-tenets-are-not-the-whole-safety-surface)) | re-run at §13 cutover |
 
 **Why "HiQS":** in rebalance-OS, HiQS was the name of the unified work-signal
 pipeline — one bundle across all sources, one ranked verdict, every action
@@ -280,8 +280,8 @@ class SyncReport:   # structured by contract → feeds events table automaticall
 
 @dataclass(frozen=True)
 class Doc:        # one search-index row
-    id: str; title: str; body: str; url: str = ""; ts: str = ""
-    project: str = ""; author: str = ""
+    source: str; id: str; title: str; body: str
+    url: str = ""; ts: str = ""; project: str = ""; author: str = ""
 
 @dataclass(frozen=True)
 class Candidate:  # one next-action candidate — attested, never bare
@@ -329,7 +329,38 @@ vault = "hiqs.sources.vault:SOURCE"
 2. `fetch` is idempotent and incremental. Three sanctioned patterns:
    hash/ID delta (vault, artifacts), window refetch + upsert (GitHub activity,
    calendar), full refetch + column-diff (reminder-style sources).
-   Never auto-delete.
+   Never auto-delete **across** units; **reconcile within** one.
+
+   The unqualified "never auto-delete" was a real bug, not a style choice
+   (found in review 2026-08-03). Vault notes chunk by heading (§6.1), so
+   renaming, splitting, or deleting a heading emits a *new* chunk id and leaves
+   the old `docs` and `docs_vec` rows in place forever. Those orphans keep
+   matching FTS5 and cosine queries and keep surfacing in rankings — retrieval
+   quality corrupting slowly, from content that no longer exists, with every
+   gate green. Phase 1's eval would not catch it: a frozen query set scored
+   against a fresh index has no orphans yet. That is cluster A in its purest
+   form — a *successful* sync that quietly degrades the corpus.
+
+   The rule that replaces it, precisely:
+
+   - **Within a unit that was fetched successfully** — one vault file, one
+     GitHub item, one calendar event — the projection reconciles: rows keyed to
+     that unit which are absent from the freshly-derived set are deleted, in the
+     same transaction that writes the new ones. Chunk ids are therefore scoped
+     (`<source>:<unit>:<heading-hash>`) so "belongs to this unit" is a query,
+     not a guess.
+   - **Never across units, and never on a failed or partial fetch.** A unit that
+     errored is not reconciled at all — it keeps its existing rows. This is the
+     other half of L15 and it is the half that matters: a source returning
+     nothing transiently must never be able to empty the corpus. The incumbent
+     has the scar (`sync_direct_commit_documents()` destroys-then-rebuilds, so a
+     partial failure shortens the corpus while every upstream measure still
+     reads healthy — GH-169 RC5).
+   - `SyncReport.counts` carries `pruned` alongside inserted/updated/unchanged/
+     rejected, so reconciliation is visible rather than inferred. A run that
+     prunes an implausible share of a source is a `warn` event, not a silent
+     success (cluster A again — the failure mode of a delete path is deleting
+     too much, quietly).
 3. Secrets go through `config.secret(name)`: keyring → `0600` file outside the
    repo → env. Plugins never hardcode paths or tokens.
 4. No scheduling, threads, or network listeners inside plugins. One refresh
@@ -372,9 +403,13 @@ search(query, limit=10):
 - Embedding is delta-only (hash-keyed) during `refresh`; the model name is part
   of the key, so swapping models re-embeds lazily and **both models' vectors can
   coexist** — that is what makes the §6.3 comparison free of migration machinery.
-- Chunking: vault notes chunk by heading. `# ponytail: a single heading with a`
-  `# very long body produces one oversized chunk; add a character cap if the`
-  `# eval shows long-note recall lagging.`
+- Chunking: vault notes chunk by heading, with chunk ids scoped to their file
+  (`vault:<rel_path>:<heading-hash>`) so plugin rule 2's within-unit
+  reconciliation can find every chunk a file currently owns. A renamed or
+  deleted heading's row is pruned in the same transaction that writes the new
+  one; a file whose read failed is not reconciled at all.
+  `# ponytail: a single heading with a very long body produces one oversized`
+  `# chunk; add a character cap if the eval shows long-note recall lagging.`
 
 ### 6.2 Degrade rungs — visible, never silent
 
@@ -533,16 +568,28 @@ the same three rules that make §6.3 hard to flatter:
 
 **`tests/eval_ranking.json` — the frozen judgment set**
 
-- 20–30 **dated daily snapshots**: the candidate set as it stood on a real
-  morning, plus the operator's own top-5 for that morning, written **before**
-  seeing what HiQS ranked. Order-of-work is the whole protocol here, exactly as
-  it is in §6.3 — a "correct" answer recorded after reading the output measures
-  the output's persuasiveness, not the ranking.
-- Judgments are **pairwise where possible** ("A was owed before B"), not absolute
-  scores. At this n, an operator can rank a pair reliably and cannot assign a
-  calibrated 1–10.
-- Committed and frozen; the SHA is recorded in every `rank.evaluated` event.
-  Snapshots added after scores are visible start a new version.
+*Preconditions, in order, before any ranking is scored — the same ordered block
+§6.3 uses, for the same reason: an answer key built after seeing the output
+measures the output's persuasiveness, not the ranking.*
+
+1. Capture 20–30 **dated daily snapshots**: the candidate set exactly as it
+   stood on a real morning, stored verbatim.
+2. For each snapshot the operator writes their own top-5 **before** looking at
+   what HiQS ranked, and before any scoring run exists. A snapshot whose
+   judgment was recorded after seeing HiQS's order is dropped, not corrected.
+3. Judgments are **pairwise where possible** ("A was owed before B"), not
+   absolute scores. At this n an operator can rank a pair reliably and cannot
+   assign a calibrated 1–10.
+4. **Commit and freeze** the file. Its SHA is recorded in every
+   `rank.evaluated` event, and no run may score against an uncommitted set.
+   Snapshots added after any score is visible start a new frozen version and
+   require re-scoring every ranker.
+
+n≈25 is small, and the plan says so rather than implying otherwise: it can
+resolve a whole-item difference in top-5 overlap and cannot resolve a few
+percentage points. The gates below are therefore written in **items**, not
+percentages, wherever the metric permits — the rev-5 lesson that a threshold
+smaller than its own instrument's resolution launders judgment as evidence.
 
 **Metrics — deliberately few**
 
@@ -558,13 +605,23 @@ the same three rules that make §6.3 hard to flatter:
 | Gate | Rule | If it fails |
 |---|---|---|
 | Beats recency | top-5 overlap beats a recency-only baseline by ≥1 item on average | the obligation terms are not earning their complexity — cut them and ship recency, honestly labelled |
-| Obligation coverage | ≥50% of top-5 items carry `owed_by` or `due` | RANKED is not yet true; either fix the source projections or **restate the tenet as "ordered by recency and source weight"** until it is |
+| Obligation coverage | ≥50% of top-5 items carry `owed_by` or `due` | **Phase 3 does not exit.** Fix the source projections and re-score |
 | Staleness leakage | 0 items in the top-5 from a source whose `source_status` is `error` | fix the ranker's freshness read before anything else |
 
-The middle gate is the one with teeth, because its failure branch changes the
-*marketing copy*, not the code. A tenet the product cannot meet is either a bug
-or a false claim, and §2's non-negotiable does not permit resolving it by
-leaving the claim up.
+**These block; they are not resolvable by editing the claim** (corrected
+2026-08-03 — an earlier draft offered "fix the projections **or** restate the
+tenet," which let a failing gate be passed by rewording what it measured. A gate
+whose failure you can discharge by changing its own definition is not a gate;
+that is precisely the unfalsifiability rev 5 removed from §6.3, reintroduced one
+section later).
+
+The tenet restatement is a **consequence, not an alternative.** If the operator
+elects to ship anyway over a failed obligation-coverage gate, that override is
+explicit and costs both of the following, together: the RANKED tenet is reworded
+to "ordered by recency and source weight" everywhere it appears — README, web
+page, MCP tool description — and the override is recorded in the CHANGELOG with
+the failing numbers. Shipping the claim unmeasured remains unavailable in every
+branch; §2's non-negotiable does not have an exception.
 
 `status.ranking.quality` surfaces the most recent result alongside
 `status.search.quality`. Never measured reports `unknown`, not a default.
@@ -758,8 +815,7 @@ contaminated by work done after seeing results.
 
 *Preconditions, before any model is scored:*
 
-- [ ] Hybrid search live: a paraphrased question finds the right note via the vector leg
-- [ ] An exact phrase finds its note via the FTS leg
+- [ ] Hybrid search live — **smoke check, not a quality gate**: a paraphrased question returns a non-empty result set through the vector leg, and an exact phrase returns one through the FTS leg. This proves both legs are wired; it says nothing about how well they rank, and it is never cited as evidence of quality. The frozen eval below is the only thing that decides that
 - [ ] Chunk-length histogram run; ≥95% of chunks fit 256 word-pieces, or a chunk cap is added to `vault.py`
 - [ ] `tests/eval_queries.json` holds 60–75 real vault queries with known-good `doc_id`s
 - [ ] ≥50% asymmetric; ≥10 private-jargon; ≥10 exact-phrase; several known-hard
@@ -997,7 +1053,7 @@ went unnoticed until 2026-08-03.
 
 | Tenet | The product (as specced) | The plan & process | Verdict |
 |---|---|---|---|
-| **01 ATTESTED** — source, author, time, link | `Candidate`/`Doc` carry source, ts, url, plus `evidence` + `why`; **`author` added 2026-08-03** after it was found missing (§5) | every lesson L1–L22 cites a version and an incident; every quality claim must cite an `eval.completed`/`rank.evaluated` row or be marked an estimate | **aligned, after a fix.** Both had the same hole: three receipts structural, the fourth in prose |
+| **01 ATTESTED** — source, author, time, link | `Candidate`/`Doc` carry source, ts, url, plus `evidence` + `why`; **`author` added 2026-08-03** after it was found missing (§5) | **incident** attribution is strong — every lesson L1–L22 cites a version and an incident, and every quality claim must cite an `eval.completed`/`rank.evaluated` row or be marked an estimate. **Decision** attribution is not: no rev, no locked decision, and no §14 row records *who* decided it or on what date, beyond a single `owner:` in frontmatter | **aligned, after a fix, and partial on the process side.** Both sides had the same hole in the same place — the *who* — and the product's has been closed while the process's has not |
 | **02 RANKED** — ordered by what your team owes | `owed_by` + `due` fields and the §7.1 detector, **both added 2026-08-03**; before that, recency wearing obligation's name | phases are dependency-ordered and §14 is an explicit "not now"; across `PROJECT/2-WORKING` the roadmap is a **list, not an order** | **the weak tenet on both sides.** Product now measured; process still unranked |
 | **03 FRESH** — stale signals decay | 2 h refresh, per-source freshness in `status`, `unknown` first-class, and **`source_age_s` on every ranked item** (added 2026-08-03) | `pdda.sh stale` flags docs past 4 days; the Status table's left column is the last verified state change; `updated:` validated | **aligned.** Shared blind spot: a fresh timestamp over stale content — the product answers with `activity_at` vs `updated_at`, the process with an LLM rubric |
 | **04 STRUCTURED** — clean to read, ready to feed agents | MCP-first, typed JSON everywhere, `status --json`, `events` as the machine feed, zero-JS page | machine-readable frontmatter, exact status-table headers as a contract, JSONL findings with a stable `check` id | **aligned and strongest.** `PROJECT/PDDA-ACTIVITY.jsonl` is an events table for docs — the same architecture, applied to the work |
@@ -1007,12 +1063,25 @@ went unnoticed until 2026-08-03.
 The finding worth keeping is not "two tenets were unmet." It is **why they were
 unmet, and that the reason was the same reason twice.**
 
-Neither the product nor the process had a representation of **who** (no `author`
-field; no per-decision attribution) or of **obligation** (no assignee, due date,
-or blocked-by; no cross-doc order over the working set). So the two gaps are not
-independent bugs that happened to co-occur — a working method with no obligation
-model produced a plan with no obligation model, and the omission was invisible
-from inside because nothing in the method would have flagged it.
+Neither the product nor the process had a representation of **who** or of
+**obligation** — and the *who* gap needs stating precisely, because the two
+sides fail it differently (sharpened 2026-08-03 after review flagged §18.1 and
+this paragraph disagreeing):
+
+- **Product:** no `author` field at all. Now fixed (§5).
+- **Process:** *incident* attribution is thorough — every lesson names a version
+  and an event. *Decision* attribution is absent: nothing records who chose
+  MiniLM as the default, who set the ≥8-point margin, or who wrote a §14 row,
+  beyond one `owner:` covering the whole document. So the process attests to
+  **what happened** and not to **who concluded what** — a partial failure, not
+  the total one the product had.
+
+**Obligation** is the gap both sides fail outright: no assignee, due date, or
+blocked-by in the product; no cross-doc order over the working set in the
+process. So these are not independent bugs that happened to co-occur — a working
+method with no obligation model produced a plan with no obligation model, and
+the omission was invisible from inside because nothing in the method would have
+flagged it.
 
 The mechanism of the miss is also on record. §2's non-negotiable read *"every
 **retrieval**-quality assertion traces to a run of the frozen eval set."* The
@@ -1023,7 +1092,48 @@ measurement behind it and §13's done-criterion checked only that a ranking was
 exists specifically to prevent it. Rev 5 caught it in the eval gate; this section
 is the same class of defect found one layer further out.
 
-### 18.3 The standing rule
+**One caveat on this whole exercise, stated so it isn't over-claimed.** The four
+tenets were *extracted from* these incidents — ATTESTED and RANKED were
+articulated at 0.56.1/0.57.0 precisely because two surfaces disagreed and the
+email rows were empty. They are scar tissue codified, so "would the tenets have
+caught the scars?" is partly circular and is not the useful question. The useful
+question is the one §18.3 answers: are they **structural now**, or still prose?
+The incumbent already demonstrated which one matters — see L23, where a known,
+already-fixed defect was reintroduced by a new module because the lesson lived
+in a changelog rather than in a test.
+
+### 18.3 The four tenets are not the whole safety surface
+
+A scorecard with exactly four rows invites the reading that passing all four
+means the system is sound. It does not, and the plan's own taxonomy proves it:
+clusters **D (environment/resource assumptions)** and **E (scope accretion)**
+map to *no tenet at all*, and part of **A (silent no-ops)** escapes too, because
+the tenets govern the quality of *signals* and these are failures of
+*operations* — a silent success is not a bad signal, it is no signal.
+
+| Uncovered class | Why no tenet sees it | The incidents | Counterpart invariant |
+|---|---|---|---|
+| **Portability** | a path or shell assumption produces no signal to attest, rank, or date | hardcoded home dirs (0.29.0) · TCC `~/Documents` launchd exit 128 (0.18.2) · Bash 3.2 (0.63.0) — **L11, L21** | **PORTABLE** — canonical app-data paths only, templates rendered per-machine, no shell in the runtime path, no absolute user path in `HiQS/**`. Gate: Phase 4 |
+| **Resource discipline** | a job that eats the machine emits perfectly well-formed telemetry right up to the OOM | no HTTP timeout + no `busy_timeout` lock cascade (0.25.0) · 46 GB jobs reporting 30 MB (0.68.0) — **L7, L18** | **BOUNDED** — explicit timeout on every network call (rule 7), 30 s `busy_timeout`, peak RSS per run, and the stated ≤100 calls / ≤500 MB refresh ceiling. Gate: Phase 2 |
+| **Silent no-ops** | the operation *succeeded*; there is no unhealthy state to report | config whitelist dropping keys (0.26.0) · duplicate migration skipped (0.32.0) · **and the orphaned-chunk bug found in review 2026-08-03** — **L16, L17** | **LOUD** — a no-op that was meant to be an op is an event. Unknown config keys reported in `status`; `pruned` counted in `SyncReport`; an implausible prune share warns. Gate: Phase 0 + Phase 2 |
+| **Scope accretion** | a bloated system can be fully attested, ranked, fresh, and structured | 10-job launchd fleet (L12) · +519 net LOC against a ≤0 criterion (0.57.0) · governance sweeps eating releases (L14) | **SMALL** — ≤3,000 LOC core and 4 top-level deps as a measured budget, §14 triggers stated as numbers, one launchd job. Gate: Phase 5 |
+
+The orphaned-chunk defect is the useful confirmation here, because it was found
+**after** §18 was written and lands squarely in the one class the tenets cannot
+see: `refresh()` returns success, `status` reports `ok`, the counts are honest,
+every payload is typed — and the corpus rots. Four tenets, all green, one silent
+failure. That is what a coverage boundary is for.
+
+One correction to a tempting reading: FRESH is sometimes said to miss the 119
+empty email rows because "the rows existed, so by count the source looked
+fresh." That was true of freshness *as the incumbent implemented it*, and it is
+the reason L4 exists — but it is not true of FRESH as specced here. Records that
+cannot attest are rejected at the write boundary, `SyncReport.counts`
+distinguishes stored from rejected, and §7.1 measures staleness leakage into the
+top-5. The tenet was upgraded from count to meaning; the uncovered classes above
+are the ones that remain genuinely outside it.
+
+### 18.4 The standing rule
 
 **A tenet is a field, a gate, and a detector — never a slogan.** Concretely:
 
@@ -1040,11 +1150,16 @@ is the same class of defect found one layer further out.
   wording, not just the backlog — if HiQS cannot order by obligation, the honest
   claim is "ordered by recency and source weight," and it stays that way until a
   measurement says otherwise.
-- **This audit re-runs.** The tenets are re-checked against the shipped system at
-  the §13 cutover and any time a tenet's wording changes. A dogfooding section
-  written once and never re-run is itself a stale signal.
+- **The same rule binds the four counterpart invariants** (§18.3). PORTABLE,
+  BOUNDED, LOUD, and SMALL are not a second manifesto — each names a gate in a
+  phase, and each is checked there. A plan that made only the tenets executable
+  would still ship the four failure classes they cannot see.
+- **This audit re-runs.** The tenets *and* the counterpart invariants are
+  re-checked against the shipped system at the §13 cutover and any time a
+  tenet's wording changes. A dogfooding section written once and never re-run is
+  itself a stale signal.
 
-### 18.4 Open self-compliance gap
+### 18.5 Open self-compliance gap
 
 **The process is still not RANKED.** `PROJECT/2-WORKING` holds ~45 active docs
 with no obligation order over them: PDDA's triage ratings
@@ -1265,6 +1380,23 @@ for one-writer-per-table, attested candidates (source/evidence/why), and the
 two-hub fan-out/fan-in model — the best ideas in the old codebase are load-bearing
 in the new one.
 
+**L23 — A shipped fix was re-introduced by a new module, because the lesson was
+prose.** `doctor._check_launchd` read `launchctl list`'s status column and
+ignored the live PID, so a running daemon reported FAILING; that was diagnosed
+and fixed under GH-146. Months later the new 3-Eyes health module **reproduced
+the identical misread** (0.67.0) — the principle was known, the fix had shipped,
+and nothing stopped a second implementation from re-committing it. This is the
+lesson that governs all the others: a principle that lives in a changelog
+protects exactly one code path, the one that was edited.
+→ *HiQS:* every lesson that produces a fix is pinned at the **seam**, not in the
+module. The plugin contract test is the model — it asserts a property of *any*
+source, so a source written next year inherits it without anyone remembering to.
+Concretely: one writer per table, attestation non-empty, watermark-on-success,
+within-unit-only reconciliation, and timeout-on-every-call are all properties the
+contract test checks against a fake plugin, so a seventh source cannot
+reintroduce them. A lesson with no seam-level test is documentation, and §18.4's
+"field, gate, detector" rule exists because of this incident.
+
 **L22 — A doc's own status field is not evidence.** A correction pass replaced
 one wrong claim with a second wrong claim because it read prose for the "was it
 merged?" half instead of asking git (0.67.1 → 0.67.2). → *HiQS:* the same rule
@@ -1288,6 +1420,7 @@ query-set SHA that produced it (§6.3, §8). A claim with no row behind it repor
 - [ ] `config.py` — one JSON config, `secret()` resolution chain keyring → 0600 file → env
 - [ ] `plugins.py` — `Source`/`SyncReport`/`Doc`/`Candidate` dataclasses + entry-point walk
 - [ ] Contract test: a fake plugin reaches `docs`, `status`, and ranking with zero core edits
+- [ ] **The contract test is the lesson-seam (L23)** — it asserts the invariants against *any* source, not the shipped three: one writer per table, attestation non-empty, watermark advances only on success, reconciliation within a unit only, explicit timeout on every network call. A future source inherits them without anyone remembering to
 - [ ] Clean-room test: `HiQS/**` imports nothing from the incumbent tree and vice versa
 - [ ] Exit: `hiqs status` on an empty DB returns structured JSON; a fake event lands in `events`
 
@@ -1365,7 +1498,7 @@ Binary and observable; all must pass before Phase 1 starts.
 - [ ] **Idempotence.** Two consecutive `refresh` runs over an unchanged window produce zero inserts and zero updates; `SyncReport.counts` distinguishes inserted / updated / unchanged / skipped / rejected. Never auto-delete (L15).
 - [ ] **Isolation on failure.** With the network stubbed to raise, the GitHub source's error lands in `events` and `SyncReport.errors`, and the rest of the walk still completes (plugin rule 5).
 - [ ] **Quality, not count (L4).** Rows that cannot attest are *rejected* at the write boundary and counted as rejected — a run that stores 100 contentless shells must not report healthy.
-- [ ] **Efficiency.** `api_calls` and `peak_rss_mb` recorded in `SyncReport.meta`; a full refresh stays within one operator-visible budget rather than discovering rate limits in production (L7, L12).
+- [ ] **Efficiency, with numbers.** `api_calls` and `peak_rss_mb` recorded in `SyncReport.meta`, and a full refresh stays inside a stated budget: **≤100 API calls** and **≤500 MB peak RSS** per run. Exceeding either is a `warn` event naming the figure, not a silent pass. (The plan's own standing-hygiene rule forbids a trigger stated as a judgment word — "an operator-visible budget" was exactly that, corrected 2026-08-03. Tune the two numbers once real figures exist; changing them is a CHANGELOG line, not a shrug.)
 - [ ] **Secrets.** The token resolves only through `config.secret()`; no token, path, or username is hardcoded, and none appears in an `events` payload.
 - [ ] **Deploy check:** none yet — still local. Network access is real, so the test suite stubs it; no scheduled job is installed until Phase 4.
 
@@ -1395,7 +1528,7 @@ Binary and observable; all must pass before Phase 1 starts.
 - [ ] **Determinism.** The `Ranker` is pure and repeatable: same candidates in, same order out, no clock- or network-dependent tiebreak, no LLM anywhere in the path (L9).
 - [ ] **Read-only, enforced.** The calendar client is scoped read-only; a test asserts no write method is reachable from `HiQS/**` (Decision 6).
 - [ ] **Attestation survives the seam.** Every item in the `ask()` `ranking` array carries `evidence`, `why`, and a resolvable `url`; `synthesis` is `null`, not an empty string, so a host can tell "no synthesizer" from "synthesizer returned nothing".
-- [ ] **Observability.** A failed OAuth refresh produces a `sync.failed` event with a readable reason and leaves `status` reporting `error` for that source — never a silent empty result rendered as green (L6, L8).
+- [ ] **Observability, checkable by a test.** A failed OAuth refresh produces a `sync.failed` event whose payload carries a **non-empty `error_type`** (a stable, enumerable token — `auth_expired`, `network`, `rate_limit`, `parse`) **and a non-empty `message`**, and leaves `status` reporting `error` for that source. "A readable reason" was unfalsifiable prose (corrected 2026-08-03); two non-empty fields with a closed vocabulary can be asserted. Never a silent empty result rendered as green (L6, L8).
 - [ ] **Deploy check:** **yes, partly** — the MCP server must be registered in a real MCP host (Claude) and the morning-briefing exit check run there, not just in tests. OAuth is a real external credential flow; verify on the actual device, and confirm the token lands in keyring rather than the repo.
 
 ## Phase 4 — Surfaces and ops
@@ -1446,6 +1579,9 @@ re-add trigger has actually fired, and each lands through an existing seam.
 - [ ] Adding eval queries starts a new frozen query-set version and requires re-scoring every model; never append to a set that has already been scored
 - [ ] Any decision threshold is checked against the sample size that will evaluate it — a margin smaller than a few queries is not a threshold
 - [ ] Deletion-ledger rows stay consistent with what v1 actually ships — a row claiming something is deleted while another section ships it is a rev-4-class bug
+- [ ] Every lesson that produced a fix is pinned at the seam by the contract test, not only in the module that broke — a lesson with no seam-level test is documentation (L23)
+- [ ] The four counterpart invariants (PORTABLE, BOUNDED, LOUD, SMALL) are re-checked alongside the four tenets; passing all four tenets is not evidence the system is sound (§18.3)
+- [ ] A gate's failure branch never permits discharging it by redefining what it measures — that is the unfalsifiability rev 5 removed from §6.3 (§7.1, corrected 2026-08-03)
 
 ---
 
