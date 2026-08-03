@@ -28,7 +28,7 @@ log "=== rebalance hourly github sync starting ==="
 # unattended. It does NOT need the GitHub token — a github error won't skip it
 # (refresh_index runs each scope independently), and the non-blocking page from
 # PR #72 is untouched (this is the background writer the page reads from).
-if "$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1
+if rb_run_python_with_retry <<'PY'
 import json
 import sys
 from rebalance.ingest.index_ops import refresh_index

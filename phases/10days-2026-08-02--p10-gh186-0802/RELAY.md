@@ -84,3 +84,31 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    claude, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · claude
+
+**Files touched:** `scripts/lib/scheduler_common.sh`, `scripts/github_sync.sh`
+
+**What was done:**
+
+Added `rb_run_python_with_retry` to `scripts/lib/scheduler_common.sh`. The function:
+- Reads the Python script from stdin (heredoc) into a temp file.
+- Runs `$PYTHON <script_file>`, appending stdout to `LOG_FILE` and capturing stderr separately.
+- On non-zero exit, checks stderr for EINTR/Interrupted-system-call signals **combined** with a `<frozen` traceback frame (the `<frozen getpath>` / other frozen bootstrap modules) to scope the retry strictly to interpreter-startup failures.
+- Retries up to 2 times (3 total attempts) on a confirmed bootstrap EINTR; logs each retry via `log`.
+- Falls through to a normal non-zero return for any other failure — real application errors are never retried.
+
+Updated `scripts/github_sync.sh`: replaced `"$PYTHON" - <<'PY' >> "$LOG_FILE" 2>&1` with `rb_run_python_with_retry <<'PY'` (I/O is now managed inside the helper).
+
+**Key decisions:**
+- Two-condition EINTR detection (`grep -qE "EINTR|Interrupted system call"` AND `grep -q "<frozen"`) ensures retry is scoped to bootstrap, not application-level interrupts.
+- Max 2 retries keeps the job bounded; excessive retries would delay launchd's failure reporting.
+- Temp file for the script (rather than shell variable) avoids bash's trailing-newline stripping on `$()` capture.
+- `bash -n` syntax check passes on both files.
+
+**Acceptance criteria status:**
+- [x] Transient bootstrap EINTR is retried (up to 2 retries)
+- [x] Retry scoped to bootstrap failure mode (`<frozen` + EINTR, not blanket retry)
+- [ ] Scheduler tests green — to be confirmed by harness gate

@@ -71,3 +71,43 @@ rb_job_init() {
 rb_trim_logs() {
     find "$LOG_DIR" -name "${RB_LOG_PREFIX}_*.log" -mtime "+$RB_LOG_RETENTION_DAYS" -delete 2>/dev/null || true
 }
+
+# rb_run_python_with_retry — run a Python script piped via heredoc, retrying on
+# a transient interpreter-bootstrap EINTR (macOS/CPython errno 4, manifests as
+# InterruptedError in <frozen getpath> before any application code runs).
+# Scoped to bootstrap failures only: retries only when stderr shows both an
+# EINTR/Interrupted-system-call signal AND a <frozen ...> traceback frame.
+# Real application errors are never retried. Max 2 retries (3 attempts total).
+# Stdout and stderr are appended to LOG_FILE; the script's exit code is returned.
+rb_run_python_with_retry() {
+    local _script_file _stderr_tmp _exit_code _attempt=0
+    local _max_retries=2
+
+    _script_file=$(mktemp)
+    cat > "$_script_file"
+
+    while true; do
+        _stderr_tmp=$(mktemp)
+        "$PYTHON" "$_script_file" >> "${LOG_FILE:-/dev/null}" 2>"$_stderr_tmp"
+        _exit_code=$?
+
+        if [ "$_exit_code" -eq 0 ]; then
+            rm -f "$_script_file" "$_stderr_tmp"
+            return 0
+        fi
+
+        if grep -qE "(EINTR|Interrupted system call)" "$_stderr_tmp" \
+           && grep -q "<frozen" "$_stderr_tmp" \
+           && [ "$_attempt" -lt "$_max_retries" ]; then
+            cat "$_stderr_tmp" >> "${LOG_FILE:-/dev/null}"
+            rm -f "$_stderr_tmp"
+            _attempt=$(( _attempt + 1 ))
+            log "python bootstrap EINTR (attempt $_attempt/$_max_retries), retrying..."
+            continue
+        fi
+
+        cat "$_stderr_tmp" >> "${LOG_FILE:-/dev/null}"
+        rm -f "$_script_file" "$_stderr_tmp"
+        return "$_exit_code"
+    done
+}
