@@ -1,6 +1,6 @@
 # Marathon Phase hiqs-m1-p5
-STATUS: Open
-NEXT: codex
+STATUS: Approved
+NEXT: none
 
 <!-- marathon-drive: task=MARATHON-HIQS-M1-P5-TURN builder=codex reviewer=agy round-cap=5 -->
 
@@ -98,3 +98,17 @@ Implemented `HiQS/hiqs/__main__.py` and `HiQS/tests/test_cli.py`.
 - Deferred commands validate their arguments, then exit non-zero with a phase-specific message and no traceback.
 - Added focused subprocess tests for help, empty-DB status JSON, deferred-command errors, and bounded option validation.
 - Verified with `pytest HiQS/tests/test_cli.py -q` — 9 passed.
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+Reviewed `HiQS/hiqs/__main__.py` and `HiQS/tests/test_cli.py`.
+- Evaluated whole-file structure and verified zero pre-existing defects.
+- All six subcommands (`refresh`, `status`, `search`, `ask`, `serve`, `auth`) are present in `hiqs --help`.
+- `hiqs status` and `hiqs status --json` emit valid JSON matching the §8 shape via `events.status()`.
+- Unimplemented subcommands cleanly fail with process exit code 2 and a phase-specific message without traceback.
+- Verified test suite passes: `pytest HiQS/tests/test_cli.py -q` (9 passed).
+
+**Verdict:** Approved
+
