@@ -83,6 +83,45 @@ Implemented `HiQS/hiqs/docs_index.py` and `HiQS/tests/test_docs_index.py` per ca
 
 ---
 
+### Round 2 · Reviewer · codex
+
+swept file: yes
+
+Focused verification: `PYTHONPATH=HiQS pytest -q HiQS/tests/test_docs_index.py` — 6 passed.
+
+The complete `docs_index.py` and its test file were swept. Pre-existing defects in these
+touched files are in scope; none were identified apart from the implementation/test gaps below.
+
+Changes requested:
+
+1. **Delta is not keyed by content hash.** `project_docs()` treats every metadata difference
+   (`url`, `ts`, `project`, or `author`) as a reason to embed. That breaks the stated
+   content-hash delta contract and turns metadata refreshes into unnecessary model calls.
+   Compare a stable hash (or equivalent stable comparison) of the actual embedding input
+   (`title` + `body`) and add a test proving a metadata-only update makes zero encode calls.
+
+2. **The document/vector update is not atomic.** `docs` changes commit before `encode()` runs.
+   If encoding fails after a content change, the new document remains paired with its old vector;
+   the next run calls it unchanged and sees a vector for that model, so it never repairs it.
+   Make projection/vector persistence atomic with failure rollback (or persist the embedded-content
+   hash and reliably retry stale vectors), and test an encoder exception during a changed-document
+   update.
+
+3. **The sole-writer test has the wrong scope.** It inspects only `docs_index`, so another
+   `hiqs` module could write `docs` and the test would still pass. Scan the relevant package
+   modules (excluding schema/trigger declarations) so the test actually enforces the phase
+   contract across HiQS.
+
+4. **Source identity is inconsistent.** Existing rows and reconciliation are keyed by
+   `source.name`, while inserts/updates use `doc.source`. A mismatched source document causes
+   missed existing rows and then a primary-key failure (and can make reconciliation incorrect).
+   Validate that `doc.source == source.name` before writing, or consistently use one canonical
+   source identity, with a regression test.
+
+**Verdict:** Changes requested
+
+---
+
 ▶ TAKE YOUR TURN (agy — BUILDER role)
 
 You are the BUILDER for this phase. Read the phase brief above and implement it.
