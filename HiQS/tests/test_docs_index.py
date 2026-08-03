@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 from pathlib import Path
+import re
 from unittest.mock import MagicMock
 
 import pytest
@@ -21,6 +22,10 @@ def _sql_writers(table: str) -> set[tuple[str, str]]:
 
     writers = set()
     pkg_path = Path(hiqs.__file__).parent
+    pattern = re.compile(
+        rf"\b(INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM|REPLACE\s+INTO)\s+[\"`']?{table}[\"`']?\b",
+        re.IGNORECASE,
+    )
 
     for py_file in pkg_path.rglob("*.py"):
         if py_file.name == "db.py":
@@ -33,10 +38,10 @@ def _sql_writers(table: str) -> set[tuple[str, str]]:
         rel_path = py_file.relative_to(pkg_path.parent).as_posix()
         for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
             for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
-                for argument in call.args:
+                call_args = call.args + [kw.value for kw in call.keywords]
+                for argument in call_args:
                     if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
-                        val = argument.value.upper()
-                        if f"INSERT INTO {table}".upper() in val or f"UPDATE {table} SET".upper() in val:
+                        if pattern.search(argument.value):
                             writers.add((rel_path, function.name))
     return writers
 
@@ -55,10 +60,9 @@ class MockSource:
 
 
 def test_docs_has_exactly_one_writer():
-    """Assert docs table has exactly one writer across all hiqs modules: project_docs."""
+    """Assert docs table has exactly one writer across all hiqs modules: (hiqs/docs_index.py, project_docs)."""
     writers = _sql_writers("docs")
-    writer_funcs = {func_name for _, func_name in writers}
-    assert writer_funcs == {"project_docs"}
+    assert writers == {("hiqs/docs_index.py", "project_docs")}
 
 
 def test_delta_behaviour_zero_embed_calls_on_unchanged_content(tmp_path):
@@ -73,17 +77,18 @@ def test_delta_behaviour_zero_embed_calls_on_unchanged_content(tmp_path):
     )
     source = MockSource("mock", [doc1])
 
-    mock_embedder = MagicMock(return_value=[[0.1] * 384])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
 
     report1 = project_docs(conn, sources=[source], embedder=mock_embedder)
     assert report1.counts["inserted"] == 1
-    assert mock_embedder.call_count == 1
+    assert mock_embedder.encode.call_count == 1
 
     # Second run with unchanged content
-    mock_embedder.reset_mock()
+    mock_embedder.encode.reset_mock()
     report2 = project_docs(conn, sources=[source], embedder=mock_embedder)
     assert report2.counts["unchanged"] == 1
-    assert mock_embedder.call_count == 0
+    assert mock_embedder.encode.call_count == 0
 
     conn.close()
 
@@ -100,11 +105,12 @@ def test_metadata_update_makes_zero_embed_calls(tmp_path):
         url="http://v1.com",
     )
     source1 = MockSource("mock", [doc1])
-    mock_embedder = MagicMock(return_value=[[0.1] * 384])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
 
     report1 = project_docs(conn, sources=[source1], embedder=mock_embedder)
     assert report1.counts["inserted"] == 1
-    assert mock_embedder.call_count == 1
+    assert mock_embedder.encode.call_count == 1
 
     # Update metadata (url) but keep title and body identical
     doc2 = Doc(
@@ -115,11 +121,11 @@ def test_metadata_update_makes_zero_embed_calls(tmp_path):
         url="http://v2.com",
     )
     source2 = MockSource("mock", [doc2])
-    mock_embedder.reset_mock()
+    mock_embedder.encode.reset_mock()
 
     report2 = project_docs(conn, sources=[source2], embedder=mock_embedder)
     assert report2.counts["updated"] == 1
-    assert mock_embedder.call_count == 0
+    assert mock_embedder.encode.call_count == 0
 
     # Verify url was updated in docs table
     url = conn.execute("SELECT url FROM docs WHERE id = ?", ("mock:1",)).fetchone()[0]
@@ -134,7 +140,8 @@ def test_atomic_vector_update_rollback_on_encoder_exception(tmp_path):
 
     doc1 = Doc(source="mock", id="mock:1", title="V1 Title", body="V1 Body")
     source1 = MockSource("mock", [doc1])
-    mock_embedder = MagicMock(return_value=[[0.1] * 384])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
 
     project_docs(conn, sources=[source1], embedder=mock_embedder)
 
@@ -142,7 +149,8 @@ def test_atomic_vector_update_rollback_on_encoder_exception(tmp_path):
     doc2 = Doc(source="mock", id="mock:1", title="V2 Title", body="V2 Body")
     source2 = MockSource("mock", [doc2])
 
-    failing_embedder = MagicMock(side_effect=RuntimeError("GPU OOM"))
+    failing_embedder = MagicMock()
+    failing_embedder.encode.side_effect = RuntimeError("GPU OOM")
 
     with pytest.raises(RuntimeError, match="GPU OOM"):
         project_docs(conn, sources=[source2], embedder=failing_embedder)
@@ -152,12 +160,74 @@ def test_atomic_vector_update_rollback_on_encoder_exception(tmp_path):
     assert title == "V1 Title"
 
     # Retry with working embedder succeed and updates to V2
-    retry_embedder = MagicMock(return_value=[[0.2] * 384])
+    retry_embedder = MagicMock()
+    retry_embedder.encode.return_value = [[0.2] * 384]
     report_retry = project_docs(conn, sources=[source2], embedder=retry_embedder)
     assert report_retry.counts["updated"] == 1
 
     title_after = conn.execute("SELECT title FROM docs WHERE id = ?", ("mock:1",)).fetchone()[0]
     assert title_after == "V2 Title"
+
+    conn.close()
+
+
+def test_embedder_without_encode_method_raises_type_error(tmp_path):
+    """Assert embedder lacking .encode() method raises TypeError."""
+    conn = db_connection(tmp_path / "hiqs.db")
+    doc1 = Doc(source="mock", id="mock:1", title="Title", body="Body")
+    source = MockSource("mock", [doc1])
+
+    plain_callable = lambda texts: [[0.1] * 384]
+
+    with pytest.raises(TypeError, match="Embedder must have an encode method"):
+        project_docs(conn, sources=[source], embedder=plain_callable)
+
+    conn.close()
+
+
+def test_malformed_encoder_result_raises_and_rolls_back(tmp_path):
+    """Assert returning fewer vectors than requested raises ValueError and leaves DB empty."""
+    conn = db_connection(tmp_path / "hiqs.db")
+
+    doc1 = Doc(source="mock", id="mock:1", title="Title 1", body="Body 1")
+    doc2 = Doc(source="mock", id="mock:2", title="Title 2", body="Body 2")
+    source = MockSource("mock", [doc1, doc2])
+
+    short_embedder = MagicMock()
+    short_embedder.encode.return_value = [[0.1] * 384]  # 1 vector for 2 docs
+
+    with pytest.raises(ValueError, match="Encoder returned 1 vectors, expected 2"):
+        project_docs(conn, sources=[source], embedder=short_embedder)
+
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 0
+
+    conn.close()
+
+
+def test_cross_source_duplicate_doc_id_raises_error(tmp_path):
+    """Assert duplicate doc IDs across sources raise ValueError to protect docs_vec."""
+    conn = db_connection(tmp_path / "hiqs.db")
+
+    doc1 = Doc(source="src1", id="shared:1", title="Title 1", body="Body 1")
+    doc2 = Doc(source="src2", id="shared:1", title="Title 2", body="Body 2")
+    s1 = MockSource("src1", [doc1])
+    s2 = MockSource("src2", [doc2])
+
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
+
+    with pytest.raises(ValueError, match="Duplicate doc ID 'shared:1' found across sources"):
+        project_docs(conn, sources=[s1, s2], embedder=mock_embedder)
+
+    # Also test existing DB collision
+    project_docs(conn, sources=[s1], embedder=mock_embedder)
+
+    doc2_colliding = Doc(source="src2", id="shared:1", title="Title 2", body="Body 2")
+    s2_colliding = MockSource("src2", [doc2_colliding])
+
+    with pytest.raises(ValueError, match="Doc ID 'shared:1' from source 'src2' collides with existing doc"):
+        project_docs(conn, sources=[s2_colliding], embedder=mock_embedder)
 
     conn.close()
 
@@ -168,7 +238,8 @@ def test_source_identity_mismatch_raises_error(tmp_path):
 
     doc1 = Doc(source="wrong_source", id="mock:1", title="Title", body="Body")
     source = MockSource("expected_source", [doc1])
-    mock_embedder = MagicMock(return_value=[[0.1] * 384])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
 
     with pytest.raises(ValueError, match="Doc source 'wrong_source' does not match Source name 'expected_source'"):
         project_docs(conn, sources=[source], embedder=mock_embedder)
@@ -191,8 +262,10 @@ def test_both_models_resident_and_vectors_coexist(tmp_path):
     vec_minilm = [0.1] * 384
     vec_qwen = [0.5] * 1024
 
-    mock_minilm = MagicMock(return_value=[vec_minilm])
-    mock_qwen = MagicMock(return_value=[vec_qwen])
+    mock_minilm = MagicMock()
+    mock_minilm.encode.return_value = [vec_minilm]
+    mock_qwen = MagicMock()
+    mock_qwen.encode.return_value = [vec_qwen]
 
     # Embed under all-MiniLM-L6-v2
     project_docs(conn, sources=[source], model_name="all-MiniLM-L6-v2", embedder=mock_minilm)
@@ -229,7 +302,8 @@ def test_reconciliation_removes_docs_vec_rows_for_pruned_chunks(tmp_path):
     doc2 = Doc(source="mock", id="mock:chunk2", title="Doc 2", body="Body 2")
     source = MockSource("mock", [doc1, doc2])
 
-    mock_embedder = MagicMock(return_value=[[0.1] * 384, [0.2] * 384])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384]
 
     project_docs(conn, sources=[source], embedder=mock_embedder)
 
@@ -256,7 +330,8 @@ def test_embed_ms_and_peak_rss_mb_recorded_in_meta(tmp_path):
 
     doc1 = Doc(source="mock", id="mock:1", title="Title", body="Body")
     source = MockSource("mock", [doc1])
-    mock_embedder = MagicMock(return_value=[[0.1] * 384])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
 
     report = project_docs(conn, sources=[source], embedder=mock_embedder)
 
@@ -278,3 +353,4 @@ def test_vector_serialization_roundtrip():
     assert dim == 4
     recovered = deserialize_vector(blob)
     assert pytest.approx(recovered) == vec
+

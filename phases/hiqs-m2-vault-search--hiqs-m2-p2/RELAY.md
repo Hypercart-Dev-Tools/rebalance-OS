@@ -181,6 +181,23 @@ Changes requested:
 
 ---
 
+### Round 5 · Builder · agy
+
+Addressed all requested changes from Round 4 review in `HiQS/hiqs/docs_index.py` and `HiQS/tests/test_docs_index.py`:
+
+1. **Strict `.encode()` Interface Contract**:
+   - `_encode_texts()` requires an embedder with an `.encode()` method exclusively and raises `TypeError` if missing or uncallable. Updated test mocks to set `mock.encode.return_value`. Added regression test `test_embedder_without_encode_method_raises_type_error`.
+2. **Encoder Output Validation**:
+   - Added validation before opening DB write transaction to verify `raw_vectors` has exact matching length (`len(raw_vectors) == len(docs_to_embed)`) and non-zero vector dimension (`dim > 0`). Added regression test `test_malformed_encoder_result_raises_and_rolls_back`.
+3. **Global Document ID Uniqueness across Sources**:
+   - Enforced global document ID uniqueness across sources both within batch and against existing DB documents. Conflicting cross-source doc IDs raise `ValueError` prior to DB writes. Added regression test `test_cross_source_duplicate_doc_id_raises_error`.
+4. **AST Sole-Writer Contract Test**:
+   - Refactored `_sql_writers("docs")` to use regex matching across positional and keyword arguments for `INSERT`, `UPDATE`, `DELETE FROM`, and `REPLACE INTO` statements. `test_docs_has_exactly_one_writer` asserts exact qualified writer location `("hiqs/docs_index.py", "project_docs")`.
+
+All 12 tests in `HiQS/tests/test_docs_index.py` passing offline.
+
+---
+
 ▶ TAKE YOUR TURN (agy — BUILDER role)
 
 You are the BUILDER for this phase. Read the phase brief above and implement it.

@@ -48,15 +48,12 @@ def get_default_embedder(model_name: str = "all-MiniLM-L6-v2") -> Any:
         raise RuntimeError(f"sentence-transformers is required for embedding: {err}") from err
 
 
-def _encode_texts(embedder: Any, texts: list[str]) -> list[list[float]] | Any:
-    """Encode texts using either an encoder object with an `.encode()` method or a callable."""
-    if hasattr(type(embedder), "encode"):
-        return embedder.encode(texts)
-    if callable(embedder):
-        return embedder(texts)
-    if hasattr(embedder, "encode"):
-        return embedder.encode(texts)
-    raise TypeError(f"Embedder must be callable or have an encode method, got {type(embedder)}")
+def _encode_texts(embedder: Any, texts: list[str]) -> Any:
+    """Encode texts using exclusively the `.encode()` method of the embedder object."""
+    encode_fn = getattr(embedder, "encode", None)
+    if callable(encode_fn):
+        return encode_fn(texts)
+    raise TypeError(f"Embedder must have an encode method, got {type(embedder)}")
 
 
 def project_docs(
@@ -83,6 +80,12 @@ def project_docs(
     errors: list[str] = []
 
     t0 = time.perf_counter()
+
+    existing_global_docs = {
+        row[0]: row[1]
+        for row in connection.execute("SELECT id, source FROM docs").fetchall()
+    }
+    seen_in_batch: dict[str, str] = {}
 
     docs_to_embed: list[Doc] = []
     inserts: list[tuple[str, str, str, str, str, str, str, str]] = []
@@ -118,6 +121,23 @@ def project_docs(
             if doc.source != source.name:
                 raise ValueError(
                     f"Doc source '{doc.source}' does not match Source name '{source.name}' for doc '{doc.id}'"
+                )
+
+            if doc.id in seen_in_batch:
+                prev_source = seen_in_batch[doc.id]
+                if prev_source != source.name:
+                    raise ValueError(
+                        f"Duplicate doc ID '{doc.id}' found across sources '{prev_source}' and '{source.name}'"
+                    )
+                else:
+                    raise ValueError(
+                        f"Duplicate doc ID '{doc.id}' found multiple times in source '{source.name}'"
+                    )
+            seen_in_batch[doc.id] = source.name
+
+            if doc.id in existing_global_docs and existing_global_docs[doc.id] != source.name:
+                raise ValueError(
+                    f"Doc ID '{doc.id}' from source '{source.name}' collides with existing doc from source '{existing_global_docs[doc.id]}'"
                 )
 
             scanned_doc_ids.add(doc.id)
@@ -161,8 +181,18 @@ def project_docs(
         texts = [f"{d.title}\n{d.body}" if d.title else d.body for d in docs_to_embed]
         raw_vectors = _encode_texts(embedder, texts)
 
+        if raw_vectors is None or not hasattr(raw_vectors, "__len__"):
+            raise ValueError("Encoder result is not a valid sequence")
+
+        if len(raw_vectors) != len(docs_to_embed):
+            raise ValueError(
+                f"Encoder returned {len(raw_vectors)} vectors, expected {len(docs_to_embed)}"
+            )
+
         for doc, vec in zip(docs_to_embed, raw_vectors):
             dim, blob = serialize_vector(vec)
+            if dim == 0:
+                raise ValueError(f"Encoder returned empty vector for doc '{doc.id}'")
             vec_data.append((doc.id, model_name, dim, blob))
 
     # Single atomic transaction for all DB mutations
