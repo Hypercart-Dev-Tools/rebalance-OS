@@ -3,6 +3,7 @@
 import os
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -79,6 +80,30 @@ def pytest_collection_modifyitems(config, items):
                     strict=False,
                 )
             )
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _assert_worktree_path_isolation():
+    """Regression guard for GH-170: worktree's src/ must be first in sys.path.
+
+    The root conftest.py injects the worktree's own src/ at sys.path[0] before
+    any test file is imported.  This fixture confirms the injection happened so
+    that removing or breaking the root conftest.py produces an immediate,
+    descriptive failure instead of silently running tests against the wrong code.
+
+    No-ops in the main checkout (where .git is a directory, not a file).
+    """
+    here = Path(__file__).parent.parent  # repo root — one level above tests/
+    git_marker = here / ".git"
+    if not git_marker.is_file():
+        return  # main checkout — guard does not apply
+
+    expected_src = str(here / "src")
+    assert sys.path[0] == expected_src, (
+        f"GH-170: running in a linked worktree but sys.path[0]={sys.path[0]!r}; "
+        f"expected {expected_src!r}. The root conftest.py should have fixed this — "
+        "check that conftest.py exists at the repo root and that _worktree_src_fixup() runs."
+    )
 
 
 @pytest.fixture(autouse=True)

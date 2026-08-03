@@ -53,3 +53,9 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Ship SQL migration files inside the wheel so run_migrations() can find them.
 "rebalance.ingest.db" = ["migrations/*.sql"]
+
+[tool.pytest.ini_options]
+# GH-170: explicit testpaths so pytest resolves the rootdir (and loads the root
+# conftest.py that injects the worktree's src/) even when invoked from a
+# subdirectory or from inside a linked worktree.
+testpaths = ["tests"]

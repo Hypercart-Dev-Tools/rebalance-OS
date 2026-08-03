@@ -73,6 +73,21 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ---
 
+### Round 1 · Builder · claude
+
+**Files touched:**
+- `conftest.py` — NEW root-level conftest. Detects linked worktree by checking whether `.git` is a file (worktree) vs directory (main checkout). If a file is found, prepends `<worktree_root>/src` to `sys.path[0]` before any test collection begins, overriding the main checkout's editable-install `.pth` entry. Idempotent (skips if already at position 0). No-op in main checkout.
+- `tests/conftest.py` — Added `from pathlib import Path` import. Added `_assert_worktree_path_isolation` session-scoped autouse fixture as a regression guard: detects if running in a worktree and asserts `sys.path[0]` is this worktree's `src/`. Fails with a descriptive message if the root conftest.py is ever removed or broken.
+- `pyproject.toml` — Added `[tool.pytest.ini_options]` with `testpaths = ["tests"]` so pytest resolves rootdir consistently and loads root `conftest.py` from any invocation directory.
+
+**Key decisions:**
+- Detection method: `.git` file vs directory is the standard git worktree marker — reliable, no subprocess needed.
+- Regression guard goes in `tests/conftest.py` as a session fixture (scope lock prohibits a new test file); autouse session fixture fires once and gives a clear failure message if the isolation breaks.
+- Manual repro documented in root `conftest.py` docstring (git worktree add → patch a symbol → confirm cross-checkout divergence).
+- Acceptance criteria status: worktree imports own src/ ✓; regression guard in place ✓; no behavior change for main checkout ✓ (.git dir check early-returns); `pytest tests/` should be green (harness runs gate).
+
+---
+
 ▶ TAKE YOUR TURN (agy — REVIEWER role)
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: conftest.py,tests/conftest.py,pyproject.toml. REVIEW THE WHOLE FILE, NOT JUST THE DIFF (GH-268): a beta test had this loop reach 'Approved' in two rounds while an independent audit of the same branch found 20 issues (1 critical, 4 high) — every one of them in the pre-existing code the change sat on, which nobody had read. Pre-existing defects in a file you are touching are IN SCOPE; say so explicitly if you find none. DECLARE IT: your review block MUST contain a literal 'swept file: yes' or 'swept file: no' line — without it a reviewer that skipped the sweep is indistinguishable in the transcript from one that did it and found nothing, which is exactly how those 20 issues stayed invisible.
