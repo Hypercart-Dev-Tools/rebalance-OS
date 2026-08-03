@@ -105,3 +105,39 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    agy, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · agy
+
+**Summary:**
+Implemented the offline retrieval evaluation runner in `HiQS/tests/eval_retrieval.py` and its comprehensive unit test suite in `HiQS/tests/test_eval_retrieval.py` according to §6.3, §19.2, and §3.2 requirements.
+
+**Key Implementation & Design Decisions:**
+1. `HiQS/tests/eval_retrieval.py`:
+   - **Public/Private Split & Freezing (§19.2):** `load_query_set` reads opaque query IDs, target `doc_id`s, and shape tags from the committed file, and natural-language query text from the gitignored sidecar. Raises a loud `FileNotFoundError` with `"unknown"` when the sidecar is absent, and raises naming §6.3 when the query set is missing. `compute_queryset_sha` computes a SHA-256 digest spanning both files.
+   - **Metrics & Legs:** `evaluate_retrieval` evaluates recall@10 and MRR@10 per leg (FTS-only, vector-only, RRF fused) per model.
+   - **Paired Disagreement Set:** `compute_paired_disagreement_set` outputs every query where two models differ on the top hit with model names and top hit IDs.
+   - **Cost Metrics:** `capture_costs` records `embed_ms` for a full corpus re-embed using `get_embed_text(title, body)`, SQLite `index_mb`, and `peak_rss_mb`.
+   - **Telemetry:** `_log_eval_completed` logs `eval.completed` events targeting the current database connection without touching the default DB.
+   - **Falsifiable Gates (§3.2):** `evaluate_gates` enforces floor (`fused_recall_at_10 >= 0.60`), vector justification (`fused_recall_at_10 - fts_recall_at_10 >= 0.10`), and the selection rule (precondition floor passed; 8-point recall lead required to beat incumbent; tiebreak on MRR@10 >= 0.05 within ±0.08 recall band; split decisions and ties go to incumbent).
+   - **Offline Enforcer:** `get_offline_embedder` enforces `local_files_only=True` to prohibit network downloads. `get_git_sha` retrieves git SHA without subprocess calls.
+
+2. `HiQS/tests/test_eval_retrieval.py`:
+   - Implemented 15 test cases using synthetic IDs (`q-test-001`) and stub embedders:
+     - Test 1: Reproducibility across identical DB and query set runs.
+     - Test 2: Error handling for missing query set (§6.3) and missing/incomplete sidecar (`unknown`).
+     - Test 3 & 4: Floor gate, vector justification, and §3.2 selection rule boundaries (including 1-point gain, 8-point lead, in-band MRR tiebreak, split decisions, and ties going to incumbent).
+     - Test 5: Integration with `status().search.quality` reading from the `eval.completed` event.
+     - Test 6: Default DB isolation (zero events written to default DB).
+     - Test 7: Multi-model evaluation and paired disagreement set across 3 models.
+     - Test 8: Cost capture timing and exact text payload validation.
+     - Test 9: Canonical §19.2 field validation (`doc_id`, `shape`).
+     - Test 10: Loud failure on missing local model (no network download allowed).
+     - Test 11: Loud RuntimeError on vector search / encoder failures.
+
+3. **Verification:**
+   - Ran `pytest HiQS/tests/test_eval_retrieval.py` (15 passed).
+
+handing off to codex — codex, take your turn.
+
