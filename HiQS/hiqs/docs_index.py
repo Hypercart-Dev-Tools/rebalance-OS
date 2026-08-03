@@ -135,6 +135,15 @@ def project_docs(
     updates: list[tuple[str, str, str, str, str, str, str, str]] = []
     prunes: list[tuple[str, str]] = []
 
+    invalidated_vec_doc_ids: list[str] = []
+
+    existing_tables = {
+        r[0]
+        for r in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'"
+        ).fetchall()
+    }
+
     for source in sources:
         if source.docs is None:
             continue
@@ -175,6 +184,40 @@ def project_docs(
                     scanned_units.update(units_res)
             except Exception as err:
                 errors.append(f"Error fetching units for source '{source.name}': {err}")
+
+        if source.name == "vault" or "vault_files" in existing_tables:
+            try:
+                vault_paths = [
+                    r[0] for r in connection.execute("SELECT path FROM vault_files").fetchall()
+                ]
+                scanned_units.update(vault_paths)
+            except Exception:
+                pass
+
+        for tbl_suffix in ("files", "records"):
+            tbl_name = f"{source.name}_{tbl_suffix}"
+            if tbl_name in existing_tables:
+                try:
+                    cols = [
+                        info[1]
+                        for info in connection.execute(f"PRAGMA table_info('{tbl_name}')").fetchall()
+                    ]
+                    if "path" in cols:
+                        scanned_units.update(
+                            r[0]
+                            for r in connection.execute(
+                                f"SELECT DISTINCT path FROM {tbl_name}"
+                            ).fetchall()
+                        )
+                    elif "unit" in cols:
+                        scanned_units.update(
+                            r[0]
+                            for r in connection.execute(
+                                f"SELECT DISTINCT unit FROM {tbl_name}"
+                            ).fetchall()
+                        )
+                except Exception:
+                    pass
 
         if successful_units is not None:
             if isinstance(successful_units, dict):
@@ -233,6 +276,8 @@ def project_docs(
                     old_hash = compute_content_hash(old_title, old_body)
                     if new_hash != old_hash or doc.id not in existing_vec_ids:
                         docs_to_embed.append(doc)
+                    if new_hash != old_hash:
+                        invalidated_vec_doc_ids.append(doc.id)
                 else:
                     counts["unchanged"] += 1
                     if doc.id not in existing_vec_ids:
@@ -297,6 +342,11 @@ def project_docs(
             connection.executemany(
                 "DELETE FROM docs_vec WHERE doc_id = ?",
                 [(p[1],) for p in prunes],
+            )
+        if invalidated_vec_doc_ids:
+            connection.executemany(
+                "DELETE FROM docs_vec WHERE doc_id = ?",
+                [(did,) for did in invalidated_vec_doc_ids],
             )
         if vec_data:
             connection.executemany(

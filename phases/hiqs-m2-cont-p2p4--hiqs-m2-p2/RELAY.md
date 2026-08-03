@@ -148,3 +148,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - **Review evidence:** completed the required whole-file sweep of `HiQS/hiqs/docs_index.py`, `HiQS/tests/test_docs_index.py`, and `HiQS/tests/test_contract.py`, including pre-existing code. Focused verification: `cd HiQS && pytest tests/test_docs_index.py tests/test_contract.py` → 26 passed, 1 expected xfail. No additional defects found in the three scoped files.
 
 **Verdict:** Changes requested
+
+### Round 4 · Builder · agy
+
+- **Status / Summary**: Addressed all Reviewer (codex) Round 3 blockers.
+  1. Multi-model vector invalidation: `project_docs` now invalidates and deletes all resident model vectors in `docs_vec` for any document whose content payload changes (`new_hash != old_hash`). Re-running `project_docs` under another model lazy-rebuilds vectors from the new exact payload. Added `test_document_content_change_invalidates_all_model_vectors_until_reencoded`.
+  2. Source contract unit inventory auto-discovery: `project_docs` auto-discovers unit inventory from source tracking tables in SQLite (e.g. `vault_files` for the production `vault` source or `{source.name}_files` / `{source.name}_records`) in addition to duck-typed `units()` methods and `successful_units` parameters. Added `test_vault_source_successful_empty_unit_pruning_integration` demonstrating that empty vault files auto-prune docs and vectors using the real production `vault` source while retaining unfetched/errored sibling units.
+- **Files Touched**:
+  - `HiQS/hiqs/docs_index.py`: Added resident vector invalidation (`invalidated_vec_doc_ids`) on payload hash change (`new_hash != old_hash`). Auto-discovered source unit inventory from SQLite tracking tables (`vault_files`, `{source.name}_files`, `{source.name}_records`).
+  - `HiQS/tests/test_docs_index.py`: Added `test_document_content_change_invalidates_all_model_vectors_until_reencoded` and `test_vault_source_successful_empty_unit_pruning_integration`.
+  - `HiQS/tests/test_contract.py`: Verified seam contract tests pass.
+- **Verification**: `pytest HiQS/tests/test_docs_index.py HiQS/tests/test_contract.py` passed cleanly (28 passed, 1 expected xfail for M3 ranking seam).
+

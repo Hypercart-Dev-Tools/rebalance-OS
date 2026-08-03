@@ -590,5 +590,94 @@ def test_explicit_successful_empty_unit_deletes_docs_and_vectors(tmp_path):
     conn.close()
 
 
+def test_document_content_change_invalidates_all_model_vectors_until_reencoded(tmp_path):
+    """Assert changing document payload invalidates all resident model vectors until re-encoded."""
+    conn = db_connection(tmp_path / "hiqs.db")
+
+    doc_v1 = Doc(source="mock", id="mock:1", title="Title 1", body="Body 1")
+    source_v1 = MockSource("mock", [doc_v1])
+
+    embedder_m1 = MagicMock()
+    embedder_m1.encode.return_value = [[0.1] * 384]
+
+    embedder_m2 = MagicMock()
+    embedder_m2.encode.return_value = [[0.9] * 1024]
+
+    # Embed under model 1 and model 2 for v1 content
+    project_docs(conn, sources=[source_v1], model_name="model1", embedder=embedder_m1)
+    project_docs(conn, sources=[source_v1], model_name="model2", embedder=embedder_m2)
+
+    assert get_doc_vector(conn, "mock:1", "model1") is not None
+    assert get_doc_vector(conn, "mock:1", "model2") is not None
+
+    # Change content payload to v2
+    doc_v2 = Doc(source="mock", id="mock:1", title="Title 1", body="Body 2 updated")
+    source_v2 = MockSource("mock", [doc_v2])
+
+    embedder_m1.encode.return_value = [[0.2] * 384]
+    project_docs(conn, sources=[source_v2], model_name="model1", embedder=embedder_m1)
+
+    # Model 1 has updated vector for v2
+    vec1_v2 = get_doc_vector(conn, "mock:1", "model1")
+    assert vec1_v2 is not None
+    assert pytest.approx(vec1_v2[1]) == [0.2] * 384
+
+    # Model 2 vector for old v1 content MUST BE INVALIDATED and return None
+    assert get_doc_vector(conn, "mock:1", "model2") is None
+
+    # Re-running project_docs under model 2 re-encodes new v2 payload
+    embedder_m2.encode.return_value = [[0.8] * 1024]
+    project_docs(conn, sources=[source_v2], model_name="model2", embedder=embedder_m2)
+
+    vec2_v2 = get_doc_vector(conn, "mock:1", "model2")
+    assert vec2_v2 is not None
+    assert pytest.approx(vec2_v2[1]) == [0.8] * 1024
+
+    conn.close()
+
+
+def test_vault_source_successful_empty_unit_pruning_integration(tmp_path, monkeypatch):
+    """Assert real vault source auto-reconciles empty fetched units via vault_files table."""
+    from hiqs.sources import vault
+    from hiqs.sources.vault import fetch as vault_fetch, SOURCE as VAULT_SOURCE
+
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+
+    file1 = vault_dir / "note1.md"
+    file1.write_text("# Heading 1\nContent 1\n# Heading 2\nContent 2")
+
+    file2 = vault_dir / "note2.md"
+    file2.write_text("# Heading A\nContent A")
+
+    monkeypatch.setattr(vault, "_resolve_vault_path", lambda cfg=None: vault_dir)
+
+    conn = db_connection(tmp_path / "hiqs.db")
+    config = {"vault_path": vault_dir}
+
+    # Initial sync
+    vault_fetch(conn, config)
+    mock_embedder = MagicMock()
+    mock_embedder.encode.side_effect = lambda texts: [[0.1] * 384 for _ in texts]
+    project_docs(conn, sources=[VAULT_SOURCE], embedder=mock_embedder)
+
+    assert conn.execute("SELECT COUNT(*) FROM docs WHERE id LIKE 'vault:note1.md:%'").fetchone()[0] == 2
+    assert conn.execute("SELECT COUNT(*) FROM docs WHERE id LIKE 'vault:note2.md:%'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 3
+
+    # Now make note1.md empty (0 chunks), while note2.md stays unchanged
+    file1.write_text("")
+    vault_fetch(conn, config)
+    project_docs(conn, sources=[VAULT_SOURCE], embedder=mock_embedder)
+
+    # note1.md chunks and vectors must be pruned! note2.md stays.
+    assert conn.execute("SELECT COUNT(*) FROM docs WHERE id LIKE 'vault:note1.md:%'").fetchone()[0] == 0
+    assert conn.execute("SELECT COUNT(*) FROM docs WHERE id LIKE 'vault:note2.md:%'").fetchone()[0] == 1
+    assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 1
+
+    conn.close()
+
+
+
 
 
