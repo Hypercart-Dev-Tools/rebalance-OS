@@ -35,4 +35,16 @@ phases:
     brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p4-eval-runner.md
     artifact: HiQS/tests/eval_retrieval.py,HiQS/tests/test_eval_retrieval.py
     turn_timeout_s: 1800
-    max_review_rounds: 3
+    # 5, not 3. The first run's rounds 1/2/4 each raised NEW real findings and round 5 delivered
+    # fixes for all six of round 4's with no reviewer turn left to approve them — a converging
+    # review clipped by the cap, not a runaway one (same shape as p2's first run).
+    #
+    # Expect this phase to be the pickiest in M2 and let it be: the artifact is the retrieval-eval
+    # runner, i.e. the thing whose whole job is to report search quality honestly. Round 4's
+    # findings were squarely on that — an embedder path that could reach the network despite an
+    # offline contract, cost capture emitting embed_ms: 0 as though it were a real measurement,
+    # vector-leg failures swallowed into empty hits and written out as a valid zero-quality event,
+    # and two new tests that asserted something weaker than the claim they were named for. Every one
+    # is the measurement lying about itself, which is the exact failure class this project exists to
+    # kill. A gate that cannot fail is worth less than no gate.
+    max_review_rounds: 5
