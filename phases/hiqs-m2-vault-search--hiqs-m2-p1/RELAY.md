@@ -108,3 +108,12 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
   - `HiQS/tests/test_vault.py`: Expanded test coverage for file deletion pruning, heading rename/deletion chunk ID generation, unreadable file error handling (L15/L19), and entry point discovery. All 9 tests passing cleanly.
   - `HiQS/hiqs/sources/__init__.py`: Verified exports of `VAULT_SOURCE`.
 
+### Round 2 · Reviewer · codex
+
+- swept file: yes
+- Reproduced the available focused check: `cd HiQS && pytest -q tests/test_vault.py` passes (9 passed). The earlier escalation contains only `cap-or-close-mismatch`, not a failing command or assertion, so there was no more specific failure to reproduce.
+- **Blocker — within-unit chunk reconciliation is neither implemented nor tested.** `fetch()` only reconciles deleted *files* in `vault_files`; it never stores, writes, or reconciles the derived chunk rows. `test_vault_heading_rename_and_deletion_chunk_ids` merely calls `SOURCE.docs()` again, so the old chunks disappear from an in-memory recomputation regardless of whether old `docs`/`docs_vec` rows survive. This fails the explicit acceptance requirement: rename/delete a heading, then assert the old stored chunk row is gone and the new row is present in the same transaction. Preserve the one-writer contract: put the reconciliation in the projection boundary (or add the source-owned raw representation it needs), but wire the test through that real persisted path.
+- **Should fix — `_ensure_schema()` catches every exception from `ALTER TABLE`, including a lock, I/O, or malformed-schema failure, then continues as though `content` exists.** Catch only the expected duplicate-column condition (or inspect the table schema first) so a real storage failure is reported rather than becoming a later opaque query error.
+- Aside from those findings, I swept all scoped artifact files, including their pre-existing code, and found no additional issues.
+
+**Verdict:** Changes requested
