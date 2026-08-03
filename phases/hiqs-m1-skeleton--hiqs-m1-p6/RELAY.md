@@ -90,3 +90,20 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+- Added `HiQS/tests/fake_source.py`, a third-party-shaped source discoverable only through the
+  `hiqs.sources` entry-point seam. Its injected network boundary receives an explicit timeout,
+  its watermark advances only after a successful fetch, and raw-record reconciliation is scoped
+  to the successfully fetched unit.
+- Added `HiQS/tests/test_contract.py` to pin fake-source discovery, documents, status telemetry,
+  total candidate attestation, timeout propagation, watermark safety, within-unit reconciliation,
+  and `log_event()` as the sole `events` writer. The absent M2 docs projection and M3 ranking
+  seam are strict `xfail`s so an unreviewed implementation cannot silently satisfy either.
+- Added `HiQS/tests/test_clean_room.py`, an AST-based two-direction import detector. Its temporary
+  fixture deliberately injects both `import rebalance` and `from hiqs import ...` to demonstrate
+  rejection; the real trees are then required to be clean. The module docstring records that this
+  is the extraction precondition rather than a style check.
+- Verification: `pytest HiQS/tests/test_contract.py HiQS/tests/test_clean_room.py` → 9 passed,
+  2 xfailed (strict, pending M2/M3).
