@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m1-p4
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-HIQS-M1-P4-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -98,3 +98,17 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Added the shared `status()` health payload: per-source latest state and successful-sync freshness, canonical table row counts, bounded error tail, and event-derived search/ranking modes and quality. Probe failures return an all-`unknown` safe shape.
 - Added `HiQS/tests/test_events.py` for event/status round-trip, empty and unreadable database honesty, writer/status validation, and evaluation/degradation aggregation.
 - Verified: `pytest HiQS/tests/test_events.py` (9 passed).
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+- Reviewed `HiQS/hiqs/events.py` and `HiQS/tests/test_events.py` in their entirety. No pre-existing or introduced defects found.
+- Verified single append-only writer `log_event()` constrained to `ok|warn|error|unknown` vocabulary.
+- Verified `status()` aggregation returning §8 JSON structure, handling empty DB and unreadable probe safely with `unknown` sentinel states without throwing exceptions or reporting false health.
+- Verified specific test execution: `pytest HiQS/tests/test_events.py` (9 passed).
+
+**Verdict:** Approved
+
+relay closed, no further turn needed
+
