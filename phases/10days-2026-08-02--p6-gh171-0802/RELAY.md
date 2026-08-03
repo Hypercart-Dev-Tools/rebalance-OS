@@ -1,6 +1,6 @@
 # Marathon Phase p6-gh171-0802
-STATUS: Open
-NEXT: claude
+STATUS: Approved
+NEXT: done
 
 <!-- marathon-drive: task=MARATHON-P6-GH171-0802-TURN builder=claude reviewer=agy round-cap=5 -->
 
@@ -113,3 +113,19 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 **Test result:** `pytest tests/test_github_knowledge.py -q` → 4 passed in 0.18s.
 
 **Pre-existing code sweep:** The rest of `github_knowledge.py` was reviewed. `embed_github_documents` already commits per batch (line ~924 in the original). `purge_github_repo_data` does a single commit at the end of a pure-write block — acceptable since it holds no network calls. No pre-existing write-spans-network issues found in the other functions.
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+**Review summary:**
+- **`src/rebalance/ingest/github_knowledge.py`**:
+  - Phase 1 network pre-fetching correctly detaches all GitHub API calls (`_paginate_list`, `api_get`) from SQLite write transactions.
+  - Phase 2 DB write transactions in `with db_connection(...)` execute cleanly without network calls, committing per batch/item.
+  - Full file sweep performed (`swept file: yes`): audited `purge_github_repo_data`, `sync_github_artifacts`, `embed_github_documents`, and `query_github_documents`. No pre-existing write-spans-network defects or concurrency locks found.
+- **`scripts/github_sync.sh`**:
+  - Policy documentation updated to explain GH-171 non-blocking write behaviour.
+- **Verification**:
+  - `pytest tests/ -k "github_scan or github_client or github_knowledge"` passed 15/15 tests.
+
+**Verdict:** Approved
