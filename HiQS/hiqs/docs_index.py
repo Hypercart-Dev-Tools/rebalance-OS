@@ -83,7 +83,11 @@ def project_docs(
     errors: list[str] = []
 
     t0 = time.perf_counter()
+
     docs_to_embed: list[Doc] = []
+    inserts: list[tuple[str, str, str, str, str, str, str, str]] = []
+    updates: list[tuple[str, str, str, str, str, str, str, str]] = []
+    prunes: list[tuple[str, str]] = []
 
     for source in sources:
         if source.docs is None:
@@ -110,50 +114,46 @@ def project_docs(
 
         scanned_doc_ids: set[str] = set()
 
-        with connection:
-            for doc in source_docs:
-                scanned_doc_ids.add(doc.id)
-                new_tuple = (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author)
+        for doc in source_docs:
+            if doc.source != source.name:
+                raise ValueError(
+                    f"Doc source '{doc.source}' does not match Source name '{source.name}' for doc '{doc.id}'"
+                )
 
-                if doc.id not in existing_map:
-                    connection.execute(
-                        "INSERT INTO docs (source, id, title, body, url, ts, project, author) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (doc.source, doc.id, doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author),
+            scanned_doc_ids.add(doc.id)
+            new_tuple = (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author)
+
+            if doc.id not in existing_map:
+                inserts.append(
+                    (source.name, doc.id, doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author)
+                )
+                counts["inserted"] += 1
+                docs_to_embed.append(doc)
+            else:
+                old_tuple = existing_map[doc.id]
+                old_title, old_body = old_tuple[0], old_tuple[1]
+
+                if new_tuple != old_tuple:
+                    updates.append(
+                        (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author, source.name, doc.id)
                     )
-                    counts["inserted"] += 1
-                    docs_to_embed.append(doc)
-                else:
-                    old_tuple = existing_map[doc.id]
-                    if new_tuple != old_tuple:
-                        connection.execute(
-                            "UPDATE docs SET title = ?, body = ?, url = ?, ts = ?, project = ?, author = ? WHERE source = ? AND id = ?",
-                            (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author, doc.source, doc.id),
-                        )
-                        counts["updated"] += 1
+                    counts["updated"] += 1
+                    # Delta embedding keyed by content comparison (title + body)
+                    if (doc.title, doc.body) != (old_title, old_body) or doc.id not in existing_vec_ids:
                         docs_to_embed.append(doc)
-                    else:
-                        counts["unchanged"] += 1
-                        if doc.id not in existing_vec_ids:
-                            docs_to_embed.append(doc)
+                else:
+                    counts["unchanged"] += 1
+                    if doc.id not in existing_vec_ids:
+                        docs_to_embed.append(doc)
 
-            # Within-unit reconciliation for docs and docs_vec (§5 rule 2)
-            to_prune = [doc_id for doc_id in existing_map if doc_id not in scanned_doc_ids]
-            if to_prune:
-                connection.executemany(
-                    "DELETE FROM docs WHERE source = ? AND id = ?",
-                    [(source.name, doc_id) for doc_id in to_prune],
-                )
-                connection.executemany(
-                    "DELETE FROM docs_vec WHERE doc_id = ?",
-                    [(doc_id,) for doc_id in to_prune],
-                )
-                counts["pruned"] += len(to_prune)
+        # Within-unit reconciliation for docs and docs_vec (§5 rule 2)
+        to_prune = [doc_id for doc_id in existing_map if doc_id not in scanned_doc_ids]
+        for doc_id in to_prune:
+            prunes.append((source.name, doc_id))
+        counts["pruned"] += len(to_prune)
 
-    # Prune orphaned vectors if any exist
-    with connection:
-        connection.execute("DELETE FROM docs_vec WHERE doc_id NOT IN (SELECT id FROM docs)")
-
-    # Delta embedding
+    # Delta embedding before DB mutations so failures leave DB state unchanged
+    vec_data: list[tuple[str, str, int, bytes]] = []
     if docs_to_embed:
         if embedder is None:
             embedder = get_default_embedder(model_name)
@@ -161,13 +161,37 @@ def project_docs(
         texts = [f"{d.title}\n{d.body}" if d.title else d.body for d in docs_to_embed]
         raw_vectors = _encode_texts(embedder, texts)
 
-        with connection:
-            for doc, vec in zip(docs_to_embed, raw_vectors):
-                dim, blob = serialize_vector(vec)
-                connection.execute(
-                    "INSERT OR REPLACE INTO docs_vec (doc_id, model, dim, vec) VALUES (?, ?, ?, ?)",
-                    (doc.id, model_name, dim, blob),
-                )
+        for doc, vec in zip(docs_to_embed, raw_vectors):
+            dim, blob = serialize_vector(vec)
+            vec_data.append((doc.id, model_name, dim, blob))
+
+    # Single atomic transaction for all DB mutations
+    with connection:
+        if inserts:
+            connection.executemany(
+                "INSERT INTO docs (source, id, title, body, url, ts, project, author) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                inserts,
+            )
+        if updates:
+            connection.executemany(
+                "UPDATE docs SET title = ?, body = ?, url = ?, ts = ?, project = ?, author = ? WHERE source = ? AND id = ?",
+                updates,
+            )
+        if prunes:
+            connection.executemany(
+                "DELETE FROM docs WHERE source = ? AND id = ?",
+                prunes,
+            )
+            connection.executemany(
+                "DELETE FROM docs_vec WHERE doc_id = ?",
+                [(p[1],) for p in prunes],
+            )
+        if vec_data:
+            connection.executemany(
+                "INSERT OR REPLACE INTO docs_vec (doc_id, model, dim, vec) VALUES (?, ?, ?, ?)",
+                vec_data,
+            )
+        connection.execute("DELETE FROM docs_vec WHERE doc_id NOT IN (SELECT id FROM docs)")
 
     t1 = time.perf_counter()
     embed_ms = round((t1 - t0) * 1000, 2)

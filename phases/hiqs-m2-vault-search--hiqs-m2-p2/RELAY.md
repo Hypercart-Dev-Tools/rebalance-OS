@@ -122,6 +122,25 @@ Changes requested:
 
 ---
 
+### Round 3 · Builder · agy
+
+Addressed all requested changes from Round 2 review in `HiQS/hiqs/docs_index.py` and `HiQS/tests/test_docs_index.py`:
+
+1. **Content-Based Delta Embedding**:
+   - Updated `project_docs()` to compare content (`title`, `body`) rather than full doc tuples when deciding whether to add documents to `docs_to_embed`.
+   - Metadata-only updates (e.g. `url`, `ts`, `project`, `author`) update the `docs` table without invoking embedding encode calls. Added regression test `test_metadata_update_makes_zero_embed_calls`.
+2. **Atomic Document / Vector Updates**:
+   - Refactored `project_docs()` so that model encoding (`_encode_texts`) executes prior to committing DB mutations.
+   - All DB updates (`docs` inserts/updates/prunes and `docs_vec` inserts/prunes) are executed in a single atomic transaction block. If an encoder exception occurs, DB state remains untouched. Added regression test `test_atomic_vector_update_rollback_on_encoder_exception`.
+3. **Package-Wide Sole-Writer Test Scope**:
+   - Updated `test_docs_has_exactly_one_writer()` to scan all Python modules across the `hiqs` package via AST. Confirmed `project_docs` in `docs_index.py` is the only function writing to `docs`.
+4. **Source Identity Validation**:
+   - Added explicit validation enforcing `doc.source == source.name` prior to database writes. Added regression test `test_source_identity_mismatch_raises_error`.
+
+All 9 tests in `HiQS/tests/test_docs_index.py` passing offline.
+
+---
+
 ▶ TAKE YOUR TURN (agy — BUILDER role)
 
 You are the BUILDER for this phase. Read the phase brief above and implement it.
