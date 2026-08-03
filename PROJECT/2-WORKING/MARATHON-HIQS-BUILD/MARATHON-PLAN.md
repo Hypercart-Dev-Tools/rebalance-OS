@@ -3,7 +3,7 @@ title: "HiQS build — marathon decomposition and operator hand-offs"
 owner: Noel
 gh_issue: TBA
 source: "TBA"
-status: "Active (2-WORKING) — created 2026-08-03. 5 marathon plans authored, none fired. M1 is preflighted and ready; M2–M5 are gated on the operator checkpoint before each."
+status: "Active (2-WORKING) — created 2026-08-03. 5 marathon plans authored and preflighted, none fired. M1 is ready behind a one-time venv pre-step; M2–M5 are gated on the operator checkpoint before each."
 created: 2026-08-03
 updated: 2026-08-03
 doc_type: project
@@ -33,7 +33,7 @@ phases: 5
 
 | What was just completed | What's next |
 |---|---|
-| Five marathon plans authored and **preflighted clean** 2026-08-03 — 18 phases, `marathon.sh --dry-run` reports the full execution order for all five with no halt. Preflight earned its keep: it caught two defects that would have failed mid-run — every plan alternated reviewers internally, which `marathon-drive` refuses when the reviewer equals the builder (exit 2 at phase 2 of all five), and bare `p1`/`p2` phase ids would have collided across plans on the `MARATHON-<ID>-TURN` tick token, which is permanently spent once claimed. Phase ids are now prefixed `hiqs-mN-pN`, matching every prior marathon in this repo. Five marathon plans authored 2026-08-03 covering **every module in [HIQS-PROJECT.md](../HIQS-PROJECT.md) §11** — 18 phases across M1–M5, each with a written brief, a disjoint artifact, and a reviewer. Write-sets verified against the plan's file tree, not inferred from phase titles. The decomposition is shaped by two facts about this harness: marathons run **strictly one phase at a time** (GH-241 — `depends_on` constrains order, it does not buy parallelism), and every phase must clear a real pre-advance gate. | **Open the tracking issue on [HiQS-Suite/HiQS](https://github.com/HiQS-Suite/HiQS)**, then fire **M1 only** (`marathon.sh --plan PROJECT/2-WORKING/MARATHON-HIQS-BUILD/M1-SKELETON.yaml --pre-advance-cmd '<gate>'`). M2–M5 must not be fired ahead of their checkpoint: each depends on evidence the prior marathon cannot generate. See [Operator checkpoints](#operator-checkpoints--what-a-marathon-cannot-do). |
+| Five marathon plans authored and **preflighted clean** 2026-08-03 — 18 phases, `marathon.sh --dry-run` reports the full execution order for all five with no halt. Preflight earned its keep: it caught two defects that would have failed mid-run — every plan alternated reviewers internally, which `marathon-drive` refuses when the reviewer equals the builder (exit 2 at phase 2 of all five), and bare `p1`/`p2` phase ids would have collided across plans on the `MARATHON-<ID>-TURN` tick token, which is permanently spent once claimed. Phase ids are now prefixed `hiqs-mN-pN`, matching every prior marathon in this repo. The plans cover **every module in [HIQS-PROJECT.md](../HIQS-PROJECT.md) §11** — one module plus its tests per phase, write-sets verified against the file tree rather than inferred from phase titles. **HiQS gets its own venv** (`HiQS/.venv`); the build runs offline on `pytest` alone and torch does not land until checkpoint A. The decomposition is shaped by two facts about this harness: marathons run **strictly one phase at a time** (GH-241 — `depends_on` constrains order, it does not buy parallelism), and every phase must clear a real pre-advance gate. | **Open the tracking issue on [HiQS-Suite/HiQS](https://github.com/HiQS-Suite/HiQS)**, run the one-time venv pre-step (`python3 -m venv HiQS/.venv && HiQS/.venv/bin/pip install pytest` — **HiQS gets its own venv; installing into the incumbent's would pull torch under seven live jobs**, see [Environment](#environment--hiqs-gets-its-own-venv-and-torch-stays-off-this-machine-for-months)), then fire **M1 only** with `--builder codex`. M2–M5 must not be fired ahead of their checkpoint: each depends on evidence the prior marathon cannot generate. See [Operator checkpoints](#operator-checkpoints--what-a-marathon-cannot-do). |
 
 ## The honest split: the code is buildable, the evidence is not
 
@@ -136,6 +136,52 @@ The one ordering that is **not** obvious: `plugins.py` lands first even though i
 file, because it is pure contract. Every later phase's brief cites it as the frozen shape it must
 satisfy, which is what stops six independently-built modules from disagreeing about `Doc`.
 
+## Environment — HiQS gets its own venv, and torch stays off this machine for months
+
+**Decided 2026-08-03: `HiQS/.venv`, never the incumbent's `.venv`.** Testing happens on the same
+device that runs rebalance-OS, and that venv currently holds `mlx`, `mlx-embeddings`, `mlx-lm`,
+`transformers 5.12.1`, `huggingface_hub 1.20.1`, `numpy 2.5.0` — and **no torch**. Installing
+`sentence-transformers` into it pulls torch *and* re-resolves `transformers`/`huggingface_hub`/
+`numpy` underneath the exact embedding stack seven live launchd jobs depend on. That is mutating
+the fallback while it is still the fallback (§19.4).
+
+Three more reasons, in increasing cost:
+
+1. **It makes the Phase 6 extraction gate untestable until it is too late.** `test_clean_room.py`
+   walks the AST for imports; it cannot see an **ambient** dependency. Share a venv and HiQS's suite
+   passes on packages it never declared — you find out at "clone fresh, `pip install -e .`, run the
+   suite", which is the one gate meant to catch exactly this.
+2. **§11's dependency budget stops being measurable.** "4 top-level, ~10 installed, ~200 MB" cannot
+   be checked when you cannot tell what HiQS pulled from what was already there. The SMALL
+   invariant (§18.3) goes blind.
+3. **§19.1 already forbids it** — *nothing HiQS needs may live above `HiQS/`*. A shared venv is
+   precisely that, and it is the kind that survives a `subtree split` invisibly.
+
+### Staged install — the build runs offline on `pytest` alone
+
+Every brief mandates stubbed network and a stubbed encoder, so M1–M5 need almost nothing installed.
+The heavy dependency lands once, in its own venv, at the moment it is first genuinely needed:
+
+| Before | Install | Why |
+|---|---|---|
+| **M1** | `pytest` only | `conftest.py` puts `HiQS/` on `sys.path`; no editable install needed during the build |
+| **M4** | `+ mcp` | `mcp_server.py` imports it |
+| **checkpoint A** | `+ sentence-transformers` | the ~200 MB/torch one — only when actually scoring models against the real vault |
+| **checkpoint B** | `+ google-auth-oauthlib`, `keyring` | real OAuth consent |
+
+### One-time operator pre-step, before firing M1
+
+```bash
+python3 -m venv HiQS/.venv
+HiQS/.venv/bin/pip install -q pytest
+printf '.venv/\n__pycache__/\n*.egg-info/\n' > HiQS/.gitignore   # M1 p1 may also create this
+```
+
+This is a **pre-step, not phase p1's job**, and the reason is the gate itself: `marathon-drive`
+checks the pre-advance command can start before turn 1, so `HiQS/.venv/bin/python` must already
+exist. Creating it inside p1 would leave the first phase's gate unable to run — and a check that
+could not run must never be scored as a check that passed.
+
 ## Gate command
 
 Marathons here default their pre-advance gate to `bash <repo-root>/validate.sh`, which this repo
@@ -146,7 +192,7 @@ does not have at the HiQS level. Supply it explicitly on every run:
 .xyz/relay-automation/marathon.sh \
   --plan PROJECT/2-WORKING/MARATHON-HIQS-BUILD/M1-SKELETON.yaml \
   --builder codex \
-  --pre-advance-cmd '.venv/bin/python -m pytest HiQS/tests -q' \
+  --pre-advance-cmd 'HiQS/.venv/bin/python -m pytest HiQS/tests -q' \
   --dry-run
 ```
 

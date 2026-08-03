@@ -4,7 +4,7 @@
 #     --dry-run first):
 #   .xyz/relay-automation/marathon.sh \
 #     --plan PROJECT/2-WORKING/MARATHON-HIQS-BUILD/M1-SKELETON.yaml \
-#     --pre-advance-cmd '.venv/bin/python -m pytest HiQS/tests -q' \
+#     --pre-advance-cmd 'HiQS/.venv/bin/python -m pytest HiQS/tests -q' \
 #     --dry-run
 #
 # Canonical contract: PROJECT/2-WORKING/HIQS-PROJECT.md (§5 dataclasses, §8 events, §9 schema,

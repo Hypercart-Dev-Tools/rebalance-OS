@@ -9,7 +9,7 @@
 # Run:
 #   .xyz/relay-automation/marathon.sh \
 #     --plan PROJECT/2-WORKING/MARATHON-HIQS-BUILD/M2-VAULT-SEARCH.yaml \
-#     --pre-advance-cmd '.venv/bin/python -m pytest HiQS/tests -q' --builder agy \
+#     --pre-advance-cmd 'HiQS/.venv/bin/python -m pytest HiQS/tests -q' --builder agy \
 #     --dry-run
 #
 # WRITE-SETS (disjoint):

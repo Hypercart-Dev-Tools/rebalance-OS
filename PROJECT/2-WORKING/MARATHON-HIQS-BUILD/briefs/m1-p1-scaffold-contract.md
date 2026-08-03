@@ -36,6 +36,10 @@ field names, order, and defaults exactly. If you think one is wrong, say so in t
    `importlib.metadata`).
 4. `HiQS/tests/conftest.py` — puts `HiQS/` on `sys.path` so the suite runs before an editable install.
 5. `HiQS/tests/test_plugins.py`.
+6. `HiQS/.gitignore` — at minimum `.venv/`, `__pycache__/`, `*.egg-info/`. The venv lives **inside**
+   the subtree (`HiQS/.venv`), never the repo root's: §19.1 forbids anything HiQS needs living above
+   `HiQS/`, and the incumbent's venv carries an mlx/transformers stack that seven live launchd jobs
+   depend on. The operator creates the venv as a pre-step; do not create or mutate it in this turn.
 
 ## Acceptance
 
@@ -44,7 +48,7 @@ field names, order, and defaults exactly. If you think one is wrong, say so in t
   **pruned** (§5 rule 2 — `pruned` is not optional, the reconciliation contract needs it).
 - Discovery returns `[]` on a clean environment without raising.
 - A test asserts each dataclass rejects mutation.
-- `.venv/bin/python -m pytest HiQS/tests -q` passes.
+- `HiQS/.venv/bin/python -m pytest HiQS/tests -q` passes.
 
 ## Do not
 
