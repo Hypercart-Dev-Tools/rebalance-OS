@@ -176,3 +176,17 @@ Pre-existing defects: none found beyond the implementation under review; the fin
    - Ran `pytest HiQS/tests/test_eval_retrieval.py` (10 passed in 0.30s).
    - Ran `pytest HiQS/tests/test_search.py` (6 passed in 0.10s).
 
+### Round 2 · Reviewer · codex
+
+swept file: yes
+
+**Verdict:** Changes requested
+
+Focused verification: `pytest HiQS/tests/test_eval_retrieval.py` passes (10 passed). I swept both permitted files in full. No unrelated pre-existing defects were found; the remaining blockers are in the runner/test implementation.
+
+1. The runner is not safely offline/fixture-contained: with no supplied embedder it calls `get_default_embedder()`, whose `SentenceTransformer(model_name)` may download a model, and its fused leg calls `search()`, which writes a `search.ready`/`search.degraded` event through the process-default DB connection. In particular, `hiqs eval --db X` can write search telemetry to the default DB while `eval.completed` goes to X. Make the runner fail loudly when an offline model is unavailable (never fetch), and keep all of its reads/events bound to the supplied fixture DB. Add a test proving no default DB connection/event is used.
+2. `run_eval_and_log()` directly creates and inserts into `events`, bypassing `hiqs.events.log_event()`, despite the plan's single-writer event contract. Route the completion event through the observability writer while preserving the selected DB for the CLI/fixture path; add a test that pins the runner to that writer rather than its own SQL insert.
+3. `capture_costs()` measures `docs.body` alone, but the indexed embedding payload is `get_embed_text(title, body)`. That makes the claimed full re-embed timing materially different from the projection it evaluates; its `sample_texts` escape hatch can also emit a partial-corpus number. Encode every exact indexed payload (title plus body) and remove or confine the partial-input path so an `eval.completed` metric cannot claim a full re-embed unless it is one. Strengthen the test to assert the exact encoded inputs, not merely their count.
+4. The advertised multi-model path only compares `eval_results[0]` with `[1]`; model three and beyond never contribute paired disagreements, and the quality gates are calculated from model one even if another model is selected. Either constrain the runner/CLI to the specified incumbent/challenger pair, or emit every pair and calculate floor/vector gates for the actual selected winner. Add coverage for three models (or a clear, tested rejection of more than two).
+
+The gate boundary fixes from Round 1 and canonical query-field handling are now present, but the issues above still prevent this from being a fixture-only, contract-compliant runner.
