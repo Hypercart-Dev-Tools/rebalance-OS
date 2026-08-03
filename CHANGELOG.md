@@ -6,6 +6,59 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.3] - 2026-08-03
+
+### Added
+- **HiQS Phase 0 and Phase 1 are built, reviewed, and green — the first HiQS code
+  in the repo.** Two XYZ marathons (M1 skeleton, 6 phases; M2 vault + search, 4
+  phases) ran builder↔reviewer relays with the pair alternated per marathon, and
+  every phase is `STATUS: Approved` with its pre-advance gate passing. The result
+  is 1,499 LOC of core across `plugins.py`, `db.py`, `config.py`, `events.py`,
+  `__main__.py`, `sources/vault.py`, `docs_index.py` and `search.py`, against 12
+  test modules — **107 passed, 1 xfailed** (the remaining xfail is the M4 ranking
+  seam, correctly still forward-declared). Well inside the §11 ≤3,000 LOC budget.
+- **`HiQS/GUIDING-PRINCIPLES.md` — the tie-breaker doc.** The four tenets, the four
+  counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL), an *ordered* precedence for
+  when they collide, nine standing decisions with their reasoning, the six inherited
+  anti-pattern clusters distilled from this repo's 68-release scar record, and four
+  working rules. Self-contained so it survives extraction to HiQS-Suite/HiQS. Its
+  governing lesson is L23: a principle that lives in a changelog protects exactly one
+  code path, so lessons are pinned at the seam, not in the module.
+
+### Changed
+- **§5 rule 2 gained the attestation channel it was missing — `SyncReport.units_ok`
+  and `Doc.unit`.** The rule mandated reconciling within successfully fetched units,
+  but nothing in the contract could say which units a run fetched: `docs()` takes only
+  a connection and cannot know what `fetch()` attempted, so *fetched fine, now empty*
+  and *could not read* were the same observation. The build stalled twice at the round
+  cap proving it, while the builder accumulated four workarounds in `docs_index.py` —
+  a parameter with no production caller, duck-typed methods a frozen dataclass cannot
+  expose, a probe for a table nothing creates, and inference from raw tracking rows
+  that carry no run identity. A cross-model consult (codex + agy, independently) found
+  no fix existed below the contract. All four workarounds are now deleted.
+  `Doc.unit` came with it: unit membership was being recovered by splitting ids on
+  `:`, which silently returns the wrong unit for any path containing a colon and then
+  prunes the wrong rows. A richer design (per-unit state enum, run ids, a fifth
+  callable) was considered and rejected as too much machinery for three sources.
+- **Rule 2 now states that a deletion is a successful fetch.** A path absent from a
+  clean walk is attested and prunes; absent from an errored walk it is unknown and
+  prunes nothing. This resolved a standing contradiction where the brief forbade
+  cross-unit deletion yet deleting a note had to remove it from search.
+- **`numpy` is a declared dependency**, not a transitive one. `search.py` imports it
+  directly; leaning on its arrival via `sentence-transformers` is what let the staged
+  install (torch deferred until the Checkpoint A vector gate) omit it and fail an
+  otherwise-approved phase's gate.
+
+### Fixed
+- **The Phase 6 clean-room gate passed vacuously on a missing root.** `rglob` over a
+  path that does not exist yields nothing and `assert [] == []` passes while scanning
+  zero files — and §19 archives this repo and moves HiQS out, deleting that root out
+  from under the gate that authorises the extraction. Verified by pointing it at a
+  missing path: silently green. It now asserts coverage first and fails loud.
+- **The same gate walked `HiQS/.venv`** — 847 of 862 files, 78% of suite runtime.
+  Measured against the incumbent's ML venv (what this plan installs next): 10,460
+  files, 17.8s per run, before torch. Now first-party only.
+
 ## [0.68.2] - 2026-08-03
 
 ### Added
