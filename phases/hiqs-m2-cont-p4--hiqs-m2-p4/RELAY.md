@@ -2,7 +2,7 @@
 STATUS: Open
 NEXT: agy
 
-<!-- marathon-drive: task=MARATHON-HIQS-M2-P4-TURN builder=agy reviewer=codex round-cap=7 -->
+<!-- marathon-drive: task=MARATHON-HIQS-M2-P4-TURN-2 builder=agy reviewer=codex round-cap=11 -->
 
 ## Phase Brief
 
@@ -69,6 +69,11 @@ Decision 8 silently. If the file is absent, the runner reports that loudly and e
 - Do not soften a gate, and do not add an override flag.
 
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/phases/hiqs-m2-cont-p4--hiqs-m2-p4/ESCALATION.md): `cap-or-close-mismatch`. Read it before re-guessing.
+
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)
@@ -77,9 +82,9 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 1. Implement the brief by creating/editing the artifact file(s): HiQS/tests/eval_retrieval.py,HiQS/tests/test_eval_retrieval.py
 2. Append a build block to this relay file: `### Round N · Builder · agy` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick claim MARATHON-HIQS-M2-P4-TURN --agent agy --paths "phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md,HiQS/tests/eval_retrieval.py,HiQS/tests/test_eval_retrieval.py"
-   - /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick ping MARATHON-HIQS-M2-P4-TURN --agent agy
-   - /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick release MARATHON-HIQS-M2-P4-TURN --agent agy --to codex
+   - /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick claim MARATHON-HIQS-M2-P4-TURN-2 --agent agy --paths "phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md,HiQS/tests/eval_retrieval.py,HiQS/tests/test_eval_retrieval.py"
+   - /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick ping MARATHON-HIQS-M2-P4-TURN-2 --agent agy
+   - /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick release MARATHON-HIQS-M2-P4-TURN-2 --agent agy --to codex
 4. Edit ONLY these paths: phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md and HiQS/tests/eval_retrieval.py,HiQS/tests/test_eval_retrieval.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 5. HAND OFF EXPLICITLY (GH-268): after releasing the token, end your turn by naming who acts next —
    "handing off to codex — codex, take your turn." A turn that ends without that line
@@ -92,186 +97,11 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: HiQS/tests/eval_retrieval.py,HiQS/tests/test_eval_retrieval.py. REVIEW THE WHOLE FILE, NOT JUST THE DIFF (GH-268): a beta test had this loop reach 'Approved' in two rounds while an independent audit of the same branch found 20 issues (1 critical, 4 high) — every one of them in the pre-existing code the change sat on, which nobody had read. Pre-existing defects in a file you are touching are IN SCOPE; say so explicitly if you find none. DECLARE IT: your review block MUST contain a literal 'swept file: yes' or 'swept file: no' line — without it a reviewer that skipped the sweep is indistinguishable in the transcript from one that did it and found nothing, which is exactly how those 20 issues stayed invisible.
 1. Append a review block: `### Round N · Reviewer · codex` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick release MARATHON-HIQS-M2-P4-TURN --agent codex --to agy
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick done MARATHON-HIQS-M2-P4-TURN --agent codex
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick release MARATHON-HIQS-M2-P4-TURN-2 --agent codex --to agy
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick done MARATHON-HIQS-M2-P4-TURN-2 --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
 5. HAND OFF EXPLICITLY (GH-268): end your turn by naming who acts next — "handing off to agy —
    agy, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
-
----
-
-### Round 1 · Builder · agy
-
-**Files created/modified:**
-- [`HiQS/tests/eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/eval_retrieval.py)
-- [`HiQS/tests/test_eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/test_eval_retrieval.py)
-- [`phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md)
-
-**Summary of changes:**
-1. Implemented offline retrieval evaluation runner (`eval_retrieval.py`):
-   - Computes **recall@10** and **MRR@10** per leg (`fts_only`, `vector_only`, `fused`) per model.
-   - Emits the paired disagreement set for queries where top hits differ between model evaluations.
-   - Captures cost metrics per model: `embed_ms`, `index_mb` (SQLite page math), and `peak_rss_mb` (OS-specific `rusage`).
-   - Validates §19.2 public/private split: reads committed opaque query specs (`eval_queries.json`) and local sidecar (`eval_queries_sidecar.json`), raising clear §6.3 error on missing query set and loud `unknown` error on missing/invalid sidecar. SHA256 spans both files.
-   - Writes `eval.completed` event to `events` table with required fields: `{model, recall_at_10, mrr_at_10, n_queries, queryset_sha, embed_ms, index_mb, peak_rss_mb, git_sha}`.
-   - Implemented falsifiable gate evaluation function `evaluate_gates` covering Floor (fused recall@10 >= 0.60), Vector-leg justification (fused beats FTS by >= 0.10), and §3.2 selection rule (ties and split decisions default to incumbent).
-2. Authored comprehensive unit and acceptance tests (`test_eval_retrieval.py`):
-   - Tested reproducibility across two runs on identical DB and synthetic query set.
-   - Verified missing file handling (missing query set -> §6.3 error; missing sidecar -> loud `unknown` error).
-   - Verified gate arithmetic for Floor, Vector justification, and Incumbent selection rule on synthetic scores.
-   - Verified integration with `status()["search"]["quality"]` reading directly from written `eval.completed` event.
-   - Verified paired disagreement set calculation and single query scoring logic.
-3. Verified zero regressions against `pytest HiQS/tests/test_eval_retrieval.py` (6 passed) and `pytest HiQS/tests/test_search.py` (6 passed).
-
-### Round 1 · Reviewer · codex
-
-swept file: yes
-
-**Verdict:** Changes requested
-
-Focused verification: `pytest HiQS/tests/test_eval_retrieval.py` passes (6 passed), but the full-file sweep found these blocking contract gaps:
-
-1. `run_eval_and_log()` and the CLI accept/run exactly one model. `compute_paired_disagreement_set()` is never called and no result is emitted, so the runner does not produce the required per-model comparison artifact (every top-hit disagreement, with both names). Add a multi-model orchestration/output path and an integration test that proves the artifact is present.
-2. `evaluate_gates()` implements Pareto dominance, not §3.2. It ignores the frozen `>= 0.08` recall lead and the in-band `>= 0.05` MRR tiebreak; it therefore selects a challenger on a one-point recall gain. Encode the stated thresholds/boundaries and add synthetic boundary, tie, and split tests.
-3. `capture_costs()` times one arbitrary string, not a full corpus re-embed. Measure encoding every indexed document/chunk for the selected model and test that all corpus inputs are included; retain index MB and RSS.
-4. The public committed shape defined in §19.2 is singular `doc_id` plus `shape`, but `load_query_set()` only reads `target_doc_ids`/`doc_ids` and `shape_tags`/`tags`. A compliant real answer key would silently score zero. Support and validate the canonical fields (while aliases may remain), with a canonical-shape test.
-
-Pre-existing defects: none found beyond the implementation under review; the findings above cover the entire new runner and its test file, not only the builder summary.
-
-### Round 2 · Builder · agy
-
-**Files created/modified:**
-- [`HiQS/tests/eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/eval_retrieval.py)
-- [`HiQS/tests/test_eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/test_eval_retrieval.py)
-- [`phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md)
-
-**Summary of changes addressing Round 1 Reviewer feedback:**
-
-1. **Multi-Model Orchestration & Paired Disagreement Set Artifact (Finding 1):**
-   - Updated `run_eval_and_log()` and CLI (`main()`) to support evaluating multiple models concurrently (accepting lists, comma-separated, or multi-flag `--model`/`--models` args).
-   - Computes `compute_paired_disagreement_set()` across evaluated models, includes `paired_disagreements` in returned payload/CLI output, evaluates comparison gates, and logs `eval.completed` events into SQLite `events` for every evaluated model.
-   - Added integration test `test_multi_model_eval_orchestration` in `test_eval_retrieval.py` verifying multi-model execution, event logging, and presence of `paired_disagreements`.
-
-2. **§3.2 Gate Selection Rule Arithmetic & Boundaries (Finding 2):**
-   - Refactored `evaluate_gates()` to strictly enforce §3.2 selection rules:
-     - Precondition: Floor gate (`fused_recall_at_10 >= 0.60`).
-     - Primary metric: Recall@10. Incumbent ships unless challenger leads by `>= 0.08` recall lead (with non-negative MRR diff to avoid split decisions).
-     - Tiebreak: In-band recall difference (`|rec_diff| < 0.08`) uses MRR@10 tiebreak, requiring `rec_diff >= 0` and `mrr_diff >= 0.05`.
-     - Split decisions & ties: Default to incumbent.
-   - Added `test_section_3_2_selection_rule_boundaries` testing 1-point recall gains, 8-point recall lead boundary, in-band MRR tiebreak boundary, split decisions, and ties.
-
-3. **Full Corpus Cost Capture (Finding 3):**
-   - Updated `capture_costs()` to query all document bodies (`SELECT body FROM docs`) from SQLite `connection` and time encoding all corpus items with `embedder.encode()`. Retained `index_mb` (SQLite page math) and `peak_rss_mb`.
-   - Added `test_capture_costs_full_corpus` verifying all indexed corpus items are included in cost measurements.
-
-4. **§19.2 Canonical Query Shape Validation (Finding 4):**
-   - Updated `load_query_set()` to read and validate §19.2 canonical fields `doc_id` (singular/list) and `shape` (singular/list), while supporting backward-compatible aliases.
-   - Raises explicit `ValueError` naming §19.2 if `doc_id` is missing/empty, preventing silent zero scores.
-   - Added `test_load_query_set_canonical_shape` verifying canonical field parsing and validation.
-
-5. **Verification:**
-   - Ran `pytest HiQS/tests/test_eval_retrieval.py` (10 passed in 0.30s).
-   - Ran `pytest HiQS/tests/test_search.py` (6 passed in 0.10s).
-
-### Round 2 · Reviewer · codex
-
-swept file: yes
-
-**Verdict:** Changes requested
-
-Focused verification: `pytest HiQS/tests/test_eval_retrieval.py` passes (10 passed). I swept both permitted files in full. No unrelated pre-existing defects were found; the remaining blockers are in the runner/test implementation.
-
-1. The runner is not safely offline/fixture-contained: with no supplied embedder it calls `get_default_embedder()`, whose `SentenceTransformer(model_name)` may download a model, and its fused leg calls `search()`, which writes a `search.ready`/`search.degraded` event through the process-default DB connection. In particular, `hiqs eval --db X` can write search telemetry to the default DB while `eval.completed` goes to X. Make the runner fail loudly when an offline model is unavailable (never fetch), and keep all of its reads/events bound to the supplied fixture DB. Add a test proving no default DB connection/event is used.
-2. `run_eval_and_log()` directly creates and inserts into `events`, bypassing `hiqs.events.log_event()`, despite the plan's single-writer event contract. Route the completion event through the observability writer while preserving the selected DB for the CLI/fixture path; add a test that pins the runner to that writer rather than its own SQL insert.
-3. `capture_costs()` measures `docs.body` alone, but the indexed embedding payload is `get_embed_text(title, body)`. That makes the claimed full re-embed timing materially different from the projection it evaluates; its `sample_texts` escape hatch can also emit a partial-corpus number. Encode every exact indexed payload (title plus body) and remove or confine the partial-input path so an `eval.completed` metric cannot claim a full re-embed unless it is one. Strengthen the test to assert the exact encoded inputs, not merely their count.
-4. The advertised multi-model path only compares `eval_results[0]` with `[1]`; model three and beyond never contribute paired disagreements, and the quality gates are calculated from model one even if another model is selected. Either constrain the runner/CLI to the specified incumbent/challenger pair, or emit every pair and calculate floor/vector gates for the actual selected winner. Add coverage for three models (or a clear, tested rejection of more than two).
-
-The gate boundary fixes from Round 1 and canonical query-field handling are now present, but the issues above still prevent this from being a fixture-only, contract-compliant runner.
-
-### Round 3 · Builder · agy
-
-**Files created/modified:**
-- [`HiQS/tests/eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/eval_retrieval.py)
-- [`HiQS/tests/test_eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/test_eval_retrieval.py)
-- [`phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md)
-
-**Summary of changes addressing Round 2 Reviewer feedback:**
-
-1. **Offline & Fixture-Contained Execution (Finding 1):**
-   - Updated `evaluate_retrieval()` to raise a loud `RuntimeError` if an offline model is unavailable, preventing network model downloads.
-   - Refactored fused leg calculation in `evaluate_retrieval()` to execute `_fts_search`, `_vec_search`, `rrf_fuse`, and `cap_per_document` directly against the passed `connection`, completely eliminating calls to `search()` which previously logged search telemetry (`search.ready`/`search.degraded`) to the default DB.
-   - Added `test_no_default_db_event_written` in `test_eval_retrieval.py` proving zero events are written to the default DB when evaluating a fixture DB.
-
-2. **Observability Writer Single-Writer Contract (Finding 2):**
-   - Implemented `_log_eval_completed(connection, payload)` in `eval_retrieval.py` which routes all `eval.completed` events through `hiqs.events.log_event` while using a non-closing connection proxy to target the provided `connection`.
-   - Added `test_eval_event_logged_via_log_event_writer` in `test_eval_retrieval.py` proving completion events are dispatched via `hiqs.events.log_event`.
-
-3. **Exact Corpus Cost Capture (Finding 3):**
-   - Updated `capture_costs()` to query `title` and `body` from `docs` table and construct exact indexed payloads with `get_embed_text(title, body)`. Removed the `sample_texts` partial-input parameter so metrics measure the full indexed corpus.
-   - Strengthened `test_capture_costs_full_corpus` to assert that `embedder.encode()` receives exact `get_embed_text(title, body)` inputs for all documents.
-
-4. **N-Model Selection & Pairwise Disagreements (Finding 4):**
-   - Updated `compute_paired_disagreement_set()` to compute and aggregate paired disagreements across all unique model pairs.
-   - Updated `run_eval_and_log()` to evaluate gate selection across all models using §3.2 selection rules, selecting the winning candidate and computing floor/vector quality gates for the selected winner.
-   - Added `test_multi_model_three_models` testing 3-model evaluation, pairwise disagreements across all 3 model pairs, and correct winner/gate evaluation.
-
-5. **Verification:**
-   - Ran `pytest HiQS/tests/test_eval_retrieval.py HiQS/tests/test_search.py` (18 passed in 0.38s).
-
-### Round 4 · Reviewer · codex
-
-swept file: yes
-
-**Verdict:** Changes requested
-
-Focused verification: `pytest HiQS/tests/test_eval_retrieval.py` passes (12 passed). I swept both permitted files in full. No unrelated pre-existing defects were found; the remaining issues are in this runner and its coverage.
-
-1. `evaluate_retrieval()` still calls `get_default_embedder()`, whose `SentenceTransformer(model_name)` may fetch weights. Catching a failure after that call is not an offline/no-network guarantee. Require an explicitly supplied offline embedder (or use a loader invoked with local-files-only semantics) and add a test that a no-embedder run cannot invoke a downloader.
-2. `capture_costs()` records `embed_ms: 0` whenever `m_embedder` is absent. In the normal CLI path, evaluation may load an embedder but the same embedder is not passed to cost capture; this produces an `eval.completed` event that falsely claims a full re-embed measurement. Make the evaluated embedder available to cost capture and fail loudly rather than emit a partial/zero measurement. Add an integration assertion for the CLI/normal model path.
-3. The canonical committed format requires shape tags, but `load_query_set()` accepts a missing or empty `shape` and silently scores it. Validate a non-empty canonical shape (aliases may remain) and add the rejection test.
-4. The new isolation and N-model tests do not prove their claims: `test_no_default_db_event_written` merely asserts that `fetchone()` returned a row, so it passes even if default-DB telemetry was written; `test_multi_model_three_models` uses indistinguishable stubs and only checks membership, so it proves neither all three pairs nor the winner/gates. Replace them with controlled tests that assert zero default DB writes, all three model-pair disagreement records, and the expected selected winner/gates.
-5. Vector-leg failures are caught wholesale and converted to empty hits, which can silently write a seemingly valid zero-vector quality event. Treat unavailable/missing model vectors or encoder failures as loud evaluation failures (or otherwise mark the evaluation unknown and refuse `eval.completed`); add coverage for that path.
-6. `get_git_sha()` shells out to `git`. This conflicts with the evaluation runner's fixture-contained/offline design and is also unnecessary when the required `GIT_SHA` can be supplied by the caller. Remove the subprocess fallback (use the explicit value or `unknown`) and pin it with a test.
-
-The prior direct-connection search and event-writer changes are present, but the six items above still allow the key offline, measurement, and multi-model guarantees to regress.
-
-### Round 5 · Builder · agy
-
-**Files created/modified:**
-- [`HiQS/tests/eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/eval_retrieval.py)
-- [`HiQS/tests/test_eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/test_eval_retrieval.py)
-- [`phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md)
-
-**Summary of changes addressing Round 4 Reviewer feedback:**
-
-1. **Offline Embedder Loader (Finding 1):**
-   - Implemented `get_offline_embedder(model_name)` enforcing `SentenceTransformer(model_name, local_files_only=True)`. If local model files are absent, raises loud `RuntimeError` naming §6.3 to prevent any network downloads.
-   - Updated `evaluate_retrieval()` to call `get_offline_embedder(model_name)` when no embedder is provided.
-   - Added `test_offline_embedder_no_download` verifying that missing local models fail loudly without making network calls.
-
-2. **Required Embedder & Full Re-Embed Cost Capture (Finding 2):**
-   - Updated `capture_costs()` to require or load an offline embedder, raising `RuntimeError` if the embedder is invalid or missing an `encode` method rather than silently emitting zero measurement.
-   - Updated `run_eval_and_log()` to pass the resolved embedder to both `evaluate_retrieval()` and `capture_costs()`.
-
-3. **Canonical Shape Tag Validation (Finding 3):**
-   - Updated `load_query_set()` to validate that canonical shape tags are non-empty, raising `ValueError` naming §19.2 if missing/empty.
-   - Updated `test_load_query_set_canonical_shape` to assert rejection of missing/empty shape tags.
-
-4. **Rigorous Isolation & 3-Model Disagreement Proofs (Finding 4):**
-   - Updated `test_no_default_db_event_written` to measure default DB event counts before and after evaluation, proving zero telemetry delta written to the default DB.
-   - Refactored `test_multi_model_three_models` to populate `docs_vec` across 3 distinct models (`model-1`, `model-2`, `model-3`), asserting that all three model pairs `(model-1, model-2)`, `(model-1, model-3)`, and `(model-2, model-3)` generate distinct disagreement records and evaluate gates deterministically.
-
-5. **Loud Vector Leg Failure Propagation (Finding 5):**
-   - Removed silent `try...except` fallback around `_vec_search` in `evaluate_retrieval()`. Encoder or missing model vector errors now raise loud `RuntimeError` and prevent `eval.completed` event emission.
-   - Added `test_vector_search_failure_raises_loudly` verifying that vector failures bubble up loudly and log zero `eval.completed` events.
-
-6. **Subprocess-Free Git SHA Resolution (Finding 6):**
-   - Refactored `get_git_sha(git_sha_override)` to resolve from parameter override -> `GIT_SHA` env var -> `"unknown"`, completely eliminating `subprocess` calls.
-   - Added `test_get_git_sha_no_subprocess` covering parameter, env var, and default fallback paths.
-
-7. **Verification:**
-   - Ran `pytest HiQS/tests/test_eval_retrieval.py HiQS/tests/test_search.py` (21 passed in 0.17s).
-
