@@ -27,7 +27,7 @@ phases:
     name: "calendar.py — read-only OAuth client, window upsert"
     reviewer: codex
     brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m4-p1-calendar.md
-    artifact: HiQS/hiqs/sources/calendar.py,HiQS/tests/test_calendar.py
+    artifact: HiQS/hiqs/sources/calendar.py,HiQS/tests/test_calendar.py,HiQS/pyproject.toml
     turn_timeout_s: 1800
     max_review_rounds: 3
 

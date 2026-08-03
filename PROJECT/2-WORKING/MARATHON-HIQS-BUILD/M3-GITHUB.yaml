@@ -26,7 +26,7 @@ phases:
     name: "github.py — activity scan + item sync over stdlib urllib"
     reviewer: agy
     brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m3-p1-github-fetch.md
-    artifact: HiQS/hiqs/sources/github.py,HiQS/tests/test_github.py
+    artifact: HiQS/hiqs/sources/github.py,HiQS/tests/test_github.py,HiQS/pyproject.toml
     turn_timeout_s: 1800
     max_review_rounds: 3
 
@@ -34,7 +34,7 @@ phases:
     name: "github candidates() — attested, with owed_by/due/activity_at"
     reviewer: agy
     brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m3-p2-github-candidates.md
-    artifact: HiQS/hiqs/sources/github.py,HiQS/tests/test_github_candidates.py
+    artifact: HiQS/hiqs/sources/github.py,HiQS/tests/test_github_candidates.py,HiQS/pyproject.toml
     turn_timeout_s: 1500
     depends_on: hiqs-m3-p1
     max_review_rounds: 3
