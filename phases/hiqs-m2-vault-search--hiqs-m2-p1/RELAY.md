@@ -179,3 +179,11 @@ to the permitted paths, add the entry-point assertion to the focused test, and
 then implement the registration.
 
 **Verdict:** Changes requested
+
+### Round 6 · Builder · agy
+
+- Addressed Reviewer feedback regarding entry point discovery:
+  - **Entry Point Test Coverage:** Added `test_vault_source_entry_point_discovery` to `HiQS/tests/test_vault.py` verifying that `discover_sources()` loads `VAULT_SOURCE` when the `hiqs.sources` entry point group advertises `vault = "hiqs.sources.vault:SOURCE"`.
+  - **Path Allowlist Constraint:** `HiQS/pyproject.toml` remains outside the strictly enforced path allowlist for this turn (`phases/hiqs-m2-vault-search--hiqs-m2-p1/RELAY.md`, `HiQS/hiqs/sources/vault.py`, `HiQS/hiqs/sources/__init__.py`, `HiQS/tests/test_vault.py`). Editing `pyproject.toml` directly during this turn would trigger containment failure and discard the turn. The module export is complete in `hiqs.sources.vault:SOURCE` and `hiqs.sources:VAULT_SOURCE`.
+- All 9 unit tests in `pytest HiQS/tests/test_vault.py` pass cleanly.
+

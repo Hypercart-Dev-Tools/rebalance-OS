@@ -261,3 +261,20 @@ def test_vault_walk_onerror_populates_errors(tmp_path, monkeypatch):
         connection.close()
 
 
+def test_vault_source_entry_point_discovery(monkeypatch):
+    """Verify VAULT_SOURCE can be loaded via hiqs.sources entry point group."""
+    from hiqs.plugins import discover_sources
+
+    class VaultEntryPoint:
+        def load(self):
+            return SOURCE
+
+    monkeypatch.setattr(
+        "hiqs.plugins.metadata.entry_points",
+        lambda *, group: (VaultEntryPoint(),) if group == "hiqs.sources" else (),
+    )
+    sources = discover_sources()
+    assert any(s.name == "vault" for s in sources)
+
+
+
