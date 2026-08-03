@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-03.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 1 / 4
 
@@ -75,5 +75,43 @@ ROUND: 1 / 4
 6. The relay ends on **Approved** (Reviewer only). End each turn by committing just this file; no push.
 
 ## Log
+
+## Round 1 — Reviewer (agy)
+
+**Verdict:** Changes requested
+
+### Definition of Done Evaluation
+
+#### 1. Are the per-phase QA gates observable and binary?
+- `[Pass]` Phase 0 QA gate ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1298-1304](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1298-L1304)) contains fully observable, binary checks using executable test paths (`tests/test_clean_room.py`), strict CLI list checks (`hiqs --help`), and grep-pinned writer assertions (`log_event()`).
+- `[Should]` Subjective / unquantified criteria in Phase 1, Phase 2, and Phase 3 QA gates:
+  - Phase 1 gate line 761 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L761](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L761)) includes `"a paraphrased question finds the right note via the vector leg"`, which is subjective prior to the frozen query set eval in line 764.
+  - Phase 2 QA gate item ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1368](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1368)) requires `"a full refresh stays within one operator-visible budget"`, but no numeric threshold for `api_calls` or `peak_rss_mb` is defined.
+  - Phase 3 QA gate item ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1398](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1398)) requires a `"readable reason"`, which is qualitative rather than binary.
+  - **Concrete Fix**:
+    1. In Phase 1 line 761, remove the informal pre-check line in favor of line 764's frozen set eval.
+    2. In Phase 2 QA gate line 1368, define explicit numerical ceilings for `api_calls` (e.g. `<= 100 calls/refresh`) and `peak_rss_mb` (e.g. `<= 500 MB`).
+    3. In Phase 3 QA gate line 1398, specify that `sync.failed` payload must contain non-empty `error_type` and `message` fields.
+
+#### 2. Is §7.1's ranking detector as un-flatterable as §6.3's?
+- `[Blocker]` §7.1's obligation coverage gate failure branch ([PROJECT/2-WORKING/HIQS-PROJECT.md:L561](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L561)) states `"either fix the source projections or restate the tenet as 'ordered by recency and source weight' until it is"`. Allowing a failing gate to pass by modifying tenet definitions renders the gate self-justifying and unfalsifiable. Furthermore, §7.1 lacks the strict anti-gaming protections of §6.3 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L413-426](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L413-L426)): there is no protocol mandating that daily snapshot operator top-5 rankings be committed and SHA-logged before running evaluation.
+  - **Concrete Fix**:
+    1. In §7.1 (line 561), remove the `"restate the tenet"` fallback option from the gate failure action so failing obligation coverage strictly blocks Phase 3 exit until resolved.
+    2. In §7.1 (line 538), add an explicit protocol requirement that `tests/eval_ranking.json` snapshots and operator top-5 rankings must be committed with SHA recorded *before* executing ranking evaluation.
+
+#### 3. Does §18's dogfooding audit hold up?
+- `[Pass]` §18.4 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1048-1056](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1048-L1056)) honestly discloses the process ranking gap without creating scope-creep governance machinery inside the HiQS plan, respecting the governance boundary in §16 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L924-938](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L924-L938)).
+- `[Should]` Contradiction between §18.1 scorecard ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1000](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1000)) and §18.2 analysis ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1009-1014](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1009-L1014)). §18.1 states that ATTESTED on the process side was fully satisfied because `"every lesson L1–L22 cites a version and an incident"`. However, §18.2 claims `"Neither the product nor the process had a representation of who (no author field; no per-decision attribution)"`.
+  - **Concrete Fix**: Update §18.2 prose to accurately reflect §18.1's finding: clarify that process-side attribution existed for lessons/incidents (L1-L22), but was missing per-decision author metadata in plan frontmatter/commits.
+
+#### 4. Internal contradictions after today's schema additions.
+- `[Blocker]` Schema field discrepancy between §5 `Doc` dataclass ([PROJECT/2-WORKING/HIQS-PROJECT.md:L282](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L282)) and §9 `docs` SQL table ([PROJECT/2-WORKING/HIQS-PROJECT.md:L623](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L623)). In §5, `Doc` is defined as `Doc(id, title, body, url, ts, project, author)` (missing `source`). In §9, `docs` table schema requires `source` (`docs(source, id, title, body, url, ts, project, author)`).
+  - **Concrete Fix**: Add `source: str` to `Doc` dataclass definition in §5 (line 282): `class Doc: source: str; id: str; title: str; body: str; url: str = ""; ts: str = ""; project: str = ""; author: str = ""`.
+- `[Pass]` §14 deletion ledger ([PROJECT/2-WORKING/HIQS-PROJECT.md:L811-814](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L811-L814)) correctly resolved rev 4's contradiction regarding torch dependency, explicitly noting that torch ships in v1 (Decision 1) while ONNX/FTS-only are handled as degrade rungs (§6.2).
+- `[Pass]` LOC budget in §11 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L702-719](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L702-L719)) accounts for all core modules (`~1,700–1,900` LOC total) well within the `≤ 3,000` LOC non-negotiable limit ([PROJECT/2-WORKING/HIQS-PROJECT.md:L127](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L127)).
+
+#### 5. The strongest counter-argument.
+- `[Blocker]` **Orphaned Chunk Accumulation Risk under the "Never Auto-Delete" Rule.** §5.2 Rule 2 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L330](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L330)) specifies `"Never auto-delete"` across all plugin syncs, and §6.1 ([PROJECT/2-WORKING/HIQS-PROJECT.md:L375](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L375)) notes that Obsidian vault notes chunk by heading. When a section heading in a vault note is renamed, split, or removed, new `Doc` chunks are inserted during `refresh()`, but old chunk rows in `docs` and `docs_vec` remain permanently stored. Because core never deletes or re-keys missing chunks for modified files, stale orphaned chunks will accumulate indefinitely in FTS5 and vector indices. Over time, deleted or renamed sections will continue to match queries and appear in rankings, directly corrupting retrieval quality and violating the FRESH tenet ([PROJECT/2-WORKING/HIQS-PROJECT.md:L1002](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/PROJECT/2-WORKING/HIQS-PROJECT.md#L1002)).
+  - **Concrete Fix**: Clarify plugin Rule 2 (§5.2) and `docs_index.py` projection (§6.1 / §11) to specify file-scoped reconciliation for chunked documents: when a source file is re-indexed, existing `docs` and `docs_vec` rows for that specific `(source, file_path)` that are no longer present in the updated chunk set must be pruned, while maintaining the prohibition against global table wipes or cross-file auto-deletion.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
