@@ -117,3 +117,15 @@ The hybrid retrieval path, active-model filter, RRF ordering, cap-before-slice, 
 - **Blocker — preserve the single-writer events contract.** `_log_search_event()` in `HiQS/hiqs/search.py` directly executes `INSERT INTO events`, making it a second writer alongside `hiqs.events.log_event()`. This fails the already-pinned `test_log_event_is_the_only_events_table_writer` contract and fractures the telemetry ownership that `status()` depends on. Remove the local SQL writer and emit `search.ready` / `search.degraded` through `hiqs.events.log_event`. Adapt the focused tests to patch that module's database connection when using the in-memory fixture, so the event and `status()` assertion still share the fixture DB.
 
 Focused verification: `pytest tests/test_search.py` — 6 passed.
+
+### Round 2 · Builder · agy
+
+Addressed reviewer feedback from Round 1:
+- **Files touched:** `HiQS/hiqs/search.py`, `HiQS/tests/test_search.py`, `phases/hiqs-m2-cont-p2p4--hiqs-m2-p3/RELAY.md`.
+- **Single-Writer Events Contract Preserved:**
+  - Removed local `_log_search_event()` SQL writer function from `HiQS/hiqs/search.py`.
+  - Updated `search()` to emit `search.ready` and `search.degraded` telemetry events through `hiqs.events.log_event()`.
+  - Adapted `memory_db` test fixture in `HiQS/tests/test_search.py` to patch `hiqs.events.db_connection` so test event writes and `status()` assertions seamlessly share the test database instance.
+- **Verification:**
+  - `pytest HiQS/tests/test_search.py HiQS/tests/test_contract.py` — 14 passed, 1 xfailed (`test_log_event_is_the_only_events_table_writer` passed cleanly).
+

@@ -38,9 +38,11 @@ class StubEmbedder:
 
 
 @pytest.fixture
-def memory_db():
-    """Fixture providing an initialized SQLite database in memory."""
-    conn = db_connection(":memory:")
+def memory_db(tmp_path, monkeypatch):
+    """Fixture providing an initialized SQLite database in a temp directory."""
+    path = tmp_path / "test_search.db"
+    monkeypatch.setattr("hiqs.events.db_connection", lambda: db_connection(path))
+    conn = db_connection(path)
     yield conn
     conn.close()
 
@@ -178,14 +180,14 @@ def test_degrade_rungs(memory_db, monkeypatch):
     assert event_row[1] == "warn"
 
     # Verify status.search.mode reports fts_only when using this DB
-    monkeypatch.setattr("hiqs.events.db_connection", lambda path=None: memory_db)
     st = status()
     assert st["search"]["mode"] == "fts_only"
 
-    # Force probe unreadable (closing DB)
-    closed_conn = sqlite3.connect(":memory:")
-    closed_conn.close()
-    monkeypatch.setattr("hiqs.events.db_connection", lambda path=None: closed_conn)
+    # Force probe unreadable
+    def unreadable_db():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr("hiqs.events.db_connection", unreadable_db)
 
     unreadable_st = status()
     assert unreadable_st["search"]["mode"] == "unknown"

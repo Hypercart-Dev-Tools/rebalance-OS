@@ -5,8 +5,6 @@ This module implements the canonical search seam defined in HIQS-PROJECT.md §6.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
-import json
 import sqlite3
 from typing import Any, Callable
 
@@ -14,6 +12,7 @@ import numpy as np
 
 from hiqs.db import db_connection
 from hiqs.docs_index import deserialize_vector, get_default_embedder
+from hiqs.events import log_event
 from hiqs.plugins import Doc
 
 RERANKER: Callable[[str, list[Doc]], list[Doc]] | None = None
@@ -154,18 +153,6 @@ def _vec_search(
     return [doc_objs[idx] for idx in top_indices]
 
 
-def _log_search_event(
-    connection: sqlite3.Connection, kind: str, status_str: str, payload: dict[str, Any]
-) -> None:
-    ts = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
-    payload_json = json.dumps(payload, separators=(",", ":"), sort_keys=True)
-    with connection:
-        connection.execute(
-            "INSERT INTO events(ts, kind, source, status, payload_json) VALUES (?, ?, ?, ?, ?)",
-            (ts, kind, "search", status_str, payload_json),
-        )
-
-
 def search(
     query: str,
     limit: int = 10,
@@ -191,11 +178,11 @@ def search(
             if embedder is None:
                 embedder = get_default_embedder(model_name)
             vec_hits = _vec_search(connection, query, model_name, embedder, limit=50)
-            _log_search_event(connection, "search.ready", "ok", {"mode": "hybrid", "model": model_name})
+            log_event("search.ready", "search", "ok", {"mode": "hybrid", "model": model_name})
         except Exception as err:
-            _log_search_event(
-                connection,
+            log_event(
                 "search.degraded",
+                "search",
                 "warn",
                 {"mode": "fts_only", "model": model_name, "reason": str(err)},
             )
@@ -209,3 +196,4 @@ def search(
     finally:
         if owns_connection:
             connection.close()
+
