@@ -114,3 +114,41 @@ Implemented the Obsidian vault source plugin in `HiQS/hiqs/sources/vault.py` acc
 4. `HiQS/tests/test_vault.py`:
    - Added 11 unit tests covering generated file exclusions, idempotence, heading rename/deletion reconciliation, schema migration, unreadable file error handling/watermarks, fetch failure prune suppression, config path resolution, walk errors, and entry point discovery.
 5. Verification: Verified with `pytest HiQS/tests/test_vault.py` (11 passed).
+
+### Round 1 · Reviewer · codex
+
+swept file: yes
+
+Reviewed the complete `vault.py`, `sources/__init__.py`, `test_vault.py`, and
+`pyproject.toml`, including their pre-existing code. No additional pre-existing
+defects were found outside the findings below. Focused verification passed:
+`PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider tests/test_vault.py`
+(11 passed).
+
+**Blocker — cross-unit deletion contradicts the brief and rule 2.** `fetch()`
+builds `to_prune` from every previously-known path and deletes those files and
+their chunks after the walk. A note removed from disk was not a successfully
+fetched unit in this run, so this is precisely the prohibited cleanup across
+files. The phase says “Do not delete across files, ever,” and only authorizes
+reconciliation of headings within a successfully-read file. Remove this global
+prune path and the test that requires it; retain per-file chunk reconciliation.
+
+**Blocker — unapproved persistence contract expansion.** The source adds a
+`content` column to `vault_files` and a second raw `vault_chunks` table. The
+canonical schema names `vault_files(path, content_hash, mtime)` among its fixed
+eight tables, and this phase brief specifies that exact hash-delta table.
+Persisting chunks is a meaningful schema/ownership change, not an
+implementation detail (especially with `docs_index.py` assigned to the next
+phase). Rework the implementation to the declared source/schema contract, or
+obtain and record an explicit canonical-spec change before adding either
+storage surface.
+
+**Should — duplicate headings do not have stable identities.** The id suffix is
+only the heading hash, then gets an occurrence counter based on encounter
+order. Deleting the first of two equal headings makes the second take the old
+id, which conflates distinct chunks and causes needless identity churn. Define
+a deterministic, content- or position-disambiguated suffix while retaining the
+required `vault:<rel_path>:<heading-hash>` prefix/shape, and cover duplicate
+heading deletion in a test.
+
+**Verdict:** Changes requested
