@@ -85,3 +85,26 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    claude, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · claude
+
+**Files touched:** `src/rebalance/ingest/semantic_index.py`, `src/rebalance/ingest/index_ops.py`
+(`src/rebalance/ingest/db/semantic.py` — no change needed, already correct)
+
+**Findings (GH-167 characterization, stated before fix):**
+
+The 302 "missing" documents in `github_documents_missing_from_semantic` were overwhelmingly ignored-repo false positives, not genuine gaps. The evidence:
+- `github_documents_for_semantic()` (db/semantic.py) already applied `LOWER(gd.repo_full_name) NOT IN (ignored_repos)` — so the projection was correct and intentionally excluded those repos.
+- The drift check in `get_index_status()` (index_ops.py ~line 670) did a bare LEFT JOIN with no ignored-repo filter, so every ignored-repo row in `github_documents` permanently appeared as "missing."
+- No evidence of malformed-row aborts was found (the loop had no error handling, so a crash would have been visible in logs), but the absence of a guard was a latent risk worth closing.
+
+**Fix 1 — `index_ops.py`:** Added `get_github_ignored_repos` to the module's top-level config import. Updated the `github_documents_missing_from_semantic` drift-check query to apply the same `LOWER(gd.repo_full_name) NOT IN (...)` filter as `github_documents_for_semantic()`. Empty-ignored-list case (no filter) kept as a separate branch to avoid SQLite `NOT IN ()` syntax error.
+
+**Fix 2 — `semantic_index.py`:** Added `import logging` and a module-level `logger`. Wrapped the per-row upsert body in `sync_github_documents()` with `try/except Exception`, logging the `source_pk` and reason and `continue`-ing on error, so one malformed row cannot abort an entire repo's projection.
+
+**Key decisions:**
+- The `seen_source_pks.add(source_pk)` call is inside the try block — if the row is malformed we don't want it counted as "seen" for deletion reconciliation purposes.
+- `db/semantic.py` is unchanged; `github_documents_for_semantic()` already had the correct filter.
+- Did not run the full gate per brief instructions. Verified all 3 artifact files parse cleanly via `ast.parse`.

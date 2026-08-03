@@ -20,6 +20,7 @@ from typing import Any, Callable, Iterable
 from rebalance.ingest.config import (
     get_figma_file_keys,
     get_figma_token,
+    get_github_ignored_repos,
     get_github_token,
     get_vault_path,
 )
@@ -667,14 +668,28 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
             drift["vault_chunks_missing_from_semantic"] = None
 
         try:
-            gh_drift = conn.execute(
-                """
-                SELECT COUNT(*) FROM github_documents gd
-                LEFT JOIN semantic_documents sd
-                  ON sd.source_type = 'github' AND sd.source_pk = gd.source_key
-                WHERE sd.id IS NULL
-                """
-            ).fetchone()[0]
+            _ignored = sorted(get_github_ignored_repos())
+            if _ignored:
+                _ignored_ph = ", ".join("?" for _ in _ignored)
+                gh_drift = conn.execute(
+                    f"""
+                    SELECT COUNT(*) FROM github_documents gd
+                    LEFT JOIN semantic_documents sd
+                      ON sd.source_type = 'github' AND sd.source_pk = gd.source_key
+                    WHERE sd.id IS NULL
+                      AND LOWER(gd.repo_full_name) NOT IN ({_ignored_ph})
+                    """,
+                    _ignored,
+                ).fetchone()[0]
+            else:
+                gh_drift = conn.execute(
+                    """
+                    SELECT COUNT(*) FROM github_documents gd
+                    LEFT JOIN semantic_documents sd
+                      ON sd.source_type = 'github' AND sd.source_pk = gd.source_key
+                    WHERE sd.id IS NULL
+                    """
+                ).fetchone()[0]
             drift["github_documents_missing_from_semantic"] = int(gh_drift)
         except Exception:
             drift["github_documents_missing_from_semantic"] = None

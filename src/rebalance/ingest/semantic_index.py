@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -27,6 +28,8 @@ from rebalance.ingest.embedder import (
     _load_model,
     _vec_to_bytes,
 )
+
+logger = logging.getLogger(__name__)
 
 EmbedTexts = Callable[[list[str], str], list[list[float]]]
 
@@ -300,29 +303,37 @@ def sync_github_documents(conn: Any, *, repo_full_name: str = "") -> dict[str, i
     seen_source_pks: set[str] = set()
     for row in rows:
         source_pk = row["source_key"]
-        seen_source_pks.add(source_pk)
-        _, state = upsert_document(
-            conn,
-            source_type="github",
-            source_table="github_documents",
-            source_pk=source_pk,
-            doc_kind=row["doc_type"],
-            title=row["title"] or "",
-            body=row["body"],
-            metadata={
-                "repo_full_name": row["repo_full_name"],
-                "item_type": row["github_source_type"],
-                "source_number": row["source_number"],
-                "state": row["state"] or "",
-                "milestone_title": row["milestone_title"] or "",
-                "labels": json.loads(row["labels_json"]) if row["labels_json"] else [],
-                "review_decision": row["review_decision"] or "",
-                "check_status": row["check_status"] or "",
-                "html_url": row["html_url"] or "",
-            },
-            created_at=row["fetched_at"],
-            updated_at=row["updated_at"] or row["fetched_at"],
-        )
+        try:
+            seen_source_pks.add(source_pk)
+            _, state = upsert_document(
+                conn,
+                source_type="github",
+                source_table="github_documents",
+                source_pk=source_pk,
+                doc_kind=row["doc_type"],
+                title=row["title"] or "",
+                body=row["body"],
+                metadata={
+                    "repo_full_name": row["repo_full_name"],
+                    "item_type": row["github_source_type"],
+                    "source_number": row["source_number"],
+                    "state": row["state"] or "",
+                    "milestone_title": row["milestone_title"] or "",
+                    "labels": json.loads(row["labels_json"]) if row["labels_json"] else [],
+                    "review_decision": row["review_decision"] or "",
+                    "check_status": row["check_status"] or "",
+                    "html_url": row["html_url"] or "",
+                },
+                created_at=row["fetched_at"],
+                updated_at=row["updated_at"] or row["fetched_at"],
+            )
+        except Exception as exc:
+            logger.warning(
+                "github semantic: skipping malformed row source_pk=%r reason=%s",
+                source_pk,
+                exc,
+            )
+            continue
         if state == "inserted":
             inserted += 1
         elif state == "updated":
