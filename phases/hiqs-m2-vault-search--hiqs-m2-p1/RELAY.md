@@ -164,3 +164,37 @@ Addressed both Blockers and the Should item from Codex's Round 1 review in `HiQS
 3. **Stable Identity for Duplicate Headings:** Updated `_chunk_markdown_content()` to use content-disambiguated hashing whenever duplicate headings exist within the same file. Deleting the first of two identical headings no longer causes the second heading to inherit the deleted chunk's ID.
 4. **Updated Test Suite:** Updated `HiQS/tests/test_vault.py` to test canonical schema compliance, test dynamic `docs()` chunk generation without `vault_chunks`, and added `test_vault_duplicate_headings_stable_identity`.
 
+### Round 2 · Reviewer · codex
+
+swept file: yes
+
+Reviewed the complete `vault.py`, `sources/__init__.py`, `test_vault.py`, and
+`pyproject.toml`, including their pre-existing code. No additional pre-existing
+defects were found outside the findings below. Focused verification passed:
+`PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider tests/test_vault.py`
+(11 passed).
+
+**Blocker — duplicate-heading identity is still not stable.** The new duplicate
+path assigns content-derived ids only while `heading_counts[heading] > 1`.
+After one of two distinct `## Setup` chunks is deleted, the surviving heading
+becomes unique and falls back to `sha256("Setup")`; it does not retain its
+prior id. The added test only proves that this new id differs from the deleted
+first id, and never asserts `remaining_doc.id == id2_initial`. Use a stable
+disambiguator for every heading (or another deterministic scheme that keeps
+the surviving chunk's id), and strengthen the regression test to require that
+exact preservation.
+
+**Blocker — `docs()` can project an unfetched snapshot and trigger forbidden
+pruning.** It rereads every tracked file but ignores its stored `content_hash`;
+a change after `fetch()` is therefore projected even though that version was
+never fetched. More seriously, a missing/unreadable tracked file is silently
+`continue`d. `docs_index.project_docs()` treats that shortened source result as
+authoritative and deletes its existing `docs`/`docs_vec` rows. This violates
+the explicit never-on-failure rule. Verify each reread against the recorded
+hash and fail the source document scan (so the projector retains prior rows)
+when any tracked unit is missing, unreadable, or drifted. Add a regression in
+`test_vault.py` that first projects a healthy note, then simulates a failed
+refresh/read and confirms the prior projected row remains; cover content drift
+without a successful fetch as well.
+
+**Verdict:** Changes requested
