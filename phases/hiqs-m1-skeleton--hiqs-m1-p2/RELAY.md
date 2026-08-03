@@ -93,3 +93,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+Implemented `HiQS/hiqs/db.py` as the persistence base: a runtime platform-derived app-data path,
+SQLite WAL/foreign-key/30-second busy-timeout setup, and idempotent creation of the eight canonical
+tables plus an external-content FTS5 index for `docs`. `docs_vec` uses the required `(doc_id, model)`
+composite primary key and records dimensions. Added `HiQS/tests/test_db.py` with live pragma/schema,
+idempotence/FTS, and coexistence tests for 384- and 1024-dimensional vectors for one document.
