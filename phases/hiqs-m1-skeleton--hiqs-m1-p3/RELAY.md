@@ -85,3 +85,7 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+Implemented `HiQS/hiqs/config.py` and `HiQS/tests/test_config.py`. The read-only API loads the complete JSON config from the canonical path (missing file returns explicit defaults), preserves and reports unknown keys through safe status metadata, and resolves secrets keyring → exact-`0600` JSON secret file → environment. Secret values are never included in errors or status. Focused tests cover defaults, unknown-key visibility, each resolution rung and their precedence, empty values, and unsafe file permissions.
