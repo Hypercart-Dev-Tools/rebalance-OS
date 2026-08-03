@@ -202,6 +202,8 @@ def test_vault_docs_unfetched_drift_or_failure_retains_projected_rows(tmp_path, 
     db_path = tmp_path / "hiqs.db"
     connection = db_connection(db_path)
 
+    monkeypatch.setattr("hiqs.config.load_config", lambda: {"vault_path": str(vault_dir)})
+
     try:
         mock_embedder = MagicMock()
         mock_embedder.encode.return_value = [[0.1] * 384]
@@ -419,6 +421,75 @@ def test_vault_source_entry_point_discovery(monkeypatch):
     )
     sources = discover_sources()
     assert any(s.name == "vault" for s in sources)
+
+
+def test_vault_docs_process_restart_resolves_config_without_global_state(tmp_path, monkeypatch):
+    """Fetches to a file-backed DB, clears/reloads module state, then projects via project_docs() without passing config and succeeds."""
+    import importlib
+    import sys
+    from unittest.mock import MagicMock
+    from hiqs.docs_index import project_docs
+
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    note_path = vault_dir / "restart.md"
+    note_path.write_text("# Restart Note\nContent for restart test.", encoding="utf-8")
+
+    db_path = tmp_path / "hiqs.db"
+    connection = db_connection(db_path)
+
+    try:
+        monkeypatch.setattr("hiqs.config.load_config", lambda: {"vault_path": str(vault_dir)})
+
+        # Step 1: Initial fetch
+        SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+
+        # Step 2: Clear/reload module state to simulate process restart
+        sys.modules.pop("hiqs.sources.vault", None)
+        vault_module = importlib.import_module("hiqs.sources.vault")
+
+        mock_embedder = MagicMock()
+        mock_embedder.encode.return_value = [[0.1] * 384]
+
+        # Step 3: project_docs calls source.docs(connection) with no config argument
+        report = project_docs(
+            connection,
+            sources=[vault_module.SOURCE],
+            embedder=mock_embedder,
+        )
+        assert report.errors == []
+        assert report.counts["inserted"] == 1
+
+        rows = connection.execute("SELECT id, title, body FROM docs WHERE source = 'vault'").fetchall()
+        assert len(rows) == 1
+        assert "Restart Note" in rows[0][1]
+    finally:
+        connection.close()
+
+
+def test_vault_mtime_utc_iso8601_format(tmp_path):
+    """mtime in vault_files must be stored in canonical UTC ISO-8601 format ending with Z."""
+    import re
+
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    (vault_dir / "time_check.md").write_text("# Timestamp Check\nContent", encoding="utf-8")
+
+    db_path = tmp_path / "hiqs.db"
+    connection = db_connection(db_path)
+
+    try:
+        SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+        row = connection.execute("SELECT mtime FROM vault_files WHERE path = 'time_check.md'").fetchone()
+        assert row is not None
+        mtime_str = row[0]
+        # Assert UTC ISO-8601 timestamp ending in 'Z'
+        assert mtime_str.endswith("Z")
+        assert "T" in mtime_str
+        assert re.match(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?Z$", mtime_str) is not None
+    finally:
+        connection.close()
+
 
 
 

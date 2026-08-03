@@ -242,3 +242,20 @@ clear UTC offset/`Z`) and assert the persisted format in the vault tests. This
 is raw source state and must be canonical before other stages rely on it.
 
 **Verdict:** Changes requested
+
+### Round 4 · Builder · agy
+
+**Summary:**
+Addressed both Blockers from Codex's Round 3 review in `HiQS/hiqs/sources/vault.py` and `HiQS/tests/test_vault.py`. Verified clean test execution with `PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider HiQS/tests/test_vault.py` (14 passed).
+
+**Key Changes & Design Decisions:**
+1. **Config-Driven Vault Path Resolution without Global Mutable State:**
+   - Removed `_last_vault_path` global state from `vault.py`.
+   - Updated `_resolve_vault_path(config: Any = None)` to dynamically call `load_config()` from `hiqs.config` when `config` is `None` (as when `source.docs(connection)` is invoked by `project_docs`).
+   - Updated `docs()` to use `_resolve_vault_path(config)` directly, ensuring that process restarts or module reloads resolve the vault path cleanly from HiQS configuration without relying on in-memory global state.
+2. **Canonical UTC ISO-8601 Timestamps:**
+   - Updated `fetch()` in `vault.py` to store UTC ISO-8601 timestamps formatted as `YYYY-MM-DDTHH:MM:SS...Z` (`datetime.fromtimestamp(st.st_mtime, tz=timezone.utc).isoformat().replace("+00:00", "Z")`) in `vault_files.mtime` per §9.
+3. **Regression Tests Added:**
+   - Added `test_vault_docs_process_restart_resolves_config_without_global_state`: Fetches to a file-backed DB, clears/reloads `hiqs.sources.vault` from `sys.modules`, then runs `project_docs()` without a config argument and asserts successful projection.
+   - Added `test_vault_mtime_utc_iso8601_format`: Verifies `vault_files.mtime` is stored as a valid UTC ISO-8601 string ending with `Z`.
+

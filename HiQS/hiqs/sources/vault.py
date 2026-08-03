@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from collections.abc import Iterable, Mapping
+from datetime import datetime, timezone
 import hashlib
 import os
 from pathlib import Path
@@ -31,8 +32,6 @@ EXCLUDED_FILE_EXTENSIONS = {
     ".swp",
     ".DS_Store",
 }
-
-_last_vault_path: Path | None = None
 
 
 def is_generated_file(path: Path | str, base_path: Path | str | None = None) -> bool:
@@ -65,8 +64,19 @@ def is_generated_file(path: Path | str, base_path: Path | str | None = None) -> 
     return False
 
 
-def _resolve_vault_path(config: Any) -> Path | None:
+def _resolve_vault_path(config: Any = None) -> Path | None:
     """Resolve vault path from config without hardcoded assumptions (L11)."""
+    if config is None:
+        try:
+            from hiqs.config import load_config
+
+            config = load_config()
+        except Exception:
+            return None
+
+    if isinstance(config, (str, Path)):
+        return Path(config)
+
     if isinstance(config, Mapping):
         if "vault_path" in config and config["vault_path"]:
             return Path(config["vault_path"])
@@ -107,7 +117,6 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
 
     Idempotent and incremental (§5 rule 2, pattern 1).
     """
-    global _last_vault_path
     _ensure_schema(connection)
 
     counts = {
@@ -124,8 +133,6 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
     if vault_path is None or not vault_path.exists() or not vault_path.is_dir():
         errors.append(f"Vault path does not exist or is not a directory: {vault_path}")
         return SyncReport(counts=counts, errors=errors)
-
-    _last_vault_path = vault_path
 
     existing = {
         row[0]: (row[1], row[2])
@@ -157,7 +164,8 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                 # Existing row in vault_files remains untouched!
                 continue
 
-            mtime_str = str(st.st_mtime)
+            mtime_dt = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
+            mtime_str = mtime_dt.isoformat().replace("+00:00", "Z")
             content_hash = hashlib.sha256(content_bytes).hexdigest()
 
             if rel_path in existing:
@@ -278,7 +286,7 @@ def docs(connection: Any, config: Any = None) -> Iterable[Doc]:
     Doc.author is "" for vault notes (they are the operator's own).
     """
     _ensure_schema(connection)
-    vault_path = _resolve_vault_path(config) or _last_vault_path
+    vault_path = _resolve_vault_path(config)
     if vault_path is None or not vault_path.exists():
         rows = connection.execute("SELECT path FROM vault_files").fetchall()
         if rows:
