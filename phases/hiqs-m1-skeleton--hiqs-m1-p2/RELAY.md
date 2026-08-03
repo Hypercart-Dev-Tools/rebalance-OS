@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m1-p2
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M1-P2-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -101,3 +101,20 @@ SQLite WAL/foreign-key/30-second busy-timeout setup, and idempotent creation of 
 tables plus an external-content FTS5 index for `docs`. `docs_vec` uses the required `(doc_id, model)`
 composite primary key and records dimensions. Added `HiQS/tests/test_db.py` with live pragma/schema,
 idempotence/FTS, and coexistence tests for 384- and 1024-dimensional vectors for one document.
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+Reviewed `HiQS/hiqs/db.py` and `HiQS/tests/test_db.py` in full.
+- `db.py` implements `default_db_path()` targeting standard OS application data paths without hardcoding repo or absolute home dirs.
+- Pragmas (`journal_mode=WAL`, `foreign_keys=ON`, `busy_timeout=30000`) are configured on every connection and validated live via SQLite queries in `test_db.py`.
+- Schema defines all 8 required tables (`vault_files`, `github_activity`, `github_items`, `calendar_events`, `docs`, `docs_vec`, `projects`, `events`) and `docs_fts` virtual table with triggers.
+- Column invariants verified (`github_items` carries both `updated_at` and `activity_at`, `calendar_events` has `organizer` and `attendees_json`, `docs` has `author`, `docs_vec` has composite PK `(doc_id, model)` and `dim`).
+- Zero query/business logic in `db.py`, no migration table.
+- Idempotency and multi-model vector coexistence (384-dim and 1024-dim) are fully covered by passing tests in `test_db.py`.
+
+**Verdict:** Approved
+
+relay closed, no further turn needed
+
