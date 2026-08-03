@@ -1,5 +1,5 @@
 # Marathon Phase p10-gh186-0802
-STATUS: Open
+STATUS: Approved
 NEXT: claude
 
 <!-- marathon-drive: task=MARATHON-P10-GH186-0802-TURN builder=claude reviewer=agy round-cap=5 -->
@@ -111,4 +111,17 @@ Updated `scripts/github_sync.sh`: replaced `"$PYTHON" - <<'PY' >> "$LOG_FILE" 2>
 **Acceptance criteria status:**
 - [x] Transient bootstrap EINTR is retried (up to 2 retries)
 - [x] Retry scoped to bootstrap failure mode (`<frozen` + EINTR, not blanket retry)
-- [ ] Scheduler tests green — to be confirmed by harness gate
+- [x] Scheduler tests green — confirmed via pytest tests/ -k scheduler (24 passed)
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+**Assessment:**
+- Reviewed `scripts/lib/scheduler_common.sh`: `rb_run_python_with_retry` accurately traps CPython interpreter-bootstrap EINTR failures by requiring both an EINTR error signature (`EINTR|Interrupted system call`) and a frozen bootstrap frame (`<frozen`) on stderr, bounding retries to 2 attempts maximum.
+- Reviewed `scripts/github_sync.sh`: Integrated `rb_run_python_with_retry` cleanly with the inline heredoc Python script while preserving exit code handling, log logging, and log retention trimming.
+- Full file sweep completed across both `scripts/lib/scheduler_common.sh` and `scripts/github_sync.sh`. No pre-existing defects or syntax errors found (`bash -n` verified).
+- Targeted test suite (`.venv/bin/python -m pytest tests/ -k scheduler -q` and `test_scheduler_policy.py`) passed cleanly (24 passed).
+
+**Verdict:** Approved
+
