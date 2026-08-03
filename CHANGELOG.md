@@ -6,6 +6,51 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.2] - 2026-08-03
+
+### Added
+- **The HiQS clean-room rebuild plan is now a tracked project doc.** It arrived as
+  a standalone rev-5 planning document with no lifecycle metadata, so nothing in the
+  repo could see it: it carried no frontmatter, no status table, no per-phase QA
+  gates, and no roadmap pointer, which means a cold agent had no way to tell which of
+  its six phases was live or what "done" looked like for any of them. It now satisfies
+  the PROJECT/PDDA.md contract — frontmatter with triage ratings, the two-column status
+  table, a table of contents spanning all six phases, an explicit QA gate after each
+  phase (with the phase's deploy requirement stated, since two of the six touch the
+  operator's real device and cannot be proven in tests), and a ledger entry in
+  ROADMAP.md.
+
+  The plan's own deletion ledger retires doc-governance machinery *from the product it
+  describes*, which reads as a contradiction against governing the plan itself, so the
+  boundary is now written down rather than left to be re-litigated: the product ships
+  no governance machinery; the plan that builds it is still a tracked doc in a governed
+  repo. Verified with `utils/pdda/pdda.sh` — zero findings against the doc; the seven
+  roadmap-coverage errors that remain in the repo are pre-existing and unrelated.
+
+### Changed
+- **HiQS will be built inside this repository rather than as a separate one.** The
+  clean-room property it needs — that the rebuild shares no code with the incumbent —
+  was going to be enforced by the repository boundary. It is now enforced by a test
+  that fails if either tree imports the other, which is a stronger guarantee than
+  separation by convention and costs one file. The plan and the code it governs
+  consequently share one history. The database is explicitly *not* included: it stays
+  at the canonical application-data path, as the plan's own path lesson requires.
+
+- **A standalone anti-patterns ledger was verified and folded into the plan.** Every
+  version it cited was re-checked against this changelog and every figure held. Two
+  things did not survive review: one entry restated an email-volume claim that a later
+  entry had already corrected downward, and one entry was filed as history when it is
+  in fact still true of the running system today — two web servers still declare an
+  overlapping set of routes. Both corrections are recorded at the fold-in, and the
+  bet is stated plainly: a lesson drawn from a defect that is still open carries more
+  weight than one drawn from a defect already closed, so the plan's one-server rule is
+  the item to watch. The ledger's six-cluster taxonomy and the seven incidents the
+  plan's existing lessons had not covered were merged in, and two of those incidents
+  produced new rules for the plugin contract rather than only prose: every network
+  call must carry its own timeout, and a progress watermark may only advance after the
+  fetch it describes actually completed. The source document is retained as provenance
+  under PROJECT/4-MISC with a pointer to what superseded it.
+
 ## [0.68.1] - 2026-07-26
 
 ### Changed
