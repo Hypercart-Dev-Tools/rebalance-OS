@@ -237,3 +237,41 @@ Focused verification: `pytest HiQS/tests/test_eval_retrieval.py` passes (12 pass
 6. `get_git_sha()` shells out to `git`. This conflicts with the evaluation runner's fixture-contained/offline design and is also unnecessary when the required `GIT_SHA` can be supplied by the caller. Remove the subprocess fallback (use the explicit value or `unknown`) and pin it with a test.
 
 The prior direct-connection search and event-writer changes are present, but the six items above still allow the key offline, measurement, and multi-model guarantees to regress.
+
+### Round 5 · Builder · agy
+
+**Files created/modified:**
+- [`HiQS/tests/eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/eval_retrieval.py)
+- [`HiQS/tests/test_eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/test_eval_retrieval.py)
+- [`phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md)
+
+**Summary of changes addressing Round 4 Reviewer feedback:**
+
+1. **Offline Embedder Loader (Finding 1):**
+   - Implemented `get_offline_embedder(model_name)` enforcing `SentenceTransformer(model_name, local_files_only=True)`. If local model files are absent, raises loud `RuntimeError` naming §6.3 to prevent any network downloads.
+   - Updated `evaluate_retrieval()` to call `get_offline_embedder(model_name)` when no embedder is provided.
+   - Added `test_offline_embedder_no_download` verifying that missing local models fail loudly without making network calls.
+
+2. **Required Embedder & Full Re-Embed Cost Capture (Finding 2):**
+   - Updated `capture_costs()` to require or load an offline embedder, raising `RuntimeError` if the embedder is invalid or missing an `encode` method rather than silently emitting zero measurement.
+   - Updated `run_eval_and_log()` to pass the resolved embedder to both `evaluate_retrieval()` and `capture_costs()`.
+
+3. **Canonical Shape Tag Validation (Finding 3):**
+   - Updated `load_query_set()` to validate that canonical shape tags are non-empty, raising `ValueError` naming §19.2 if missing/empty.
+   - Updated `test_load_query_set_canonical_shape` to assert rejection of missing/empty shape tags.
+
+4. **Rigorous Isolation & 3-Model Disagreement Proofs (Finding 4):**
+   - Updated `test_no_default_db_event_written` to measure default DB event counts before and after evaluation, proving zero telemetry delta written to the default DB.
+   - Refactored `test_multi_model_three_models` to populate `docs_vec` across 3 distinct models (`model-1`, `model-2`, `model-3`), asserting that all three model pairs `(model-1, model-2)`, `(model-1, model-3)`, and `(model-2, model-3)` generate distinct disagreement records and evaluate gates deterministically.
+
+5. **Loud Vector Leg Failure Propagation (Finding 5):**
+   - Removed silent `try...except` fallback around `_vec_search` in `evaluate_retrieval()`. Encoder or missing model vector errors now raise loud `RuntimeError` and prevent `eval.completed` event emission.
+   - Added `test_vector_search_failure_raises_loudly` verifying that vector failures bubble up loudly and log zero `eval.completed` events.
+
+6. **Subprocess-Free Git SHA Resolution (Finding 6):**
+   - Refactored `get_git_sha(git_sha_override)` to resolve from parameter override -> `GIT_SHA` env var -> `"unknown"`, completely eliminating `subprocess` calls.
+   - Added `test_get_git_sha_no_subprocess` covering parameter, env var, and default fallback paths.
+
+7. **Verification:**
+   - Ran `pytest HiQS/tests/test_eval_retrieval.py HiQS/tests/test_search.py` (21 passed in 0.17s).
+

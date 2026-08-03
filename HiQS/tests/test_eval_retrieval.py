@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from unittest.mock import MagicMock, patch
 import pytest
@@ -17,6 +18,8 @@ from tests.eval_retrieval import (
     compute_paired_disagreement_set,
     evaluate_gates,
     evaluate_retrieval,
+    get_git_sha,
+    get_offline_embedder,
     load_query_set,
     run_eval_and_log,
     score_single_query,
@@ -292,6 +295,15 @@ def test_no_default_db_event_written(tmp_path, synthetic_query_files):
     insert_doc(fixture_conn, doc)
     stub = StubEmbedder(dim=384)
 
+    default_path = default_db_path()
+    initial_count = 0
+    if default_path.exists():
+        dconn = db_connection(default_path)
+        initial_count = dconn.execute(
+            "SELECT count(*) FROM events WHERE kind IN ('eval.completed', 'search.ready', 'search.degraded')"
+        ).fetchone()[0]
+        dconn.close()
+
     # Run evaluation against fixture_conn
     run_eval_and_log(
         fixture_conn,
@@ -303,16 +315,15 @@ def test_no_default_db_event_written(tmp_path, synthetic_query_files):
 
     fixture_conn.close()
 
-    # Assert default DB has no events written by this evaluation
-    default_path = default_db_path()
+    final_count = 0
     if default_path.exists():
         dconn = db_connection(default_path)
-        rows = dconn.execute(
+        final_count = dconn.execute(
             "SELECT count(*) FROM events WHERE kind IN ('eval.completed', 'search.ready', 'search.degraded')"
-        ).fetchone()
+        ).fetchone()[0]
         dconn.close()
-        # Verify no event from this run modified default DB
-        assert rows is not None
+
+    assert final_count == initial_count, "Evaluation wrote telemetry to default DB!"
 
 
 def test_eval_event_logged_via_log_event_writer(memory_db, synthetic_query_files):
@@ -349,21 +360,26 @@ def test_eval_event_logged_via_log_event_writer(memory_db, synthetic_query_files
 
 
 def test_multi_model_three_models(memory_db, synthetic_query_files):
-    """Test evaluation across 3 models, verifying all pairwise disagreements and winner/gate selection."""
+    """Test evaluation across 3 models with distinct stubs, verifying all 3 model-pair disagreements and winner selection."""
     committed_file, sidecar_file = synthetic_query_files
 
-    doc1 = Doc(
-        source="vault",
-        id="doc-test-001",
-        title="Signal Architecture Note",
-        body="signal architecture design document",
-        unit="note1.md",
-    )
-    insert_doc(memory_db, doc1)
+    v_a = [1.0] + [0.0] * 383
+    v_b = [0.0, 1.0] + [0.0] * 382
+    v_c = [0.0, 0.0, 1.0] + [0.0] * 381
 
-    stub1 = StubEmbedder(dim=384)
-    stub2 = StubEmbedder(dim=384)
-    stub3 = StubEmbedder(dim=384)
+    doc1 = Doc(source="vault", id="doc-test-001", title="Signal Architecture Note", body="text", unit="note1.md")
+    doc2 = Doc(source="vault", id="doc-test-002", title="Quantum Mechanics Note", body="text", unit="note2.md")
+    doc3 = Doc(source="vault", id="doc-test-003", title="Relay Automation Note", body="text", unit="note3.md")
+
+    # insert_doc populates docs_vec for model-1, model-2, model-3
+    insert_doc(memory_db, doc1, {"model-1": v_a, "model-2": v_b, "model-3": v_c})
+    insert_doc(memory_db, doc2, {"model-1": v_b, "model-2": v_a, "model-3": v_c})
+    insert_doc(memory_db, doc3, {"model-1": v_c, "model-2": v_b, "model-3": v_a})
+
+    # For query_vec v_a: model-1 top hit is doc1; model-2 top hit is doc2; model-3 top hit is doc3
+    stub1 = StubEmbedder(dim=384, mappings={"signal architecture design": v_a, "quantum computing mechanics": v_a})
+    stub2 = StubEmbedder(dim=384, mappings={"signal architecture design": v_a, "quantum computing mechanics": v_a})
+    stub3 = StubEmbedder(dim=384, mappings={"signal architecture design": v_a, "quantum computing mechanics": v_a})
 
     models = ["model-1", "model-2", "model-3"]
     embedders = {
@@ -381,8 +397,18 @@ def test_multi_model_three_models(memory_db, synthetic_query_files):
     )
 
     assert len(payload["eval_results"]) == 3
-    assert "paired_disagreements" in payload
-    assert "gates" in payload
+    disagreements = payload["paired_disagreements"]
+    assert len(disagreements) >= 3
+
+    pairs_found = set()
+    for d in disagreements:
+        pairs_found.add((d["model1"], d["model2"]))
+
+    # Verify all three unique model pairs exist in paired disagreements
+    assert ("model-1", "model-2") in pairs_found
+    assert ("model-1", "model-3") in pairs_found
+    assert ("model-2", "model-3") in pairs_found
+
     assert payload["gates"]["winner"] in ("incumbent", "model-1", "model-2", "model-3")
 
 
@@ -424,7 +450,7 @@ def test_capture_costs_full_corpus(memory_db):
 
 
 def test_load_query_set_canonical_shape(tmp_path):
-    """Test load_query_set with §19.2 canonical fields (singular doc_id and shape)."""
+    """Test load_query_set with §19.2 canonical fields and rejection of missing/empty shape tags."""
     committed_file = tmp_path / "eval_canonical.json"
     sidecar_file = tmp_path / "sidecar_canonical.json"
 
@@ -448,11 +474,67 @@ def test_load_query_set_canonical_shape(tmp_path):
     assert queries[0]["target_doc_ids"] == ["doc-canon-001"]
     assert queries[0]["shape_tags"] == ["asymmetric"]
 
-    # Test missing target doc_id raises ValueError (§19.2)
-    invalid_file = tmp_path / "eval_invalid.json"
-    invalid_file.write_text(json.dumps([{"id": "q-canon-001"}]), encoding="utf-8")
+    # Rejection 1: missing target doc_id (§19.2)
+    invalid_doc_file = tmp_path / "eval_no_doc.json"
+    invalid_doc_file.write_text(json.dumps([{"id": "q-canon-001", "shape": "asymmetric"}]), encoding="utf-8")
     with pytest.raises(ValueError, match=r"canonical target doc_id"):
-        load_query_set(invalid_file, sidecar_file)
+        load_query_set(invalid_doc_file, sidecar_file)
+
+    # Rejection 2: missing or empty shape tag (§19.2)
+    invalid_shape_file = tmp_path / "eval_no_shape.json"
+    invalid_shape_file.write_text(json.dumps([{"id": "q-canon-001", "doc_id": "doc-canon-001", "shape": ""}]), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"canonical shape tag"):
+        load_query_set(invalid_shape_file, sidecar_file)
+
+
+def test_offline_embedder_no_download():
+    """Test that get_offline_embedder prevents network downloads and fails loudly when model is missing locally."""
+    with pytest.raises(RuntimeError, match=r"No network downloads allowed"):
+        get_offline_embedder("non-existent-local-model-xyz")
+
+
+def test_vector_search_failure_raises_loudly(memory_db, synthetic_query_files):
+    """Test that encoder or vector search failure raises RuntimeError loudly and does not log eval.completed."""
+    committed_file, sidecar_file = synthetic_query_files
+
+    doc = Doc(
+        source="vault",
+        id="doc-test-001",
+        title="Signal Architecture Note",
+        body="signal architecture design document",
+        unit="note1.md",
+    )
+    insert_doc(memory_db, doc)
+
+    bad_stub = MagicMock()
+    bad_stub.encode.side_effect = Exception("Encoder corrupted")
+
+    with pytest.raises(RuntimeError, match=r"Vector search failed"):
+        run_eval_and_log(
+            memory_db,
+            committed_path=committed_file,
+            sidecar_path=sidecar_file,
+            model_name="all-MiniLM-L6-v2",
+            embedder=bad_stub,
+        )
+
+    # Verify no eval.completed event was written
+    rows = memory_db.execute("SELECT count(*) FROM events WHERE kind = 'eval.completed'").fetchone()
+    assert rows[0] == 0
+
+
+def test_get_git_sha_no_subprocess(monkeypatch):
+    """Test get_git_sha without shelling out to git."""
+    # Explicit parameter override
+    assert get_git_sha("abc1234") == "abc1234"
+
+    # Environment variable GIT_SHA
+    monkeypatch.setenv("GIT_SHA", "def5678")
+    assert get_git_sha() == "def5678"
+
+    # Fallback to 'unknown'
+    monkeypatch.delenv("GIT_SHA", raising=False)
+    assert get_git_sha() == "unknown"
 
 
 def test_paired_disagreement_set():
@@ -495,7 +577,5 @@ def test_score_single_query_unit():
     ]
 
     recall, mrr = score_single_query(target_ids, hits)
-    # Both targets in top 10 -> recall = 1.0
-    # First match target-1 at rank 2 -> MRR = 1/2 = 0.5
     assert recall == 1.0
     assert mrr == 0.5

@@ -14,14 +14,13 @@ import os
 from pathlib import Path
 import resource
 import sqlite3
-import subprocess
 import sys
 import time
 from typing import Any
 from unittest.mock import patch
 
 from hiqs.db import db_connection
-from hiqs.docs_index import get_default_embedder, get_embed_text
+from hiqs.docs_index import get_embed_text
 from hiqs.events import log_event
 from hiqs.plugins import Doc
 from hiqs.search import _fts_search, _vec_search, cap_per_document, rrf_fuse
@@ -40,23 +39,13 @@ def get_peak_rss_mb() -> float:
     return usage / 1024.0
 
 
-def get_git_sha() -> str:
-    """Retrieve current git SHA without mutating git repo."""
+def get_git_sha(git_sha_override: str | None = None) -> str:
+    """Retrieve git SHA from parameter, GIT_SHA env var, or default to 'unknown' without subprocess calls."""
+    if git_sha_override and git_sha_override.strip():
+        return git_sha_override.strip()
     env_sha = os.environ.get("GIT_SHA")
-    if env_sha:
-        return env_sha
-    try:
-        res = subprocess.run(
-            ["git", "rev-parse", "HEAD"],
-            capture_output=True,
-            text=True,
-            timeout=5,
-            check=False,
-        )
-        if res.returncode == 0 and res.stdout.strip():
-            return res.stdout.strip()
-    except Exception:
-        pass
+    if env_sha and env_sha.strip():
+        return env_sha.strip()
     return "unknown"
 
 
@@ -128,9 +117,9 @@ def load_query_set(
             ),
         )
         if isinstance(raw_doc_ids, str):
-            target_doc_ids = [raw_doc_ids]
+            target_doc_ids = [raw_doc_ids] if raw_doc_ids.strip() else []
         elif isinstance(raw_doc_ids, list):
-            target_doc_ids = [str(d) for d in raw_doc_ids]
+            target_doc_ids = [str(d) for d in raw_doc_ids if str(d).strip()]
         else:
             target_doc_ids = []
 
@@ -143,11 +132,16 @@ def load_query_set(
             "shape", item.get("shape_tags", item.get("tags", []))
         )
         if isinstance(raw_shape, str):
-            shape_tags = [raw_shape]
+            shape_tags = [raw_shape] if raw_shape.strip() else []
         elif isinstance(raw_shape, list):
-            shape_tags = [str(s) for s in raw_shape]
+            shape_tags = [str(s) for s in raw_shape if str(s).strip()]
         else:
             shape_tags = []
+
+        if not shape_tags:
+            raise ValueError(
+                f"Query item '{q_id}' missing canonical shape tag (§19.2)."
+            )
 
         queries.append(
             {
@@ -187,6 +181,17 @@ def score_single_query(
     return recall, mrr
 
 
+def get_offline_embedder(model_name: str) -> Any:
+    """Load embedder with strict local_files_only=True semantics to prevent network downloads (§6.3)."""
+    try:
+        from sentence_transformers import SentenceTransformer
+        return SentenceTransformer(model_name, local_files_only=True)
+    except Exception as err:
+        raise RuntimeError(
+            f"Offline model '{model_name}' is unavailable locally: {err}. No network downloads allowed during evaluation (§6.3)."
+        )
+
+
 def evaluate_retrieval(
     connection: sqlite3.Connection,
     queries: list[dict[str, Any]],
@@ -195,16 +200,7 @@ def evaluate_retrieval(
 ) -> dict[str, Any]:
     """Evaluate retrieval queries across FTS-only, vector-only, and fused legs without side-effects."""
     if embedder is None:
-        try:
-            embedder = get_default_embedder(model_name)
-        except Exception as err:
-            raise RuntimeError(
-                f"Offline model '{model_name}' is unavailable: {err}. No network downloads allowed during evaluation (§6.3)."
-            )
-        if embedder is None:
-            raise RuntimeError(
-                f"Offline model '{model_name}' is unavailable. No network downloads allowed during evaluation (§6.3)."
-            )
+        embedder = get_offline_embedder(model_name)
 
     fts_recalls, fts_mrrs = [], []
     vec_recalls, vec_mrrs = [], []
@@ -227,13 +223,14 @@ def evaluate_retrieval(
         if fts_hits:
             fts_top_hits[q_id] = fts_hits[0].id
 
-        # Vector-only leg
-        vec_hits: list[Doc] = []
-        if embedder is not None:
-            try:
-                vec_hits = _vec_search(connection, q_text, model_name, embedder, limit=10)
-            except Exception:
-                vec_hits = []
+        # Vector-only leg (raise loud failure on encoder or missing vector error)
+        try:
+            vec_hits = _vec_search(connection, q_text, model_name, embedder, limit=10)
+        except Exception as err:
+            raise RuntimeError(
+                f"Vector search failed for model '{model_name}': {err}. Cannot record valid evaluation metrics (§6.3)."
+            ) from err
+
         rec, mrr = score_single_query(targets, vec_hits)
         vec_recalls.append(rec)
         vec_mrrs.append(mrr)
@@ -242,12 +239,13 @@ def evaluate_retrieval(
 
         # Fused leg (executed directly on connection without calling search() to avoid writing search telemetry to default DB)
         fts_hits_50 = _fts_search(connection, q_text, limit=50)
-        vec_hits_50: list[Doc] = []
-        if embedder is not None:
-            try:
-                vec_hits_50 = _vec_search(connection, q_text, model_name, embedder, limit=50)
-            except Exception:
-                vec_hits_50 = []
+        try:
+            vec_hits_50 = _vec_search(connection, q_text, model_name, embedder, limit=50)
+        except Exception as err:
+            raise RuntimeError(
+                f"Vector search failed for model '{model_name}': {err}. Cannot record valid evaluation metrics (§6.3)."
+            ) from err
+
         fused = rrf_fuse(fts_hits_50, vec_hits_50, k=60)
         fused_hits = cap_per_document(fused, max_chunks=2)[:10]
 
@@ -323,15 +321,22 @@ def capture_costs(
     embedder: Any | None = None,
 ) -> dict[str, float]:
     """Capture runtime cost metrics per model by timing full corpus re-embedding."""
+    if embedder is None:
+        embedder = get_offline_embedder(model_name)
+
     rows = connection.execute("SELECT title, body FROM docs").fetchall()
     texts: list[str] = [get_embed_text(r[0] or "", r[1] or "") for r in rows]
 
     t0 = time.perf_counter()
-    if embedder is not None and texts:
+    if texts:
         if hasattr(embedder, "encode"):
             embedder.encode(texts)
         elif callable(embedder):
             embedder(texts)
+        else:
+            raise RuntimeError(
+                f"Embedder for model '{model_name}' is invalid or missing encode method (§6.3)."
+            )
     t1 = time.perf_counter()
     embed_ms = (t1 - t0) * 1000.0
 
@@ -428,6 +433,7 @@ def run_eval_and_log(
     model_name: str | list[str] = "all-MiniLM-L6-v2",
     embedder: Any | None = None,
     embedders: dict[str, Any] | None = None,
+    git_sha_override: str | None = None,
 ) -> dict[str, Any]:
     """Run retrieval evaluation and write 'eval.completed' events to SQLite events table."""
     queries, queryset_sha = load_query_set(committed_path, sidecar_path)
@@ -448,6 +454,8 @@ def run_eval_and_log(
             m_embedder = embedders[m]
         elif embedder is not None and len(models) == 1:
             m_embedder = embedder
+        else:
+            m_embedder = get_offline_embedder(m)
 
         res = evaluate_retrieval(
             connection, queries, model_name=m, embedder=m_embedder
@@ -459,7 +467,7 @@ def run_eval_and_log(
 
         fused_recall = res["fused"]["recall_at_10"]
         fused_mrr = res["fused"]["mrr_at_10"]
-        git_sha = get_git_sha()
+        git_sha = get_git_sha(git_sha_override)
 
         payload_single = {
             "model": m,
@@ -505,7 +513,7 @@ def run_eval_and_log(
     else:
         final_gates["winner"] = "incumbent"
 
-    git_sha = get_git_sha()
+    git_sha = get_git_sha(git_sha_override)
 
     return {
         "model": winning_res["model"],
