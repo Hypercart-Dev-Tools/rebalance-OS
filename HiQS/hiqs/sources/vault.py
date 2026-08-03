@@ -241,19 +241,12 @@ def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:
     duplicate_occurrences: dict[tuple[str | None, str], int] = {}
 
     for heading, body in processed_chunks:
-        total_for_heading = heading_counts[heading]
-
-        if total_for_heading > 1:
-            # Duplicate heading text within the file: content-disambiguated hash
-            key_str = f"{heading or 'preamble'}:{body}"
-            dup_idx = duplicate_occurrences.get((heading, body), 0) + 1
-            duplicate_occurrences[(heading, body)] = dup_idx
-            if dup_idx > 1:
-                key_str = f"{key_str}:{dup_idx}"
-            heading_hash = hashlib.sha256(key_str.encode("utf-8")).hexdigest()[:12]
-        else:
-            base_key = heading.encode("utf-8") if heading is not None else b"preamble"
-            heading_hash = hashlib.sha256(base_key).hexdigest()[:12]
+        key_str = f"{heading or 'preamble'}:{body}"
+        dup_idx = duplicate_occurrences.get((heading, body), 0) + 1
+        duplicate_occurrences[(heading, body)] = dup_idx
+        if dup_idx > 1:
+            key_str = f"{key_str}:{dup_idx}"
+        heading_hash = hashlib.sha256(key_str.encode("utf-8")).hexdigest()[:12]
 
         chunk_id = f"vault:{rel_path}:{heading_hash}"
         doc_title = (
@@ -287,21 +280,31 @@ def docs(connection: Any, config: Any = None) -> Iterable[Doc]:
     _ensure_schema(connection)
     vault_path = _resolve_vault_path(config) or _last_vault_path
     if vault_path is None or not vault_path.exists():
+        rows = connection.execute("SELECT path FROM vault_files").fetchall()
+        if rows:
+            raise RuntimeError(f"Vault path does not exist or is unavailable: {vault_path}")
         return []
 
-    rows = connection.execute("SELECT path FROM vault_files ORDER BY path").fetchall()
+    rows = connection.execute("SELECT path, content_hash FROM vault_files ORDER BY path").fetchall()
     documents: list[Doc] = []
 
-    for (rel_path,) in rows:
+    for rel_path, stored_hash in rows:
         file_path = vault_path / rel_path
-        if not file_path.exists() or is_generated_file(file_path, base_path=vault_path):
-            continue
-        try:
-            content_bytes = file_path.read_bytes()
-            content = content_bytes.decode("utf-8", errors="replace")
-        except Exception:
+        if not file_path.exists():
+            raise RuntimeError(f"Tracked file missing from vault: {rel_path}")
+        if is_generated_file(file_path, base_path=vault_path):
             continue
 
+        try:
+            content_bytes = file_path.read_bytes()
+        except Exception as err:
+            raise RuntimeError(f"Failed to read tracked file {rel_path}: {err}") from err
+
+        current_hash = hashlib.sha256(content_bytes).hexdigest()
+        if current_hash != stored_hash:
+            raise RuntimeError(f"Tracked file content drifted without fetch: {rel_path}")
+
+        content = content_bytes.decode("utf-8", errors="replace")
         documents.extend(_chunk_markdown_content(content, rel_path))
 
     return documents

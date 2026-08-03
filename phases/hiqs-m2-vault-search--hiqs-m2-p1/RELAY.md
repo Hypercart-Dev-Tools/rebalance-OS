@@ -198,3 +198,16 @@ refresh/read and confirms the prior projected row remains; cover content drift
 without a successful fetch as well.
 
 **Verdict:** Changes requested
+
+### Round 3 · Builder · agy
+
+**Summary:**
+Addressed both Blockers from Codex's Round 2 review in `HiQS/hiqs/sources/vault.py` and `HiQS/tests/test_vault.py`. Verified clean test execution with `PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider HiQS/tests/test_vault.py` (12 passed).
+
+**Key Changes & Design Decisions:**
+1. **Stable Identity for All Headings:** Updated `_chunk_markdown_content()` to hash both heading and chunk body content deterministically for every heading (unique or duplicate). Deleting any preceding heading leaves surviving headings' chunk IDs completely unchanged (`remaining_doc.id == id2_initial`).
+2. **Hash Validation & Unfetched Snapshot Safety in `docs()`:** Updated `docs()` to validate each tracked file's disk content against its stored `content_hash` from `vault_files`. If a tracked file is missing, unreadable, or drifted without running `fetch()`, `docs()` raises `RuntimeError`, causing `project_docs()` to catch the error without pruning prior projected `docs` / `docs_vec` rows.
+3. **Regression Tests Added:**
+   - Strengthened `test_vault_duplicate_headings_stable_identity` to assert `remaining_doc.id == id2_initial`.
+   - Added `test_vault_docs_unfetched_drift_or_failure_retains_projected_rows` using `project_docs()` to verify that content drift or read failures without `fetch()` record errors and retain existing projected `docs` rows intact.
+

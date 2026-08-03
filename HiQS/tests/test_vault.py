@@ -139,15 +139,16 @@ def test_vault_heading_rename_and_deletion_chunk_ids(tmp_path):
         # Old IDs must no longer be present
         assert ids_run1.isdisjoint(ids_run2)
 
-        # Hash of "Heading Renamed"
-        expected_hash = hashlib.sha256(b"Heading Renamed").hexdigest()[:12]
+        # Hash of "Heading Renamed" with body
+        expected_key = "Heading Renamed:# Heading Renamed\n\nContent original."
+        expected_hash = hashlib.sha256(expected_key.encode("utf-8")).hexdigest()[:12]
         assert f"vault:topic.md:{expected_hash}" in ids_run2
     finally:
         connection.close()
 
 
 def test_vault_duplicate_headings_stable_identity(tmp_path):
-    """Deleting the first of two equal headings does not cause the second to inherit the deleted heading's ID."""
+    """Deleting the first of two equal headings does not cause the second to inherit the deleted heading's ID or change its own ID."""
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir()
 
@@ -180,9 +181,77 @@ def test_vault_duplicate_headings_stable_identity(tmp_path):
         assert len(docs_run2) == 1
 
         remaining_doc = docs_run2[0]
-        # The remaining doc's ID must NOT be id1_initial (the deleted chunk's ID)
+        # The remaining doc's ID must NOT be id1_initial, and MUST match its prior id2_initial
         assert remaining_doc.id != id1_initial
+        assert remaining_doc.id == id2_initial
         assert remaining_doc.body == "## Setup\n\nSecond setup block."
+    finally:
+        connection.close()
+
+
+def test_vault_docs_unfetched_drift_or_failure_retains_projected_rows(tmp_path, monkeypatch):
+    """docs() raises RuntimeError on missing/unreadable/drifted tracked files so project_docs retains prior rows."""
+    from unittest.mock import MagicMock
+    from hiqs.docs_index import project_docs
+
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+    note_path = vault_dir / "note.md"
+    note_path.write_text("# Note Title\n\nInitial note content.", encoding="utf-8")
+
+    db_path = tmp_path / "hiqs.db"
+    connection = db_connection(db_path)
+
+    try:
+        mock_embedder = MagicMock()
+        mock_embedder.encode.return_value = [[0.1] * 384]
+
+        # Step 1: Initial fetch and projection
+        SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+        report1 = project_docs(
+            connection,
+            sources=[SOURCE],
+            embedder=mock_embedder,
+        )
+        assert report1.counts["inserted"] == 1
+        rows_before = connection.execute("SELECT id, title, body FROM docs WHERE source = 'vault'").fetchall()
+        assert len(rows_before) == 1
+
+        # Step 2: Content drift without running fetch()
+        note_path.write_text("# Note Title\n\nDrifted content on disk.", encoding="utf-8")
+
+        # project_docs should record error and NOT prune the existing row in docs
+        report_drift = project_docs(
+            connection,
+            sources=[SOURCE],
+            embedder=mock_embedder,
+        )
+        assert len(report_drift.errors) == 1
+        assert "content drifted without fetch" in report_drift.errors[0]
+
+        rows_after_drift = connection.execute("SELECT id, title, body FROM docs WHERE source = 'vault'").fetchall()
+        assert rows_after_drift == rows_before
+
+        # Step 3: Unreadable file / failed read without fetch()
+        orig_read_bytes = Path.read_bytes
+
+        def mock_read_bytes(path_obj):
+            if path_obj.name == "note.md":
+                raise PermissionError("Permission denied")
+            return orig_read_bytes(path_obj)
+
+        monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
+
+        report_read_err = project_docs(
+            connection,
+            sources=[SOURCE],
+            embedder=mock_embedder,
+        )
+        assert len(report_read_err.errors) == 1
+        assert "Failed to read tracked file" in report_read_err.errors[0]
+
+        rows_after_err = connection.execute("SELECT id, title, body FROM docs WHERE source = 'vault'").fetchall()
+        assert rows_after_err == rows_before
     finally:
         connection.close()
 
