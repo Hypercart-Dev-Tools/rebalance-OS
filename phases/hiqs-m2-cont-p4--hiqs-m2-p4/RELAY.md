@@ -221,3 +221,19 @@ The gate boundary fixes from Round 1 and canonical query-field handling are now 
 5. **Verification:**
    - Ran `pytest HiQS/tests/test_eval_retrieval.py HiQS/tests/test_search.py` (18 passed in 0.38s).
 
+### Round 4 · Reviewer · codex
+
+swept file: yes
+
+**Verdict:** Changes requested
+
+Focused verification: `pytest HiQS/tests/test_eval_retrieval.py` passes (12 passed). I swept both permitted files in full. No unrelated pre-existing defects were found; the remaining issues are in this runner and its coverage.
+
+1. `evaluate_retrieval()` still calls `get_default_embedder()`, whose `SentenceTransformer(model_name)` may fetch weights. Catching a failure after that call is not an offline/no-network guarantee. Require an explicitly supplied offline embedder (or use a loader invoked with local-files-only semantics) and add a test that a no-embedder run cannot invoke a downloader.
+2. `capture_costs()` records `embed_ms: 0` whenever `m_embedder` is absent. In the normal CLI path, evaluation may load an embedder but the same embedder is not passed to cost capture; this produces an `eval.completed` event that falsely claims a full re-embed measurement. Make the evaluated embedder available to cost capture and fail loudly rather than emit a partial/zero measurement. Add an integration assertion for the CLI/normal model path.
+3. The canonical committed format requires shape tags, but `load_query_set()` accepts a missing or empty `shape` and silently scores it. Validate a non-empty canonical shape (aliases may remain) and add the rejection test.
+4. The new isolation and N-model tests do not prove their claims: `test_no_default_db_event_written` merely asserts that `fetchone()` returned a row, so it passes even if default-DB telemetry was written; `test_multi_model_three_models` uses indistinguishable stubs and only checks membership, so it proves neither all three pairs nor the winner/gates. Replace them with controlled tests that assert zero default DB writes, all three model-pair disagreement records, and the expected selected winner/gates.
+5. Vector-leg failures are caught wholesale and converted to empty hits, which can silently write a seemingly valid zero-vector quality event. Treat unavailable/missing model vectors or encoder failures as loud evaluation failures (or otherwise mark the evaluation unknown and refuse `eval.completed`); add coverage for that path.
+6. `get_git_sha()` shells out to `git`. This conflicts with the evaluation runner's fixture-contained/offline design and is also unnecessary when the required `GIT_SHA` can be supplied by the caller. Remove the subprocess fallback (use the explicit value or `unknown`) and pin it with a test.
+
+The prior direct-connection search and event-writer changes are present, but the six items above still allow the key offline, measurement, and multi-model guarantees to regress.
