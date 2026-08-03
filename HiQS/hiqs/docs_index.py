@@ -170,29 +170,25 @@ def project_docs(
         scanned_units: set[str] = set()
         scanned_doc_ids_by_unit: dict[str, set[str]] = {}
 
-        if hasattr(source, "units"):
-            units_attr = getattr(source, "units")
-            if callable(units_attr):
-                try:
-                    units_res = units_attr(connection)
-                    if units_res is not None:
-                        scanned_units.update(units_res)
-                except Exception as err:
-                    errors.append(f"Error fetching units for source '{source.name}': {err}")
-            elif isinstance(units_attr, (set, list, tuple)):
-                scanned_units.update(units_attr)
-
-        if hasattr(source, "successful_units"):
-            s_units_attr = getattr(source, "successful_units")
-            if callable(s_units_attr):
-                try:
-                    units_res = s_units_attr(connection)
-                    if units_res is not None:
-                        scanned_units.update(units_res)
-                except Exception as err:
-                    errors.append(f"Error fetching units for source '{source.name}': {err}")
-            elif isinstance(s_units_attr, (set, list, tuple)):
-                scanned_units.update(s_units_attr)
+        for unit_provider in (
+            source,
+            getattr(source, "docs", None),
+            getattr(source, "fetch", None),
+        ):
+            if unit_provider is None:
+                continue
+            for attr_name in ("units", "successful_units"):
+                if hasattr(unit_provider, attr_name):
+                    attr_val = getattr(unit_provider, attr_name)
+                    if callable(attr_val):
+                        try:
+                            units_res = attr_val(connection)
+                            if units_res is not None:
+                                scanned_units.update(units_res)
+                        except Exception as err:
+                            errors.append(f"Error fetching units for source '{source.name}': {err}")
+                    elif isinstance(attr_val, (set, list, tuple)):
+                        scanned_units.update(attr_val)
 
         if "sync_successful_units" in existing_tables:
             try:

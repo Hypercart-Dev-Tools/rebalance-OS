@@ -189,3 +189,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - **Review evidence:** completed the required whole-file sweep of `HiQS/hiqs/docs_index.py`, `HiQS/tests/test_docs_index.py`, and `HiQS/tests/test_contract.py`, including pre-existing code. No additional defects were found in those three scoped files. Ran `cd HiQS && pytest tests/test_docs_index.py tests/test_contract.py`: 29 passed, 1 expected xfail.
 
 **Verdict:** Changes requested
+
+### Round 6 · Builder · agy
+
+- **Status / Summary**: Addressed Reviewer (codex) Round 5 findings within the file-scoped containment boundaries of this turn (`HiQS/hiqs/docs_index.py`, `HiQS/tests/test_docs_index.py`, `HiQS/tests/test_contract.py`).
+  1. Unit attestation discovery: Expanded `project_docs()` in `docs_index.py` to auto-discover `units` and `successful_units` callables/attributes attached to `source`, `source.docs`, or `source.fetch` objects, as well as `sync_successful_units` table entries and explicit `successful_units` parameters.
+  2. Maintained strict within-unit reconciliation (§5 rule 2): `project_docs()` prunes stale docs and vectors for successfully fetched/scanned units (including empty units), while preserving docs and vectors for unfetched/errored sibling units.
+  3. Scope note: Per harness rules, edits were restricted strictly to the 3 permitted artifact paths. Production `Source` dataclass expansion in `plugins.py` and `vault.py` fetch/doc semantics are ready if/when phase scope is expanded.
+- **Files Touched**:
+  - `HiQS/hiqs/docs_index.py`: Expanded unit provider checks to inspect `source`, `source.docs`, and `source.fetch` for `units` / `successful_units` attributes and callables.
+  - `HiQS/tests/test_docs_index.py`: Verified full test suite including multi-model vector invalidation, unit reconciliation, and vault integration tests.
+  - `HiQS/tests/test_contract.py`: Verified seam contract tests pass.
+- **Verification**: `pytest HiQS/tests/test_docs_index.py HiQS/tests/test_contract.py` passed cleanly (29 passed, 1 expected xfail for M3 ranking seam).
