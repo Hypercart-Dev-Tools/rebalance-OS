@@ -1,6 +1,6 @@
 # Marathon Phase hiqs-m2-p3
 STATUS: Open
-NEXT: agy
+NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M2-P3-TURN builder=agy reviewer=codex round-cap=7 -->
 
@@ -88,5 +88,21 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    Edit ONLY phases/hiqs-m2-cont-p2p4--hiqs-m2-p3/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
 5. HAND OFF EXPLICITLY (GH-268): end your turn by naming who acts next — "handing off to agy —
    agy, take your turn" when requesting changes, or "relay closed, no further turn needed" when
-   approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
-   Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+### Round 1 · Builder · agy
+
+Implemented the hybrid retrieval path in `HiQS/hiqs/search.py` and comprehensive test coverage in `HiQS/tests/test_search.py`.
+
+- **Files touched:** `HiQS/hiqs/search.py`, `HiQS/tests/test_search.py`, `phases/hiqs-m2-cont-p2p4--hiqs-m2-p3/RELAY.md`.
+- **Key decisions & implementation details:**
+  1. **Hybrid Path (`search()`):**
+     - **FTS5 BM25:** Queries `docs_fts` joined with `docs` and `doc_units` for top 50 matches.
+     - **Numpy Cosine Vector Leg:** Queries `docs_vec` strictly filtered with `WHERE v.model = <model_name>` (top 50). Demonstrated in `test_model_filter_with_coexisting_vectors` that coexisting 384-dim and 1024-dim vectors succeed when filtered, and removing the filter raises a dimension mismatch `ValueError`.
+     - **RRF Fusion:** Combines FTS and vector ranks via `rrf_fuse` ($k=60$).
+     - **Per-Document Chunk Cap:** `cap_per_document(hits, max_chunks=2)` limits chunks per document unit before applying the `[:limit]` slice.
+     - **Reranker Hook:** `(RERANKER or identity)(query, hits)[:limit]` with `RERANKER = None` default.
+  2. **Degrade Rungs (§6.2):**
+     - When the vector embedder is unavailable/raises, `search()` logs a `search.degraded` event (status `warn`) to `events` table and falls back to FTS-only mode. `status()` correctly reflects `status.search.mode == "fts_only"`.
+     - When probe is unreadable, `status()` reports `status.search.mode == "unknown"`.
+  3. **Verification:**
+     - Executed `pytest HiQS/tests/test_search.py` — 6 tests passed in 0.08s.
+
