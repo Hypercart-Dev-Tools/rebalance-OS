@@ -100,3 +100,28 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    agy, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · agy
+
+**Files created/modified:**
+- [`HiQS/tests/eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/eval_retrieval.py)
+- [`HiQS/tests/test_eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/test_eval_retrieval.py)
+- [`phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md)
+
+**Summary of changes:**
+1. Implemented offline retrieval evaluation runner (`eval_retrieval.py`):
+   - Computes **recall@10** and **MRR@10** per leg (`fts_only`, `vector_only`, `fused`) per model.
+   - Emits the paired disagreement set for queries where top hits differ between model evaluations.
+   - Captures cost metrics per model: `embed_ms`, `index_mb` (SQLite page math), and `peak_rss_mb` (OS-specific `rusage`).
+   - Validates §19.2 public/private split: reads committed opaque query specs (`eval_queries.json`) and local sidecar (`eval_queries_sidecar.json`), raising clear §6.3 error on missing query set and loud `unknown` error on missing/invalid sidecar. SHA256 spans both files.
+   - Writes `eval.completed` event to `events` table with required fields: `{model, recall_at_10, mrr_at_10, n_queries, queryset_sha, embed_ms, index_mb, peak_rss_mb, git_sha}`.
+   - Implemented falsifiable gate evaluation function `evaluate_gates` covering Floor (fused recall@10 >= 0.60), Vector-leg justification (fused beats FTS by >= 0.10), and §3.2 selection rule (ties and split decisions default to incumbent).
+2. Authored comprehensive unit and acceptance tests (`test_eval_retrieval.py`):
+   - Tested reproducibility across two runs on identical DB and synthetic query set.
+   - Verified missing file handling (missing query set -> §6.3 error; missing sidecar -> loud `unknown` error).
+   - Verified gate arithmetic for Floor, Vector justification, and Incumbent selection rule on synthetic scores.
+   - Verified integration with `status()["search"]["quality"]` reading directly from written `eval.completed` event.
+   - Verified paired disagreement set calculation and single query scoring logic.
+3. Verified zero regressions against `pytest HiQS/tests/test_eval_retrieval.py` (6 passed) and `pytest HiQS/tests/test_search.py` (6 passed).
