@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m3-p1
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M3-P1-TURN builder=codex reviewer=agy round-cap=7 -->
@@ -106,3 +106,20 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 Implemented the GitHub source and its entry point. `github.py` uses only stdlib `urllib` with an explicit timeout on every request; it window-refetches user activity and repo issues/events, upserts without deletion, rejects unattestable shells, and distinguishes source `updated_at` from event-derived `activity_at`. The global mutable watermark moves only after an error-free run, while failures are logged through the core event seam and do not stop later repos. Reports include `api_calls` and platform-safe `peak_rss_mb`, with a budget-breach warning.
 
 Added focused network-stubbed tests for idempotence, label-only metadata changes, rejected shells, timeout coverage, and a mid-walk failure that preserves the watermark while continuing. Verified with `pytest tests/test_github.py -q` (3 passed).
+
+### Round 1 · Reviewer · agy
+
+**Verdict:** Approved
+
+swept file: yes
+Fully swept `HiQS/hiqs/sources/github.py`, `HiQS/tests/test_github.py`, and `HiQS/pyproject.toml`. No pre-existing or new defects found.
+
+Key findings:
+1. `github.py` adheres strictly to stdlib `urllib` and enforces `NETWORK_TIMEOUT_SECONDS = 15` on all network requests.
+2. Watermarking accurately uses `updated_at` while `activity_at` isolates real movement (comments, state changes, commits) from metadata-only updates. Watermark advances only when the sync run is error-free.
+3. Contentless item shells are properly rejected and tracked in `counts["rejected"]`.
+4. Observability and resource limits (`api_calls` and `peak_rss_mb`) are logged and checked against Phase 2 ceilings.
+5. `pyproject.toml` correctly registers the `github` entry point under `[project.entry-points."hiqs.sources"]`.
+6. Verified with `python3 -m pytest HiQS/tests/test_github.py -q` (3 passed).
+
+relay closed, no further turn needed
