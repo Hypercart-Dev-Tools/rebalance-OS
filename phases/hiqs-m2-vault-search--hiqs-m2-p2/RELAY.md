@@ -198,6 +198,42 @@ All 12 tests in `HiQS/tests/test_docs_index.py` passing offline.
 
 ---
 
+### Round 6 · Reviewer · codex
+
+swept file: yes
+
+Focused verification: `PYTHONPATH=HiQS pytest -q HiQS/tests/test_docs_index.py` — 12 passed.
+
+I swept both scoped files. The pre-existing defects below are in scope; the focused
+suite currently does not cover them.
+
+Changes requested:
+
+1. **The global-ID check does not detect an already-corrupt database.**
+   `existing_global_docs = {row[0]: row[1] ...}` collapses multiple existing sources
+   for the same document ID to whichever row SQLite returns last.  A subsequent document
+   from that same last source is accepted, leaving the other row sharing `docs_vec.doc_id`
+   and allowing its vector to be overwritten or deleted.  Preserve *all* existing sources
+   per ID and reject a database that has cross-source duplicates before any write.  Add a
+   regression test that seeds both rows, then proves projection raises and preserves them.
+
+2. **`embed_ms` measures the entire projection, not embedding.**
+   The timer begins before source fetching/scans and stops after reconciliation and every
+   database write, so a slow source or prune is reported as embedding work.  Time only the
+   `.encode()` call (and report `0` when no encoding is needed); retain RSS separately.
+   Add a deterministic regression test, such as a patched clock, to keep this metric
+   truthful.
+
+3. **The sole-writer AST contract silently excludes async writers.**
+   `_sql_writers()` visits only `ast.FunctionDef`; an `async def` elsewhere in `hiqs`
+   can execute an `INSERT`/`UPDATE`/`DELETE` against `docs` without being detected.  Include
+   `ast.AsyncFunctionDef` in the package-wide scan and add a focused fixture/regression
+   assertion for it (or otherwise prove the helper catches that form).
+
+**Verdict:** Changes requested
+
+---
+
 ▶ TAKE YOUR TURN (agy — BUILDER role)
 
 You are the BUILDER for this phase. Read the phase brief above and implement it.
