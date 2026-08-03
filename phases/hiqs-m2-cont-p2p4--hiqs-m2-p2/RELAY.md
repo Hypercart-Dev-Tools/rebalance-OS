@@ -138,3 +138,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    agy, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · agy
+
+Implemented M2 p2 per brief:
+- **plugins.py**: Added `units_ok: tuple[str, ...] = ()` to `SyncReport` and `unit: str = ""` to `Doc`.
+- **vault.py**: `fetch()` populates `units_ok` and deletes vanished paths on clean walk. On errored walk, unknown paths are retained and not attested. `docs()` skips missing files instead of throwing. `Doc` objects set `unit=rel_path`.
+- **docs_index.py**: Deleted `get_doc_unit()` and all 4 legacy attestation workarounds (`successful_units` kwarg, duck-typed `units()`, `sync_successful_units` table probe, raw table probe). Updated `project_docs` signature to accept `reports: Mapping[str, SyncReport] | None = None` and reconcile strictly within `reports[source.name].units_ok` (no attestation ⇒ prune nothing).
+- **tests**: Updated `test_plugins.py`, `test_vault.py`, `test_docs_index.py` to cover all acceptance criteria (unit attestation, colon handling, partial fetch retention, zero chunk reconciliation, deleted vault note clean vs errored fetch). All 54 tests passing.
+

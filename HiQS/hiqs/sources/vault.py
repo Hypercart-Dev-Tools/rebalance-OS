@@ -142,6 +142,9 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
     def _on_walk_error(os_err: OSError) -> None:
         errors.append(f"Directory walk error: {os_err}")
 
+    walked_paths: set[str] = set()
+    units_ok: list[str] = []
+
     for root, dirs, files in os.walk(vault_path, onerror=_on_walk_error):
         root_path = Path(root)
         dirs[:] = [d for d in dirs if not is_generated_file(root_path / d, base_path=vault_path)]
@@ -163,6 +166,9 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                 # L19: Watermark/mtime state does NOT advance for a file whose read failed.
                 # Existing row in vault_files remains untouched!
                 continue
+
+            walked_paths.add(rel_path)
+            units_ok.append(rel_path)
 
             mtime_dt = datetime.fromtimestamp(st.st_mtime, tz=timezone.utc)
             mtime_str = mtime_dt.isoformat().replace("+00:00", "Z")
@@ -187,7 +193,14 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                     )
                 counts["inserted"] += 1
 
-    return SyncReport(counts=counts, errors=errors)
+    if len(errors) == 0:
+        vanished = set(existing.keys()) - walked_paths
+        for rel_path in sorted(vanished):
+            with connection:
+                connection.execute("DELETE FROM vault_files WHERE path = ?", (rel_path,))
+            units_ok.append(rel_path)
+
+    return SyncReport(counts=counts, errors=errors, units_ok=tuple(units_ok))
 
 
 def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:
@@ -273,6 +286,7 @@ def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:
                 ts="",
                 project="",
                 author="",
+                unit=rel_path,
             )
         )
 
@@ -299,7 +313,7 @@ def docs(connection: Any, config: Any = None) -> Iterable[Doc]:
     for rel_path, stored_hash in rows:
         file_path = vault_path / rel_path
         if not file_path.exists():
-            raise RuntimeError(f"Tracked file missing from vault: {rel_path}")
+            continue
         if is_generated_file(file_path, base_path=vault_path):
             continue
 

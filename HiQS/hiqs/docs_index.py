@@ -7,6 +7,7 @@ It is the SOLE writer to the `docs` table (§5 rule 1).
 from __future__ import annotations
 
 import array
+from collections.abc import Mapping
 import hashlib
 import os
 import platform
@@ -27,31 +28,6 @@ def compute_content_hash(title: str, body: str) -> str:
     """Compute sha256 content hash of the document embedding payload."""
     text = get_embed_text(title, body)
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
-
-
-def get_doc_unit(doc_id: str, source_name: str, doc: Doc | None = None) -> str:
-    """Determine the unit name for a document.
-
-    Reconciliation is scoped to successfully fetched units (§5 rule 2).
-    """
-    if doc is not None:
-        unit_attr = getattr(doc, "unit", None)
-        if unit_attr:
-            return str(unit_attr)
-    parts = doc_id.split(":")
-    if parts[0] == source_name:
-        if len(parts) >= 3:
-            return parts[1]
-        elif len(parts) == 2:
-            return parts[0]
-        else:
-            return doc_id
-    else:
-        if len(parts) >= 2:
-            return parts[0]
-        else:
-            return doc_id
-
 
 
 def get_peak_rss_mb() -> float:
@@ -93,12 +69,25 @@ def _encode_texts(embedder: Any, texts: list[str]) -> Any:
     raise TypeError(f"Embedder must have an encode method, got {type(embedder)}")
 
 
+def _matches_unit(unit: str, doc_id: str, source_name: str, doc_unit_map: dict[str, str]) -> bool:
+    """Check if doc_id belongs to unit."""
+    if doc_id in doc_unit_map:
+        return doc_unit_map[doc_id] == unit
+    if doc_id == unit:
+        return True
+    if doc_id.startswith(f"{source_name}:{unit}:"):
+        return True
+    if doc_id.startswith(f"{unit}:"):
+        return True
+    return False
+
+
 def project_docs(
     connection: sqlite3.Connection,
     sources: Iterable[Source] | None = None,
     model_name: str = "all-MiniLM-L6-v2",
     embedder: Any | None = None,
-    successful_units: dict[str, Iterable[str]] | Iterable[str] | None = None,
+    reports: Mapping[str, SyncReport] | None = None,
 ) -> SyncReport:
     """Project raw source documents into the unified `docs` table and delta-embed vectors into `docs_vec`.
 
@@ -137,13 +126,6 @@ def project_docs(
 
     invalidated_vec_doc_ids: list[str] = []
 
-    existing_tables = {
-        r[0]
-        for r in connection.execute(
-            "SELECT name FROM sqlite_master WHERE type='table'"
-        ).fetchall()
-    }
-
     for source in sources:
         if source.docs is None:
             continue
@@ -167,44 +149,11 @@ def project_docs(
             ).fetchall()
         }
 
-        scanned_units: set[str] = set()
+        report = reports.get(source.name) if reports else None
+        attested_units = set(report.units_ok) if report and report.units_ok else set()
+
+        doc_unit_map: dict[str, str] = {}
         scanned_doc_ids_by_unit: dict[str, set[str]] = {}
-
-        for unit_provider in (
-            source,
-            getattr(source, "docs", None),
-            getattr(source, "fetch", None),
-        ):
-            if unit_provider is None:
-                continue
-            for attr_name in ("units", "successful_units"):
-                if hasattr(unit_provider, attr_name):
-                    attr_val = getattr(unit_provider, attr_name)
-                    if callable(attr_val):
-                        try:
-                            units_res = attr_val(connection)
-                            if units_res is not None:
-                                scanned_units.update(units_res)
-                        except Exception as err:
-                            errors.append(f"Error fetching units for source '{source.name}': {err}")
-                    elif isinstance(attr_val, (set, list, tuple)):
-                        scanned_units.update(attr_val)
-
-        if "sync_successful_units" in existing_tables:
-            try:
-                rows = connection.execute(
-                    "SELECT unit FROM sync_successful_units WHERE source = ?", (source.name,)
-                ).fetchall()
-                scanned_units.update(r[0] for r in rows)
-            except Exception:
-                pass
-
-        if successful_units is not None:
-            if isinstance(successful_units, dict):
-                if source.name in successful_units:
-                    scanned_units.update(successful_units[source.name])
-            elif isinstance(successful_units, (set, list, tuple)):
-                scanned_units.update(successful_units)
 
         for doc in source_docs:
             if doc.source != source.name:
@@ -230,8 +179,8 @@ def project_docs(
                     f"Doc ID '{doc.id}' from source '{source.name}' collides with existing doc from source '{other_src}'"
                 )
 
-            unit = get_doc_unit(doc.id, source.name, doc)
-            scanned_units.add(unit)
+            unit = doc.unit if doc.unit else doc.id
+            doc_unit_map[doc.id] = unit
             scanned_doc_ids_by_unit.setdefault(unit, set()).add(doc.id)
 
             new_tuple = (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author)
@@ -264,16 +213,18 @@ def project_docs(
                         docs_to_embed.append(doc)
 
         # Within-unit reconciliation for docs and docs_vec (§5 rule 2)
-        to_prune: list[str] = []
-        for existing_id in existing_map:
-            unit = get_doc_unit(existing_id, source.name)
-            if unit in scanned_units:
-                if existing_id not in scanned_doc_ids_by_unit.get(unit, set()):
-                    to_prune.append(existing_id)
+        if attested_units:
+            to_prune: list[str] = []
+            for existing_id in existing_map:
+                for unit in attested_units:
+                    if _matches_unit(unit, existing_id, source.name, doc_unit_map):
+                        if existing_id not in scanned_doc_ids_by_unit.get(unit, set()):
+                            to_prune.append(existing_id)
+                        break
 
-        for doc_id in to_prune:
-            prunes.append((source.name, doc_id))
-        counts["pruned"] += len(to_prune)
+            for doc_id in to_prune:
+                prunes.append((source.name, doc_id))
+            counts["pruned"] += len(to_prune)
 
     # Delta embedding before DB mutations so failures leave DB state unchanged
     embed_ms: float = 0.0

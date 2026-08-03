@@ -26,6 +26,7 @@ class SyncReport:
     counts: dict[str, int]
     errors: list[str] = field(default_factory=list)
     meta: dict = field(default_factory=dict)
+    units_ok: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,7 @@ class Doc:
     ts: str = ""
     project: str = ""
     author: str = ""
+    unit: str = ""
 
 
 @dataclass(frozen=True)

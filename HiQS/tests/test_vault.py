@@ -491,6 +491,71 @@ def test_vault_mtime_utc_iso8601_format(tmp_path):
         connection.close()
 
 
+def test_deleting_vault_note_removes_from_search_and_errored_walk_retains(tmp_path, monkeypatch):
+    """Deleting a vault note removes its rows on a clean fetch, but retains rows when walk errors."""
+    from unittest.mock import MagicMock
+    from hiqs.docs_index import project_docs
+
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+
+    monkeypatch.setattr("hiqs.config.load_config", lambda: {"vault_path": str(vault_dir)})
+
+    file1 = vault_dir / "note1.md"
+    file1.write_text("# Note 1\nContent 1", encoding="utf-8")
+
+    file2 = vault_dir / "note2.md"
+    file2.write_text("# Note 2\nContent 2", encoding="utf-8")
+
+    db_path = tmp_path / "hiqs.db"
+    conn = db_connection(db_path)
+
+    try:
+        mock_embedder = MagicMock()
+        mock_embedder.encode.side_effect = lambda texts: [[0.1] * 384 for _ in texts]
+
+        # Initial sync of both notes
+        rep1 = SOURCE.fetch(conn, {"vault_path": str(vault_dir)})
+        project_docs(conn, sources=[SOURCE], embedder=mock_embedder, reports={"vault": rep1})
+        assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 2
+
+        # Step 1: Delete note1.md and perform clean fetch
+        file1.unlink()
+        rep_clean = SOURCE.fetch(conn, {"vault_path": str(vault_dir)})
+        assert rep_clean.errors == []
+        assert "note1.md" in rep_clean.units_ok
+
+        project_docs(conn, sources=[SOURCE], embedder=mock_embedder, reports={"vault": rep_clean})
+        # note1.md rows MUST BE GONE, note2.md rows REMAIN
+        remaining = [r[0] for r in conn.execute("SELECT id FROM docs").fetchall()]
+        assert len(remaining) == 1
+        assert remaining[0].startswith("vault:note2.md:")
+
+        # Step 2: Delete note2.md, but trigger walk error during fetch
+        file2.unlink()
+
+        def mock_walk(top, topdown=True, onerror=None, followlinks=False):
+            if onerror:
+                onerror(PermissionError("Simulated walk error"))
+            return [(str(top), [], [])]
+
+        monkeypatch.setattr("os.walk", mock_walk)
+
+        rep_error = SOURCE.fetch(conn, {"vault_path": str(vault_dir)})
+        assert len(rep_error.errors) > 0
+        # Because walk errored, note2.md is NOT in units_ok
+        assert "note2.md" not in rep_error.units_ok
+
+        project_docs(conn, sources=[SOURCE], embedder=mock_embedder, reports={"vault": rep_error})
+        # note2.md rows MUST SURVIVE!
+        remaining_after_err = [r[0] for r in conn.execute("SELECT id FROM docs").fetchall()]
+        assert len(remaining_after_err) == 1
+        assert remaining_after_err[0].startswith("vault:note2.md:")
+    finally:
+        conn.close()
+
+
+
 
 
 

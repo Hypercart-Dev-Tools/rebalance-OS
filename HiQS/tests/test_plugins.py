@@ -13,8 +13,8 @@ def _fetch(_conn, _config):
     ("record", "field_names"),
     [
         (Source(name="test", fetch=_fetch), ["name", "fetch", "docs", "candidates"]),
-        (SyncReport(counts={}), ["counts", "errors", "meta"]),
-        (Doc(source="test", id="1", title="title", body="body"), ["source", "id", "title", "body", "url", "ts", "project", "author"]),
+        (SyncReport(counts={}), ["counts", "errors", "meta", "units_ok"]),
+        (Doc(source="test", id="1", title="title", body="body"), ["source", "id", "title", "body", "url", "ts", "project", "author", "unit"]),
         (Candidate(title="title", source="test", evidence="evidence", why="why", ts="2026-08-03"), ["title", "source", "evidence", "why", "ts", "url", "author", "owed_by", "due"]),
     ],
 )
@@ -27,7 +27,9 @@ def test_plugin_records_are_frozen_with_contract_fields(record, field_names):
 def test_optional_contract_defaults():
     assert SyncReport(counts={}).errors == []
     assert SyncReport(counts={}).meta == {}
+    assert SyncReport(counts={}).units_ok == ()
     assert Doc(source="test", id="1", title="title", body="body").author == ""
+    assert Doc(source="test", id="1", title="title", body="body").unit == ""
     candidate = Candidate(title="title", source="test", evidence="evidence", why="why", ts="2026-08-03")
     assert (candidate.url, candidate.author, candidate.owed_by, candidate.due) == ("", "", "", "")
 

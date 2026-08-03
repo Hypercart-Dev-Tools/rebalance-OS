@@ -302,21 +302,23 @@ def test_reconciliation_removes_docs_vec_rows_for_pruned_chunks(tmp_path):
     """Assert within-unit reconciliation removes both docs and docs_vec rows for pruned chunks."""
     conn = db_connection(tmp_path / "hiqs.db")
 
-    doc1 = Doc(source="mock", id="mock:chunk1", title="Doc 1", body="Body 1")
-    doc2 = Doc(source="mock", id="mock:chunk2", title="Doc 2", body="Body 2")
+    doc1 = Doc(source="mock", id="mock:chunk1", title="Doc 1", body="Body 1", unit="mock:chunk1")
+    doc2 = Doc(source="mock", id="mock:chunk2", title="Doc 2", body="Body 2", unit="mock:chunk2")
     source = MockSource("mock", [doc1, doc2])
 
     mock_embedder = MagicMock()
     mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384]
 
-    project_docs(conn, sources=[source], embedder=mock_embedder)
+    rep1 = SyncReport(counts={}, units_ok=("mock:chunk1", "mock:chunk2"))
+    project_docs(conn, sources=[source], embedder=mock_embedder, reports={"mock": rep1})
 
     assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 2
 
     # Update source: doc2 pruned
     source_pruned = MockSource("mock", [doc1])
-    project_docs(conn, sources=[source_pruned], embedder=mock_embedder)
+    rep2 = SyncReport(counts={}, units_ok=("mock:chunk1", "mock:chunk2"))
+    project_docs(conn, sources=[source_pruned], embedder=mock_embedder, reports={"mock": rep2})
 
     # doc2 pruned from docs and docs_vec
     doc_ids = [r[0] for r in conn.execute("SELECT id FROM docs").fetchall()]
@@ -450,16 +452,17 @@ def test_within_unit_reconciliation_retains_unfetched_sibling_units_and_vectors(
     conn = db_connection(tmp_path / "hiqs.db")
 
     # Initial state: vault source with unit "one.md" (2 chunks) and unit "two.md" (1 chunk)
-    doc_u1_c1 = Doc(source="vault", id="vault:one.md:h1", title="U1 C1", body="Body 1")
-    doc_u1_c2 = Doc(source="vault", id="vault:one.md:h2", title="U1 C2", body="Body 2")
-    doc_u2_c1 = Doc(source="vault", id="vault:two.md:h1", title="U2 C1", body="Body 3")
+    doc_u1_c1 = Doc(source="vault", id="vault:one.md:h1", title="U1 C1", body="Body 1", unit="one.md")
+    doc_u1_c2 = Doc(source="vault", id="vault:one.md:h2", title="U1 C2", body="Body 2", unit="one.md")
+    doc_u2_c1 = Doc(source="vault", id="vault:two.md:h1", title="U2 C1", body="Body 3", unit="two.md")
 
     source_init = MockSource("vault", [doc_u1_c1, doc_u1_c2, doc_u2_c1])
     mock_embedder = MagicMock()
     mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384, [0.3] * 384]
 
-    report_init = project_docs(conn, sources=[source_init], embedder=mock_embedder)
-    assert report_init.counts["inserted"] == 3
+    report_init = SyncReport(counts={}, units_ok=("one.md", "two.md"))
+    report_res = project_docs(conn, sources=[source_init], embedder=mock_embedder, reports={"vault": report_init})
+    assert report_res.counts["inserted"] == 3
 
     assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 3
     assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 3
@@ -468,7 +471,8 @@ def test_within_unit_reconciliation_retains_unfetched_sibling_units_and_vectors(
     source_partial = MockSource("vault", [doc_u1_c1])
     mock_embedder.encode.reset_mock()
 
-    report_partial = project_docs(conn, sources=[source_partial], embedder=mock_embedder)
+    report_partial_sync = SyncReport(counts={}, units_ok=("one.md",))
+    report_partial = project_docs(conn, sources=[source_partial], embedder=mock_embedder, reports={"vault": report_partial_sync})
 
     # Pruned must be 1 (vault:one.md:h2 pruned), NOT 2 (vault:two.md:h1 retained)
     assert report_partial.counts["pruned"] == 1
@@ -525,7 +529,7 @@ class MockSourceWithUnits:
         self._units = unit_names
 
     def fetch(self, conn, config):
-        return SyncReport(counts={"inserted": len(self._docs)})
+        return SyncReport(counts={"inserted": len(self._docs)}, units_ok=self._units)
 
     def docs(self, conn):
         return self._docs
@@ -539,25 +543,27 @@ def test_explicit_successful_empty_unit_deletes_docs_and_vectors(tmp_path):
     conn = db_connection(tmp_path / "hiqs.db")
 
     # Initial state: unit "one.md" with 2 chunks, sibling unit "two.md" with 1 chunk
-    doc_u1_c1 = Doc(source="vault", id="vault:one.md:chunk1", title="U1 C1", body="Body 1")
-    doc_u1_c2 = Doc(source="vault", id="vault:one.md:chunk2", title="U1 C2", body="Body 2")
-    doc_u2_c1 = Doc(source="vault", id="vault:two.md:chunk1", title="U2 C1", body="Body 3")
+    doc_u1_c1 = Doc(source="vault", id="vault:one.md:chunk1", title="U1 C1", body="Body 1", unit="one.md")
+    doc_u1_c2 = Doc(source="vault", id="vault:one.md:chunk2", title="U1 C2", body="Body 2", unit="one.md")
+    doc_u2_c1 = Doc(source="vault", id="vault:two.md:chunk1", title="U2 C1", body="Body 3", unit="two.md")
 
     source_init = MockSource("vault", [doc_u1_c1, doc_u1_c2, doc_u2_c1])
     mock_embedder = MagicMock()
     mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384, [0.3] * 384]
 
-    report_init = project_docs(conn, sources=[source_init], embedder=mock_embedder)
-    assert report_init.counts["inserted"] == 3
+    report_init = SyncReport(counts={}, units_ok=("one.md", "two.md"))
+    report_res = project_docs(conn, sources=[source_init], embedder=mock_embedder, reports={"vault": report_init})
+    assert report_res.counts["inserted"] == 3
     assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 3
     assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 3
 
     # Sync 2: unit "one.md" was successfully fetched but yields 0 chunks (empty content).
     # "one.md" is in successful units attestation. Sibling unit "two.md" was not fetched (absent from units attestation).
-    source_empty_u1 = MockSourceWithUnits("vault", docs_list=[], unit_names=["one.md"])
+    source_empty_u1 = MockSource("vault", [])
     mock_embedder.encode.reset_mock()
 
-    report_sync2 = project_docs(conn, sources=[source_empty_u1], embedder=mock_embedder)
+    report_empty = SyncReport(counts={}, units_ok=("one.md",))
+    report_sync2 = project_docs(conn, sources=[source_empty_u1], embedder=mock_embedder, reports={"vault": report_empty})
 
     # 2 chunks from "one.md" pruned, 0 from "two.md"
     assert report_sync2.counts["pruned"] == 2
@@ -567,25 +573,6 @@ def test_explicit_successful_empty_unit_deletes_docs_and_vectors(tmp_path):
 
     remaining_vecs = [r[0] for r in conn.execute("SELECT doc_id FROM docs_vec ORDER BY doc_id").fetchall()]
     assert remaining_vecs == ["vault:two.md:chunk1"]
-
-    # Also test successful_units parameter explicitly
-    # Re-insert unit "one.md" chunks
-    source_reinsert = MockSource("vault", [doc_u1_c1, doc_u1_c2, doc_u2_c1])
-    mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384]
-    project_docs(conn, sources=[source_reinsert], embedder=mock_embedder)
-
-    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 3
-
-    # Pass successful_units parameter explicitly for "one.md"
-    source_empty_param = MockSource("vault", [])
-    report_sync3 = project_docs(
-        conn,
-        sources=[source_empty_param],
-        embedder=mock_embedder,
-        successful_units={"vault": ["one.md"]},
-    )
-    assert report_sync3.counts["pruned"] == 2
-    assert [r[0] for r in conn.execute("SELECT id FROM docs").fetchall()] == ["vault:two.md:chunk1"]
 
     conn.close()
 
@@ -637,7 +624,7 @@ def test_document_content_change_invalidates_all_model_vectors_until_reencoded(t
 
 
 def test_vault_source_successful_empty_unit_pruning_integration(tmp_path, monkeypatch):
-    """Assert real vault source auto-reconciles empty fetched units when passed in successful_units."""
+    """Assert real vault source auto-reconciles empty fetched units when passed in reports."""
     from hiqs.sources import vault
     from hiqs.sources.vault import fetch as vault_fetch, SOURCE as VAULT_SOURCE
 
@@ -656,14 +643,14 @@ def test_vault_source_successful_empty_unit_pruning_integration(tmp_path, monkey
     config = {"vault_path": vault_dir}
 
     # Initial sync
-    vault_fetch(conn, config)
+    report1 = vault_fetch(conn, config)
     mock_embedder = MagicMock()
     mock_embedder.encode.side_effect = lambda texts: [[0.1] * 384 for _ in texts]
     project_docs(
         conn,
         sources=[VAULT_SOURCE],
         embedder=mock_embedder,
-        successful_units={"vault": ["note1.md", "note2.md"]},
+        reports={"vault": report1},
     )
 
     assert conn.execute("SELECT COUNT(*) FROM docs WHERE id LIKE 'vault:note1.md:%'").fetchone()[0] == 2
@@ -672,12 +659,12 @@ def test_vault_source_successful_empty_unit_pruning_integration(tmp_path, monkey
 
     # Now make note1.md empty (0 chunks), while note2.md stays unchanged
     file1.write_text("")
-    vault_fetch(conn, config)
+    report2 = vault_fetch(conn, config)
     project_docs(
         conn,
         sources=[VAULT_SOURCE],
         embedder=mock_embedder,
-        successful_units={"vault": ["note1.md", "note2.md"]},
+        reports={"vault": report2},
     )
 
     # note1.md chunks and vectors must be pruned! note2.md stays.
@@ -700,28 +687,30 @@ def test_retained_raw_row_after_failed_partial_fetch_is_not_pruned(tmp_path):
     conn.execute("INSERT INTO vault_files VALUES ('u2_failed.md', 'hash2', 'mtime2')")
     conn.commit()
 
-    doc_u1 = Doc(source="vault", id="vault:u1.md:chunk1", title="U1", body="Body 1")
-    doc_u2 = Doc(source="vault", id="vault:u2_failed.md:chunk1", title="U2", body="Body 2")
+    doc_u1 = Doc(source="vault", id="vault:u1.md:chunk1", title="U1", body="Body 1", unit="u1.md")
+    doc_u2 = Doc(source="vault", id="vault:u2_failed.md:chunk1", title="U2", body="Body 2", unit="u2_failed.md")
 
     source_init = MockSource("vault", [doc_u1, doc_u2])
     mock_embedder = MagicMock()
     mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384]
 
     # Initial projection
-    project_docs(conn, sources=[source_init], embedder=mock_embedder)
+    rep_init = SyncReport(counts={}, units_ok=("u1.md", "u2_failed.md"))
+    project_docs(conn, sources=[source_init], embedder=mock_embedder, reports={"vault": rep_init})
     assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 2
     assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 2
 
-    # Second sync: u2_failed.md fetch failed (so u2_failed.md is NOT in successful_units).
+    # Second sync: u2_failed.md fetch failed (so u2_failed.md is NOT in units_ok).
     # u1.md fetch succeeded.
     source_sync2 = MockSource("vault", [doc_u1])
     mock_embedder.encode.reset_mock()
 
+    rep_sync2 = SyncReport(counts={}, units_ok=("u1.md",))
     report_sync2 = project_docs(
         conn,
         sources=[source_sync2],
         embedder=mock_embedder,
-        successful_units={"vault": ["u1.md"]},  # u2_failed.md is NOT in successful_units!
+        reports={"vault": rep_sync2},
     )
 
     # u2_failed.md must NOT be pruned despite vault_files raw table entry existing!
@@ -735,7 +724,45 @@ def test_retained_raw_row_after_failed_partial_fetch_is_not_pruned(tmp_path):
     conn.close()
 
 
+def test_source_with_no_attestation_prunes_nothing(tmp_path):
+    """Assert a source with no attestation (default units_ok=()) prunes nothing."""
+    conn = db_connection(tmp_path / "hiqs.db")
+    doc1 = Doc(source="fake", id="alpha:one", title="Title 1", body="Body 1", unit="alpha")
+    source = MockSource("fake", [doc1])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
+
+    # Initial run without reports -> prunes nothing
+    rep1 = project_docs(conn, sources=[source], embedder=mock_embedder)
+    assert rep1.counts["inserted"] == 1
+
+    # Run 2: empty docs returned, but no attestation (reports is None or units_ok=())
+    empty_source = MockSource("fake", [])
+    rep2 = project_docs(conn, sources=[empty_source], embedder=mock_embedder)
+    assert rep2.counts["pruned"] == 0
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 1
+    conn.close()
 
 
+def test_doc_unit_membership_and_colon_in_id(tmp_path):
+    """Assert unit membership comes from Doc.unit, including for an ID with colons, and get_doc_unit is gone."""
+    assert not hasattr(docs_index, "get_doc_unit")
 
+    conn = db_connection(tmp_path / "hiqs.db")
+    doc1 = Doc(source="custom", id="sub/dir:file.md:chunk1", title="T1", body="B1", unit="sub/dir:file.md")
+    source = MockSource("custom", [doc1])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
 
+    report_sync1 = SyncReport(counts={}, units_ok=("sub/dir:file.md",))
+    project_docs(conn, sources=[source], embedder=mock_embedder, reports={"custom": report_sync1})
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 1
+
+    # Now empty source for sub/dir:file.md unit
+    source_empty = MockSource("custom", [])
+    report_sync2 = SyncReport(counts={}, units_ok=("sub/dir:file.md",))
+    rep2 = project_docs(conn, sources=[source_empty], embedder=mock_embedder, reports={"custom": report_sync2})
+    assert rep2.counts["pruned"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 0
+
+    conn.close()
