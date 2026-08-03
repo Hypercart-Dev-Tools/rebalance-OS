@@ -248,8 +248,49 @@ def test_vault_unreadable_file_handling(tmp_path, monkeypatch):
         connection.close()
 
 
+def test_vault_no_pruning_on_fetch_failure(tmp_path, monkeypatch):
+    """Never prune across units or delete on failure: fetch errors prevent pruning deleted files (L15, rule 5)."""
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+
+    file1 = vault_dir / "file1.md"
+    file2 = vault_dir / "file2.md"
+    file1.write_text("# File 1\nContent 1.", encoding="utf-8")
+    file2.write_text("# File 2\nContent 2.", encoding="utf-8")
+
+    db_path = tmp_path / "hiqs.db"
+    connection = db_connection(db_path)
+
+    try:
+        report1 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+        assert report1.counts["inserted"] == 2
+
+        # Delete file1 from disk, and make file2 unreadable
+        file1.unlink()
+        orig_read_bytes = Path.read_bytes
+
+        def mock_read_bytes(path_obj):
+            if path_obj.name == "file2.md":
+                raise PermissionError("Unreadable file2")
+            return orig_read_bytes(path_obj)
+
+        monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
+
+        report2 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+        assert len(report2.errors) == 1
+        assert report2.counts["pruned"] == 0
+
+        # Assert file1 was NOT pruned because the fetch encountered errors
+        rows = connection.execute("SELECT path FROM vault_files ORDER BY path").fetchall()
+        paths = [r[0] for r in rows]
+        assert "file1.md" in paths
+        assert "file2.md" in paths
+    finally:
+        connection.close()
+
+
 def test_vault_path_resolution_from_config(tmp_path):
-    """Vault path must come from config, not a hardcoded location (L11)."""
+    """Vault path must come from config, not a hardcoded location (L11). Supports dicts and objects."""
     vault_dir = tmp_path / "my_custom_vault"
     vault_dir.mkdir()
     (vault_dir / "test.md").write_text("# Custom Path\nContent.", encoding="utf-8")
@@ -266,6 +307,13 @@ def test_vault_path_resolution_from_config(tmp_path):
         docs = list(SOURCE.docs(connection))
         assert len(docs) == 1
         assert docs[0].title == "test - Custom Path"
+
+        # Object with vault_path attribute
+        class ConfigObj:
+            vault_path = str(vault_dir)
+
+        report_obj = SOURCE.fetch(connection, ConfigObj())
+        assert report_obj.counts["unchanged"] == 1
     finally:
         connection.close()
 

@@ -62,7 +62,7 @@ def is_generated_file(path: Path | str, base_path: Path | str | None = None) -> 
     return False
 
 
-def _resolve_vault_path(config: Mapping[str, Any] | Any) -> Path | None:
+def _resolve_vault_path(config: Any) -> Path | None:
     """Resolve vault path from config without hardcoded assumptions (L11)."""
     if isinstance(config, Mapping):
         if "vault_path" in config and config["vault_path"]:
@@ -72,6 +72,17 @@ def _resolve_vault_path(config: Mapping[str, Any] | Any) -> Path | None:
             return Path(vault_conf)
         if isinstance(vault_conf, Mapping) and "path" in vault_conf:
             return Path(vault_conf["path"])
+    elif config is not None:
+        vault_path = getattr(config, "vault_path", None)
+        if vault_path:
+            return Path(vault_path)
+        vault_conf = getattr(config, "vault", None)
+        if isinstance(vault_conf, (str, Path)):
+            return Path(vault_conf)
+        if isinstance(vault_conf, Mapping) and "path" in vault_conf:
+            return Path(vault_conf["path"])
+        if hasattr(vault_conf, "path"):
+            return Path(getattr(vault_conf, "path"))
     return None
 
 

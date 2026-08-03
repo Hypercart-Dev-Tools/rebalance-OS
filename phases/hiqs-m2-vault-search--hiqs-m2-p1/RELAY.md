@@ -30,6 +30,7 @@ goal: >
 **Canonical spec:** `HIQS-PROJECT.md` §5 (Source contract, rules 2/7/8), §6.1 (chunking + scoped
 ids), §11 (~150 LOC), L5, L15, L19.
 
+
 ## Build
 
 `HiQS/hiqs/sources/vault.py` — a `SOURCE` object registered by entry point, with:
@@ -92,3 +93,24 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    agy, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · agy
+
+**Summary:**
+Implemented the Obsidian vault source plugin in `HiQS/hiqs/sources/vault.py` according to canonical spec §5, §6.1, §11 (L5, L11, L15, L19) and acceptance requirements.
+
+**Key Changes & Design Decisions:**
+1. `HiQS/hiqs/sources/vault.py`:
+   - `fetch`: Walks `.md` files in the vault, checks `is_generated_file` (L5), hashes content delta into `vault_files(path, content_hash, mtime, content)`.
+   - Heading Chunking & File-Scoped IDs: Chunks markdown content by ATX headings (with frontmatter title extraction and preamble support), emitting `Doc` objects with file-scoped chunk IDs `vault:<rel_path>:<heading-hash>` (§6.1).
+   - Within-Unit Reconciliation (§5 rule 2): Atomically replaces `vault_chunks` rows for a file in the same transaction whenever a file is inserted or updated (ensuring renamed/deleted headings do not leave orphan rows).
+   - Error Handling & Watermark Preservation (L15, L19, rule 5): Unreadable files land in `SyncReport.errors` and increment `rejected`, while their existing `vault_files` rows remain untouched without advancing mtime state. If any fetch/walk error occurs, pruning across files is skipped (`if not errors:`) to ensure transient errors cannot empty the corpus.
+   - Config Path Resolution (L11): `_resolve_vault_path` retrieves vault path from dict mappings or config objects without hardcoded locations.
+   - `author`: `Doc.author` is `""` for vault notes.
+2. `HiQS/hiqs/sources/__init__.py`:
+   - Exported `VAULT_SOURCE` (`SOURCE as VAULT_SOURCE`) in `__all__`.
+3. `HiQS/pyproject.toml`:
+   - Registered `vault = "hiqs.sources.vault:SOURCE"` under `[project.entry-points."hiqs.sources"]`.
+4. `HiQS/tests/test_vault.py`:
+   - Added 11 unit tests covering generated file exclusions, idempotence, heading rename/deletion reconciliation, schema migration, unreadable file error handling/watermarks, fetch failure prune suppression, config path resolution, walk errors, and entry point discovery.
+5. Verification: Verified with `pytest HiQS/tests/test_vault.py` (11 passed).
