@@ -1,0 +1,66 @@
+# M2-VAULT-SEARCH.yaml — HiQS Phase 1, CODE ONLY. Fires after M1 is fully approved.
+#
+# SCOPE BOUNDARY, read this before firing: this marathon builds the vault plugin, the projection,
+# the hybrid search path, and the eval RUNNER. It does NOT and CANNOT produce eval_queries.json —
+# that answer key must be authored by the operator from memory and resolved by grep, never by
+# running search() (HIQS-PROJECT.md §6.3). An agent-authored query set invalidates Decision 8 by
+# construction. Operator checkpoint A follows this marathon; M3 must not fire before it.
+#
+# Run:
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-HIQS-BUILD/M2-VAULT-SEARCH.yaml \
+#     --pre-advance-cmd '.venv/bin/python -m pytest HiQS/tests -q' --builder agy \
+#     --dry-run
+#
+# WRITE-SETS (disjoint):
+#   p1  HiQS/hiqs/sources/vault.py, HiQS/tests/test_vault.py
+#   p2  HiQS/hiqs/docs_index.py, HiQS/tests/test_docs_index.py
+#   p3  HiQS/hiqs/search.py, HiQS/tests/test_search.py
+#   p4  HiQS/tests/eval_retrieval.py, HiQS/tests/test_eval_retrieval.py
+#
+# BUILDER / REVIEWER PAIRING — preflight caught this, do not "simplify" it away:
+# marathon-drive REFUSES a phase whose reviewer id equals the builder id (exit 2). This plan is
+# pinned reviewer=codex, so it MUST run with --builder agy. Alternating the pair across the five
+# marathons is deliberate: r1 and r2 of the plan-doc relay found different defect classes, and a
+# different reviewer model is the cheapest way to keep that going.
+#
+# PHASE IDS are prefixed (hiqs-m2-pN) because the tick token is MARATHON-<ID>-TURN and a token,
+# once claimed, is permanently spent. Bare `p1` ids would collide across all five plans — every
+# prior marathon in this repo prefixes for exactly this reason.
+
+name: hiqs-m2-vault-search
+phases:
+  - id: hiqs-m2-p1
+    name: "vault.py — walk, hash delta, chunk by heading with scoped ids"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p1-vault.md
+    artifact: HiQS/hiqs/sources/vault.py,HiQS/hiqs/sources/__init__.py,HiQS/tests/test_vault.py
+    turn_timeout_s: 1500
+    max_review_rounds: 3
+
+  - id: hiqs-m2-p2
+    name: "docs_index.py — projection, within-unit reconciliation, delta embed"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p2-docs-index.md
+    artifact: HiQS/hiqs/docs_index.py,HiQS/tests/test_docs_index.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m2-p1
+    max_review_rounds: 3
+
+  - id: hiqs-m2-p3
+    name: "search.py — FTS5 + model-filtered cosine + RRF + per-doc cap"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p3-search.md
+    artifact: HiQS/hiqs/search.py,HiQS/tests/test_search.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m2-p2
+    max_review_rounds: 3
+
+  - id: hiqs-m2-p4
+    name: "eval_retrieval.py — the runner (NOT the answer key)"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p4-eval-runner.md
+    artifact: HiQS/tests/eval_retrieval.py,HiQS/tests/test_eval_retrieval.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m2-p3
+    max_review_rounds: 3

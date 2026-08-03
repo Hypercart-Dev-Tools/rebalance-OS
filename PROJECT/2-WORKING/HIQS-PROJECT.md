@@ -1743,6 +1743,7 @@ Binary and observable; all must pass before Phase 1 starts.
 - [ ] **Unattended honesty.** After a week of 2-hourly runs, every gap in the data is explained by an `events` row. A miss with no event is an observability defect, not an operations anecdote (L6).
 - [ ] **Every failure has an operator action.** Expire the calendar token deliberately, then confirm: the run reports `auth_expired`, `status` names `hiqs auth calendar` as the remedy, and running it restores the source. A failure whose only remedy is improvisation is not specced — an unattended runner that cannot open a browser needs an interactive path to exist before it is needed, not after (Decision 4).
 - [ ] **Path portability (L11).** Zero absolute user paths in `HiQS/**` or in the installed job; the plist/crontab is rendered per-machine from a template. The DB path is verified to sit outside any TCC-protected folder on the actual device.
+- [ ] **Coexistence with the running incumbent (blocking).** HiQS is built and run on the same machine that already runs rebalance-OS — **7 live launchd jobs**, including `vault-sync` and `github-sync`, both of which embed. HiQS embeds every 2 h. **This is GH-172 exactly**: three concurrent embedding runs stacked to ~90 GB on a 68.7 GB machine and the kernel panicked. That fix was a `flock` + memory ceiling applied at the *incumbent's* library leaves, and a separate HiQS process knows nothing about it — two systems each correctly guarding themselves is not a guard. Required: HiQS's embed path takes the **same machine-scoped lock** (read the incumbent's path, do not invent a parallel one), keeps its own memory ceiling regardless, offsets its schedule, and the installer **probes and refuses** on a bound port (`:8790` vs the incumbent's `:8767`) or an already-loaded `com.hiqs.*` label.
 - [ ] **Job hygiene (L12).** Exactly one scheduled job. If a second is ever proposed, it goes through §14 with a stated trigger — the fleet is the failure mode, not the solution.
 - [ ] **Secrets at rest.** Keyring is confirmed *live* (write, then read back in a fresh process) rather than assumed — a keyring write that silently no-ops and still prints success is a known real failure mode in this repo's history.
 - [ ] **Local-only exposure.** The server binds `127.0.0.1` and refuses a non-loopback origin; verified by an actual request from a second host failing.
@@ -1783,6 +1784,15 @@ Not gated on Phase 5, which is on-demand-only and may never run.
 - [ ] File/transfer the tracking issue to `HiQS-Suite/HiQS`; the archived repo's issues freeze
 - [ ] Move `PROJECT/2-WORKING/HIQS-PROJECT.md` → `PROJECT/3-COMPLETED/` with `## Lessons Learned (For Future Agents)` appended, **before** the archive
 - [ ] Update `ROADMAP.md` to point at the new repo rather than the working doc
+- [ ] **Decommission the incumbent's scheduled jobs — operator action, and only here.** After §13's
+      done-criterion is met, unload the 7 `com.rebalance-os.*` launchd jobs so two systems stop
+      contending for the same machine, API budget, and embedding memory. This belongs at cutover
+      and nowhere earlier: the incumbent is the **fallback** until HiQS is proven (Decision 7), and
+      disabling it sooner removes the safety net before the replacement has earned its place —
+      exactly backwards, and worse now that the archive makes the fallback unmaintained (§19.4).
+      Never performed by a build turn: unloading 7 jobs on the operator's machine is a destructive,
+      hard-to-reverse act that must not happen unattended. Keep the plists; unload is reversible,
+      deletion is not.
 
 ### QA gate — Phase 6
 

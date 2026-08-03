@@ -1,0 +1,40 @@
+# M3-GITHUB.yaml — HiQS Phase 2. Fires ONLY after operator checkpoint A (the Phase 1 eval).
+#
+# WHY THE CHECKPOINT GATES THIS: checkpoint A's vector-leg gate can delete a dependency. If fused
+# retrieval does not beat FTS-only by >=10 points recall@10, torch leaves the plan (§14) and the
+# embedding path in docs_index.py changes underneath this marathon. Firing M3 early risks building
+# candidates into a ranking whose retrieval half is still unproven.
+#
+# WRITE-SETS (disjoint):
+#   p1  HiQS/hiqs/sources/github.py, HiQS/tests/test_github.py
+#   p2  HiQS/hiqs/sources/github.py (candidates fn), HiQS/tests/test_github_candidates.py
+#   NOTE: p2 extends p1's file — depends_on p1 is REQUIRED, not decorative.
+#
+# BUILDER / REVIEWER PAIRING — preflight caught this, do not "simplify" it away:
+# marathon-drive REFUSES a phase whose reviewer id equals the builder id (exit 2). This plan is
+# pinned reviewer=agy, so it MUST run with --builder codex. Alternating the pair across the five
+# marathons is deliberate: r1 and r2 of the plan-doc relay found different defect classes, and a
+# different reviewer model is the cheapest way to keep that going.
+#
+# PHASE IDS are prefixed (hiqs-m3-pN) because the tick token is MARATHON-<ID>-TURN and a token,
+# once claimed, is permanently spent. Bare `p1` ids would collide across all five plans — every
+# prior marathon in this repo prefixes for exactly this reason.
+
+name: hiqs-m3-github
+phases:
+  - id: hiqs-m3-p1
+    name: "github.py — activity scan + item sync over stdlib urllib"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m3-p1-github-fetch.md
+    artifact: HiQS/hiqs/sources/github.py,HiQS/tests/test_github.py
+    turn_timeout_s: 1800
+    max_review_rounds: 3
+
+  - id: hiqs-m3-p2
+    name: "github candidates() — attested, with owed_by/due/activity_at"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m3-p2-github-candidates.md
+    artifact: HiQS/hiqs/sources/github.py,HiQS/tests/test_github_candidates.py
+    turn_timeout_s: 1500
+    depends_on: hiqs-m3-p1
+    max_review_rounds: 3

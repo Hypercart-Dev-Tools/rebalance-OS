@@ -1,0 +1,59 @@
+# M4-ASK-MCP.yaml — HiQS Phase 3, CODE ONLY. Fires after M3 is approved.
+#
+# SCOPE BOUNDARY: builds the calendar client, the ranker, the MCP server, and the ranking-eval
+# RUNNER. It does NOT complete OAuth consent (interactive browser) and CANNOT produce
+# eval_ranking.json — that needs 20-30 real mornings of the operator's own judgments recorded
+# before seeing HiQS's output (§7.1). Operator checkpoint B follows.
+#
+# WRITE-SETS (disjoint):
+#   p1  HiQS/hiqs/sources/calendar.py, HiQS/tests/test_calendar.py
+#   p2  HiQS/hiqs/ask.py, HiQS/tests/test_ask.py
+#   p3  HiQS/hiqs/mcp_server.py, HiQS/tests/test_mcp.py
+#   p4  HiQS/tests/eval_ranking.py, HiQS/tests/test_eval_ranking.py
+#
+# BUILDER / REVIEWER PAIRING — preflight caught this, do not "simplify" it away:
+# marathon-drive REFUSES a phase whose reviewer id equals the builder id (exit 2). This plan is
+# pinned reviewer=codex, so it MUST run with --builder agy. Alternating the pair across the five
+# marathons is deliberate: r1 and r2 of the plan-doc relay found different defect classes, and a
+# different reviewer model is the cheapest way to keep that going.
+#
+# PHASE IDS are prefixed (hiqs-m4-pN) because the tick token is MARATHON-<ID>-TURN and a token,
+# once claimed, is permanently spent. Bare `p1` ids would collide across all five plans — every
+# prior marathon in this repo prefixes for exactly this reason.
+
+name: hiqs-m4-ask-mcp
+phases:
+  - id: hiqs-m4-p1
+    name: "calendar.py — read-only OAuth client, window upsert"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m4-p1-calendar.md
+    artifact: HiQS/hiqs/sources/calendar.py,HiQS/tests/test_calendar.py
+    turn_timeout_s: 1800
+    max_review_rounds: 3
+
+  - id: hiqs-m4-p2
+    name: "ask.py — context gather, attestation, the deterministic Ranker"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m4-p2-ask-ranker.md
+    artifact: HiQS/hiqs/ask.py,HiQS/tests/test_ask.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m4-p1
+    max_review_rounds: 3
+
+  - id: hiqs-m4-p3
+    name: "mcp_server.py — 4 thin tools, zero logic"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m4-p3-mcp.md
+    artifact: HiQS/hiqs/mcp_server.py,HiQS/tests/test_mcp.py
+    turn_timeout_s: 1500
+    depends_on: hiqs-m4-p2
+    max_review_rounds: 2
+
+  - id: hiqs-m4-p4
+    name: "eval_ranking.py — the runner (NOT the judgment set)"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m4-p4-eval-ranking-runner.md
+    artifact: HiQS/tests/eval_ranking.py,HiQS/tests/test_eval_ranking.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m4-p3
+    max_review_rounds: 3

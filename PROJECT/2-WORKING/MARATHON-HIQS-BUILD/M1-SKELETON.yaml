@@ -1,0 +1,91 @@
+# M1-SKELETON.yaml — HiQS Phase 0 (foundation). Builds the subtree every later phase imports.
+#
+# Run (ALWAYS --builder codex \
+#     --dry-run first):
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-HIQS-BUILD/M1-SKELETON.yaml \
+#     --pre-advance-cmd '.venv/bin/python -m pytest HiQS/tests -q' \
+#     --dry-run
+#
+# Canonical contract: PROJECT/2-WORKING/HIQS-PROJECT.md (§5 dataclasses, §8 events, §9 schema,
+# §11 tree). The briefs cite it; they do not restate it. A builder that disagrees with the plan
+# doc is wrong, not the plan doc.
+#
+# WRITE-SETS (verified against §11's tree 2026-08-03) — one module + its test per phase, disjoint:
+#   p1  HiQS/pyproject.toml, HiQS/hiqs/plugins.py, HiQS/tests/test_plugins.py
+#   p2  HiQS/hiqs/db.py, HiQS/tests/test_db.py
+#   p3  HiQS/hiqs/config.py, HiQS/tests/test_config.py
+#   p4  HiQS/hiqs/events.py, HiQS/tests/test_events.py
+#   p5  HiQS/hiqs/__main__.py, HiQS/tests/test_cli.py
+#   p6  HiQS/tests/test_contract.py, HiQS/tests/test_clean_room.py
+#
+# depends_on is used ONLY where a phase cannot start without the prior output. Marathons run one
+# phase at a time regardless (GH-241) — the chain here documents real coupling, not sequencing.
+#
+# p1 is first because it is pure contract. Every later brief cites its frozen dataclasses, which
+# is what stops six independently-built modules from disagreeing about what a Doc is.
+#
+# BUILDER / REVIEWER PAIRING — preflight caught this, do not "simplify" it away:
+# marathon-drive REFUSES a phase whose reviewer id equals the builder id (exit 2). This plan is
+# pinned reviewer=agy, so it MUST run with --builder codex. Alternating the pair across the five
+# marathons is deliberate: r1 and r2 of the plan-doc relay found different defect classes, and a
+# different reviewer model is the cheapest way to keep that going.
+#
+# PHASE IDS are prefixed (hiqs-m1-pN) because the tick token is MARATHON-<ID>-TURN and a token,
+# once claimed, is permanently spent. Bare `p1` ids would collide across all five plans — every
+# prior marathon in this repo prefixes for exactly this reason.
+
+name: hiqs-m1-skeleton
+phases:
+  - id: hiqs-m1-p1
+    name: "Subtree scaffold + the plugin contract (frozen shapes)"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m1-p1-scaffold-contract.md
+    artifact: HiQS/pyproject.toml,HiQS/hiqs/__init__.py,HiQS/hiqs/plugins.py,HiQS/tests/conftest.py,HiQS/tests/test_plugins.py
+    turn_timeout_s: 1200
+    max_review_rounds: 2
+
+  - id: hiqs-m1-p2
+    name: "db.py — connection factory + the full 8-table schema"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m1-p2-db.md
+    artifact: HiQS/hiqs/db.py,HiQS/tests/test_db.py
+    turn_timeout_s: 1500
+    depends_on: hiqs-m1-p1
+    max_review_rounds: 3
+
+  - id: hiqs-m1-p3
+    name: "config.py — one JSON config + the secret resolution chain"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m1-p3-config.md
+    artifact: HiQS/hiqs/config.py,HiQS/tests/test_config.py
+    turn_timeout_s: 1200
+    depends_on: hiqs-m1-p1
+    max_review_rounds: 2
+
+  - id: hiqs-m1-p4
+    name: "events.py — log_event() sole writer + status() aggregator"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m1-p4-events.md
+    artifact: HiQS/hiqs/events.py,HiQS/tests/test_events.py
+    turn_timeout_s: 1500
+    depends_on: hiqs-m1-p2
+    max_review_rounds: 3
+
+  - id: hiqs-m1-p5
+    name: "__main__.py — CLI skeleton, 6 subcommands incl. auth"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m1-p5-cli.md
+    artifact: HiQS/hiqs/__main__.py,HiQS/tests/test_cli.py
+    turn_timeout_s: 1200
+    depends_on: hiqs-m1-p4
+    max_review_rounds: 2
+
+  - id: hiqs-m1-p6
+    name: "The two seam tests: plugin contract + clean-room import boundary"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m1-p6-seam-tests.md
+    artifact: HiQS/tests/test_contract.py,HiQS/tests/test_clean_room.py,HiQS/tests/fake_source.py
+    turn_timeout_s: 1500
+    depends_on: hiqs-m1-p5
+    max_review_rounds: 3
