@@ -58,8 +58,24 @@ def test_vault_fetch_idempotence_and_counts(tmp_path):
         assert report2.counts["rejected"] == 0
         assert report2.counts["pruned"] == 0
         assert report2.errors == []
+
+        # Run 3: delete note2.md and re-fetch -> assert pruned == 1
+        (vault_dir / "note2.md").unlink()
+        report3 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+        assert report3.counts["inserted"] == 0
+        assert report3.counts["updated"] == 0
+        assert report3.counts["unchanged"] == 1
+        assert report3.counts["skipped"] == 1
+        assert report3.counts["rejected"] == 0
+        assert report3.counts["pruned"] == 1
+        assert report3.errors == []
+
+        remaining_docs = list(SOURCE.docs(connection))
+        assert len(remaining_docs) == 1
+        assert remaining_docs[0].id.startswith("vault:note1.md:")
     finally:
         connection.close()
+
 
 
 def test_vault_docs_chunking_and_id_shape(tmp_path):

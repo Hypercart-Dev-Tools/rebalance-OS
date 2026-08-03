@@ -123,6 +123,8 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
     def _on_walk_error(os_err: OSError) -> None:
         errors.append(f"Directory walk error: {os_err}")
 
+    scanned_paths: set[str] = set()
+
     for root, dirs, files in os.walk(vault_path, onerror=_on_walk_error):
         root_path = Path(root)
         dirs[:] = [d for d in dirs if not is_generated_file(root_path / d, base_path=vault_path)]
@@ -145,6 +147,7 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                 # Existing row in vault_files remains untouched!
                 continue
 
+            scanned_paths.add(rel_path)
             mtime_str = str(st.st_mtime)
             content_hash = hashlib.sha256(content_bytes).hexdigest()
             content_str = content_bytes.decode("utf-8", errors="replace")
@@ -168,7 +171,16 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                     )
                 counts["inserted"] += 1
 
+    # Within-unit reconciliation (§5 rule 2): if no fetch errors occurred, prune files deleted from disk.
+    if not errors:
+        to_prune = [p for p in existing if p not in scanned_paths]
+        if to_prune:
+            with connection:
+                connection.executemany("DELETE FROM vault_files WHERE path = ?", [(p,) for p in to_prune])
+            counts["pruned"] += len(to_prune)
+
     return SyncReport(counts=counts, errors=errors)
+
 
 
 def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:

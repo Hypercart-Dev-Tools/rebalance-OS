@@ -18,6 +18,7 @@ dependencies = [
 dev = ["pytest"]
 
 [project.entry-points."hiqs.sources"]
+vault = "hiqs.sources.vault:SOURCE"
 
 [tool.setuptools.packages.find]
 include = ["hiqs*"]

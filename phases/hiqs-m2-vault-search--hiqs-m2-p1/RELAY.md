@@ -97,3 +97,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    agy, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · agy
+
+- **Files touched:**
+  - `HiQS/hiqs/sources/vault.py`: Ensured idempotent and incremental walking of `.md` notes into `vault_files(path, content_hash, mtime, content)`; added within-unit reconciliation to prune deleted notes when fetch succeeds without errors; implemented heading-based chunking emitting file-scoped IDs (`vault:<rel_path>:<heading-hash>`) and `author=""` per spec.
+  - `HiQS/pyproject.toml`: Registered `vault = "hiqs.sources.vault:SOURCE"` under `[project.entry-points."hiqs.sources"]`.
+  - `HiQS/tests/test_vault.py`: Expanded test coverage for file deletion pruning, heading rename/deletion chunk ID generation, unreadable file error handling (L15/L19), and entry point discovery. All 9 tests passing cleanly.
+  - `HiQS/hiqs/sources/__init__.py`: Verified exports of `VAULT_SOURCE`.
+
