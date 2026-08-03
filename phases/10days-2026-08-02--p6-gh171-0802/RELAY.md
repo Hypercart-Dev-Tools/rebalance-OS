@@ -85,3 +85,31 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    claude, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Builder · claude
+
+**Files touched:** `src/rebalance/ingest/github_knowledge.py`, `scripts/github_sync.sh`
+
+**What was done:**
+
+`sync_github_repo()` previously opened a single `with db_connection(...)` block and performed all GitHub API network calls (per-issue comments, per-PR detail + comments + reviews + commits + check-runs) inside that block. This held the SQLite write lock for the entire run duration — potentially 49 minutes per GH-146, blocking all other writers.
+
+**Fix in `github_knowledge.py`:**
+
+- Added a two-phase structure: **Phase 1** fetches all GitHub API data (no DB), **Phase 2** writes all fetched data (no network).
+- Inserted a pre-fetch loop for `issues_fetched` — each issue's comments are now fetched before opening the DB connection.
+- Inserted a pre-fetch loop for `prs_fetched` — each PR's full detail, issue comments, reviews, review comments, commits, and check-runs are now fetched before opening the DB connection.
+- Inside `with db_connection(...)`: no `api_get` or `_paginate_list` calls remain (verified by AST walk).
+- Added `conn.commit()` after the initial metadata writes (branches/labels/milestones/releases), after each issue, and after each PR — following the GH-169 batch-commit pattern.
+- PR loop now iterates over `prs_fetched` (tuple unpacking); `issue_comments` inside the PR write loop renamed to `pr_issue_comments` to avoid shadowing the issue-loop variable.
+- `prs_synced=len(pull_summaries)` preserved to match prior behaviour.
+
+**Fix in `scripts/github_sync.sh`:**
+
+- Added a "Write-lock policy (GH-171)" comment block documenting the change so operators understand the job no longer holds the write lock for the run duration.
+
+**Test result:** `pytest tests/test_github_knowledge.py -q` → 4 passed in 0.18s.
+
+**Pre-existing code sweep:** The rest of `github_knowledge.py` was reviewed. `embed_github_documents` already commits per batch (line ~924 in the original). `purge_github_repo_data` does a single commit at the end of a pure-write block — acceptable since it holds no network calls. No pre-existing write-spans-network issues found in the other functions.

@@ -392,6 +392,33 @@ def sync_github_repo(
         direction="desc",
     )
 
+    # GH-171: pre-fetch all per-issue and per-PR data before opening the write
+    # transaction so no network call ever spans an open SQLite write lock.
+    issues_fetched: list[tuple[dict, list]] = []
+    for issue in issues:
+        issue_comments = _paginate_list(
+            f"{repo_base}/issues/{int(issue['number'])}/comments", api_get
+        )
+        issues_fetched.append((issue, issue_comments))
+
+    prs_fetched: list[tuple[dict, list, list, list, list, list]] = []
+    for pull_summary in pull_summaries:
+        item_number = int(pull_summary["number"])
+        pr = api_get(f"{repo_base}/pulls/{item_number}")
+        if not isinstance(pr, dict):
+            continue
+        pr_issue_comments = _paginate_list(f"{repo_base}/issues/{item_number}/comments", api_get)
+        reviews = _paginate_list(f"{repo_base}/pulls/{item_number}/reviews", api_get)
+        review_comments = _paginate_list(f"{repo_base}/pulls/{item_number}/comments", api_get)
+        commits = _paginate_list(f"{repo_base}/pulls/{item_number}/commits", api_get)
+        check_runs_resp = api_get(_build_url(f"{repo_base}/commits/{pr.get('head', {}).get('sha', '')}/check-runs", per_page=100))
+        check_runs = (
+            check_runs_resp.get("check_runs", [])
+            if isinstance(check_runs_resp, dict)
+            else []
+        )
+        prs_fetched.append((pr, pr_issue_comments, reviews, review_comments, commits, check_runs))
+
     comments_synced = 0
     commits_synced = 0
     checks_synced = 0
@@ -479,8 +506,9 @@ def sync_github_repo(
                     release.get("html_url", ""),
                 ),
             )
+        conn.commit()
 
-        for issue in issues:
+        for issue, issue_comments in issues_fetched:
             item_type = "issue"
             item_number = int(issue["number"])
             milestone = issue.get("milestone") or {}
@@ -526,7 +554,6 @@ def sync_github_repo(
 
             gh.upsert_item(conn, item_record)
 
-            issue_comments = _paginate_list(f"{repo_base}/issues/{item_number}/comments", api_get)
             for comment in issue_comments:
                 body = comment.get("body", "") or ""
                 gh.upsert_comment(
@@ -579,23 +606,11 @@ def sync_github_repo(
                 )
                 docs_built += 1
 
-        for pull_summary in pull_summaries:
-            item_type = "pull_request"
-            item_number = int(pull_summary["number"])
-            pr = api_get(f"{repo_base}/pulls/{item_number}")
-            if not isinstance(pr, dict):
-                continue
+            conn.commit()
 
-            issue_comments = _paginate_list(f"{repo_base}/issues/{item_number}/comments", api_get)
-            reviews = _paginate_list(f"{repo_base}/pulls/{item_number}/reviews", api_get)
-            review_comments = _paginate_list(f"{repo_base}/pulls/{item_number}/comments", api_get)
-            commits = _paginate_list(f"{repo_base}/pulls/{item_number}/commits", api_get)
-            check_runs_resp = api_get(_build_url(f"{repo_base}/commits/{pr.get('head', {}).get('sha', '')}/check-runs", per_page=100))
-            check_runs = (
-                check_runs_resp.get("check_runs", [])
-                if isinstance(check_runs_resp, dict)
-                else []
-            )
+        for pr, pr_issue_comments, reviews, review_comments, commits, check_runs in prs_fetched:
+            item_type = "pull_request"
+            item_number = int(pr["number"])
             milestone = pr.get("milestone") or {}
             gh.delete_item_children(conn, repo_full_name, item_type, item_number)
 
@@ -646,7 +661,7 @@ def sync_github_repo(
                     (repo_full_name, item_type, item_number, "issue", issue_number, link_kind),
                 )
 
-            for comment in issue_comments:
+            for comment in pr_issue_comments:
                 body = comment.get("body", "") or ""
                 gh.upsert_comment(
                     conn,
@@ -829,6 +844,8 @@ def sync_github_repo(
                     fetched_at=fetched_at,
                 )
                 docs_built += 1
+
+            conn.commit()
 
         ensure_semantic_schema(conn)
         sync_github_documents(conn, repo_full_name=repo_full_name)

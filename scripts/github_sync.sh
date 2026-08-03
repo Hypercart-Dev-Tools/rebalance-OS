@@ -18,6 +18,11 @@ log "=== rebalance hourly github sync starting ==="
 # in the 06:30 daily sync. The gap is observable as the
 # github_documents_missing_from_semantic drift metric (index_status).
 #
+# Write-lock policy (GH-171): sync_github_repo() now pre-fetches all GitHub
+# API data before opening a SQLite write transaction, so this job no longer
+# holds the write lock across network I/O. Other writers (manual refresh, MCP
+# tools, pulse collectors) can proceed concurrently for the full run duration.
+#
 # Focus 5 piggybacks on this cadence ("focus5" scope): a device-local git scan
 # (~30s, no network) that recomputes focus5_roster so the dashboard stays fresh
 # unattended. It does NOT need the GitHub token — a github error won't skip it
