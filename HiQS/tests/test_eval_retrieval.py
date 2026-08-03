@@ -10,6 +10,7 @@ from hiqs.db import db_connection
 from hiqs.events import status
 from hiqs.plugins import Doc
 from tests.eval_retrieval import (
+    capture_costs,
     compute_queryset_sha,
     compute_paired_disagreement_set,
     evaluate_gates,
@@ -40,13 +41,13 @@ def synthetic_query_files(tmp_path):
     committed_data = [
         {
             "id": "q-test-001",
-            "target_doc_ids": ["doc-test-001"],
-            "shape_tags": ["asymmetric"],
+            "doc_id": "doc-test-001",
+            "shape": "asymmetric",
         },
         {
             "id": "q-test-002",
-            "target_doc_ids": ["doc-test-002"],
-            "shape_tags": ["exact_phrase"],
+            "doc_id": "doc-test-002",
+            "shape": "exact_phrase",
         },
     ]
 
@@ -143,20 +144,82 @@ def test_gate_arithmetic_synthetic():
     gates_vec_unjustified = evaluate_gates(fused_recall_at_10=0.70, fts_recall_at_10=0.65)
     assert gates_vec_unjustified["vector_justified"] is False
 
-    # Selection rule (§3.2): ties and split decisions go to incumbent
+
+def test_section_3_2_selection_rule_boundaries():
+    """Comprehensive test of §3.2 selection rule boundaries, ties, split decisions, and 1-point recall gain."""
     incumbent = {"recall_at_10": 0.70, "mrr_at_10": 0.60}
 
-    # Clear challenger win
-    challenger_win = {"recall_at_10": 0.80, "mrr_at_10": 0.70}
-    res_win = evaluate_gates(
-        fused_recall_at_10=0.80,
-        fts_recall_at_10=0.60,
-        challenger_scores=challenger_win,
+    # 1. One-point recall gain (0.01 gain) -> incumbent wins
+    challenger_1pt = {"recall_at_10": 0.71, "mrr_at_10": 0.61}
+    res_1pt = evaluate_gates(
+        fused_recall_at_10=0.71,
+        fts_recall_at_10=0.50,
+        challenger_scores=challenger_1pt,
         incumbent_scores=incumbent,
     )
-    assert res_win["winner"] == "challenger"
+    assert res_1pt["winner"] == "incumbent"
 
-    # Tie -> incumbent wins
+    # 2. Frozen 8-point recall lead boundary (0.08) -> challenger wins
+    challenger_8pt = {"recall_at_10": 0.78, "mrr_at_10": 0.60}
+    res_8pt = evaluate_gates(
+        fused_recall_at_10=0.78,
+        fts_recall_at_10=0.50,
+        challenger_scores=challenger_8pt,
+        incumbent_scores=incumbent,
+    )
+    assert res_8pt["winner"] == "challenger"
+
+    # 3. Just below 8-point lead without MRR tiebreak (0.079) -> incumbent wins
+    challenger_7_9pt = {"recall_at_10": 0.779, "mrr_at_10": 0.60}
+    res_7_9pt = evaluate_gates(
+        fused_recall_at_10=0.779,
+        fts_recall_at_10=0.50,
+        challenger_scores=challenger_7_9pt,
+        incumbent_scores=incumbent,
+    )
+    assert res_7_9pt["winner"] == "incumbent"
+
+    # 4. In-band tiebreak boundary (0.04 recall, 0.05 MRR) -> challenger wins
+    challenger_tb_win = {"recall_at_10": 0.74, "mrr_at_10": 0.65}
+    res_tb_win = evaluate_gates(
+        fused_recall_at_10=0.74,
+        fts_recall_at_10=0.50,
+        challenger_scores=challenger_tb_win,
+        incumbent_scores=incumbent,
+    )
+    assert res_tb_win["winner"] == "challenger"
+
+    # 5. In-band tiebreak just below MRR threshold (0.04 recall, 0.049 MRR) -> incumbent wins
+    challenger_tb_fail = {"recall_at_10": 0.74, "mrr_at_10": 0.649}
+    res_tb_fail = evaluate_gates(
+        fused_recall_at_10=0.74,
+        fts_recall_at_10=0.50,
+        challenger_scores=challenger_tb_fail,
+        incumbent_scores=incumbent,
+    )
+    assert res_tb_fail["winner"] == "incumbent"
+
+    # 6. Split decision 1: recall lead >= 0.08 but MRR worse -> incumbent wins
+    challenger_split_1 = {"recall_at_10": 0.80, "mrr_at_10": 0.55}
+    res_split_1 = evaluate_gates(
+        fused_recall_at_10=0.80,
+        fts_recall_at_10=0.50,
+        challenger_scores=challenger_split_1,
+        incumbent_scores=incumbent,
+    )
+    assert res_split_1["winner"] == "incumbent"
+
+    # 7. Split decision 2: MRR lead >= 0.05 but recall worse -> incumbent wins
+    challenger_split_2 = {"recall_at_10": 0.68, "mrr_at_10": 0.67}
+    res_split_2 = evaluate_gates(
+        fused_recall_at_10=0.68,
+        fts_recall_at_10=0.50,
+        challenger_scores=challenger_split_2,
+        incumbent_scores=incumbent,
+    )
+    assert res_split_2["winner"] == "incumbent"
+
+    # 8. Tie -> incumbent wins
     challenger_tie = {"recall_at_10": 0.70, "mrr_at_10": 0.60}
     res_tie = evaluate_gates(
         fused_recall_at_10=0.70,
@@ -166,21 +229,11 @@ def test_gate_arithmetic_synthetic():
     )
     assert res_tie["winner"] == "incumbent"
 
-    # Split decision (higher recall, lower MRR) -> incumbent wins
-    challenger_split = {"recall_at_10": 0.75, "mrr_at_10": 0.55}
-    res_split = evaluate_gates(
-        fused_recall_at_10=0.75,
-        fts_recall_at_10=0.50,
-        challenger_scores=challenger_split,
-        incumbent_scores=incumbent,
-    )
-    assert res_split["winner"] == "incumbent"
-
-    # Floor failed -> incumbent wins even if challenger metrics higher
+    # 9. Floor failed -> incumbent wins even if challenger scores high
     res_floor_fail = evaluate_gates(
         fused_recall_at_10=0.50,
         fts_recall_at_10=0.30,
-        challenger_scores=challenger_win,
+        challenger_scores=challenger_8pt,
         incumbent_scores=incumbent,
     )
     assert res_floor_fail["winner"] == "incumbent"
@@ -219,6 +272,112 @@ def test_status_search_quality_integration(memory_db, synthetic_query_files):
     assert search_quality["queryset_sha"] == payload["queryset_sha"]
     assert search_quality["n_queries"] == 2
     assert "measured_at" in search_quality
+
+
+def test_multi_model_eval_orchestration(memory_db, synthetic_query_files):
+    """Test multi-model evaluation orchestration, paired disagreement set emission, and event logging."""
+    committed_file, sidecar_file = synthetic_query_files
+
+    doc1 = Doc(
+        source="vault",
+        id="doc-test-001",
+        title="Signal Architecture Note",
+        body="signal architecture design document",
+        unit="note1.md",
+    )
+    insert_doc(memory_db, doc1)
+
+    stub1 = StubEmbedder(dim=384)
+    stub2 = StubEmbedder(dim=384)
+
+    models = ["all-MiniLM-L6-v2", "Qwen/Qwen3-Embedding-0.6B"]
+    embedders = {
+        "all-MiniLM-L6-v2": stub1,
+        "Qwen/Qwen3-Embedding-0.6B": stub2,
+    }
+
+    payload = run_eval_and_log(
+        memory_db,
+        committed_path=committed_file,
+        sidecar_path=sidecar_file,
+        model_name=models,
+        embedders=embedders,
+    )
+
+    assert len(payload["eval_results"]) == 2
+    assert "paired_disagreements" in payload
+    assert isinstance(payload["paired_disagreements"], list)
+    assert "gates" in payload
+    assert payload["gates"]["winner"] in ("incumbent", "challenger")
+
+    # Verify both models inserted events into SQLite
+    rows = memory_db.execute(
+        "SELECT payload_json FROM events WHERE kind = 'eval.completed'"
+    ).fetchall()
+    assert len(rows) == 2
+    logged_models = [json.loads(r[0])["model"] for r in rows]
+    assert "all-MiniLM-L6-v2" in logged_models
+    assert "Qwen/Qwen3-Embedding-0.6B" in logged_models
+
+
+def test_capture_costs_full_corpus(memory_db):
+    """Test capture_costs timing and full corpus input inclusion."""
+    doc1 = Doc(
+        source="vault",
+        id="doc-1",
+        title="Title 1",
+        body="Body content number one",
+        unit="note1.md",
+    )
+    doc2 = Doc(
+        source="vault",
+        id="doc-2",
+        title="Title 2",
+        body="Body content number two",
+        unit="note2.md",
+    )
+    insert_doc(memory_db, doc1)
+    insert_doc(memory_db, doc2)
+
+    stub = StubEmbedder(dim=384)
+    costs = capture_costs(memory_db, "all-MiniLM-L6-v2", embedder=stub)
+
+    assert costs["n_corpus_items"] == 2.0
+    assert costs["embed_ms"] >= 0.0
+    assert costs["index_mb"] >= 0.0
+    assert costs["peak_rss_mb"] >= 0.0
+
+
+def test_load_query_set_canonical_shape(tmp_path):
+    """Test load_query_set with §19.2 canonical fields (singular doc_id and shape)."""
+    committed_file = tmp_path / "eval_canonical.json"
+    sidecar_file = tmp_path / "sidecar_canonical.json"
+
+    committed_data = [
+        {
+            "id": "q-canon-001",
+            "doc_id": "doc-canon-001",
+            "shape": "asymmetric",
+        }
+    ]
+    sidecar_data = {
+        "q-canon-001": {"query": "canonical query text"}
+    }
+
+    committed_file.write_text(json.dumps(committed_data), encoding="utf-8")
+    sidecar_file.write_text(json.dumps(sidecar_data), encoding="utf-8")
+
+    queries, sha = load_query_set(committed_file, sidecar_file)
+    assert len(queries) == 1
+    assert queries[0]["id"] == "q-canon-001"
+    assert queries[0]["target_doc_ids"] == ["doc-canon-001"]
+    assert queries[0]["shape_tags"] == ["asymmetric"]
+
+    # Test missing target doc_id raises ValueError (§19.2)
+    invalid_file = tmp_path / "eval_invalid.json"
+    invalid_file.write_text(json.dumps([{"id": "q-canon-001"}]), encoding="utf-8")
+    with pytest.raises(ValueError, match=r"canonical target doc_id"):
+        load_query_set(invalid_file, sidecar_file)
 
 
 def test_paired_disagreement_set():

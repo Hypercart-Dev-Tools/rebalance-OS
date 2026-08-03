@@ -140,3 +140,39 @@ Focused verification: `pytest HiQS/tests/test_eval_retrieval.py` passes (6 passe
 4. The public committed shape defined in §19.2 is singular `doc_id` plus `shape`, but `load_query_set()` only reads `target_doc_ids`/`doc_ids` and `shape_tags`/`tags`. A compliant real answer key would silently score zero. Support and validate the canonical fields (while aliases may remain), with a canonical-shape test.
 
 Pre-existing defects: none found beyond the implementation under review; the findings above cover the entire new runner and its test file, not only the builder summary.
+
+### Round 2 · Builder · agy
+
+**Files created/modified:**
+- [`HiQS/tests/eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/eval_retrieval.py)
+- [`HiQS/tests/test_eval_retrieval.py`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/HiQS/tests/test_eval_retrieval.py)
+- [`phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md`](file:///Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/phases/hiqs-m2-cont-p4--hiqs-m2-p4/RELAY.md)
+
+**Summary of changes addressing Round 1 Reviewer feedback:**
+
+1. **Multi-Model Orchestration & Paired Disagreement Set Artifact (Finding 1):**
+   - Updated `run_eval_and_log()` and CLI (`main()`) to support evaluating multiple models concurrently (accepting lists, comma-separated, or multi-flag `--model`/`--models` args).
+   - Computes `compute_paired_disagreement_set()` across evaluated models, includes `paired_disagreements` in returned payload/CLI output, evaluates comparison gates, and logs `eval.completed` events into SQLite `events` for every evaluated model.
+   - Added integration test `test_multi_model_eval_orchestration` in `test_eval_retrieval.py` verifying multi-model execution, event logging, and presence of `paired_disagreements`.
+
+2. **§3.2 Gate Selection Rule Arithmetic & Boundaries (Finding 2):**
+   - Refactored `evaluate_gates()` to strictly enforce §3.2 selection rules:
+     - Precondition: Floor gate (`fused_recall_at_10 >= 0.60`).
+     - Primary metric: Recall@10. Incumbent ships unless challenger leads by `>= 0.08` recall lead (with non-negative MRR diff to avoid split decisions).
+     - Tiebreak: In-band recall difference (`|rec_diff| < 0.08`) uses MRR@10 tiebreak, requiring `rec_diff >= 0` and `mrr_diff >= 0.05`.
+     - Split decisions & ties: Default to incumbent.
+   - Added `test_section_3_2_selection_rule_boundaries` testing 1-point recall gains, 8-point recall lead boundary, in-band MRR tiebreak boundary, split decisions, and ties.
+
+3. **Full Corpus Cost Capture (Finding 3):**
+   - Updated `capture_costs()` to query all document bodies (`SELECT body FROM docs`) from SQLite `connection` and time encoding all corpus items with `embedder.encode()`. Retained `index_mb` (SQLite page math) and `peak_rss_mb`.
+   - Added `test_capture_costs_full_corpus` verifying all indexed corpus items are included in cost measurements.
+
+4. **§19.2 Canonical Query Shape Validation (Finding 4):**
+   - Updated `load_query_set()` to read and validate §19.2 canonical fields `doc_id` (singular/list) and `shape` (singular/list), while supporting backward-compatible aliases.
+   - Raises explicit `ValueError` naming §19.2 if `doc_id` is missing/empty, preventing silent zero scores.
+   - Added `test_load_query_set_canonical_shape` verifying canonical field parsing and validation.
+
+5. **Verification:**
+   - Ran `pytest HiQS/tests/test_eval_retrieval.py` (10 passed in 0.30s).
+   - Ran `pytest HiQS/tests/test_search.py` (6 passed in 0.10s).
+

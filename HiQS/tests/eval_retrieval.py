@@ -118,8 +118,34 @@ def load_query_set(
                 f"Empty text for query id '{q_id}': unknown query text (§19.2)."
             )
 
-        target_doc_ids = item.get("target_doc_ids", item.get("doc_ids", []))
-        shape_tags = item.get("shape_tags", item.get("tags", []))
+        # Canonical §19.2 fields: doc_id and shape
+        raw_doc_ids = item.get(
+            "doc_id",
+            item.get(
+                "target_doc_ids", item.get("doc_ids", item.get("target_doc_id", []))
+            ),
+        )
+        if isinstance(raw_doc_ids, str):
+            target_doc_ids = [raw_doc_ids]
+        elif isinstance(raw_doc_ids, list):
+            target_doc_ids = [str(d) for d in raw_doc_ids]
+        else:
+            target_doc_ids = []
+
+        if not target_doc_ids:
+            raise ValueError(
+                f"Query item '{q_id}' missing canonical target doc_id (§19.2)."
+            )
+
+        raw_shape = item.get(
+            "shape", item.get("shape_tags", item.get("tags", []))
+        )
+        if isinstance(raw_shape, str):
+            shape_tags = [raw_shape]
+        elif isinstance(raw_shape, list):
+            shape_tags = [str(s) for s in raw_shape]
+        else:
+            shape_tags = []
 
         queries.append(
             {
@@ -206,6 +232,8 @@ def evaluate_retrieval(
         if vec_hits:
             vec_top_hits[q_id] = vec_hits[0].id
 
+        connection.commit()
+
         # Fused leg
         fused_hits = search(
             q_text,
@@ -273,11 +301,26 @@ def capture_costs(
     embedder: Any | None = None,
     sample_texts: list[str] | None = None,
 ) -> dict[str, float]:
-    """Capture runtime cost metrics per model (embed_ms, index_mb, peak_rss_mb)."""
-    texts = sample_texts or ["sample text for cost capture timing"]
+    """Capture runtime cost metrics per model by timing full corpus re-embedding."""
+    texts: list[str] = []
+    if sample_texts:
+        texts = sample_texts
+    else:
+        try:
+            rows = connection.execute("SELECT body FROM docs").fetchall()
+            texts = [r[0] for r in rows if r[0]]
+        except Exception:
+            pass
+
+    if not texts:
+        texts = ["sample text for cost capture timing"]
+
     t0 = time.perf_counter()
-    if embedder is not None and hasattr(embedder, "encode"):
-        embedder.encode(texts)
+    if embedder is not None:
+        if hasattr(embedder, "encode"):
+            embedder.encode(texts)
+        elif callable(embedder):
+            embedder(texts)
     t1 = time.perf_counter()
     embed_ms = (t1 - t0) * 1000.0
 
@@ -296,6 +339,7 @@ def capture_costs(
         "embed_ms": float(round(embed_ms, 2)),
         "index_mb": float(round(index_mb, 2)),
         "peak_rss_mb": float(round(peak_rss_mb, 2)),
+        "n_corpus_items": float(len(texts)),
     }
 
 
@@ -316,15 +360,28 @@ def evaluate_gates(
         i_rec = incumbent_scores.get("recall_at_10", 0.0)
         i_mrr = incumbent_scores.get("mrr_at_10", 0.0)
 
-        # Candidate wins ONLY IF floor passes AND recall & MRR are >= incumbent AND at least one >.
-        # Ties and splits go to incumbent.
-        if (
-            floor_passed
-            and c_rec >= i_rec
-            and c_mrr >= i_mrr
-            and (c_rec > i_rec or c_mrr > i_mrr)
-        ):
-            winner = "challenger"
+        rec_diff = c_rec - i_rec
+        mrr_diff = c_mrr - i_mrr
+
+        # §3.2 Selection Rule:
+        # Precondition: floor_passed must be True.
+        # Primary metric: recall@10. Incumbent ships unless challenger leads by >= 0.08.
+        # Tiebreak: MRR@10, used only when recall@10 falls inside the ±0.08 band. Challenger takes tiebreak win at >= 0.05 MRR@10.
+        # Split decisions go to incumbent: if one metric favours challenger and the other favours incumbent, incumbent ships.
+        # Ties go to incumbent.
+
+        if not floor_passed:
+            winner = "incumbent"
+        elif rec_diff >= 0.08:
+            if mrr_diff < 0:
+                winner = "incumbent"  # split decision
+            else:
+                winner = "challenger"
+        elif -0.08 < rec_diff < 0.08:
+            if rec_diff >= 0 and mrr_diff >= 0.05:
+                winner = "challenger"
+            else:
+                winner = "incumbent"
         else:
             winner = "incumbent"
 
@@ -339,39 +396,24 @@ def run_eval_and_log(
     connection: sqlite3.Connection,
     committed_path: str | Path,
     sidecar_path: str | Path,
-    model_name: str = "all-MiniLM-L6-v2",
+    model_name: str | list[str] = "all-MiniLM-L6-v2",
     embedder: Any | None = None,
+    embedders: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Run retrieval evaluation and write the 'eval.completed' event to SQLite events table."""
+    """Run retrieval evaluation and write 'eval.completed' events to SQLite events table."""
     queries, queryset_sha = load_query_set(committed_path, sidecar_path)
-    eval_res = evaluate_retrieval(
-        connection, queries, model_name=model_name, embedder=embedder
-    )
 
-    fused_recall = eval_res["fused"]["recall_at_10"]
-    fused_mrr = eval_res["fused"]["mrr_at_10"]
+    if isinstance(model_name, list):
+        models = model_name
+    elif isinstance(model_name, str):
+        models = [m.strip() for m in model_name.split(",") if m.strip()]
+    else:
+        models = ["all-MiniLM-L6-v2"]
 
-    costs = capture_costs(connection, model_name, embedder)
-    git_sha = get_git_sha()
+    eval_results: list[dict[str, Any]] = []
+    costs_list: list[dict[str, float]] = []
 
-    payload = {
-        "model": model_name,
-        "recall_at_10": float(round(fused_recall, 4)),
-        "mrr_at_10": float(round(fused_mrr, 4)),
-        "n_queries": len(queries),
-        "queryset_sha": queryset_sha,
-        "embed_ms": float(round(costs["embed_ms"], 2)),
-        "index_mb": float(round(costs["index_mb"], 2)),
-        "peak_rss_mb": float(round(costs["peak_rss_mb"], 2)),
-        "git_sha": git_sha,
-        "legs": {
-            "fused": eval_res["fused"],
-            "fts_only": eval_res["fts_only"],
-            "vector_only": eval_res["vector_only"],
-        },
-    }
-
-    # Ensure events table exists and insert event directly into the target database connection
+    # Ensure events table exists
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS events (
@@ -384,13 +426,86 @@ def run_eval_and_log(
         )
         """
     )
-    connection.execute(
-        "INSERT INTO events(ts, kind, source, status, payload_json) VALUES (?, ?, ?, ?, ?)",
-        (_utc_now(), "eval.completed", "search", "ok", json.dumps(payload, sort_keys=True)),
-    )
     connection.commit()
 
-    return payload
+    for m in models:
+        m_embedder = None
+        if embedders and m in embedders:
+            m_embedder = embedders[m]
+        elif embedder is not None and len(models) == 1:
+            m_embedder = embedder
+
+        res = evaluate_retrieval(
+            connection, queries, model_name=m, embedder=m_embedder
+        )
+        costs = capture_costs(connection, m, embedder=m_embedder)
+
+        eval_results.append(res)
+        costs_list.append(costs)
+
+        fused_recall = res["fused"]["recall_at_10"]
+        fused_mrr = res["fused"]["mrr_at_10"]
+        git_sha = get_git_sha()
+
+        payload_single = {
+            "model": m,
+            "recall_at_10": float(round(fused_recall, 4)),
+            "mrr_at_10": float(round(fused_mrr, 4)),
+            "n_queries": len(queries),
+            "queryset_sha": queryset_sha,
+            "embed_ms": float(round(costs["embed_ms"], 2)),
+            "index_mb": float(round(costs["index_mb"], 2)),
+            "peak_rss_mb": float(round(costs["peak_rss_mb"], 2)),
+            "git_sha": git_sha,
+            "legs": res,
+        }
+
+        connection.execute(
+            "INSERT INTO events(ts, kind, source, status, payload_json) VALUES (?, ?, ?, ?, ?)",
+            (_utc_now(), "eval.completed", "search", "ok", json.dumps(payload_single, sort_keys=True)),
+        )
+        connection.commit()
+
+    git_sha = get_git_sha()
+    disagreements: list[dict[str, Any]] = []
+    if len(eval_results) >= 2:
+        disagreements = compute_paired_disagreement_set(
+            eval_results[0], eval_results[1], leg="fused"
+        )
+        gates = evaluate_gates(
+            fused_recall_at_10=eval_results[0]["fused"]["recall_at_10"],
+            fts_recall_at_10=eval_results[0]["fts_only"]["recall_at_10"],
+            challenger_scores=eval_results[1]["fused"],
+            incumbent_scores=eval_results[0]["fused"],
+        )
+    else:
+        gates = evaluate_gates(
+            fused_recall_at_10=eval_results[0]["fused"]["recall_at_10"],
+            fts_recall_at_10=eval_results[0]["fts_only"]["recall_at_10"],
+        )
+
+    primary_res = eval_results[0]
+    primary_costs = costs_list[0]
+
+    return {
+        "model": primary_res["model"],
+        "recall_at_10": float(round(primary_res["fused"]["recall_at_10"], 4)),
+        "mrr_at_10": float(round(primary_res["fused"]["mrr_at_10"], 4)),
+        "n_queries": len(queries),
+        "queryset_sha": queryset_sha,
+        "embed_ms": float(round(primary_costs["embed_ms"], 2)),
+        "index_mb": float(round(primary_costs["index_mb"], 2)),
+        "peak_rss_mb": float(round(primary_costs["peak_rss_mb"], 2)),
+        "git_sha": git_sha,
+        "legs": {
+            "fused": primary_res["fused"],
+            "fts_only": primary_res["fts_only"],
+            "vector_only": primary_res["vector_only"],
+        },
+        "paired_disagreements": disagreements,
+        "gates": gates,
+        "eval_results": eval_results,
+    }
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -414,7 +529,11 @@ def main(argv: list[str] | None = None) -> int:
         help="Path to local query set sidecar JSON.",
     )
     parser.add_argument(
-        "--model", default="all-MiniLM-L6-v2", help="Embedding model name to evaluate."
+        "--model",
+        "--models",
+        nargs="+",
+        default=["all-MiniLM-L6-v2"],
+        help="Embedding model name(s) to evaluate.",
     )
 
     args = parser.parse_args(argv)
