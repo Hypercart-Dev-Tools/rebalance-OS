@@ -7,6 +7,7 @@ It is the SOLE writer to the `docs` table (§5 rule 1).
 from __future__ import annotations
 
 import array
+import hashlib
 import os
 import platform
 import resource
@@ -15,6 +16,42 @@ import time
 from typing import Any, Iterable
 
 from hiqs.plugins import Doc, Source, SyncReport, discover_sources
+
+
+def get_embed_text(title: str, body: str) -> str:
+    """Return the exact text payload passed to the encoder."""
+    return f"{title}\n{body}" if title else body
+
+
+def compute_content_hash(title: str, body: str) -> str:
+    """Compute sha256 content hash of the document embedding payload."""
+    text = get_embed_text(title, body)
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def get_doc_unit(doc_id: str, source_name: str, doc: Doc | None = None) -> str:
+    """Determine the unit name for a document.
+
+    Reconciliation is scoped to successfully fetched units (§5 rule 2).
+    """
+    if doc is not None:
+        unit_attr = getattr(doc, "unit", None)
+        if unit_attr:
+            return str(unit_attr)
+    parts = doc_id.split(":")
+    if parts[0] == source_name:
+        if len(parts) >= 3:
+            return parts[1]
+        elif len(parts) == 2:
+            return parts[0]
+        else:
+            return doc_id
+    else:
+        if len(parts) >= 2:
+            return parts[0]
+        else:
+            return doc_id
+
 
 
 def get_peak_rss_mb() -> float:
@@ -120,7 +157,8 @@ def project_docs(
             ).fetchall()
         }
 
-        scanned_doc_ids: set[str] = set()
+        scanned_units: set[str] = set()
+        scanned_doc_ids_by_unit: dict[str, set[str]] = {}
 
         for doc in source_docs:
             if doc.source != source.name:
@@ -146,7 +184,10 @@ def project_docs(
                     f"Doc ID '{doc.id}' from source '{source.name}' collides with existing doc from source '{other_src}'"
                 )
 
-            scanned_doc_ids.add(doc.id)
+            unit = get_doc_unit(doc.id, source.name, doc)
+            scanned_units.add(unit)
+            scanned_doc_ids_by_unit.setdefault(unit, set()).add(doc.id)
+
             new_tuple = (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author)
 
             if doc.id not in existing_map:
@@ -164,8 +205,10 @@ def project_docs(
                         (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author, source.name, doc.id)
                     )
                     counts["updated"] += 1
-                    # Delta embedding keyed by content comparison (title + body)
-                    if (doc.title, doc.body) != (old_title, old_body) or doc.id not in existing_vec_ids:
+                    # Delta embedding keyed by content hash
+                    new_hash = compute_content_hash(doc.title, doc.body)
+                    old_hash = compute_content_hash(old_title, old_body)
+                    if new_hash != old_hash or doc.id not in existing_vec_ids:
                         docs_to_embed.append(doc)
                 else:
                     counts["unchanged"] += 1
@@ -173,7 +216,13 @@ def project_docs(
                         docs_to_embed.append(doc)
 
         # Within-unit reconciliation for docs and docs_vec (§5 rule 2)
-        to_prune = [doc_id for doc_id in existing_map if doc_id not in scanned_doc_ids]
+        to_prune: list[str] = []
+        for existing_id in existing_map:
+            unit = get_doc_unit(existing_id, source.name)
+            if unit in scanned_units:
+                if existing_id not in scanned_doc_ids_by_unit[unit]:
+                    to_prune.append(existing_id)
+
         for doc_id in to_prune:
             prunes.append((source.name, doc_id))
         counts["pruned"] += len(to_prune)
@@ -185,7 +234,7 @@ def project_docs(
         if embedder is None:
             embedder = get_default_embedder(model_name)
 
-        texts = [f"{d.title}\n{d.body}" if d.title else d.body for d in docs_to_embed]
+        texts = [get_embed_text(d.title, d.body) for d in docs_to_embed]
         t0 = time.perf_counter()
         raw_vectors = _encode_texts(embedder, texts)
         t1 = time.perf_counter()

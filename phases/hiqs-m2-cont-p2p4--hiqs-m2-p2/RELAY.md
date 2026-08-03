@@ -1,6 +1,6 @@
 # Marathon Phase hiqs-m2-p2
 STATUS: Open
-NEXT: agy
+NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M2-P2-TURN-2 builder=agy reviewer=codex round-cap=11 -->
 
@@ -113,3 +113,12 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - **Review evidence:** completed a whole-file sweep of `docs_index.py`, `test_docs_index.py`, and `test_contract.py`; ran `cd HiQS && pytest tests/test_docs_index.py tests/test_contract.py` (23 passed, 1 expected xfail). No additional pre-existing defects were found in the three scoped files.
 
 **Verdict:** Changes requested
+
+### Round 2 · Builder · agy
+
+- **Status / Summary**: Addressed all Reviewer (codex) Round 1 findings. Scoped reconciliation strictly to successfully derived units (`scanned_units`), ensuring unfetched or errored sibling units and their vectors are preserved (§5 rule 2). Implemented explicit content-hash delta embedding (`compute_content_hash`, `get_embed_text`). Added comprehensive regression tests for both items.
+- **Files Touched**:
+  - `HiQS/hiqs/docs_index.py`: Added `get_embed_text`, `compute_content_hash`, and `get_doc_unit` helpers. Scoped `to_prune` reconciliation to units present in `scanned_units` so unfetched sibling units are preserved in `docs` and `docs_vec`. Implemented sha256 content-hash check for embedding payload delta logic.
+  - `HiQS/tests/test_docs_index.py`: Added `test_within_unit_reconciliation_retains_unfetched_sibling_units_and_vectors` to verify unfetched sibling units/vectors are retained while stale chunks in fetched units are pruned. Added `test_content_hash_helpers_and_delta_embedding` testing helper functions and metadata update zero-embed calls.
+  - `HiQS/tests/test_contract.py`: Preserved contract tests.
+- **Verification**: `pytest HiQS/tests/test_docs_index.py HiQS/tests/test_contract.py` passed cleanly (25 passed, 1 expected xfail for M3 ranking seam).

@@ -445,3 +445,76 @@ def test_embed_ms_times_only_encode_and_reports_zero_when_no_encode(tmp_path, mo
     conn.close()
 
 
+def test_within_unit_reconciliation_retains_unfetched_sibling_units_and_vectors(tmp_path):
+    """Assert within-unit reconciliation retains unfetched sibling units and vectors while pruning stale chunks in fetched units."""
+    conn = db_connection(tmp_path / "hiqs.db")
+
+    # Initial state: vault source with unit "one.md" (2 chunks) and unit "two.md" (1 chunk)
+    doc_u1_c1 = Doc(source="vault", id="vault:one.md:h1", title="U1 C1", body="Body 1")
+    doc_u1_c2 = Doc(source="vault", id="vault:one.md:h2", title="U1 C2", body="Body 2")
+    doc_u2_c1 = Doc(source="vault", id="vault:two.md:h1", title="U2 C1", body="Body 3")
+
+    source_init = MockSource("vault", [doc_u1_c1, doc_u1_c2, doc_u2_c1])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384, [0.3] * 384]
+
+    report_init = project_docs(conn, sources=[source_init], embedder=mock_embedder)
+    assert report_init.counts["inserted"] == 3
+
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 3
+
+    # Next sync: unit "two.md" was not fetched (e.g. read error), and unit "one.md" now only has chunk 1 (h2 stale)
+    source_partial = MockSource("vault", [doc_u1_c1])
+    mock_embedder.encode.reset_mock()
+
+    report_partial = project_docs(conn, sources=[source_partial], embedder=mock_embedder)
+
+    # Pruned must be 1 (vault:one.md:h2 pruned), NOT 2 (vault:two.md:h1 retained)
+    assert report_partial.counts["pruned"] == 1
+
+    remaining_docs = [r[0] for r in conn.execute("SELECT id FROM docs ORDER BY id").fetchall()]
+    assert remaining_docs == ["vault:one.md:h1", "vault:two.md:h1"]
+
+    remaining_vecs = [r[0] for r in conn.execute("SELECT doc_id FROM docs_vec ORDER BY doc_id").fetchall()]
+    assert remaining_vecs == ["vault:one.md:h1", "vault:two.md:h1"]
+
+    conn.close()
+
+
+def test_content_hash_helpers_and_delta_embedding(tmp_path):
+    """Test compute_content_hash helper and verify metadata-only updates perform zero embed calls."""
+    from hiqs.docs_index import compute_content_hash, get_embed_text
+
+    text = get_embed_text("My Title", "My Body")
+    assert text == "My Title\nMy Body"
+    assert get_embed_text("", "Only Body") == "Only Body"
+
+    h1 = compute_content_hash("My Title", "My Body")
+    h2 = compute_content_hash("My Title", "My Body")
+    assert h1 == h2
+
+    conn = db_connection(tmp_path / "hiqs.db")
+    doc = Doc(source="mock", id="mock:1", title="Title", body="Body", author="Alice")
+    source = MockSource("mock", [doc])
+
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
+
+    project_docs(conn, sources=[source], embedder=mock_embedder)
+    assert mock_embedder.encode.call_count == 1
+
+    # Update metadata (author) with identical title and body
+    doc_updated = Doc(source="mock", id="mock:1", title="Title", body="Body", author="Bob")
+    source_updated = MockSource("mock", [doc_updated])
+
+    mock_embedder.encode.reset_mock()
+    report = project_docs(conn, sources=[source_updated], embedder=mock_embedder)
+
+    assert report.counts["updated"] == 1
+    assert mock_embedder.encode.call_count == 0
+
+    conn.close()
+
+
+
