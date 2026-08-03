@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m1-p3
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M1-P3-TURN builder=codex reviewer=agy round-cap=5 -->
@@ -89,3 +89,20 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 ### Round 1 · Builder · codex
 
 Implemented `HiQS/hiqs/config.py` and `HiQS/tests/test_config.py`. The read-only API loads the complete JSON config from the canonical path (missing file returns explicit defaults), preserves and reports unknown keys through safe status metadata, and resolves secrets keyring → exact-`0600` JSON secret file → environment. Secret values are never included in errors or status. Focused tests cover defaults, unknown-key visibility, each resolution rung and their precedence, empty values, and unsafe file permissions.
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+Reviewed `HiQS/hiqs/config.py` and `HiQS/tests/test_config.py` in full.
+- Canonical path resolution (`~/.config/hiqs/config.json`) with safe missing-file defaults and explicit malformed JSON errors.
+- Unknown top-level keys preserved in config dictionary and surfaced via `status` with state `"warn"`.
+- Secret resolution chain (`keyring` → `0600` file → environment) correctly enforced in precedence order with empty string / missing value handling returning `None`.
+- 0600 file mode check properly enforced and raises `SecretFilePermissionError`.
+- No secret values exposed in status outputs, return structures, or error messages.
+- Full test suite in `HiQS/tests/test_config.py` verified and passing cleanly.
+
+**Verdict:** Approved
+
+relay closed, no further turn needed
+
