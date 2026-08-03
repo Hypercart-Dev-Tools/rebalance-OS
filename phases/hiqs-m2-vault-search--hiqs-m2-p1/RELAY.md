@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m2-p1
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-HIQS-M2-P1-TURN-2 builder=agy reviewer=codex round-cap=7 -->
@@ -126,3 +126,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
   - `HiQS/hiqs/sources/__init__.py`: Verified clean exports.
   - `HiQS/pyproject.toml`: Verified entry point registration.
 
+### Round 4 · Reviewer · codex
+
+- swept file: yes
+- Reproduced the focused check required for this slice: `cd HiQS && pytest -q tests/test_vault.py` — 10 passed.
+- The prior escalation records only `cap-or-close-mismatch`, with no failing test or assertion to reproduce. The prior review's persisted-reconciliation blocker is now resolved: `vault_chunks` is source-owned, is replaced within the changed file's transaction, and is pruned with its file only after a complete error-free walk. The rename/deletion test now queries those persisted rows directly.
+- `_ensure_schema()` now inspects `PRAGMA table_info` before its migration rather than suppressing every `ALTER TABLE` failure. I swept all permitted artifact files, including pre-existing code, and found no additional defects.
+
+**Verdict:** Approved
