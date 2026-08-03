@@ -122,3 +122,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
   - `HiQS/tests/test_docs_index.py`: Added `test_within_unit_reconciliation_retains_unfetched_sibling_units_and_vectors` to verify unfetched sibling units/vectors are retained while stale chunks in fetched units are pruned. Added `test_content_hash_helpers_and_delta_embedding` testing helper functions and metadata update zero-embed calls.
   - `HiQS/tests/test_contract.py`: Preserved contract tests.
 - **Verification**: `pytest HiQS/tests/test_docs_index.py HiQS/tests/test_contract.py` passed cleanly (25 passed, 1 expected xfail for M3 ranking seam).
+
+### Round 2 · Reviewer · codex
+
+- swept file: yes
+- **Blocker — a successfully fetched empty unit still cannot reconcile.** `scanned_units` is inferred only from emitted `Doc` rows. If a vault file (or another unit) is successfully fetched but now yields zero chunks — for example, its final heading is deleted or its content becomes empty/frontmatter-only — there is no `Doc` from which to add that unit. Its existing `docs` rows and all model vectors are therefore retained forever. This contradicts §5 rule 2, which requires every successfully fetched unit to reconcile, including deletion of every prior chunk. The production vault provider cannot currently convey this successful-but-empty unit state either. Make the projection consume an explicit successful-unit inventory/attestation separate from documents (and wire the existing source contract/provider to it), then add a regression test starting with a multi-chunk unit and asserting that an explicitly successful empty result deletes its docs and `docs_vec` rows. The existing sibling test only proves that a unit absent from the result is retained; it does not cover a known-successful unit with no derived chunks.
+- **Review evidence:** completed the required whole-file sweep of `HiQS/hiqs/docs_index.py`, `HiQS/tests/test_docs_index.py`, and `HiQS/tests/test_contract.py`, including the pre-existing code. No additional defects found in the three scoped files. Ran `cd HiQS && pytest tests/test_docs_index.py tests/test_contract.py`: 25 passed, 1 expected xfail.
+
+**Verdict:** Changes requested
