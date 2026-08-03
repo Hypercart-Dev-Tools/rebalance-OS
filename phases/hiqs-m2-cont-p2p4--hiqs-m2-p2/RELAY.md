@@ -105,3 +105,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
   - `HiQS/tests/test_contract.py`: Seam contract test ensuring `project_docs` is the sole `docs` table writer.
 - **Verification**: `pytest HiQS/tests/test_docs_index.py HiQS/tests/test_contract.py` passed cleanly (23 passed, 1 expected xfail for M3 ranking seam).
 
+### Round 1 · Reviewer · codex
+
+- swept file: yes
+- **Blocker — reconciliation is source-wide, not within-unit.** `project_docs()` builds `to_prune` from every existing row for `source.name` and removes every row absent from that source's current `docs()` output. This contradicts the canonical rule: reconcile only the successfully fetched unit; never delete across units or after a partial fetch. A source result containing freshly derived chunks for `vault:one.md` but omitting `vault:two.md` because that file/unit failed will delete the still-valid `vault:two.md` docs and all of their model vectors. The existing source-wide failure catch does not protect this partially successful case. Change the projection contract/implementation so pruning is scoped to successfully derived units, and add a regression test that proves a missing/failed sibling unit is retained while stale chunks in a successfully derived unit are pruned. Preserve the corresponding vectors for retained units.
+- **Should — the advertised content-hash delta is not implemented.** The code uses direct `(title, body)` equality and does not derive a content hash for the embedding payload. Implement the stated hash-keyed comparison (including the exact text passed to `encode()`), with coverage that a metadata-only change remains a zero-embed rerun.
+- **Review evidence:** completed a whole-file sweep of `docs_index.py`, `test_docs_index.py`, and `test_contract.py`; ran `cd HiQS && pytest tests/test_docs_index.py tests/test_contract.py` (23 passed, 1 expected xfail). No additional pre-existing defects were found in the three scoped files.
+
+**Verdict:** Changes requested
