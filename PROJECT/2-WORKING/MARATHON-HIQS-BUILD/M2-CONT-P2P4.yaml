@@ -36,7 +36,13 @@ phases:
     name: "docs_index.py — projection, within-unit reconciliation, delta embed"
     reviewer: codex
     brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p2-docs-index.md
-    artifact: HiQS/hiqs/docs_index.py,HiQS/tests/test_docs_index.py,HiQS/tests/test_contract.py
+    # plugins.py and vault.py are here because the phase CANNOT be completed without them: the
+    # attestation channel (§5 rule 2, SyncReport.units_ok + Doc.unit) lives in the contract, and
+    # the vanished-path fix lives in the provider. Two prior runs died at the round cap proving
+    # exactly this — the reviewer twice wrote "needs a permitted-scope expansion for the
+    # contract/provider files". Scoping a phase below its own deliverable is what makes it
+    # unsatisfiable; this is the third instance in this marathon.
+    artifact: HiQS/hiqs/docs_index.py,HiQS/tests/test_docs_index.py,HiQS/tests/test_contract.py,HiQS/hiqs/plugins.py,HiQS/hiqs/sources/vault.py,HiQS/tests/test_vault.py,HiQS/tests/test_plugins.py
     turn_timeout_s: 1800
     # 5, not 3: the first run's rounds 2/4/6 each surfaced DIFFERENT real defects and round 7
     # delivered the fixes with no reviewer turn left to approve them. The cap clipped a

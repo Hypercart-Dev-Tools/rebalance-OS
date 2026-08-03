@@ -295,11 +295,13 @@ class SyncReport:   # structured by contract → feeds events table automaticall
     counts: dict[str, int]                    # inserted / updated / unchanged / skipped / rejected
     errors: list[str] = field(default_factory=list)
     meta: dict = field(default_factory=dict)  # e.g. api_calls, window, peak_rss_mb, embed_ms
+    units_ok: tuple[str, ...] = ()            # units THIS run genuinely fetched — the prune warrant
 
 @dataclass(frozen=True)
 class Doc:        # one search-index row
     source: str; id: str; title: str; body: str
     url: str = ""; ts: str = ""; project: str = ""; author: str = ""
+    unit: str = ""        # which unit this chunk belongs to; "" = the doc IS its own unit
 
 @dataclass(frozen=True)
 class Candidate:  # one next-action candidate — attested, never bare
@@ -364,9 +366,36 @@ vault = "hiqs.sources.vault:SOURCE"
    - **Within a unit that was fetched successfully** — one vault file, one
      GitHub item, one calendar event — the projection reconciles: rows keyed to
      that unit which are absent from the freshly-derived set are deleted, in the
-     same transaction that writes the new ones. Chunk ids are therefore scoped
-     (`<source>:<unit>:<heading-hash>`) so "belongs to this unit" is a query,
-     not a guess.
+     same transaction that writes the new ones. Chunk ids are still scoped
+     (`<source>:<unit>:<heading-hash>`) for legibility, but **`Doc.unit` is what
+     the projection reads** — membership is a field, never parsed back out of an
+     id. Splitting an id on `:` looked equivalent and is not: a vault path may
+     itself contain a colon, and every source picks its own id grammar, so the
+     parse silently returns the wrong unit and reconciliation then prunes the
+     wrong rows. `unit` is `""` only when the doc genuinely *is* its own unit.
+   - **The prune warrant is `SyncReport.units_ok`** (added 2026-08-03, after the
+     build stalled on its absence). `fetch` returns the units it genuinely
+     fetched this run; the projection reconciles **only** those and leaves every
+     other unit untouched. This is the field that makes the rest of rule 2
+     implementable, and without it the rule is not merely hard but impossible:
+     `docs` is a separate later call taking only a connection, so it cannot know
+     what `fetch` attempted, and "no chunks emitted" is identically the shape of
+     *fetched fine, now empty* and *could not be read*. Attestation is the only
+     thing that separates them.
+
+     Two consequences that are not optional:
+
+     - **A source that attests nothing prunes nothing.** `units_ok` defaults to
+       `()`, so an un-migrated or third-party source degrades to insert/update
+       and keeps its stale rows. The alternative default — absence of an
+       attestation authorising deletion — is the GH-169 RC5 scar re-armed and
+       pointed at every source at once. Stale is recoverable; deleted is not.
+     - **Attestation is per-run and in-process.** The report goes straight from
+       `fetch` into the projection in the same walk. It is never persisted and
+       re-read, because a stored attestation outlives the run that earned it and
+       becomes a licence to delete on the strength of an earlier success. This
+       is why raw tracking tables (`vault_files`) cannot serve: they are
+       cumulative state with no run identity.
    - **Never across units, and never on a failed or partial fetch.** A unit that
      errored is not reconciled at all — it keeps its existing rows. This is the
      other half of L15 and it is the half that matters: a source returning
@@ -374,6 +403,16 @@ vault = "hiqs.sources.vault:SOURCE"
      has the scar (`sync_direct_commit_documents()` destroys-then-rebuilds, so a
      partial failure shortens the corpus while every upstream measure still
      reads healthy — GH-169 RC5).
+   - **A deletion is a successful fetch, not a missing one.** A unit whose source
+     proves it is gone — a vault path absent from a walk that itself completed
+     without error — belongs in `units_ok`, emits zero docs, and therefore
+     reconciles to zero. That is how deleting a note removes it from search.
+     `fetch` must resolve the vanished unit at the raw layer too; leaving a
+     tracked-but-absent row for `docs` to trip over takes down the whole source
+     and freezes every other unit's rows as collateral. The distinction rides
+     entirely on the walk's own success: absence proven by a clean enumeration
+     is a deletion, absence during an errored one is unknown, and unknown never
+     prunes.
    - `SyncReport.counts` carries `pruned` alongside inserted/updated/unchanged/
      rejected, so reconciliation is visible rather than inferred. A run that
      prunes an implausible share of a source is a `warn` event, not a silent
