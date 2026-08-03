@@ -517,4 +517,78 @@ def test_content_hash_helpers_and_delta_embedding(tmp_path):
     conn.close()
 
 
+class MockSourceWithUnits:
+
+    def __init__(self, name: str, docs_list: list[Doc], unit_names: list[str]):
+        self.name = name
+        self._docs = docs_list
+        self._units = unit_names
+
+    def fetch(self, conn, config):
+        return SyncReport(counts={"inserted": len(self._docs)})
+
+    def docs(self, conn):
+        return self._docs
+
+    def units(self, conn):
+        return self._units
+
+
+def test_explicit_successful_empty_unit_deletes_docs_and_vectors(tmp_path):
+    """Assert a multi-chunk unit explicitly attested as successful but emitting zero docs is pruned along with its docs_vec rows, while unfetched siblings are retained."""
+    conn = db_connection(tmp_path / "hiqs.db")
+
+    # Initial state: unit "one.md" with 2 chunks, sibling unit "two.md" with 1 chunk
+    doc_u1_c1 = Doc(source="vault", id="vault:one.md:chunk1", title="U1 C1", body="Body 1")
+    doc_u1_c2 = Doc(source="vault", id="vault:one.md:chunk2", title="U1 C2", body="Body 2")
+    doc_u2_c1 = Doc(source="vault", id="vault:two.md:chunk1", title="U2 C1", body="Body 3")
+
+    source_init = MockSource("vault", [doc_u1_c1, doc_u1_c2, doc_u2_c1])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384, [0.3] * 384]
+
+    report_init = project_docs(conn, sources=[source_init], embedder=mock_embedder)
+    assert report_init.counts["inserted"] == 3
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 3
+    assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 3
+
+    # Sync 2: unit "one.md" was successfully fetched but yields 0 chunks (empty content).
+    # "one.md" is in successful units attestation. Sibling unit "two.md" was not fetched (absent from units attestation).
+    source_empty_u1 = MockSourceWithUnits("vault", docs_list=[], unit_names=["one.md"])
+    mock_embedder.encode.reset_mock()
+
+    report_sync2 = project_docs(conn, sources=[source_empty_u1], embedder=mock_embedder)
+
+    # 2 chunks from "one.md" pruned, 0 from "two.md"
+    assert report_sync2.counts["pruned"] == 2
+
+    remaining_docs = [r[0] for r in conn.execute("SELECT id FROM docs ORDER BY id").fetchall()]
+    assert remaining_docs == ["vault:two.md:chunk1"]
+
+    remaining_vecs = [r[0] for r in conn.execute("SELECT doc_id FROM docs_vec ORDER BY doc_id").fetchall()]
+    assert remaining_vecs == ["vault:two.md:chunk1"]
+
+    # Also test successful_units parameter explicitly
+    # Re-insert unit "one.md" chunks
+    source_reinsert = MockSource("vault", [doc_u1_c1, doc_u1_c2, doc_u2_c1])
+    mock_embedder.encode.return_value = [[0.1] * 384, [0.2] * 384]
+    project_docs(conn, sources=[source_reinsert], embedder=mock_embedder)
+
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 3
+
+    # Pass successful_units parameter explicitly for "one.md"
+    source_empty_param = MockSource("vault", [])
+    report_sync3 = project_docs(
+        conn,
+        sources=[source_empty_param],
+        embedder=mock_embedder,
+        successful_units={"vault": ["one.md"]},
+    )
+    assert report_sync3.counts["pruned"] == 2
+    assert [r[0] for r in conn.execute("SELECT id FROM docs").fetchall()] == ["vault:two.md:chunk1"]
+
+    conn.close()
+
+
+
 

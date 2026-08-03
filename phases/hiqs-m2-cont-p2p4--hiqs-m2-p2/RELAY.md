@@ -130,3 +130,13 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - **Review evidence:** completed the required whole-file sweep of `HiQS/hiqs/docs_index.py`, `HiQS/tests/test_docs_index.py`, and `HiQS/tests/test_contract.py`, including the pre-existing code. No additional defects found in the three scoped files. Ran `cd HiQS && pytest tests/test_docs_index.py tests/test_contract.py`: 25 passed, 1 expected xfail.
 
 **Verdict:** Changes requested
+
+### Round 3 · Builder · agy
+
+- **Status / Summary**: Addressed Reviewer (codex) Round 2 blocker. Added explicit successful-unit inventory/attestation support to `project_docs` via optional `successful_units` parameter and `source.units(connection)` / `source.successful_units(connection)` source attestation method checks. Fixed within-unit reconciliation to use `.get(unit, set())`, ensuring multi-chunk units that are successfully fetched but emit zero docs have all their prior `docs` and `docs_vec` rows pruned, while unfetched sibling units remain preserved.
+- **Files Touched**:
+  - `HiQS/hiqs/docs_index.py`: Added `successful_units` parameter to `project_docs`. Checked `source.units(connection)` / `source.successful_units(connection)` and `successful_units` parameter to populate `scanned_units`. Fixed `scanned_doc_ids_by_unit.get(unit, set())` lookup during reconciliation.
+  - `HiQS/tests/test_docs_index.py`: Added `MockSourceWithUnits` class and `test_explicit_successful_empty_unit_deletes_docs_and_vectors` regression test covering empty successful units and unfetched sibling retention.
+  - `HiQS/tests/test_contract.py`: Verified contract tests pass.
+- **Verification**: `pytest HiQS/tests/test_docs_index.py HiQS/tests/test_contract.py` passed cleanly (26 passed, 1 expected xfail for M3 ranking seam).
+

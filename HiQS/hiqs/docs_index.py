@@ -98,6 +98,7 @@ def project_docs(
     sources: Iterable[Source] | None = None,
     model_name: str = "all-MiniLM-L6-v2",
     embedder: Any | None = None,
+    successful_units: dict[str, Iterable[str]] | Iterable[str] | None = None,
 ) -> SyncReport:
     """Project raw source documents into the unified `docs` table and delta-embed vectors into `docs_vec`.
 
@@ -160,6 +161,28 @@ def project_docs(
         scanned_units: set[str] = set()
         scanned_doc_ids_by_unit: dict[str, set[str]] = {}
 
+        if hasattr(source, "units") and callable(getattr(source, "units")):
+            try:
+                units_res = source.units(connection)
+                if units_res is not None:
+                    scanned_units.update(units_res)
+            except Exception as err:
+                errors.append(f"Error fetching units for source '{source.name}': {err}")
+        elif hasattr(source, "successful_units") and callable(getattr(source, "successful_units")):
+            try:
+                units_res = source.successful_units(connection)
+                if units_res is not None:
+                    scanned_units.update(units_res)
+            except Exception as err:
+                errors.append(f"Error fetching units for source '{source.name}': {err}")
+
+        if successful_units is not None:
+            if isinstance(successful_units, dict):
+                if source.name in successful_units:
+                    scanned_units.update(successful_units[source.name])
+            elif isinstance(successful_units, (set, list, tuple)):
+                scanned_units.update(successful_units)
+
         for doc in source_docs:
             if doc.source != source.name:
                 raise ValueError(
@@ -220,7 +243,7 @@ def project_docs(
         for existing_id in existing_map:
             unit = get_doc_unit(existing_id, source.name)
             if unit in scanned_units:
-                if existing_id not in scanned_doc_ids_by_unit[unit]:
+                if existing_id not in scanned_doc_ids_by_unit.get(unit, set()):
                     to_prune.append(existing_id)
 
         for doc_id in to_prune:
