@@ -1,10 +1,11 @@
-"""Regression coverage for the launchd health predicate (GH-146).
+"""Regression coverage for the launchd health predicate (GH-146, GH-160).
 
-`_check_launchd` must not flag a running or just-restarted daemon as broken.
+`_check_launchd` must not flag a running or just-restarted daemon as broken,
+but must detect a crash-looping KeepAlive job even when its current PID is live.
 It reads a stubbed `launchctl list` snapshot (`pid \t status \t label`), never
-the real machine. The bug these tests pin: a `KeepAlive` daemon restarted via
-`launchctl kickstart -k` shows a live PID with the *previous* instance's exit
-`-15` (SIGTERM) and used to WARN despite being healthy and serving.
+the real machine. GH-146: a KeepAlive daemon restarted via `launchctl kickstart
+-k` shows a live PID with exit -15 (SIGTERM) — must stay OK. GH-160: a live PID
+with a positive non-zero exit is crash-looping — must WARN, not OK.
 """
 
 from rebalance.doctor import NOTICE, OK, WARN, WARNING, _check_launchd
@@ -36,11 +37,11 @@ def test_negative_signal_without_live_pid_is_ok() -> None:
     assert check.detail == "idle, last run ok"
 
 
-def test_running_daemon_with_positive_last_exit_is_ok() -> None:
-    """A live PID means it is up now, regardless of the prior instance's code."""
+def test_crash_looping_keepalive_warns() -> None:
+    """GH-160 regression: live PID + positive exit = KeepAlive crash-loop; must WARN."""
     check = _one("50001\t1\tcom.rebalance-os.pulse-web-sync\n")
-    assert check.status == OK
-    assert check.detail == "running"
+    assert check.status == WARN
+    assert check.detail == "crash-looping: KeepAlive relaunched after exit 1"
 
 
 def test_crashed_job_positive_exit_no_pid_still_warns() -> None:

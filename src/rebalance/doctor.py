@@ -790,7 +790,17 @@ def _check_launchd(
 
         is_ok_status = status_val in ("0", "-") or is_negative_signal
 
-        if has_live_pid or is_ok_status:
+        if has_live_pid and not is_ok_status:
+            # GH-160: KeepAlive relaunched after a crash — a live PID does not
+            # mean healthy when the previous instance exited non-zero.
+            checks.append(
+                Check(
+                    f"launchd:{short}", WARN,
+                    f"crash-looping: KeepAlive relaunched after exit {status_val}",
+                    "inspect temp/logs/ for this job's error output",
+                )
+            )
+        elif is_ok_status:
             running = "running" if has_live_pid else "idle, last run ok"
             checks.append(
                 Check(f"launchd:{short}", OK, running, severity=NOTICE)
