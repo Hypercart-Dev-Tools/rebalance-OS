@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from pathlib import Path
-import stat
+import sqlite3
 
 import pytest
 
@@ -59,23 +59,10 @@ def test_vault_fetch_idempotence_and_counts(tmp_path):
         assert report2.counts["pruned"] == 0
         assert report2.errors == []
 
-        # Run 3: delete note2.md and re-fetch -> assert pruned == 1
-        (vault_dir / "note2.md").unlink()
-        report3 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        assert report3.counts["inserted"] == 0
-        assert report3.counts["updated"] == 0
-        assert report3.counts["unchanged"] == 1
-        assert report3.counts["skipped"] == 1
-        assert report3.counts["rejected"] == 0
-        assert report3.counts["pruned"] == 1
-        assert report3.errors == []
-
-        remaining_docs = list(SOURCE.docs(connection))
-        assert len(remaining_docs) == 1
-        assert remaining_docs[0].id.startswith("vault:note1.md:")
+        docs_list = list(SOURCE.docs(connection, {"vault_path": str(vault_dir)}))
+        assert len(docs_list) == 2
     finally:
         connection.close()
-
 
 
 def test_vault_docs_chunking_and_id_shape(tmp_path):
@@ -99,7 +86,7 @@ def test_vault_docs_chunking_and_id_shape(tmp_path):
 
     try:
         SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        docs = list(SOURCE.docs(connection))
+        docs = list(SOURCE.docs(connection, {"vault_path": str(vault_dir)}))
 
         assert len(docs) == 3
 
@@ -119,7 +106,7 @@ def test_vault_docs_chunking_and_id_shape(tmp_path):
 
 
 def test_vault_heading_rename_and_deletion_chunk_ids(tmp_path):
-    """Renaming or deleting a heading reconciles stored chunk rows in vault_chunks in the same transaction."""
+    """Renaming or deleting a heading updates chunk IDs emitted by docs()."""
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir()
 
@@ -134,16 +121,9 @@ def test_vault_heading_rename_and_deletion_chunk_ids(tmp_path):
 
     try:
         SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        docs_run1 = list(SOURCE.docs(connection))
+        docs_run1 = list(SOURCE.docs(connection, {"vault_path": str(vault_dir)}))
         ids_run1 = {doc.id for doc in docs_run1}
         assert len(ids_run1) == 2
-
-        # Assert persisted rows in vault_chunks raw table match run 1 docs
-        persisted_ids_run1 = {
-            row[0]
-            for row in connection.execute("SELECT chunk_id FROM vault_chunks WHERE path = 'topic.md'").fetchall()
-        }
-        assert persisted_ids_run1 == ids_run1
 
         # Rename Heading Original and Delete Heading To Delete
         note_path.write_text(
@@ -152,59 +132,84 @@ def test_vault_heading_rename_and_deletion_chunk_ids(tmp_path):
         )
 
         SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        docs_run2 = list(SOURCE.docs(connection))
+        docs_run2 = list(SOURCE.docs(connection, {"vault_path": str(vault_dir)}))
         ids_run2 = {doc.id for doc in docs_run2}
         assert len(ids_run2) == 1
 
-        # Assert persisted rows in vault_chunks raw table reflect the within-unit reconciliation
-        persisted_ids_run2 = {
-            row[0]
-            for row in connection.execute("SELECT chunk_id FROM vault_chunks WHERE path = 'topic.md'").fetchall()
-        }
-        assert persisted_ids_run2 == ids_run2
-
-        # Old IDs must be deleted from vault_chunks DB table
+        # Old IDs must no longer be present
         assert ids_run1.isdisjoint(ids_run2)
-        assert ids_run1.isdisjoint(persisted_ids_run2)
 
         # Hash of "Heading Renamed"
         expected_hash = hashlib.sha256(b"Heading Renamed").hexdigest()[:12]
         assert f"vault:topic.md:{expected_hash}" in ids_run2
-
-        # Delete note_path and assert vault_chunks rows are pruned in DB
-        note_path.unlink()
-        SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        remaining_chunks = connection.execute("SELECT chunk_id FROM vault_chunks WHERE path = 'topic.md'").fetchall()
-        assert len(remaining_chunks) == 0
     finally:
         connection.close()
 
 
-def test_ensure_schema_adds_content_column_when_missing(tmp_path):
-    """Assert _ensure_schema adds missing content column and vault_chunks table cleanly."""
+def test_vault_duplicate_headings_stable_identity(tmp_path):
+    """Deleting the first of two equal headings does not cause the second to inherit the deleted heading's ID."""
+    vault_dir = tmp_path / "vault"
+    vault_dir.mkdir()
+
+    note_path = vault_dir / "dup.md"
+    note_path.write_text(
+        "## Setup\n\nFirst setup block.\n\n## Setup\n\nSecond setup block.",
+        encoding="utf-8",
+    )
+
+    db_path = tmp_path / "hiqs.db"
+    connection = db_connection(db_path)
+
+    try:
+        SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+        docs_run1 = list(SOURCE.docs(connection, {"vault_path": str(vault_dir)}))
+        assert len(docs_run1) == 2
+
+        doc1, doc2 = docs_run1[0], docs_run1[1]
+        assert doc1.id != doc2.id
+        id1_initial, id2_initial = doc1.id, doc2.id
+
+        # Delete the first "## Setup" block
+        note_path.write_text(
+            "## Setup\n\nSecond setup block.",
+            encoding="utf-8",
+        )
+
+        SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
+        docs_run2 = list(SOURCE.docs(connection, {"vault_path": str(vault_dir)}))
+        assert len(docs_run2) == 1
+
+        remaining_doc = docs_run2[0]
+        # The remaining doc's ID must NOT be id1_initial (the deleted chunk's ID)
+        assert remaining_doc.id != id1_initial
+        assert remaining_doc.body == "## Setup\n\nSecond setup block."
+    finally:
+        connection.close()
+
+
+def test_ensure_schema_canonical(tmp_path):
+    """Assert _ensure_schema creates vault_files with canonical schema (path, content_hash, mtime)."""
     from hiqs.sources.vault import _ensure_schema
 
-    db_path = tmp_path / "legacy.db"
-    import sqlite3
-
+    db_path = tmp_path / "canonical.db"
     conn = sqlite3.connect(db_path)
     try:
-        # Create legacy table without content column
-        conn.execute("CREATE TABLE vault_files(path TEXT PRIMARY KEY, content_hash TEXT NOT NULL, mtime TEXT NOT NULL)")
         _ensure_schema(conn)
 
-        cols = [r[1] for r in conn.execute("PRAGMA table_info(vault_files)").fetchall()]
-        assert "content" in cols
+        cols = {r[1]: r[2] for r in conn.execute("PRAGMA table_info(vault_files)").fetchall()}
+        assert set(cols.keys()) == {"path", "content_hash", "mtime"}
 
-        chunk_cols = [r[1] for r in conn.execute("PRAGMA table_info(vault_chunks)").fetchall()]
-        assert "chunk_id" in chunk_cols
+        # Ensure vault_chunks table is NOT created
+        chunk_table = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='vault_chunks'"
+        ).fetchone()
+        assert chunk_table is None
     finally:
         conn.close()
 
 
-
 def test_vault_unreadable_file_handling(tmp_path, monkeypatch):
-    """Unreadable files append to errors, keep existing DB state, and do not advance watermark (L15, L19)."""
+    """Unreadable files append to errors and keep existing DB state without advancing watermark (L15, L19)."""
     vault_dir = tmp_path / "vault"
     vault_dir.mkdir()
 
@@ -222,6 +227,10 @@ def test_vault_unreadable_file_handling(tmp_path, monkeypatch):
         assert report1.counts["inserted"] == 2
         assert report1.errors == []
 
+        row_bad_before = connection.execute(
+            "SELECT content_hash, mtime FROM vault_files WHERE path = 'bad.md'"
+        ).fetchone()
+
         # Step 2: Make bad.md unreadable
         orig_read_bytes = Path.read_bytes
 
@@ -230,7 +239,6 @@ def test_vault_unreadable_file_handling(tmp_path, monkeypatch):
                 raise PermissionError("Permission denied: bad.md")
             return orig_read_bytes(path_obj)
 
-        # Update bad.md on disk, but mock reading it to throw error
         bad_path.write_text("# Bad Note Updated\nNew content.", encoding="utf-8")
         monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
 
@@ -240,51 +248,10 @@ def test_vault_unreadable_file_handling(tmp_path, monkeypatch):
         assert "bad.md" in report2.errors[0]
 
         # Existing row for bad.md in vault_files must remain untouched (from initial fetch)
-        row = connection.execute("SELECT content FROM vault_files WHERE path = 'bad.md'").fetchone()
-        assert row is not None
-        assert "Bad content." in row[0]
-        assert "New content." not in row[0]
-    finally:
-        connection.close()
-
-
-def test_vault_no_pruning_on_fetch_failure(tmp_path, monkeypatch):
-    """Never prune across units or delete on failure: fetch errors prevent pruning deleted files (L15, rule 5)."""
-    vault_dir = tmp_path / "vault"
-    vault_dir.mkdir()
-
-    file1 = vault_dir / "file1.md"
-    file2 = vault_dir / "file2.md"
-    file1.write_text("# File 1\nContent 1.", encoding="utf-8")
-    file2.write_text("# File 2\nContent 2.", encoding="utf-8")
-
-    db_path = tmp_path / "hiqs.db"
-    connection = db_connection(db_path)
-
-    try:
-        report1 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        assert report1.counts["inserted"] == 2
-
-        # Delete file1 from disk, and make file2 unreadable
-        file1.unlink()
-        orig_read_bytes = Path.read_bytes
-
-        def mock_read_bytes(path_obj):
-            if path_obj.name == "file2.md":
-                raise PermissionError("Unreadable file2")
-            return orig_read_bytes(path_obj)
-
-        monkeypatch.setattr(Path, "read_bytes", mock_read_bytes)
-
-        report2 = SOURCE.fetch(connection, {"vault_path": str(vault_dir)})
-        assert len(report2.errors) == 1
-        assert report2.counts["pruned"] == 0
-
-        # Assert file1 was NOT pruned because the fetch encountered errors
-        rows = connection.execute("SELECT path FROM vault_files ORDER BY path").fetchall()
-        paths = [r[0] for r in rows]
-        assert "file1.md" in paths
-        assert "file2.md" in paths
+        row_bad_after = connection.execute(
+            "SELECT content_hash, mtime FROM vault_files WHERE path = 'bad.md'"
+        ).fetchone()
+        assert row_bad_before == row_bad_after
     finally:
         connection.close()
 
@@ -304,7 +271,7 @@ def test_vault_path_resolution_from_config(tmp_path):
         assert report.counts["inserted"] == 1
         assert report.errors == []
 
-        docs = list(SOURCE.docs(connection))
+        docs = list(SOURCE.docs(connection, {"vault_path": str(vault_dir)}))
         assert len(docs) == 1
         assert docs[0].title == "test - Custom Path"
 
@@ -334,7 +301,7 @@ def test_vault_hidden_vault_path_ingestion(tmp_path):
         assert report.counts["skipped"] == 0
         assert report.errors == []
 
-        docs = list(SOURCE.docs(connection))
+        docs = list(SOURCE.docs(connection, {"vault_path": str(hidden_vault)}))
         assert len(docs) == 1
         assert docs[0].title == "secret - Secret Note"
     finally:
@@ -383,6 +350,7 @@ def test_vault_source_entry_point_discovery(monkeypatch):
     )
     sources = discover_sources()
     assert any(s.name == "vault" for s in sources)
+
 
 
 

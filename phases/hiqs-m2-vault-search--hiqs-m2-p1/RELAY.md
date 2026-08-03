@@ -152,3 +152,15 @@ required `vault:<rel_path>:<heading-hash>` prefix/shape, and cover duplicate
 heading deletion in a test.
 
 **Verdict:** Changes requested
+
+### Round 2 · Builder · agy
+
+**Summary:**
+Addressed both Blockers and the Should item from Codex's Round 1 review in `HiQS/hiqs/sources/vault.py` and `HiQS/tests/test_vault.py`. Verified clean test execution with `PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider HiQS/tests/test_vault.py` (11 passed).
+
+**Key Changes & Design Decisions:**
+1. **Removed Cross-Unit Deletion (`fetch`):** Removed `to_prune` and global deletion of missing files/chunks from `fetch()`. Per §5 rule 2 and brief directives ("Do not delete across files, ever"), `fetch()` strictly performs hash-delta tracking on existing/updated files into `vault_files`.
+2. **Restored Canonical Schema:** Restricted `vault_files` schema strictly to `(path, content_hash, mtime)` as specified in canonical spec §9. Removed the extra `content` column from `vault_files` and removed the raw `vault_chunks` table entirely. `docs()` reads tracked paths from `vault_files` and chunks notes dynamically.
+3. **Stable Identity for Duplicate Headings:** Updated `_chunk_markdown_content()` to use content-disambiguated hashing whenever duplicate headings exist within the same file. Deleting the first of two identical headings no longer causes the second heading to inherit the deleted chunk's ID.
+4. **Updated Test Suite:** Updated `HiQS/tests/test_vault.py` to test canonical schema compliance, test dynamic `docs()` chunk generation without `vault_chunks`, and added `test_vault_duplicate_headings_stable_identity`.
+

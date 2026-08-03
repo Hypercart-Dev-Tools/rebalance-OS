@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Iterable, Mapping
 import hashlib
 import os
@@ -30,6 +31,8 @@ EXCLUDED_FILE_EXTENSIONS = {
     ".swp",
     ".DS_Store",
 }
+
+_last_vault_path: Path | None = None
 
 
 def is_generated_file(path: Path | str, base_path: Path | str | None = None) -> bool:
@@ -87,36 +90,15 @@ def _resolve_vault_path(config: Any) -> Path | None:
 
 
 def _ensure_schema(connection: Any) -> None:
-    """Ensure vault_files and vault_chunks raw tables exist with required columns."""
+    """Ensure vault_files raw table exists with canonical schema (path, content_hash, mtime)."""
     connection.execute(
         """
         CREATE TABLE IF NOT EXISTS vault_files(
           path TEXT PRIMARY KEY,
           content_hash TEXT NOT NULL,
-          mtime TEXT NOT NULL,
-          content TEXT
+          mtime TEXT NOT NULL
         )
         """
-    )
-    columns = {
-        row[1]
-        for row in connection.execute("PRAGMA table_info(vault_files)").fetchall()
-    }
-    if "content" not in columns:
-        connection.execute("ALTER TABLE vault_files ADD COLUMN content TEXT")
-
-    connection.execute(
-        """
-        CREATE TABLE IF NOT EXISTS vault_chunks(
-          path TEXT NOT NULL,
-          chunk_id TEXT PRIMARY KEY,
-          title TEXT NOT NULL,
-          body TEXT NOT NULL
-        )
-        """
-    )
-    connection.execute(
-        "CREATE INDEX IF NOT EXISTS idx_vault_chunks_path ON vault_chunks(path)"
     )
 
 
@@ -125,6 +107,7 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
 
     Idempotent and incremental (§5 rule 2, pattern 1).
     """
+    global _last_vault_path
     _ensure_schema(connection)
 
     counts = {
@@ -142,6 +125,8 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
         errors.append(f"Vault path does not exist or is not a directory: {vault_path}")
         return SyncReport(counts=counts, errors=errors)
 
+    _last_vault_path = vault_path
+
     existing = {
         row[0]: (row[1], row[2])
         for row in connection.execute("SELECT path, content_hash, mtime FROM vault_files").fetchall()
@@ -149,8 +134,6 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
 
     def _on_walk_error(os_err: OSError) -> None:
         errors.append(f"Directory walk error: {os_err}")
-
-    scanned_paths: set[str] = set()
 
     for root, dirs, files in os.walk(vault_path, onerror=_on_walk_error):
         root_path = Path(root)
@@ -174,46 +157,27 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
                 # Existing row in vault_files remains untouched!
                 continue
 
-            scanned_paths.add(rel_path)
             mtime_str = str(st.st_mtime)
             content_hash = hashlib.sha256(content_bytes).hexdigest()
-            content_str = content_bytes.decode("utf-8", errors="replace")
 
             if rel_path in existing:
                 old_hash, _old_mtime = existing[rel_path]
                 if old_hash == content_hash:
-                    chunk_cnt = connection.execute(
-                        "SELECT COUNT(*) FROM vault_chunks WHERE path = ?", (rel_path,)
-                    ).fetchone()[0]
-                    if chunk_cnt == 0 and content_str:
-                        with connection:
-                            _update_file_chunks(connection, rel_path, content_str)
                     counts["unchanged"] += 1
                 else:
                     with connection:
                         connection.execute(
-                            "UPDATE vault_files SET content_hash = ?, mtime = ?, content = ? WHERE path = ?",
-                            (content_hash, mtime_str, content_str, rel_path),
+                            "UPDATE vault_files SET content_hash = ?, mtime = ? WHERE path = ?",
+                            (content_hash, mtime_str, rel_path),
                         )
-                        _update_file_chunks(connection, rel_path, content_str)
                     counts["updated"] += 1
             else:
                 with connection:
                     connection.execute(
-                        "INSERT INTO vault_files (path, content_hash, mtime, content) VALUES (?, ?, ?, ?)",
-                        (rel_path, content_hash, mtime_str, content_str),
+                        "INSERT INTO vault_files (path, content_hash, mtime) VALUES (?, ?, ?)",
+                        (rel_path, content_hash, mtime_str),
                     )
-                    _update_file_chunks(connection, rel_path, content_str)
                 counts["inserted"] += 1
-
-    # Within-unit reconciliation (§5 rule 2): if no fetch errors occurred, prune files deleted from disk.
-    if not errors:
-        to_prune = [p for p in existing if p not in scanned_paths]
-        if to_prune:
-            with connection:
-                connection.executemany("DELETE FROM vault_files WHERE path = ?", [(p,) for p in to_prune])
-                connection.executemany("DELETE FROM vault_chunks WHERE path = ?", [(p,) for p in to_prune])
-            counts["pruned"] += len(to_prune)
 
     return SyncReport(counts=counts, errors=errors)
 
@@ -235,7 +199,7 @@ def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:
     heading_re = re.compile(r"^(#{1,6})\s+(.*)$")
     lines = content.splitlines()
 
-    chunks: list[tuple[str | None, list[str]]] = []
+    raw_chunks: list[tuple[str | None, list[str]]] = []
     current_heading: str | None = None
     current_lines: list[str] = []
 
@@ -243,19 +207,20 @@ def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:
         match = heading_re.match(line)
         if match:
             if current_lines or current_heading is not None:
-                chunks.append((current_heading, current_lines))
+                raw_chunks.append((current_heading, current_lines))
             current_heading = match.group(2).strip()
             current_lines = [line]
         else:
             current_lines.append(line)
 
     if current_lines or current_heading is not None:
-        chunks.append((current_heading, current_lines))
+        raw_chunks.append((current_heading, current_lines))
 
-    result: list[Doc] = []
-    seen_heading_hashes: dict[str, int] = {}
+    # Pre-pass: clean and gather (heading, body) tuples
+    processed_chunks: list[tuple[str | None, str]] = []
+    heading_counts: Counter[str | None] = Counter()
 
-    for heading, chunk_lines in chunks:
+    for heading, chunk_lines in raw_chunks:
         body = "\n".join(chunk_lines).strip()
         if not body:
             continue
@@ -269,96 +234,77 @@ def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:
             if not clean_body:
                 continue
 
-            base_hash = hashlib.sha256(b"preamble").hexdigest()[:12]
-            seen_heading_hashes[base_hash] = seen_heading_hashes.get(base_hash, 0) + 1
-            if seen_heading_hashes[base_hash] > 1:
-                heading_hash = hashlib.sha256(f"preamble:{seen_heading_hashes[base_hash]}".encode()).hexdigest()[:12]
-            else:
-                heading_hash = base_hash
+        processed_chunks.append((heading, body))
+        heading_counts[heading] += 1
 
-            chunk_id = f"vault:{rel_path}:{heading_hash}"
-            doc_title = file_title
-            result.append(
-                Doc(
-                    source="vault",
-                    id=chunk_id,
-                    title=doc_title,
-                    body=body,
-                    url="",
-                    ts="",
-                    project="",
-                    author="",
-                )
-            )
+    result: list[Doc] = []
+    duplicate_occurrences: dict[tuple[str | None, str], int] = {}
+
+    for heading, body in processed_chunks:
+        total_for_heading = heading_counts[heading]
+
+        if total_for_heading > 1:
+            # Duplicate heading text within the file: content-disambiguated hash
+            key_str = f"{heading or 'preamble'}:{body}"
+            dup_idx = duplicate_occurrences.get((heading, body), 0) + 1
+            duplicate_occurrences[(heading, body)] = dup_idx
+            if dup_idx > 1:
+                key_str = f"{key_str}:{dup_idx}"
+            heading_hash = hashlib.sha256(key_str.encode("utf-8")).hexdigest()[:12]
         else:
-            raw_hash = hashlib.sha256(heading.encode("utf-8")).hexdigest()[:12]
-            seen_heading_hashes[raw_hash] = seen_heading_hashes.get(raw_hash, 0) + 1
-            if seen_heading_hashes[raw_hash] > 1:
-                heading_hash = hashlib.sha256(f"{heading}:{seen_heading_hashes[raw_hash]}".encode("utf-8")).hexdigest()[:12]
-            else:
-                heading_hash = raw_hash
+            base_key = heading.encode("utf-8") if heading is not None else b"preamble"
+            heading_hash = hashlib.sha256(base_key).hexdigest()[:12]
 
-            chunk_id = f"vault:{rel_path}:{heading_hash}"
-            doc_title = f"{file_title} - {heading}" if heading != file_title else file_title
-            result.append(
-                Doc(
-                    source="vault",
-                    id=chunk_id,
-                    title=doc_title,
-                    body=body,
-                    url="",
-                    ts="",
-                    project="",
-                    author="",
-                )
+        chunk_id = f"vault:{rel_path}:{heading_hash}"
+        doc_title = (
+            file_title
+            if (heading is None or heading == file_title)
+            else f"{file_title} - {heading}"
+        )
+
+        result.append(
+            Doc(
+                source="vault",
+                id=chunk_id,
+                title=doc_title,
+                body=body,
+                url="",
+                ts="",
+                project="",
+                author="",
             )
+        )
 
     return result
 
 
-def _update_file_chunks(connection: Any, rel_path: str, content: str) -> None:
-    """Helper to update source-owned vault_chunks table for a given path within a transaction."""
-    chunks = _chunk_markdown_content(content, rel_path)
-    connection.execute("DELETE FROM vault_chunks WHERE path = ?", (rel_path,))
-    if chunks:
-        connection.executemany(
-            "INSERT INTO vault_chunks (path, chunk_id, title, body) VALUES (?, ?, ?, ?)",
-            [(rel_path, doc.id, doc.title, doc.body) for doc in chunks],
-        )
-
-
-def docs(connection: Any) -> Iterable[Doc]:
+def docs(connection: Any, config: Any = None) -> Iterable[Doc]:
     """Expose vault note chunks through the public document-provider contract.
 
     Chunk ids are file-scoped: vault:<rel_path>:<heading-hash> (§6.1).
     Doc.author is "" for vault notes (they are the operator's own).
     """
     _ensure_schema(connection)
-    chunk_rows = connection.execute(
-        "SELECT chunk_id, title, body FROM vault_chunks ORDER BY path, chunk_id"
-    ).fetchall()
+    vault_path = _resolve_vault_path(config) or _last_vault_path
+    if vault_path is None or not vault_path.exists():
+        return []
 
-    if not chunk_rows:
-        rows = connection.execute("SELECT path, content FROM vault_files ORDER BY path").fetchall()
-        documents: list[Doc] = []
-        for rel_path, content in rows:
-            if content:
-                documents.extend(_chunk_markdown_content(content, rel_path))
-        return documents
+    rows = connection.execute("SELECT path FROM vault_files ORDER BY path").fetchall()
+    documents: list[Doc] = []
 
-    return [
-        Doc(
-            source="vault",
-            id=chunk_id,
-            title=title,
-            body=body,
-            url="",
-            ts="",
-            project="",
-            author="",
-        )
-        for chunk_id, title, body in chunk_rows
-    ]
+    for (rel_path,) in rows:
+        file_path = vault_path / rel_path
+        if not file_path.exists() or is_generated_file(file_path, base_path=vault_path):
+            continue
+        try:
+            content_bytes = file_path.read_bytes()
+            content = content_bytes.decode("utf-8", errors="replace")
+        except Exception:
+            continue
+
+        documents.extend(_chunk_markdown_content(content, rel_path))
+
+    return documents
 
 
 SOURCE = Source(
@@ -366,3 +312,4 @@ SOURCE = Source(
     fetch=fetch,
     docs=docs,
 )
+
