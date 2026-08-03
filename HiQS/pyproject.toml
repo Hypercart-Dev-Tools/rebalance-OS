@@ -24,6 +24,7 @@ dev = ["pytest"]
 
 [project.entry-points."hiqs.sources"]
 vault = "hiqs.sources.vault:SOURCE"
+github = "hiqs.sources.github:SOURCE"
 
 [tool.setuptools.packages.find]
 include = ["hiqs*"]

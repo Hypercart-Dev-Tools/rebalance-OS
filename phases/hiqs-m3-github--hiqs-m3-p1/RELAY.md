@@ -100,3 +100,9 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+Implemented the GitHub source and its entry point. `github.py` uses only stdlib `urllib` with an explicit timeout on every request; it window-refetches user activity and repo issues/events, upserts without deletion, rejects unattestable shells, and distinguishes source `updated_at` from event-derived `activity_at`. The global mutable watermark moves only after an error-free run, while failures are logged through the core event seam and do not stop later repos. Reports include `api_calls` and platform-safe `peak_rss_mb`, with a budget-breach warning.
+
+Added focused network-stubbed tests for idempotence, label-only metadata changes, rejected shells, timeout coverage, and a mid-walk failure that preserves the watermark while continuing. Verified with `pytest tests/test_github.py -q` (3 passed).
