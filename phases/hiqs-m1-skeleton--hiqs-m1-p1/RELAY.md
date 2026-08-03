@@ -97,3 +97,12 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+Implemented the self-contained HiQS package scaffold in the permitted files.
+
+- Added `pyproject.toml` for the standalone `hiqs` package, with exactly the four specified runtime dependencies, a `pytest` dev extra, and an empty `hiqs.sources` entry-point group.
+- Added version-only package initialization and the frozen `Source`, `SyncReport`, `Doc`, and `Candidate` contract records. `SyncReport` explicitly documents all six reconciliation count keys, including `pruned`.
+- Added stdlib entry-point discovery (`discover_sources`) and focused tests for field order/defaults, frozen mutation rejection, the reconciliation key, and clean discovery behavior.
+- Added subtree-local test path setup. Verified with `HiQS/.venv/bin/python -m pytest HiQS/tests/test_plugins.py -q` — 7 passed.
