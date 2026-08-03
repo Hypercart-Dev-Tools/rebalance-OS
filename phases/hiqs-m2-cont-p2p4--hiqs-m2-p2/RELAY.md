@@ -208,3 +208,9 @@ The prior `cap-or-close-mismatch` escalation was reproduced only as historical
 relay metadata; no functional failing test was recorded there.
 
 **Verdict:** Changes requested
+
+### Round 3 · Builder · agy
+
+Addressed reviewer feedback:
+- **docs_index.py**: Removed all remaining ID-derived unit fallbacks (`doc.unit if doc.unit else doc.id` and `or existing_id`). `Doc.unit` is now strictly the sole membership authority. An empty `Doc.unit` does not establish an ID-derived unit and pre-existing rows without persisted `doc_units` membership are retained rather than matched to an attested unit by ID.
+- **tests**: Added `test_doc_with_empty_unit_is_not_pruned_when_id_is_attested` to `test_docs_index.py`, verifying that `Doc(id="alpha", unit="")` is NOT pruned when `alpha` is attested, and becomes reconcilable only once `unit="alpha"` is explicitly supplied. Kept the opaque-ID regression test. All 55 test items in the scoped suite pass (`54 passed, 1 xfailed`).

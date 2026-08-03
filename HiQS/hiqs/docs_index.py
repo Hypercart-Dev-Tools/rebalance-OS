@@ -177,9 +177,10 @@ def project_docs(
                     f"Doc ID '{doc.id}' from source '{source.name}' collides with existing doc from source '{other_src}'"
                 )
 
-            unit = doc.unit if doc.unit else doc.id
+            unit = doc.unit
             doc_unit_map[doc.id] = unit
-            scanned_doc_ids_by_unit.setdefault(unit, set()).add(doc.id)
+            if unit:
+                scanned_doc_ids_by_unit.setdefault(unit, set()).add(doc.id)
             doc_units_to_upsert.append((doc.id, unit))
 
             new_tuple = (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author)
@@ -215,8 +216,10 @@ def project_docs(
         if attested_units:
             to_prune: list[str] = []
             for existing_id in existing_map:
-                existing_unit = doc_unit_map.get(existing_id) or existing_doc_units.get(existing_id) or existing_id
-                if existing_unit in attested_units:
+                existing_unit = doc_unit_map.get(existing_id)
+                if existing_unit is None:
+                    existing_unit = existing_doc_units.get(existing_id)
+                if existing_unit and existing_unit in attested_units:
                     if existing_id not in scanned_doc_ids_by_unit.get(existing_unit, set()):
                         to_prune.append(existing_id)
 

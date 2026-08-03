@@ -770,3 +770,38 @@ def test_doc_unit_membership_and_colon_in_id(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM docs_vec").fetchone()[0] == 0
 
     conn.close()
+
+
+def test_doc_with_empty_unit_is_not_pruned_when_id_is_attested(tmp_path):
+    """Assert a Doc with empty unit is not pruned merely because an attested unit matches its ID, and becomes reconcilable once a real non-empty unit is supplied."""
+    conn = db_connection(tmp_path / "hiqs.db")
+
+    doc1 = Doc(source="custom", id="alpha", title="T1", body="B1", unit="")
+    source1 = MockSource("custom", [doc1])
+    mock_embedder = MagicMock()
+    mock_embedder.encode.return_value = [[0.1] * 384]
+
+    report1 = SyncReport(counts={}, units_ok=("alpha",))
+    project_docs(conn, sources=[source1], embedder=mock_embedder, reports={"custom": report1})
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 1
+
+    # Sync empty source with unit "alpha" attested: MUST NOT prune "alpha" because its unit was empty
+    source_empty = MockSource("custom", [])
+    report2 = SyncReport(counts={}, units_ok=("alpha",))
+    rep2 = project_docs(conn, sources=[source_empty], embedder=mock_embedder, reports={"custom": report2})
+    assert rep2.counts["pruned"] == 0
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 1
+
+    # Update doc with non-empty unit="alpha"
+    doc2 = Doc(source="custom", id="alpha", title="T1", body="B1", unit="alpha")
+    source2 = MockSource("custom", [doc2])
+    report3 = SyncReport(counts={}, units_ok=("alpha",))
+    project_docs(conn, sources=[source2], embedder=mock_embedder, reports={"custom": report3})
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 1
+
+    # Now sync empty source with unit "alpha" attested: MUST prune "alpha"
+    rep4 = project_docs(conn, sources=[source_empty], embedder=mock_embedder, reports={"custom": report2})
+    assert rep4.counts["pruned"] == 1
+    assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 0
+
+    conn.close()
