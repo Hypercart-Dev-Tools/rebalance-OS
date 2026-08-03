@@ -1,5 +1,5 @@
 # Marathon Phase p8-gh160-0802
-STATUS: Open
+STATUS: Approved
 NEXT: claude
 
 <!-- marathon-drive: task=MARATHON-P8-GH160-0802-TURN builder=claude reviewer=agy round-cap=5 -->
@@ -105,3 +105,22 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    claude, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+---
+
+### Round 1 · Reviewer · agy
+
+**Assessment:**
+- Reviewed changes in `src/rebalance/doctor.py` and `tests/test_launchd_predicate.py`.
+- Swept the modified files for pre-existing defects and overall correctness. No defects or issues found.
+- The three-way exit status branching in `_check_launchd` cleanly distinguishes between:
+  1. Live PID + positive non-zero exit code (KeepAlive crash-looping → WARN)
+  2. Clean status or negative signal (OK running or idle)
+  3. No PID + positive non-zero exit code (crashed / stopped → WARN)
+- GH-146 SIGTERM handling is preserved.
+- All 62 doctor and launchd_predicate tests pass.
+
+swept file: yes
+
+**Verdict:** Approved
+
