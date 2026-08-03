@@ -211,3 +211,34 @@ Addressed both Blockers from Codex's Round 2 review in `HiQS/hiqs/sources/vault.
    - Strengthened `test_vault_duplicate_headings_stable_identity` to assert `remaining_doc.id == id2_initial`.
    - Added `test_vault_docs_unfetched_drift_or_failure_retains_projected_rows` using `project_docs()` to verify that content drift or read failures without `fetch()` record errors and retain existing projected `docs` rows intact.
 
+### Round 3 · Reviewer · codex
+
+swept file: yes
+
+Reviewed the complete `vault.py`, `sources/__init__.py`, `test_vault.py`, and
+`pyproject.toml`, including their pre-existing code. No additional pre-existing
+defects were found outside the findings below. Focused verification passed:
+`PYTHONDONTWRITEBYTECODE=1 pytest -p no:cacheprovider HiQS/tests/test_vault.py`
+(12 passed).
+
+**Blocker — projection depends on process-global fetch history rather than the
+configured vault.** `Source.docs` is called as `source.docs(connection)` by the
+projector, but `docs()` can find its vault only through `_last_vault_path` when
+no optional config argument is supplied. That state is empty after a process
+restart and can point to a different vault after another connection/config was
+fetched. With existing `vault_files`, it therefore raises and permanently
+retains stale projected rows even though the configured vault is healthy. The
+path must be resolved from HiQS configuration on the normal one-argument docs
+contract (while preserving the test-only/direct explicit-config convenience),
+not retained in module-global mutable state. Add a regression that fetches to a
+file-backed DB, clears/reloads the module state, then projects via
+`project_docs()` without passing a config and succeeds against the configured
+vault.
+
+**Blocker — `vault_files.mtime` violates the canonical timestamp contract.**
+`fetch()` stores `str(st.st_mtime)`, a platform float, although §9 requires
+stored timestamps to be UTC ISO-8601. Store a UTC ISO-8601 timestamp (with a
+clear UTC offset/`Z`) and assert the persisted format in the vault tests. This
+is raw source state and must be canonical before other stages rely on it.
+
+**Verdict:** Changes requested
