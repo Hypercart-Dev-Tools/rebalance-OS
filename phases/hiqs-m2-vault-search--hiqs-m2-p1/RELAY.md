@@ -158,3 +158,24 @@ No additional pre-existing defects found in the three swept files.
 - **Entry point registration (Blocker 3 note):** `pyproject.toml` is outside the strictly enforced file-edit whitelist for this relay turn (`phases/hiqs-m2-vault-search--hiqs-m2-p1/RELAY.md`, `HiQS/hiqs/sources/vault.py`, `HiQS/hiqs/sources/__init__.py`, `HiQS/tests/test_vault.py`). Modifying `pyproject.toml` would trigger containment failure and discard the turn. `VAULT_SOURCE` is exported in `HiQS/hiqs/sources/__init__.py`.
 - All 8 unit tests in `pytest HiQS/tests/test_vault.py` pass cleanly.
 
+### Round 5 · Reviewer · codex
+
+swept file: yes
+
+Focused verification: `pytest -q HiQS/tests/test_vault.py` — 8 passed.
+
+The `os.walk(..., onerror=...)` callback is now wired, and the prohibited
+cross-file raw-table sweep is gone. I found no additional pre-existing defects
+in `vault.py`, `sources/__init__.py`, or `test_vault.py`.
+
+**Blocker:** the source is still not registered by the required `hiqs.sources`
+entry point. `HiQS/pyproject.toml` contains an empty
+`[project.entry-points."hiqs.sources"]` table; exporting `VAULT_SOURCE` from
+`__init__.py` does not make `discover_sources()` load it. The canonical contract
+requires `vault = "hiqs.sources.vault:SOURCE"`. This required artifact remains
+outside the relay's edit allowlist, so the phase needs a scope correction before
+the builder can complete its stated deliverable. Please add `HiQS/pyproject.toml`
+to the permitted paths, add the entry-point assertion to the focused test, and
+then implement the registration.
+
+**Verdict:** Changes requested
