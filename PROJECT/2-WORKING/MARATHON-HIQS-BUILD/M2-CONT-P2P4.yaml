@@ -1,0 +1,62 @@
+# M2-CONT-P2P4.yaml — continuation of M2 after hiqs-m2-p1 was approved.
+#
+# WHY THIS FILE EXISTS — read before "consolidating" it back into M2-VAULT-SEARCH.yaml.
+#
+# marathon.sh walks its plan from phase 1 on EVERY invocation. It has no memory of which phases
+# already passed, and --retry only overrides one phase's tick-task name; it does not skip the
+# phases before it. So re-firing the full M2 plan to reach p2 re-opens p1 — and re-opening an
+# APPROVED phase is not free: the reviewer sweeps the file again, always finds something new to
+# request on a fresh read of good code, and burns the round cap on work that was already done.
+# That is exactly how the p2 retry died: it never reached p2, it re-litigated p1 to cap.
+#
+# A completed phase must therefore be removed from the plan, not re-run. p2's depends_on is
+# dropped because hiqs-m2-p1 is not in this file — a depends_on naming an absent phase does not
+# resolve. p1's deliverable is committed and verified independently:
+#   HiQS/pyproject.toml carries `vault = "hiqs.sources.vault:SOURCE"` and the suite is green.
+#
+# Everything else — reviewer pinning, briefs, write-sets, round caps — is copied verbatim from
+# M2-VAULT-SEARCH.yaml. Keep them in sync if that file changes.
+#
+# Reviewer is pinned codex, so this MUST run with --builder agy (marathon-drive exits 2 if the
+# builder id equals the reviewer id).
+#
+# Run:
+#   RELAY_WORKTREE_ISOLATION=0 .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-HIQS-BUILD/M2-CONT-P2P4.yaml \
+#     --builder agy \
+#     --pre-advance-cmd 'HiQS/.venv/bin/python -m pytest HiQS/tests -q'
+#
+# RELAY_WORKTREE_ISOLATION=0 is required whenever agy takes a turn: agy prints absolute paths, the
+# isolation guard reads that as a breach of the throwaway worktree, and fails the turn (exit 5).
+# The path allowlist still contains the turn.
+
+name: hiqs-m2-cont-p2p4
+phases:
+  - id: hiqs-m2-p2
+    name: "docs_index.py — projection, within-unit reconciliation, delta embed"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p2-docs-index.md
+    artifact: HiQS/hiqs/docs_index.py,HiQS/tests/test_docs_index.py,HiQS/tests/test_contract.py
+    turn_timeout_s: 1800
+    # 5, not 3: the first run's rounds 2/4/6 each surfaced DIFFERENT real defects and round 7
+    # delivered the fixes with no reviewer turn left to approve them. The cap clipped a
+    # converging review, it did not contain a runaway one.
+    max_review_rounds: 5
+
+  - id: hiqs-m2-p3
+    name: "search.py — FTS5 + model-filtered cosine + RRF + per-doc cap"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p3-search.md
+    artifact: HiQS/hiqs/search.py,HiQS/tests/test_search.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m2-p2
+    max_review_rounds: 3
+
+  - id: hiqs-m2-p4
+    name: "eval_retrieval.py — the runner (NOT the answer key)"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p4-eval-runner.md
+    artifact: HiQS/tests/eval_retrieval.py,HiQS/tests/test_eval_retrieval.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m2-p3
+    max_review_rounds: 3

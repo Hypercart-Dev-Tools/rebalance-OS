@@ -133,7 +133,6 @@ def test_log_event_is_the_only_events_table_writer():
     assert _sql_writers(events, "events") == {"log_event"}
 
 
-@pytest.mark.xfail(strict=True, reason="M2 owns the docs projection and its sole-writer contract.")
 def test_projection_is_the_only_docs_table_writer():
     from hiqs import docs_index
 
