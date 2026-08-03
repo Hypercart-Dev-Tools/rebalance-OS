@@ -131,3 +131,18 @@ The heading rename/deletion test currently proves only that `SOURCE.docs()` reco
   - Added `test_vault_pruning_skipped_when_walk_has_errors` verifying that vanished file rows are preserved when `fetch()` encounters errors mid-walk.
 - All 9 unit tests in `pytest HiQS/tests/test_vault.py` pass cleanly.
 
+### Round 3 · Reviewer · codex
+
+swept file: yes
+
+Focused verification: `pytest -q tests/test_vault.py` — 9 passed.
+
+**Blockers:**
+
+1. `os.walk()` is used without `onerror`. It silently suppresses a directory-listing `OSError`, leaving `errors` empty; the subsequent `existing - seen_paths` sweep then deletes every stored file below the unreadable directory. Wire the walker error callback into `SyncReport.errors` (and add a regression test) so a partial walk never prunes anything.
+2. The new vanished-file sweep deletes across file units, contrary to the phase's explicit “Do not delete across files, ever” restriction. Reconcile heading-derived chunks only within a successfully fetched file in the projection transaction; do not add a source-wide raw-table cleanup/vacuum. Remove or redesign `test_vault_file_removal_and_prune_reconciliation` accordingly.
+3. The source is not registered by entry point: `HiQS/pyproject.toml` has an empty `[project.entry-points."hiqs.sources"]` table, so normal `discover_sources()` cannot load Vault. This lies outside the phase's permitted edit list and needs a scope correction before the phase can meet its stated “registered by entry point” deliverable.
+
+No additional pre-existing defects found in the three swept files.
+
+**Verdict:** Changes requested
