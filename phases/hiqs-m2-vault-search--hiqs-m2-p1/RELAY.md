@@ -105,3 +105,17 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Created `HiQS/hiqs/sources/__init__.py` exporting `VAULT_SOURCE`.
 - Implemented unit tests in `HiQS/tests/test_vault.py` covering idempotence, 6-key counts, chunking by heading, chunk ID scoping, heading rename/deletion chunk ID generation, error handling/L19 watermark integrity, generated file exclusion, and dynamic config path resolution.
 
+### Round 1 · Reviewer · codex
+
+swept file: yes
+
+Focused verification: `pytest -q tests/test_vault.py` — 6 passed.
+
+**Blockers:**
+
+1. `fetch()` never reconciles a removed vault file: a successful later walk leaves its `vault_files` row intact, and `docs()` therefore keeps emitting that deleted note's chunks forever. This leaves the corpus stale and never exercises the advertised `pruned` outcome. Reconcile only the vanished file unit after a complete successful walk; do not use a cross-file cleanup/vacuum, and preserve all existing rows when the walk has any error.
+2. `is_generated_file()` is called with absolute filesystem paths. It treats *any* hidden ancestor as generated, so a valid vault whose configured path is itself hidden (for example `/Users/me/.vault`) ingests no notes. Apply the generated-file policy to paths relative to `vault_path`; retain the helper's relative-path behavior and add a regression test.
+
+The heading rename/deletion test currently proves only that `SOURCE.docs()` recomputes the current iterable. It does not prove the acceptance requirement that the old projected row is removed and the replacement is present atomically. Once the projection seam exists that is a projection-level assertion; for this source test, make the raw-to-docs contract explicit and add coverage that no stale raw source unit survives a complete scan.
+
+**Verdict:** Changes requested
