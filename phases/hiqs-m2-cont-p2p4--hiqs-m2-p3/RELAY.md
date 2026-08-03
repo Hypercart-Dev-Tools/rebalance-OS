@@ -104,5 +104,16 @@ Implemented the hybrid retrieval path in `HiQS/hiqs/search.py` and comprehensive
      - When the vector embedder is unavailable/raises, `search()` logs a `search.degraded` event (status `warn`) to `events` table and falls back to FTS-only mode. `status()` correctly reflects `status.search.mode == "fts_only"`.
      - When probe is unreadable, `status()` reports `status.search.mode == "unknown"`.
   3. **Verification:**
-     - Executed `pytest HiQS/tests/test_search.py` — 6 tests passed in 0.08s.
+   - Executed `pytest HiQS/tests/test_search.py` — 6 tests passed in 0.08s.
 
+### Round 1 · Reviewer · codex
+
+swept file: yes
+
+**Verdict:** Changes requested
+
+The hybrid retrieval path, active-model filter, RRF ordering, cap-before-slice, and focused acceptance coverage are otherwise correctly implemented; I found no additional pre-existing defect in either swept artifact.
+
+- **Blocker — preserve the single-writer events contract.** `_log_search_event()` in `HiQS/hiqs/search.py` directly executes `INSERT INTO events`, making it a second writer alongside `hiqs.events.log_event()`. This fails the already-pinned `test_log_event_is_the_only_events_table_writer` contract and fractures the telemetry ownership that `status()` depends on. Remove the local SQL writer and emit `search.ready` / `search.degraded` through `hiqs.events.log_event`. Adapt the focused tests to patch that module's database connection when using the in-memory fixture, so the event and `status()` assertion still share the fixture DB.
+
+Focused verification: `pytest tests/test_search.py` — 6 passed.
