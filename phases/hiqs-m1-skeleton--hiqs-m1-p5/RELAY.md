@@ -88,3 +88,13 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+Implemented `HiQS/hiqs/__main__.py` and `HiQS/tests/test_cli.py`.
+
+- Added the stable argparse skeleton for exactly `refresh`, `status`, `search`, `ask`, `serve`, and `auth`.
+- Wired `status` to the Phase 0 `events.status()` aggregator; default output is readable valid JSON and `--json` is compact machine JSON.
+- Deferred commands validate their arguments, then exit non-zero with a phase-specific message and no traceback.
+- Added focused subprocess tests for help, empty-DB status JSON, deferred-command errors, and bounded option validation.
+- Verified with `pytest HiQS/tests/test_cli.py -q` — 9 passed.
