@@ -1,0 +1,177 @@
+[
+  {
+    "id": "q-001",
+    "shape": "time-window",
+    "scoreable": false,
+    "origin": "mined",
+    "contains_private_text": true
+  },
+  {
+    "id": "q-002",
+    "shape": "jargon",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-003",
+    "shape": "exact-phrase",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": true
+  },
+  {
+    "id": "q-004",
+    "shape": "asymmetric",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": true
+  },
+  {
+    "id": "q-005",
+    "shape": "jargon",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-006",
+    "shape": "jargon",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-007",
+    "shape": "asymmetric",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-008",
+    "shape": "hard",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-009",
+    "shape": "jargon",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": true
+  },
+  {
+    "id": "q-010",
+    "shape": "asymmetric",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-011",
+    "shape": "jargon",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-012",
+    "shape": "jargon",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-013",
+    "shape": "asymmetric",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-014",
+    "shape": "hard",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-015",
+    "shape": "hard",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-016",
+    "shape": "asymmetric",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-017",
+    "shape": "time-window",
+    "scoreable": false,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-018",
+    "shape": "exact-phrase",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-019",
+    "shape": "jargon",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-020",
+    "shape": "asymmetric",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-021",
+    "shape": "jargon",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "q-022",
+    "shape": "hard",
+    "scoreable": true,
+    "origin": "mined",
+    "contains_private_text": false
+  },
+  {
+    "id": "s-001",
+    "shape": "time-window",
+    "scoreable": false,
+    "origin": "operator-seed",
+    "contains_private_text": false
+  },
+  {
+    "id": "s-002",
+    "shape": "asymmetric",
+    "scoreable": true,
+    "origin": "operator-seed",
+    "contains_private_text": false
+  },
+  {
+    "id": "s-003",
+    "shape": "jargon",
+    "scoreable": true,
+    "origin": "operator-seed",
+    "contains_private_text": true
+  }
+]
