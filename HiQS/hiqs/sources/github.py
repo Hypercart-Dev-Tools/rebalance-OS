@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from collections.abc import Mapping, MutableMapping
+from collections.abc import Iterable, Mapping, MutableMapping
 import json
 import platform
 from typing import Any
@@ -17,13 +17,28 @@ except ImportError:  # pragma: no cover - covered by Windows packaging, not CI h
 
 from hiqs import config as hiqs_config
 from hiqs.events import log_event
-from hiqs.plugins import Source, SyncReport
+from hiqs.plugins import Candidate, Source, SyncReport
 
 
 NETWORK_TIMEOUT_SECONDS = 15
 API_CALL_LIMIT = 100
 RSS_LIMIT_MB = 500
 _ACTIVITY_EVENTS = frozenset({"closed", "reopened", "merged", "committed", "commented", "reviewed", "created"})
+
+
+def _ensure_obligations_table(connection: Any) -> None:
+    """Create the GitHub-owned receipts that are not part of the core item schema."""
+    connection.execute(
+        """
+        CREATE TABLE IF NOT EXISTS github_item_obligations(
+          repo TEXT NOT NULL,
+          type TEXT NOT NULL,
+          number INTEGER NOT NULL,
+          requested_reviewer TEXT NOT NULL,
+          due TEXT NOT NULL,
+          PRIMARY KEY (repo, type, number))
+        """
+    )
 
 
 def _settings(config: Mapping[str, Any]) -> tuple[str, list[str], str]:
@@ -126,6 +141,26 @@ def _item_row(
     return (repo, item_type, number, title, str(item.get("body") or ""), str(item.get("state") or ""), url, author, str(assignee or ""), updated_at, activity_at)
 
 
+def _obligation_row(repo: str, item: Mapping[str, Any], item_type: str, number: int) -> tuple[str, str, int, str, str]:
+    """Extract only explicitly supplied review and deadline obligations from one item."""
+    reviewers = item.get("requested_reviewers")
+    requested_reviewer = ""
+    if isinstance(reviewers, list):
+        for reviewer in reviewers:
+            login = reviewer.get("login") if isinstance(reviewer, Mapping) else None
+            if isinstance(login, str) and login.strip():
+                requested_reviewer = login.strip()
+                break
+
+    due = item.get("due_on")
+    milestone = item.get("milestone")
+    if not isinstance(due, str) or not due.strip():
+        due = milestone.get("due_on") if isinstance(milestone, Mapping) else ""
+    if not isinstance(due, str) or not due.strip():
+        due = milestone.get("title") if isinstance(milestone, Mapping) else ""
+    return (repo, item_type, number, requested_reviewer, due.strip() if isinstance(due, str) else "")
+
+
 def _upsert_items(connection: Any, repo: str, items: list[Mapping[str, Any]], activity: Mapping[int, str], counts: dict[str, int]) -> list[str]:
     """Upsert item rows by their stable GitHub identity; never delete absent rows."""
     watermarks: list[str] = []
@@ -134,6 +169,7 @@ def _upsert_items(connection: Any, repo: str, items: list[Mapping[str, Any]], ac
         if row is None:
             counts["rejected"] += 1
             continue
+        obligation = _obligation_row(row[0], item, row[1], row[2])
         watermarks.append(row[-2])
         existing = connection.execute(
             "SELECT title, body, state, url, author, assignee, updated_at, activity_at "
@@ -157,7 +193,51 @@ def _upsert_items(connection: Any, repo: str, items: list[Mapping[str, Any]], ac
                 (*payload, row[0], row[1], row[2]),
             )
             counts["updated"] += 1
+        connection.execute(
+            "INSERT INTO github_item_obligations(repo, type, number, requested_reviewer, due) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT(repo, type, number) DO UPDATE SET requested_reviewer = excluded.requested_reviewer, due = excluded.due",
+            obligation,
+        )
     return watermarks
+
+
+def candidates(connection: Any, _config: Mapping[str, Any]) -> Iterable[Candidate]:
+    """Expose GitHub work as attested candidates without assigning a rank or score."""
+    rows = connection.execute(
+        """
+        SELECT item.type, item.number, item.title, item.url, item.author, item.assignee,
+               item.activity_at, COALESCE(obligation.requested_reviewer, ''), COALESCE(obligation.due, '')
+        FROM github_items AS item
+        LEFT JOIN github_item_obligations AS obligation
+          ON obligation.repo = item.repo AND obligation.type = item.type AND obligation.number = item.number
+        """
+    ).fetchall()
+    return [_candidate_from_row(row) for row in rows]
+
+
+def _candidate_from_row(row: tuple[str, int, str, str, str, str, str, str, str]) -> Candidate:
+    """Build a hand-verifiable candidate receipt from one persisted GitHub item."""
+    item_type, number, title, url, author, assignee, activity_at, requested_reviewer, due = row
+    owed_by = assignee or requested_reviewer
+    item_label = "PR" if item_type == "pull_request" else "Issue"
+    if assignee:
+        obligation = f"assigned to {assignee}"
+    elif requested_reviewer:
+        obligation = f"review requested from {requested_reviewer}"
+    else:
+        obligation = "no assignee or requested reviewer recorded"
+    due_receipt = f", due {due}" if due else ""
+    return Candidate(
+        title=title,
+        source="github",
+        evidence=f"{item_label} #{number}, {obligation}, last activity {activity_at}{due_receipt}",
+        why="This GitHub item has recent recorded activity and may require follow-up.",
+        ts=activity_at,
+        url=url,
+        author=author,
+        owed_by=owed_by,
+        due=due,
+    )
 
 
 def _record(status: str, payload: Mapping[str, Any]) -> None:
@@ -174,6 +254,8 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
     login, repos, api_base = _settings(config)
     token = hiqs_config.secret("GITHUB_TOKEN")
     watermarks: list[str] = []
+
+    _ensure_obligations_table(connection)
 
     if login:
         try:
@@ -217,4 +299,4 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
     return SyncReport(counts=counts, errors=errors, meta=meta, units_ok=tuple(units_ok))
 
 
-SOURCE = Source(name="github", fetch=fetch)
+SOURCE = Source(name="github", fetch=fetch, candidates=candidates)

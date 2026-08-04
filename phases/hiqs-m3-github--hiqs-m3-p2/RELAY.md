@@ -95,3 +95,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+- Added the `github` candidate provider and wired it into `SOURCE`; every receipt includes source,
+  hand-verifiable evidence, why, `activity_at` as `ts`, URL, and author.
+- Persisted GitHub-supplied requested-reviewer and milestone/deadline data in the source-owned
+  `github_item_obligations` table. Candidates prefer an assignee, otherwise use a requested reviewer;
+  unknown obligations remain empty rather than inferred.
+- Added focused API-shaped tests covering attestation, label-only timestamp stability, assignee/reviewer
+  obligations, milestone due dates, and absent obligations. The existing GitHub entry point in
+  `HiQS/pyproject.toml` already registers this source, so it required no change.
+- Verified with `python -m pytest HiQS/tests/test_github.py HiQS/tests/test_github_candidates.py` (5 passed).
