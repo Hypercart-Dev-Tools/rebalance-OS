@@ -1,6 +1,6 @@
 # Marathon Phase hiqs-m3-p2
-STATUS: Open
-NEXT: codex
+STATUS: Approved
+NEXT: none
 
 <!-- marathon-drive: task=MARATHON-HIQS-M3-P2-TURN builder=codex reviewer=agy round-cap=7 -->
 
@@ -107,3 +107,16 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
   obligations, milestone due dates, and absent obligations. The existing GitHub entry point in
   `HiQS/pyproject.toml` already registers this source, so it required no change.
 - Verified with `python -m pytest HiQS/tests/test_github.py HiQS/tests/test_github_candidates.py` (5 passed).
+
+### Round 1 · Reviewer · agy
+
+- swept file: yes
+- Reviewed `HiQS/hiqs/sources/github.py`, `HiQS/tests/test_github_candidates.py`, and `HiQS/pyproject.toml` completely.
+- Verified candidate provider implementation: all emitted `Candidate` receipts maintain non-empty `source`, `evidence`, and `why`.
+- Confirmed `ts` derives from `activity_at` rather than `updated_at`, ensuring metadata/label edits do not shift candidate timestamps.
+- Verified obligation fields (`owed_by`, `due`) use explicit API-supplied values (assignee/reviewer, milestone/due_on) and leave unknown values as blank strings (`""`) without imputation.
+- Confirmed zero edits to core files outside `sources/github.py`.
+- Ran candidate test suite (`pytest HiQS/tests/test_github.py HiQS/tests/test_github_candidates.py`), passing 5/5.
+
+**Verdict:** Approved
+
