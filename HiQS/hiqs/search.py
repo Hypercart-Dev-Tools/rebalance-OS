@@ -160,6 +160,8 @@ def search(
     connection: sqlite3.Connection | None = None,
     model_name: str = "all-MiniLM-L6-v2",
     embedder: Any | None = None,
+    affinity: bool = True,
+    affinity_edges: frozenset[str] | None = None,
 ) -> list[Doc]:
     """Execute hybrid retrieval (FTS5 + vector search + RRF fusion + document cap)."""
     if not query.strip():
@@ -191,9 +193,17 @@ def search(
         capped = cap_per_document(fused, max_chunks=2)
 
         rerank_fn = RERANKER if RERANKER is not None else (lambda q, hits: hits)
-        result = rerank_fn(query, capped)[:limit]
-        return result
+        direct_hits = rerank_fn(query, capped)[:limit]
+        if not affinity:
+            return direct_hits
+
+        # Widen only after fusion, the document cap, and any ranking hook so
+        # sibling documents can never reorder or displace direct retrieval.
+        from hiqs.affinity import append_affinity_hits
+
+        return append_affinity_hits(
+            connection, query, direct_hits, limit, enabled_edges=affinity_edges
+        )
     finally:
         if owns_connection:
             connection.close()
-

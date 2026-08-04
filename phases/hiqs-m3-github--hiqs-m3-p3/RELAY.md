@@ -135,3 +135,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+Implemented the HiQS affinity seam in the permitted files only.
+
+- Added the canonical `project_affinity` schema and local edge rebuild for same-org and optional shared significant-name tokens. Generic and short tokens are excluded; each symmetric pair is persisted once.
+- Added query-time issue-title edges, plus `AffinityDoc.affinity_edge` so every widened hit is attested. Stored edge classes can be disabled at query time without recomputation.
+- Wired widening after hybrid fusion, per-document cap, and reranking. Direct hits stay untouched and retain their original order; siblings only fill unused result capacity.
+- Added schema, derivation, attestation, disabling, query-time, and precise-search parity coverage.
+
+Verification: `PYTHONPATH=HiQS python -m pytest HiQS/tests/test_affinity.py HiQS/tests/test_search.py HiQS/tests/test_db.py -q` → 17 passed.

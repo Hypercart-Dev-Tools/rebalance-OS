@@ -259,3 +259,12 @@ def test_rrf_fuse_unit():
     # doc3 is rank 2 in vec -> score = 1/62
     # So doc2 should be rank 1 in fused output
     assert fused[0].id == "d2"
+
+
+def test_precise_search_is_byte_identical_with_affinity_on_or_off(memory_db):
+    doc = Doc(source="vault", id="precise:1", title="Exact maintenance ticket", body="repair", unit="precise.md")
+    insert_doc(memory_db, doc)
+    stub = StubEmbedder(dim=384)
+    enabled = search("exact maintenance ticket", connection=memory_db, embedder=stub, affinity=True)
+    disabled = search("exact maintenance ticket", connection=memory_db, embedder=stub, affinity=False)
+    assert enabled == disabled

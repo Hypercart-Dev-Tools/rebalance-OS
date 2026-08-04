@@ -1,6 +1,8 @@
 import sqlite3
 import struct
 
+import pytest
+
 from hiqs.db import db_connection
 
 
@@ -25,9 +27,24 @@ def test_connection_configures_required_pragmas_and_full_schema(tmp_path):
             "docs",
             "docs_vec",
             "projects",
+            "project_affinity",
             "events",
         } <= tables
         assert "docs_fts" in tables
+    finally:
+        connection.close()
+
+
+def test_project_affinity_enforces_one_canonical_row_per_edge(tmp_path):
+    connection = db_connection(tmp_path / "hiqs.db")
+    try:
+        connection.execute(
+            "INSERT INTO project_affinity VALUES (?, ?, ?, ?)", ("alpha", "beta", "same_org", 1.0)
+        )
+        with pytest.raises(sqlite3.IntegrityError):
+            connection.execute(
+                "INSERT INTO project_affinity VALUES (?, ?, ?, ?)", ("beta", "alpha", "same_org", 1.0)
+            )
     finally:
         connection.close()
 

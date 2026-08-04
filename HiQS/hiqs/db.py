@@ -102,6 +102,16 @@ CREATE TABLE IF NOT EXISTS projects(
   aliases_json TEXT NOT NULL,
   repos_json TEXT NOT NULL);
 
+CREATE TABLE IF NOT EXISTS project_affinity(
+  project_a TEXT NOT NULL,
+  project_b TEXT NOT NULL,
+  edge TEXT NOT NULL,
+  weight REAL NOT NULL,
+  PRIMARY KEY (project_a, project_b, edge),
+  CHECK (project_a < project_b),
+  CHECK (edge IN ('same_org', 'name_token')),
+  CHECK (weight > 0));
+
 CREATE TABLE IF NOT EXISTS events(
   ts TEXT,
   kind TEXT,
