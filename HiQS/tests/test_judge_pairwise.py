@@ -69,6 +69,36 @@ def test_a_missing_sidecar_entry_fails_loudly_rather_than_scoring_a_subset(tmp_p
         load_queries(c, s)
 
 
+def test_the_eval_excludes_units_that_merely_echo_the_query(monkeypatch):
+    """20 of 22 queries returned the operator's own prompt log at rank 1, for both models."""
+    from hiqs.plugins import Doc
+    import judge_pairwise
+
+    hits = [
+        Doc(source="vault", id=f"d{n}", title="t", body="b", unit=unit)
+        for n, unit in enumerate(["0. Claude Prompts.md"] * 3 + ["real-work.md"] * 5)
+    ]
+    monkeypatch.setattr(judge_pairwise, "search", lambda *a, **k: hits)
+
+    sets = judge_pairwise.result_sets(None, [{"id": "q-1", "query": "anything"}], "m")
+
+    # The echo chunks are gone and the set is still full length, not silently truncated.
+    assert sets["q-1"] == ["d3", "d4", "d5", "d6", "d7"]
+
+
+def test_the_exclusion_can_be_turned_off_for_a_real_use_ranking(monkeypatch):
+    from hiqs.plugins import Doc
+    import judge_pairwise
+
+    hits = [Doc(source="vault", id="d0", title="t", body="b", unit="0. Claude Prompts.md")]
+    monkeypatch.setattr(judge_pairwise, "search", lambda *a, **k: hits)
+
+    sets = judge_pairwise.result_sets(
+        None, [{"id": "q-1", "query": "x"}], "m", excluded_units=frozenset()
+    )
+    assert sets["q-1"] == ["d0"]
+
+
 def test_disagreements_are_full_set_comparisons_not_top_hit_only():
     a = {"q-1": ["d1", "d2"], "q-2": ["d3", "d4"], "q-3": ["d5"]}
     b = {"q-1": ["d1", "d2"], "q-2": ["d3", "d9"], "q-3": ["d6"]}

@@ -833,6 +833,44 @@ saw them. A launchd job could not have told that run from a clean one. `refresh`
 with no repo attested, §5 rule 2 pruned nothing and 330 stale rows survived exactly as
 designed — the safety net worked, which is how the exit-code bug became visible at all.
 
+### 6.8 The eval set was circular (2026-08-04)
+
+§6.5 predicted a corpus/question mismatch. The measured form is worse than predicted and in
+the opposite direction: the mined queries matched the corpus *too* well.
+
+`0. Claude Prompts.md` is a verbatim log of the operator's own prompts and is **1,572 of
+6,053 corpus chunks — 26% of everything indexed**. The eval queries were mined from it, so
+the query text is present in the corpus verbatim. Result: **20 of 22 queries returned a
+prompt-log chunk at rank 1, for both models**, and 36% of all top-5 slots were prompt logs.
+Scoring that measures whether a model can find a copy of the question. Both models score
+well; neither is being tested.
+
+This is the eval-design analogue of the truncation gate one section up. Nothing errored, the
+disagreement set was full, and the sheet was ready to judge — the number would simply have
+been about the wrong thing.
+
+**Resolved (operator, 2026-08-04): exclude the prompt log from the eval only.** The note stays
+indexed, so real-use behaviour is unchanged and the corpus-composition question stays open
+until Checkpoint A is decided with evidence in hand. Both models are filtered identically, and
+retrieval is widened before filtering so result sets stay full rather than silently short —
+verified at 0 prompt-log hits and 0 short sets across all 22 queries.
+
+**Cost axis, measured on matched hardware (both on MPS):**
+
+| | ms/chunk | full corpus | index |
+|---|---|---|---|
+| `all-MiniLM-L6-v2` | 2.2 | 13s | 8.9 MB |
+| `Qwen/Qwen3-Embedding-0.6B` | 116.6 | 706s | 23.6 MB |
+
+**53×.** §6.3 escalates anything past 4× to the operator rather than resolving it by
+threshold, so this is already an argument for the incumbent independent of quality.
+
+An earlier measurement of this axis was nearly recorded as fact and was wrong: the first Qwen3
+run took **1h58m and had not finished** because Claude Code's Bash sandbox blocks the Metal
+device, so torch fell back to CPU **silently**. Unsandboxed on MPS the same work took **6m31s**.
+A silent accelerator downgrade is the same failure class as a silent truncation — the run
+completes, and the number is an artefact. The embed script now refuses to start on CPU.
+
 ## 7. AI-native seams (one signature, one implementation today)
 
 ```python

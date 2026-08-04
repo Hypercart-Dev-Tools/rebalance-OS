@@ -115,26 +115,40 @@ def load_queries(committed: str | Path, sidecar: str | Path) -> list[dict[str, A
     return queries
 
 
+# Eval-only exclusion. `0. Claude Prompts.md` is a verbatim log of the operator's own prompts
+# and is 1,572 of 6,053 corpus chunks (26%). The eval queries were mined from it, so the query
+# text appears in the corpus verbatim and 20 of 22 queries returned a prompt-log chunk at rank
+# 1 — for BOTH models. Scoring that measures whether a model can find a copy of the question,
+# which is not retrieval quality; it is the §6.5 corpus/question mismatch made concrete.
+#
+# The filter is deliberately eval-only: the note stays indexed, so real-use behaviour is
+# unchanged and the corpus-composition question stays open. Both models are filtered
+# identically, so neither is advantaged. Widen the retrieval before filtering, or the
+# exclusion silently returns short result sets and shrinks what is being compared.
+EVAL_EXCLUDED_UNITS = frozenset({"0. Claude Prompts.md"})
+_OVERFETCH = 6
+
+
 def result_sets(
     connection,
     queries: list[dict[str, Any]],
     model: str,
     embedder: Any | None = None,
+    excluded_units: frozenset[str] = EVAL_EXCLUDED_UNITS,
 ) -> dict[str, list[str]]:
-    """Top-N document ids per query for one model."""
-    return {
-        q["id"]: [
-            doc.id
-            for doc in search(
-                q["query"],
-                limit=TOP_N,
-                connection=connection,
-                model_name=model,
-                embedder=embedder,
-            )
-        ]
-        for q in queries
-    }
+    """Top-N document ids per query for one model, minus units the eval cannot learn from."""
+    sets: dict[str, list[str]] = {}
+    for q in queries:
+        hits = search(
+            q["query"],
+            limit=TOP_N * _OVERFETCH if excluded_units else TOP_N,
+            connection=connection,
+            model_name=model,
+            embedder=embedder,
+        )
+        kept = [doc.id for doc in hits if doc.unit not in excluded_units]
+        sets[q["id"]] = kept[:TOP_N]
+    return sets
 
 
 def disagreements(a: dict[str, list[str]], b: dict[str, list[str]]) -> list[str]:
