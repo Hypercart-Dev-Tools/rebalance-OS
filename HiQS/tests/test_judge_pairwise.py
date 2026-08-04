@@ -12,6 +12,7 @@ from judge_pairwise import (
     disagreements,
     load_queries,
     truncation_gate,
+    vector_leg_ready,
     win_rate,
 )
 
@@ -96,6 +97,31 @@ def test_a_clear_margin_names_a_winner():
     result = win_rate(judgments, "mini", "qwen")
     assert result["winner"] == "qwen"
     assert result["decisive"] is True
+
+
+def test_a_model_with_no_vectors_is_not_ready_to_be_compared(tmp_path):
+    """Without this, search() degrades both models to FTS and reports them indistinguishable."""
+    connection = _corpus(tmp_path, ["a b c"] * 3)
+    try:
+        result = vector_leg_ready(connection, "Qwen/Qwen3-Embedding-0.6B")
+        assert result["ready"] is False
+        assert result["coverage"] == 0.0
+    finally:
+        connection.close()
+
+
+def test_partial_vector_coverage_is_not_ready_either(tmp_path):
+    connection = _corpus(tmp_path, ["a b c"] * 3)
+    try:
+        connection.execute(
+            "INSERT INTO docs_vec (doc_id, model, dim, vec) VALUES ('d0', 'm', 1, X'00')"
+        )
+        connection.commit()
+        result = vector_leg_ready(connection, "m")
+        assert result["ready"] is False
+        assert result["vectors"] == 1 and result["docs"] == 3
+    finally:
+        connection.close()
 
 
 def test_the_truncation_gate_fails_a_corpus_the_model_cannot_read(tmp_path):

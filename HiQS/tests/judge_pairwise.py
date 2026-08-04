@@ -73,6 +73,28 @@ def truncation_gate(connection, embedder: Any) -> dict[str, Any]:
     }
 
 
+def vector_leg_ready(connection, model: str) -> dict[str, Any]:
+    """Confirm a model's vectors actually cover the corpus before comparing it to anything.
+
+    ``search()`` catches any failure in the vector leg and degrades to FTS-only with a warn
+    event (§6.2). That is right for a user query and fatal for this comparison: with no Qwen3
+    vectors both models fall back to the same BM25 ranking, produce zero disagreements, and
+    the run reports "the models are indistinguishable" when what actually happened is that
+    neither model was consulted. Checkpoint A would have been decided by FTS against itself.
+    """
+    total = connection.execute("SELECT count(*) FROM docs").fetchone()[0]
+    vectors = connection.execute(
+        "SELECT count(*) FROM docs_vec WHERE model = ?", (model,)
+    ).fetchone()[0]
+    return {
+        "model": model,
+        "docs": total,
+        "vectors": vectors,
+        "coverage": (vectors / total) if total else 0.0,
+        "ready": bool(total) and vectors == total,
+    }
+
+
 def load_queries(committed: str | Path, sidecar: str | Path) -> list[dict[str, Any]]:
     """Return scoreable queries with their text, joined across the §19.2 public/private split."""
     committed_rows = json.loads(Path(committed).read_text(encoding="utf-8"))
@@ -153,3 +175,104 @@ def win_rate(judgments: dict[str, str], model_a: str, model_b: str) -> dict[str,
             "models. Report unknown and widen the query set rather than picking the leader."
         ),
     }
+
+
+MINILM = "all-MiniLM-L6-v2"
+QWEN = "Qwen/Qwen3-Embedding-0.6B"
+
+
+def _render(connection, query_id: str, ids: list[str]) -> str:
+    """Render one model's ranked set as titles the operator can actually judge."""
+    lines = []
+    for rank, doc_id in enumerate(ids, 1):
+        row = connection.execute(
+            "SELECT source, title, substr(body, 1, 220) FROM docs WHERE id = ?", (doc_id,)
+        ).fetchone()
+        if row is None:
+            lines.append(f"{rank}. [MISSING ROW {doc_id}]")
+            continue
+        source, title, snippet = row
+        snippet = " ".join(snippet.split())
+        lines.append(f"{rank}. **[{source}] {title or '(untitled)'}**\n   {snippet}…")
+    return "\n".join(lines) or "_(no results)_"
+
+
+def main() -> int:
+    """Emit the blind A/B sheet for Checkpoint A, refusing to run on an invalid comparison."""
+    from sentence_transformers import SentenceTransformer
+
+    here = Path(__file__).resolve().parent
+    connection = db_connection()
+    try:
+        shipped = SentenceTransformer(f"sentence-transformers/{MINILM}", local_files_only=True)
+        gate = truncation_gate(connection, shipped)
+        print(
+            f"§6.3 truncation gate: {gate['fitting']}/{gate['chunks']} = {gate['rate']:.1%} "
+            f"(max {gate['max_tokens']} of {gate['limit']} word-pieces) — "
+            f"{'PASS' if gate['passed'] else 'FAIL'}"
+        )
+        if not gate["passed"]:
+            print("Refusing to score: the models are not being shown the same input.")
+            return 1
+
+        for model in (MINILM, QWEN):
+            leg = vector_leg_ready(connection, model)
+            print(f"vector leg {model:32} {leg['vectors']}/{leg['docs']} = {leg['coverage']:.1%}")
+            if not leg["ready"]:
+                # search() would silently fall back to FTS for this model and the run would
+                # report the two as indistinguishable. That is a lie, not a result.
+                print(f"Refusing to score: {model} has no usable vector leg.")
+                return 1
+
+        queries = load_queries(here / "eval_queries.json", here / "eval_queries_sidecar.json")
+        embedders = {
+            MINILM: shipped,
+            QWEN: SentenceTransformer(QWEN, local_files_only=True),
+        }
+        sets = {
+            model: result_sets(connection, queries, model, embedder=embedders[model])
+            for model in (MINILM, QWEN)
+        }
+        differing = disagreements(sets[MINILM], sets[QWEN])
+        print(f"\nqueries scored: {len(queries)}   disagreements: {len(differing)}")
+
+        text = {q["id"]: q["query"] for q in queries}
+        out = [
+            "# Checkpoint A — blind pairwise judging",
+            "",
+            f"{len(differing)} of {len(queries)} queries where the two models disagree. The models",
+            "are unlabelled and their slots are shuffled per query. For each, write **A**, **B**,",
+            "or **tie** on the verdict line. Judge the results, not the layout.",
+            "",
+        ]
+        for query_id in differing:
+            first, second = blind_order(query_id, MINILM, QWEN)
+            out += [
+                "---",
+                "",
+                f"## {query_id}",
+                "",
+                f"> {text[query_id]}",
+                "",
+                "**A**",
+                "",
+                _render(connection, query_id, sets[first][query_id]),
+                "",
+                "**B**",
+                "",
+                _render(connection, query_id, sets[second][query_id]),
+                "",
+                "`VERDICT:`",
+                "",
+            ]
+        # Gitignored: these sheets carry real query text and vault titles (§19.2).
+        sheet = here / "checkpoint_a_pairs.md"
+        sheet.write_text("\n".join(out), encoding="utf-8")
+        print(f"wrote {sheet}")
+        return 0
+    finally:
+        connection.close()
+
+
+if __name__ == "__main__":  # pragma: no cover - operator entry point
+    raise SystemExit(main())
