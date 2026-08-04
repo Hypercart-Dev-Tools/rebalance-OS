@@ -139,12 +139,36 @@ def get_default_embedder(model_name: str = "all-MiniLM-L6-v2") -> Any:
         return SentenceTransformer(model_name)
 
 
-def _encode_texts(embedder: Any, texts: list[str]) -> Any:
-    """Encode texts using exclusively the `.encode()` method of the embedder object."""
+EMBED_BATCH_SIZE = int(os.environ.get("HIQS_EMBED_BATCH", "64"))
+
+
+def _encode_texts(embedder: Any, texts: list[str], batch_size: int = EMBED_BATCH_SIZE) -> Any:
+    """Encode texts through `.encode()` in bounded batches.
+
+    Unbounded until 2026-08-03, when one `.encode()` call over 1,833 chunks with
+    Qwen3-Embedding-0.6B reached 14.32 GiB and was stopped only by MPS's own watermark.
+    Nothing in HiQS limited it; the smaller default model had merely been hiding the
+    absence of a ceiling. That is GH-172's mechanism — unbounded embedding memory —
+    reproduced inside the clean room, and BOUNDED (§18.3) exists to forbid exactly it.
+
+    Note the trap in torch's own advice: the MPS error suggests
+    PYTORCH_MPS_HIGH_WATERMARK_RATIO=0.0 to lift the limit, "may cause system failure".
+    Raising the ceiling is how the original incident ended in a kernel panic. The fix is
+    to need less, not to be allowed more.
+    """
     encode_fn = getattr(embedder, "encode", None)
-    if callable(encode_fn):
+    if not callable(encode_fn):
+        raise TypeError(f"Embedder must have an encode method, got {type(embedder)}")
+    if batch_size < 1:
+        raise ValueError("embedding batch size must be at least 1")
+
+    if len(texts) <= batch_size:
         return encode_fn(texts)
-    raise TypeError(f"Embedder must have an encode method, got {type(embedder)}")
+
+    vectors: list[Any] = []
+    for start in range(0, len(texts), batch_size):
+        vectors.extend(encode_fn(texts[start : start + batch_size]))
+    return vectors
 
 
 def project_docs(

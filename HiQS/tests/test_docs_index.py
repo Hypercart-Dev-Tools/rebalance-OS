@@ -942,3 +942,33 @@ def test_doc_with_empty_unit_is_not_pruned_when_id_is_attested(tmp_path):
     assert conn.execute("SELECT COUNT(*) FROM docs").fetchone()[0] == 0
 
     conn.close()
+
+
+def test_encoding_is_batched_so_memory_cannot_grow_with_corpus_size():
+    """BOUNDED (§18.3). One unbounded .encode() over 1,833 chunks hit 14.32 GiB on 2026-08-03."""
+    from hiqs.docs_index import _encode_texts
+
+    seen_batch_sizes = []
+
+    class RecordingEmbedder:
+        def encode(self, texts, **kwargs):
+            seen_batch_sizes.append(len(texts))
+            return [[float(len(t)), 0.0] for t in texts]
+
+    texts = [f"chunk {n}" for n in range(150)]
+    vectors = _encode_texts(RecordingEmbedder(), texts, batch_size=64)
+
+    assert len(vectors) == 150               # nothing dropped by batching
+    assert seen_batch_sizes == [64, 64, 22]  # bounded, and the remainder is not lost
+    assert max(seen_batch_sizes) <= 64
+
+
+def test_a_batch_size_below_one_is_rejected_rather_than_looping_forever():
+    from hiqs.docs_index import _encode_texts
+
+    class Embedder:
+        def encode(self, texts, **kwargs):
+            return [[0.0] for _ in texts]
+
+    with pytest.raises(ValueError, match="at least 1"):
+        _encode_texts(Embedder(), ["a", "b"], batch_size=0)
