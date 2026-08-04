@@ -244,6 +244,20 @@ def sync_direct_commit_documents(database_path: Path) -> int:
     """Materialize non-PR-overlapping direct commits into the GitHub document corpus."""
     now = _now()
     with db_connection(database_path, ensure_github_schema) as conn:
+        # GH-248: drop the vectors in the same transaction as the documents.
+        # The re-insert below takes fresh autoincrement ids, so any embedding
+        # left keyed to an old id is unreachable forever -- and vec0 never
+        # reclaims the slot. Churning ~15.5k documents per run this way
+        # orphaned 2.65M vectors (10.8 GB, 99% of the vector table) in ~9 days.
+        # delete_item_children() already gets this ordering right; match it.
+        stale_doc_ids = [
+            row["id"]
+            for row in conn.execute(
+                "SELECT id FROM github_documents WHERE doc_type = 'direct_commit'"
+            ).fetchall()
+        ]
+        if stale_doc_ids:
+            gh.delete_github_embeddings_for_docs(conn, stale_doc_ids)
         conn.execute("DELETE FROM github_documents WHERE doc_type = 'direct_commit'")
         rows = conn.execute(
             """
