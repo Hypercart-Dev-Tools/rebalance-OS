@@ -12,11 +12,70 @@ import hashlib
 import os
 import platform
 import resource
+import re
 import sqlite3
 import time
 from typing import Any, Iterable
 
 from hiqs.plugins import Doc, Source, SyncReport, discover_sources
+
+
+_FENCED_CODE_BLOCK_RE = re.compile(r"(?:^|\n)```[^\n]*\n.*?(?:\n```|\Z)", re.DOTALL)
+_URL_RE = re.compile(r"https?://[^\s<>()]+")
+_GITHUB_URL_RE = re.compile(
+    r"https?://github\.com/(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)/(?:issues/(?P<issue>\d+)|pull/(?P<pull>\d+))(?=$|[/?#\s<>)\],.?!;:])",
+    re.IGNORECASE,
+)
+_GITHUB_SHORTHAND_RE = re.compile(
+    r"(?<![\w./-])(?P<repo>[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+)#(?P<number>\d+)\b"
+)
+_BARE_GITHUB_REF_RE = re.compile(r"(?<![\w/#])#(?P<number>\d+)\b")
+_NEWSLETTER_ISSUE_RE = re.compile(r"^\s+of\s+(?:the\s+)?newsletter\b", re.IGNORECASE)
+
+
+def _literal_github_references(body: str, repo_context: str) -> set[tuple[str, str | None, int]]:
+    """Extract literal GitHub references, excluding fenced code and URL fragments."""
+    text = _FENCED_CODE_BLOCK_RE.sub("\n", body)
+    references: set[tuple[str, str | None, int]] = set()
+
+    for match in _GITHUB_URL_RE.finditer(text):
+        repo = match.group("repo")
+        if match.group("issue"):
+            references.add((repo, "issue", int(match.group("issue"))))
+        else:
+            references.add((repo, "pull_request", int(match.group("pull"))))
+
+    text_without_urls = _URL_RE.sub(" ", text)
+    for match in _GITHUB_SHORTHAND_RE.finditer(text_without_urls):
+        references.add((match.group("repo"), None, int(match.group("number"))))
+
+    if repo_context:
+        for match in _BARE_GITHUB_REF_RE.finditer(text_without_urls):
+            if _NEWSLETTER_ISSUE_RE.match(text_without_urls[match.end() :]):
+                continue
+            references.add((repo_context, None, int(match.group("number"))))
+
+    return references
+
+
+def _resolved_github_references(
+    connection: sqlite3.Connection, doc: Doc
+) -> set[tuple[str, str, int]]:
+    """Resolve only literal references to existing GitHub rows; never create placeholders."""
+    resolved: set[tuple[str, str, int]] = set()
+    for repo, explicit_type, number in _literal_github_references(doc.body, doc.project):
+        if explicit_type is None:
+            rows = connection.execute(
+                "SELECT type FROM github_items WHERE repo = ? AND number = ?",
+                (repo, number),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                "SELECT type FROM github_items WHERE repo = ? AND type = ? AND number = ?",
+                (repo, explicit_type, number),
+            ).fetchall()
+        resolved.update((repo, row[0], number) for row in rows)
+    return resolved
 
 
 def get_embed_text(title: str, body: str) -> str:
@@ -115,6 +174,7 @@ def project_docs(
     updates: list[tuple[str, str, str, str, str, str, str, str]] = []
     prunes: list[tuple[str, str]] = []
     doc_units_to_upsert: list[tuple[str, str]] = []
+    desired_refs_by_doc: dict[tuple[str, str], set[tuple[str, str, int]]] = {}
 
     invalidated_vec_doc_ids: list[str] = []
 
@@ -182,6 +242,9 @@ def project_docs(
             if unit:
                 scanned_doc_ids_by_unit.setdefault(unit, set()).add(doc.id)
             doc_units_to_upsert.append((doc.id, unit))
+            desired_refs_by_doc[(source.name, doc.id)] = _resolved_github_references(
+                connection, doc
+            )
 
             new_tuple = (doc.title, doc.body, doc.url, doc.ts, doc.project, doc.author)
 
@@ -271,6 +334,34 @@ def project_docs(
                 "UPDATE docs SET title = ?, body = ?, url = ?, ts = ?, project = ?, author = ? WHERE source = ? AND id = ?",
                 updates,
             )
+        refs_to_insert: list[tuple[str, str, str, str, int]] = []
+        refs_to_delete: list[tuple[str, str, str, str, int]] = []
+        for (doc_source, doc_id), desired_refs in desired_refs_by_doc.items():
+            existing_refs = {
+                (row[0], row[1], row[2])
+                for row in connection.execute(
+                    "SELECT repo, type, number FROM doc_github_refs WHERE doc_source = ? AND doc_id = ?",
+                    (doc_source, doc_id),
+                ).fetchall()
+            }
+            refs_to_insert.extend(
+                (doc_source, doc_id, repo, item_type, number)
+                for repo, item_type, number in desired_refs - existing_refs
+            )
+            refs_to_delete.extend(
+                (doc_source, doc_id, repo, item_type, number)
+                for repo, item_type, number in existing_refs - desired_refs
+            )
+        if refs_to_delete:
+            connection.executemany(
+                "DELETE FROM doc_github_refs WHERE doc_source = ? AND doc_id = ? AND repo = ? AND type = ? AND number = ?",
+                refs_to_delete,
+            )
+        if refs_to_insert:
+            connection.executemany(
+                "INSERT INTO doc_github_refs(doc_source, doc_id, repo, type, number) VALUES (?, ?, ?, ?, ?)",
+                refs_to_insert,
+            )
         if prunes:
             connection.executemany(
                 "DELETE FROM docs WHERE source = ? AND id = ?",
@@ -314,3 +405,20 @@ def get_doc_vector(
         return None
     dim, blob = row
     return dim, deserialize_vector(blob)
+
+
+def get_linked_github_items(
+    connection: sqlite3.Connection, doc_id: str
+) -> list[tuple[str, str, int, str, str]]:
+    """Return GitHub items literally linked from one projected document, without ranking them."""
+    return connection.execute(
+        """
+        SELECT item.repo, item.type, item.number, item.title, item.url
+        FROM doc_github_refs AS ref
+        JOIN github_items AS item
+          ON item.repo = ref.repo AND item.type = ref.type AND item.number = ref.number
+        WHERE ref.doc_id = ?
+        ORDER BY item.repo, item.type, item.number
+        """,
+        (doc_id,),
+    ).fetchall()

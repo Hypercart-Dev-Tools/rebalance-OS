@@ -12,7 +12,13 @@ import pytest
 
 from hiqs import docs_index
 from hiqs.db import db_connection
-from hiqs.docs_index import deserialize_vector, get_doc_vector, project_docs, serialize_vector
+from hiqs.docs_index import (
+    deserialize_vector,
+    get_doc_vector,
+    get_linked_github_items,
+    project_docs,
+    serialize_vector,
+)
 from hiqs.plugins import Doc, Source, SyncReport
 
 
@@ -67,6 +73,137 @@ def test_docs_has_exactly_one_writer():
     """Assert docs table has exactly one writer across all hiqs modules: (hiqs/docs_index.py, project_docs)."""
     writers = _sql_writers("docs")
     assert writers == {("hiqs/docs_index.py", "project_docs")}
+
+
+def _insert_github_item(conn, repo: str, item_type: str, number: int, title: str = "Linked item"):
+    conn.execute(
+        "INSERT INTO github_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (repo, item_type, number, title, "", "open", f"https://github.com/{repo}/issues/{number}", "author", "", "2026-08-03", "2026-08-03"),
+    )
+
+
+def test_projection_records_only_resolved_literal_github_references(tmp_path):
+    conn = db_connection(tmp_path / "hiqs.db")
+    try:
+        _insert_github_item(conn, "acme/widgets", "issue", 123, "Issue")
+        _insert_github_item(conn, "acme/widgets", "pull_request", 42, "Pull request")
+        _insert_github_item(conn, "other/service", "issue", 7, "Other issue")
+        doc = Doc(
+            source="vault",
+            id="vault:decision",
+            title="Decision",
+            body="See #123, https://github.com/acme/widgets/pull/42, and other/service#7.",
+            project="acme/widgets",
+            unit="decision.md",
+        )
+        embedder = MagicMock()
+        embedder.encode.return_value = [[0.1] * 3]
+
+        project_docs(
+            conn,
+            sources=[MockSource("vault", [doc])],
+            embedder=embedder,
+            reports={"vault": SyncReport(counts={}, units_ok=("decision.md",))},
+        )
+
+        assert get_linked_github_items(conn, doc.id) == [
+            ("acme/widgets", "issue", 123, "Issue", "https://github.com/acme/widgets/issues/123"),
+            ("acme/widgets", "pull_request", 42, "Pull request", "https://github.com/acme/widgets/issues/42"),
+            ("other/service", "issue", 7, "Other issue", "https://github.com/other/service/issues/7"),
+        ]
+    finally:
+        conn.close()
+
+
+def test_projection_drops_unresolved_and_false_positive_github_references(tmp_path):
+    conn = db_connection(tmp_path / "hiqs.db")
+    try:
+        _insert_github_item(conn, "acme/widgets", "issue", 1)
+        _insert_github_item(conn, "acme/widgets", "issue", 2)
+        _insert_github_item(conn, "acme/widgets", "issue", 123)
+        doc = Doc(
+            source="vault",
+            id="vault:false-positives",
+            title="Decision",
+            body=(
+                "```python\n#123\n```\n"
+                "Read https://example.test/newsletter#123. issue #1 of the newsletter. "
+                "The actual item is #2, while #999 and https://github.com/acme/widgets/issues/888 are unresolved."
+            ),
+            project="acme/widgets",
+            unit="decision.md",
+        )
+        no_context = Doc(source="vault", id="vault:no-context", title="No context", body="#2", unit="other.md")
+        embedder = MagicMock()
+        embedder.encode.return_value = [[0.1] * 3, [0.2] * 3]
+
+        project_docs(
+            conn,
+            sources=[MockSource("vault", [doc, no_context])],
+            embedder=embedder,
+            reports={"vault": SyncReport(counts={}, units_ok=("decision.md", "other.md"))},
+        )
+
+        assert get_linked_github_items(conn, doc.id) == [
+            ("acme/widgets", "issue", 2, "Linked item", "https://github.com/acme/widgets/issues/2")
+        ]
+        assert get_linked_github_items(conn, no_context.id) == []
+    finally:
+        conn.close()
+
+
+def test_unchanged_projection_does_not_write_github_reference_edges(tmp_path):
+    conn = db_connection(tmp_path / "hiqs.db")
+    try:
+        _insert_github_item(conn, "acme/widgets", "issue", 123)
+        doc = Doc(source="vault", id="vault:decision", title="Decision", body="See #123", project="acme/widgets", unit="decision.md")
+        source = MockSource("vault", [doc])
+        report = SyncReport(counts={}, units_ok=("decision.md",))
+        embedder = MagicMock()
+        embedder.encode.return_value = [[0.1] * 3]
+        project_docs(conn, sources=[source], embedder=embedder, reports={"vault": report})
+
+        statements = []
+        conn.set_trace_callback(statements.append)
+        project_docs(conn, sources=[source], embedder=embedder, reports={"vault": report})
+        conn.set_trace_callback(None)
+
+        assert not any(
+            statement.upper().startswith(("INSERT INTO DOC_GITHUB_REFS", "UPDATE DOC_GITHUB_REFS"))
+            for statement in statements
+        )
+    finally:
+        conn.close()
+
+
+def test_failed_document_fetch_retains_existing_github_reference_edges(tmp_path):
+    conn = db_connection(tmp_path / "hiqs.db")
+    try:
+        _insert_github_item(conn, "acme/widgets", "issue", 123)
+        doc = Doc(source="vault", id="vault:decision", title="Decision", body="See #123", project="acme/widgets", unit="decision.md")
+        embedder = MagicMock()
+        embedder.encode.return_value = [[0.1] * 3]
+        project_docs(
+            conn,
+            sources=[MockSource("vault", [doc])],
+            embedder=embedder,
+            reports={"vault": SyncReport(counts={}, units_ok=("decision.md",))},
+        )
+
+        def failed_docs(_connection):
+            raise OSError("vault file could not be read")
+
+        result = project_docs(
+            conn,
+            sources=[Source(name="vault", fetch=lambda *_args: SyncReport(counts={}), docs=failed_docs)],
+            embedder=embedder,
+            reports={"vault": SyncReport(counts={}, units_ok=("decision.md",))},
+        )
+
+        assert result.errors == ["Error fetching docs for source 'vault': vault file could not be read"]
+        assert get_linked_github_items(conn, doc.id)[0][:3] == ("acme/widgets", "issue", 123)
+    finally:
+        conn.close()
 
 
 def test_delta_behaviour_zero_embed_calls_on_unchanged_content(tmp_path):

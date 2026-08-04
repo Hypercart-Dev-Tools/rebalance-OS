@@ -71,6 +71,16 @@ CREATE TABLE IF NOT EXISTS docs(
   author TEXT NOT NULL,
   PRIMARY KEY (source, id));
 
+CREATE TABLE IF NOT EXISTS doc_github_refs(
+  doc_source TEXT NOT NULL,
+  doc_id TEXT NOT NULL,
+  repo TEXT NOT NULL,
+  type TEXT NOT NULL,
+  number INTEGER NOT NULL,
+  PRIMARY KEY (doc_source, doc_id, repo, type, number),
+  FOREIGN KEY (doc_source, doc_id) REFERENCES docs(source, id) ON DELETE CASCADE,
+  FOREIGN KEY (repo, type, number) REFERENCES github_items(repo, type, number) ON DELETE CASCADE);
+
 CREATE VIRTUAL TABLE IF NOT EXISTS docs_fts USING fts5(
   title, body,
   content='docs', content_rowid='rowid');

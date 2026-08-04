@@ -25,6 +25,7 @@ def test_connection_configures_required_pragmas_and_full_schema(tmp_path):
             "github_items",
             "calendar_events",
             "docs",
+            "doc_github_refs",
             "docs_vec",
             "projects",
             "project_affinity",

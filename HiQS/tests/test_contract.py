@@ -29,9 +29,11 @@ def _fetched_unit(*, timeout):
 def _sql_writers(module, table: str) -> set[str]:
     tree = ast.parse(inspect.getsource(module))
     writers = set()
-    for function in (node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)):
+    for function in (
+        node for node in ast.walk(tree) if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+    ):
         for call in (node for node in ast.walk(function) if isinstance(node, ast.Call)):
-            for argument in call.args:
+            for argument in call.args + [keyword.value for keyword in call.keywords]:
                 if isinstance(argument, ast.Constant) and isinstance(argument.value, str):
                     if f"INSERT INTO {table}".upper() in argument.value.upper():
                         writers.add(function.name)
@@ -137,6 +139,12 @@ def test_projection_is_the_only_docs_table_writer():
     from hiqs import docs_index
 
     assert _sql_writers(docs_index, "docs") == {"project_docs"}
+
+
+def test_projection_is_the_only_github_reference_edge_writer():
+    from hiqs import docs_index
+
+    assert _sql_writers(docs_index, "doc_github_refs") == {"project_docs"}
 
 
 @pytest.mark.xfail(strict=True, reason="M3 owns ranking; this protects the fake-source path until then.")
