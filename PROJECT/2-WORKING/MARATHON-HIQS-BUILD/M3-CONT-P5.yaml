@@ -1,0 +1,32 @@
+# M3-CONT-P5.yaml — one phase, added after M3's four were already approved.
+#
+# Continuation file rather than an edit to M3-GITHUB.yaml, for the reason established across M2:
+# marathon.sh walks its plan from phase 1 every invocation with no memory of what passed, so an
+# approved phase left in the plan is re-opened and re-reviewed, and a reviewer re-sweeping settled
+# code reliably finds new things to request and burns the cap on finished work.
+#
+# WHY THIS PHASE EXISTS: github.py shipped fetch + candidates but no docs() provider, so GitHub
+# items reach the ranking and never the search index. The searchable corpus was the vault alone —
+# 63 files — while the operator's real questions are almost entirely about repos and issues.
+# Checkpoint A would have scored two embedding models on questions the index cannot answer and
+# retired torch on the result. Full reasoning in HIQS-PROJECT.md §6.5 / §6.6.
+#
+# THIS PHASE BLOCKS OPERATOR CHECKPOINT A. The retrieval eval is not meaningful until it lands.
+#
+# Reviewer is pinned agy, so this MUST run with --builder codex.
+#
+# Run:
+#   RELAY_WORKTREE_ISOLATION=0 .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-HIQS-BUILD/M3-CONT-P5.yaml \
+#     --builder codex \
+#     --pre-advance-cmd 'HiQS/.venv/bin/python -m pytest HiQS/tests -q'
+
+name: hiqs-m3-cont-p5
+phases:
+  - id: hiqs-m3-p5
+    name: "github.py docs() — issues and PRs into the search index"
+    reviewer: agy
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m3-p5-github-docs.md
+    artifact: HiQS/hiqs/sources/github.py,HiQS/tests/test_github.py,HiQS/tests/test_github_docs.py,HiQS/tests/test_search.py,HiQS/tests/test_docs_index.py
+    turn_timeout_s: 1800
+    max_review_rounds: 4

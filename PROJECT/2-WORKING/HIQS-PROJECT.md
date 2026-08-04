@@ -541,7 +541,7 @@ that needs no answer key at all. The gate now rests on it.
    - *"What did I work on yesterday from 9 AM to 11 AM?"*
    - *"What did we decide on with XYZ to phase out the Bash scripts on which GH
      issue?"*
-   - *"What tasks did I work on the Binoid repo project?"*
+   - *"What tasks did I work on the <client-project> repo project?"* (real name in the sidecar)
 2. Both models run every query. The runner emits the disagreement set.
 3. For each disagreeing query the operator sees **both result sets, unlabelled**,
    and picks better / worse / tie. Blind, so brand preference cannot leak in.
@@ -623,7 +623,7 @@ model against queries nobody asks.
 Each is stated as a shape, a gap, and where it lands. None is a v1 blocker except
 where marked.
 
-**Q3 — project affinity. `"What tasks did I work on the Binoid repo project?"`**
+**Q3 — project affinity. `"What tasks did I work on the <client-project> repo project?"`**
 
 The gap, in the operator's words: *"repo queries need affinity repos (same
 client/related projects) so a broad question can cast a wider net if an operator
@@ -706,6 +706,82 @@ orders what it found. None of it detects a question the system cannot reach an
 answer to at all. §6.3's gates therefore report **coverage by query shape**
 alongside recall, so a shape scoring zero is visible as a missing capability rather
 than averaged away as a weak model.
+
+### 6.5 What the operator actually asks — and the corpus that cannot answer it (2026-08-03)
+
+Rather than have the operator hand-write 60–75 queries, a subagent **mined questions he had
+already really asked** from his own Claude Code transcripts, GitHub issue titles, and git log —
+sources independent of the index under test. **The vault was deliberately excluded from the
+mining**: a query derived from indexed text is written to match that text and biases the
+evaluation it is meant to score. 22 questions were recovered with verbatim traces, from ~100 JSONL
+files across 15 project directories. The raw list, with query text and client names, lives in the
+gitignored sidecar (§19.2) — **only findings appear here, because this document is extracted to a
+public repo at Phase 6.**
+
+**The five recurring shapes, in frequency order:**
+
+1. **"What's next / what's left?"** — by a wide margin the most common, asked in nearly every
+   project, usually immediately after approving a merge.
+2. **"Did we already do or record X?"** — verification against his own past artifacts. Was that
+   already in the doc, did the files get written, did that issue get finished, is that rule still
+   enforced.
+3. **"Where does this thing live?"** — which repo owns a change, where a decision record is
+   stored, where a registry file is.
+4. **"What happened over this window?"** — resuming cold and wanting replayable history.
+5. **"Why was it built this way?"** — design-rationale archaeology, where the answer should exist
+   in a past decision record.
+
+**Finding 1 — the dominant question is a RANKING query, not a retrieval one.** *"What's next?"*
+is not answered by finding a document; it is answered by ordering obligations. The most frequent
+thing the operator asks is the thing §7 does, not the thing §6 does. This does not diminish
+retrieval, but it does mean **§7.1's ranking gate matters more to daily use than §6.3's retrieval
+gate**, and the plan had them the other way round in emphasis.
+
+**Finding 2 — theme 2 is this project's own thesis, independently reproduced.** "Did we already do
+X?" is distrust of silent state drift, arrived at from the operator's behaviour rather than from
+anyone's argument. Cluster A is not a theory about software here; it is a description of what he
+spends his time defending against.
+
+**Finding 3 (blocking, and the reason Checkpoint A was held) — the questions and the corpus do not
+overlap.** Nearly every mined question is about repos, issues, commits, branches, and project
+files. The searchable corpus was **the vault alone, 63 markdown files**: `github.py` shipped
+`fetch` and `candidates` but **no `docs` provider**, so GitHub items reached the ranking and never
+the search index.
+
+Running Checkpoint A in that state would have scored both embedding models on questions whose
+answers were **not in the index at all**. Both would score near zero, the vector-leg gate would
+read *"vectors do not justify torch"*, and a permanent dependency decision would rest on a corpus
+that could not answer the queries. That is cluster B exactly — trusting the measurement instead of
+the thing measured — arriving inside the instrument built to prevent it.
+
+**This was a plan gap, not a build defect.** `docs` is optional in the §5 contract, Phase 2's
+checklist only ever required `candidates()`, and no section said GitHub should be searchable. M3
+built precisely what was specified. What nobody noticed was that the product's centre of gravity
+had moved to GitHub while the eval still pointed at the vault. **§6.6 closes it.**
+
+The general lesson, which outlives this instance: **a corpus specified before the questions are
+known is a guess.** The queries should have been mined first; they cost 105 seconds of agent time
+and they moved a dependency decision, a phase boundary, and the emphasis between two gates.
+
+### 6.6 GitHub as a searchable source (added 2026-08-03, precedes Checkpoint A)
+
+`github.py` gains a `docs()` provider so issues and pull requests are retrievable, not merely
+rankable.
+
+- **What projects:** issue and PR **title + body**, one `Doc` per item.
+  `id` is `github:<owner>/<repo>#<number>`, `unit` is the repo, `ts` is `activity_at` (never
+  `updated_at` — L20), `author` and `url` carry their real values.
+- **Reconciliation is unchanged.** The unit is the repo; pruning is authorised only by
+  `SyncReport.units_ok`, exactly as vault. A repo whose fetch failed keeps every row. No new
+  deletion path, no exception to §5 rule 2.
+- **Chunking:** an item is one document. GitHub bodies are short relative to notes, and the
+  2-chunk-per-document cap after RRF already prevents one long thread flooding the top-10.
+- **Closed items stay indexed.** Half the mined questions are archaeology — *did we finish that,
+  why was it built that way* — and excluding closed items would delete precisely the answers.
+  `state` is carried on the row so the ranker can discount them without retrieval losing them.
+- **Corpus effect:** the searchable set goes from 63 documents to the vault plus every indexed
+  issue and PR. §6.3's n was set against an unknown corpus size and should be reconsidered once
+  the real figure is known (§6.3, amended).
 
 ## 7. AI-native seams (one signature, one implementation today)
 
@@ -1500,7 +1576,7 @@ tree.
 
 **A live instance, 2026-08-03 — the gate earned its keep within hours of being
 written.** M3 p3's disclosure guard was implemented as
-`assert "binoid" not in source`: a real project name, asserted inline, in a test
+`assert "<a real client project name>" not in source`: the name spelled out inline, in a test
 file bound for the public repo. **The guard was the leak.** It was also weak —
 one hardcoded string is not a check on client names generally, it is a check on
 one string.
@@ -1524,6 +1600,25 @@ The general lesson, which is not about this one string: **a guard written inline
 becomes a carrier for what it guards.** Anything that must not appear in the
 public repo cannot be named in the public repo, including by the test asserting
 its absence.
+
+**Then it happened twice more, in this document, within the hour.** Writing up
+the affinity requirement (§6.4) and the incident above put the same client
+project name into **this plan doc — four times**, including inside the paragraph
+warning about it. **This document is extracted at Phase 6 too**, so it is in
+scope for exactly the gate it describes. All four are now redacted to
+`<client-project>`, with real text in the sidecar.
+
+Three instances in one day, all by the same author, one of them inside the
+warning itself. That frequency is the actual finding: **this is not a lapse of
+attention, it is the default outcome of writing about private data at all.**
+Naming the thing is the path of least resistance in every sentence, so the
+control cannot be care. It has to be mechanical:
+
+- **Every artifact that is extracted is in scope** — code, tests, *and the
+  planning docs*. The Phase 6 scan covers this file, not just `HiQS/**`.
+- **A private value is referenced by placeholder, never spelled**, even in prose,
+  even in a commit message, even when explaining why it must not be spelled.
+- The gitignored sidecar is the only place a real name is written down.
 
 This gate is why Phase 6 exists as a phase. It is discovered by *tracing the
 path*, exactly like the OAuth hole r2 found — and like that one, it is invisible
@@ -1909,7 +2004,7 @@ Binary and observable; all must pass before Phase 1 starts.
 
 ### QA gate — Phase 2
 
-- [ ] **A broad query beats a narrow one on coverage (§6.4, Q3).** The operator's seed question — *"What tasks did I work on the Binoid repo project?"* — returns work from sibling repos in the same org, not only the exactly-named one. Recorded as a coverage figure, because a recall failure here presents as "not much happened" and is trusted as content (cluster B).
+- [ ] **A broad query beats a narrow one on coverage (§6.4, Q3).** The operator's seed question — *"What tasks did I work on the <client-project> repo project?"*, real name in the sidecar — returns work from sibling repos in the same org, not only the exactly-named one. Recorded as a coverage figure, because a recall failure here presents as "not much happened" and is trusted as content (cluster B).
 - [ ] **Zero core edits.** Adding GitHub touched only `sources/github.py` and one entry-point line. Any file changed under `HiQS/hiqs/*.py` to make GitHub work is a plugin-contract defect (L2), fixed in the contract rather than absorbed here.
 - [ ] **Attestation is total.** Every emitted `Candidate` carries a non-empty `source`, `evidence`, and `why`. A bare candidate fails the test — receipts are the product, not decoration.
 - [ ] **Idempotence.** Two consecutive `refresh` runs over an unchanged window produce zero inserts and zero updates; `SyncReport.counts` distinguishes inserted / updated / unchanged / skipped / rejected. Never auto-delete (L15).
@@ -2019,7 +2114,7 @@ Not gated on Phase 5, which is on-demand-only and may never run.
 ### QA gate — Phase 6
 
 - [ ] **It stands alone, proven by doing it.** Clone `HiQS-Suite/HiQS` to a fresh directory on a machine that has never held rebalance-OS: `pip install -e .`, run the suite, run `hiqs status`. All three succeed with no reference back. A "should work" here is worth nothing — the failure mode of an extraction is a dependency nobody noticed, and the only detector is a clean clone.
-- [ ] **Nothing private in the history (blocking).** The scan above is clean across every commit `subtree split` carried, not just the tip. **Known instance to expect:** a project name was committed inline in M3 p3's disclosure test on 2026-08-03 and fixed at the tip only, so history still carries it — remedy is a rewrite of the extracted subtree before the first public push, not a follow-up commit (§19.2). History is the part that cannot be fixed with a follow-up commit — and this repo's own L11 is what a leaked absolute path costs.
+- [ ] **Nothing private in the history (blocking).** The scan above is clean across every commit `subtree split` carried, not just the tip. **Known instances to expect (three, 2026-08-03):** a client project name committed inline in M3 p3's disclosure test, and the same name in this plan doc four times including inside the §19.2 warning about it. All fixed at the tip only, so history still carries them — and the scan must cover `PROJECT/**`, not only `HiQS/**`, since this doc is extracted too — remedy is a rewrite of the extracted subtree before the first public push, not a follow-up commit (§19.2). History is the part that cannot be fixed with a follow-up commit — and this repo's own L11 is what a leaked absolute path costs.
 - [ ] **The frozen sets are still frozen.** Post-extraction, `eval_retrieval.py` and `eval_ranking.py` reproduce the same figures from the opaque ids plus the local sidecar. If the anonymization changed a score, the anonymization is wrong; a frozen answer key that moves is not frozen.
 - [ ] **History preserved.** `git log` in the new repo shows the real commit history for `HiQS/**`, not one squashed import. The provenance is the point — this plan's whole method is traceability.
 - [ ] **No orphaned pointer.** `ROADMAP.md` and this doc's `3-COMPLETED` copy both point at the new repo; the new repo points back at the archived original. Neither side is a dead end.
