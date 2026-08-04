@@ -125,3 +125,7 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
    codex, take your turn" when requesting changes, or "relay closed, no further turn needed" when
    approving. The beta report singled this out: the Reviewer turn did not tell the user to go back to the
    Producer, so the relay looked stalled when it was simply waiting. Do this EVERY round.
+
+### Round 1 · Builder · codex
+
+Implemented `github.docs()` and registered it on `SOURCE`. Each persisted item becomes one document keyed as `github:<repo>#<number>`, with the repo as both unit/project and `activity_at` as its timestamp; no raw-table deletion or projection changes were made. Added focused coverage for closed-item retrieval alongside vault docs, idempotent re-projection, attested-repo-only reconciliation, and label-only timestamp stability. The exercised fixture corpus is 3 documents (2 GitHub, 1 vault).

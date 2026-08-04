@@ -17,7 +17,7 @@ except ImportError:  # pragma: no cover - covered by Windows packaging, not CI h
 
 from hiqs import config as hiqs_config
 from hiqs.events import log_event
-from hiqs.plugins import Candidate, Source, SyncReport
+from hiqs.plugins import Candidate, Doc, Source, SyncReport
 
 
 NETWORK_TIMEOUT_SECONDS = 15
@@ -215,6 +215,31 @@ def candidates(connection: Any, _config: Mapping[str, Any]) -> Iterable[Candidat
     return [_candidate_from_row(row) for row in rows]
 
 
+def docs(connection: Any) -> Iterable[Doc]:
+    """Expose each persisted GitHub issue or pull request as one searchable document."""
+    rows = connection.execute(
+        """
+        SELECT repo, number, title, body, url, activity_at, author
+        FROM github_items
+        ORDER BY repo, number
+        """
+    ).fetchall()
+    return [
+        Doc(
+            source="github",
+            id=f"github:{repo}#{number}",
+            title=title,
+            body=body,
+            url=url,
+            ts=activity_at,
+            project=repo,
+            author=author,
+            unit=repo,
+        )
+        for repo, number, title, body, url, activity_at, author in rows
+    ]
+
+
 def _candidate_from_row(row: tuple[str, int, str, str, str, str, str, str, str]) -> Candidate:
     """Build a hand-verifiable candidate receipt from one persisted GitHub item."""
     item_type, number, title, url, author, assignee, activity_at, requested_reviewer, due = row
@@ -299,4 +324,4 @@ def fetch(connection: Any, config: Mapping[str, Any]) -> SyncReport:
     return SyncReport(counts=counts, errors=errors, meta=meta, units_ok=tuple(units_ok))
 
 
-SOURCE = Source(name="github", fetch=fetch, candidates=candidates)
+SOURCE = Source(name="github", fetch=fetch, docs=docs, candidates=candidates)

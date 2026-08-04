@@ -50,7 +50,7 @@ def _stubbed_urlopen(payloads):
 
 
 def test_github_fetch_idempotence_activity_time_and_watermark(tmp_path, monkeypatch):
-    """A label-only source update changes the watermark but not ranker-facing activity time."""
+    """A label-only source update changes the watermark but not ranker- or docs-facing activity time."""
     conn = db_connection(tmp_path / "hiqs.db")
     monkeypatch.setattr(github.hiqs_config, "secret", lambda _name: None)
     monkeypatch.setattr(github, "log_event", lambda *_args: None)
@@ -76,6 +76,7 @@ def test_github_fetch_idempotence_activity_time_and_watermark(tmp_path, monkeypa
         labelled = github.SOURCE.fetch(conn, config)
         assert labelled.counts["updated"] == 1
         assert conn.execute("SELECT activity_at FROM github_items").fetchone()[0] == "2026-08-01T09:00:00Z"
+        assert list(github.docs(conn))[0].ts == "2026-08-01T09:00:00Z"
     finally:
         conn.close()
 
