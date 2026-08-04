@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m3-p3
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M3-P3-TURN builder=codex reviewer=agy round-cap=9 -->
@@ -117,7 +117,7 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
    - /Users/noelsaw/Documents/GitHub-Repos/rebalance-OS/.xyz/bin/tick release MARATHON-HIQS-M3-P3-TURN --agent codex --to agy
 4. Edit ONLY these paths: phases/hiqs-m3-github--hiqs-m3-p3/RELAY.md and HiQS/hiqs/affinity.py,HiQS/hiqs/db.py,HiQS/hiqs/search.py,HiQS/tests/test_affinity.py,HiQS/tests/test_search.py,HiQS/tests/test_db.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 5. HAND OFF EXPLICITLY (GH-268): after releasing the token, end your turn by naming who acts next —
-   "handing off to agy — agy, take your turn." A turn that ends without that line
+   "handing off to codex — codex, take your turn." A turn that ends without that line
    leaves a human guessing whether the relay is waiting on them or has stalled. Do this EVERY round,
    not just the first.
 
@@ -146,3 +146,20 @@ Implemented the HiQS affinity seam in the permitted files only.
 - Added schema, derivation, attestation, disabling, query-time, and precise-search parity coverage.
 
 Verification: `PYTHONPATH=HiQS python -m pytest HiQS/tests/test_affinity.py HiQS/tests/test_search.py HiQS/tests/test_db.py -q` → 17 passed.
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+Reviewed all touched files (`HiQS/hiqs/affinity.py`, `HiQS/hiqs/db.py`, `HiQS/hiqs/search.py`, `HiQS/tests/test_affinity.py`, `HiQS/tests/test_search.py`, `HiQS/tests/test_db.py`) in full. Pre-existing code and new changes were swept; no critical, high, or blocking defects found.
+
+Key checks passed:
+- `project_affinity` schema and constraints in `db.py` enforce `project_a < project_b` and edge types.
+- Local edge derivation in `affinity.py` handles `same_org` and `name_token` edges with canonical pairs, excluding generic/short tokens.
+- Query-time `issue_title` edges function correctly without mutating persisted schema.
+- `append_affinity_hits` strictly appends sibling-project hits after hybrid fusion, per-document capping, and reranking, preserving direct hit ordering and byte-identical results when affinity is on or off.
+- `AffinityDoc` attests each widened hit with its `affinity_edge`.
+- No operator-specific literals exist in `affinity.py`.
+- Unit tests (`17 passed in 0.16s`) verify schema integrity, affinity derivation, query-time edge computation, fallback behavior, and search parity.
+
+**Verdict:** Approved
