@@ -1498,6 +1498,33 @@ tree.
   that `subtree split` will carry — not just the tip. History is the part people
   forget, and it is the part that cannot be fixed with a follow-up commit.
 
+**A live instance, 2026-08-03 — the gate earned its keep within hours of being
+written.** M3 p3's disclosure guard was implemented as
+`assert "binoid" not in source`: a real project name, asserted inline, in a test
+file bound for the public repo. **The guard was the leak.** It was also weak —
+one hardcoded string is not a check on client names generally, it is a check on
+one string.
+
+Two consequences, and the second is the one that matters:
+
+- *Fixed at the tip.* The forbidden list moved to `HiQS/tests/private_names.txt`,
+  gitignored, matching the split this section already mandates for the eval sets.
+  The test reads it and **skips with a loud `unknown`** when it is absent rather
+  than passing silently — the same rule the eval runner follows, for the same
+  reason. Verified by planting a name and confirming the guard fires.
+- *Not fixed in history.* The name is in a commit reachable from this branch.
+  Removing it from the tip does not remove it from what `subtree split` carries,
+  which is exactly what the paragraph above warns about. **The Phase 6 scan must
+  therefore be run against full history and is expected to flag this commit**, and
+  the remedy at that point is a history rewrite of the extracted subtree before
+  the first public push, not a follow-up commit. Recorded here so Phase 6 finds a
+  known instance rather than a surprise.
+
+The general lesson, which is not about this one string: **a guard written inline
+becomes a carrier for what it guards.** Anything that must not appear in the
+public repo cannot be named in the public repo, including by the test asserting
+its absence.
+
 This gate is why Phase 6 exists as a phase. It is discovered by *tracing the
 path*, exactly like the OAuth hole r2 found — and like that one, it is invisible
 if you only read the sections separately.
@@ -1876,7 +1903,7 @@ Binary and observable; all must pass before Phase 1 starts.
 - [ ] Peak RSS and API call counts recorded in `SyncReport.meta`
 - [ ] **`project_affinity` populated (§6.4, §9).** Sibling edges derived at runtime from data: `same_org` from the owner already on every row, `name_token` over a generic stoplist, `issue_title` from query-term hits across sibling repos. Each row records its `edge`.
 - [ ] **Affinity widens, never narrows.** Siblings are appended *below* direct hits and labelled with the edge that pulled them in; a precise query returns byte-identical results to affinity-off. Pinned by a test.
-- [ ] **No client or project literal in code.** A test greps the affinity module for the operator's known client and project names and fails on a hit — §19.2's disclosure gate enforced at the source, not at extraction. (The incumbent's `_owner_group_key` hardcodes a client vertical in a regex; that is the defect being avoided, not copied.)
+- [x] **No client or project literal in code.** A test greps the affinity module against a **gitignored** name list (`HiQS/tests/private_names.txt`) and fails on a hit, skipping with a loud `unknown` when the sidecar is absent — never a silent pass. The list is gitignored because the first implementation asserted a real project name inline and *became* the leak (§19.2, live instance 2026-08-03). Verified by planting a name and confirming the guard fires. (The incumbent's `_owner_group_key` hardcodes a client vertical in a regex; that is the defect being avoided, not copied.)
 - [ ] **Reference linking (§6.4, Q2).** The projection records GitHub numbers/URLs literally present in a note's text as an edge — a receipt in a field, not a query-time re-derivation (D5). Literal matches only; inferring an unstated link is not v1.
 - [ ] Exit: GitHub candidates appear attested in a dry ranking; contract test still green
 
@@ -1992,7 +2019,7 @@ Not gated on Phase 5, which is on-demand-only and may never run.
 ### QA gate — Phase 6
 
 - [ ] **It stands alone, proven by doing it.** Clone `HiQS-Suite/HiQS` to a fresh directory on a machine that has never held rebalance-OS: `pip install -e .`, run the suite, run `hiqs status`. All three succeed with no reference back. A "should work" here is worth nothing — the failure mode of an extraction is a dependency nobody noticed, and the only detector is a clean clone.
-- [ ] **Nothing private in the history (blocking).** The scan above is clean across every commit `subtree split` carried, not just the tip. History is the part that cannot be fixed with a follow-up commit — and this repo's own L11 is what a leaked absolute path costs.
+- [ ] **Nothing private in the history (blocking).** The scan above is clean across every commit `subtree split` carried, not just the tip. **Known instance to expect:** a project name was committed inline in M3 p3's disclosure test on 2026-08-03 and fixed at the tip only, so history still carries it — remedy is a rewrite of the extracted subtree before the first public push, not a follow-up commit (§19.2). History is the part that cannot be fixed with a follow-up commit — and this repo's own L11 is what a leaked absolute path costs.
 - [ ] **The frozen sets are still frozen.** Post-extraction, `eval_retrieval.py` and `eval_ranking.py` reproduce the same figures from the opaque ids plus the local sidecar. If the anonymization changed a score, the anonymization is wrong; a frozen answer key that moves is not frozen.
 - [ ] **History preserved.** `git log` in the new repo shows the real commit history for `HiQS/**`, not one squashed import. The provenance is the point — this plan's whole method is traceability.
 - [ ] **No orphaned pointer.** `ROADMAP.md` and this doc's `3-COMPLETED` copy both point at the new repo; the new repo points back at the archived original. Neither side is a dead end.

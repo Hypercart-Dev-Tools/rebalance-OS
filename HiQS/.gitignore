@@ -2,3 +2,6 @@
 __pycache__/
 *.egg-info/
 .pytest_cache/
+
+# §19.2 — private name list for the disclosure guard; never committed, never extracted
+tests/private_names.txt

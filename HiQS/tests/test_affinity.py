@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import inspect
 import json
+import pathlib
 
+import pytest
+
+from hiqs import affinity
 from hiqs.affinity import AffinityDoc, append_affinity_hits, rebuild_project_affinity
 from hiqs.db import db_connection
 from hiqs.plugins import Doc
@@ -104,5 +108,29 @@ def test_issue_title_edge_is_query_time_only(tmp_path):
 
 
 def test_affinity_module_has_no_operator_specific_literals():
-    source = inspect.getsource(__import__("hiqs.affinity", fromlist=["*"])).casefold()
-    assert "binoid" not in source
+    """Guard §19.2 without becoming the leak it guards.
+
+    The first version of this test asserted one client name inline — which put that
+    name in a file destined for a public repo, and pinned the check to a single
+    string. The forbidden list therefore lives in a gitignored sidecar, the same
+    split §19.2 already mandates for the eval sets. Absent sidecar reports a loud
+    skip, never a silent pass: the blocking full-history scan at Phase 6 is the
+    backstop, not this test.
+    """
+    sidecar = pathlib.Path(__file__).with_name("private_names.txt")
+    if not sidecar.exists():
+        pytest.skip(
+            f"UNKNOWN, not pass: {sidecar.name} absent, so no name check ran. "
+            "Create it (one lowercase name per line, gitignored) to enforce locally; "
+            "the Phase 6 pre-extraction history scan remains the blocking gate."
+        )
+
+    forbidden = [
+        line.strip().casefold()
+        for line in sidecar.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.startswith("#")
+    ]
+    assert forbidden, f"{sidecar.name} exists but lists no names — an empty guard is not a guard"
+
+    source = inspect.getsource(affinity).casefold()
+    assert [name for name in forbidden if name in source] == []
