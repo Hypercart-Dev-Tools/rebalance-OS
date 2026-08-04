@@ -1,6 +1,7 @@
 # Marathon Phase hiqs-m3-p5
-STATUS: Open
-NEXT: codex
+STATUS: Approved
+NEXT: agy
+
 
 <!-- marathon-drive: task=MARATHON-HIQS-M3-P5-TURN builder=codex reviewer=agy round-cap=9 -->
 
@@ -129,3 +130,19 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 ### Round 1 · Builder · codex
 
 Implemented `github.docs()` and registered it on `SOURCE`. Each persisted item becomes one document keyed as `github:<repo>#<number>`, with the repo as both unit/project and `activity_at` as its timestamp; no raw-table deletion or projection changes were made. Added focused coverage for closed-item retrieval alongside vault docs, idempotent re-projection, attested-repo-only reconciliation, and label-only timestamp stability. The exercised fixture corpus is 3 documents (2 GitHub, 1 vault).
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+Reviewed all changes and pre-existing code in `HiQS/hiqs/sources/github.py`, `HiQS/tests/test_github.py`, `HiQS/tests/test_github_docs.py`, `HiQS/tests/test_search.py`, and `HiQS/tests/test_docs_index.py`.
+
+- `github.docs()` correctly returns `Doc` instances for persisted GitHub issues and PRs with key format `github:<repo>#<number>`, repo as `unit` and `project`, and `activity_at` (never `updated_at`) as `ts`.
+- `SOURCE` is properly registered with `docs=docs`.
+- Closed items remain retrievable in search results alongside vault docs.
+- Idempotency and reconciliation contracts hold: unchanged projections make zero embed calls, and reconciliation prunes only attested units.
+- Single-writer invariant on `docs` table verified via AST test.
+- All 40 tests across touched test files pass cleanly.
+
+**Verdict:** Approved
+
