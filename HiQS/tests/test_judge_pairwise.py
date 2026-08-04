@@ -6,7 +6,36 @@ import json
 
 import pytest
 
-from judge_pairwise import blind_order, disagreements, load_queries, win_rate
+from hiqs.db import db_connection
+from judge_pairwise import (
+    blind_order,
+    disagreements,
+    load_queries,
+    truncation_gate,
+    win_rate,
+)
+
+
+class _Tokenizer:
+    def encode(self, text, add_special_tokens=True):
+        return text.split()
+
+
+class _Embedder:
+    tokenizer = _Tokenizer()
+    max_seq_length = 5
+
+
+def _corpus(tmp_path, bodies):
+    connection = db_connection(tmp_path / "hiqs.db")
+    for index, body in enumerate(bodies):
+        connection.execute(
+            "INSERT INTO docs (source, id, title, body, url, ts, project, author) "
+            "VALUES ('vault', ?, '', ?, '', '', '', '')",
+            (f"d{index}", body),
+        )
+    connection.commit()
+    return connection
 
 
 def _write(tmp_path, committed, sidecar):
@@ -67,6 +96,43 @@ def test_a_clear_margin_names_a_winner():
     result = win_rate(judgments, "mini", "qwen")
     assert result["winner"] == "qwen"
     assert result["decisive"] is True
+
+
+def test_the_truncation_gate_fails_a_corpus_the_model_cannot_read(tmp_path):
+    connection = _corpus(tmp_path, ["a b c"] * 5 + ["w " * 40] * 5)
+    try:
+        result = truncation_gate(connection, _Embedder())
+        assert result["passed"] is False
+        assert result["rate"] == 0.5
+    finally:
+        connection.close()
+
+
+def test_the_truncation_gate_passes_a_corpus_within_the_window(tmp_path):
+    connection = _corpus(tmp_path, ["a b c"] * 20)
+    try:
+        assert truncation_gate(connection, _Embedder())["passed"] is True
+    finally:
+        connection.close()
+
+
+def test_an_unmeasurable_gate_is_an_error_not_a_pass(tmp_path):
+    """A gate that cannot run must never report the same thing as a gate that passed."""
+    connection = _corpus(tmp_path, ["a b c"])
+    try:
+        with pytest.raises(TypeError, match="truncation gate"):
+            truncation_gate(connection, object())
+    finally:
+        connection.close()
+
+
+def test_an_empty_corpus_does_not_vacuously_pass_the_gate(tmp_path):
+    connection = _corpus(tmp_path, [])
+    try:
+        with pytest.raises(ValueError, match="empty corpus"):
+            truncation_gate(connection, _Embedder())
+    finally:
+        connection.close()
 
 
 def test_ties_count_toward_volume_but_never_toward_a_win():

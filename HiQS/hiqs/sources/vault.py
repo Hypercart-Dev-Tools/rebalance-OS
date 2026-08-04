@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 from typing import Any
 
+from hiqs.chunking import split_oversized
 from hiqs.plugins import Doc, Source, SyncReport
 
 # Exclusion patterns for generated/system files and directories (L5)
@@ -255,8 +256,14 @@ def _chunk_markdown_content(content: str, rel_path: str) -> list[Doc]:
             if not clean_body:
                 continue
 
-        processed_chunks.append((heading, body))
-        heading_counts[heading] += 1
+        # A heading section is not bounded by anything — the largest one in this vault ran to
+        # 6893 word-pieces against MiniLM's 256-token window, so 36% of the corpus was being
+        # embedded from its opening lines only. Cap it here; ids stay content-derived because
+        # the hash below is taken over the part, so parts get distinct ids for free and the
+        # existing duplicate counter still resolves genuine collisions.
+        for part in split_oversized(body):
+            processed_chunks.append((heading, part))
+            heading_counts[heading] += 1
 
     result: list[Doc] = []
     duplicate_occurrences: dict[tuple[str | None, str], int] = {}

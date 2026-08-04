@@ -16,6 +16,7 @@ except ImportError:  # pragma: no cover - covered by Windows packaging, not CI h
     resource = None  # type: ignore[assignment]
 
 from hiqs import config as hiqs_config
+from hiqs.chunking import split_oversized
 from hiqs.events import log_event
 from hiqs.plugins import Candidate, Doc, Source, SyncReport
 
@@ -216,7 +217,13 @@ def candidates(connection: Any, _config: Mapping[str, Any]) -> Iterable[Candidat
 
 
 def docs(connection: Any) -> Iterable[Doc]:
-    """Expose each persisted GitHub issue or pull request as one searchable document."""
+    """Expose each persisted GitHub issue or pull request as searchable documents.
+
+    An issue body is unbounded, and this provider used to emit each one whole: only 11.7% of
+    GitHub documents fit MiniLM's 256-token window, so the overwhelming majority were indexed
+    from their first paragraph and the discussion below it — where decisions actually get made
+    — was never embedded. Long bodies are split under the shared cap (§6.3).
+    """
     rows = connection.execute(
         """
         SELECT repo, number, title, body, url, activity_at, author
@@ -224,20 +231,29 @@ def docs(connection: Any) -> Iterable[Doc]:
         ORDER BY repo, number
         """
     ).fetchall()
-    return [
-        Doc(
-            source="github",
-            id=f"github:{repo}#{number}",
-            title=title,
-            body=body,
-            url=url,
-            ts=activity_at,
-            project=repo,
-            author=author,
-            unit=repo,
-        )
-        for repo, number, title, body, url, activity_at, author in rows
-    ]
+    documents: list[Doc] = []
+    for repo, number, title, body, url, activity_at, author in rows:
+        parts = split_oversized(body)
+        for index, part in enumerate(parts, start=1):
+            # An item that fits keeps its bare id, so the common case is unchanged and the
+            # §6.1 id contract still holds for it. Only a split item takes a part suffix.
+            doc_id = f"github:{repo}#{number}"
+            if len(parts) > 1:
+                doc_id = f"{doc_id}:{index}"
+            documents.append(
+                Doc(
+                    source="github",
+                    id=doc_id,
+                    title=title,
+                    body=part,
+                    url=url,
+                    ts=activity_at,
+                    project=repo,
+                    author=author,
+                    unit=repo,
+                )
+            )
+    return documents
 
 
 def _candidate_from_row(row: tuple[str, int, str, str, str, str, str, str, str]) -> Candidate:

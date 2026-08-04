@@ -6,6 +6,34 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.4] - 2026-08-04
+
+### Fixed
+- **HiQS: the §6.3 truncation gate was run for the first time and failed at 64.0%
+  against a ≥95% bar — MiniLM had been silently discarding the tail of a third of
+  every indexed document for the entire life of the index, with 139 tests green and
+  `docs_vec` full.** The same unbounded chunk is why Qwen3-Embedding-0.6B OOM'd twice
+  (14.32 GiB, 16.61 GiB): its context is 32768, so it truncated nothing and ran
+  attention over a 6893-token sequence. The two models were never seeing the same
+  input, so the Checkpoint A comparison was invalid before it was run. A shared chunk
+  cap now lives in `HiQS/hiqs/chunking.py` — at the seam every source shares, not in
+  `vault.py` as the plan's remedy said, because measured per source vault was 77.5%
+  and **github 11.7%** (it emitted whole issue bodies as one document), so a
+  vault-only cap would have left the corpus at ~78% while looking fixed. The 600-char
+  value was chosen by running the real gate over the real corpus for each candidate
+  (700 → 93.2% FAIL, 600 → 98.2% PASS, 500 → 99.8%), not derived — the measured
+  chars/token ratio spans 1.69–4.06. Corpus re-indexed: **6,044 chunks, 98.2% fit,
+  max 350 tokens**, and Qwen3 peak RSS fell from >14 GiB to 2.16 GiB. The gate is now
+  executable (`tests/judge_pairwise.truncation_gate`) and runs before scoring; an
+  unmeasurable gate or an empty corpus raises rather than passing.
+- **HiQS: `hiqs refresh` exited 0 while every configured GitHub repo failed to
+  fetch.** `github.fetch` collects per-repo failures into `SyncReport.errors` instead
+  of raising, so the walk's exception handler never saw them and the summary printed
+  `errors: {}` — a launchd job could not have distinguished that run from a clean
+  one. `refresh` now reports `source_errors` and exits non-zero on them. The §5 rule 2
+  reconciliation was correct throughout: with no repo attested it pruned nothing and
+  330 stale rows survived by design, which is how the exit-code bug became visible.
+
 ## [0.68.3] - 2026-08-03
 
 ### Added

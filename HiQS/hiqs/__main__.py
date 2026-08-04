@@ -118,10 +118,20 @@ def refresh(
             {"counts": projection.counts},
         )
 
+        # A source can fail without raising: github's fetch collects per-repo errors and
+        # returns them in the report. That happened on a real run where all seven repos
+        # failed and `refresh` still printed errors:{} and exited 0 — indistinguishable
+        # from success to a scheduled job, which is the failure mode this project exists to
+        # kill. Report-level errors are surfaced and counted the same as an exception.
+        source_errors = {
+            name: list(report.errors) for name, report in reports.items() if report.errors
+        }
+
         summary = {
             "sources": {name: report.counts for name, report in reports.items()},
             "projection": projection.counts,
             "errors": errors,
+            "source_errors": source_errors,
             "unknown_sources": missing,
         }
         if missing:
@@ -150,7 +160,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(json.dumps(summary, indent=2, sort_keys=True))
         # Non-zero when any source failed or was misnamed. A walk that silently half-ran
         # and exited 0 is indistinguishable from success to a scheduled job (L6, L19).
-        return 1 if summary["errors"] or summary["unknown_sources"] else 0
+        # source_errors counts here too: a source that reported failures without raising
+        # is still a failed walk.
+        failed = (
+            summary["errors"] or summary["source_errors"] or summary["unknown_sources"]
+        )
+        return 1 if failed else 0
 
     if arguments.command == "search":
         from .search import search as run_search

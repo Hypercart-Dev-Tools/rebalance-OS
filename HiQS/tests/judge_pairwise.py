@@ -30,6 +30,47 @@ from hiqs.db import db_connection  # noqa: E402
 from hiqs.search import search  # noqa: E402
 
 TOP_N = 5
+TRUNCATION_GATE_MINIMUM = 0.95
+
+
+def truncation_gate(connection, embedder: Any) -> dict[str, Any]:
+    """Refuse to score a corpus the shipped model cannot actually read (§6.3).
+
+    §6.3 requires that ≥95% of chunks fit the shipped model's context, and this check existed
+    only as a sentence in the plan until the corpus was measured at 64.0%. Below the gate the
+    comparison is not merely weak, it is invalid: MiniLM truncates at 256 word-pieces while
+    Qwen3-Embedding-0.6B truncates at 32768, so the two models are not being shown the same
+    input and any winner is an artefact of who got to read more.
+
+    Returns the measurement rather than raising, so the caller reports a number; ``passed`` is
+    the thing to branch on and it is deliberately not a soft warning.
+    """
+    tokenizer = getattr(embedder, "tokenizer", None)
+    limit = getattr(embedder, "max_seq_length", None)
+    if tokenizer is None or not limit:
+        raise TypeError(
+            f"Cannot run the truncation gate against {type(embedder).__name__}: no tokenizer "
+            "or max_seq_length. An unmeasurable gate must not be reported as a passing one."
+        )
+
+    rows = connection.execute("SELECT title, body FROM docs").fetchall()
+    if not rows:
+        raise ValueError("Refusing to gate an empty corpus: nothing has been indexed.")
+
+    lengths = sorted(
+        len(tokenizer.encode(f"{title}\n{body}" if title else body, add_special_tokens=True))
+        for title, body in rows
+    )
+    fitting = sum(1 for length in lengths if length <= limit)
+    rate = fitting / len(lengths)
+    return {
+        "chunks": len(lengths),
+        "fitting": fitting,
+        "rate": rate,
+        "limit": limit,
+        "max_tokens": lengths[-1],
+        "passed": rate >= TRUNCATION_GATE_MINIMUM,
+    }
 
 
 def load_queries(committed: str | Path, sidecar: str | Path) -> list[dict[str, Any]]:

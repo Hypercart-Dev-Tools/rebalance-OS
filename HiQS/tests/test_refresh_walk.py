@@ -108,6 +108,26 @@ def test_a_failed_walk_is_reported_not_swallowed(wired, monkeypatch):
     assert statuses == ["error"]
 
 
+def test_a_source_that_reports_errors_without_raising_is_still_a_failed_walk(wired, monkeypatch):
+    """Observed live: all seven GitHub repos failed, and refresh printed errors:{} and exited 0.
+
+    github's fetch catches per-repo failures and returns them in SyncReport.errors rather than
+    raising, so the exception handler above never saw them. A scheduled job reading the exit
+    code could not tell that run from a clean one.
+    """
+    partial = Source(
+        name="github",
+        fetch=lambda conn, cfg: SyncReport(counts={}, errors=["repo a: 403", "repo b: 403"]),
+        docs=lambda conn: [],
+    )
+    monkeypatch.setattr("hiqs.__main__.discover_sources", lambda: [partial])
+
+    summary = refresh(connection=wired, config={}, embedder=StubEmbedder())
+
+    assert summary["errors"] == {}  # nothing raised
+    assert summary["source_errors"] == {"github": ["repo a: 403", "repo b: 403"]}
+
+
 def test_naming_a_source_that_does_not_exist_is_loud(wired, monkeypatch):
     monkeypatch.setattr("hiqs.__main__.discover_sources", lambda: [_ok_source("alpha", [])])
 

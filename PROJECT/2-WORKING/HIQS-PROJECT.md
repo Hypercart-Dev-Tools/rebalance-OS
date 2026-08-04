@@ -783,6 +783,56 @@ rankable.
   issue and PR. §6.3's n was set against an unknown corpus size and should be reconsidered once
   the real figure is known (§6.3, amended).
 
+### 6.7 The truncation gate, run for the first time (2026-08-04)
+
+§6.3's truncation precondition was written in rev 5 and never executed. When it finally
+ran against the real corpus it read **64.0%** against a **≥95%** gate — MiniLM had been
+silently discarding the tail of a third of every indexed document for the entire life of
+this index, while 139 tests stayed green and `docs_vec` stayed full. That is cluster B in
+its cleanest form: the measurement was fine, it just wasn't of the thing being claimed.
+
+The same unbounded chunk is why Qwen3-Embedding-0.6B OOM'd twice at 14.32 GiB and 16.61 GiB.
+Its context is 32768, so it truncated nothing and ran attention over a 6893-token sequence.
+The first fix — batching at 64 — was aimed at the wrong variable; the traceback pointed at
+`apply_rotary_pos_emb`, which is sequence length, not batch count. **The two models were
+never being shown the same input**, so Checkpoint A would have measured who got to read
+more, not which embeds better. The comparison was invalid before it was ever run.
+
+**Where the cap went.** The plan's own remedy said "add a chunk cap to `vault.py`". Measured
+per source, vault was **77.5%** and github **11.7%** — the GitHub provider emitted an entire
+issue body as one document, so a cap in `vault.py` alone would have left the corpus-wide gate
+failing at ~78% while looking like the fix had landed. The cap lives in `hiqs/chunking.py`,
+at the seam every source shares, so a source added later inherits it (L23, cluster C).
+
+**How the value was chosen.** Not analytically — the measured chars/token ratio across this
+corpus ranges 1.69–4.06, so no character cap maps onto a token target. Each candidate was run
+through the real gate over the real corpus:
+
+| cap (chars) | chunks | fit ≤256 word-pieces | |
+|---|---|---|---|
+| none (as shipped) | 1,458 | 77.5% vault / 11.7% github / **64.0% corpus** | FAIL |
+| 900 | 2,190 | 82.8% | FAIL |
+| 700 | 2,504 | 93.2% | FAIL |
+| **600** | **2,809** | **96.9% vault, 98.2% corpus** | **PASS** |
+| 500 | 3,282 | 99.8% | PASS |
+
+600 is the largest cap that clears the gate, and larger chunks retrieve better than smaller
+ones. Result after re-index: **6,044 chunks, 98.2% fit, max 350 tokens** — which also bounds
+the Qwen3 attention memory by construction rather than by a batch-size heuristic (BOUNDED).
+
+The margin over the gate is ~3 points, so the gate is now **executable**
+(`tests/judge_pairwise.truncation_gate`) and runs before scoring rather than existing as a
+sentence in this plan. An unmeasurable gate raises; an empty corpus raises. Neither may
+report the same thing as a pass (§8).
+
+**A second defect surfaced during the re-index.** All seven GitHub repos failed to fetch, and
+`hiqs refresh` printed `errors: {}` and **exited 0** — `github.fetch` collects per-repo
+failures into `SyncReport.errors` rather than raising, so the walk's exception handler never
+saw them. A launchd job could not have told that run from a clean one. `refresh` now surfaces
+`source_errors` and exits non-zero on them. The reconciliation itself was correct throughout:
+with no repo attested, §5 rule 2 pruned nothing and 330 stale rows survived exactly as
+designed — the safety net worked, which is how the exit-code bug became visible at all.
+
 ## 7. AI-native seams (one signature, one implementation today)
 
 ```python
