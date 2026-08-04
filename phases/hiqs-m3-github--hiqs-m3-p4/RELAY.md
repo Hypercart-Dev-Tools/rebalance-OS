@@ -1,5 +1,5 @@
 # Marathon Phase hiqs-m3-p4
-STATUS: Open
+STATUS: Approved
 NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-HIQS-M3-P4-TURN builder=codex reviewer=agy round-cap=9 -->
@@ -129,3 +129,20 @@ coverage for resolution, false positives, idempotence, and failed fetches.
 
 Verified: `pytest -q tests/test_docs_index.py tests/test_db.py tests/test_contract.py` — 42 passed,
 1 xfailed.
+
+### Round 1 · Reviewer · agy
+
+swept file: yes
+
+Reviewed all touched files completely line-by-line (`HiQS/hiqs/docs_index.py`, `HiQS/hiqs/db.py`, `HiQS/tests/test_docs_index.py`, `HiQS/tests/test_db.py`, `HiQS/tests/test_contract.py`).
+
+No pre-existing or new defects found.
+- The `doc_github_refs` table schema and foreign key constraints are properly defined in `db.py`.
+- Literal reference extraction correctly handles bare `#123`, full URLs, and `owner/repo#number` shorthand while filtering out code blocks, URL fragments, newsletter prose, and unresolvable items.
+- Projection delta-reconciles edges per document and preserves existing edges when source fetching fails.
+- AST sole-writer contract tests in `test_contract.py` verify single-writer enforcement for `doc_github_refs`.
+- All tests pass (42 passed, 1 expected failure).
+
+**Verdict:** Approved
+
+relay closed, no further turn needed
