@@ -14,6 +14,7 @@ import platform
 import resource
 import re
 import sqlite3
+import sys
 import time
 from typing import Any, Iterable
 
@@ -111,13 +112,31 @@ def deserialize_vector(blob: bytes) -> list[float]:
 
 
 def get_default_embedder(model_name: str = "all-MiniLM-L6-v2") -> Any:
-    """Load SentenceTransformer model instance for the given model_name."""
+    """Load a SentenceTransformer, preferring local weights and never downloading silently.
+
+    The plain `SentenceTransformer(model_name)` call this replaces fetched weights from the
+    network with no announcement: an unattended run would stall for minutes on a cold cache
+    with nothing in the log explaining why, and a test would hang (observed 2026-08-03).
+    The eval runner already carries the offline-first fix as `get_offline_embedder`; this is
+    the same fix at the second site that needed it — L23's lesson is precisely that a fix
+    applied in one module does not protect the next one written.
+    """
     try:
         from sentence_transformers import SentenceTransformer
-
-        return SentenceTransformer(model_name)
     except ImportError as err:
         raise RuntimeError(f"sentence-transformers is required for embedding: {err}") from err
+
+    try:
+        return SentenceTransformer(model_name, local_files_only=True)
+    except Exception:
+        # Downloading is legitimate on a cold cache — it just may never be silent.
+        print(
+            f"hiqs: embedding model {model_name!r} is not cached locally; downloading now "
+            "(one time, ~90 MB). An unattended run should pre-warm the cache instead.",
+            file=sys.stderr,
+            flush=True,
+        )
+        return SentenceTransformer(model_name)
 
 
 def _encode_texts(embedder: Any, texts: list[str]) -> Any:

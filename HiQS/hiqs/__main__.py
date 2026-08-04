@@ -5,8 +5,13 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from typing import Any
 
-from .events import status
+from .config import load_config
+from .db import db_connection
+from .docs_index import project_docs
+from .events import log_event, status
+from .plugins import discover_sources
 
 
 def _positive_integer(value: str) -> int:
@@ -52,12 +57,82 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 _IMPLEMENTATION_PHASE = {
-    "refresh": "Phase 1",
-    "search": "Phase 1",
     "ask": "Phase 3",
     "serve": "Phase 4",
     "auth": "Phase 4",
 }
+
+
+def refresh(
+    only: Sequence[str] = (),
+    *,
+    connection=None,
+    config=None,
+    embedder=None,
+) -> dict[str, Any]:
+    """Run every configured source once, then project what they fetched into the index.
+
+    This is §5's "one refresh walk" — the only thing that turns configuration into a
+    searchable corpus. Every part of it existed before this function did; nothing
+    connected them, so the system passed 133 tests without ever having ingested a file.
+
+    Plugin rule 5 governs the loop: a source that raises does NOT abort the walk. Its
+    error lands in `events` and in the returned summary, and the remaining sources still
+    run. A failing source must not be able to take the others down with it.
+    """
+    config = load_config() if config is None else config
+    owns_connection = connection is None
+    connection = db_connection() if owns_connection else connection
+
+    try:
+        sources = [s for s in discover_sources() if not only or s.name in only]
+        missing = sorted(set(only) - {s.name for s in sources})
+
+        reports: dict[str, Any] = {}
+        errors: dict[str, str] = {}
+        for source in sources:
+            try:
+                reports[source.name] = source.fetch(connection, config)
+            except Exception as error:  # plugin rule 5 — isolate, record, continue
+                errors[source.name] = f"{type(error).__name__}: {error}"
+                log_event("sync.failed", source.name, "error", {"error": errors[source.name]})
+            else:
+                log_event(
+                    "sync.completed",
+                    source.name,
+                    "warn" if reports[source.name].errors else "ok",
+                    {"counts": reports[source.name].counts},
+                )
+
+        # Only sources that actually returned a report may reach the projection: a source
+        # that raised has no units_ok, and absent attestation must never authorise pruning
+        # (§5 rule 2). Passing it through would be the GH-169 RC5 scar re-armed.
+        fetched = [s for s in sources if s.name in reports]
+        projection = project_docs(
+            connection, sources=fetched, reports=reports, embedder=embedder
+        )
+        log_event(
+            "projection.completed",
+            "core",
+            "warn" if projection.errors else "ok",
+            {"counts": projection.counts},
+        )
+
+        summary = {
+            "sources": {name: report.counts for name, report in reports.items()},
+            "projection": projection.counts,
+            "errors": errors,
+            "unknown_sources": missing,
+        }
+        if missing:
+            # Asking for a source that does not exist is a typo, not a no-op. Silently
+            # refreshing nothing and reporting success is the failure mode this project exists
+            # to kill, so it is named in the summary and reflected in the exit code.
+            log_event("refresh.unknown_source", "core", "warn", {"requested": missing})
+        return summary
+    finally:
+        if owns_connection:
+            connection.close()
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -68,6 +143,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     if arguments.command == "status":
         indent = None if arguments.json else 2
         print(json.dumps(status(), indent=indent, sort_keys=True))
+        return 0
+
+    if arguments.command == "refresh":
+        summary = refresh(arguments.source)
+        print(json.dumps(summary, indent=2, sort_keys=True))
+        # Non-zero when any source failed or was misnamed. A walk that silently half-ran
+        # and exited 0 is indistinguishable from success to a scheduled job (L6, L19).
+        return 1 if summary["errors"] or summary["unknown_sources"] else 0
+
+    if arguments.command == "search":
+        from .search import search as run_search
+
+        for rank, doc in enumerate(run_search(arguments.query, limit=arguments.limit), 1):
+            print(f"{rank:2}. [{doc.source}] {doc.title}  {doc.url}".rstrip())
         return 0
 
     phase = _IMPLEMENTATION_PHASE[arguments.command]

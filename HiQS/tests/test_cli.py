@@ -48,8 +48,10 @@ def test_status_on_an_empty_database_emits_the_shared_json_shape(tmp_path, argum
 @pytest.mark.parametrize(
     ("arguments", "phase"),
     [
-        (("refresh",), "Phase 1"),
-        (("search", "status"), "Phase 1"),
+        # refresh and search were here until 2026-08-03; both are implemented now, so
+        # asserting they fail would pin a stub that no longer exists. Retiring the row is
+        # part of implementing the command — the same retire-the-forward-declaration duty
+        # the strict xfail contracts carry.
         (("ask", "what now?"), "Phase 3"),
         (("serve",), "Phase 4"),
         (("auth", "calendar"), "Phase 4"),
