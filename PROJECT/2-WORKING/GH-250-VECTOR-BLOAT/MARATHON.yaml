@@ -1,0 +1,68 @@
+# MARATHON.yaml — GH-250 vector-bloat remediation, autonomous subset
+#
+# Scope decision (read before firing): this plan deliberately does NOT contain R1, R4, or R5
+# from GH-250. See SCOPE.md in this directory for the reasoning. In short:
+#   R1  is time-gated on >=3 real github_sync cycles (~4h wall clock) — a marathon phase can
+#       only sleep or falsely pass; neither is a check.
+#   R4  is an irreversible DELETE + VACUUM against a 13.4 GB production database.
+#   R5  depends on R4 and is a multi-hour MLX embedding run that itself trips the very memory
+#       ceiling under investigation.
+# What IS here: the efficiency fix (R7), the prevention invariant (R6), and full readiness for
+# R4 — runbook, fencing procedure, and a rehearsal proven against a throwaway COPY of the db.
+#
+# Fire with (dry-run FIRST, always):
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/MARATHON.yaml \
+#     --pre-advance-cmd "python -m pytest tests/test_github_direct_commits.py tests/test_db_github.py tests/test_github_knowledge.py tests/test_github_coverage.py -q" \
+#     --dry-run
+#
+# The pre-advance gate is SCOPED, not the full suite, on purpose: GH-231 (job_guard fixture never
+# pins the compressor ceiling) and GH-232 (5 tests that only fail outside CI) both fail on this
+# machine for reasons unrelated to this work. A full-suite gate would halt the chain on a
+# pre-existing flake. Widen it once those two are closed.
+
+name: gh250-vector-bloat
+phases:
+  - id: p1
+    name: R7 — make the direct-commit writer idempotent (kill the re-embed churn)
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p1-idempotent-writer.md
+    artifact: src/rebalance/ingest/github_direct_commits.py,src/rebalance/ingest/db/github.py,tests/test_github_direct_commits.py
+    turn_timeout_s: 1200
+    max_review_rounds: 3
+
+  - id: p2
+    name: R6 — zero-orphan invariant in doctor, sawtooth-aware
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p2-orphan-invariant.md
+    artifact: src/rebalance/ingest/db/github.py,src/rebalance/cli/doctor.py,tests/test_github_vector_invariants.py
+    turn_timeout_s: 1200
+    max_review_rounds: 3
+    depends_on: p1
+
+  - id: p3
+    name: R2 — author the reclaim runbook
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p3-reclaim-runbook.md
+    artifact: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md
+    turn_timeout_s: 900
+    max_review_rounds: 2
+    depends_on: p2
+
+  - id: p4
+    name: R3 — writer-fencing script with guaranteed restore
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p4-writer-fencing.md
+    artifact: utils/gh250/fence-writers.sh,tests/test_gh250_fencing.py
+    turn_timeout_s: 900
+    max_review_rounds: 2
+    depends_on: p3
+
+  - id: p5
+    name: Rehearse the reclaim against a throwaway COPY — never the live db
+    reviewer: codex
+    brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p5-reclaim-rehearsal.md
+    artifact: utils/gh250/reclaim.py,utils/gh250/rehearse.sh,tests/test_gh250_reclaim.py
+    turn_timeout_s: 1800
+    max_review_rounds: 3
+    depends_on: p4
