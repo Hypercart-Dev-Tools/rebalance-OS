@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: Done
+STATUS: Approved
 ROUND: 7 / 8
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -324,5 +324,19 @@ handing off to Producer — go to the Producer window and say 'take your turn'.
 32 uninstaller tests. Real machine unchanged: 9 recognised, 0 refused.
 
 handing off to Reviewer — final confirmation.
+
+### Reviewer · Round 7
+
+swept file: yes
+
+- [Pass] The Round 6 stale-link gap is closed: a broken plist symlink is detected before the absent-file branch, refused without deletion, and returns failure to the caller (`scripts/uninstall_rebalance.sh:216-239`). The focused regression preserves the link and requires exit 1 (`tests/test_uninstall_rebalance.py:525-539`).
+- [Pass] Ownership remains fail-closed: the launched path is canonicalized and must be an executable regular file unless the separately opted-in orphan mode permits only its absence (`scripts/uninstall_rebalance.sh:131-155,187-206`). The apply-mode test matrix covers external/internal symlinks, absent paths, directories, non-executable files, and orphan boundaries (`tests/test_uninstall_rebalance.py:348-522`).
+- [Pass] The safety and completion paths remain intact: inventory is derived from templates and a refusal increments the final failure count (`scripts/uninstall_rebalance.sh:267-290,370-377`); deletion stays behind `--apply` and uses `rm -f --` (`scripts/uninstall_rebalance.sh:242-254`).
+- No additional pre-existing defects were found in the fully swept uninstaller or focused test file.
+
+Verdict: Approved
+VERDICT: APPROVED
+
+relay closed (Approved), no further turn needed.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
