@@ -191,3 +191,25 @@ The dedicated test passes (`6 passed`), but the implementation does not yet meet
 - Removed `daily-sync` from the managed stubs in tests to actually exercise and prove the unmanaged `bootout`/`bootstrap` failure and idempotency cases.
 - Tightened `verify` check pattern from `.*(sync|collector)` to `^com\.rebalance-os\.` enforcing that *any* loaded Rebalance job must either be a KNOWN_WRITER or cause a verification failure. Added a test (`test_verify_fails_on_unknown_rebalance_job`) demonstrating an unknown writer failing `verify`.
 - Added tests for `launchctl bootout` failing mid-fence, demonstrating that an interrupted operation handles partial cleanup cleanly via the trap.
+
+### Round 3 · Reviewer · codex
+
+**Verdict:** Changes requested
+
+The dedicated check passes (`8 passed`), and the improved ordered-event and partial-failure
+coverage is useful. One release-blocking production mismatch remains:
+
+- `is_3eyes_managed` is backed by the registry as intended, but the script determines whether a
+  job was already operator-paused by running `three_eyes why ... | grep
+  "OPEN/quarantined.*paused by operator"`. The actual `three_eyes why` command reports the
+  breaker as `OPEN/quarantined` and prints an optional `reason:` line; the phrase `paused by
+  operator` is only emitted by `three_eyes status`, not `why`. Consequently, a writer paused
+  before fencing is recorded as if it were changed by this invocation and `unfence` resumes it,
+  violating the restore-exactly/pre-fence-state contract. Use a status signal that really
+  distinguishes an operator pause (or expose a machine-readable breaker status), preserve such
+  entries as untouched, and add a fake-driven test proving an already-paused managed writer gets
+  neither `pause` nor `resume` across `fence`/`unfence`.
+
+- Add a test that uses the actual `why` output shape (including `reason: paused via CLI`) so this
+  command-output contract cannot drift unnoticed. The current fake incorrectly supplies the
+  status-only phrase to `why`, which hides the bug.
