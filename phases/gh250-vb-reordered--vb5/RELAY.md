@@ -65,6 +65,22 @@ passed — and that flag is for the human executing R4 later, never for this pha
 Build the safety in as a guard, not as a convention. A comment saying "don't point this at prod" is
 not a guard.
 
+## Where test databases may live — NOT in the working tree
+
+This phase manipulates databases, so it will want scratch ones. A previous turn was failed by
+containment for creating `test.db` at the repo root (`agy-turn: OFF-ALLOWLIST change: test.db —
+reverting`). Containment reads git porcelain and cannot distinguish your scratch file from an
+off-lane escape, so it fails the whole turn.
+
+Rules:
+- In tests, use pytest's `tmp_path` / `tmp_path_factory` fixtures. Never a relative `test.db`.
+- In `rehearse.sh`, use `mktemp -d` and clean up with a `trap`.
+- Never create a database, journal, WAL, or SHM file anywhere inside the repo.
+
+`*.db` / `*.sqlite` and their sidecars are now gitignored as a second line of defence, but do not
+rely on that — put them in a temp directory because that is correct, not because the ignore file
+will hide the mistake.
+
 ## Deliverables
 
 ### `utils/gh250/reclaim.py`
@@ -137,6 +153,11 @@ and can tell immediately if the production run is diverging from the rehearsal.
   incomplete phase.
 
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/gh250-vb-reordered--vb5/ESCALATION.md): `containment-violation (off-lane edit reverted by a turn-taker)`. Read it before re-guessing.
+
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)
@@ -160,53 +181,3 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB5-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vb-reordered--vb5/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
-
-### Round 1 · Builder · agy
-
-Implemented the requested deliverables:
-1. `utils/gh250/reclaim.py`: Python script with `--execute` requirement, dry-run by default, refusal to run on `rebalance.db` without `--i-know-this-is-production`, batching with transaction checkpointing, and `PRAGMA integrity_check` verification.
-2. `utils/gh250/rehearse.sh`: Bash script that checks disk headroom, copies `rebalance.db` into `scratch/`, runs the reclaim script in the background while monitoring WAL size, asserts on final conditions, and prints the rehearse report to `scratch/rehearsal-report.txt`.
-3. `tests/test_gh250_reclaim.py`: A pytest suite validating `dry-run`, production path guard, batching logic, resume capabilities (via a testing environment variable), and integrity failures.
-
-Note: I could not execute `rehearse.sh` against the actual repository's `rebalance.db` because it lacks the `vec0` table (likely a sandbox stub DB), but the tests in `test_gh250_reclaim.py` passed successfully.
-
-Ready for review!
-
-### Round 1 · Reviewer · codex
-
-**Assessment:** Changes requested.
-
-1. `reclaim.py` only deletes rows. It never rebuilds/vacuums the copy, so its database size is effectively unchanged and `rehearse.sh` will report zero bytes reclaimed rather than the expected physical reclaim. Put the compact/rebuild operation in the single reclaim code path and include its result in the post-check metrics.
-2. Successful completion does not assert `after_metrics["orphans"] == 0`; `--batch-size 0` (or a negative value) exits successfully with all orphans remaining. Reject non-positive batch sizes and make remaining orphans a failing post-check.
-3. The production guard is CWD-relative (`Path("rebalance.db")`). It misses the actual production file when the command is invoked from another directory with an absolute database path. Resolve a canonical production path (while retaining an operator-friendly default) and test that exact protected target. The current test neither snapshots mtime/hash nor proves that the database is untouched, contrary to the brief.
-4. The rehearsal copy must be a transactionally consistent SQLite backup. `cp` of the main DB plus sidecars can capture an inconsistent live state. Use SQLite's backup facility to create the copy, without writing the source DB.
-5. Use the repository temp/scratch convention with a unique per-run directory, clean its DB artifacts on every exit, and write the durable report to the required GH-250 report path (the current `scratch/rehearsal-report.txt` is neither the required report location nor durable documentation). The script should also use the repository virtualenv/interpreter rather than an unqualified `python`.
-
-`PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_gh250_reclaim.py -q` passed (7 passed), but that coverage does not exercise the failures above.
-
-**Verdict:** Changes requested
-
-### Round 2 · Builder · agy
-
-Addressed the reviewer's feedback:
-1. `reclaim.py`: Added `VACUUM` after deleting orphans to correctly rebuild the database and report physical space reclamation. Included assertion that final orphans count must be 0.
-2. `reclaim.py` and `tests/test_gh250_reclaim.py`: Added check to reject non-positive batch sizes, ensuring valid integer ranges.
-3. `reclaim.py`: Adjusted the production guard to dynamically resolve the canonical absolute path to `rebalance.db` at the repository root. Replaced the dummy relative checks with a solid validation. Tests now verify this path is successfully rejected and unharmed without creating it if it doesn't exist or tracking its original modification time if it does.
-4. `rehearse.sh`: Replaced the dangerous `cp` logic with SQLite's native backup `.backup` feature for a transactionally consistent copy. 
-5. `rehearse.sh`: Improved execution by generating a unique timestamped scratch directory for each rehearsal, effectively sandboxing its artifacts and auto-cleaning them upon exit. Pointed the interpreter to the correct `.venv/bin/python` context and adjusted the output report path to store the durable `REHEARSAL-REPORT.md` within `2-WORKING/GH-250-VECTOR-BLOAT/` instead.
-
-Ready for the next review!
-
-### Round 2 · Reviewer · codex
-
-**Assessment:** Changes requested.
-
-The focused test command passed (`8 passed`), but the code path intended for the later human production run does not yet implement the p3 runbook safely:
-
-1. `reclaim.py` performs in-place `VACUUM`. The runbook requires `VACUUM INTO` a distinct target, then integrity/orphan/live-count validation of that target before an explicitly guarded atomic swap. Implement that durable rebuild/swap path (and make the rehearsal exercise it), so an interrupted production rebuild cannot leave the only database file in an uncertain state.
-2. The runbook requires a clean WAL checkpoint before *each* batch and treats a non-clean result as a failure. The script checkpoints only after commit and ignores the returned status. Checkpoint before beginning each delete and fail unless the result is clean; retain the committed-batch/resume property.
-3. The rehearsal headroom calculation is insufficient for its own copy plus rebuild: it currently requires only `source_size + 2 GB`, while p3 requires source + same-size backup/copy + vacuum target + a 10 GB margin (about 38.06 GB at the reference size). Enforce that formula before creating the copy.
-4. `rehearse.sh` writes the report to `2-WORKING/...`, missing the required `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/REHEARSAL-REPORT.md` path. Correct the path and ensure the generated report includes the required before/after assertions (including zero orphans) as well as the requested report fields.
-5. Extend the focused tests to cover rejected/non-clean checkpoint behavior and the rebuild-target validation/swap path; the current tests all pass despite these omissions.
-
-**Verdict:** Changes requested
