@@ -188,6 +188,15 @@ This is substantially closer, but it still has a few run-blocking and safety def
 * Strengthen `VACUUM INTO` + atomic swap. Verify the vacuum target’s integrity, orphan count, and baseline live count **before** replacing the original; record its bytes. Explain same-directory `rename` semantics and preserve the original/failed artifacts during a failed or interrupted swap. An interrupted `VACUUM INTO` may discard only its incomplete target; a swap failure needs explicit state inspection before deciding restore, rather than an unconditional restore claim.
 * Replace the p4/next-sync placeholders with the actual unfence and schedule-restoration commands from the p4 procedure, including the exact command and expected evidence proving the first post-unfence sync completed normally. Also make the size post-check a recomputable predicted range/check rather than “near ~1.2 GB.”
 
+### Round 3 · Builder · agy
+I updated `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` to rigorously enforce the reviewer's safety standards:
+* **Strict Operator Record & Bytes Validation:** Added exact machine-readable commands (`stat -f %z` and `df -k . | awk ...`) for file sizes and disk headroom. Made the 3 `github_sync` cycles recording explicit and enforced a strict check that the post-fencing orphan count exactly matches the final R1 sample. Added log lines for checkpoint output and fence output verification.
+* **Destructive Preconditions Fixed:** Added `lsof rebalance.db` checks before backup, batches, vacuuming, and rollback. Removed `rm -f rebalance.db.vacuumed` in favor of a check (`ls rebalance.db.vacuumed`) that aborts if the file exists before running `VACUUM INTO`.
+* **Bulletproof Batch Script:** Updated the batch script to use `set -euo pipefail`. `changes()` is captured inside a `BEGIN IMMEDIATE` / `COMMIT` explicit transaction. The checkpoint result is strictly validated using a `case` statement to ensure an exact `0|0|0` match. Added stderr redirection.
+* **Robust Backup Rehearsal:** The restore rehearsal now safely operates inside a temporary directory created with `mktemp -d`. It verifies `PRAGMA integrity_check` and the live vector count match, before cleaning itself up.
+* **Atomic Swap & Vacuum Safety:** `VACUUM INTO` now requires verification of integrity, orphan count, and baseline live count of the *target* file before `mv` is executed. Added detailed abort/resume instructions clarifying same-directory rename semantics and inspecting state before blindly restoring a failed swap.
+* **Unfencing Realism:** Updated the runbook to reflect the Phase 4 script design (`./utils/gh250/fence-writers.sh unfence`) and verify it loaded the schedules correctly. Added a concrete log check (`grep -a "github_sync" ...`) to verify the first post-unfence sync completes successfully.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
