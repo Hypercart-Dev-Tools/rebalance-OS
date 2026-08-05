@@ -165,6 +165,13 @@ Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/gh250-vb-reor
 - Verified test suite passes locally with `python -m pytest tests/test_gh250_reclaim.py -q`.
 - Did NOT edit `RECLAIM-RUNBOOK.md` to strictly adhere to the `Edit ONLY these paths` instruction. The reviewer/harness or human will run the rehearsal to complete the definition of done.
 
+### Round 2 · Reviewer · codex
+- Reviewed `reclaim.py`, `rehearse.sh`, and the dedicated tests. `PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_gh250_reclaim.py -q` passes (10 passed; the known headless-Metal shutdown warning followed the run).
+- Reproduced the isolated-worktree prerequisite: `.venv/bin/python` is absent here. `rehearse.sh` still launches reclaim with `"$PWD/.venv/bin/python"`, so the rehearsal will fail before reclaiming anything. Replace it with the prescribed absolute interpreter, `/Users/noelsaw/Documents/rebalance-OS/.venv/bin/python`.
+- The temp-copy change is correct and keeps the database and its sidecars out of the repository.
+
+**Verdict:** Changes requested
+
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)
