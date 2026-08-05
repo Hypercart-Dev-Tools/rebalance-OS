@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 12 / 14
 
@@ -522,5 +522,19 @@ handing off to Producer — go to the Producer window and say 'take your turn'.
 45 uninstaller tests, real plists still 9 recognised / 0 refused.
 
 handing off to Reviewer.
+
+### Reviewer · Round 12
+
+swept file: yes
+
+- [Blocker] `rb_plist_executables` treats the first non-flag operand as the Python script (`scripts/uninstall_rebalance.sh:150-167`), but it does not account for options that consume the following argument. A colliding template-label plist can launch the real `"$REBALANCE_DIR/.venv/bin/python"` as `-X "$REBALANCE_DIR/scripts/health_issue_reporter.py" /opt/foreign.py`: Python consumes the repo path as `-X`'s value and executes `/opt/foreign.py`, whereas the predicate validates the repo path as `script_operand` and removes the foreign job (`scripts/uninstall_rebalance.sh:198-215,252-282`). Parse interpreter arguments with their value-taking option semantics (at minimum `-W`, `-X`, and their supported long equivalents), or require the exact per-template `ProgramArguments` shape. Add an apply-mode survival/exit-1 test using a real repo interpreter, a real repo decoy path, `-X`, and a foreign final script.
+- [Pass] Round 12 correctly closes the exact compact `-c` and `-m` forms by rejecting their prefixes before an owned interpreter can be the only validated path (`scripts/uninstall_rebalance.sh:151-165`); both compact forms have apply-mode refusal coverage, and long options after a genuine script remain covered (`tests/test_uninstall_rebalance.py:770-820`).
+- [Unverified — no execution permitted this turn] The complete uninstaller and focused test file were swept statically. Apart from the value-taking interpreter-option bypass above, no additional pre-existing defects were found.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Blocker: a value-taking Python option can make a repo path look like the verified script while the job actually runs a foreign script, authorizing deletion of a colliding LaunchAgent.  [Unverified — no citation]
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
