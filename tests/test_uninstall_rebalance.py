@@ -522,6 +522,23 @@ def test_a_non_executable_regular_file_is_also_refused(sandbox):
     assert result.returncode == 1
 
 
+def test_a_broken_plist_symlink_is_not_reported_as_absent(sandbox, tmp_path):
+    """QA r6: `-f` is false for a broken link, so it read as "not installed" and exited 0.
+
+    "Absent" and "present but unreadable" are different states; collapsing them into the
+    reassuring one leaves a stale entry behind under a clean exit code.
+    """
+    _repo, _templates, agents = sandbox
+    link = agents / "com.rebalance-os.alpha.plist"
+    link.symlink_to(tmp_path / "gone-away.plist")
+
+    result = _run(sandbox, "--apply")
+
+    assert link.is_symlink()
+    assert result.returncode == 1
+    assert "not installed" not in result.stdout.split("com.rebalance-os.alpha")[1][:40]
+
+
 def test_an_unparseable_plist_fails_closed(sandbox):
     """A file we cannot read is a file we cannot prove is ours."""
     _repo, _templates, agents = sandbox

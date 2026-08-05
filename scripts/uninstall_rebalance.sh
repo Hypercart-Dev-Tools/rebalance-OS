@@ -213,6 +213,16 @@ rb_remove_job() {
     local mode="${3:-under}"
     local plist="$LAUNCH_AGENTS_DIR/$label.plist"
 
+    # A broken symlink at the plist path fails -f, so it used to be reported as "not installed"
+    # and the run exited 0 while the stale entry sat there (QA r6). "Absent" and "present but
+    # unreadable" are different states and must not collapse into the reassuring one. Ownership
+    # cannot be proven for a link with no target, so it is refused rather than removed.
+    if [ -L "$plist" ] && [ ! -e "$plist" ]; then
+        say "  ! $label: broken symlink at $plist — cannot prove ownership, refusing to remove"
+        skipped_foreign=$((skipped_foreign + 1))
+        return 1
+    fi
+
     if [ ! -f "$plist" ]; then
         say "  - $label: not installed"
         skipped_absent=$((skipped_absent + 1))

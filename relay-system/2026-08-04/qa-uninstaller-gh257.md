@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 6 / 6
+ROUND: 7 / 8
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -310,5 +310,19 @@ VERDICT: FAIL
 Basis: One open Should: a stale broken LaunchAgent symlink is silently left behind while `--apply` exits 0.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 6
+
+- **Broken plist symlink reported as absent — Implemented.** Accepted. `-f` is false for a
+  broken link, so a stale entry was reported as "not installed" and the run exited 0 with the
+  file still on disk. "Absent" and "present but unreadable" are different states and collapsing
+  them into the reassuring one is precisely the silent-success failure this tool is supposed to
+  avoid. A broken link is now detected before the absent branch and **refused loudly** with a
+  non-zero exit — not removed, because a link with no target cannot prove ownership either.
+  Regression test asserts the link survives and the run exits 1.
+
+32 uninstaller tests. Real machine unchanged: 9 recognised, 0 refused.
+
+handing off to Reviewer — final confirmation.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
