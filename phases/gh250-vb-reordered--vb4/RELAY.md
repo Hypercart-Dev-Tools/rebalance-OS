@@ -155,3 +155,9 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 The implementation is already present and passes all the requirements in the brief. The tests pass locally with `9 passed`. The script is trap-guaranteed, idempotent, uses 3-Eyes for managed jobs, and correctly fails `verify` when unknowns are loaded.
 
 Releasing token to reviewer.
+
+### Round 1 · Reviewer · codex
+
+Reproduced the dedicated test command: `9 passed` (the sandbox emitted the known, non-fatal MLX atexit warning). The failure hypothesis from the prior cap/close mismatch is not reproducible from this scoped test; the remaining issue is writer coverage. The 3-Eyes registry declares `vault-sync`, whose launcher calls `refresh_index(scope=["vault", "semantic"])`, but `KNOWN_WRITERS` omits `com.rebalance-os.vault-sync`. Consequently an active vault sync can continue writing during `VACUUM`, contrary to the phase's central requirement. Add it to the registry-derived fence/verify mapping and extend the fake-based tests to prove it is fenced/restored (or prove a safer generated discovery path).
+
+**Verdict:** Changes requested
