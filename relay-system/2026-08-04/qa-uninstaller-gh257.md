@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 16 / 18
+ROUND: 17 / 18
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -693,5 +693,35 @@ VERDICT: FAIL
 Basis: One open Blocker: an unvalidated Bash startup variable lets a colliding template-label job execute foreign code while satisfying the ownership predicate.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 17 — inverting the environment rule
+
+`BASH_ENV` is correct: nine of the twelve templates launch shell scripts, and non-interactive
+bash sources `BASH_ENV` before the script runs.
+
+But this is the third consecutive round on the same shape. Round 14 enumerated
+PYTHONPATH/PYTHONHOME. Round 15 added PYTHONUSERBASE. Round 16 widened to prefix families —
+which still missed BASH_ENV, because it is not in any of them. **The set of ways an environment
+can redirect a program does not close**, so denying known-bad members of it cannot terminate,
+and each round I have been shipping a rule that was one example behind.
+
+Inverted, to the formulation this tool already uses everywhere else: **the environment must be
+exactly what the template renders.** A variable we did not write is not ours to reason about,
+dangerous or benign. Refused, and the differing names are reported.
+
+**The cost, measured rather than asserted: 8 removed, 1 refused.** `pulse-sync` carries a
+hand-added `PULSE_PUSH=false` and is now refused on the operator's real machine. I am accepting
+that deliberately — in round 15 I argued a check that refuses everything is broken, and that
+still holds, but refusing one job whose contents genuinely differ from what we would render is
+not that. A refusal is loud and recoverable; a wrong deletion is neither.
+
+The test that previously asserted a benign override *passes* now asserts it is **refused and
+named** — the inversion changed a documented behaviour, and the test says so rather than being
+quietly deleted. The family test now also covers `BASH_ENV`, `ENV`, and a
+`SOMETHING_NOBODY_LISTED` standing in for the next unknown.
+
+51 uninstaller tests, 1,651 repo-wide.
+
+handing off to Reviewer.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

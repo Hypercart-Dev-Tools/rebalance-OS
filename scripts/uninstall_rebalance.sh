@@ -277,33 +277,35 @@ for key in (
 # REDIRECT execution. PYTHONPATH/PYTHONHOME make the repo-owned interpreter import
 # attacker-controlled code; the DYLD_/LD_ family hijacks the loader; PATH re-points the
 # commands a shell job runs. A benign app-level override like PULSE_PUSH cannot.
-# Matched by PREFIX FAMILY, not by name. An enumerated list of variables is the same losing
-# game the python-grammar rounds were: the first list missed PYTHONUSERBASE, which points at a
-# user-site directory whose sitecustomize.py python imports at startup, before the owned script
-# runs at all. The next list would miss the one after that. Every PYTHON* variable influences
-# interpreter startup, every DYLD_*/LD_* influences the loader, and PATH re-points the commands
-# a shell job runs — so the rule is the family, and a future addition to any of them is already
-# covered.
-def redirects_execution(name):
-    upper = name.upper()
-    return (
-        upper.startswith("PYTHON")
-        or upper.startswith("DYLD_")
-        or upper.startswith("LD_")
-        or upper == "PATH"
+# INVERTED: the environment must be exactly what the template ships. Nothing else.
+#
+# Three rounds tried to enumerate the dangerous variables and each list was one behind:
+# PYTHONPATH/PYTHONHOME, then PYTHONUSERBASE (user-site sitecustomize.py runs at startup),
+# then BASH_ENV (non-interactive bash sources it before the script). Widening to prefix
+# families still missed BASH_ENV, and the family after that is unknowable — the set of ways an
+# environment can redirect a program is open-ended, so denying known-bad members of it cannot
+# terminate.
+#
+# The only closed formulation is the one this tool already uses everywhere else: ownership
+# means "this is what our installer would have written". An environment variable we did not
+# render is not ours to reason about, dangerous or benign, so it is refused and NAMED.
+#
+# This is not free. On the live machine pulse-sync carries a hand-added PULSE_PUSH=false, so it
+# is now refused rather than removed — a real job the operator must handle deliberately. That
+# is the correct trade for a deletion tool: a refusal is recoverable and loud, a wrong deletion
+# is neither.
+environment = got.get("EnvironmentVariables") or {}
+expected_environment = want.get("EnvironmentVariables") or {}
+if not isinstance(environment, dict) or not isinstance(expected_environment, dict):
+    sys.exit(1)
+if environment != expected_environment:
+    differing = sorted(
+        set(environment) ^ set(expected_environment)
+        | {k for k in set(environment) & set(expected_environment)
+           if environment[k] != expected_environment[k]}
     )
-
-environment = got.get("EnvironmentVariables")
-if environment is not None:
-    if not isinstance(environment, dict):
-        sys.exit(1)
-    expected_environment = want.get("EnvironmentVariables") or {}
-    if not isinstance(expected_environment, dict):
-        sys.exit(1)
-    for name in environment:
-        # Refused unless the template itself ships that exact value.
-        if redirects_execution(name) and environment[name] != expected_environment.get(name):
-            sys.exit(1)
+    print("ENV_DRIFT " + ",".join(differing), file=sys.stderr)
+    sys.exit(1)
 sys.exit(0)
 PY
 }

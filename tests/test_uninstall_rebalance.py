@@ -1049,8 +1049,12 @@ def test_loader_hijack_variables_are_refused(sandbox):
     # Matched by family, so a variable nobody enumerated is covered too: PYTHONUSERBASE
     # (QA r15) points at a user-site dir whose sitecustomize.py python imports at startup,
     # and PYTHONNEVERHEARDOFIT stands in for whatever the next list would have missed.
-    for name in ("DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "PATH",
-                 "PYTHONUSERBASE", "PYTHONNEVERHEARDOFIT"):
+    # Any variable the template did not ship, dangerous-looking or not. Enumerating the
+    # dangerous ones was one list behind three rounds running (PYTHONUSERBASE, then BASH_ENV);
+    # the set of ways an environment redirects a program does not close, so the rule is
+    # "exactly what we rendered".
+    for name in ("DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "PATH", "PYTHONUSERBASE",
+                 "BASH_ENV", "ENV", "PYTHONNEVERHEARDOFIT", "SOMETHING_NOBODY_LISTED"):
         plist = _plist_with_env(agents, "com.rebalance-os.alpha", repo,
                                 [f"{repo}/scripts/alpha.sh"], {name: "/opt/attacker"})
         result = _run(sandbox, "--apply")
@@ -1059,11 +1063,13 @@ def test_loader_hijack_variables_are_refused(sandbox):
         plist.unlink()
 
 
-def test_a_benign_environment_override_does_not_block_removal(sandbox):
-    """pulse-sync really does carry a local PULSE_PUSH=false on the operator's machine.
+def test_an_environment_variable_we_did_not_render_is_refused_and_named(sandbox):
+    """Even a benign-looking one. pulse-sync really carries a hand-added PULSE_PUSH=false, so
+    this refuses a real job on the operator's machine — deliberately.
 
-    Comparing the whole plist matched only 1 of 7 installed jobs, so a check that demanded
-    byte-equality would refuse six real jobs — broken, not safe.
+    Three rounds of enumerating dangerous variables were each one behind. The set does not
+    close, so the rule is "exactly what we rendered", and the cost is named: a refusal is loud
+    and recoverable, a wrong deletion is neither.
     """
     repo, templates, agents = sandbox
     args = ["{{REBALANCE_DIR}}/scripts/alpha.sh"]
@@ -1075,5 +1081,5 @@ def test_a_benign_environment_override_does_not_block_removal(sandbox):
 
     result = _run(sandbox, "--apply")
 
-    assert not plist.exists()
-    assert result.returncode == 0
+    assert plist.exists()
+    assert result.returncode == 1
