@@ -48,6 +48,18 @@
 
 
 
+## ORDERING — read this first
+
+This phase now runs LAST, after vb4 (`utils/gh250/fence-writers.sh`) and vb5
+(`utils/gh250/reclaim.py`, `utils/gh250/rehearse.sh`) have landed. That is deliberate: two earlier
+attempts at this runbook escalated on round-cap because the reviewer kept — correctly — requiring
+the real fence/reclaim commands and their actual success evidence, which did not exist yet.
+
+So: **cite the real scripts, their real flags, and their real output.** Read them before you write.
+Do not invent placeholder commands, and do not describe SQL in prose where a script already does it.
+A prior draft is on the branch and references `fence-writers.sh` 8 times — check every one of those
+against the script as actually built, and fix any that drifted.
+
 ## Deliverable
 
 One file: `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md`. No code in this phase.
