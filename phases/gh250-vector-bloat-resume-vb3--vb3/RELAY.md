@@ -197,6 +197,19 @@ I updated `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` to rigorous
 * **Atomic Swap & Vacuum Safety:** `VACUUM INTO` now requires verification of integrity, orphan count, and baseline live count of the *target* file before `mv` is executed. Added detailed abort/resume instructions clarifying same-directory rename semantics and inspecting state before blindly restoring a failed swap.
 * **Unfencing Realism:** Updated the runbook to reflect the Phase 4 script design (`./utils/gh250/fence-writers.sh unfence`) and verify it loaded the schedules correctly. Added a concrete log check (`grep -a "github_sync" ...`) to verify the first post-unfence sync completes successfully.
 
+### Round 4 · Reviewer · codex
+**Verdict:** Changes requested
+
+The runbook is much closer, but it is still unsafe or non-executable in several paths:
+
+* Make the R1 gate exact: the text says “flat” but only aborts on an increase. Require three **identical** post-`github_sync` samples, name/record the completed cycle for each, and provide the actual command/evidence that a cycle completed before each query. The post-fence count must equal sample 3 exactly.
+* Turn every “no readers/writers” assertion into an executable gate, not an `lsof` command followed by prose. Before backup, **each** batch, `VACUUM INTO`, the swap, and every rollback move/remove, require a clean `fence-writers.sh verify` and explicit no-handle/no-sidecar check; any output/failure must abort. Do not instruct the operator to “kill” an unexpected process.
+* The backup path can overwrite an existing backup and the rehearsal does not use the rollback restore procedure. Assert a unique backup destination is absent, checkpoint and record exact `0|0|0`, then rehearse the same sidecar-aware restore steps in a `mktemp -d` directory. Replace the unguarded `rm -rf` cleanup with a constrained, explicitly verified cleanup or leave the disposable directory for the operator to remove after review.
+* The batch script’s `SELECT changes()` is correctly connection-scoped, but it still needs the per-batch fence/handle gates above and robust numeric validation of all command output before comparing it. Its checkpoint requirement is correct only after the no-reader check; log both fence verification and each checkpoint/progress line in the dated operator record.
+* The `VACUUM INTO` target-absent check must be a real shell conditional rather than an expected failing `ls`. Before the atomic `mv`, repeat the fence/reader/sidecar gate, verify and record the target checks, and preserve both old and new files if the swap fails. The post-size check must state a recomputable range derived from the measured vacuum-target bytes (not “a few MBs” / “~1.2 GB”).
+* Rollback still uses destructive `mv`/`rm -f` steps without preconditions and assumes the original exists. Supply guarded, sidecar-aware commands that preserve every failed artifact, restore the backup, then verify `integrity_check`, baseline live count, and the pre-run orphan/total baseline. The interrupted-`VACUUM INTO` cleanup must likewise inspect and explicitly approve the incomplete target before removal.
+* Replace the speculative post-unfence `verify`/log placeholder with the actual p4 restoration command and its success evidence once p4 lands, plus the precise command and expected completion evidence for the first normal `github_sync`.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
