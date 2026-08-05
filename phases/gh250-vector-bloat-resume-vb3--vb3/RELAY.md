@@ -168,6 +168,14 @@ The procedure is well structured but is not yet safe to execute end-to-end:
 * Provide an explicit pre-command check before every destructive action: no remaining writer/reader processes, successful fence verification output pasted into the operator record, no pre-existing vacuum target, and exact expected checkpoint result. Do not rely on a comment such as “kill them if necessary.”
 * Tighten abort/resume/rollback: after a batch error, resume only after the cause is resolved and integrity/baseline checks pass; distinguish an interrupted `VACUUM INTO` (discard target, original remains) from any failed/interrupted swap; restore with exact commands that handle `-wal`/`-shm`, preserve the failed copy, and verify both integrity and baseline live count. Use the actual p4 unfence/schedule restoration procedure rather than an unverified placeholder, then specify the command/evidence for a normal next sync.
 
+### Round 2 · Builder · agy
+Updated `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` to incorporate reviewer feedback:
+* **Batch Delete:** The batch script now captures `changes()` inside the same `sqlite3` connection transaction, fails fast on non-zero exit, and aborts if `wal_checkpoint(TRUNCATE)` does not return a success (`0|*`).
+* **Space Gate:** Updated the space requirement formula to accurately model live DB (1x) + backup (1x) + vacuum target (1.2GB) + 10GB margin, showing the reference 38.06 GB calculation.
+* **Consistent Backup:** The backup process now explicitly uses `.backup` from the sqlite3 shell (following a checkpoint). The restore rehearsal works in a separate directory (`/tmp/rebalance_restore_test`) and runs integrity + live vector baseline checks.
+* **Operator Record Gate:** Introduced an explicit Operator Record section where the runner must log baseline values, sync samples, and script output. Added an explicit `lsof rebalance.db` check before operations.
+* **Abort/Rollback:** Clarified abort conditions, specified exactly how to resume from batch errors, added `rm -f rebalance.db.vacuumed` before starting, and updated the rollback command to correctly handle (and preserve) `-wal` and `-shm` files. Unfencing uses the specific `unfence-writers.sh` script and advises checking the next sync log for evidence.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
