@@ -169,3 +169,11 @@ Added `com.rebalance-os.vault-sync` to `KNOWN_WRITERS` in `utils/gh250/fence-wri
 Verified with the scoped test suite locally (42 passed).
 
 Releasing token to reviewer.
+
+### Round 2 · Reviewer · codex
+
+Re-ran the dedicated fake-based suite with the required worktree import path: `9 passed` (followed only by the known sandbox MLX atexit warning). I also checked the 3-Eyes registry: `vault-sync` is declared and supersedes `com.rebalance-os.vault-sync`, so its new mapping closes the coverage gap identified in Round 1.
+
+The regression proof is still incomplete. `test_fence_interrupt_restores_and_idempotent` deliberately fails the later `daily-sync` bootout after all four 3-Eyes jobs have been paused, but it asserts pause/resume only for `github-sync`; it never proves `vault-sync` was paused and restored. Strengthen that test to assert pause and resume for every successfully paused preceding job (at minimum `vault-sync`), satisfying both the brief's Nth-job restore requirement and the Round 1 request for vault-sync fenced/restored coverage.
+
+**Verdict:** Changes requested
