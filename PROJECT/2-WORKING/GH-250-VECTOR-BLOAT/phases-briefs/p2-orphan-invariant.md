@@ -94,7 +94,10 @@ WARN that cries wolf every sync** — a check the operator learns to ignore is w
 
 - Query helpers into `src/rebalance/ingest/db/github.py` (and the semantic equivalent in
   `db/semantic.py`) — never inline SQL in the doctor/CLI layer.
-- Wire into the existing `rebalance doctor` check registry. **Read how neighbouring checks register,
+- Wire into the existing `rebalance doctor` check registry, which lives in
+  **`src/rebalance/doctor.py`** — that exact file. Do NOT create `src/rebalance/cli/doctor.py`;
+  it does not exist and is not the registry. (A previous attempt at this phase was failed by
+  containment for editing off-allowlist paths after the allowlist named the wrong file.) **Read how neighbouring checks register,
   format, and set severity, and match it exactly** — do not invent a parallel reporting shape.
 - Must be strictly **read-only** and must open the database read-only. `doctor` runs while
   collectors are live; it must never contend for the writer lock.

@@ -33,16 +33,13 @@
 #   "relay task MARATHON-P1-TURN is open but reserved for unexpected agent 'claude'"
 # Phase ids must be globally unique per clone, not merely unique within a plan.
 #
-name: gh250-vector-bloat
+# RESUME plan — vb1 was APPROVED on 2026-08-05 (4 turns, codex approved, gate passed) and is
+# deliberately absent so a re-fire cannot redo it. marathon.sh has no --from/--skip flag, so a
+# reduced plan is how you resume a partially-completed chain. vb2 drops its depends_on for the
+# same reason. The full plan stays in MARATHON.yaml as the record.
+#
+name: gh250-vector-bloat-resume
 phases:
-  - id: vb1
-    name: R7 — make the direct-commit writer idempotent (kill the re-embed churn)
-    reviewer: codex
-    brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p1-idempotent-writer.md
-    artifact: src/rebalance/ingest/github_direct_commits.py,src/rebalance/ingest/db/github.py,tests/test_github_direct_commits.py
-    turn_timeout_s: 1200
-    max_review_rounds: 3
-
   - id: vb2
     name: R6 — zero-orphan invariant in doctor, sawtooth-aware
     reviewer: codex
@@ -50,7 +47,6 @@ phases:
     artifact: src/rebalance/ingest/db/github.py,src/rebalance/ingest/db/semantic.py,src/rebalance/doctor.py,tests/test_github_vector_invariants.py
     turn_timeout_s: 1200
     max_review_rounds: 3
-    depends_on: vb1
 
   - id: vb3
     name: R2 — author the reclaim runbook
