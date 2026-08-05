@@ -1083,3 +1083,5 @@ def test_an_environment_variable_we_did_not_render_is_refused_and_named(sandbox)
 
     assert plist.exists()
     assert result.returncode == 1
+    # the refusal must NAME the variable, or the operator cannot act on it
+    assert "environment differs: PULSE_PUSH" in result.stdout

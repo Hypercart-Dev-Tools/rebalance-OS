@@ -234,7 +234,7 @@ rb_matches_template() {
     local template="$1"
     local plist="$2"
     RB_REPO="$REBALANCE_DIR" RB_PY="$REBALANCE_DIR/.venv/bin/python" RB_HOME="$HOME" \
-    python3 - "$template" "$plist" <<'PY' 2>/dev/null
+    python3 - "$template" "$plist" 2>/dev/null <<'PY' 
 import os, plistlib, sys
 
 try:
@@ -304,7 +304,10 @@ if environment != expected_environment:
         | {k for k in set(environment) & set(expected_environment)
            if environment[k] != expected_environment[k]}
     )
-    print("ENV_DRIFT " + ",".join(differing), file=sys.stderr)
+    # stdout, not stderr: the caller suppresses stderr to keep plistlib noise out of the
+    # report, so a diagnostic written there was promised in the comments and delivered to
+    # /dev/null. Names only — a value could hold a secret.
+    print("environment differs: " + ", ".join(differing))
     sys.exit(1)
 sys.exit(0)
 PY
@@ -403,9 +406,11 @@ rb_remove_job() {
     # A template-derived job is proved by matching what the installer would have rendered.
     # Only jobs with no template (the ~/bin ones) fall back to path-based ownership.
     if [ -n "$template" ]; then
-        if ! rb_matches_template "$template" "$plist"; then
+        local detail=""
+        if ! detail="$(rb_matches_template "$template" "$plist")"; then
             say "  ! $label: EXISTS but does not match $template — refusing to remove"
             say "      $plist"
+            [ -n "$detail" ] && say "      $detail"
             say "      (hand-edited, or another program's job under the same label)"
             skipped_foreign=$((skipped_foreign + 1))
             return 1

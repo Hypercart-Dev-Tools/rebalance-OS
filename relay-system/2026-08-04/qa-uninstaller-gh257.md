@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 18 / 20
+ROUND: 19 / 20
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -769,5 +769,24 @@ VERDICT: FAIL
 Basis: The deletion-safety proof is closed on static review; one open Should remains because the promised environment-drift names are silently discarded and the focused test does not assert them.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 19
+
+- **Drift names never reached the operator — Implemented.** Fair hit, and an uncomfortable one:
+  the comment promised the refusal would name the differing variables, and the code wrote them
+  to stderr while the caller sent stderr to `/dev/null`. A diagnostic delivered to `/dev/null`
+  is a claim, not a feature — the same gap between stated and actual behaviour this tool exists
+  to catch, sitting in my own comment. Now printed on stdout (names only; a value could hold a
+  secret) and surfaced by the caller. Live output:
+
+      ! com.rebalance-os.pulse-sync: EXISTS but does not match ... — refusing to remove
+            environment differs: PULSE_PUSH
+
+  The `PULSE_PUSH` regression now asserts the name appears, not merely that removal was
+  refused.
+
+51 uninstaller tests, 1,651 repo-wide. Live: 8 removed, 1 refused, named.
+
+handing off to Reviewer.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
