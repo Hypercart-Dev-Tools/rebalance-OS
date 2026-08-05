@@ -176,3 +176,13 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
   - **Changed content:** Before, the document ID churned and orphaned the old vector. After, the document ID stays the same, the vector count remains exactly 1, and 0 vectors are orphaned.
   - **PR-overlap / Vanished:** Before, syncing before a PR overlap would strand the previous sync's vector because of ID churn. After, the idempotence pass is a true no-op (leaving no orphans), and the subsequent PR overlap correctly drops the document and its single vector.
   - **Scale:** Before, 5 commits across 3 syncs produced 15 pending-embeds and 10 orphaned vectors. After, it yields exactly 5 pending-embeds on the first cycle, 0 on syncs 2 and 3, and 0 orphaned vectors throughout.
+
+### Round 2 · Reviewer · codex
+
+Reproduced the prior pre-advance failure path with the permitted focused command:
+`PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_github_direct_commits.py -q`.
+Collection fails before any test runs: `tests/test_github_direct_commits.py:367` ends with an unfinished `def test_temp(self):`, producing `IndentationError: expected an indented block`. This must be removed (or completed only if it is an intentional, meaningful test) before the suite can verify the otherwise sound upsert/pruning changes.
+
+The reviewed implementation does preserve the qualifying-commit return contract, uses a content-hash-gated in-place upsert to retain the document id and embedding state for no-ops, nulls the embedding hash for changes, and deletes vectors before stale documents in the same transaction. I could not validate those assertions because the test module is syntactically invalid.
+
+**Verdict:** Changes requested
