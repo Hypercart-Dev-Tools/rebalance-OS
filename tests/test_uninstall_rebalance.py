@@ -568,6 +568,62 @@ def test_no_mcp_section_when_the_repo_does_not_register_one(sandbox):
     assert "other entry points" not in result.stdout
 
 
+def test_the_word_rebalance_elsewhere_in_mcp_json_is_not_a_registration(sandbox):
+    """Same match-anywhere sloppiness the ownership check spent four rounds shedding."""
+    repo, _templates, _agents = sandbox
+    (repo / ".mcp.json").write_text(
+        '{"_comment": "does not talk to rebalance at all",'
+        ' "mcpServers": {"other": {"command": "/opt/other", "args": ["--note", "rebalance"]}}}',
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert "other entry points" not in result.stdout
+
+
+def test_an_unreadable_mcp_json_does_not_claim_a_registration(sandbox):
+    repo, _templates, _agents = sandbox
+    (repo / ".mcp.json").write_text("{ not json", encoding="utf-8")
+
+    result = _run(sandbox, "--apply")
+
+    assert "other entry points" not in result.stdout
+    assert result.returncode == 0
+
+
+def test_matching_processes_are_reported_without_claiming_the_checkout(sandbox, tmp_path):
+    """A command line cannot prove which clone a process belongs to, so it must not say so."""
+    repo, templates, agents = sandbox
+    (repo / ".mcp.json").write_text(
+        '{"mcpServers": {"rebalance": {"command": ".venv/bin/python",'
+        ' "args": ["-m", "rebalance.mcp_server"]}}}',
+        encoding="utf-8",
+    )
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    pgrep = fake_bin / "pgrep"
+    pgrep.write_text("#!/bin/sh\nprintf '4242\\n4243\\n'\n", encoding="utf-8")
+    pgrep.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--apply"],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "RB_UNINSTALL_REPO_DIR": str(repo),
+            "RB_UNINSTALL_TEMPLATE_DIR": str(templates),
+            "RB_UNINSTALL_AGENTS_DIR": str(agents),
+        },
+    )
+
+    assert "4242 4243" in result.stdout
+    assert "Not attributed to this checkout" in result.stdout
+    assert result.returncode == 0
+
+
 def test_an_unparseable_plist_fails_closed(sandbox):
     """A file we cannot read is a file we cannot prove is ours."""
     _repo, _templates, agents = sandbox

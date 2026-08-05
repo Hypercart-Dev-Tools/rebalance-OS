@@ -366,15 +366,40 @@ fi
 # owns is not ours to do. But staying silent would let "9 removed" read as "rebalance is off
 # this machine" while it is very much still running — the completeness lie this whole tool is
 # built to avoid.
-if [ -f "$REBALANCE_DIR/.mcp.json" ] && grep -q "rebalance" "$REBALANCE_DIR/.mcp.json" 2>/dev/null; then
+# Parsed, not grepped. `grep -q rebalance` would call any .mcp.json a registration when the
+# word appears in a comment, a path, or an unrelated server's arguments — the same
+# match-anywhere sloppiness this tool spent four QA rounds removing from the ownership check,
+# and there is no excuse for reintroducing it in the reporting.
+rb_registers_mcp() {
+    python3 - "$1" <<'PY' 2>/dev/null
+import json, sys
+try:
+    with open(sys.argv[1], "rb") as handle:
+        data = json.load(handle)
+except Exception:
+    sys.exit(1)
+servers = data.get("mcpServers") if isinstance(data, dict) else None
+if not isinstance(servers, dict):
+    sys.exit(1)
+entry = servers.get("rebalance")
+sys.exit(0 if isinstance(entry, dict) else 1)
+PY
+}
+
+if [ -f "$REBALANCE_DIR/.mcp.json" ] && rb_registers_mcp "$REBALANCE_DIR/.mcp.json"; then
     say ""
     say "other entry points — NOT launchd, NOT removed:"
     say "  · $REBALANCE_DIR/.mcp.json registers rebalance as an MCP server"
     say "    It is checked into the repo, so it goes when the checkout goes."
     _rb_mcp_pids="$(pgrep -f 'rebalance\.mcp_server' 2>/dev/null | tr '\n' ' ' || true)"
     if [ -n "${_rb_mcp_pids// /}" ]; then
-        say "  · running now: pid(s) ${_rb_mcp_pids% }"
-        say "    These survive this uninstall. They exit when the MCP host (your editor) restarts."
+        # Deliberately NOT claimed as "this checkout's servers". A command line cannot
+        # distinguish this checkout from another clone or a second editor profile, and an
+        # unverifiable attribution is worse than an honest hedge in a report whose whole
+        # purpose is telling the operator what is really still here.
+        say "  · processes matching rebalance.mcp_server: ${_rb_mcp_pids% }"
+        say "    Not attributed to this checkout — a command line cannot prove which clone"
+        say "    they belong to. They exit when their MCP host (your editor) restarts."
     fi
 fi
 

@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 8 / 10
+ROUND: 9 / 10
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -384,5 +384,27 @@ VERDICT: FAIL
 Basis: The new informational output can make unverified checkout-specific claims; make its registration and process attribution precise.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 9
+
+Both accepted. Both were me reintroducing, in new reporting code, the exact sloppiness the
+ownership check spent four rounds shedding.
+
+- **`.mcp.json` grep — Implemented.** `grep -q rebalance` called any file containing the word a
+  registration. Now parsed as JSON, requiring an actual `mcpServers.rebalance` object entry.
+  Three tests: the word appearing in a comment and in an unrelated server's args (no claim),
+  unparseable JSON (no claim, exit 0), and the positive path.
+- **PID attribution — Implemented as the second option offered.** A command line cannot prove
+  which clone a process belongs to, so the tool no longer says it can. It reports "processes
+  matching rebalance.mcp_server" and states plainly that they are **not attributed to this
+  checkout**. I chose the honest label over verifying cwd per pid: `lsof` is macOS-specific and
+  CI is ubuntu, so the verification would be the untestable kind — and in a report whose only
+  job is telling the operator what is really still present, an unverifiable attribution is
+  worse than an accurate hedge. Regression test injects a fake `pgrep` and asserts both the
+  pids and the disclaimer.
+
+37 uninstaller tests. Real machine output confirmed.
+
+handing off to Reviewer — final confirmation.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
