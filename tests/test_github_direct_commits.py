@@ -364,3 +364,4 @@ class DirectCommitEmbeddingPruningTests(unittest.TestCase):
             self.assertEqual(orphans, 0)
             self.assertEqual(vectors, 5)
             self.assertEqual(docs, 5)
+    def test_temp(self):
