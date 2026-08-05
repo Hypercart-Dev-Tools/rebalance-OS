@@ -367,9 +367,15 @@ def test_multi_model_three_models(memory_db, synthetic_query_files):
     v_b = [0.0, 1.0] + [0.0] * 382
     v_c = [0.0, 0.0, 1.0] + [0.0] * 381
 
-    doc1 = Doc(source="vault", id="doc-test-001", title="Signal Architecture Note", body="text", unit="note1.md")
-    doc2 = Doc(source="vault", id="doc-test-002", title="Quantum Mechanics Note", body="text", unit="note2.md")
-    doc3 = Doc(source="vault", id="doc-test-003", title="Relay Automation Note", body="text", unit="note3.md")
+    # Titles and bodies share NO term with the fixture's queries, so the vector leg is the
+    # only thing that can separate these models. Previously they read "Signal Architecture
+    # Note" etc., which matched the queries lexically — and the test still saw disagreements
+    # only because _fts_search ANDed its terms and therefore matched nothing. Once the lexical
+    # leg works, a shared FTS hit makes all three models agree, which is correct behaviour and
+    # would have made this test's premise vanish.
+    doc1 = Doc(source="vault", id="doc-test-001", title="Alpha", body="alpha", unit="note1.md")
+    doc2 = Doc(source="vault", id="doc-test-002", title="Bravo", body="bravo", unit="note2.md")
+    doc3 = Doc(source="vault", id="doc-test-003", title="Charlie", body="charlie", unit="note3.md")
 
     # insert_doc populates docs_vec for model-1, model-2, model-3
     insert_doc(memory_db, doc1, {"model-1": v_a, "model-2": v_b, "model-3": v_c})

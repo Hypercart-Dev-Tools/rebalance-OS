@@ -5,6 +5,7 @@ This module implements the canonical search seam defined in HIQS-PROJECT.md §6.
 
 from __future__ import annotations
 
+import re
 import sqlite3
 from typing import Any, Callable
 
@@ -48,6 +49,34 @@ def rrf_fuse(fts_hits: list[Doc], vec_hits: list[Doc], k: int = 60) -> list[Doc]
     return [doc_map[doc_id] for doc_id in sorted_ids]
 
 
+_FTS_OPERATORS = ("AND", "OR", "NOT", "NEAR")
+_FTS_TOKEN = re.compile(r"[A-Za-z0-9_]+(?:[-'][A-Za-z0-9_]+)*")
+
+
+def _fts_expression(query: str) -> str:
+    """Build an FTS5 MATCH expression that ORs the query's terms, ranked by bm25.
+
+    FTS5's implicit operator is AND, so passing a question through verbatim demands that one
+    chunk contain *every* word. Measured on the real corpus, that returned 35 hits across 22
+    queries and **all 35 were the operator's own prompt log** — the only text holding a
+    question verbatim is the record of it being asked. Remove that log and the lexical leg
+    returned nothing at all, so "hybrid" search was running on the vector leg alone.
+
+        "Where is the earlier generated ADR doc stored?"
+            AND (before) ->     1 matching chunk
+            OR  (after)  -> 4,760 matching chunks, bm25-ranked
+
+    OR alone would be too loose if every match counted equally, but bm25 is what does the
+    ranking: rare terms ("ADR") dominate common ones ("is", "the"), so recall widens without
+    the top of the list going to whatever mentions "the" most.
+    """
+    if any(f" {op} " in query for op in _FTS_OPERATORS) or '"' in query:
+        # The caller wrote FTS5 syntax on purpose. Honour it rather than rewriting it.
+        return query
+    tokens = _FTS_TOKEN.findall(query)
+    return " OR ".join(f'"{token}"' for token in tokens)
+
+
 def _fts_search(connection: sqlite3.Connection, query: str, limit: int = 50) -> list[Doc]:
     """Execute FTS5 BM25 search over docs_fts."""
     sql = """
@@ -60,22 +89,22 @@ def _fts_search(connection: sqlite3.Connection, query: str, limit: int = 50) -> 
         LIMIT ?
     """
     rows = []
-    try:
-        rows = connection.execute(sql, (query, limit)).fetchall()
-    except sqlite3.OperationalError:
-        clean = query.replace('"', '""')
-        formatted = f'"{clean}"'
+    expression = _fts_expression(query)
+    if expression:
         try:
-            rows = connection.execute(sql, (formatted, limit)).fetchall()
+            rows = connection.execute(sql, (expression, limit)).fetchall()
         except sqlite3.OperationalError:
-            tokens = [f'"{t.replace(chr(34), chr(34)+chr(34))}"' for t in query.split() if t]
+            # Caller-supplied FTS5 syntax that does not parse. Fall back to its bare terms
+            # rather than returning nothing, since an empty lexical leg is invisible in a
+            # fused result and reads as "no lexical match" instead of "malformed query".
+            tokens = _FTS_TOKEN.findall(query)
             if tokens:
                 try:
-                    rows = connection.execute(sql, (" ".join(tokens), limit)).fetchall()
+                    rows = connection.execute(
+                        sql, (" OR ".join(f'"{t}"' for t in tokens), limit)
+                    ).fetchall()
                 except sqlite3.OperationalError:
                     rows = []
-            else:
-                rows = []
 
     return [
         Doc(

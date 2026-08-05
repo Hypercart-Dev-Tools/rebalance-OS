@@ -871,6 +871,54 @@ device, so torch fell back to CPU **silently**. Unsandboxed on MPS the same work
 A silent accelerator downgrade is the same failure class as a silent truncation — the run
 completes, and the number is an artefact. The embed script now refuses to start on CPU.
 
+### 6.9 Hybrid search was not hybrid (2026-08-04)
+
+Checkpoint A could not be judged — the operator's answer was that telling the two result sets
+apart would require researching every hit, which is a legitimate verdict and not a failure of
+nerve. Measuring *why* found the reason, and it was not the models.
+
+FTS5's implicit operator is **AND**. `_fts_search` passed the query through and, on a parse
+error, joined its terms with a space — also AND. So a question demanded that a single chunk
+contain **every** word in it:
+
+    "Where is the earlier generated ADR doc stored?"
+        AND ->     1 matching chunk
+        OR  -> 4,760 matching chunks, bm25-ranked
+
+Across the 22 eval queries the lexical leg returned **35 hits, all 35 of them the operator's
+own prompt log** — the only text containing a question verbatim is the record of it being
+asked. Exclude that log and the leg returned **nothing**. Every result the operator was asked
+to judge came from the vector leg alone; the hybrid design had never run.
+
+This is why §6.3's "FTS-only baseline promoted to a decision" mattered and why it had not been
+run either. The baseline was not weak, it was empty.
+
+**Fixed:** terms are ORed and ranked by bm25, so rare terms (`ADR`, `GH-172`) dominate common
+ones without requiring all of them. Explicit FTS5 syntax from a caller is honoured, not
+rewritten. Effect on the real corpus:
+
+| | before | after |
+|---|---|---|
+| usable FTS hits across 22 queries | 0 | 697 |
+| queries with no usable lexical hit | 22/22 | 0/22 |
+| MiniLM vs Qwen3 shared top-5 (hybrid) | 0.77/5 | **2.18/5** |
+| rank-1 identical | 2/22 | **9/22** |
+
+**This strengthens the Checkpoint A default rather than reopening it.** With the lexical leg
+working, ~44% of a ranked set is signal both models share, so the two agree far more and the
+53× embed-cost premium for Qwen3 buys correspondingly less. Vector-only overlap is unchanged
+at 0.77/5 — the models really are different — but that difference now moves a smaller share of
+what the operator actually sees.
+
+**Checkpoint A outcome: `unknown`, resolved to the incumbent.** MiniLM ships because §6.3
+sends ties and unknowns to the incumbent, **not** because it was measured better. The 22 pairs
+remain unjudged on disk and the question can be reopened at any time; both models' vectors
+coexist in `docs_vec`, so switching is a config change plus one 6-minute re-embed.
+
+One regression test in `test_eval_retrieval.py` had been passing *because* of this defect: its
+three models disagreed only because the lexical leg matched nothing. Its fixture now shares no
+term with its queries, so it isolates the vector leg deliberately instead of accidentally.
+
 ## 7. AI-native seams (one signature, one implementation today)
 
 ```python

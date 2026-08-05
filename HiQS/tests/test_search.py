@@ -268,3 +268,43 @@ def test_precise_search_is_byte_identical_with_affinity_on_or_off(memory_db):
     enabled = search("exact maintenance ticket", connection=memory_db, embedder=stub, affinity=True)
     disabled = search("exact maintenance ticket", connection=memory_db, embedder=stub, affinity=False)
     assert enabled == disabled
+
+
+def test_a_question_matches_on_its_distinctive_terms_not_all_of_them(memory_db):
+    """FTS5's implicit operator is AND, so a question demanded every word in one chunk.
+
+    Measured on the real corpus that returned 35 hits across 22 queries and all 35 were the
+    operator's own prompt log — the only text containing a question verbatim is the record of
+    it being asked. With the log excluded the lexical leg returned nothing, so hybrid search
+    was silently running on the vector leg alone.
+    """
+    from hiqs.search import _fts_search
+
+    doc = Doc(source="vault", id="d1", title="Architecture decision record storage",
+              body="ADR documents live under docs/adr.", unit="n1.md")
+    insert_doc(memory_db, doc)
+
+    hits = _fts_search(memory_db, "Where is the earlier generated ADR doc stored?")
+
+    # Not one word of "where/earlier/generated" appears in the note, and it must still match.
+    assert [h.id for h in hits] == ["d1"]
+
+
+def test_explicit_fts_syntax_is_honoured_not_rewritten(memory_db):
+    from hiqs.search import _fts_expression
+
+    assert _fts_expression('"exact phrase here"') == '"exact phrase here"'
+    assert _fts_expression("alpha AND bravo") == "alpha AND bravo"
+
+
+def test_a_plain_question_becomes_an_or_expression():
+    from hiqs.search import _fts_expression
+
+    assert _fts_expression("Where is the ADR?") == '"Where" OR "is" OR "the" OR "ADR"'
+
+
+def test_hyphenated_and_versioned_terms_survive_tokenisation():
+    """GH-172 and ask-self are how the operator actually refers to things (§6.3 jargon)."""
+    from hiqs.search import _fts_expression
+
+    assert _fts_expression("status of GH-172") == '"status" OR "of" OR "GH-172"'

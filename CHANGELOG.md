@@ -6,6 +6,27 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.5] - 2026-08-04
+
+### Fixed
+- **HiQS: hybrid search was not hybrid — the lexical leg had never returned a usable
+  result.** FTS5's implicit operator is AND, and `_fts_search` joined query terms with a
+  space, so a question demanded that one chunk contain *every* word in it. Across the 22
+  Checkpoint A queries the leg returned 35 hits and **all 35 were the operator's own prompt
+  log**, since the only text holding a question verbatim is the record of it being asked;
+  excluding that log left the leg returning nothing at all. Every result Checkpoint A offered
+  for judging came from the vector leg alone. Terms are now ORed and ranked by bm25 so rare
+  terms dominate without requiring all of them, and explicit FTS5 syntax from a caller is
+  honoured rather than rewritten. Usable FTS hits across the eval went 0 → 697, queries with
+  no lexical hit went 22/22 → 0/22, and MiniLM/Qwen3 top-5 agreement rose from 0.77/5 to
+  2.18/5. A regression test in `test_eval_retrieval.py` had been green *because* of this
+  defect — its three models disagreed only because the lexical leg matched nothing — so its
+  fixture now shares no term with its queries and isolates the vector leg deliberately.
+- **HiQS Checkpoint A resolved to `unknown`.** MiniLM ships because §6.3 sends ties and
+  unknowns to the incumbent, not because it measured better; the 22 pairs remain unjudged and
+  both models' vectors coexist in `docs_vec`, so reopening it costs a config change and one
+  6-minute re-embed.
+
 ## [0.68.4] - 2026-08-04
 
 ### Fixed
