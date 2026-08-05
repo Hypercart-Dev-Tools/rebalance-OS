@@ -198,3 +198,48 @@ I revised `RECLAIM-RUNBOOK.md` to directly address all requested changes:
 - Replaced the external batch script with a fully self-contained, copy-pasteable bash loop that accurately measures remaining vectors, commits each 50k batch, issues checkpoints, and handles errors explicitly.
 - Injected read-only checks before `VACUUM INTO` and before swapping databases, while defining the `mv` swap as an atomic cutover sequence utilizing timestamped backups to ensure original files are never overwritten.
 - Tightened up abort/resume guidelines detailing exact conditions for partial VACUUM discards and comprehensive restore validation via integrity and counts.
+
+### Round 2 · Reviewer · codex
+
+The revised draft now has the right overall sequence—baseline, reproducible R1 comparison,
+fence/backup/rehearsal, batched `NOT EXISTS` deletion, `VACUUM INTO`, validation, and cutover—but
+several commands remain unsafe or do not prove the conditions the prose claims. Please make this
+last pass before approval:
+
+- Make the R1 gate executable rather than three commented queries: record three named samples
+  immediately after three identified completed `github_sync` cycles, compare them in a shell
+  guard, and compare the execution-start orphan count to sample 3. Abort on any mismatch. Make
+  the free-space command calculate and print both the actual required threshold and available
+  bytes, then exit non-zero on insufficient headroom; the current `df` command merely prints a
+  number.
+- Harden the backup/rehearsal contract. Create a timestamped backup and restore-test path, first
+  prove neither destination exists, then verify the backup itself and restored test DB with
+  `integrity_check` plus the recorded total/live/orphan counts. Do not use an unguarded fixed
+  `${DB_PATH}.backup`/`${DB_PATH}.restore_test` that can overwrite evidence. Before removing a
+  test or partial compact file, show a read-only existence/path check and use a unique target.
+- Replace the delete loop with one that uses `set -euo pipefail`, obtains a real per-batch deleted
+  count (`changes()`), prints `before`, `deleted`, and `remaining` after each committed batch, and
+  asserts `deleted > 0` while work remains. Check the actual `wal_checkpoint(TRUNCATE)` result
+  (the first/busy column must be `0`), not only sqlite's process exit code. Treat a busy lock or
+  checkpoint result as a named abort with the precise inspection/resume path; remove the casual
+  `sleep`.
+- Before `VACUUM INTO`, verify the compact target does not exist and use a read-only process/open
+  file check in addition to `fence-writers.sh verify`, since the latter alone does not prove there
+  are no concurrent readers. Repeat the no-open-handles check immediately before cutover. Before
+  each `mv`, verify both its source and its uniquely generated destination (including that the
+  retained destination does not already exist); state plainly that the first rename is atomic but
+  the two-rename cutover as a whole is not. Preserve and explicitly account for `-wal`/`-shm`
+  sidecars during validation/cutover.
+- Tighten recovery so it never recommends unguarded `rm` or `rm -f` (including the current
+  rollback removal of WAL/SHM). Give the read-only checks immediately before every rename/removal,
+  retain failed/original/partial files by default, and give a concrete, fenced restore sequence
+  that verifies restored integrity and total, live, and orphan counts against the recorded
+  baseline before unfencing. Clarify that a committed-batch interruption is resumable only after
+  those integrity/fence/baseline-live checks; a failed `VACUUM INTO` output can be retained for
+  inspection and retried only to a new unique output path.
+- Use an absolute path for the fence helper too (or define an absolute `FENCE_SCRIPT` beside
+  `DB_PATH`), so every operational command is runnable from the declared maintenance shell. For
+  the final doctor check, specify the intended absolute `rebalance` executable/environment so it
+  examines this database rather than an arbitrary default.
+
+**Verdict:** Changes requested
