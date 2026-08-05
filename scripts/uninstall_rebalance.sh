@@ -5,6 +5,8 @@
 #     scripts/uninstall_rebalance.sh --apply            # unload and delete the launchd jobs
 #     scripts/uninstall_rebalance.sh --apply --include-data      # also delete logs and temp state
 #     scripts/uninstall_rebalance.sh --apply --include-secrets   # also delete keyring entries
+#     scripts/uninstall_rebalance.sh --apply --include-orphans   # also delete jobs whose
+#                                                                # executable is already gone
 #
 # Two design rules do the real work here.
 #
@@ -34,6 +36,10 @@ TEMPLATE_DIR="${RB_UNINSTALL_TEMPLATE_DIR:-$SCRIPT_DIR}"
 APPLY=0
 INCLUDE_DATA=0
 INCLUDE_SECRETS=0
+# Allow removing a job whose executable no longer exists. Separate from the default proof on
+# purpose: it is the one case where we delete WITHOUT positive evidence of ownership, so it has
+# to be asked for.
+INCLUDE_ORPHANS=0
 
 # Jobs this repo installs that do NOT follow the template convention, as `label|marker` pairs.
 # Named explicitly and never matched by prefix: `com.user.*` is a generic namespace and
@@ -74,6 +80,7 @@ while [ $# -gt 0 ]; do
         --apply) APPLY=1 ;;
         --include-data) INCLUDE_DATA=1 ;;
         --include-secrets) INCLUDE_SECRETS=1 ;;
+        --include-orphans) INCLUDE_ORPHANS=1 ;;
         -h|--help) usage ;;
         *) echo "ERROR: unknown option: $1 (try --help)" >&2; exit 2 ;;
     esac
@@ -89,7 +96,7 @@ act() { if [ "$APPLY" -eq 1 ]; then printf '  %s\n' "$*"; else printf '  [dry-ru
 # plistlib rather than plutil because plutil is macOS-only and CI runs ubuntu-latest; a check
 # that cannot run in CI is a check nobody is testing.
 rb_plist_executables() {
-    python3 - "$1" <<'PY' 2>/dev/null
+    python3 - "$1" "${2:-1}" <<'PY' 2>/dev/null
 import os
 import plistlib, sys
 
@@ -124,7 +131,18 @@ else:
 # Resolve symlinks before ownership is judged (QA r3 Blocker). Comparing the SPELLING of a
 # path is not the same as knowing what runs: a symlink at "$REBALANCE_DIR/bin/owned-looking"
 # pointing to /opt/foreign/tool reads as ours and executes something else entirely.
-print(os.path.realpath(executable))
+resolved = os.path.realpath(executable)
+
+# The executable must EXIST to prove ownership (QA r4 Blocker). realpath normalises a string
+# whether or not anything is there, so without this a foreign plist naming
+# "$REBALANCE_DIR/not-ours/never-existed" was deleted. A path that has never existed cannot
+# be evidence that the job belongs to this installation. Orphan cleanup — a half-removed
+# checkout leaving jobs whose files are already gone — is a real need, but it is a DIFFERENT
+# operation and gets its own opt-in flag rather than weakening the default proof.
+if sys.argv[2] == "1" and not os.path.exists(resolved):
+    sys.exit(1)
+
+print(resolved)
 PY
 }
 
@@ -163,6 +181,9 @@ rb_is_ours() {
     local executable
     marker="$(rb_realpath "$marker")"
 
+    local require_exists=1
+    [ "$INCLUDE_ORPHANS" -eq 1 ] && require_exists=0
+
     while IFS= read -r executable; do
         [ -n "$executable" ] || continue
         case "$mode" in
@@ -170,7 +191,7 @@ rb_is_ours() {
             under) case "$executable" in "$marker"/*) return 0 ;; esac ;;
         esac
     done <<EOF
-$(rb_plist_executables "$plist")
+$(rb_plist_executables "$plist" "$require_exists")
 EOF
     return 1
 }
@@ -191,7 +212,8 @@ rb_remove_job() {
     if ! rb_is_ours "$plist" "$marker" "$mode"; then
         # Reported loudly and counted as a failure: the operator asked for this job to be gone
         # and it is still here. Silently skipping would let a partial uninstall exit 0.
-        say "  ! $label: EXISTS but does not launch $marker ($mode) — refusing to remove"
+        say "  ! $label: EXISTS but does not launch an existing $marker ($mode) — refusing to remove"
+        say "      (if its executable is already gone, re-run with --include-orphans)"
         say "      $plist"
         skipped_foreign=$((skipped_foreign + 1))
         return 1

@@ -19,7 +19,29 @@ import pytest
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "uninstall_rebalance.sh"
 
 
-def _plist(path: Path, program: str) -> None:
+def _touch_executable(program: str) -> None:
+    """Create the binary a fixture plist claims to launch.
+
+    Ownership now requires the executable to exist, so a fixture that skips this would pass
+    for the wrong reason — refused because the file is missing rather than because the
+    ownership logic worked. Only paths under a temp dir are created; system paths are left be.
+    """
+    target = Path(program)
+    if target.exists():
+        return
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text("#!/bin/sh\n", encoding="utf-8")
+        target.chmod(0o755)
+    except OSError:
+        # A system path the test never intended to create (/opt/..., /Library/...). Leaving it
+        # absent is fine there — those fixtures assert refusal either way.
+        pass
+
+
+def _plist(path: Path, program: str, *, create: bool = True) -> None:
+    if create:
+        _touch_executable(program)
     path.write_text(
         "<?xml version='1.0' encoding='UTF-8'?>\n"
         "<plist version='1.0'><dict>"
@@ -111,6 +133,7 @@ def test_a_plist_that_only_MENTIONS_our_path_is_refused(sandbox):
         encoding="utf-8",
     )
 
+    _touch_executable("/opt/other/tool")
     result = _run(sandbox, "--apply")
 
     assert foreign.exists()
@@ -214,6 +237,7 @@ def test_an_interpreter_backed_job_inside_the_repo_is_recognised(sandbox):
     """
     repo, templates, agents = sandbox
     (templates / "com.rebalance-os.health-check.plist.template").write_text("x", encoding="utf-8")
+    _touch_executable(f"{repo}/.venv/bin/python")
     plist = agents / "com.rebalance-os.health-check.plist"
     plist.write_text(
         "<?xml version='1.0' encoding='UTF-8'?>\n"
@@ -360,6 +384,72 @@ def test_a_symlink_that_stays_inside_the_repo_still_confers_ownership(sandbox):
 
     assert not plist.exists()
     assert result.returncode == 0
+
+
+def test_a_path_that_never_existed_is_not_proof_of_ownership(sandbox):
+    """QA r4 Blocker: realpath normalises a string whether or not anything is there.
+
+    A colliding foreign plist naming a path under the checkout that has never existed was
+    being deleted on the strength of its spelling alone.
+    """
+    repo, _templates, agents = sandbox
+    foreign = agents / "com.rebalance-os.alpha.plist"
+    _plist(foreign, f"{repo}/not-ours/never-existed", create=False)
+
+    result = _run(sandbox, "--apply")
+
+    assert foreign.exists()
+    assert result.returncode == 1
+    assert "--include-orphans" in result.stdout  # and the operator is told the way forward
+
+
+def test_an_absent_exact_marker_is_also_refused(sandbox, tmp_path):
+    """Same hole, non-template branch: the ~/bin binary must exist to prove anything."""
+    repo, templates, agents = sandbox
+    home = tmp_path / "home"
+    (home / "bin").mkdir(parents=True)
+    plist = agents / "com.user.git-pulse.plist"
+    _plist(plist, f"{home}/bin/git-pulse", create=False)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--apply"],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "RB_UNINSTALL_REPO_DIR": str(repo),
+            "RB_UNINSTALL_TEMPLATE_DIR": str(templates),
+            "RB_UNINSTALL_AGENTS_DIR": str(agents),
+        },
+    )
+
+    assert plist.exists()
+    assert result.returncode == 1
+
+
+def test_include_orphans_cleans_up_a_job_whose_executable_is_gone(sandbox):
+    """The half-removed-checkout case an uninstaller exists for — but asked for explicitly."""
+    repo, _templates, agents = sandbox
+    plist = agents / "com.rebalance-os.alpha.plist"
+    _plist(plist, f"{repo}/scripts/already-deleted.sh", create=False)
+
+    result = _run(sandbox, "--apply", "--include-orphans")
+
+    assert not plist.exists()
+    assert result.returncode == 0
+
+
+def test_include_orphans_still_refuses_a_foreign_job(sandbox):
+    """The orphan flag relaxes the existence proof, never the ownership boundary."""
+    repo, _templates, agents = sandbox
+    foreign = agents / "com.rebalance-os.alpha.plist"
+    _plist(foreign, f"{repo}-archive/scripts/alpha.sh", create=False)
+
+    result = _run(sandbox, "--apply", "--include-orphans")
+
+    assert foreign.exists()
+    assert result.returncode == 1
 
 
 def test_an_unparseable_plist_fails_closed(sandbox):
