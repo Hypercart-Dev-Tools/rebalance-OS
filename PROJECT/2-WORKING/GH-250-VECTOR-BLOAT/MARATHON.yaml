@@ -13,8 +13,13 @@
 # Fire with (dry-run FIRST, always):
 #   .xyz/relay-automation/marathon.sh \
 #     --plan PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/MARATHON.yaml \
-#     --pre-advance-cmd "python -m pytest tests/test_github_direct_commits.py tests/test_db_github.py tests/test_github_knowledge.py tests/test_github_coverage.py -q" \
+#     --pre-advance-cmd "/Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_github_direct_commits.py tests/test_db_github.py tests/test_github_knowledge.py tests/test_github_coverage.py -q" \
 #     --dry-run
+#
+# The gate MUST name an ABSOLUTE interpreter. Bare `python` passed only because the operator's
+# interactive shell had a venv active; the marathon's turn context does not inherit it, so the gate
+# failed with exit 5 / reason=pre-advance-failed on 2026-08-04. In a sanitized env `python` is not
+# even on PATH, and homebrew python3 cannot import `rebalance`.
 #
 # The pre-advance gate is SCOPED, not the full suite, on purpose: GH-231 (job_guard fixture never
 # pins the compressor ceiling) and GH-232 (5 tests that only fail outside CI) both fail on this
