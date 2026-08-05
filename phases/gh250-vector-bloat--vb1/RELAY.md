@@ -1,5 +1,5 @@
 # Marathon Phase vb1
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-VB1-TURN builder=agy reviewer=codex round-cap=7 -->
@@ -194,3 +194,12 @@ The reviewed implementation does preserve the qualifying-commit return contract,
 
 **Key decisions:**
 - The incomplete test was a remnant and served no purpose. After its removal, the scoped test suite runs perfectly with 33 passed tests (`pytest tests/test_github_direct_commits.py tests/test_db_github.py tests/test_github_knowledge.py tests/test_github_coverage.py -q`), validating the assertions verified in Round 1.
+
+### Round 4 · Reviewer · codex
+
+Reproduced the prior failure path's required pre-advance command on the current worktree:
+`PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_github_direct_commits.py tests/test_db_github.py tests/test_github_knowledge.py tests/test_github_coverage.py -q` → **33 passed**. (The interpreter emits its known sandbox-only MLX atexit warning after pytest completes; it does not affect the successful test result.)
+
+The source review confirms the writer preserves its qualifying-commit return contract (`len(rows)`), uses `source_key` conflict upsert with a content-hash `WHERE` guard so unchanged rows—including `id`, `embedded_hash`, and `fetched_at`—are true no-ops, and updates changed rows in place with `embedded_hash = NULL`. Stale direct-commit vectors are removed before their documents within the same transaction via the DB helper. The added tests cover idempotence, vector stability, changed content, PR-overlap pruning, and the five-commit scale cycle; the builder recorded their pre-change failure metrics.
+
+**Verdict:** Approved
