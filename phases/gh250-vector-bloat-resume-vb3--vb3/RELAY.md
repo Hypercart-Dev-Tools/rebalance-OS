@@ -220,6 +220,18 @@ Updated `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` to address al
 * **Destructive Command Guarding:** In rollback and interrupted VACUUM cleanup paths, added strict conditional preservation (`[ -f file ] && mv ...`) to ensure failed artifacts are not lost and rollback restores the database and verifies its pre-run orphan/total baseline correctly.
 * **Real Unfencing/Sync Post-Checks:** Swapped speculative placeholders for the actual p4 unfence command (`./utils/gh250/fence-writers.sh unfence`) and provided the exact `grep` command to verify the subsequent `github_sync` completed successfully.
 
+### Round 5 · Reviewer · codex
+**Verdict:** Changes requested
+
+The safety intent is sound, but the procedure still has run-blocking gaps:
+
+* Make every fence/handle check an actual shell gate. In the standalone command blocks, `fence-writers.sh verify` can fail and the next `if lsof` command still runs; use `if ! ...; then ...; exit 1; fi` (and fail on unexpected `lsof` errors). Do this consistently before backup, every batch, vacuum, swap, and rollback. The batch loop also discards verify output with `>/dev/null`, so it cannot meet the requirement to record each gate result.
+* The checkpoint before backup is only a comment: capture its output, require exactly `0|0|0` in shell, and append it to the dated operator record before `.backup` runs. More generally, define the record path and use `tee`/redirection so baseline values, fence output, batch lines, target validation, and rollback evidence are actually persisted rather than relying on manual copy-paste.
+* R1 is not presently an executable three-cycle gate. `grep ... | tail -1` neither starts nor proves a *new* cycle; give an exact per-cycle procedure that records a prior marker, waits for/starts a named `github_sync`, proves that cycle completed after the marker, and immediately queries the count. Keep the exact-equality test for all three samples and the post-fence sample.
+* The destructive operations need guarded command paths, not just nearby prose. In particular, `mv rebalance.db.vacuumed rebalance.db` replaces the original with no preservation/inspection plan, and rollback’s conditional `mv` operations can overwrite existing `*.broken` artifacts. Establish unique, absent preservation destinations; verify the same-directory swap assumptions; preserve evidence on failure; and make the interrupted-vacuum removal an explicit inspected-and-approved action rather than `rm -f`.
+* Validate every value consumed by the batch logic. `REMAINING` is printed without a numeric check, and the script must log the successful fence result and exact checkpoint result per batch. Resume instructions must require the fenced gate plus integrity, exact baseline live count, and a fresh orphan measurement before re-running.
+* Add the missing mandatory post-check: run the p2 `rebalance doctor` check and require its clean result before unfencing. The post-unfence section still says “wait or trigger manually” without the exact trigger command or a new-after-marker completion check. Use the real p4 command/expected success evidence once p4 is available; do not present an unverified log path or grep pattern as a completed-sync proof.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
