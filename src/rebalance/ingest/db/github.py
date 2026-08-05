@@ -487,13 +487,11 @@ def upsert_github_document(
             doc_type=excluded.doc_type,
             title=excluded.title,
             body=excluded.body,
-            embedded_hash=CASE
-                WHEN github_documents.content_hash = excluded.content_hash THEN github_documents.embedded_hash
-                ELSE NULL
-            END,
+            embedded_hash=NULL,
             content_hash=excluded.content_hash,
             updated_at=excluded.updated_at,
             fetched_at=excluded.fetched_at
+        WHERE github_documents.content_hash != excluded.content_hash
         RETURNING id
         """,
         (
@@ -509,7 +507,13 @@ def upsert_github_document(
             fetched_at,
         ),
     )
-    return int(cursor.fetchone()[0])
+    row = cursor.fetchone()
+    if row is not None:
+        return int(row[0])
+    return int(conn.execute(
+        "SELECT id FROM github_documents WHERE source_key = ?",
+        (source_key,)
+    ).fetchone()[0])
 
 
 def delete_item_children(
@@ -778,3 +782,16 @@ def delete_github_embeddings_for_docs(
         "DELETE FROM github_embeddings WHERE doc_id = ?",
         [(doc_id,) for doc_id in doc_ids],
     )
+
+
+def delete_github_documents(conn: sqlite3.Connection, doc_ids: list[int]) -> None:
+    """Delete vectors and then documents for the given document ids."""
+    if not doc_ids:
+        return
+    delete_github_embeddings_for_docs(conn, doc_ids)
+    for i in range(0, len(doc_ids), 900):
+        chunk = doc_ids[i:i + 900]
+        conn.executemany(
+            "DELETE FROM github_documents WHERE id = ?",
+            [(doc_id,) for doc_id in chunk],
+        )

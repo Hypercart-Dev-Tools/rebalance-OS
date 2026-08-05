@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -246,8 +247,9 @@ class DirectCommitEmbeddingPruningTests(unittest.TestCase):
 
     def _get_doc(self, sha: str) -> dict | None:
         with db_connection(self.db_path, ensure_github_schema) as conn:
+            conn.row_factory = sqlite3.Row
             row = conn.execute(
-                "SELECT id, embedded_hash FROM github_documents WHERE source_key = ?",
+                "SELECT * FROM github_documents WHERE source_key = ?",
                 (f"{REPO}:direct_commit:{sha}",)
             ).fetchone()
             return dict(row) if row else None
@@ -271,8 +273,7 @@ class DirectCommitEmbeddingPruningTests(unittest.TestCase):
                 self.assertEqual(pending, 0, "No re-embedding should be scheduled")
             
             doc = self._get_doc(SHA)
-            self.assertEqual(doc["id"], first_doc["id"], "Document id must not churn")
-            self.assertEqual(doc["embedded_hash"], first_doc["embedded_hash"], "embedded_hash must not churn")
+            self.assertEqual(doc, first_doc, "Complete row must not churn across repeat syncs")
             
             docs, vectors, orphans = self._counts()
             self.assertEqual(vectors, 1)
@@ -312,6 +313,12 @@ class DirectCommitEmbeddingPruningTests(unittest.TestCase):
         self._seed_direct_commit(SHA)
         self.assertEqual(sync_direct_commit_documents(self.db_path), 1)
         self.assertEqual(self._embed_all_pending(), 1)
+        
+        # Add idempotence interaction to prove the new upsert path is exercised
+        self.assertEqual(sync_direct_commit_documents(self.db_path), 1)
+        with db_connection(self.db_path, ensure_github_schema) as conn:
+            pending = len(gh.github_documents_pending_embed(conn, min_chars=0))
+            self.assertEqual(pending, 0)
         
         # Make PR-overlapping
         with db_connection(self.db_path, ensure_github_schema) as conn:

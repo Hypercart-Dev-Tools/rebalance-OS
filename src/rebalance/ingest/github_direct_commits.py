@@ -297,13 +297,7 @@ def sync_direct_commit_documents(database_path: Path) -> int:
             doc["id"] for doc in existing_docs if doc["source_key"] not in valid_source_keys
         ]
         if stale_doc_ids:
-            gh.delete_github_embeddings_for_docs(conn, stale_doc_ids)
-            for i in range(0, len(stale_doc_ids), 900):
-                chunk = stale_doc_ids[i:i + 900]
-                conn.executemany(
-                    "DELETE FROM github_documents WHERE id = ?",
-                    [(doc_id,) for doc_id in chunk],
-                )
+            gh.delete_github_documents(conn, stale_doc_ids)
 
         conn.commit()
     return len(rows)
