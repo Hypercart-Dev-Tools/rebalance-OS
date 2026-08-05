@@ -255,12 +255,42 @@ if not isinstance(want, dict) or not isinstance(got, dict):
 
 # Compare only what determines WHAT RUNS. Schedules and log paths may legitimately drift
 # without changing whose job this is.
-# Label is part of the shape: a foreign plist sitting at our filename could otherwise copy the
-# expected launch fields while declaring Label=com.foreign.agent and still be deleted. Our
-# installer always renders the label that matches the file, so anything else is not ours.
-for key in ("Label", "Program", "ProgramArguments", "WorkingDirectory"):
+# Everything that determines WHAT RUNS and AS WHOM. Label is here because a foreign plist at
+# our filename could otherwise copy the launch fields while declaring Label=com.foreign.agent.
+for key in (
+    "Label", "Program", "ProgramArguments", "WorkingDirectory",
+    "RootDirectory", "UserName", "GroupName", "Umask",
+):
     if want.get(key) != got.get(key):
         sys.exit(1)
+
+# EnvironmentVariables is deliberately NOT compared wholesale, and this is the one place the
+# structural proof has to be a judgement rather than an equality.
+#
+# Measured on the live machine: comparing the WHOLE plist matched only 1 of 7 installed jobs.
+# The installed plists predate template changes (`Nice: 5` was added since), and pulse-sync
+# carries a deliberate local `PULSE_PUSH=false`. Byte-equality would refuse six of the
+# operator's nine real jobs — a check that refuses everything is not a safe check, it is a
+# broken one.
+#
+# So instead of demanding the environment be identical, require that nothing in it can
+# REDIRECT execution. PYTHONPATH/PYTHONHOME make the repo-owned interpreter import
+# attacker-controlled code; the DYLD_/LD_ family hijacks the loader; PATH re-points the
+# commands a shell job runs. A benign app-level override like PULSE_PUSH cannot.
+hijackers = (
+    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONEXECUTABLE",
+    "PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
+    "DYLD_FALLBACK_LIBRARY_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
+)
+environment = got.get("EnvironmentVariables")
+if environment is not None:
+    if not isinstance(environment, dict):
+        sys.exit(1)
+    expected_environment = want.get("EnvironmentVariables") or {}
+    for name in environment:
+        # An injected loader variable is refused unless the template itself ships it.
+        if name.upper() in hijackers and environment[name] != expected_environment.get(name):
+            sys.exit(1)
 sys.exit(0)
 PY
 }

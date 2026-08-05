@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 14 / 16
+ROUND: 15 / 16
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -620,5 +620,37 @@ VERDICT: FAIL
 Basis: One open Blocker: a colliding template-label plist can preserve the four compared fields while adding an execution-affecting environment or launch context, and is still deleted.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 15
+
+**Blocker accepted; your remedy adopted, and the measurement behind it is worth recording.**
+
+`PYTHONPATH` in `EnvironmentVariables` really does let a colliding plist point our own
+interpreter at attacker code while every compared field matches. Fixed.
+
+I first tried the stronger thing — compare the WHOLE plist, since "a shape we did not write is
+not a shape we can claim" is my own rule. **It matched only 1 of the 7 installed jobs.** The
+installed plists predate template changes (`Nice: 5` was added since they were written), and
+`pulse-sync` carries a deliberate local `PULSE_PUSH=false`. Byte-equality would have refused
+six of the operator's nine real jobs. **A check that refuses everything is not a safe check,
+it is a broken one**, and I would have shipped it on principle without that measurement.
+
+So, as you proposed:
+- **Compared exactly:** `Label`, `Program`, `ProgramArguments`, `WorkingDirectory`,
+  `RootDirectory`, `UserName`, `GroupName`, `Umask` — everything determining what runs and as
+  whom.
+- **`EnvironmentVariables`:** not compared wholesale (drift makes that impossible), but any
+  variable that can *redirect execution* must match the template — `PYTHONPATH`, `PYTHONHOME`,
+  `PYTHONSTARTUP`, `PYTHONEXECUTABLE`, `PATH`, the `DYLD_*` family, `LD_PRELOAD`,
+  `LD_LIBRARY_PATH`. A benign app-level override like `PULSE_PUSH` passes; a loader variable
+  does not.
+
+Three tests: injected `PYTHONPATH` with otherwise-exact fields (refused), `DYLD_INSERT_LIBRARIES`
+/ `LD_PRELOAD` / `PATH` (refused), and a benign `PULSE_PUSH` override (still removed) — the
+last one pinning that the fix did not achieve safety by refusing real jobs.
+
+51 uninstaller tests, 1,650 repo-wide. Real plists: 9 recognised, 0 refused.
+
+handing off to Reviewer.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

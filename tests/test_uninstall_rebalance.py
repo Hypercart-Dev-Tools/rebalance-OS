@@ -999,3 +999,77 @@ def test_a_foreign_label_inside_our_filename_is_refused(sandbox):
 
     assert plist.exists(), "a foreign Label must not be removable under our filename"
     assert result.returncode == 1
+
+
+def _plist_with_env(agents, label, repo, args, env):
+    body = "".join(f"<string>{a}</string>" for a in args)
+    envxml = "".join(f"<key>{k}</key><string>{v}</string>" for k, v in env.items())
+    path = agents / f"{label}.plist"
+    path.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        f"<key>Label</key><string>{label}</string>"
+        f"<key>ProgramArguments</key><array>{body}</array>"
+        f"<key>EnvironmentVariables</key><dict>{envxml}</dict>"
+        "</dict></plist>\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_an_injected_PYTHONPATH_is_refused(sandbox):
+    """QA r14 Blocker: the environment can redirect a repo-owned interpreter.
+
+    Exact Label and ProgramArguments, but PYTHONPATH makes our own python import someone
+    else's code.
+    """
+    repo, templates, agents = sandbox
+    args = ["{{PYTHON}}", "{{REBALANCE_DIR}}/scripts/health_issue_reporter.py"]
+    _template(templates, "com.rebalance-os.health-check", args)
+    _touch_executable(f"{repo}/.venv/bin/python")
+    _touch_executable(f"{repo}/scripts/health_issue_reporter.py")
+    real = [a.replace("{{REBALANCE_DIR}}", str(repo)).replace("{{PYTHON}}", f"{repo}/.venv/bin/python")
+            for a in args]
+
+    plist = _plist_with_env(agents, "com.rebalance-os.health-check", repo, real,
+                            {"PYTHONPATH": "/opt/attacker"})
+
+    result = _run(sandbox, "--apply")
+
+    assert plist.exists()
+    assert result.returncode == 1
+
+
+def test_loader_hijack_variables_are_refused(sandbox):
+    repo, templates, agents = sandbox
+    args = ["{{REBALANCE_DIR}}/scripts/alpha.sh"]
+    _template(templates, "com.rebalance-os.alpha", args)
+    _touch_executable(f"{repo}/scripts/alpha.sh")
+
+    for name in ("DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "PATH"):
+        plist = _plist_with_env(agents, "com.rebalance-os.alpha", repo,
+                                [f"{repo}/scripts/alpha.sh"], {name: "/opt/attacker"})
+        result = _run(sandbox, "--apply")
+        assert plist.exists(), f"{name} must not be removable"
+        assert result.returncode == 1
+        plist.unlink()
+
+
+def test_a_benign_environment_override_does_not_block_removal(sandbox):
+    """pulse-sync really does carry a local PULSE_PUSH=false on the operator's machine.
+
+    Comparing the whole plist matched only 1 of 7 installed jobs, so a check that demanded
+    byte-equality would refuse six real jobs — broken, not safe.
+    """
+    repo, templates, agents = sandbox
+    args = ["{{REBALANCE_DIR}}/scripts/alpha.sh"]
+    _template(templates, "com.rebalance-os.alpha", args)
+    _touch_executable(f"{repo}/scripts/alpha.sh")
+
+    plist = _plist_with_env(agents, "com.rebalance-os.alpha", repo,
+                            [f"{repo}/scripts/alpha.sh"], {"PULSE_PUSH": "false"})
+
+    result = _run(sandbox, "--apply")
+
+    assert not plist.exists()
+    assert result.returncode == 0
