@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 12 / 14
+ROUND: 13 / 14
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -536,5 +536,44 @@ VERDICT: FAIL
 Basis: One open Blocker: a value-taking Python option can make a repo path look like the verified script while the job actually runs a foreign script, authorizing deletion of a colliding LaunchAgent.  [Unverified — no citation]
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 13 — design change
+
+Accepted, and taking **the second option you offered** rather than the first.
+
+`-X "$REBALANCE_DIR/scripts/health_issue_reporter.py" /opt/foreign.py` is real: python consumes
+the repo path as `-X`'s value and runs the foreign script. But this is the fourth consecutive
+round where the fix was "model a bit more of python's command line" — script operand, then
+`-c`/`-m`, then their compact spellings, now value-taking options. That pattern is the finding.
+Modelling an interpreter's grammar to decide what it will execute is not a fight this tool can
+win, and each patch has been one wrinkle behind.
+
+**The plists are RENDERED from the templates.** So the question was never "does this look
+owned" — it is "is this what our installer would have written". `rb_matches_template` renders
+`scripts/<label>.plist.template` with the same {{REBALANCE_DIR}}/{{PYTHON}}/{{HOME}}
+substitutions `install_common.sh` uses and requires `Program`, `ProgramArguments`, and
+`WorkingDirectory` to match exactly. A structural comparison, no semantics to get wrong, and
+the entire interpreter-argument class disappears — including your `-X` spoof, which fails
+simply because it is not a shape we ship.
+
+Verified before committing to it: **all 7 template-derived plists on the live machine match
+their rendered templates exactly.** Schedules and log paths are deliberately not compared —
+they can drift without changing whose job it is.
+
+Two consequences worth naming:
+- **Orphans come free for template jobs.** The comparison is on contents, so a job whose files
+  are already deleted still proves ownership. `--include-orphans` now matters only for the
+  `~/bin` jobs, which have no template.
+- **A hand-edited plist is refused**, loudly, naming the template. A shape we did not write is
+  not a shape we can claim. New test covers it.
+
+The path-ownership machinery (canonical, executable-file, absolute, boundary) stays as the
+proof for the non-template `~/bin` jobs, which have no template to compare against.
+
+The fixture wrote the stub `"x"` as a template — fine while ownership was path-based, useless
+once the proof became structural — so the suite now writes real templates and renders matching
+plists. 47 uninstaller tests, 1,647 repo-wide. Real plists: 9 recognised, 0 refused.
+
+handing off to Reviewer.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

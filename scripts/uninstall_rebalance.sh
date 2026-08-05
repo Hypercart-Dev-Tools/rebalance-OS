@@ -216,6 +216,52 @@ for line in lines:
 PY
 }
 
+# The strongest proof available, and the one that ends a whole class of bypasses.
+#
+# Rounds 9-12 were a losing game: every round modelled a bit more of Python's command line
+# (script operand, then `-c`/`-m`, then their compact spellings, then `-X` consuming its next
+# argument) and every round the reviewer found another wrinkle. Modelling an interpreter's
+# grammar to decide what it will execute is not a fight worth having.
+#
+# `install_common.sh` RENDERS these plists from `scripts/<label>.plist.template`, substituting
+# {{REBALANCE_DIR}}, {{PYTHON}}, {{HOME}}. So the question is not "does this look owned" but
+# "is this what our installer would have written" — a structural comparison with no semantics
+# to get wrong. Verified against the live backup: all 7 installed template jobs match exactly.
+#
+# It subsumes the orphan case for free: the comparison is on the plist's contents, so a job
+# whose files were already deleted still matches its template.
+rb_matches_template() {
+    local template="$1"
+    local plist="$2"
+    RB_REPO="$REBALANCE_DIR" RB_PY="$REBALANCE_DIR/.venv/bin/python" RB_HOME="$HOME" \
+    python3 - "$template" "$plist" <<'PY' 2>/dev/null
+import os, plistlib, sys
+
+try:
+    rendered = (
+        open(sys.argv[1], encoding="utf-8").read()
+        .replace("{{REBALANCE_DIR}}", os.environ["RB_REPO"])
+        .replace("{{PYTHON}}", os.environ["RB_PY"])
+        .replace("{{HOME}}", os.environ["RB_HOME"])
+    )
+    want = plistlib.loads(rendered.encode("utf-8"))
+    with open(sys.argv[2], "rb") as handle:
+        got = plistlib.load(handle)
+except Exception:
+    sys.exit(1)
+
+if not isinstance(want, dict) or not isinstance(got, dict):
+    sys.exit(1)
+
+# Compare only what determines WHAT RUNS. Schedules and log paths may legitimately drift
+# without changing whose job this is.
+for key in ("Program", "ProgramArguments", "WorkingDirectory"):
+    if want.get(key) != got.get(key):
+        sys.exit(1)
+sys.exit(0)
+PY
+}
+
 # Canonical form of a path, for comparing like with like. The executable side is resolved in
 # the parser, so the marker side has to be resolved too or a symlinked checkout would stop
 # matching its own jobs.
@@ -287,6 +333,7 @@ rb_remove_job() {
     local label="$1"
     local marker="${2:-$REBALANCE_DIR}"
     local mode="${3:-under}"
+    local template="${4:-}"
     local plist="$LAUNCH_AGENTS_DIR/$label.plist"
 
     # A broken symlink at the plist path fails -f, so it used to be reported as "not installed"
@@ -305,7 +352,17 @@ rb_remove_job() {
         return 0
     fi
 
-    if ! rb_is_ours "$plist" "$marker" "$mode"; then
+    # A template-derived job is proved by matching what the installer would have rendered.
+    # Only jobs with no template (the ~/bin ones) fall back to path-based ownership.
+    if [ -n "$template" ]; then
+        if ! rb_matches_template "$template" "$plist"; then
+            say "  ! $label: EXISTS but does not match $template — refusing to remove"
+            say "      $plist"
+            say "      (hand-edited, or another program's job under the same label)"
+            skipped_foreign=$((skipped_foreign + 1))
+            return 1
+        fi
+    elif ! rb_is_ours "$plist" "$marker" "$mode"; then
         # Reported loudly and counted as a failure: the operator asked for this job to be gone
         # and it is still here. Silently skipping would let a partial uninstall exit 0.
         say "  ! $label: EXISTS but does not launch an existing $marker ($mode) — refusing to remove"
@@ -347,7 +404,7 @@ for template in "$TEMPLATE_DIR"/*.plist.template; do
     [ -e "$template" ] || continue
     found_template=1
     label="$(basename "$template" .plist.template)"
-    rb_remove_job "$label" || failures=$((failures + 1))
+    rb_remove_job "$label" "$REBALANCE_DIR" under "$template" || failures=$((failures + 1))
 done
 if [ "$found_template" -eq 0 ]; then
     # Without templates there is no inventory, and reporting "nothing to remove" would be a

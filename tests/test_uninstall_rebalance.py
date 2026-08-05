@@ -52,6 +52,50 @@ def _plist(path: Path, program: str, *, create: bool = True) -> None:
     )
 
 
+
+def _template(templates: Path, label: str, args: list[str]) -> Path:
+    """Write a real plist template, the way install_common.sh expects to find one.
+
+    The fixture used to write the stub "x". That was fine while ownership was judged from
+    paths, and useless once the proof became "does this plist match what our installer would
+    have rendered" — the tests have to exercise the real contract.
+    """
+    body = "".join(f"<string>{a}</string>" for a in args)
+    path = templates / f"{label}.plist.template"
+    path.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        f"<key>Label</key><string>{label}</string>"
+        f"<key>ProgramArguments</key><array>{body}</array>"
+        "</dict></plist>\n",
+        encoding="utf-8",
+    )
+    return path
+
+
+def _rendered(agents: Path, label: str, repo: Path, args: list[str], *, create: bool = True) -> Path:
+    """Write the plist a template would render to, substituting {{REBALANCE_DIR}}/{{PYTHON}}."""
+    real = [
+        a.replace("{{REBALANCE_DIR}}", str(repo)).replace("{{PYTHON}}", f"{repo}/.venv/bin/python")
+        for a in args
+    ]
+    if create:
+        for a in real:
+            if a.startswith("/"):
+                _touch_executable(a)
+    path = agents / f"{label}.plist"
+    body = "".join(f"<string>{a}</string>" for a in real)
+    path.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        f"<key>Label</key><string>{label}</string>"
+        f"<key>ProgramArguments</key><array>{body}</array>"
+        "</dict></plist>\n",
+        encoding="utf-8",
+    )
+    return path
+
+
 @pytest.fixture
 def sandbox(tmp_path):
     """A fake repo, template dir, and LaunchAgents dir that the script operates on."""
@@ -60,8 +104,8 @@ def sandbox(tmp_path):
     agents = tmp_path / "LaunchAgents"
     for directory in (repo, templates, agents):
         directory.mkdir()
-    (templates / "com.rebalance-os.alpha.plist.template").write_text("x", encoding="utf-8")
-    (templates / "com.rebalance-os.bravo.plist.template").write_text("x", encoding="utf-8")
+    _template(templates, "com.rebalance-os.alpha", ["{{REBALANCE_DIR}}/scripts/alpha.sh"])
+    _template(templates, "com.rebalance-os.bravo", ["{{REBALANCE_DIR}}/scripts/bravo.sh"])
     return repo, templates, agents
 
 
@@ -236,22 +280,9 @@ def test_an_interpreter_backed_job_inside_the_repo_is_recognised(sandbox):
     The strict executable check must not refuse these — that would leave a partial uninstall.
     """
     repo, templates, agents = sandbox
-    (templates / "com.rebalance-os.health-check.plist.template").write_text("x", encoding="utf-8")
-    _touch_executable(f"{repo}/.venv/bin/python")
-    # The script operand must exist too — ownership covers the code, not just the interpreter.
-    (repo / "scripts").mkdir(parents=True, exist_ok=True)
-    (repo / "scripts" / "health_issue_reporter.py").write_text("#\n", encoding="utf-8")
-    plist = agents / "com.rebalance-os.health-check.plist"
-    plist.write_text(
-        "<?xml version='1.0' encoding='UTF-8'?>\n"
-        "<plist version='1.0'><dict>"
-        "<key>ProgramArguments</key><array>"
-        f"<string>{repo}/.venv/bin/python</string>"
-        f"<string>{repo}/scripts/health_issue_reporter.py</string>"
-        "<string>--close</string>"
-        "</array></dict></plist>\n",
-        encoding="utf-8",
-    )
+    args = ["{{PYTHON}}", "{{REBALANCE_DIR}}/scripts/health_issue_reporter.py", "--close"]
+    _template(templates, "com.rebalance-os.health-check", args)
+    plist = _rendered(agents, "com.rebalance-os.health-check", repo, args)
 
     result = _run(sandbox, "--apply")
 
@@ -338,9 +369,9 @@ def test_no_secrets_left_behind_exits_clean(sandbox, tmp_path):
 def test_a_plist_whose_name_begins_with_a_dash_is_still_deleted(sandbox):
     """Without `--`, rm reads a leading-dash filename as options."""
     repo, templates, agents = sandbox
-    (templates / "-dashy.plist.template").write_text("x", encoding="utf-8")
-    plist = agents / "-dashy.plist"
-    _plist(plist, f"{repo}/scripts/dashy.sh")
+    args = ["{{REBALANCE_DIR}}/scripts/dashy.sh"]
+    _template(templates, "-dashy", args)
+    plist = _rendered(agents, "-dashy", repo, args)
 
     result = _run(sandbox, "--apply")
 
@@ -381,6 +412,9 @@ def test_a_symlink_that_stays_inside_the_repo_still_confers_ownership(sandbox):
     alias = link / "alpha"
     alias.symlink_to(real)
 
+    # Template and plist both name the alias, so the shapes match; the point is that a
+    # symlink resolving INSIDE the repo is still a legitimate job.
+    _template(sandbox[1], "com.rebalance-os.alpha", [str(alias)])
     plist = agents / "com.rebalance-os.alpha.plist"
     _plist(plist, str(alias))
 
@@ -404,7 +438,6 @@ def test_a_path_that_never_existed_is_not_proof_of_ownership(sandbox):
 
     assert foreign.exists()
     assert result.returncode == 1
-    assert "--include-orphans" in result.stdout  # and the operator is told the way forward
 
 
 def test_an_absent_exact_marker_is_also_refused(sandbox, tmp_path):
@@ -435,10 +468,14 @@ def test_an_absent_exact_marker_is_also_refused(sandbox, tmp_path):
 def test_include_orphans_cleans_up_a_job_whose_executable_is_gone(sandbox):
     """The half-removed-checkout case an uninstaller exists for — but asked for explicitly."""
     repo, _templates, agents = sandbox
-    plist = agents / "com.rebalance-os.alpha.plist"
-    _plist(plist, f"{repo}/scripts/already-deleted.sh", create=False)
+    # Matching the template is a comparison of contents, so a job whose files are already
+    # gone still proves ownership — the orphan case is handled without a flag for template
+    # jobs. The flag remains for the ~/bin jobs, which have no template to compare against.
+    args = ["{{REBALANCE_DIR}}/scripts/already-deleted.sh"]
+    _template(sandbox[1], "com.rebalance-os.alpha", args)
+    plist = _rendered(agents, "com.rebalance-os.alpha", repo, args, create=False)
 
-    result = _run(sandbox, "--apply", "--include-orphans")
+    result = _run(sandbox, "--apply")
 
     assert not plist.exists()
     assert result.returncode == 0
@@ -682,22 +719,10 @@ def test_inline_code_and_module_invocations_are_refused(sandbox):
 def test_a_genuine_interpreter_job_with_flags_is_still_removed(sandbox):
     """pulse-warning-watch passes flags after its script; those must not break ownership."""
     repo, templates, agents = sandbox
-    (templates / "com.rebalance-os.pulse-warning-watch.plist.template").write_text("x", encoding="utf-8")
-    _touch_executable(f"{repo}/.venv/bin/python")
-    (repo / "scripts").mkdir(parents=True, exist_ok=True)
-    (repo / "scripts" / "pulse_warning_watch.py").write_text("#\n", encoding="utf-8")
-
-    plist = agents / "com.rebalance-os.pulse-warning-watch.plist"
-    plist.write_text(
-        "<?xml version='1.0' encoding='UTF-8'?>\n"
-        "<plist version='1.0'><dict>"
-        "<key>ProgramArguments</key><array>"
-        f"<string>{repo}/.venv/bin/python</string>"
-        f"<string>{repo}/scripts/pulse_warning_watch.py</string>"
-        "<string>--url</string><string>http://127.0.0.1:8767/</string>"
-        "</array></dict></plist>\n",
-        encoding="utf-8",
-    )
+    args = ["{{PYTHON}}", "{{REBALANCE_DIR}}/scripts/pulse_warning_watch.py",
+            "--url", "http://127.0.0.1:8767/"]
+    _template(templates, "com.rebalance-os.pulse-warning-watch", args)
+    plist = _rendered(agents, "com.rebalance-os.pulse-warning-watch", repo, args)
 
     result = _run(sandbox, "--apply")
 
@@ -796,23 +821,10 @@ def test_compact_inline_code_and_module_forms_are_refused(sandbox):
 def test_long_options_after_a_script_are_unaffected(sandbox):
     """--close/--llm-triage must keep working: they begin '--', not '-c'/'-m'."""
     repo, templates, agents = sandbox
-    (templates / "com.rebalance-os.health-check-triage.plist.template").write_text("x", encoding="utf-8")
-    _touch_executable(f"{repo}/.venv/bin/python")
-    (repo / "scripts").mkdir(parents=True, exist_ok=True)
-    (repo / "scripts" / "health_issue_reporter.py").write_text("#\n", encoding="utf-8")
-
-    plist = agents / "com.rebalance-os.health-check-triage.plist"
-    plist.write_text(
-        "<?xml version='1.0' encoding='UTF-8'?>\n"
-        "<plist version='1.0'><dict>"
-        "<key>ProgramArguments</key><array>"
-        f"<string>{repo}/.venv/bin/python</string>"
-        f"<string>{repo}/scripts/health_issue_reporter.py</string>"
-        "<string>--warn</string><string>--close</string><string>--llm-triage</string>"
-        "<string>--llm-max-per-run</string><string>5</string>"
-        "</array></dict></plist>\n",
-        encoding="utf-8",
-    )
+    args = ["{{PYTHON}}", "{{REBALANCE_DIR}}/scripts/health_issue_reporter.py",
+            "--warn", "--close", "--llm-triage", "--llm-max-per-run", "5"]
+    _template(templates, "com.rebalance-os.health-check-triage", args)
+    plist = _rendered(agents, "com.rebalance-os.health-check-triage", repo, args)
 
     result = _run(sandbox, "--apply")
 
@@ -908,11 +920,55 @@ def test_an_unknown_option_is_rejected_rather_than_ignored(sandbox):
 def test_the_job_list_is_derived_from_templates_not_hardcoded(sandbox):
     """Add a template, and the new job is covered with no edit to the script."""
     repo, templates, agents = sandbox
-    (templates / "com.rebalance-os.charlie.plist.template").write_text("x", encoding="utf-8")
-    plist = agents / "com.rebalance-os.charlie.plist"
-    _plist(plist, f"{repo}/scripts/charlie.sh")
+    args = ["{{REBALANCE_DIR}}/scripts/charlie.sh"]
+    _template(templates, "com.rebalance-os.charlie", args)
+    plist = _rendered(agents, "com.rebalance-os.charlie", repo, args)
 
     result = _run(sandbox, "--apply")
 
     assert result.returncode == 0
     assert not plist.exists()
+
+
+def test_an_interpreter_option_cannot_smuggle_a_foreign_script(sandbox):
+    """QA r12 Blocker: `-X <repo path> /opt/foreign.py` — python consumes the repo path as
+    -X's value and runs the foreign script, while a first-non-flag-operand scan validated the
+    repo path. Chasing python's grammar lost four rounds running; matching the template shape
+    ends the whole class, because this is simply not what our installer would have written.
+    """
+    repo, templates, agents = sandbox
+    args = ["{{PYTHON}}", "{{REBALANCE_DIR}}/scripts/health_issue_reporter.py", "--close"]
+    _template(templates, "com.rebalance-os.health-check", args)
+    _touch_executable(f"{repo}/.venv/bin/python")
+
+    plist = agents / "com.rebalance-os.health-check.plist"
+    plist.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        "<key>ProgramArguments</key><array>"
+        f"<string>{repo}/.venv/bin/python</string>"
+        "<string>-X</string>"
+        f"<string>{repo}/scripts/health_issue_reporter.py</string>"
+        "<string>/opt/foreign.py</string>"
+        "</array></dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert plist.exists()
+    assert result.returncode == 1
+
+
+def test_a_hand_edited_plist_is_refused_rather_than_assumed(sandbox):
+    """A shape we did not write is not a shape we can claim. Refused loudly, not deleted."""
+    repo, templates, agents = sandbox
+    _template(templates, "com.rebalance-os.alpha", ["{{REBALANCE_DIR}}/scripts/alpha.sh"])
+    plist = _rendered(agents, "com.rebalance-os.alpha", repo,
+                      ["{{REBALANCE_DIR}}/scripts/alpha.sh", "--extra-flag"])
+
+    result = _run(sandbox, "--apply")
+
+    assert plist.exists()
+    assert result.returncode == 1
+    assert "does not match" in result.stdout
