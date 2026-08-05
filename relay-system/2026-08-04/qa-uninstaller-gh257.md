@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 14 / 16
 
@@ -605,5 +605,20 @@ handing off to Producer — go to the Producer window and say 'take your turn'.
 48 uninstaller tests. Real plists: 9 recognised, 0 refused.
 
 handing off to Reviewer.
+
+### Reviewer · Round 14
+
+swept file: yes
+
+- [Blocker] The new structural proof is still not a proof of the rendered job: `rb_matches_template` compares only `Label`, `Program`, `ProgramArguments`, and `WorkingDirectory` (`scripts/uninstall_rebalance.sh:256-263`), silently accepting extra or altered execution-affecting fields. In particular, the health templates contain an `EnvironmentVariables` dictionary (`scripts/com.rebalance-os.health-check.plist.template:22-27`; `scripts/com.rebalance-os.health-check-triage.plist.template:32-47`), yet a colliding plist at a template label can copy the four compared fields and add `PYTHONPATH`, `PYTHONHOME`, or loader-related environment to make the repo-owned interpreter execute attacker-controlled code; it is then unloaded and deleted at `scripts/uninstall_rebalance.sh:358-384`. This directly defeats the stated “shape we did not write is not a shape we can claim” rule. Compare all execution-affecting fields (at minimum `EnvironmentVariables`, `RootDirectory`, `UserName`, `GroupName`, `Umask`, and launchd resource/session controls), allowing only an explicit documented whitelist of per-user overrides such as `GEMINI_API_KEY`/`HEALTH_LLM_DISABLE`; add an apply-mode fixture that has the exact rendered `Label`/`ProgramArguments` plus an injected `PYTHONPATH` and asserts survival and exit 1.
+- [Pass] The Round 13 embedded-label bypass is closed: the matcher now includes `Label` (`scripts/uninstall_rebalance.sh:258-263`), and the new decoupled-label fixture requires the colliding plist to survive with exit 1 (`tests/test_uninstall_rebalance.py:977-1001`).
+- [Pass] The interpreter-option spoof remains refused by rendered-template comparison (`scripts/uninstall_rebalance.sh:358-367`; `tests/test_uninstall_rebalance.py:933-960`), while non-template jobs retain the canonical exact-path check (`scripts/uninstall_rebalance.sh:296-332`).
+- [Unverified — no execution permitted this turn] The whole uninstaller and focused test file were swept statically. Apart from the unvalidated execution-affecting template fields above, no additional pre-existing defects were found.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Blocker: a colliding template-label plist can preserve the four compared fields while adding an execution-affecting environment or launch context, and is still deleted.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
