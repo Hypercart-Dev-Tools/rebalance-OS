@@ -211,11 +211,63 @@ def _render(connection, query_id: str, ids: list[str]) -> str:
     return "\n".join(lines) or "_(no results)_"
 
 
+def parse_sheet(text: str) -> dict[str, str]:
+    """Read `VERDICT: A|B|tie` lines back off the judged sheet, keyed by query id.
+
+    Unjudged verdicts are skipped rather than defaulted. A blank line is "not judged", never a
+    tie: silently counting blanks as ties would inflate `judged` past the decisiveness
+    threshold and manufacture a result out of an unfinished sheet.
+    """
+    verdicts: dict[str, str] = {}
+    query_id = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("## "):
+            query_id = stripped[3:].strip()
+        elif stripped.startswith("`VERDICT:") or stripped.startswith("VERDICT:"):
+            raw = stripped.split("VERDICT:", 1)[1].strip().strip("`").strip().lower()
+            if not raw or query_id is None:
+                continue
+            if raw not in {"a", "b", "tie"}:
+                raise ValueError(
+                    f"{query_id}: unreadable verdict {raw!r}. Expected A, B, or tie — "
+                    "refusing to guess what was meant."
+                )
+            verdicts[query_id] = raw
+    return verdicts
+
+
+def tally(verdicts: dict[str, str], model_a: str = MINILM, model_b: str = QWEN) -> dict[str, Any]:
+    """Un-blind slot verdicts into model judgments and decide (§6.3)."""
+    judgments: dict[str, str] = {}
+    for query_id, slot in verdicts.items():
+        if slot == "tie":
+            judgments[query_id] = "tie"
+            continue
+        first, second = blind_order(query_id, model_a, model_b)
+        judgments[query_id] = first if slot == "a" else second
+    return win_rate(judgments, model_a, model_b)
+
+
 def main() -> int:
     """Emit the blind A/B sheet for Checkpoint A, refusing to run on an invalid comparison."""
     from sentence_transformers import SentenceTransformer
 
     here = Path(__file__).resolve().parent
+
+    if "--tally" in sys.argv:
+        sheet = here / "checkpoint_a_pairs.md"
+        verdicts = parse_sheet(sheet.read_text(encoding="utf-8"))
+        result = tally(verdicts)
+        print(f"judged {result['judged']} of 22")
+        print(f"  {MINILM:32} {result[MINILM]}")
+        print(f"  {QWEN:32} {result[QWEN]}")
+        print(f"  ties{'':29} {result['ties']}")
+        print(f"\nwinner: {result['winner']}   decisive: {result['decisive']}")
+        if result["note"]:
+            print(result["note"])
+        return 0
+
     connection = db_connection()
     try:
         shipped = SentenceTransformer(f"sentence-transformers/{MINILM}", local_files_only=True)

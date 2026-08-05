@@ -69,6 +69,30 @@ def test_a_missing_sidecar_entry_fails_loudly_rather_than_scoring_a_subset(tmp_p
         load_queries(c, s)
 
 
+def test_an_unfinished_sheet_does_not_count_blanks_as_ties():
+    """Counting blanks as ties would push `judged` past the threshold and invent a result."""
+    from judge_pairwise import parse_sheet
+
+    sheet = "## q-1\n\n`VERDICT: A`\n\n## q-2\n\n`VERDICT:`\n\n## q-3\n\n`VERDICT: tie`\n"
+    assert parse_sheet(sheet) == {"q-1": "a", "q-3": "tie"}
+
+
+def test_an_unreadable_verdict_is_refused_rather_than_guessed():
+    from judge_pairwise import parse_sheet
+
+    with pytest.raises(ValueError, match="unreadable verdict"):
+        parse_sheet("## q-1\n\n`VERDICT: maybe the second one`\n")
+
+
+def test_tally_unblinds_slots_back_to_the_models():
+    from judge_pairwise import MINILM, QWEN, blind_order, tally
+
+    # Whichever model sits in slot A for this query is the one an "a" verdict credits.
+    first, _second = blind_order("q-1", MINILM, QWEN)
+    result = tally({"q-1": "a"})
+    assert result[first] == 1
+
+
 def test_the_eval_excludes_units_that_merely_echo_the_query(monkeypatch):
     """20 of 22 queries returned the operator's own prompt log at rank 1, for both models."""
     from hiqs.plugins import Doc
