@@ -7,6 +7,7 @@ DB) and the report aggregation logic.
 
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from unittest.mock import patch
 
@@ -335,8 +336,14 @@ class PulseCollectorCheckTests(unittest.TestCase):
     def _health(self, name, state, *, healthy, age_hours, failures=0, examples=""):
         from rebalance.ingest.pulse_health import CollectorHealth
 
+        # classify() derives age_hours FROM last_scan_utc, so a row carrying an
+        # age always carries the scan timestamp it was computed from. Derive it
+        # here for the same reason: pinning the two independently produced a
+        # state read_collector_health() cannot emit — an age with no scan — and
+        # the check only kept passing because it read the age directly.
+        last_scan = datetime.now(timezone.utc) - timedelta(hours=age_hours)
         h = CollectorHealth(
-            device_id=name, device_name=name, last_scan_utc=None,
+            device_id=name, device_name=name, last_scan_utc=last_scan,
             repo_scan_failures=failures, scan_failure_examples=examples,
         )
         h.state, h.age_hours = state, age_hours
@@ -359,7 +366,12 @@ class PulseCollectorCheckTests(unittest.TestCase):
         self.assertIn("4 repo scan failures", by["pulse collector:Broken"].detail)
         self.assertIn("repo-a", by["pulse collector:Broken"].detail)
         self.assertEqual(by["pulse collector:Stale"].status, WARN)
-        self.assertIn("1.2d ago", by["pulse collector:Stale"].detail)  # 30h → days
+        # GH-189 re-sourced this from format_timestamp(relative=True), which
+        # emits an absolute anchor plus the compact relative and returns ""
+        # rather than a bare relative — so assert the anchor, not just the age.
+        stale_detail = by["pulse collector:Stale"].detail
+        self.assertIn("1d ago", stale_detail)  # 30h → days
+        self.assertRegex(stale_detail, r"last scan \d{4}-\d{2}-\d{2} \d{1,2}:\d{2} [AP]M · ")
         self.assertEqual(by["pulse collector:Fine"].status, OK)
 
     def test_empty_when_no_collectors(self) -> None:
