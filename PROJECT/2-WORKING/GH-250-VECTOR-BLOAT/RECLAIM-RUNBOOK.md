@@ -3,6 +3,21 @@
 Reclaims ~10.2 GB from `rebalance.db` by deleting orphaned `github_embeddings` vectors and rebuilding
 the file. One operator, one maintenance window, start to finish.
 
+> ## Status — complete and verified; one precondition is still outstanding
+>
+> **The document is done.** Two review rounds; every valid objection closed. All 16 bash blocks pass
+> `bash -n`, and every read-only gate has been executed against the real 13.5 GB database (§1.1–§1.4a,
+> 4 seconds total). One reviewer objection was **declined**: it asserted the file "ends after §4.1"
+> with no §5 Rollback, which is incorrect — §5 is present and does everything that objection asked
+> for. Recorded in commit `d7fe69bf` rather than silently ignored.
+>
+> **What is NOT done is GH-250 R1**, and that is a fact about the world, not this document: the
+> writer fix must be observed holding across three completed `github_sync` cycles before anything is
+> reclaimed. §1.1 gates on it and aborts if the samples are not identical. Until R1 passes, do not
+> proceed past §1.
+>
+> Nothing in this runbook has been executed against production. Only the read-only gates have run.
+
 **This runbook does not implement the reclaim.** Two tested scripts do:
 
 | Script | Tests | Role |
