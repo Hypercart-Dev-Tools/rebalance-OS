@@ -6,6 +6,24 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.6] - 2026-08-05
+
+### Added
+- **`scripts/uninstall_rebalance.sh` — reverses what the 13 `install_*.sh` scripts put on a
+  device (GH-257).** The job list is **derived** from `scripts/*.plist.template` rather than
+  hardcoded, because the templates *are* the set of installable jobs, so a job added later is
+  uninstallable with no edit here. Before deleting anything it **reads each plist and requires
+  it to reference the owning path**: `~/Library/LaunchAgents` also holds Google, Setapp and
+  Homebrew agents, and matching a label is not authority to delete a file. Jobs installed
+  outside the template convention (`com.user.git-pulse`, `com.user.git-pulse-health`) are
+  named explicitly — never matched by a `com.user.*` glob — and carry their own ownership
+  marker, since `experimental/git-pulse/install.sh` copies its executable to `~/bin` and its
+  plist never mentions this repo. Dry-run by default; data and keyring removal are separately
+  opt-in because unloading a job is reversible and deleting a log history is not. Exits
+  non-zero on partial failure, and a dry run reports "would be removed" rather than claiming
+  the past tense. The git checkout, `.venv`, and HiQS are out of scope by design — HiQS is
+  independently installed and keeps working after a full rebalance uninstall.
+
 ## [0.68.5] - 2026-08-04
 
 ### Fixed
