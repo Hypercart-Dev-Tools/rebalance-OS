@@ -149,3 +149,9 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB4-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vb-reordered--vb4/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · agy
+
+The implementation is already present and passes all the requirements in the brief. The tests pass locally with `9 passed`. The script is trap-guaranteed, idempotent, uses 3-Eyes for managed jobs, and correctly fails `verify` when unknowns are loaded.
+
+Releasing token to reviewer.
