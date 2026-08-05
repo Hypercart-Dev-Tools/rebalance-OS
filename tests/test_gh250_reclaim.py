@@ -159,3 +159,32 @@ def test_invalid_batch_size(tmp_path):
     res = run_reclaim("--database", str(db_path), "--execute", "--batch-size", "-5")
     assert res.returncode != 0
     assert "ERROR: --batch-size must be a positive integer" in res.stderr
+
+def test_rebuild_target_swap_path(tmp_path):
+    db_path = tmp_path / "test.db"
+    setup_db(db_path, num_live=10, num_orphans=10)
+    
+    target_path = db_path.with_suffix(".vacuum.db")
+    
+    res = run_reclaim("--database", str(db_path), "--execute")
+    assert res.returncode == 0
+    assert "Validating rebuilt target" in res.stdout
+    assert "Target validated. Swapping" in res.stdout
+    assert not target_path.exists()
+    
+    conn = sqlite3.connect(db_path)
+    assert conn.execute("SELECT count(*) FROM vec0;").fetchone()[0] == 10
+    conn.close()
+
+def test_non_clean_checkpoint_fails(tmp_path):
+    db_path = tmp_path / "test.db"
+    setup_db(db_path, num_live=10, num_orphans=10)
+    
+    env = os.environ.copy()
+    env["_MOCK_CHECKPOINT_FAIL"] = "1"
+    
+    res = run_reclaim("--database", str(db_path), "--execute", env=env)
+    
+    assert res.returncode != 0
+    assert "ERROR: WAL checkpoint not clean before batch" in res.stderr
+

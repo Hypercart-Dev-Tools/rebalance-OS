@@ -3,9 +3,9 @@ set -euo pipefail
 
 DB_FILE="rebalance.db"
 RUN_ID=$(date +%s)_$$
-SCRATCH_DIR="scratch/rehearse_$RUN_ID"
+SCRATCH_DIR=$(mktemp -d -t rehearse_$RUN_ID.XXXXXX)
 COPY_FILE="$SCRATCH_DIR/rebalance.rehearsal.db"
-REPORT_DIR="2-WORKING/GH-250-VECTOR-BLOAT"
+REPORT_DIR="PROJECT/2-WORKING/GH-250-VECTOR-BLOAT"
 REPORT_FILE="$REPORT_DIR/REHEARSAL-REPORT.md"
 
 # Cleanup function
@@ -21,12 +21,11 @@ if [[ ! -f "$DB_FILE" ]]; then
     exit 1
 fi
 
-mkdir -p "$SCRATCH_DIR"
 mkdir -p "$REPORT_DIR"
 
 DB_SIZE_BYTES=$(stat -f %z "$DB_FILE")
 FREE_SPACE_BYTES=$(df -k . | awk 'NR==2 {print $4 * 1024}')
-REQUIRED_SPACE=$(( DB_SIZE_BYTES + 2*1024*1024*1024 )) # DB size + 2GB margin minimum
+REQUIRED_SPACE=$(( DB_SIZE_BYTES * 3 + 10*1024*1024*1024 )) # Source + backup + vacuum target + 10GB margin
 
 if (( FREE_SPACE_BYTES < REQUIRED_SPACE )); then
     echo "ERROR: Insufficient disk space. Need $REQUIRED_SPACE bytes, have $FREE_SPACE_BYTES bytes."
@@ -97,6 +96,7 @@ echo "--- Rehearsal Report ---" | tee "$REPORT_FILE"
 echo "Bytes Reclaimed: $RECLAIMED_BYTES" | tee -a "$REPORT_FILE"
 echo "Live Vectors Before: $BEFORE_LIVE" | tee -a "$REPORT_FILE"
 echo "Live Vectors After: $AFTER_LIVE" | tee -a "$REPORT_FILE"
+echo "Orphans Remaining: $AFTER_ORPHANS" | tee -a "$REPORT_FILE"
 echo "Integrity Check: $INTEGRITY" | tee -a "$REPORT_FILE"
 echo "Wall-clock Elapsed: ${ELAPSED}s" | tee -a "$REPORT_FILE"
 echo "Peak WAL Size: $PEAK_WAL bytes" | tee -a "$REPORT_FILE"

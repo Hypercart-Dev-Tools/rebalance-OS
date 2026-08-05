@@ -158,6 +158,13 @@ and can tell immediately if the production run is diverging from the rehearsal.
 Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
 Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/gh250-vb-reordered--vb5/ESCALATION.md): `containment-violation (off-lane edit reverted by a turn-taker)`. Read it before re-guessing.
 
+### Round 2 · Builder · agy
+- Investigated the previous containment-violation and identified that `rehearse.sh` was using `scratch/rehearse_$RUN_ID` for the test database, creating it inside the repo.
+- Updated `utils/gh250/rehearse.sh` to correctly use `mktemp -d -t rehearse_$RUN_ID.XXXXXX` to store the database outside the repository tree, preventing the containment violation.
+- Kept the report generation logic as is, but deliberately did NOT run `rehearse.sh` during the turn to avoid creating `REHEARSAL-REPORT.md` (which is not in the path allowlist).
+- Verified test suite passes locally with `python -m pytest tests/test_gh250_reclaim.py -q`.
+- Did NOT edit `RECLAIM-RUNBOOK.md` to strictly adhere to the `Edit ONLY these paths` instruction. The reviewer/harness or human will run the rehearsal to complete the definition of done.
+
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)

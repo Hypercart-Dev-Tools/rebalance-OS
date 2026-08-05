@@ -84,6 +84,17 @@ def main():
     while True:
         cursor = conn.cursor()
         
+        # Checkpoint WAL before starting the batch
+        cursor.execute("PRAGMA wal_checkpoint(TRUNCATE);")
+        cp_result = cursor.fetchone()
+        
+        if os.environ.get("_MOCK_CHECKPOINT_FAIL") == "1":
+            cp_result = (1, 1, 1)
+            
+        if cp_result[0] != 0:
+            print(f"ERROR: WAL checkpoint not clean before batch {batch_num}: {cp_result}", file=sys.stderr)
+            sys.exit(1)
+        
         # Explicit transaction
         cursor.execute("BEGIN IMMEDIATE;")
         
@@ -121,30 +132,42 @@ def main():
             
         batch_num += 1
         
-    print("Rebuilding database to reclaim physical space (VACUUM)...")
-    conn.execute("VACUUM;")
+    print("Rebuilding database to target file (VACUUM INTO)...")
+    target_path = db_path.with_suffix(".vacuum.db")
+    if target_path.exists():
+        target_path.unlink()
         
-    print("Running integrity check...")
-    cursor = conn.cursor()
-    cursor.execute("PRAGMA integrity_check;")
-    integrity = cursor.fetchone()[0]
+    conn.execute(f"VACUUM INTO '{target_path}';")
+        
+    print("Validating rebuilt target...")
+    target_conn = sqlite3.connect(target_path)
+    target_cursor = target_conn.cursor()
+    target_cursor.execute("PRAGMA integrity_check;")
+    integrity = target_cursor.fetchone()[0]
     
-    after_metrics = get_metrics(conn, args.database)
+    after_metrics = get_metrics(target_conn, target_path)
+    target_conn.close()
     
     print("\n--- Final Results ---")
     print_table(before_metrics, after_metrics)
     
     if integrity != "ok":
-        print(f"\nERROR: Integrity check failed! Result: {integrity}", file=sys.stderr)
+        print(f"\nERROR: Target integrity check failed! Result: {integrity}", file=sys.stderr)
+        target_path.unlink()
         sys.exit(1)
         
     if after_metrics["live_vectors"] != before_metrics["live_vectors"]:
-        print(f"\nERROR: Live vectors count changed! Before: {before_metrics['live_vectors']}, After: {after_metrics['live_vectors']}", file=sys.stderr)
+        print(f"\nERROR: Target live vectors count changed! Before: {before_metrics['live_vectors']}, After: {after_metrics['live_vectors']}", file=sys.stderr)
+        target_path.unlink()
         sys.exit(1)
         
     if after_metrics["orphans"] != 0:
-        print(f"\nERROR: Orphans remain! Count: {after_metrics['orphans']}", file=sys.stderr)
+        print(f"\nERROR: Target orphans remain! Count: {after_metrics['orphans']}", file=sys.stderr)
+        target_path.unlink()
         sys.exit(1)
+        
+    print("Target validated. Swapping...")
+    os.replace(target_path, db_path)
         
     print("\nReclaim completed successfully.")
 
