@@ -149,6 +149,13 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
    - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-VB3-TURN --agent agy --to codex
 4. Edit ONLY these paths: phases/gh250-vector-bloat-resume-vb3--vb3/RELAY.md and PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
+### Round 1 · Builder · agy
+Created `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` fulfilling all requirements in the phase brief:
+* Included preconditions with checks for disk space formula, backup rehearsals, and writer fences.
+* Uses batched deletions with WAL checkpointing and `NOT EXISTS` rather than `NOT IN`.
+* Recommends `VACUUM INTO` followed by atomic move.
+* Includes explicit post-checks (with commands) and step-by-step rollback instructions.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
