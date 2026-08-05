@@ -621,6 +621,84 @@ def test_matching_processes_are_reported_without_claiming_the_checkout(sandbox, 
 
     assert "4242 4243" in result.stdout
     assert "Not attributed to this checkout" in result.stdout
+    # and no unproven lifecycle claim either (QA r9 Should)
+    assert "If hosted by your editor" in result.stdout
+    assert result.returncode == 0
+
+
+def test_our_interpreter_running_a_foreign_script_is_refused(sandbox, tmp_path):
+    """QA r9 Blocker: a repo-owned interpreter must not vouch for foreign code.
+
+    Three templates launch {{PYTHON}} — a binary inside the checkout — with their real work in
+    argument 1, so a colliding plist could borrow our interpreter to run /opt/foreign.py.
+    """
+    repo, _templates, agents = sandbox
+    _touch_executable(f"{repo}/.venv/bin/python")
+    foreign_script = tmp_path / "foreign.py"
+    foreign_script.write_text("print('not ours')\n", encoding="utf-8")
+
+    plist = agents / "com.rebalance-os.alpha.plist"
+    plist.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        "<key>ProgramArguments</key><array>"
+        f"<string>{repo}/.venv/bin/python</string>"
+        f"<string>{foreign_script}</string>"
+        "</array></dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert plist.exists(), "our interpreter must not confer ownership on foreign code"
+    assert result.returncode == 1
+
+
+def test_inline_code_and_module_invocations_are_refused(sandbox):
+    """`-c` and `-m` leave no path to verify, so ownership cannot be proven at all."""
+    repo, _templates, agents = sandbox
+    _touch_executable(f"{repo}/.venv/bin/python")
+
+    for flag, payload in (("-c", "import os; os.system('rm -rf /')"), ("-m", "http.server")):
+        plist = agents / "com.rebalance-os.alpha.plist"
+        plist.write_text(
+            "<?xml version='1.0' encoding='UTF-8'?>\n"
+            "<plist version='1.0'><dict>"
+            "<key>ProgramArguments</key><array>"
+            f"<string>{repo}/.venv/bin/python</string>"
+            f"<string>{flag}</string><string>{payload}</string>"
+            "</array></dict></plist>\n",
+            encoding="utf-8",
+        )
+        result = _run(sandbox, "--apply")
+        assert plist.exists(), f"{flag} must not be removable"
+        assert result.returncode == 1
+        plist.unlink()
+
+
+def test_a_genuine_interpreter_job_with_flags_is_still_removed(sandbox):
+    """pulse-warning-watch passes flags after its script; those must not break ownership."""
+    repo, templates, agents = sandbox
+    (templates / "com.rebalance-os.pulse-warning-watch.plist.template").write_text("x", encoding="utf-8")
+    _touch_executable(f"{repo}/.venv/bin/python")
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    (repo / "scripts" / "pulse_warning_watch.py").write_text("#\n", encoding="utf-8")
+
+    plist = agents / "com.rebalance-os.pulse-warning-watch.plist"
+    plist.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        "<key>ProgramArguments</key><array>"
+        f"<string>{repo}/.venv/bin/python</string>"
+        f"<string>{repo}/scripts/pulse_warning_watch.py</string>"
+        "<string>--url</string><string>http://127.0.0.1:8767/</string>"
+        "</array></dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert not plist.exists()
     assert result.returncode == 0
 
 

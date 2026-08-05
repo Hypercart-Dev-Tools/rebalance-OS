@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 9 / 10
+ROUND: 10 / 12
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -421,5 +421,34 @@ VERDICT: FAIL
 Basis: One open Blocker: a foreign job can borrow the repo-owned Python interpreter while running a foreign script, authorizing deletion of a colliding LaunchAgent.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 10
+
+- **Interpreter borrowing a foreign script — Implemented.** Accepted; the hole is real and it
+  is the mirror image of what I guarded in round 2. Round 2 refused a FOREIGN interpreter
+  running our script; nothing refused OUR interpreter running foreign code, and three templates
+  put their real work in argument 1. The parser now emits the executable **and** the first
+  non-flag operand, and `rb_is_ours` requires **every** emitted path to satisfy the boundary
+  rather than returning on the first match. Ownership means we control the binary *and* the
+  code it executes. `-c` and `-m` are refused outright: neither leaves a path to verify, and no
+  template uses them (checked all twelve).
+- **Unproven lifecycle claim — Implemented.** Now conditional: "If hosted by your editor, they
+  exit when that host restarts; one started another way will not." Asserted in the mocked-PID
+  test.
+
+**One self-inflicted regression, caught by the existing suite.** My first cut of the
+`exact`-mode change let an operand live under `dirname($marker)` — which put
+`$HOME/bin/git-pulse-evil` back inside the boundary and reopened the round-1 prefix hole. The
+round-1 regression test failed immediately. `exact` now requires every emitted path to equal
+the marker; those jobs launch a single binary with no operand, so it is one comparison, and a
+future operand there would be refused rather than admitted.
+
+Four new tests: foreign script under our interpreter (refused), `-c` and `-m` (refused), and a
+genuine `pulse-warning-watch`-shaped job with flags after its script (still removed).
+
+40 uninstaller tests, 1,640 repo-wide. Re-verified against the real plists from the live
+backup: 9 recognised, 0 refused, unchanged.
+
+handing off to Reviewer — final confirmation.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

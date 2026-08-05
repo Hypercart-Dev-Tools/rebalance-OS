@@ -121,12 +121,34 @@ if program is not None:
     if not isinstance(program, str):
         sys.exit(1)
     executable = program
+    operands = arguments[1:] if isinstance(arguments, list) else []
 elif isinstance(arguments, list) and arguments:
     if not isinstance(arguments[0], str):
         sys.exit(1)
     executable = arguments[0]
+    operands = arguments[1:]
 else:
     sys.exit(1)
+
+# An interpreter that is ours does not make the JOB ours (QA r9 Blocker). Three templates
+# launch {{PYTHON}} — a binary inside the checkout — with their real work in argument 1, so a
+# colliding plist could borrow our interpreter to run /opt/foreign.py and pass a check that
+# looked only at the executable. Whatever the interpreter is told to run must be ours too.
+#
+# Round 2 guarded the mirror image (a FOREIGN interpreter running our script, refused). Both
+# halves are needed: ownership means we control the binary AND the code it executes.
+script_operand = None
+for candidate in operands:
+    if not isinstance(candidate, str):
+        sys.exit(1)
+    if candidate in ("-c", "-m"):
+        # Inline code or a module name: there is no path to verify, so ownership cannot be
+        # proven at all. No template uses either form.
+        sys.exit(1)
+    if candidate.startswith("-"):
+        continue  # a flag, not the thing being run
+    script_operand = candidate
+    break
 
 # Resolve symlinks before ownership is judged (QA r3 Blocker). Comparing the SPELLING of a
 # path is not the same as knowing what runs: a symlink at "$REBALANCE_DIR/bin/owned-looking"
@@ -153,6 +175,19 @@ elif sys.argv[2] == "1":
     sys.exit(1)
 
 print(resolved)
+
+# The script operand is checked the same way minus the executable bit — a .py passed to an
+# interpreter is read, not executed. Printed as a second line: the caller requires EVERY line
+# to satisfy the ownership boundary, so a foreign script fails the job even though the
+# interpreter passed.
+if script_operand is not None:
+    resolved_operand = os.path.realpath(script_operand)
+    if os.path.exists(resolved_operand):
+        if not os.path.isfile(resolved_operand):
+            sys.exit(1)
+    elif sys.argv[2] == "1":
+        sys.exit(1)
+    print(resolved_operand)
 PY
 }
 
@@ -193,17 +228,33 @@ rb_is_ours() {
 
     local require_exists=1
     [ "$INCLUDE_ORPHANS" -eq 1 ] && require_exists=0
+    local seen=0
 
+    # EVERY emitted path must be ours — the executable and, for an interpreter-backed job, the
+    # script it runs. Returning on the first match (the previous behaviour) meant a repo-owned
+    # interpreter could vouch for a foreign script.
     while IFS= read -r executable; do
         [ -n "$executable" ] || continue
+        seen=$((seen + 1))
         case "$mode" in
-            exact) [ "$executable" = "$marker" ] && return 0 ;;
-            under) case "$executable" in "$marker"/*) return 0 ;; esac ;;
+            exact)
+                # Every emitted path must equal the marker. The non-template jobs launch a
+                # single binary with no script operand, so this is exactly one comparison.
+                # An earlier attempt allowed operands under dirname($marker) — which put
+                # "$HOME/bin/git-pulse-evil" back inside the boundary and reopened the round-1
+                # prefix hole. If one of these jobs ever gains an operand, refusing it is the
+                # safe direction to fail.
+                [ "$executable" = "$marker" ] || return 1
+                ;;
+            under)
+                case "$executable" in "$marker"/*) continue ;; esac
+                return 1
+                ;;
         esac
     done <<EOF
 $(rb_plist_executables "$plist" "$require_exists")
 EOF
-    return 1
+    [ "$seen" -gt 0 ]
 }
 
 # rb_remove_job <label> [ownership-marker] [exact|under]
@@ -399,7 +450,8 @@ if [ -f "$REBALANCE_DIR/.mcp.json" ] && rb_registers_mcp "$REBALANCE_DIR/.mcp.js
         # purpose is telling the operator what is really still here.
         say "  · processes matching rebalance.mcp_server: ${_rb_mcp_pids% }"
         say "    Not attributed to this checkout — a command line cannot prove which clone"
-        say "    they belong to. They exit when their MCP host (your editor) restarts."
+        say "    they belong to. If hosted by your editor, they exit when that host restarts;"
+        say "    one started another way will not."
     fi
 fi
 
