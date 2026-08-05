@@ -1,5 +1,5 @@
 # Marathon Phase vb2
-STATUS: Open
+STATUS: Approved
 NEXT: agy
 
 <!-- marathon-drive: task=MARATHON-VB2-TURN builder=agy reviewer=codex round-cap=7 -->
@@ -216,3 +216,12 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - **`tests/test_github_vector_invariants.py`**: Added `test_database_bloat_reports_nonzero_size` which asserts that `gh.table_byte_size(conn, "github_embeddings")` is strictly non-zero after vector insertion, preventing regression on the `dbstat` shadow table lookup. It also validates that `_check_database_bloat` properly reflects this non-zero size instead of falsely reporting 0.0 MB.
 - Also added the required `4096 bytes` estimate assertions to the existing orphan true-positive tests.
 - Extended the semantic true-positive suite with a hand-inserted orphan test (`test_semantic_hand_inserted_fails_orphan_check`), verifying that it correctly reports both the count and the 4096 byte waste, satisfying the "same coverage for the semantic pair" requirement.
+
+---
+### Round 3 · Reviewer · codex
+
+- Reviewed the scoped helpers and doctor wiring. The orphan joins use the actual vector keys (`doc_id` for GitHub, `rowid` for semantic), the read-only URI connection is used for every new doctor check, and backlog remains NOTICE-only so normal sync/embedding sawtooths do not produce a false alarm.
+- `table_byte_size()` now includes the vec0 shadow tables through the `github_embeddings%` match; the new regression test proves a post-insert vector produces a non-zero size and doctor output no longer reports the known false `0.0 MB (0.0% share)` value.
+- Focused verification passed: `PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_github_vector_invariants.py -q` — 8 passed. The expected headless MLX atexit diagnostic appeared after pytest completed successfully.
+
+**Verdict:** Approved
