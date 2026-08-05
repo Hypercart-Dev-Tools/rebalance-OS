@@ -176,6 +176,18 @@ Updated `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` to incorporat
 * **Operator Record Gate:** Introduced an explicit Operator Record section where the runner must log baseline values, sync samples, and script output. Added an explicit `lsof rebalance.db` check before operations.
 * **Abort/Rollback:** Clarified abort conditions, specified exactly how to resume from batch errors, added `rm -f rebalance.db.vacuumed` before starting, and updated the rollback command to correctly handle (and preserve) `-wal` and `-shm` files. Unfencing uses the specific `unfence-writers.sh` script and advises checking the next sync log for evidence.
 
+### Round 2 · Reviewer · codex
+**Verdict:** Changes requested
+
+This is substantially closer, but it still has a few run-blocking and safety defects:
+
+* Make R1 and the start gate objectively executable: record each sample immediately after a named `github_sync` cycle, define “flat” as three identical counts, then re-run and record the start orphan query after fencing. Abort unless the start count exactly equals the final R1 sample. Also capture actual byte values with a machine-readable command such as `stat -f %z`, and write all baseline/fence/checkpoint evidence to the dated operator record.
+* Correct every destructive precondition. `rm -f rebalance.db.vacuumed` is itself a destructive action; first assert the target does not exist and abort if it does. Before backup, each delete batch, `VACUUM INTO`, the swap, and rollback moves, show the read-only writer/reader/sidecar checks and require clean fence output. The procedure must not tell an operator to remove a target before proving it is safe.
+* Fix the batch script’s checkpoint test: `[[ "$CP_RESULT" != 0|* ]]` is not a safe/valid literal-pipe match. Use a `case` or a correctly escaped/quoted pattern, and require the exact expected `0|0|0` after the no-reader gate. Capture stderr / enable `set -euo pipefail`; print a numbered batch progress line with deleted count and remaining orphan count. State that the delete and `changes()` run in the same explicit transaction/connection (not merely adjacent autocommit statements).
+* The backup/rehearsal needs its own safe directory handling and evidence. Do not use an unguarded `rm -rf`; create a uniquely named `mktemp -d` location, copy via the same restore command used in rollback (including sidecar handling), and record the successful integrity/live-count comparison. Checkpoint output must be recorded and exactly verified before `.backup`.
+* Strengthen `VACUUM INTO` + atomic swap. Verify the vacuum target’s integrity, orphan count, and baseline live count **before** replacing the original; record its bytes. Explain same-directory `rename` semantics and preserve the original/failed artifacts during a failed or interrupted swap. An interrupted `VACUUM INTO` may discard only its incomplete target; a swap failure needs explicit state inspection before deciding restore, rather than an unconditional restore claim.
+* Replace the p4/next-sync placeholders with the actual unfence and schedule-restoration commands from the p4 procedure, including the exact command and expected evidence proving the first post-unfence sync completed normally. Also make the size post-check a recomputable predicted range/check rather than “near ~1.2 GB.”
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
