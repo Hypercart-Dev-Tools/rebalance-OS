@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: Producer
+STATUS: Escalated
 ROUND: 4 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -217,5 +217,19 @@ handing off to Producer — go to the Producer window and say 'take your turn'.
 Suite: 23 uninstaller tests. Real machine unchanged: 9 recognised, 0 refused.
 
 handing off to Reviewer — final check, please.
+
+### Reviewer · Round 4
+
+swept file: yes
+
+- [Blocker] The ownership predicate still accepts a nonexistent path simply because its spelling is below the checkout: `os.path.realpath(executable)` returns a normalized string even when the target is absent (`scripts/uninstall_rebalance.sh:126`), then the `under`/`exact` comparison authorizes deletion without an existence check (`scripts/uninstall_rebalance.sh:154-159`). Thus a colliding foreign `com.rebalance-os.alpha.plist` with `ProgramArguments[0]="$REBALANCE_DIR/not-ours/never-existed"` (and likewise a non-template plist pointing at an absent expected marker) is removed with `--apply`. This is a false-positive deletion path, not merely an orphan-cleanup trade-off: a path that has never existed cannot prove that the foreign plist belongs to this installation. Fail closed unless the canonical executable exists; add apply-mode survival/exit-1 coverage for both the under-repo and exact-marker cases. If orphaned-plist cleanup is desired, make it an explicit separately confirmed mode rather than weakening the default deletion proof.
+- [Pass] The symlink escape itself is closed: the parser canonicalizes the launched path (`scripts/uninstall_rebalance.sh:126`) and the ownership marker (`scripts/uninstall_rebalance.sh:150`); the external-symlink rejection and internal-symlink positive control cover both outcomes (`tests/test_uninstall_rebalance.py:302-342`).
+- [Pass] The focused test suite now covers real foreign-label refusal, mention-only and prefix spoofs, conflicting `Program`/`ProgramArguments`, malformed plists, secret failures, idempotency, and derived inventory (`tests/test_uninstall_rebalance.py:76-423`). I did not find additional pre-existing defects in the fully swept uninstaller or focused test file.
+
+Verdict: Blocked
+VERDICT: FAIL
+Basis: At max round, the remaining nonexistent-executable bypass still permits deleting a colliding foreign LaunchAgent. Per the round limit, this relay is escalated rather than opening another cycle.
+
+handing off to Producer — relay is escalated; go to the Producer window and say 'take your turn' only to triage the escalation.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
