@@ -208,3 +208,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB2-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vector-bloat-resume--vb2/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+---
+
+### Round 3 · Builder · agy
+
+- **`tests/test_github_vector_invariants.py`**: Added `test_database_bloat_reports_nonzero_size` which asserts that `gh.table_byte_size(conn, "github_embeddings")` is strictly non-zero after vector insertion, preventing regression on the `dbstat` shadow table lookup. It also validates that `_check_database_bloat` properly reflects this non-zero size instead of falsely reporting 0.0 MB.
+- Also added the required `4096 bytes` estimate assertions to the existing orphan true-positive tests.
+- Extended the semantic true-positive suite with a hand-inserted orphan test (`test_semantic_hand_inserted_fails_orphan_check`), verifying that it correctly reports both the count and the 4096 byte waste, satisfying the "same coverage for the semantic pair" requirement.

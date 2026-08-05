@@ -14,7 +14,7 @@ from rebalance.ingest.db import (
 )
 from rebalance.ingest.db import github as gh
 from rebalance.ingest.db import semantic as sem
-from rebalance.doctor import _check_orphaned_vectors, _check_embedding_backlog, OK, WARN, FAIL
+from rebalance.doctor import _check_orphaned_vectors, _check_embedding_backlog, _check_database_bloat, OK, WARN, FAIL
 
 
 class VectorInvariantsTests(unittest.TestCase):
@@ -43,6 +43,7 @@ class VectorInvariantsTests(unittest.TestCase):
         gh_check = next(c for c in checks if c.name == "orphaned vectors:github")
         self.assertEqual(gh_check.status, FAIL)
         self.assertIn("1 orphaned vectors", gh_check.detail)
+        self.assertIn("4096 bytes", gh_check.detail)
         
     def test_deleted_document_fails_orphan_check(self):
         with db_connection(self.db_path) as conn:
@@ -63,6 +64,7 @@ class VectorInvariantsTests(unittest.TestCase):
         gh_check = next(c for c in checks if c.name == "orphaned vectors:github")
         self.assertEqual(gh_check.status, FAIL)
         self.assertIn("1 orphaned vectors", gh_check.detail)
+        self.assertIn("4096 bytes", gh_check.detail)
 
     def test_backlog_sawtooth_guard_does_not_fail(self):
         with db_connection(self.db_path) as conn:
@@ -98,6 +100,29 @@ class VectorInvariantsTests(unittest.TestCase):
         sem_check = next(c for c in checks if c.name == "orphaned vectors:semantic")
         self.assertEqual(sem_check.status, FAIL)
         self.assertIn("1 orphaned vectors", sem_check.detail)
+        self.assertIn("4096 bytes", sem_check.detail)
+
+    def test_semantic_hand_inserted_fails_orphan_check(self):
+        with db_connection(self.db_path) as conn:
+            sem.insert_semantic_embedding(conn, 999, struct.pack("1024f", *([0.0]*1024)))
+            conn.commit()
+            
+        checks = _check_orphaned_vectors(self.db_path)
+        sem_check = next(c for c in checks if c.name == "orphaned vectors:semantic")
+        self.assertEqual(sem_check.status, FAIL)
+        self.assertIn("1 orphaned vectors", sem_check.detail)
+        self.assertIn("4096 bytes", sem_check.detail)
+
+    def test_database_bloat_reports_nonzero_size(self):
+        with db_connection(self.db_path) as conn:
+            gh.upsert_github_embedding(conn, 999, struct.pack("1024f", *([0.0]*1024)))
+            conn.commit()
+            size = gh.table_byte_size(conn, "github_embeddings")
+            self.assertGreater(size, 0)
+            
+        check = _check_database_bloat(self.db_path)
+        self.assertEqual(check.status, OK)
+        self.assertNotIn("github_embeddings 0.0 MB (0.0% share)", check.detail)
 
     def test_readonly_connection(self):
         # Assert the checks perform no writes and succeed on a read-only connection
