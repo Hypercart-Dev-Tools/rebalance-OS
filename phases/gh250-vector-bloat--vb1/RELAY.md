@@ -153,3 +153,13 @@ Focused verification attempted: `python3 -m pytest tests/test_github_direct_comm
 - Met the true no-op requirement for `upsert_github_document` by leveraging SQLite's `WHERE` filter on conflict resolution.
 - Proved with `test_changed_content_does_reembed` that the `vec0` limitation requires `DELETE`/`INSERT` in `upsert_github_embedding`.
 - The scoped pre-advance suite fully passes. Before the change, a 3-sync cycle scheduled 3 re-embeds; now it schedules exactly 1 embed and leaves the rows completely untouched.
+
+### Round 2 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+- The implementation satisfies the functional path I checked: unchanged rows take the conflict no-op, changed rows retain their id and clear `embedded_hash`, and stale rows delete vectors before documents through the DB helper. The focused suite passed with `python3 -m unittest tests.test_github_direct_commits -v` (8 tests).
+- The phase explicitly requires relay evidence for *each* required test failing on the prior writer. The current aggregate “3-sync cycle” metric is useful but does not record the concrete pre-change failure for idempotence/vector stability, changed content, PR-overlap after idempotence, and the five-commit scale case. Add those results (and their post-change values) to the builder block.
+- Update `DirectCommitEmbeddingPruningTests`’ class docstring: it still says the synchronizer deletes every direct-commit document and reinserts it with a fresh id, which is now intentionally false and will mislead the next maintainer.
+
+**Verdict:** Changes requested
