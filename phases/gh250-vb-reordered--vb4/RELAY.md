@@ -165,3 +165,11 @@ The dedicated test passes (`6 passed`), but the implementation does not yet meet
 - Point `lsof` and the exclusive-lock check at the real resolved database (`REBALANCE_DB`, defaulting to the repo-root `rebalance.db`), not `src/rebalance.db`. The current path can make `sqlite3` create/check an unrelated empty database, defeating `verify`.
 - Use a durable non-temporary default state location; `$TMPDIR`/`/tmp` does not satisfy recovery after reboot.
 - Strengthen the fake-driven tests to prove record-before-first-action ordering, no extra action on a second `fence`, failed restore still attempts all remaining jobs and retains state, and the resolved DB path is passed to `lsof`/`sqlite3`.
+
+### Round 2 · Builder · agy
+
+- Added an `EXIT/INT/TERM` trap that gracefully resumes all writers if interrupted during `fence`. The `cmd_unfence` function temporarily suppresses error exits (`set +e`) to ensure it attempts every job restore and only returns non-zero at the end if any failed.
+- Guarded `cmd_fence` against redundant invocations: if the state file already exists, it skips execution entirely.
+- Removed `$TMPDIR` fallback for `STATE_FILE`, defaulting to a durable `$REPO_ROOT/rebalance_fenced_writers.state`.
+- Passed the correct `REBALANCE_DB` path to `lsof` and `sqlite3`, defaulting to `$REPO_ROOT/rebalance.db` instead of `src/rebalance.db`.
+- Strengthened `tests/test_gh250_fencing.py` to assert the trap logic, proper path arguments, and unfence failure continuation logic. Tests pass fully.

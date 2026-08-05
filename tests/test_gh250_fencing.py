@@ -14,6 +14,10 @@ def run_env(tmp_path):
 echo "$@" >> {tmp_path}/launchctl.log
 if [ "$1" = "list" ]; then
     cat {tmp_path}/launchctl_list.txt
+elif [ "$1" = "bootstrap" ]; then
+    if [ -f {tmp_path}/fail_bootstrap ]; then exit 1; fi
+    # Add to list to simulate loading
+    echo "129 0 $(basename $3 .plist)" >> {tmp_path}/launchctl_list.txt
 fi
 """)
     launchctl_stub.chmod(0o755)
@@ -35,6 +39,9 @@ elif [[ "$*" == *"-m three_eyes pause"* ]]; then
     fi
     echo "$4 paused" >> {tmp_path}/3eyes_paused.txt
 elif [[ "$*" == *"-m three_eyes resume"* ]]; then
+    if [ -f {tmp_path}/fail_resume_$4 ]; then
+        exit 1
+    fi
     sed -i.bak "/$4 paused/d" {tmp_path}/3eyes_paused.txt 2>/dev/null || true
 fi
 """)
@@ -42,12 +49,14 @@ fi
 
     lsof_stub = stub_bin / "lsof"
     lsof_stub.write_text(f"""#!/usr/bin/env bash
+echo "$@" >> {tmp_path}/lsof.log
 if [ -f {tmp_path}/lsof_fail ]; then exit 0; else exit 1; fi
 """)
     lsof_stub.chmod(0o755)
     
     sqlite_stub = stub_bin / "sqlite3"
     sqlite_stub.write_text(f"""#!/usr/bin/env bash
+echo "$@" >> {tmp_path}/sqlite.log
 if [ -f {tmp_path}/sqlite_fail ]; then exit 1; else exit 0; fi
 """)
     sqlite_stub.chmod(0o755)
@@ -58,6 +67,7 @@ if [ -f {tmp_path}/sqlite_fail ]; then exit 1; else exit 0; fi
     env["LSOF_CMD"] = str(lsof_stub)
     env["SQLITE_CMD"] = str(sqlite_stub)
     env["STATE_FILE"] = str(tmp_path / "state.txt")
+    env["REBALANCE_DB"] = str(tmp_path / "mock_rebalance.db")
     
     # Initialize basic stub states
     (tmp_path / "launchctl_list.txt").write_text(
@@ -100,14 +110,20 @@ def test_fence_twice_no_clobber(run_env):
         "123 0 com.rebalance-os.github-sync\n"
         "124 0 com.rebalance-os.pulse-sync\n"
     )
-    run_script("fence", env)
+    res = run_script("fence", env)
+    assert "A fence is already active. Doing nothing." in res.stdout
     state2 = (tmp / "state.txt").read_text()
     assert state1 == state2 
+    
+    py_log = (tmp / "python.log").read_text()
+    # Check that it didn't pause pulse-sync
+    assert "pause pulse-sync" not in py_log
 
 def test_unfence_restores_recorded(run_env):
     env, tmp = run_env
     state_content = "com.rebalance-os.github-sync:3eyes:github-sync\ncom.rebalance-os.daily-sync:launchctl:none\n"
     (tmp / "state.txt").write_text(state_content)
+    (tmp / "3eyes_paused.txt").write_text("github-sync paused\n")
     
     run_script("unfence", env)
     
@@ -137,6 +153,13 @@ def test_verify_fails_when_writer_loaded(run_env):
     )
     res = run_script("verify", env, check=True)
     assert res.returncode == 0
+    
+    # check if path was passed correctly
+    res = run_script("verify", env, check=True)
+    lsof_log = (tmp / "lsof.log").read_text()
+    sqlite_log = (tmp / "sqlite.log").read_text()
+    assert str(tmp / "mock_rebalance.db") in lsof_log
+    assert str(tmp / "mock_rebalance.db") in sqlite_log
 
 def test_fence_interrupt_restores(run_env):
     env, tmp = run_env
@@ -144,7 +167,7 @@ def test_fence_interrupt_restores(run_env):
     
     res = run_script("fence", env, check=False)
     assert res.returncode != 0
-    assert "Interrupt received, restoring..." in res.stdout
+    assert "restoring..." in res.stdout
     assert "Restoring fenced writers..." in res.stdout
     
     py_log = (tmp / "python.log").read_text()
@@ -152,3 +175,24 @@ def test_fence_interrupt_restores(run_env):
     assert "-m three_eyes pause github-sync" in py_log
     # Then it should have resumed it in the trap
     assert "-m three_eyes resume github-sync" in py_log
+    
+def test_unfence_failures_continue_and_retain_state(run_env):
+    env, tmp = run_env
+    state_content = "com.rebalance-os.github-sync:3eyes:github-sync\ncom.rebalance-os.daily-sync:launchctl:none\ncom.rebalance-os.pulse-sync:3eyes:pulse-sync\n"
+    (tmp / "state.txt").write_text(state_content)
+    (tmp / "3eyes_paused.txt").write_text("github-sync paused\npulse-sync paused\n")
+    (tmp / "fail_resume_github-sync").touch()
+    
+    res = run_script("unfence", env, check=False)
+    assert res.returncode != 0
+    assert "Unfence encountered errors. State file retained." in res.stdout
+    
+    py_log = (tmp / "python.log").read_text()
+    assert "-m three_eyes resume github-sync" in py_log
+    assert "-m three_eyes resume pulse-sync" in py_log
+    
+    launch_log = (tmp / "launchctl.log").read_text()
+    assert "bootstrap" in launch_log
+    assert "com.rebalance-os.daily-sync.plist" in launch_log
+    
+    assert (tmp / "state.txt").exists()

@@ -10,8 +10,9 @@ KNOWN_WRITERS=(
     "com.rebalance-os.3eyes.collector-health"
 )
 
-STATE_FILE="${STATE_FILE:-${TMPDIR:-/tmp}/rebalance_fenced_writers.state}"
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+STATE_FILE="${STATE_FILE:-${REPO_ROOT}/rebalance_fenced_writers.state}"
+REBALANCE_DB="${REBALANCE_DB:-${REPO_ROOT}/rebalance.db}"
 
 LAUNCHCTL_CMD="${LAUNCHCTL_CMD:-launchctl}"
 PYTHON_CMD="${PYTHON_CMD:-python}"
@@ -37,6 +38,11 @@ is_3eyes_managed() {
 cmd_fence() {
     echo "Fencing database writers..."
     
+    if [ -f "$STATE_FILE" ]; then
+        echo "State file already exists ($STATE_FILE). A fence is already active. Doing nothing."
+        return 0
+    fi
+    
     # We must record pre-state BEFORE acting
     local pre_state=""
     local to_pause=()
@@ -61,36 +67,30 @@ cmd_fence() {
     done
     
     if [ -n "$pre_state" ]; then
-        if [ ! -f "$STATE_FILE" ]; then
-            echo "# State recorded at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
-            echo -e -n "$pre_state" >> "$STATE_FILE"
-            echo "Recorded pre-state to $STATE_FILE"
-        else
-            echo "State file already exists, skipping record to avoid clobbering."
-        fi
+        echo "# State recorded at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
+        echo -e -n "$pre_state" >> "$STATE_FILE"
+        echo "Recorded pre-state to $STATE_FILE"
     else
         echo "Nothing to fence, state already clear."
-        if [ ! -f "$STATE_FILE" ]; then
-            echo "# State recorded at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
-        fi
+        echo "# State recorded at $(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$STATE_FILE"
         return 0
     fi
     
-    trap 'echo "Interrupt received, restoring..."; cmd_unfence; exit 1' INT TERM
+    trap 'echo "Interrupt or exit received, restoring..."; cmd_unfence || true; exit 1' EXIT INT TERM
     
     for t_id in "${to_pause[@]:-}"; do
         echo "Pausing $t_id via 3-Eyes..."
-        (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes pause "$t_id" >/dev/null) || { echo "Failed to pause $t_id"; kill -INT $$; }
+        (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes pause "$t_id" >/dev/null) || { echo "Failed to pause $t_id"; exit 1; }
         echo "  -> 3-Eyes path taken for $t_id"
     done
     
     for w in "${to_unload[@]:-}"; do
         echo "Unloading $w via launchctl..."
-        "$LAUNCHCTL_CMD" bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/${w}.plist" >/dev/null 2>&1 || true
+        "$LAUNCHCTL_CMD" bootout "gui/$(id -u)" "$HOME/Library/LaunchAgents/${w}.plist" >/dev/null 2>&1 || { echo "Failed to bootout $w"; exit 1; }
         echo "  -> launchctl path taken for $w"
     done
     
-    trap - INT TERM
+    trap - EXIT INT TERM
     echo "Fencing complete."
 }
 
@@ -133,15 +133,15 @@ cmd_verify() {
     done
     
     if command -v "$LSOF_CMD" >/dev/null 2>&1; then
-        if "$LSOF_CMD" "$REPO_ROOT/src/rebalance.db" >/dev/null 2>&1; then
+        if "$LSOF_CMD" "$REBALANCE_DB" >/dev/null 2>&1; then
             echo "FAIL: A live process has rebalance.db open!"
-            "$LSOF_CMD" "$REPO_ROOT/src/rebalance.db" || true
+            "$LSOF_CMD" "$REBALANCE_DB" || true
             failed=1
         fi
     fi
     
     if command -v "$SQLITE_CMD" >/dev/null 2>&1; then
-        if ! "$SQLITE_CMD" "$REPO_ROOT/src/rebalance.db" "BEGIN EXCLUSIVE; COMMIT;" 2>/dev/null; then
+        if ! "$SQLITE_CMD" "$REBALANCE_DB" "BEGIN EXCLUSIVE; COMMIT;" 2>/dev/null; then
             echo "FAIL: Could not acquire EXCLUSIVE lock on rebalance.db!"
             failed=1
         fi
@@ -168,8 +168,13 @@ cmd_unfence() {
         return 0
     fi
     
+    local any_failed=0
+    
+    # Temporarily disable error exit for unfence to try restoring all
+    set +e
+    
     while IFS=: read -r w method t_id; do
-        if [[ "$w" == \#* ]]; then
+        if [[ "$w" == \#* ]] || [ -z "$w" ]; then
             continue
         fi
         
@@ -177,25 +182,35 @@ cmd_unfence() {
             echo "Resuming $w via 3-Eyes ($t_id)..."
             (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes resume "$t_id" >/dev/null)
             
-            if (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes why "$t_id" 2>/dev/null | grep -q "closed"); then
-                echo "  -> Confirmed $t_id is resumed."
+            if (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes why "$t_id" 2>/dev/null | grep -q "closed") && "$LAUNCHCTL_CMD" list | awk '{print $3}' | grep -q "^${w}$"; then
+                echo "  -> Confirmed $t_id is resumed and loaded."
             else
-                echo "  -> Warning: $t_id did not resume properly!"
+                echo "  -> Error: $t_id did not resume properly or is not loaded!"
+                any_failed=1
             fi
         elif [ "$method" = "launchctl" ]; then
             echo "Bootstrapping $w via launchctl..."
-            "$LAUNCHCTL_CMD" bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/${w}.plist" >/dev/null 2>&1 || true
+            "$LAUNCHCTL_CMD" bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/${w}.plist" >/dev/null 2>&1
             
             if "$LAUNCHCTL_CMD" list | awk '{print $3}' | grep -q "^${w}$"; then
                 echo "  -> Confirmed $w is loaded."
             else
-                echo "  -> Warning: $w did not load properly!"
+                echo "  -> Error: $w did not load properly!"
+                any_failed=1
             fi
         fi
     done < "$STATE_FILE"
     
+    set -e
+    
+    if [ $any_failed -ne 0 ]; then
+        echo "Unfence encountered errors. State file retained."
+        return 1
+    fi
+    
     echo "Unfence complete. Removing state file."
     rm -f "$STATE_FILE"
+    return 0
 }
 
 case "${1:-}" in
