@@ -277,19 +277,32 @@ for key in (
 # REDIRECT execution. PYTHONPATH/PYTHONHOME make the repo-owned interpreter import
 # attacker-controlled code; the DYLD_/LD_ family hijacks the loader; PATH re-points the
 # commands a shell job runs. A benign app-level override like PULSE_PUSH cannot.
-hijackers = (
-    "PYTHONPATH", "PYTHONHOME", "PYTHONSTARTUP", "PYTHONEXECUTABLE",
-    "PATH", "DYLD_INSERT_LIBRARIES", "DYLD_LIBRARY_PATH", "DYLD_FRAMEWORK_PATH",
-    "DYLD_FALLBACK_LIBRARY_PATH", "LD_PRELOAD", "LD_LIBRARY_PATH",
-)
+# Matched by PREFIX FAMILY, not by name. An enumerated list of variables is the same losing
+# game the python-grammar rounds were: the first list missed PYTHONUSERBASE, which points at a
+# user-site directory whose sitecustomize.py python imports at startup, before the owned script
+# runs at all. The next list would miss the one after that. Every PYTHON* variable influences
+# interpreter startup, every DYLD_*/LD_* influences the loader, and PATH re-points the commands
+# a shell job runs — so the rule is the family, and a future addition to any of them is already
+# covered.
+def redirects_execution(name):
+    upper = name.upper()
+    return (
+        upper.startswith("PYTHON")
+        or upper.startswith("DYLD_")
+        or upper.startswith("LD_")
+        or upper == "PATH"
+    )
+
 environment = got.get("EnvironmentVariables")
 if environment is not None:
     if not isinstance(environment, dict):
         sys.exit(1)
     expected_environment = want.get("EnvironmentVariables") or {}
+    if not isinstance(expected_environment, dict):
+        sys.exit(1)
     for name in environment:
-        # An injected loader variable is refused unless the template itself ships it.
-        if name.upper() in hijackers and environment[name] != expected_environment.get(name):
+        # Refused unless the template itself ships that exact value.
+        if redirects_execution(name) and environment[name] != expected_environment.get(name):
             sys.exit(1)
 sys.exit(0)
 PY

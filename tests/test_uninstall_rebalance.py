@@ -1046,7 +1046,11 @@ def test_loader_hijack_variables_are_refused(sandbox):
     _template(templates, "com.rebalance-os.alpha", args)
     _touch_executable(f"{repo}/scripts/alpha.sh")
 
-    for name in ("DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "PATH"):
+    # Matched by family, so a variable nobody enumerated is covered too: PYTHONUSERBASE
+    # (QA r15) points at a user-site dir whose sitecustomize.py python imports at startup,
+    # and PYTHONNEVERHEARDOFIT stands in for whatever the next list would have missed.
+    for name in ("DYLD_INSERT_LIBRARIES", "LD_PRELOAD", "PATH",
+                 "PYTHONUSERBASE", "PYTHONNEVERHEARDOFIT"):
         plist = _plist_with_env(agents, "com.rebalance-os.alpha", repo,
                                 [f"{repo}/scripts/alpha.sh"], {name: "/opt/attacker"})
         result = _run(sandbox, "--apply")
