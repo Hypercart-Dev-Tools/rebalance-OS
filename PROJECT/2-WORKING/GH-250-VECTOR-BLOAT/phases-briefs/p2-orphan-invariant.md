@@ -34,6 +34,17 @@
 > unrelated pre-existing failures (5 order-dependent in test_hiqs_pipeline.py, 1 in
 > test_scheduler_liveness.py). Stick to the scoped command.
 
+> ## ⚠️ No scratch files anywhere in the repo
+>
+> Your turn is confined to the artifact allowlist, and that includes **file CREATION**, not just
+> edits. A throwaway like `query_test.py` at the repo root fails the whole turn — this already
+> happened once (`agy-turn: OFF-ALLOWLIST change: query_test.py — reverting`).
+>
+> If you need to try a query or a snippet, run it inline (`python -c '...'`) or write it under
+> `$TMPDIR`, never inside the working tree. Only the files named in your allowlist may appear or
+> change.
+
+
 
 
 
@@ -114,6 +125,27 @@ WARN that cries wolf every sync** — a check the operator learns to ignore is w
 5. Same coverage for the `semantic_*` pair.
 6. Assert the checks perform no writes — e.g. run against a read-only connection and confirm no
    exception.
+
+## Known defects in the work already on the branch — fix these
+
+A previous turn landed the three helpers and the doctor wiring, but the turn failed before tests
+were written and before review. Two real defects, both confirmed against the live database:
+
+1. **`table_byte_size` returns 0 for `github_embeddings`.** `doctor` prints
+   `github_embeddings 0.0 MB (0.0% share)` when the table is actually **12.19 GB**. `dbstat` has no
+   rows for a `vec0` VIRTUAL table — the bytes live in its shadow table
+   `github_embeddings_vector_chunks00` (and `..._rowids`, `..._chunks`). Sum the shadow tables, or
+   match `name LIKE 'github_embeddings%'`. A size check that always says 0.0 MB is worse than no
+   size check: it reads as reassurance. This is the single most important fix in this phase.
+
+2. **`semantic_embeddings` has 302 orphans**, which the new check correctly found:
+   `FAIL orphaned vectors:semantic — 302 orphaned vectors`. Earlier analysis had assumed the
+   `semantic_*` path was a clean 1.01x control. It is not. Do not "fix" this by loosening the check
+   — the check is right. Leave it failing and note the count in the relay file; the semantic-side
+   leak is a separate defect to be filed, not silenced here.
+
+Also still missing: the whole of `tests/test_github_vector_invariants.py`, including the
+sawtooth false-positive guard, which is the most important test in this phase.
 
 ## Definition of done
 

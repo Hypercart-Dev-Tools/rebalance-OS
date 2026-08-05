@@ -695,6 +695,54 @@ def set_github_embedding_meta(
     )
 
 
+def count_orphaned_embeddings(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Count orphaned github_embeddings and estimate their wasted bytes.
+
+    Returns (orphan_count, estimated_wasted_bytes).
+    """
+    count = conn.execute(
+        """
+        SELECT COUNT(*) FROM github_embeddings e
+        WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = e.doc_id)
+        """
+    ).fetchone()[0]
+    wasted = 0
+    if count > 0:
+        row = conn.execute(
+            """
+            SELECT LENGTH(embedding) FROM github_embeddings e
+            WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = e.doc_id)
+            LIMIT 1
+            """
+        ).fetchone()
+        if row and row[0]:
+            wasted = count * row[0]
+    return count, wasted
+
+
+def count_unembedded_documents(conn: sqlite3.Connection, min_chars: int) -> int:
+    """Count github_documents needing (re-)embedding."""
+    return conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM github_documents
+        WHERE LENGTH(body) >= ?
+          AND (embedded_hash IS NULL OR embedded_hash != content_hash)
+        """,
+        (min_chars,),
+    ).fetchone()[0]
+
+
+def table_byte_size(conn: sqlite3.Connection, table_name: str) -> int:
+    """Return the total byte size of a table using dbstat."""
+    try:
+        return conn.execute(
+            "SELECT SUM(pgsize) FROM dbstat WHERE name=?", (table_name,)
+        ).fetchone()[0] or 0
+    except sqlite3.OperationalError:
+        return 0
+
+
 # ---------------------------------------------------------------------------
 # Per-repo purge
 # ---------------------------------------------------------------------------

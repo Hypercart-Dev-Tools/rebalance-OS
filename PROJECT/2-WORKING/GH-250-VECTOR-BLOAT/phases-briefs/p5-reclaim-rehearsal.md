@@ -34,6 +34,17 @@
 > unrelated pre-existing failures (5 order-dependent in test_hiqs_pipeline.py, 1 in
 > test_scheduler_liveness.py). Stick to the scoped command.
 
+> ## ⚠️ No scratch files anywhere in the repo
+>
+> Your turn is confined to the artifact allowlist, and that includes **file CREATION**, not just
+> edits. A throwaway like `query_test.py` at the repo root fails the whole turn — this already
+> happened once (`agy-turn: OFF-ALLOWLIST change: query_test.py — reverting`).
+>
+> If you need to try a query or a snippet, run it inline (`python -c '...'`) or write it under
+> `$TMPDIR`, never inside the working tree. Only the files named in your allowlist may appear or
+> change.
+
+
 
 
 
