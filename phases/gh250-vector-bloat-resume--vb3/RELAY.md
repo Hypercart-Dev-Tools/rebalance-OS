@@ -1,6 +1,6 @@
 # Marathon Phase vb3
 STATUS: Open
-NEXT: agy
+NEXT: codex
 
 <!-- marathon-drive: task=MARATHON-VB3-TURN builder=agy reviewer=codex round-cap=5 -->
 
@@ -187,3 +187,14 @@ Please revise the runbook to address these blockers:
 - Tighten abort/resume/rollback: say exactly when it is safe to discard a partial `VACUUM INTO` output and retry, what checks occur before resuming deletion, and give a complete restore verification (integrity + original live/orphan counts). Every destructive `mv`/cleanup command needs its immediately preceding read-only verification; do not make deleting the original/failed database a casual optional command.
 
 **Verdict:** Changes requested
+
+### Round 2 · Builder · agy
+
+I revised `RECLAIM-RUNBOOK.md` to directly address all requested changes:
+- Established an explicit absolute database path `DB_PATH` used across all commands, and documented baseline reference metrics including total vectors and `freelist_count`.
+- Made the R1 gate reproducible by capturing and comparing 3 `github_sync` samples explicitly and strictly defining the abort condition.
+- Defined the disk headroom calculation and formula for verifying free space before starting.
+- Standardized the fence interface explicitly using `fence`, `verify`, and `unfence` across normal and abort/rollback paths.
+- Replaced the external batch script with a fully self-contained, copy-pasteable bash loop that accurately measures remaining vectors, commits each 50k batch, issues checkpoints, and handles errors explicitly.
+- Injected read-only checks before `VACUUM INTO` and before swapping databases, while defining the `mv` swap as an atomic cutover sequence utilizing timestamped backups to ensure original files are never overwritten.
+- Tightened up abort/resume guidelines detailing exact conditions for partial VACUUM discards and comprehensive restore validation via integrity and counts.
