@@ -151,9 +151,15 @@ script_operand = None
 for candidate in operands:
     if not isinstance(candidate, str):
         sys.exit(1)
-    if candidate in ("-c", "-m"):
+    if candidate.startswith("-c") or candidate.startswith("-m"):
         # Inline code or a module name: there is no path to verify, so ownership cannot be
         # proven at all. No template uses either form.
+        #
+        # startswith, not equality: Python accepts the COMPACT spellings "-cimport os; ..."
+        # and "-mhttp.server", which an exact match let through as ordinary flags — the
+        # interpreter alone then satisfied the boundary and a colliding plist running
+        # arbitrary inline code was deletable. Long options are unaffected ("--close" begins
+        # "--"), and every flag in the twelve shipped templates is a long option.
         sys.exit(1)
     if candidate.startswith("-"):
         continue  # a flag, not the thing being run

@@ -767,6 +767,59 @@ def test_a_broken_data_symlink_is_not_called_absent(sandbox, tmp_path):
     assert result.returncode == 0
 
 
+def test_compact_inline_code_and_module_forms_are_refused(sandbox):
+    """QA r11 Blocker: python accepts "-cimport os; ..." and "-mhttp.server" compactly.
+
+    An exact `-c`/`-m` match let those through as ordinary flags, leaving the owned
+    interpreter as the only checked path — so arbitrary inline code was deletable.
+    """
+    repo, _templates, agents = sandbox
+    _touch_executable(f"{repo}/.venv/bin/python")
+
+    for payload in ("-cimport os; os.system('id')", "-mhttp.server"):
+        plist = agents / "com.rebalance-os.alpha.plist"
+        plist.write_text(
+            "<?xml version='1.0' encoding='UTF-8'?>\n"
+            "<plist version='1.0'><dict>"
+            "<key>ProgramArguments</key><array>"
+            f"<string>{repo}/.venv/bin/python</string>"
+            f"<string>{payload}</string>"
+            "</array></dict></plist>\n",
+            encoding="utf-8",
+        )
+        result = _run(sandbox, "--apply")
+        assert plist.exists(), f"{payload!r} must not be removable"
+        assert result.returncode == 1
+        plist.unlink()
+
+
+def test_long_options_after_a_script_are_unaffected(sandbox):
+    """--close/--llm-triage must keep working: they begin '--', not '-c'/'-m'."""
+    repo, templates, agents = sandbox
+    (templates / "com.rebalance-os.health-check-triage.plist.template").write_text("x", encoding="utf-8")
+    _touch_executable(f"{repo}/.venv/bin/python")
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    (repo / "scripts" / "health_issue_reporter.py").write_text("#\n", encoding="utf-8")
+
+    plist = agents / "com.rebalance-os.health-check-triage.plist"
+    plist.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        "<key>ProgramArguments</key><array>"
+        f"<string>{repo}/.venv/bin/python</string>"
+        f"<string>{repo}/scripts/health_issue_reporter.py</string>"
+        "<string>--warn</string><string>--close</string><string>--llm-triage</string>"
+        "<string>--llm-max-per-run</string><string>5</string>"
+        "</array></dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert not plist.exists()
+    assert result.returncode == 0
+
+
 def test_an_unparseable_plist_fails_closed(sandbox):
     """A file we cannot read is a file we cannot prove is ours."""
     _repo, _templates, agents = sandbox

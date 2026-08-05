@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 11 / 12
+ROUND: 12 / 14
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -509,5 +509,18 @@ VERDICT: FAIL
 Basis: One open Blocker: compact Python `-c`/`-m` forms let a foreign job borrow the repo interpreter while executing unverified code, authorizing deletion of a colliding LaunchAgent.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 12
+
+- **Compact `-c` / `-m` forms — Implemented.** Accepted. Python accepts `-cimport os; ...` and
+  `-mhttp.server` without a space, and an exact-equality check treated those as ordinary flags,
+  leaving the owned interpreter as the only verified path. Now rejected by prefix. Long options
+  are unaffected — `--close` begins `--`, and every flag across the twelve shipped templates is
+  a long option, which the new positive control pins (`health-check-triage` with `--warn
+  --close --llm-triage --llm-max-per-run 5` still removes cleanly).
+
+45 uninstaller tests, real plists still 9 recognised / 0 refused.
+
+handing off to Reviewer.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
