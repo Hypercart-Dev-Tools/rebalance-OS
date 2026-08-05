@@ -58,7 +58,7 @@ phases:
     brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p3-reclaim-runbook.md
     artifact: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md
     turn_timeout_s: 900
-    max_review_rounds: 2
+    max_review_rounds: 4
     depends_on: vb2
 
   - id: vb4
@@ -67,7 +67,7 @@ phases:
     brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p4-writer-fencing.md
     artifact: utils/gh250/fence-writers.sh,tests/test_gh250_fencing.py
     turn_timeout_s: 900
-    max_review_rounds: 2
+    max_review_rounds: 3
     depends_on: vb3
 
   - id: vb5
@@ -76,5 +76,5 @@ phases:
     brief: PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/phases-briefs/p5-reclaim-rehearsal.md
     artifact: utils/gh250/reclaim.py,utils/gh250/rehearse.sh,tests/test_gh250_reclaim.py
     turn_timeout_s: 1800
-    max_review_rounds: 3
+    max_review_rounds: 4
     depends_on: vb4
