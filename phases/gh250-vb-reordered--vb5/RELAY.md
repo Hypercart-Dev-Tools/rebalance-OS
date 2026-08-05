@@ -171,3 +171,17 @@ Implemented the requested deliverables:
 Note: I could not execute `rehearse.sh` against the actual repository's `rebalance.db` because it lacks the `vec0` table (likely a sandbox stub DB), but the tests in `test_gh250_reclaim.py` passed successfully.
 
 Ready for review!
+
+### Round 1 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+1. `reclaim.py` only deletes rows. It never rebuilds/vacuums the copy, so its database size is effectively unchanged and `rehearse.sh` will report zero bytes reclaimed rather than the expected physical reclaim. Put the compact/rebuild operation in the single reclaim code path and include its result in the post-check metrics.
+2. Successful completion does not assert `after_metrics["orphans"] == 0`; `--batch-size 0` (or a negative value) exits successfully with all orphans remaining. Reject non-positive batch sizes and make remaining orphans a failing post-check.
+3. The production guard is CWD-relative (`Path("rebalance.db")`). It misses the actual production file when the command is invoked from another directory with an absolute database path. Resolve a canonical production path (while retaining an operator-friendly default) and test that exact protected target. The current test neither snapshots mtime/hash nor proves that the database is untouched, contrary to the brief.
+4. The rehearsal copy must be a transactionally consistent SQLite backup. `cp` of the main DB plus sidecars can capture an inconsistent live state. Use SQLite's backup facility to create the copy, without writing the source DB.
+5. Use the repository temp/scratch convention with a unique per-run directory, clean its DB artifacts on every exit, and write the durable report to the required GH-250 report path (the current `scratch/rehearsal-report.txt` is neither the required report location nor durable documentation). The script should also use the repository virtualenv/interpreter rather than an unqualified `python`.
+
+`PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_gh250_reclaim.py -q` passed (7 passed), but that coverage does not exercise the failures above.
+
+**Verdict:** Changes requested
