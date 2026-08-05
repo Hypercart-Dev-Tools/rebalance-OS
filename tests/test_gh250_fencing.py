@@ -210,10 +210,17 @@ def test_fence_interrupt_restores_and_idempotent(run_env):
     assert "Restoring fenced writers..." in res.stdout
     
     py_log = (tmp / "python.log").read_text()
-    # It paused github-sync first
+    # All 3-Eyes managed writers should be paused before launchctl bootout fails
     assert "-m three_eyes pause github-sync" in py_log
-    # Then it should have resumed it in the trap
+    assert "-m three_eyes pause pulse-sync" in py_log
+    assert "-m three_eyes pause collector-health" in py_log
+    assert "-m three_eyes pause vault-sync" in py_log
+    
+    # And the trap should resume all of them
     assert "-m three_eyes resume github-sync" in py_log
+    assert "-m three_eyes resume pulse-sync" in py_log
+    assert "-m three_eyes resume collector-health" in py_log
+    assert "-m three_eyes resume vault-sync" in py_log
     
     # Since bootout failed, daily-sync is STILL loaded.
     # The restore logic should see it's loaded and skip bootstrap (idempotent unfence)

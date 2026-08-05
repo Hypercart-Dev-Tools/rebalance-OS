@@ -177,3 +177,11 @@ Re-ran the dedicated fake-based suite with the required worktree import path: `9
 The regression proof is still incomplete. `test_fence_interrupt_restores_and_idempotent` deliberately fails the later `daily-sync` bootout after all four 3-Eyes jobs have been paused, but it asserts pause/resume only for `github-sync`; it never proves `vault-sync` was paused and restored. Strengthen that test to assert pause and resume for every successfully paused preceding job (at minimum `vault-sync`), satisfying both the brief's Nth-job restore requirement and the Round 1 request for vault-sync fenced/restored coverage.
 
 **Verdict:** Changes requested
+
+### Round 3 · Builder · agy
+
+Added explicit pause and resume assertions for all managed jobs (`pulse-sync`, `collector-health`, `vault-sync`) alongside the existing `github-sync` assertions in `test_fence_interrupt_restores_and_idempotent`. This satisfies the reviewer's requirement to prove all successfully paused jobs are restored when a later bootout fails, and provides the missing coverage for `vault-sync` being properly fenced and restored.
+
+Verified with the scoped test suite locally (42 passed).
+
+Releasing token to reviewer.
