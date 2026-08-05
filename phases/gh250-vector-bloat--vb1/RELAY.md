@@ -112,7 +112,7 @@ passes both before and after proves nothing — that check is the whole point of
   number this phase exists to drive to zero.
 
 
-## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+## Debug mantra (auto-triggered — 2 prior attempt(s) on this phase did not reach Approved)
 
 Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
 
@@ -139,26 +139,3 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB1-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vector-bloat--vb1/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
-
-### Round 1 · Builder · agy
-
-**Files touched:**
-- `src/rebalance/ingest/db/github.py`: 
-  - Modified `upsert_github_document` to use a true `WHERE github_documents.content_hash != excluded.content_hash` clause in its `ON CONFLICT DO UPDATE SET` statement. This ensures the row is left completely byte-identical when the content matches. Also falls back to a `SELECT id` query to ensure the document ID is still returned when the update is a no-op.
-  - Added the helper `delete_github_documents(conn, doc_ids)` to move the `DELETE` logic out of the ingest module.
-  - Kept `upsert_github_embedding` as a `DELETE`/`INSERT` pair instead of reverting to `INSERT OR REPLACE`. A focused regression proved this is required: attempting to revert to `INSERT OR REPLACE` causes `sqlite3.OperationalError: UNIQUE constraint failed on github_embeddings primary key` because `github_embeddings` is a `vec0` virtual table that does not support `ON CONFLICT REPLACE`.
-- `src/rebalance/ingest/github_direct_commits.py`: 
-  - Called the new `gh.delete_github_documents` helper instead of embedding raw `DELETE` SQL.
-- `tests/test_github_direct_commits.py`:
-  - Updated `_get_doc` to select the entire row, and extended the idempotence check in `test_idempotence_and_vector_stability` to assert that `doc == first_doc`, proving that all mutable fields (including `fetched_at`) remain byte-identical.
-  - Updated `test_vanished_commit_prunes_both` to include an idempotence interaction (`sync_direct_commit_documents` -> pending=0) before forcing the PR overlap to prove the new upsert path is exercised.
-  - Fixed the docstring on `DirectCommitEmbeddingPruningTests` to accurately state that the writer is now idempotent and vanished commits cleanly prune their vectors.
-
-**Key decisions & Before/After Metric:**
-- Met the true no-op requirement for `upsert_github_document` by leveraging SQLite's `WHERE` filter on conflict resolution.
-- Proved with `test_changed_content_does_reembed` that the `vec0` limitation requires `DELETE`/`INSERT` in `upsert_github_embedding`.
-- The scoped pre-advance suite fully passes. Below are the before/after results for each required invariant against the prior writer implementation (before the fix):
-  - **Idempotence/Vector stability:** Before, a 3-sync cycle scheduled 3 re-embeds, orphaned 2 vectors, and generated a new document ID every time. After, it schedules exactly 1 embed, leaves `id` and `embedded_hash` completely unchanged on the 2nd and 3rd syncs, and orphans 0 vectors.
-  - **Changed content:** Before, the document ID churned and orphaned the old vector. After, the document ID stays the same, the vector count remains exactly 1, and 0 vectors are orphaned.
-  - **PR-overlap / Vanished:** Before, syncing before a PR overlap would strand the previous sync's vector because of ID churn. After, the idempotence pass is a true no-op (leaving no orphans), and the subsequent PR overlap correctly drops the document and its single vector.
-  - **Scale:** Before, 5 commits across 3 syncs produced 15 pending-embeds and 10 orphaned vectors. After, it yields exactly 5 pending-embeds on the first cycle, 0 on syncs 2 and 3, and 0 orphaned vectors throughout.
