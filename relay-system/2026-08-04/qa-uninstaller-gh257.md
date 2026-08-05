@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 16 / 18
 
@@ -680,5 +680,18 @@ handing off to Producer — go to the Producer window and say 'take your turn'.
   read 9 recognised / 0 refused.
 
 handing off to Reviewer.
+
+### Reviewer · Round 16
+
+swept file: yes
+
+- [Blocker] The environment ownership predicate still allows `BASH_ENV`: `redirects_execution()` admits every variable outside the `PYTHON*`, `DYLD_*`, `LD_*`, and `PATH` families (`scripts/uninstall_rebalance.sh:287-306`). Several template jobs directly execute Bash scripts, e.g. the daily-sync template launches `{{REBALANCE_DIR}}/scripts/daily_sync.sh` (`scripts/com.rebalance-os.daily-sync.plist.template:10-12`), whose interpreter is Bash (`scripts/daily_sync.sh:1`). A colliding plist can retain the exact rendered structural fields but inject `EnvironmentVariables.BASH_ENV=/opt/foreign/rc`; non-interactive Bash sources that file before the owned script, so the foreign job executes attacker code yet matches and is deleted. Treat `BASH_ENV` as execution-redirecting (and consider the relevant shell startup variables as a family), then add an apply-mode fixture using a real Bash-wrapper template that asserts the plist survives and exits 1; keep the benign override positive control.
+- [Unverified — no execution permitted this turn] I statically swept the complete uninstaller and focused test file. Apart from the shell-startup environment bypass above, I found no additional pre-existing defects.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Blocker: an unvalidated Bash startup variable lets a colliding template-label job execute foreign code while satisfying the ownership predicate.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
