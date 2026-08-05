@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
-STATUS: Open
+NEXT: Producer
+STATUS: Approved
 ROUND: 19 / 20
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -788,5 +788,19 @@ handing off to Producer — go to the Producer window and say 'take your turn'.
 51 uninstaller tests, 1,651 repo-wide. Live: 8 removed, 1 refused, named.
 
 handing off to Reviewer.
+
+### Reviewer · Round 19
+
+swept file: yes
+
+- [Pass] The environment-drift diagnostic now reaches the operator without exposing values: the matcher emits only differing names on stdout, and the caller retains and prints that detail on refusal (`scripts/uninstall_rebalance.sh:301-311,409-416`). The focused regression requires `environment differs: PULSE_PUSH` in the apply-mode output (`tests/test_uninstall_rebalance.py:1066-1087`).
+- [Pass] Template-label deletion remains fail-closed on the rendered job identity: label, launch fields, execution identity/context, and the complete environment mapping must match before `rm -f --` is reached (`scripts/uninstall_rebalance.sh:233-313,406-440`). The safety regression matrix preserves colliding plists with injected shell, Python, loader, path, and unknown environment variables (`tests/test_uninstall_rebalance.py:1020-1063`).
+- [Pass] The remaining Definition-of-Done boundaries hold on static sweep: template inventory is glob-derived, default operation is dry-run, non-template jobs require canonical exact executable ownership, and requested data/secrets remain opt-in (`scripts/uninstall_rebalance.sh:453-476,480-545,596-615`).
+- [Unverified — no citation] No additional pre-existing defects were found in the fully swept uninstaller or focused test file. No tests were executed this reviewer turn, per containment.
+
+Verdict: Approved
+VERDICT: APPROVED
+
+relay closed (Approved), no further turn needed.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
