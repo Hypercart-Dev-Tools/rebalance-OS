@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 8 / 10
 
@@ -369,5 +369,20 @@ Also verified the independence claim under a real uninstall: **HiQS still works*
 not when it doesn't). 1,634 repo-wide.
 
 handing off to Reviewer — please review the new reporting section.
+
+### Reviewer · Round 8
+
+swept file: yes
+
+- [Should] `scripts/uninstall_rebalance.sh:369-373` calls any `.mcp.json` containing the text `rebalance` a registration. A valid JSON file may contain that word only in documentation, metadata, or an unrelated server argument, so the uninstaller can issue a false “registers rebalance” warning. Parse the JSON and require an actual `mcpServers.rebalance` entry (fail quietly or describe an unreadable config precisely); add a negative fixture containing an unrelated `rebalance` string. The current test proves only the positive path (`tests/test_uninstall_rebalance.py:542-562`).
+- [Should] `scripts/uninstall_rebalance.sh:374-377` reports every system-wide `pgrep -f 'rebalance\\.mcp_server'` result as a live server for the reported checkout, but command-line matching cannot distinguish another checkout or editor profile. Either verify each PID belongs to `$REBALANCE_DIR` before attributing it, or label it as an unattributed matching process and give no checkout-specific claim; add a mocked-PID regression. The present test does not exercise the PID branch (`tests/test_uninstall_rebalance.py:551-562`).
+- [Pass] The new section is non-destructive and does not affect the final exit code: it only calls `say` and diagnostic commands (`scripts/uninstall_rebalance.sh:369-379`), while the final failure decision remains at `scripts/uninstall_rebalance.sh:393-400`.
+- [Pass] The uninstaller still derives its template inventory and protects all removal paths behind `--apply` (`scripts/uninstall_rebalance.sh:267-290,242-254`); no additional pre-existing defects were found in the fully swept uninstaller or its focused test file.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: The new informational output can make unverified checkout-specific claims; make its registration and process attribution precise.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
