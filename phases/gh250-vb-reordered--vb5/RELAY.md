@@ -160,3 +160,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB5-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vb-reordered--vb5/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · agy
+
+Implemented the requested deliverables:
+1. `utils/gh250/reclaim.py`: Python script with `--execute` requirement, dry-run by default, refusal to run on `rebalance.db` without `--i-know-this-is-production`, batching with transaction checkpointing, and `PRAGMA integrity_check` verification.
+2. `utils/gh250/rehearse.sh`: Bash script that checks disk headroom, copies `rebalance.db` into `scratch/`, runs the reclaim script in the background while monitoring WAL size, asserts on final conditions, and prints the rehearse report to `scratch/rehearsal-report.txt`.
+3. `tests/test_gh250_reclaim.py`: A pytest suite validating `dry-run`, production path guard, batching logic, resume capabilities (via a testing environment variable), and integrity failures.
+
+Note: I could not execute `rehearse.sh` against the actual repository's `rebalance.db` because it lacks the `vec0` table (likely a sandbox stub DB), but the tests in `test_gh250_reclaim.py` passed successfully.
+
+Ready for review!
