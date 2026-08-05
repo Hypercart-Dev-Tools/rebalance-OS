@@ -172,3 +172,18 @@ I authored the `RECLAIM-RUNBOOK.md` as requested in the brief.
 - Created a batched delete script loop utilizing `NOT EXISTS` rather than `NOT IN` in a chunked size of `50000`, issuing `PRAGMA wal_checkpoint(TRUNCATE)` and committing between batches.
 - Selected `VACUUM INTO` and an atomic swap (`mv`) over in-place `VACUUM` for better safety, so the original DB stays untouched until compacting finishes.
 - Ensured all specified abort conditions and recovery actions are thoroughly spelled out. No live database writes/deletes happen without first gating on integrity, flat orphan count, and fenced writers.
+
+### Round 1 · Reviewer · codex
+
+The draft has the required headings and correctly chooses batched `NOT EXISTS` deletes plus `VACUUM INTO`, but it is not yet safe or executable enough for a production maintenance window.
+
+Please revise the runbook to address these blockers:
+
+- Establish one explicit, absolute database path and use it in every command. Add the missing pre-delete `PRAGMA integrity_check` and record all derived baseline metrics (including total vectors and `freelist_count`) with the reference values: 13.43 GB, 2,687,606 total, 2,678,314 orphaned, 9,292 live, freelist 0, ~10.2 GB expected reclaim, ~1.2 GB expected final size, and 319 GB reference free space.
+- Make the R1 gate reproducible: capture and compare the three `github_sync` samples; abort on a non-flat result or a start value differing from the final R1 sample. State the actual headroom formula as `current DB + backup + compacted rebuild copy + margin`, explain the reference ~40 GB calculation, and make the execution-time go/no-go command unambiguous.
+- Correct the p4 interface: run `utils/gh250/fence-writers.sh fence`, then `... verify`, paste the **verify** output, and use `... unfence` only after every post-check passes (and on every abort/rollback path). The current no-argument invocation and prose-only "restore schedules" do not satisfy the fencing contract.
+- Replace the ad-hoc repo-root `reclaim_batch.sh` creation with copy-pasteable, self-contained execution commands (or explicitly use the subsequent p5 `utils/gh250/reclaim.py` once it exists). The current script can report more deleted rows than exist, never checks actual per-batch changes/progress, and gives no actionable checkpoint/busy failure handling. Require one committed 50,000-row batch at a time, a checkpoint after each batch, true remaining/deleted counts, and abort on a SQL/checkpoint error.
+- Before `VACUUM INTO` and again before the swap, add the read-only checks that prove no readers/writers remain and validate the compact file (`integrity_check`, orphan=0, live count equals baseline, size). Explain that the two `mv` operations are an atomic *cutover sequence*, not a single atomic command; use uniquely named retained originals and never overwrite an existing recovery file.
+- Tighten abort/resume/rollback: say exactly when it is safe to discard a partial `VACUUM INTO` output and retry, what checks occur before resuming deletion, and give a complete restore verification (integrity + original live/orphan counts). Every destructive `mv`/cleanup command needs its immediately preceding read-only verification; do not make deleting the original/failed database a casual optional command.
+
+**Verdict:** Changes requested
