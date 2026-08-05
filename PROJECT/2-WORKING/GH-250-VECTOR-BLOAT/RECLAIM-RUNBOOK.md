@@ -13,23 +13,29 @@ Date/Operator:
 Free bytes (df -k . | awk 'NR==2 {print $4 * 1024}'):
 Database bytes (stat -f %z rebalance.db):
 
+github_sync 1 timestamp:
 Orphan count immediately after github_sync 1:
+github_sync 2 timestamp:
 Orphan count immediately after github_sync 2:
+github_sync 3 timestamp:
 Orphan count immediately after github_sync 3:
-(Must be flat. If increasing, ABORT. R1 is not confirmed.)
+(Must be 3 identical counts. If they differ, ABORT. R1 is not confirmed.)
 
 Journal Mode (must be 'wal'):
 Integrity Check (must be 'ok'):
 
 Baseline Total Vectors:
 Baseline Live Vectors:
-Baseline Orphan Vectors (post-fencing, MUST exactly equal the final R1 sample above, else ABORT):
+Baseline Orphan Vectors (post-fencing, MUST exactly equal sample 3 above, else ABORT):
 
 Fence Verification Output:
 (Paste successful `./utils/gh250/fence-writers.sh verify` output here)
 
 Checkpoint Output:
 (Paste exact 0|0|0 checkpoint verification output here)
+
+Batch execution log:
+(Paste the output of each batch here, including fence verification and progress lines)
 ```
 
 ## 1. Preconditions & Verification
@@ -37,11 +43,18 @@ Checkpoint Output:
 Before proceeding with any destructive action, ensure all preconditions are met.
 
 ### 1.1 GH-250 R1 Confirmed
-Confirm the orphan count is flat across at least 3 `github_sync` cycles. Record each sample immediately after a named `github_sync` cycle completes.
+Confirm the orphan count is strictly flat across 3 `github_sync` cycles. For each cycle, first verify it completed, then sample the orphan count.
+
+Command to verify a sync cycle completed (run and wait for a new timestamp):
+```bash
+grep -a "github_sync" ~/Library/Logs/rebalance/3eyes.log | grep "completed" | tail -n 1
+```
+
+Record the timestamp, then immediately run:
 ```bash
 sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);"
 ```
-*Record the 3 samples in your Operator Record. If the count increases, ABORT.*
+*Record the 3 identical samples and their sync completion timestamps in your Operator Record. If the counts differ in any way, ABORT.*
 
 ### 1.2 Baseline Measurements
 Record these baseline values in your Operator Record.
@@ -80,17 +93,16 @@ No background tasks or other writers can be active during this operation. Run th
 ```bash
 ./utils/gh250/fence-writers.sh fence
 ```
-Verify the fence was successful and paste the output into your Operator Record:
+
+Before ANY destructive action, you must assert no processes hold handles to the database. Use this **Executable Reader/Writer Gate**:
 ```bash
 ./utils/gh250/fence-writers.sh verify
+if lsof rebalance.db rebalance.db-wal rebalance.db-shm 2>/dev/null; then echo "ABORT: Processes holding handles detected!"; exit 1; else echo "OK: No handles"; fi
 ```
-Check for any rogue processes still holding open file handles. Ensure no output is returned for the db file:
-```bash
-lsof rebalance.db
-```
-*If `lsof` returns any output, you MUST kill those processes before continuing.*
+*If this gate fails or outputs anything other than `OK: No handles` and a clean verify, ABORT. Do not manually kill processes; investigate why the fence failed.*
+*Paste the successful verify output into your Operator Record.*
 
-**CRITICAL POST-FENCING GATE:** Re-run the orphan count. It MUST exactly equal the final R1 sample from Step 1.1.
+**CRITICAL POST-FENCING GATE:** Re-run the orphan count. It MUST exactly equal sample 3 from Step 1.1.
 ```bash
 sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);"
 ```
@@ -98,46 +110,52 @@ sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM 
 
 ### 1.5 Consistent Backup and Restore Rehearsal
 Take a consistent backup using SQLite's backup facility, then rehearse the restore command in a disposable location.
+
 ```bash
-# 0. Ensure no readers/writers
-lsof rebalance.db
+# 0. Ensure no backup destination exists
+if [ -f "rebalance.db.backup" ]; then echo "ABORT: Backup already exists"; exit 1; fi
 
-# 1. Checkpoint WAL before backup to ensure all data is in the main file
+# 1. Run the Executable Reader/Writer Gate
+./utils/gh250/fence-writers.sh verify
+if lsof rebalance.db rebalance.db-wal rebalance.db-shm 2>/dev/null; then echo "ABORT: Handles open"; exit 1; fi
+
+# 2. Checkpoint WAL before backup
 sqlite3 rebalance.db "PRAGMA wal_checkpoint(TRUNCATE);"
-# EXPECTED: 0|0|0
-# If the result is NOT 0|0|0, readers are still active or the checkpoint failed. ABORT.
-# Record the checkpoint output in your Operator Record.
+# EXPECTED EXACT OUTPUT: 0|0|0
+# If the result is NOT exactly 0|0|0, ABORT. Record the checkpoint output in your Operator Record.
 
-# 2. Take a consistent SQLite backup
+# 3. Take a consistent SQLite backup
 sqlite3 rebalance.db ".backup 'rebalance.db.backup'"
 
-# 3. Rehearse the restore in a safe temporary directory
-RESTORE_DIR=$(mktemp -d -t rebalance_restore_test)
-cp rebalance.db.backup "$RESTORE_DIR/rebalance.db"
+# 4. Rehearse the restore using the exact sidecar-aware rollback steps
+RESTORE_DIR=$(mktemp -d -t rebalance_restore_test.XXXXXX)
+# Simulate the failure state by copying the current files
+cp rebalance.db "$RESTORE_DIR/rebalance.db"
+[ -f rebalance.db-wal ] && cp rebalance.db-wal "$RESTORE_DIR/rebalance.db-wal"
+[ -f rebalance.db-shm ] && cp rebalance.db-shm "$RESTORE_DIR/rebalance.db-shm"
 
-# 4. Verify integrity and live vectors on the restored rehearsal
+# Execute sidecar-aware restore
+cp rebalance.db.backup "$RESTORE_DIR/rebalance.db"
+rm -f "$RESTORE_DIR/rebalance.db-wal" "$RESTORE_DIR/rebalance.db-shm"
+
+# 5. Verify integrity and live vectors on the restored rehearsal
 sqlite3 "$RESTORE_DIR/rebalance.db" "PRAGMA integrity_check;"
 sqlite3 "$RESTORE_DIR/rebalance.db" "SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);"
-# Verify integrity is 'ok' and live vectors match the Baseline Live Vectors.
+# Verify integrity is 'ok' and live vectors exactly match Baseline Live Vectors.
 
-# 5. Clean up rehearsal
-rm -rf "$RESTORE_DIR"
+# 6. Constrained cleanup of rehearsal
+rm -f "$RESTORE_DIR/rebalance.db" "$RESTORE_DIR/rebalance.db-wal" "$RESTORE_DIR/rebalance.db-shm"
+rmdir "$RESTORE_DIR"
 ```
-*Do not proceed if the backup cannot be read or live vectors do not match.*
+*Do not proceed if the backup cannot be verified or live vectors do not match.*
 
 ---
 
 ## 2. Execution
 
-The database must be in WAL mode. Delete operations are batched to prevent holding the writer lock for too long and to avoid unbounded WAL inflation.
-
 ### 2.1 Batch Deletion
-Verify no remaining writer/reader processes exist:
-```bash
-lsof rebalance.db
-./utils/gh250/fence-writers.sh verify
-```
-Save this to a temporary script `delete_orphans.sh` (outside the repo if necessary, e.g. in `/tmp`) and execute it. It runs in a strict pipeline and explicitly checks for exact WAL checkpoint success.
+
+Save this script to `delete_orphans.sh` (outside the repo) and execute it. It enforces the no-reader gate and explicit transaction checkpointing for each batch.
 
 ```bash
 #!/bin/bash
@@ -148,26 +166,34 @@ DB="rebalance.db"
 BATCH_NUM=1
 
 while true; do
-  # Execute DELETE and SELECT changes() in the same explicit connection transaction, capturing stderr
+  # Executable Reader/Writer Gate per batch
+  ./utils/gh250/fence-writers.sh verify >/dev/null
+  if lsof "$DB" "$DB-wal" "$DB-shm" 2>/dev/null; then
+    echo "ERROR: Processes holding handles detected before batch $BATCH_NUM!"
+    exit 1
+  fi
+  
+  # Checkpoint WAL before batch
+  CP_RESULT=$(sqlite3 "$DB" "PRAGMA wal_checkpoint(TRUNCATE);" 2>&1)
+  if [ "$CP_RESULT" != "0|0|0" ]; then
+    echo "ERROR: WAL checkpoint failed before batch $BATCH_NUM. Result: $CP_RESULT"
+    exit 1
+  fi
+
+  # Execute DELETE and SELECT changes() in the same explicit connection transaction
   OUTPUT=$(sqlite3 "$DB" "BEGIN IMMEDIATE; DELETE FROM vec0 WHERE rowid IN (SELECT rowid FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id) LIMIT $BATCH_SIZE); SELECT changes(); COMMIT;" 2>&1)
   
-  CHANGES=$(echo "$OUTPUT" | tail -n 1)
+  # Robust numeric extraction
+  CHANGES=$(echo "$OUTPUT" | grep -Eo '^[0-9]+$' | tail -n 1 || echo "ERROR")
+  if [[ "$CHANGES" == "ERROR" ]] || ! [[ "$CHANGES" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: Could not parse changes output in batch $BATCH_NUM: $OUTPUT"
+    exit 1
+  fi
   
   if [ "$CHANGES" -eq 0 ]; then
     echo "No more orphans to delete."
     break
   fi
-  
-  # Checkpoint WAL explicitly and abort if it fails
-  CP_RESULT=$(sqlite3 "$DB" "PRAGMA wal_checkpoint(TRUNCATE);" 2>&1)
-  case "$CP_RESULT" in
-    0\|0\|0)
-      ;;
-    *)
-      echo "ERROR: WAL checkpoint failed or readers still active. Result: $CP_RESULT"
-      exit 1
-      ;;
-  esac
   
   REMAINING=$(sqlite3 "$DB" "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" 2>&1)
   
@@ -175,46 +201,48 @@ while true; do
   ((BATCH_NUM++))
 done
 ```
+*Record the script output (or final lines) and the fence verifications in your Operator Record.*
 
 ### 2.2 Reclaim Space (VACUUM INTO)
-Once all orphans are deleted, reclaim space using `VACUUM INTO`. 
 
-Verify no writers/readers are active:
+**1. Assert target absent:**
 ```bash
-lsof rebalance.db
+if [ -f "rebalance.db.vacuumed" ]; then echo "ABORT: Target already exists"; exit 1; fi
+```
+
+**2. Executable Reader/Writer Gate:**
+```bash
 ./utils/gh250/fence-writers.sh verify
+if lsof rebalance.db rebalance.db-wal rebalance.db-shm 2>/dev/null; then echo "ABORT: Handles open"; exit 1; fi
 ```
 
-Assert the vacuum target does **NOT** exist. If `ls` finds it, **ABORT** and investigate. Do not blindly `rm -f`.
-```bash
-ls rebalance.db.vacuumed
-# Expected: "ls: rebalance.db.vacuumed: No such file or directory"
-```
-
-Vacuum into the new file:
+**3. Vacuum into the new file:**
 ```bash
 sqlite3 rebalance.db "VACUUM INTO 'rebalance.db.vacuumed';"
 ```
 
-**CRITICAL:** Verify the vacuum target's integrity, orphan count, and baseline live count **BEFORE** replacing the original. Also record its bytes.
+**4. CRITICAL: Verify the vacuum target BEFORE swap:**
 ```bash
-# Verify integrity
 sqlite3 rebalance.db.vacuumed "PRAGMA integrity_check;"
 # Expected: ok
 
-# Verify 0 orphans
 sqlite3 rebalance.db.vacuumed "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);"
 # Expected: 0
 
-# Verify baseline live vectors match
 sqlite3 rebalance.db.vacuumed "SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);"
-# Expected: [Your recorded live vector count]
+# Expected: Exactly matches Baseline Live Vectors
 
-# Record target bytes
 stat -f %z rebalance.db.vacuumed
+# Record target bytes in Operator Record
 ```
 
-If all checks pass, perform the atomic swap. `mv` within the same directory on the same filesystem is atomic.
+**5. Executable Reader/Writer Gate again before atomic swap:**
+```bash
+./utils/gh250/fence-writers.sh verify
+if lsof rebalance.db rebalance.db-wal rebalance.db-shm rebalance.db.vacuumed 2>/dev/null; then echo "ABORT: Handles open"; exit 1; fi
+```
+
+**6. Atomic Swap:**
 ```bash
 mv rebalance.db.vacuumed rebalance.db
 ```
@@ -223,28 +251,23 @@ mv rebalance.db.vacuumed rebalance.db
 
 ## 3. Abort and Resume
 
-If things go wrong, evaluate the state based on the following conditions:
-
 ### Abort Conditions
-Abort the procedure before or during execution if:
-- Orphan count increases during the R1 confirmation (sync sample).
-- `PRAGMA integrity_check` returns anything other than `ok`.
-- Free disk space is below the calculated formula threshold.
-- Any background writer process is detected.
-- WAL checkpoint fails (result is not exactly `0|0|0`).
-- The batch deletion script returns a batch error.
-- The vacuum target `rebalance.db.vacuumed` already exists before `VACUUM INTO`.
+- Baseline measurements do not match exact requirements.
+- Any background writer process is detected or verification fails.
+- WAL checkpoint fails to return exactly `0|0|0`.
+- The batch deletion script errors.
+- Target `rebalance.db.vacuumed` exists before `VACUUM INTO`.
 
 ### Resumability
-- **Batch Error:** If the script errors, resolve the cause (e.g., killed process, disk full). Run `PRAGMA integrity_check;` and verify baseline live vectors on `rebalance.db`. If they pass, you may resume by running the script again.
-- **Interrupted `VACUUM INTO`:** Safe. If `VACUUM INTO` fails or is interrupted, the original database is untouched. Ensure no SQLite process is hanging, delete the incomplete partial target (`rm -f rebalance.db.vacuumed`), and restart the vacuum command.
-- **Failed/Interrupted Swap:** Needs inspection. If the `mv` command somehow fails, do not blindly restore. Check the state of `rebalance.db` and `rebalance.db.vacuumed`. If `rebalance.db` is missing or corrupted, preserve the failed artifacts (move them aside) and perform the full restore procedure.
+- **Batch Error:** Resolve the cause (e.g., disk full, random reader spawned). Run `PRAGMA integrity_check;` and verify baseline live vectors on `rebalance.db`. If they pass, resume by running the script again.
+- **Interrupted `VACUUM INTO`:** The original database remains valid. Ensure no SQLite process is hanging (`lsof`). Inspect the incomplete target `rebalance.db.vacuumed` to ensure it is just a partial file, then safely remove it: `rm -f rebalance.db.vacuumed`. Restart step 2.2.
+- **Failed/Interrupted Swap:** If the `mv` command fails, DO NOT blindly restore. Inspect `rebalance.db` and `rebalance.db.vacuumed`. If both exist, the swap didn't happen—preserve both, check integrity of `rebalance.db`, and retry the swap. If `rebalance.db` is missing or corrupt, preserve the failed artifacts and execute the full Rollback procedure.
 
 ---
 
 ## 4. Post-checks
 
-Run these checks to verify the cleanup. **All must pass before unfencing writers.**
+All checks must pass before unfencing writers.
 
 ```bash
 # 1. Integrity check
@@ -257,52 +280,66 @@ sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM 
 
 # 3. Live vector count (MUST exactly match baseline from Operator Record)
 sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);"
-# Expected: [Your recorded live vector count, e.g., 9292]
+# Expected: [Your recorded live vector count]
 
-# 4. Database size
-stat -f %z rebalance.db
-# Expected: Within a few MBs of the recorded vacuumed target bytes (~1.2 GB).
+# 4. Total vector count (MUST exactly match baseline live count)
+sqlite3 rebalance.db "SELECT count(*) FROM vec0;"
+# Expected: [Your recorded live vector count]
+
+# 5. Database size
+TARGET_BYTES=$(grep -A1 "Record target bytes" reclaim-*.log | tail -n1 | grep -Eo '^[0-9]+$' || echo 1)
+ACTUAL_BYTES=$(stat -f %z rebalance.db)
+if [ "$ACTUAL_BYTES" -eq "$TARGET_BYTES" ]; then echo "OK: Size matches target"; else echo "WARN: Size mismatch"; fi
 ```
 
 ### 4.1 Unfence and Verify
-If all post-checks pass, unfence the writers and verify the next sync works:
 ```bash
-# Unfence writers to restore schedules exactly as they were
+# Restore schedules using the p4 restoration command
 ./utils/gh250/fence-writers.sh unfence
-
-# Check that schedules are loaded
-./utils/gh250/fence-writers.sh verify
-# (This should now FAIL to verify zero writers, meaning writers are back)
 ```
 
-Confirm the first post-unfence sync completes normally. Wait for the scheduled `github_sync` or trigger it, then tail the logs to ensure success:
+**Wait for the first scheduled `github_sync` or trigger it manually, then verify completion:**
 ```bash
-# Check the log for a completed sync
-grep -a "github_sync" ~/Library/Logs/rebalance/3eyes.log | tail -n 5
-# Expected evidence: A log entry indicating a successful sync round completed without errors.
+grep -a "github_sync completed" ~/Library/Logs/rebalance/3eyes.log | tail -n 1
+# Expected evidence: A log entry with a current timestamp indicating successful completion.
 ```
 
 ---
 
 ## 5. Rollback
 
-If you made a mistake (e.g. live vectors count dropped) or the database is corrupted, restore from the backup.
+If the database is corrupted or live vectors dropped, restore from backup. 
 
+**1. Executable Reader/Writer Gate before rollback:**
 ```bash
-# 1. Ensure no SQLite processes are touching the DB. Check for any locking processes:
-lsof rebalance.db
+./utils/gh250/fence-writers.sh verify
+if lsof rebalance.db rebalance.db-wal rebalance.db-shm 2>/dev/null; then echo "ABORT: Handles open"; exit 1; fi
+```
 
-# 2. Move the broken DB and its WAL/SHM files aside to preserve them for debugging
-mv rebalance.db rebalance.db.broken
-mv rebalance.db-wal rebalance.db.broken-wal 2>/dev/null || true
-mv rebalance.db-shm rebalance.db.broken-shm 2>/dev/null || true
+**2. Preserve failed artifacts (sidecar-aware):**
+```bash
+[ -f rebalance.db ] && mv rebalance.db rebalance.db.broken
+[ -f rebalance.db-wal ] && mv rebalance.db-wal rebalance.db.broken-wal
+[ -f rebalance.db-shm ] && mv rebalance.db-shm rebalance.db.broken-shm
+[ -f rebalance.db.vacuumed ] && mv rebalance.db.vacuumed rebalance.db.vacuumed.broken
+```
 
-# 3. Restore the backup (with exact commands to handle -wal/-shm)
+**3. Restore from backup:**
+```bash
 cp rebalance.db.backup rebalance.db
-rm -f rebalance.db-wal rebalance.db-shm
+```
 
-# 4. Verify the restore
+**4. Verify the restored state:**
+```bash
 sqlite3 rebalance.db "PRAGMA integrity_check;"
+# Expected: ok
+
 sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);"
-# Must be 'ok' and match baseline live vectors.
+# Expected: Exactly matches Baseline Live Vectors
+
+sqlite3 rebalance.db "SELECT count(*) FROM vec0;"
+# Expected: Exactly matches Baseline Total Vectors
+
+sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);"
+# Expected: Exactly matches Baseline Orphan Vectors
 ```

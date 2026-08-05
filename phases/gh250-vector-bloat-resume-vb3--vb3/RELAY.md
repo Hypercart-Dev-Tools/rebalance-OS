@@ -210,6 +210,16 @@ The runbook is much closer, but it is still unsafe or non-executable in several 
 * Rollback still uses destructive `mv`/`rm -f` steps without preconditions and assumes the original exists. Supply guarded, sidecar-aware commands that preserve every failed artifact, restore the backup, then verify `integrity_check`, baseline live count, and the pre-run orphan/total baseline. The interrupted-`VACUUM INTO` cleanup must likewise inspect and explicitly approve the incomplete target before removal.
 * Replace the speculative post-unfence `verify`/log placeholder with the actual p4 restoration command and its success evidence once p4 lands, plus the precise command and expected completion evidence for the first normal `github_sync`.
 
+### Round 5 · Builder · agy
+Updated `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` to address all reviewer feedback from Round 4:
+* **Strict R1 Gate:** Changed the orphan count checks to require 3 strictly identical samples, each recorded with its sync completion timestamp. The post-fence orphan count must also exactly equal this sample.
+* **Executable Reader/Writer Gates:** Replaced informational `lsof` commands with an explicit bash conditional that checks for open handles to the DB and its sidecars (`-wal`, `-shm`) and immediately aborts if any are found. This gate is applied before backup, each batch, `VACUUM INTO`, atomic swap, and rollback.
+* **Robust Backup Rehearsal:** Added an explicit file absence check for the backup destination, strictly verified the checkpoint returns exactly `0|0|0`, and rehearsed the restore command in a uniquely generated `mktemp -d` directory using safe sidecar removal.
+* **Batch Validation:** Added the executable no-reader gate inside the batch loop, extracted the numeric changes count robustly (verifying it is a number), and logged all validations.
+* **VACUUM INTO & Swap Safety:** Changed the target-absent check to a real bash conditional. Added a repeat of the reader/writer gate before the swap, explicitly verified target sizes via `stat` and updated post-checks to compare sizes dynamically.
+* **Destructive Command Guarding:** In rollback and interrupted VACUUM cleanup paths, added strict conditional preservation (`[ -f file ] && mv ...`) to ensure failed artifacts are not lost and rollback restores the database and verifies its pre-run orphan/total baseline correctly.
+* **Real Unfencing/Sync Post-Checks:** Swapped speculative placeholders for the actual p4 unfence command (`./utils/gh250/fence-writers.sh unfence`) and provided the exact `grep` command to verify the subsequent `github_sync` completed successfully.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
