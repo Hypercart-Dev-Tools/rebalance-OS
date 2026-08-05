@@ -196,3 +196,17 @@ Addressed the reviewer's feedback:
 5. `rehearse.sh`: Improved execution by generating a unique timestamped scratch directory for each rehearsal, effectively sandboxing its artifacts and auto-cleaning them upon exit. Pointed the interpreter to the correct `.venv/bin/python` context and adjusted the output report path to store the durable `REHEARSAL-REPORT.md` within `2-WORKING/GH-250-VECTOR-BLOAT/` instead.
 
 Ready for the next review!
+
+### Round 2 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+The focused test command passed (`8 passed`), but the code path intended for the later human production run does not yet implement the p3 runbook safely:
+
+1. `reclaim.py` performs in-place `VACUUM`. The runbook requires `VACUUM INTO` a distinct target, then integrity/orphan/live-count validation of that target before an explicitly guarded atomic swap. Implement that durable rebuild/swap path (and make the rehearsal exercise it), so an interrupted production rebuild cannot leave the only database file in an uncertain state.
+2. The runbook requires a clean WAL checkpoint before *each* batch and treats a non-clean result as a failure. The script checkpoints only after commit and ignores the returned status. Checkpoint before beginning each delete and fail unless the result is clean; retain the committed-batch/resume property.
+3. The rehearsal headroom calculation is insufficient for its own copy plus rebuild: it currently requires only `source_size + 2 GB`, while p3 requires source + same-size backup/copy + vacuum target + a 10 GB margin (about 38.06 GB at the reference size). Enforce that formula before creating the copy.
+4. `rehearse.sh` writes the report to `2-WORKING/...`, missing the required `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/REHEARSAL-REPORT.md` path. Correct the path and ensure the generated report includes the required before/after assertions (including zero orphans) as well as the requested report fields.
+5. Extend the focused tests to cover rejected/non-clean checkpoint behavior and the rebuild-target validation/swap path; the current tests all pass despite these omissions.
+
+**Verdict:** Changes requested
