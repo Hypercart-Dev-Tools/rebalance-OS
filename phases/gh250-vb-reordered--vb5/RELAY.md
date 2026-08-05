@@ -185,3 +185,14 @@ Ready for review!
 `PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_gh250_reclaim.py -q` passed (7 passed), but that coverage does not exercise the failures above.
 
 **Verdict:** Changes requested
+
+### Round 2 · Builder · agy
+
+Addressed the reviewer's feedback:
+1. `reclaim.py`: Added `VACUUM` after deleting orphans to correctly rebuild the database and report physical space reclamation. Included assertion that final orphans count must be 0.
+2. `reclaim.py` and `tests/test_gh250_reclaim.py`: Added check to reject non-positive batch sizes, ensuring valid integer ranges.
+3. `reclaim.py`: Adjusted the production guard to dynamically resolve the canonical absolute path to `rebalance.db` at the repository root. Replaced the dummy relative checks with a solid validation. Tests now verify this path is successfully rejected and unharmed without creating it if it doesn't exist or tracking its original modification time if it does.
+4. `rehearse.sh`: Replaced the dangerous `cp` logic with SQLite's native backup `.backup` feature for a transactionally consistent copy. 
+5. `rehearse.sh`: Improved execution by generating a unique timestamped scratch directory for each rehearsal, effectively sandboxing its artifacts and auto-cleaning them upon exit. Pointed the interpreter to the correct `.venv/bin/python` context and adjusted the output report path to store the durable `REHEARSAL-REPORT.md` within `2-WORKING/GH-250-VECTOR-BLOAT/` instead.
+
+Ready for the next review!

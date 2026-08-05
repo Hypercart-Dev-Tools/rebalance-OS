@@ -51,8 +51,12 @@ def main():
     parser.add_argument("--batch-size", type=int, default=10000, help="Batch size for deletion")
     args = parser.parse_args()
     
+    if args.batch_size <= 0:
+        print("ERROR: --batch-size must be a positive integer", file=sys.stderr)
+        sys.exit(1)
+    
     db_path = Path(args.database).resolve()
-    prod_path = Path("rebalance.db").resolve()
+    prod_path = (Path(__file__).resolve().parent.parent.parent / "rebalance.db").resolve()
     
     if db_path == prod_path and not args.i_know_this_is_production:
         print("ERROR: Refusing to run on production database without --i-know-this-is-production", file=sys.stderr)
@@ -117,6 +121,9 @@ def main():
             
         batch_num += 1
         
+    print("Rebuilding database to reclaim physical space (VACUUM)...")
+    conn.execute("VACUUM;")
+        
     print("Running integrity check...")
     cursor = conn.cursor()
     cursor.execute("PRAGMA integrity_check;")
@@ -133,6 +140,10 @@ def main():
         
     if after_metrics["live_vectors"] != before_metrics["live_vectors"]:
         print(f"\nERROR: Live vectors count changed! Before: {before_metrics['live_vectors']}, After: {after_metrics['live_vectors']}", file=sys.stderr)
+        sys.exit(1)
+        
+    if after_metrics["orphans"] != 0:
+        print(f"\nERROR: Orphans remain! Count: {after_metrics['orphans']}", file=sys.stderr)
         sys.exit(1)
         
     print("\nReclaim completed successfully.")

@@ -2,6 +2,7 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+import sys
 import time
 from pathlib import Path
 
@@ -32,7 +33,7 @@ def setup_db(db_path, num_live=5, num_orphans=5, corrupt=False):
         conn.close()
 
 def run_reclaim(*args, env=None):
-    cmd = ["python", "utils/gh250/reclaim.py"] + list(args)
+    cmd = [sys.executable, "utils/gh250/reclaim.py"] + list(args)
     return subprocess.run(cmd, env=env, capture_output=True, text=True)
 
 def test_dry_run_changes_nothing(tmp_path):
@@ -55,12 +56,13 @@ def test_dry_run_changes_nothing(tmp_path):
     assert cursor.fetchone()[0] == 20
     conn.close()
 
-def test_execute_deletes_orphans(tmp_path):
+def test_execute_deletes_orphans_and_vacuums(tmp_path):
     db_path = tmp_path / "test.db"
     setup_db(db_path, num_live=10, num_orphans=10)
     
     res = run_reclaim("--database", str(db_path), "--execute")
     assert res.returncode == 0
+    assert "VACUUM" in res.stdout
     
     conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
@@ -72,17 +74,22 @@ def test_execute_deletes_orphans(tmp_path):
     conn.close()
 
 def test_production_path_guard(tmp_path):
-    prod_path = Path("rebalance.db")
-    # Backup original if it exists, though it shouldn't in this test environment
-    # Actually, we shouldn't touch the real production db! We can just assert the script refuses it without creating it.
+    prod_path = (Path(__file__).resolve().parent.parent / "rebalance.db").resolve()
     
-    # Check if prod db exists, but we can just run dry-run against it, it should fail before even checking if it exists.
-    res = run_reclaim("--database", "rebalance.db")
-    assert res.returncode != 0
-    assert "ERROR: Refusing to run on production database" in res.stderr
+    # Snapshot before state
+    existed_before = prod_path.exists()
+    mtime_before = prod_path.stat().st_mtime if existed_before else None
     
-    # Make sure we didn't write a file
-    # We shouldn't write to rebalance.db in this test. We just rely on the script refusing it.
+    # Try both absolute and relative
+    for target in [str(prod_path), "rebalance.db", "./rebalance.db"]:
+        res = run_reclaim("--database", target)
+        assert res.returncode != 0
+        assert "ERROR: Refusing to run on production database" in res.stderr
+        
+        # Verify untouched
+        assert prod_path.exists() == existed_before
+        if existed_before:
+            assert prod_path.stat().st_mtime == mtime_before
 
 def test_batching_correctness(tmp_path):
     db_path = tmp_path / "test.db"
@@ -140,3 +147,15 @@ def test_integrity_check_failure(tmp_path):
     res = run_reclaim("--database", str(db_path), "--execute")
     assert res.returncode != 0
     assert "malformed" in res.stderr
+
+def test_invalid_batch_size(tmp_path):
+    db_path = tmp_path / "test.db"
+    setup_db(db_path)
+    
+    res = run_reclaim("--database", str(db_path), "--execute", "--batch-size", "0")
+    assert res.returncode != 0
+    assert "ERROR: --batch-size must be a positive integer" in res.stderr
+    
+    res = run_reclaim("--database", str(db_path), "--execute", "--batch-size", "-5")
+    assert res.returncode != 0
+    assert "ERROR: --batch-size must be a positive integer" in res.stderr

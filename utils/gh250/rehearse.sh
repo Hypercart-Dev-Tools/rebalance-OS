@@ -2,14 +2,16 @@
 set -euo pipefail
 
 DB_FILE="rebalance.db"
-SCRATCH_DIR="scratch"
+RUN_ID=$(date +%s)_$$
+SCRATCH_DIR="scratch/rehearse_$RUN_ID"
 COPY_FILE="$SCRATCH_DIR/rebalance.rehearsal.db"
-REPORT_FILE="$SCRATCH_DIR/rehearsal-report.txt"
+REPORT_DIR="2-WORKING/GH-250-VECTOR-BLOAT"
+REPORT_FILE="$REPORT_DIR/REHEARSAL-REPORT.md"
 
 # Cleanup function
 cleanup() {
     echo "Cleaning up rehearsal copy..."
-    rm -f "$COPY_FILE" "$COPY_FILE-wal" "$COPY_FILE-shm"
+    rm -rf "$SCRATCH_DIR"
 }
 trap cleanup EXIT
 
@@ -20,6 +22,7 @@ if [[ ! -f "$DB_FILE" ]]; then
 fi
 
 mkdir -p "$SCRATCH_DIR"
+mkdir -p "$REPORT_DIR"
 
 DB_SIZE_BYTES=$(stat -f %z "$DB_FILE")
 FREE_SPACE_BYTES=$(df -k . | awk 'NR==2 {print $4 * 1024}')
@@ -32,11 +35,8 @@ fi
 
 echo "Disk space check passed. Required: $REQUIRED_SPACE, Available: $FREE_SPACE_BYTES"
 
-echo "Copying $DB_FILE to $COPY_FILE..."
-cp "$DB_FILE" "$COPY_FILE"
-# Also copy wal and shm if they exist
-[[ -f "$DB_FILE-wal" ]] && cp "$DB_FILE-wal" "$COPY_FILE-wal"
-[[ -f "$DB_FILE-shm" ]] && cp "$DB_FILE-shm" "$COPY_FILE-shm"
+echo "Copying $DB_FILE to $COPY_FILE via SQLite backup..."
+sqlite3 "$DB_FILE" ".backup '$COPY_FILE'"
 
 echo "Gathering before metrics..."
 BEFORE_SIZE=$(stat -f %z "$COPY_FILE")
@@ -49,7 +49,7 @@ START_TIME=$(date +%s)
 # Note: we need to run reclaim in a way that we can observe peak WAL size.
 # We'll run reclaim in background and monitor WAL size.
 
-python utils/gh250/reclaim.py --database "$COPY_FILE" --execute &
+PYTHONPATH="$PWD/src" "$PWD/.venv/bin/python" utils/gh250/reclaim.py --database "$COPY_FILE" --execute &
 RECLAIM_PID=$!
 
 PEAK_WAL=0
