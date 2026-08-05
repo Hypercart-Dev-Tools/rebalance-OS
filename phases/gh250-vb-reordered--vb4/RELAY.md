@@ -152,3 +152,16 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 - Designed `verify` to anti-rot: it checks all loaded jobs matching `com.rebalance-os.*(sync|collector)` and fails if it finds one outside `KNOWN_WRITERS`.
 - Ensured all actions track to a durable state file `rebalance_fenced_writers.state` allowing idempotent fences and exact restores (with trap-on-interrupt protection).
 - Created `tests/test_gh250_fencing.py` using stubs for `launchctl`, `python`, `lsof`, and `sqlite3` to assert the required behavior without running actual operator jobs. Tests are passing!
+
+### Round 1 · Reviewer · codex
+
+**Verdict:** Changes requested
+
+The dedicated test passes (`6 passed`), but the implementation does not yet meet the safety contract:
+
+- Install and exercise a guarded cleanup trap for `EXIT`, `INT`, and `TERM`. The current trap covers only `INT`/`TERM`, is removed on normal completion, and `cmd_unfence` can abort on its first failed resume under `set -e`, leaving later writers fenced. Cleanup must attempt every recorded restore, preserve the state file when any restore/confirmation fails, and return non-zero only after all attempts.
+- Make a second `fence` a true no-op when its state file already exists. It currently can pause newly loaded writers without recording them, so a later `unfence` cannot restore the exact set it changed.
+- Do not ignore `bootout`/`bootstrap` failures, and do not remove state after warnings. `unfence` must confirm every recorded job is loaded again (including 3-Eyes-managed jobs' launchd state), otherwise retain the record and fail clearly.
+- Point `lsof` and the exclusive-lock check at the real resolved database (`REBALANCE_DB`, defaulting to the repo-root `rebalance.db`), not `src/rebalance.db`. The current path can make `sqlite3` create/check an unrelated empty database, defeating `verify`.
+- Use a durable non-temporary default state location; `$TMPDIR`/`/tmp` does not satisfy recovery after reboot.
+- Strengthen the fake-driven tests to prove record-before-first-action ordering, no extra action on a second `fence`, failed restore still attempts all remaining jobs and retains state, and the resolved DB path is passed to `lsof`/`sqlite3`.
