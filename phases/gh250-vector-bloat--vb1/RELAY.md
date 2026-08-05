@@ -20,15 +20,28 @@ NEXT: agy
 > MLX works fine outside the sandbox on this machine (M1 Max, Metal 3), so this is a turn-sandbox
 > limitation, not a broken repo.
 >
-> **Run only this:**
+> **Run only this** (the interpreter matters — see below):
 > ```
-> python -m pytest tests/test_github_direct_commits.py tests/test_db_github.py \
+> PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest \\
+>   tests/test_github_direct_commits.py tests/test_db_github.py \\
 >   tests/test_github_knowledge.py tests/test_github_coverage.py -q
 > ```
-> Verified clean (33 passed, no MLX device use). Add the specific new test file for your phase.
-> Never `pytest tests/` — it collects `test_mlx_instrumentation.py` / `test_mlx_cache_cap.py` /
-> `test_job_guard_wiring.py`, which is what aborts. None of this phase's work touches MLX, so there
-> is no reason to reach for the full suite.
+> Verified clean (33 passed). Add the specific new test file for your phase.
+>
+> **Why not plain `python`:** your isolated worktree has NO virtualenv — `.venv/` is gitignored,
+> so it does not exist there and bare `python` either is not found or cannot import `rebalance`.
+> Use the absolute interpreter above. **Do not go looking for a working environment in the real
+> repo root** — that is an isolation breach and the shim will fail your turn (it already did once).
+>
+> **Why `PYTHONPATH="$PWD/src"`:** that venv has rebalance installed *editable*, pointing at the
+> MAIN repo's `src/`. Without PYTHONPATH your edits in the worktree are not what gets imported, so
+> you would be testing the wrong code and a green run would mean nothing.
+>
+> Never `pytest tests/` — it collects the MLX suite. As of GH-250 those tests skip cleanly via the
+> `requires_metal` marker rather than aborting, but the full suite is still slow and carries
+> unrelated pre-existing failures (5 order-dependent in test_hiqs_pipeline.py, 1 in
+> test_scheduler_liveness.py). Stick to the scoped command.
+
 
 
 
@@ -112,9 +125,10 @@ passes both before and after proves nothing — that check is the whole point of
   number this phase exists to drive to zero.
 
 
-## Debug mantra (auto-triggered — 2 prior attempt(s) on this phase did not reach Approved)
+## Debug mantra (auto-triggered — 3 prior attempt(s) on this phase did not reach Approved)
 
 Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/gh250-vector-bloat--vb1/ESCALATION.md): `pre-advance-failed`. Read it before re-guessing.
 
 ---
 
