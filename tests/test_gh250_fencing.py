@@ -49,7 +49,8 @@ if [[ "$*" == *"-m three_eyes list"* ]]; then
     cat {tmp_path}/3eyes_list.txt
 elif [[ "$*" == *"-m three_eyes why"* ]]; then
     if grep -q "$4 paused" {tmp_path}/3eyes_paused.txt 2>/dev/null; then
-        echo "OPEN/quarantined paused by operator"
+        echo "OPEN/quarantined"
+        echo "reason: paused via CLI"
     else
         echo "closed"
     fi
@@ -238,3 +239,29 @@ def test_unfence_failures_continue_and_retain_state(run_env):
     assert "com.rebalance-os.daily-sync.plist" in launch_log
     
     assert (tmp / "state.txt").exists()
+
+def test_already_paused_writer_gets_neither_pause_nor_resume(run_env):
+    env, tmp = run_env
+    # Pre-pause github-sync before fence
+    (tmp / "3eyes_paused.txt").write_text("github-sync paused\n")
+    
+    res = run_script("fence", env)
+    assert res.returncode == 0
+    assert "is 3-Eyes managed and already paused" in res.stdout
+    
+    # State file shouldn't record github-sync
+    state_content = (tmp / "state.txt").read_text()
+    assert "com.rebalance-os.github-sync" not in state_content
+    
+    py_log = (tmp / "python.log").read_text()
+    # It shouldn't pause github-sync because it was already paused
+    assert "-m three_eyes pause github-sync" not in py_log
+    
+    # Now unfence
+    res2 = run_script("unfence", env)
+    assert res2.returncode == 0
+    
+    py_log_after = (tmp / "python.log").read_text()
+    # It shouldn't resume github-sync because it wasn't in state
+    assert "-m three_eyes resume github-sync" not in py_log_after
+

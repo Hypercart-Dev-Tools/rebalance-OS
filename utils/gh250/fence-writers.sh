@@ -53,7 +53,9 @@ cmd_fence() {
             local t_id
             t_id=$(get_3eyes_id "$w")
             if [ -n "$t_id" ] && is_3eyes_managed "$t_id"; then
-                if (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes why "$t_id" 2>/dev/null | grep -q "OPEN/quarantined.*paused by operator"); then
+                local why_out
+                why_out=$(cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes why "$t_id" 2>/dev/null || true)
+                if echo "$why_out" | grep -q "OPEN/quarantined" && echo "$why_out" | grep -q "reason: paused via CLI"; then
                     echo "$w is 3-Eyes managed and already paused."
                 else
                     pre_state+="${w}:3eyes:${t_id}\n"
@@ -121,7 +123,9 @@ cmd_verify() {
             local t_id
             t_id=$(get_3eyes_id "$w")
             if [ -n "$t_id" ] && is_3eyes_managed "$t_id"; then
-                if ! (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes why "$t_id" 2>/dev/null | grep -q "OPEN/quarantined.*paused by operator"); then
+                local why_out
+                why_out=$(cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes why "$t_id" 2>/dev/null || true)
+                if ! (echo "$why_out" | grep -q "OPEN/quarantined" && echo "$why_out" | grep -q "reason: paused via CLI"); then
                     echo "FAIL: 3-Eyes managed writer $w ($t_id) is NOT paused!"
                     failed=1
                 fi

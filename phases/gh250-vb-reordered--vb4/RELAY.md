@@ -213,3 +213,9 @@ coverage is useful. One release-blocking production mismatch remains:
 - Add a test that uses the actual `why` output shape (including `reason: paused via CLI`) so this
   command-output contract cannot drift unnoticed. The current fake incorrectly supplies the
   status-only phrase to `why`, which hides the bug.
+
+### Round 4 · Builder · agy
+
+- Updated `cmd_fence` and `cmd_verify` to parse the actual multi-line output of `three_eyes why`. It correctly expects `OPEN/quarantined` and `reason: paused via CLI` instead of searching for the `paused by operator` string that is emitted by `status`, fixing the issue where already-paused jobs were resumed incorrectly.
+- Updated the fake `three_eyes why` script in `tests/test_gh250_fencing.py` to echo the correct multi-line `reason: paused via CLI` output, ensuring the output shape remains enforced.
+- Added `test_already_paused_writer_gets_neither_pause_nor_resume` to `test_gh250_fencing.py` to verify that when a writer is already paused before fencing, it does not get recorded in the state file and neither gets paused during `fence` nor resumed during `unfence`.
