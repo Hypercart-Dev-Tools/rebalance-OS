@@ -43,7 +43,7 @@ spin_out_target: "https://github.com/HiQS-Suite/HiQS"
 
 | What was just completed | What's next |
 |---|---|
-| Plan rev 5 authored and promoted to `2-WORKING` 2026-08-03, with the rev-4 eval gate rewritten to be falsifiable (n raised to 60–75, paired disagreement set made the primary artifact, ground-truth protocol written, query set frozen, FTS-only baseline promoted to a decision, split-decision rule, cost axis, floor + truncation gates). Codebase location settled: HiQS ships **inside this repo at `HiQS/`**, not as a separate repository, so the plan doc and the code it governs live under one `git log`. PDDA compliance sections added (frontmatter, this table, table of contents, per-phase QA gates, §16 boundary note). The standalone anti-patterns ledger was **verified against `CHANGELOG.md` and folded in** — six-cluster failure-mode taxonomy at the head of the Lessons section, seven incidents L1–L15 missed added as **L16–L22**, and two new plugin rules (§5.7 explicit network timeout, §5.8 watermark advances only on a completed fetch); source archived to `PROJECT/4-MISC/HiQS-ANTI-PATTERNS.md`. **The four tenets were then audited against the plan itself and two failed**: ATTESTED had no `author` field and RANKED had no obligation model and no detector — so `author`/`owed_by`/`due` landed on `Doc`/`Candidate`, `activity_at` split from `updated_at` (L20), `source_age_s`/`source_status` landed on `RankedAction`, §7.1 added a frozen ranking-judgment set with three gates, §2's non-negotiable was widened from *retrieval*-quality to all quality claims, and **§18 records the dogfooding audit in both directions**. An **agy relay review (r1, Changes requested)** then found 3 Blockers + 2 Shoulds, all accepted and applied: `Doc` was missing `source` (a pre-rev-5 mismatch with §9); §7.1's obligation gate was self-justifying — its failure could be discharged by rewording the tenet, so it now **blocks**, with restatement demoted to a consequence of an explicit override; and **"never auto-delete" was silently corrupting the corpus** — chunk-by-heading plus no pruning means a renamed heading orphans its old `docs`/`docs_vec` rows forever, so rule 2 is now within-unit reconciliation, never across units and never on a failed fetch. Three unfalsifiable gate items got numbers. Cross-model review (Qwen) added the coverage boundary: the four tenets cover **neither** cluster D (resource) **nor** E (scope accretion), so **§18.3** names four counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL) and **L23** records the incumbent reintroducing an already-fixed defect because the lesson was prose. **r2 found 1 Blocker + 3 Shoulds + 1 Nit, all applied**: r1's own gate fix had propagated to §7.1 but not to the Phase 3 checklist (the exact drift class this plan warns about); §7.1's gates were all relative, so an absolute **floor of 3/5 top-5 overlap** was added; `docs_vec` reads must filter `WHERE model = <active>` or mixed 384/1024-dim vectors crash the cosine; **`hiqs auth <source>` added as a 6th subcommand** (~40 LOC, recorded not absorbed) because an unattended launchd job cannot complete a browser OAuth flow; and a **2-chunk-per-document cap** after RRF stops one long note flooding the top-10. Relay closed at r2 (`VERDICT: PARKED` — all findings fixed; the reviewer never issued `Approved`, so none is claimed). **Then the operator confirmed the spin-out**: `HiQS/` is a **staging home**, extracted to [`HiQS-Suite/HiQS`](https://github.com/HiQS-Suite/HiQS) (public, empty, created 2026-08-03) once stable, with rebalance-OS archived within weeks — added as **§19 + a real Phase 6**, which surfaced the **public-repo disclosure gate**: the frozen eval sets are built from a private vault and explicitly include client names, and were specced to be committed into what becomes a public repo. **No code written.** | **Open the GitHub issue on [`HiQS-Suite/HiQS`](https://github.com/HiQS-Suite/HiQS), not here** — an archived repo's issues freeze, and PDDA's `source:` URL disambiguates a foreign-repo issue (§19.3). Then run **Phase 0 — Skeleton**: scaffold `HiQS/`, `db.py`, `config.py`, `plugins.py`, `events.py`, the fake-plugin contract test, and the clean-room import pin — which is now the **extraction precondition**, not just a purity check. Exit when `hiqs status` on an empty DB returns structured JSON and a fake event lands in `events`. |
+| Plan rev 5 authored and promoted to `2-WORKING` 2026-08-03, with the rev-4 eval gate rewritten to be falsifiable (n raised to 60–75, paired disagreement set made the primary artifact, ground-truth protocol written, query set frozen, FTS-only baseline promoted to a decision, split-decision rule, cost axis, floor + truncation gates). Codebase location settled: HiQS ships **inside this repo at `HiQS/`**, not as a separate repository, so the plan doc and the code it governs live under one `git log`. PDDA compliance sections added (frontmatter, this table, table of contents, per-phase QA gates, §16 boundary note). The standalone anti-patterns ledger was **verified against `CHANGELOG.md` and folded in** — six-cluster failure-mode taxonomy at the head of the Lessons section, seven incidents L1–L15 missed added as **L16–L22**, and two new plugin rules (§5.7 explicit network timeout, §5.8 watermark advances only on a completed fetch); source archived to `PROJECT/4-MISC/HiQS-ANTI-PATTERNS.md`. **The four tenets were then audited against the plan itself and two failed**: ATTESTED had no `author` field and RANKED had no obligation model and no detector — so `author`/`owed_by`/`due` landed on `Doc`/`Candidate`, `activity_at` split from `updated_at` (L20), `source_age_s`/`source_status` landed on `RankedAction`, §7.1 added a frozen ranking-judgment set with three gates, §2's non-negotiable was widened from *retrieval*-quality to all quality claims, and **§18 records the dogfooding audit in both directions**. An **agy relay review (r1, Changes requested)** then found 3 Blockers + 2 Shoulds, all accepted and applied: `Doc` was missing `source` (a pre-rev-5 mismatch with §9); §7.1's obligation gate was self-justifying — its failure could be discharged by rewording the tenet, so it now **blocks**, with restatement demoted to a consequence of an explicit override; and **"never auto-delete" was silently corrupting the corpus** — chunk-by-heading plus no pruning means a renamed heading orphans its old `docs`/`docs_vec` rows forever, so rule 2 is now within-unit reconciliation, never across units and never on a failed fetch. Three unfalsifiable gate items got numbers. Cross-model review (Qwen) added the coverage boundary: the four tenets cover **neither** cluster D (resource) **nor** E (scope accretion), so **§18.3** names four counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL) and **L23** records the incumbent reintroducing an already-fixed defect because the lesson was prose. **r2 found 1 Blocker + 3 Shoulds + 1 Nit, all applied**: r1's own gate fix had propagated to §7.1 but not to the Phase 3 checklist (the exact drift class this plan warns about); §7.1's gates were all relative, so an absolute **floor of 3/5 top-5 overlap** was added; `docs_vec` reads must filter `WHERE model = <active>` or mixed 384/1024-dim vectors crash the cosine; **`hiqs auth <source>` added as a 6th subcommand** (~40 LOC, recorded not absorbed) because an unattended launchd job cannot complete a browser OAuth flow; and a **2-chunk-per-document cap** after RRF stops one long note flooding the top-10. Relay closed at r2 (`VERDICT: PARKED` — all findings fixed; the reviewer never issued `Approved`, so none is claimed). **Then the operator confirmed the spin-out**: `HiQS/` is a **staging home**, extracted to [`HiQS-Suite/HiQS`](https://github.com/HiQS-Suite/HiQS) (public, empty, created 2026-08-03) once stable, with rebalance-OS archived within weeks — added as **§19 + a real Phase 6**, which surfaced the **public-repo disclosure gate**: the frozen eval sets are built from a private vault and explicitly include client names, and were specced to be committed into what becomes a public repo. **No code written.** | **Operator checkpoint A — author `eval_queries.json` yourself.** Phases 0 and 1 are **built and green** (107 passed, 1 xfailed; 1,499 LOC core). M2 shipped the eval *runner*; it cannot produce the answer key, and an agent-authored one invalidates Decision 8 by construction. Write it from memory per §6.3, grep only to resolve, drop what you cannot locate, freeze it and record the SHA. Then score MiniLM vs Qwen3 and read the disagreement set query by query. **The vector-leg gate can delete torch from the plan** and reshape M4/M5, so do not fire M3 first. Still open: the GitHub issue belongs on [`HiQS-Suite/HiQS`](https://github.com/HiQS-Suite/HiQS), not here (§19.3). |
 
 ## Table of contents
 
@@ -295,11 +295,13 @@ class SyncReport:   # structured by contract → feeds events table automaticall
     counts: dict[str, int]                    # inserted / updated / unchanged / skipped / rejected
     errors: list[str] = field(default_factory=list)
     meta: dict = field(default_factory=dict)  # e.g. api_calls, window, peak_rss_mb, embed_ms
+    units_ok: tuple[str, ...] = ()            # units THIS run genuinely fetched — the prune warrant
 
 @dataclass(frozen=True)
 class Doc:        # one search-index row
     source: str; id: str; title: str; body: str
     url: str = ""; ts: str = ""; project: str = ""; author: str = ""
+    unit: str = ""        # which unit this chunk belongs to; "" = the doc IS its own unit
 
 @dataclass(frozen=True)
 class Candidate:  # one next-action candidate — attested, never bare
@@ -364,9 +366,36 @@ vault = "hiqs.sources.vault:SOURCE"
    - **Within a unit that was fetched successfully** — one vault file, one
      GitHub item, one calendar event — the projection reconciles: rows keyed to
      that unit which are absent from the freshly-derived set are deleted, in the
-     same transaction that writes the new ones. Chunk ids are therefore scoped
-     (`<source>:<unit>:<heading-hash>`) so "belongs to this unit" is a query,
-     not a guess.
+     same transaction that writes the new ones. Chunk ids are still scoped
+     (`<source>:<unit>:<heading-hash>`) for legibility, but **`Doc.unit` is what
+     the projection reads** — membership is a field, never parsed back out of an
+     id. Splitting an id on `:` looked equivalent and is not: a vault path may
+     itself contain a colon, and every source picks its own id grammar, so the
+     parse silently returns the wrong unit and reconciliation then prunes the
+     wrong rows. `unit` is `""` only when the doc genuinely *is* its own unit.
+   - **The prune warrant is `SyncReport.units_ok`** (added 2026-08-03, after the
+     build stalled on its absence). `fetch` returns the units it genuinely
+     fetched this run; the projection reconciles **only** those and leaves every
+     other unit untouched. This is the field that makes the rest of rule 2
+     implementable, and without it the rule is not merely hard but impossible:
+     `docs` is a separate later call taking only a connection, so it cannot know
+     what `fetch` attempted, and "no chunks emitted" is identically the shape of
+     *fetched fine, now empty* and *could not be read*. Attestation is the only
+     thing that separates them.
+
+     Two consequences that are not optional:
+
+     - **A source that attests nothing prunes nothing.** `units_ok` defaults to
+       `()`, so an un-migrated or third-party source degrades to insert/update
+       and keeps its stale rows. The alternative default — absence of an
+       attestation authorising deletion — is the GH-169 RC5 scar re-armed and
+       pointed at every source at once. Stale is recoverable; deleted is not.
+     - **Attestation is per-run and in-process.** The report goes straight from
+       `fetch` into the projection in the same walk. It is never persisted and
+       re-read, because a stored attestation outlives the run that earned it and
+       becomes a licence to delete on the strength of an earlier success. This
+       is why raw tracking tables (`vault_files`) cannot serve: they are
+       cumulative state with no run identity.
    - **Never across units, and never on a failed or partial fetch.** A unit that
      errored is not reconciled at all — it keeps its existing rows. This is the
      other half of L15 and it is the half that matters: a source returning
@@ -374,6 +403,16 @@ vault = "hiqs.sources.vault:SOURCE"
      has the scar (`sync_direct_commit_documents()` destroys-then-rebuilds, so a
      partial failure shortens the corpus while every upstream measure still
      reads healthy — GH-169 RC5).
+   - **A deletion is a successful fetch, not a missing one.** A unit whose source
+     proves it is gone — a vault path absent from a walk that itself completed
+     without error — belongs in `units_ok`, emits zero docs, and therefore
+     reconciles to zero. That is how deleting a note removes it from search.
+     `fetch` must resolve the vanished unit at the raw layer too; leaving a
+     tracked-but-absent row for `docs` to trip over takes down the whole source
+     and freezes every other unit's rows as collateral. The distinction rides
+     entirely on the walk's own success: absence proven by a clean enumeration
+     is a deletion, absence during an errored one is unknown, and unknown never
+     prunes.
    - `SyncReport.counts` carries `pruned` alongside inserted/updated/unchanged/
      rejected, so reconciliation is visible rather than inferred. A run that
      prunes an implausible share of a source is a `warn` event, not a silent
@@ -480,16 +519,60 @@ can't flatter the incumbent, so the protocol is part of the spec.
 - A handful of known-hard queries where you expect *both* legs to struggle. An
   eval where everything passes measures nothing.
 
-**Ground-truth protocol (order matters, and this is the part that silently
-invalidates everything if skipped)**
+**Amended 2026-08-03 — the operator does not author an answer key.** The protocol
+below originally required resolving every query to known-good `doc_id`s up front.
+The operator's objection killed it, and it is correct: *"If I knew the answers I
+wouldn't be building the system."* Requiring a pre-authored answer key is only
+tractable for questions you can already answer, which selects precisely the
+queries that do not need the system — a biased set, expensively produced.
 
-1. Write the query from memory and intent — "the note where I decided to use
-   BigQuery as the analytical venue" — before touching the index.
-2. Resolve it to a `doc_id` by **filename or `grep`**, never by running
-   `search()`. Ground truth built from search output encodes the current
-   model's bias into the answer key, and that model then wins by construction.
-3. If you cannot find the target by grep, the query is dropped, not softened.
-   A query whose answer you can't independently locate has no ground truth.
+The deeper error was metric choice, not effort. Checkpoint A decides **which of
+two models is better**, a *relative* question, yet the gate was written on
+`recall@10`, an *absolute* metric that cannot be computed without ground truth.
+§6.3 already named the **paired disagreement set** as the primary signal, and
+that needs no answer key at all. The gate now rests on it.
+
+**What the operator actually does — recognition, not recall**
+
+1. Write the queries. **No answers.** Real questions, in the words you would
+   really use, before touching the index. Seed set captured from the operator
+   2026-08-03 and kept as literal fixtures, because they are evidence of real
+   query shape (see §6.4):
+   - *"What did I work on yesterday from 9 AM to 11 AM?"*
+   - *"What did we decide on with XYZ to phase out the Bash scripts on which GH
+     issue?"*
+   - *"What tasks did I work on the <client-project> repo project?"* (real name in the sidecar)
+2. Both models run every query. The runner emits the disagreement set.
+3. For each disagreeing query the operator sees **both result sets, unlabelled**,
+   and picks better / worse / tie. Blind, so brand preference cannot leak in.
+4. **The winner is decided on pairwise preference**, not recall. Judging asks only
+   that you *recognise* a better answer when two are side by side — a categorically
+   easier task than *recalling* one from memory, and the only one honestly
+   available here.
+5. **Ground truth accumulates as a by-product.** Whenever a result set contains
+   something the operator recognises as genuinely right, that `doc_id` is recorded.
+   Over a few rounds this grows into a real answer key that was *earned* rather
+   than pre-declared — and from that point `recall@10` becomes computable and can
+   return as a tracked metric. It is not a precondition for the Checkpoint A
+   decision.
+
+**What this costs, stated honestly.** No absolute recall figure at Checkpoint A.
+Nothing in the model decision depends on one: every rule in §6.3's decision
+procedure is a comparison between two models. Any claim needing an absolute number
+reports `unknown` until the accumulated key supports it — which is the §8 rule
+applied to this document's own gate.
+
+**Anti-flattery rules that still bind.** These were the point of the original
+protocol and survive unchanged:
+- Queries are written **before** seeing any output, and frozen.
+- A query is never edited after its scores are visible. Additions start a new
+  frozen version and require re-running every model.
+- Judging is **blind to which model produced which set**.
+- A `doc_id` recorded in step 5 is recorded because the operator recognised it as
+  correct, never because it ranked first.
+
+Then, as before:
+
 4. Commit and **freeze** the file. Its SHA is recorded in every
    `eval.completed` event. Queries added after scores are visible turn an eval
    into a justification, so additions start a new frozen version and require
@@ -528,6 +611,313 @@ changes the plan. §14's torch row depends on it: without a stated margin,
 `unknown` — never assumed good.
 
 Cost is contained: this lives in the test budget, not the ≤3,000 LOC core.
+
+### 6.4 Query shapes the seed questions expose (added 2026-08-03)
+
+Asking the operator for real questions instead of an answer key paid for itself
+immediately: all three seed questions need retrieval capabilities the plan did not
+have. They are recorded here because **an eval that cannot express these shapes
+would score the system on the wrong thing**, and Checkpoint A would then measure a
+model against queries nobody asks.
+
+Each is stated as a shape, a gap, and where it lands. None is a v1 blocker except
+where marked.
+
+**Q3 — project affinity. `"What tasks did I work on the <client-project> repo project?"`**
+
+The gap, in the operator's words: *"repo queries need affinity repos (same
+client/related projects) so a broad question can cast a wider net if an operator
+does not ask a precise question."* §9's `projects(name, aliases_json, repos_json)`
+maps one project to its own repos and aliases. It has no notion of **sibling**
+projects, so a deliberately broad question returns a thin, precise answer — which
+reads as "not much happened" when the truth is "you asked narrowly."
+
+This is a **recall** failure that presents as a **content** failure, which puts it
+in cluster B: the measurement (few results) is trusted as the thing measured (few
+tasks). That is why it is specified now rather than after scoring.
+
+*Mechanism — take the incumbent's idea, not its code.* `project_inference.py`
+already derives affinity from GitHub owner and name tokens
+(`_build_repo_aliases`, `_owner_brand_aliases`, `_owner_group_key`) and it works.
+It is also 981 LOC of accreted heuristics, and `_owner_group_key` only fires for
+owners whose name ends in `team|cbd` — a **client vertical hardcoded into a
+regex**, which is both a portability failure and exactly the kind of string §19.2
+must keep out of a public repo. HiQS reimplements the idea in the clean room:
+
+- **Same GitHub organisation is the primary affinity edge**, and it is free — the
+  owner is already on every `github_items` row. No inference, no heuristic.
+- **Name-token overlap is the secondary edge**, over a generic-token stoplist.
+- **Issue-title matching is the third**, per the operator's suggestion: a query
+  term appearing in issue titles across sibling repos widens the net.
+- **Affinity widens, it never narrows.** A precise query must return exactly what
+  it returns today; affinity only adds siblings *below* the direct hits, and every
+  added row is labelled with the edge that pulled it in. An affinity edge is a
+  claim, so it carries its receipt like any other (ATTESTED).
+- **No client names in code.** Grouping is derived from data at runtime, never
+  from a literal in a regex. Pinned by a test that greps the module for the
+  operator's known client and project names and fails on a hit — the §19.2 gate
+  applied at the source rather than at extraction.
+
+*Lands in:* a new column or side table alongside `projects` (§9), consumed by
+`search()` as a post-fusion widening step. **Phase 2**, with GitHub — it needs
+`github_items.repo` populated, and specifying it before then is speculative.
+
+**Q1 — time-window retrieval. `"What did I work on yesterday from 9 AM to 11 AM?"`**
+
+Not a topical search at all. It is *"return everything from any source whose event
+time falls in this window, ordered by time"* — a different access path from
+BM25+cosine, and one no amount of retrieval quality delivers.
+
+The data exists: `activity_at`, `Doc.ts`, `calendar_events.start/end`,
+`Candidate.ts`. There is no path that reads them as a **range across sources**.
+FTS5 and cosine both rank by similarity, and "yesterday 9–11am" has no similarity
+signal — the words do not appear in the answer.
+
+*Consequence for the eval:* a time-window query cannot be scored by recall@10
+against a topical index, so **these are tagged as a separate shape and excluded
+from the model comparison**. Scoring a retrieval model on a query no retrieval
+model can answer would penalise both equally and add noise to a decision that is
+already close. They still belong in the query set as a capability gap the eval
+*reports* rather than *scores*.
+
+*Lands in:* §7's `ask()` seam as a time-range branch, **Phase 3**, once calendar
+is in and there is more than one clock to reconcile.
+
+**Q2 — cross-source linking. `"What did we decide on with XYZ to phase out the
+Bash scripts on which GH issue?"`**
+
+Two joined asks: find a decision (which lives in a note), then name the artifact
+carrying it (which lives in GitHub). Retrieval can surface the note. Nothing today
+carries the edge *note → issue*.
+
+Partly a chunking question and partly an extraction one. The honest v1 answer is
+that HiQS returns the note **and** any GitHub item whose number or URL appears in
+that note's text — a literal reference match, not entity extraction. That is a
+small, deterministic win and it is most of the value; inferring an unstated link
+is not v1 work.
+
+*Lands in:* the projection, **Phase 2**. A reference is a link, so it is a receipt,
+so it is a field — not something re-derived at query time (D5 in
+`HiQS/GUIDING-PRINCIPLES.md`).
+
+**What all three have in common.** Each is a *retrieval-path* gap, not a ranking
+gap. The plan's quality machinery — §6.3, §7.1 — measures how well the system
+orders what it found. None of it detects a question the system cannot reach an
+answer to at all. §6.3's gates therefore report **coverage by query shape**
+alongside recall, so a shape scoring zero is visible as a missing capability rather
+than averaged away as a weak model.
+
+### 6.5 What the operator actually asks — and the corpus that cannot answer it (2026-08-03)
+
+Rather than have the operator hand-write 60–75 queries, a subagent **mined questions he had
+already really asked** from his own Claude Code transcripts, GitHub issue titles, and git log —
+sources independent of the index under test. **The vault was deliberately excluded from the
+mining**: a query derived from indexed text is written to match that text and biases the
+evaluation it is meant to score. 22 questions were recovered with verbatim traces, from ~100 JSONL
+files across 15 project directories. The raw list, with query text and client names, lives in the
+gitignored sidecar (§19.2) — **only findings appear here, because this document is extracted to a
+public repo at Phase 6.**
+
+**The five recurring shapes, in frequency order:**
+
+1. **"What's next / what's left?"** — by a wide margin the most common, asked in nearly every
+   project, usually immediately after approving a merge.
+2. **"Did we already do or record X?"** — verification against his own past artifacts. Was that
+   already in the doc, did the files get written, did that issue get finished, is that rule still
+   enforced.
+3. **"Where does this thing live?"** — which repo owns a change, where a decision record is
+   stored, where a registry file is.
+4. **"What happened over this window?"** — resuming cold and wanting replayable history.
+5. **"Why was it built this way?"** — design-rationale archaeology, where the answer should exist
+   in a past decision record.
+
+**Finding 1 — the dominant question is a RANKING query, not a retrieval one.** *"What's next?"*
+is not answered by finding a document; it is answered by ordering obligations. The most frequent
+thing the operator asks is the thing §7 does, not the thing §6 does. This does not diminish
+retrieval, but it does mean **§7.1's ranking gate matters more to daily use than §6.3's retrieval
+gate**, and the plan had them the other way round in emphasis.
+
+**Finding 2 — theme 2 is this project's own thesis, independently reproduced.** "Did we already do
+X?" is distrust of silent state drift, arrived at from the operator's behaviour rather than from
+anyone's argument. Cluster A is not a theory about software here; it is a description of what he
+spends his time defending against.
+
+**Finding 3 (blocking, and the reason Checkpoint A was held) — the questions and the corpus do not
+overlap.** Nearly every mined question is about repos, issues, commits, branches, and project
+files. The searchable corpus was **the vault alone, 63 markdown files**: `github.py` shipped
+`fetch` and `candidates` but **no `docs` provider**, so GitHub items reached the ranking and never
+the search index.
+
+Running Checkpoint A in that state would have scored both embedding models on questions whose
+answers were **not in the index at all**. Both would score near zero, the vector-leg gate would
+read *"vectors do not justify torch"*, and a permanent dependency decision would rest on a corpus
+that could not answer the queries. That is cluster B exactly — trusting the measurement instead of
+the thing measured — arriving inside the instrument built to prevent it.
+
+**This was a plan gap, not a build defect.** `docs` is optional in the §5 contract, Phase 2's
+checklist only ever required `candidates()`, and no section said GitHub should be searchable. M3
+built precisely what was specified. What nobody noticed was that the product's centre of gravity
+had moved to GitHub while the eval still pointed at the vault. **§6.6 closes it.**
+
+The general lesson, which outlives this instance: **a corpus specified before the questions are
+known is a guess.** The queries should have been mined first; they cost 105 seconds of agent time
+and they moved a dependency decision, a phase boundary, and the emphasis between two gates.
+
+### 6.6 GitHub as a searchable source (added 2026-08-03, precedes Checkpoint A)
+
+`github.py` gains a `docs()` provider so issues and pull requests are retrievable, not merely
+rankable.
+
+- **What projects:** issue and PR **title + body**, one `Doc` per item.
+  `id` is `github:<owner>/<repo>#<number>`, `unit` is the repo, `ts` is `activity_at` (never
+  `updated_at` — L20), `author` and `url` carry their real values.
+- **Reconciliation is unchanged.** The unit is the repo; pruning is authorised only by
+  `SyncReport.units_ok`, exactly as vault. A repo whose fetch failed keeps every row. No new
+  deletion path, no exception to §5 rule 2.
+- **Chunking:** an item is one document. GitHub bodies are short relative to notes, and the
+  2-chunk-per-document cap after RRF already prevents one long thread flooding the top-10.
+- **Closed items stay indexed.** Half the mined questions are archaeology — *did we finish that,
+  why was it built that way* — and excluding closed items would delete precisely the answers.
+  `state` is carried on the row so the ranker can discount them without retrieval losing them.
+- **Corpus effect:** the searchable set goes from 63 documents to the vault plus every indexed
+  issue and PR. §6.3's n was set against an unknown corpus size and should be reconsidered once
+  the real figure is known (§6.3, amended).
+
+### 6.7 The truncation gate, run for the first time (2026-08-04)
+
+§6.3's truncation precondition was written in rev 5 and never executed. When it finally
+ran against the real corpus it read **64.0%** against a **≥95%** gate — MiniLM had been
+silently discarding the tail of a third of every indexed document for the entire life of
+this index, while 139 tests stayed green and `docs_vec` stayed full. That is cluster B in
+its cleanest form: the measurement was fine, it just wasn't of the thing being claimed.
+
+The same unbounded chunk is why Qwen3-Embedding-0.6B OOM'd twice at 14.32 GiB and 16.61 GiB.
+Its context is 32768, so it truncated nothing and ran attention over a 6893-token sequence.
+The first fix — batching at 64 — was aimed at the wrong variable; the traceback pointed at
+`apply_rotary_pos_emb`, which is sequence length, not batch count. **The two models were
+never being shown the same input**, so Checkpoint A would have measured who got to read
+more, not which embeds better. The comparison was invalid before it was ever run.
+
+**Where the cap went.** The plan's own remedy said "add a chunk cap to `vault.py`". Measured
+per source, vault was **77.5%** and github **11.7%** — the GitHub provider emitted an entire
+issue body as one document, so a cap in `vault.py` alone would have left the corpus-wide gate
+failing at ~78% while looking like the fix had landed. The cap lives in `hiqs/chunking.py`,
+at the seam every source shares, so a source added later inherits it (L23, cluster C).
+
+**How the value was chosen.** Not analytically — the measured chars/token ratio across this
+corpus ranges 1.69–4.06, so no character cap maps onto a token target. Each candidate was run
+through the real gate over the real corpus:
+
+| cap (chars) | chunks | fit ≤256 word-pieces | |
+|---|---|---|---|
+| none (as shipped) | 1,458 | 77.5% vault / 11.7% github / **64.0% corpus** | FAIL |
+| 900 | 2,190 | 82.8% | FAIL |
+| 700 | 2,504 | 93.2% | FAIL |
+| **600** | **2,809** | **96.9% vault, 98.2% corpus** | **PASS** |
+| 500 | 3,282 | 99.8% | PASS |
+
+600 is the largest cap that clears the gate, and larger chunks retrieve better than smaller
+ones. Result after re-index: **6,044 chunks, 98.2% fit, max 350 tokens** — which also bounds
+the Qwen3 attention memory by construction rather than by a batch-size heuristic (BOUNDED).
+
+The margin over the gate is ~3 points, so the gate is now **executable**
+(`tests/judge_pairwise.truncation_gate`) and runs before scoring rather than existing as a
+sentence in this plan. An unmeasurable gate raises; an empty corpus raises. Neither may
+report the same thing as a pass (§8).
+
+**A second defect surfaced during the re-index.** All seven GitHub repos failed to fetch, and
+`hiqs refresh` printed `errors: {}` and **exited 0** — `github.fetch` collects per-repo
+failures into `SyncReport.errors` rather than raising, so the walk's exception handler never
+saw them. A launchd job could not have told that run from a clean one. `refresh` now surfaces
+`source_errors` and exits non-zero on them. The reconciliation itself was correct throughout:
+with no repo attested, §5 rule 2 pruned nothing and 330 stale rows survived exactly as
+designed — the safety net worked, which is how the exit-code bug became visible at all.
+
+### 6.8 The eval set was circular (2026-08-04)
+
+§6.5 predicted a corpus/question mismatch. The measured form is worse than predicted and in
+the opposite direction: the mined queries matched the corpus *too* well.
+
+`0. Claude Prompts.md` is a verbatim log of the operator's own prompts and is **1,572 of
+6,053 corpus chunks — 26% of everything indexed**. The eval queries were mined from it, so
+the query text is present in the corpus verbatim. Result: **20 of 22 queries returned a
+prompt-log chunk at rank 1, for both models**, and 36% of all top-5 slots were prompt logs.
+Scoring that measures whether a model can find a copy of the question. Both models score
+well; neither is being tested.
+
+This is the eval-design analogue of the truncation gate one section up. Nothing errored, the
+disagreement set was full, and the sheet was ready to judge — the number would simply have
+been about the wrong thing.
+
+**Resolved (operator, 2026-08-04): exclude the prompt log from the eval only.** The note stays
+indexed, so real-use behaviour is unchanged and the corpus-composition question stays open
+until Checkpoint A is decided with evidence in hand. Both models are filtered identically, and
+retrieval is widened before filtering so result sets stay full rather than silently short —
+verified at 0 prompt-log hits and 0 short sets across all 22 queries.
+
+**Cost axis, measured on matched hardware (both on MPS):**
+
+| | ms/chunk | full corpus | index |
+|---|---|---|---|
+| `all-MiniLM-L6-v2` | 2.2 | 13s | 8.9 MB |
+| `Qwen/Qwen3-Embedding-0.6B` | 116.6 | 706s | 23.6 MB |
+
+**53×.** §6.3 escalates anything past 4× to the operator rather than resolving it by
+threshold, so this is already an argument for the incumbent independent of quality.
+
+An earlier measurement of this axis was nearly recorded as fact and was wrong: the first Qwen3
+run took **1h58m and had not finished** because Claude Code's Bash sandbox blocks the Metal
+device, so torch fell back to CPU **silently**. Unsandboxed on MPS the same work took **6m31s**.
+A silent accelerator downgrade is the same failure class as a silent truncation — the run
+completes, and the number is an artefact. The embed script now refuses to start on CPU.
+
+### 6.9 Hybrid search was not hybrid (2026-08-04)
+
+Checkpoint A could not be judged — the operator's answer was that telling the two result sets
+apart would require researching every hit, which is a legitimate verdict and not a failure of
+nerve. Measuring *why* found the reason, and it was not the models.
+
+FTS5's implicit operator is **AND**. `_fts_search` passed the query through and, on a parse
+error, joined its terms with a space — also AND. So a question demanded that a single chunk
+contain **every** word in it:
+
+    "Where is the earlier generated ADR doc stored?"
+        AND ->     1 matching chunk
+        OR  -> 4,760 matching chunks, bm25-ranked
+
+Across the 22 eval queries the lexical leg returned **35 hits, all 35 of them the operator's
+own prompt log** — the only text containing a question verbatim is the record of it being
+asked. Exclude that log and the leg returned **nothing**. Every result the operator was asked
+to judge came from the vector leg alone; the hybrid design had never run.
+
+This is why §6.3's "FTS-only baseline promoted to a decision" mattered and why it had not been
+run either. The baseline was not weak, it was empty.
+
+**Fixed:** terms are ORed and ranked by bm25, so rare terms (`ADR`, `GH-172`) dominate common
+ones without requiring all of them. Explicit FTS5 syntax from a caller is honoured, not
+rewritten. Effect on the real corpus:
+
+| | before | after |
+|---|---|---|
+| usable FTS hits across 22 queries | 0 | 697 |
+| queries with no usable lexical hit | 22/22 | 0/22 |
+| MiniLM vs Qwen3 shared top-5 (hybrid) | 0.77/5 | **2.18/5** |
+| rank-1 identical | 2/22 | **9/22** |
+
+**This strengthens the Checkpoint A default rather than reopening it.** With the lexical leg
+working, ~44% of a ranked set is signal both models share, so the two agree far more and the
+53× embed-cost premium for Qwen3 buys correspondingly less. Vector-only overlap is unchanged
+at 0.77/5 — the models really are different — but that difference now moves a smaller share of
+what the operator actually sees.
+
+**Checkpoint A outcome: `unknown`, resolved to the incumbent.** MiniLM ships because §6.3
+sends ties and unknowns to the incumbent, **not** because it was measured better. The 22 pairs
+remain unjudged on disk and the question can be reopened at any time; both models' vectors
+coexist in `docs_vec`, so switching is a config change plus one 6-minute re-embed.
+
+One regression test in `test_eval_retrieval.py` had been passing *because* of this defect: its
+three models disagreed only because the lexical leg matched nothing. Its fixture now shares no
+term with its queries, so it isolates the vector leg deliberately instead of accidentally.
 
 ## 7. AI-native seams (one signature, one implementation today)
 
@@ -726,7 +1116,7 @@ CREATE TABLE events(
 This table is the sentinel substrate: a future observer LLM reads structured,
 attested history — nothing else needs to change for it to exist.
 
-## 9. Schema — 8 tables total (rebalance-OS ships ~35)
+## 9. Schema — 9 tables total (rebalance-OS ships ~35)
 
 ```
 vault_files       path, content_hash, mtime
@@ -737,8 +1127,18 @@ calendar_events   id, summary, start, end, project, organizer, attendees_json
 docs              source, id, title, body, url, ts, project, author  + FTS5 index
 docs_vec          doc_id, model, dim, vec BLOB                 PK (doc_id, model)
 projects          name, aliases_json, repos_json               (config projection)
+project_affinity  project_a, project_b, edge, weight           PK (project_a, project_b, edge)
 events            ts, kind, source, status, payload_json       ← observability spine
 ```
+
+**`project_affinity` — sibling projects, added 2026-08-03 (Phase 2).** Nine tables
+now, not eight; the budget line moves rather than the table being squeezed into
+`projects`, because this is a *many-to-many* relation and `repos_json` is a list on
+one row. §6.4 has the reasoning; the schema note is that `edge` records **why** two
+projects are siblings — `same_org`, `name_token`, `issue_title` — so an affinity
+hit arrives with its receipt and a bad edge class can be disabled without a
+re-derivation. Symmetric pairs are stored once, canonicalised `project_a <
+project_b`. `weight` orders the widening, never the direct hits.
 
 **`updated_at` is stored but never ranked on (added 2026-08-03).** L20 is
 explicit that `updated_at` is bumped by label, assignee, and edit activity that
@@ -833,6 +1233,8 @@ HiQS/                 ← repo-relative root; the only tree HiQS writes
       github.py       activity scan + artifact sync (stdlib urllib)     ~250
       calendar.py     OAuth read, window upsert                         ~180
     docs_index.py     raw → docs projection + embed (delta, lazy model) ~130
+    affinity.py       sibling-project edges (same_org|name_token|       ~80
+                      issue_title); widens search, never narrows (§6.4)
     search.py         FTS5 + numpy cosine + RRF + Reranker hook         ~95
     ask.py            context gather + attestation + Ranker             ~180
     web.py            ONE page, stdlib http.server, zero JS             ~150
@@ -841,7 +1243,7 @@ HiQS/                 ← repo-relative root; the only tree HiQS writes
                       plugin contract test                              ~700
                       test_clean_room.py (import-boundary pin)          ~20
                       eval_retrieval.py + eval_queries.json             ~80
-                                                     core ≈ 1,700–1,900
+                                                     core ≈ 1,780–1,980
 ```
 
 **Deps (4 top-level):** `mcp` · `sentence-transformers` · `google-auth-oauthlib`
@@ -1308,6 +1710,52 @@ tree.
   that `subtree split` will carry — not just the tip. History is the part people
   forget, and it is the part that cannot be fixed with a follow-up commit.
 
+**A live instance, 2026-08-03 — the gate earned its keep within hours of being
+written.** M3 p3's disclosure guard was implemented as
+`assert "<a real client project name>" not in source`: the name spelled out inline, in a test
+file bound for the public repo. **The guard was the leak.** It was also weak —
+one hardcoded string is not a check on client names generally, it is a check on
+one string.
+
+Two consequences, and the second is the one that matters:
+
+- *Fixed at the tip.* The forbidden list moved to `HiQS/tests/private_names.txt`,
+  gitignored, matching the split this section already mandates for the eval sets.
+  The test reads it and **skips with a loud `unknown`** when it is absent rather
+  than passing silently — the same rule the eval runner follows, for the same
+  reason. Verified by planting a name and confirming the guard fires.
+- *Not fixed in history.* The name is in a commit reachable from this branch.
+  Removing it from the tip does not remove it from what `subtree split` carries,
+  which is exactly what the paragraph above warns about. **The Phase 6 scan must
+  therefore be run against full history and is expected to flag this commit**, and
+  the remedy at that point is a history rewrite of the extracted subtree before
+  the first public push, not a follow-up commit. Recorded here so Phase 6 finds a
+  known instance rather than a surprise.
+
+The general lesson, which is not about this one string: **a guard written inline
+becomes a carrier for what it guards.** Anything that must not appear in the
+public repo cannot be named in the public repo, including by the test asserting
+its absence.
+
+**Then it happened twice more, in this document, within the hour.** Writing up
+the affinity requirement (§6.4) and the incident above put the same client
+project name into **this plan doc — four times**, including inside the paragraph
+warning about it. **This document is extracted at Phase 6 too**, so it is in
+scope for exactly the gate it describes. All four are now redacted to
+`<client-project>`, with real text in the sidecar.
+
+Three instances in one day, all by the same author, one of them inside the
+warning itself. That frequency is the actual finding: **this is not a lapse of
+attention, it is the default outcome of writing about private data at all.**
+Naming the thing is the path of least resistance in every sentence, so the
+control cannot be care. It has to be mechanical:
+
+- **Every artifact that is extracted is in scope** — code, tests, *and the
+  planning docs*. The Phase 6 scan covers this file, not just `HiQS/**`.
+- **A private value is referenced by placeholder, never spelled**, even in prose,
+  even in a commit message, even when explaining why it must not be spelled.
+- The gitignored sidecar is the only place a real name is written down.
+
 This gate is why Phase 6 exists as a phase. It is discovered by *tracing the
 path*, exactly like the OAuth hole r2 found — and like that one, it is invisible
 if you only read the sections separately.
@@ -1684,10 +2132,15 @@ Binary and observable; all must pass before Phase 1 starts.
 - [ ] Project `author`, `assignee`, and `activity_at` — the last event that *happened*, never `updated_at` (L20)
 - [ ] Map `assignee` / requested-reviewer → `Candidate.owed_by`; milestone or stated deadline → `due`; leave `""` when unknown, never guess
 - [ ] Peak RSS and API call counts recorded in `SyncReport.meta`
+- [ ] **`project_affinity` populated (§6.4, §9).** Sibling edges derived at runtime from data: `same_org` from the owner already on every row, `name_token` over a generic stoplist, `issue_title` from query-term hits across sibling repos. Each row records its `edge`.
+- [ ] **Affinity widens, never narrows.** Siblings are appended *below* direct hits and labelled with the edge that pulled them in; a precise query returns byte-identical results to affinity-off. Pinned by a test.
+- [x] **No client or project literal in code.** A test greps the affinity module against a **gitignored** name list (`HiQS/tests/private_names.txt`) and fails on a hit, skipping with a loud `unknown` when the sidecar is absent — never a silent pass. The list is gitignored because the first implementation asserted a real project name inline and *became* the leak (§19.2, live instance 2026-08-03). Verified by planting a name and confirming the guard fires. (The incumbent's `_owner_group_key` hardcodes a client vertical in a regex; that is the defect being avoided, not copied.)
+- [ ] **Reference linking (§6.4, Q2).** The projection records GitHub numbers/URLs literally present in a note's text as an edge — a receipt in a field, not a query-time re-derivation (D5). Literal matches only; inferring an unstated link is not v1.
 - [ ] Exit: GitHub candidates appear attested in a dry ranking; contract test still green
 
 ### QA gate — Phase 2
 
+- [ ] **A broad query beats a narrow one on coverage (§6.4, Q3).** The operator's seed question — *"What tasks did I work on the <client-project> repo project?"*, real name in the sidecar — returns work from sibling repos in the same org, not only the exactly-named one. Recorded as a coverage figure, because a recall failure here presents as "not much happened" and is trusted as content (cluster B).
 - [ ] **Zero core edits.** Adding GitHub touched only `sources/github.py` and one entry-point line. Any file changed under `HiQS/hiqs/*.py` to make GitHub work is a plugin-contract defect (L2), fixed in the contract rather than absorbed here.
 - [ ] **Attestation is total.** Every emitted `Candidate` carries a non-empty `source`, `evidence`, and `why`. A bare candidate fails the test — receipts are the product, not decoration.
 - [ ] **Idempotence.** Two consecutive `refresh` runs over an unchanged window produce zero inserts and zero updates; `SyncReport.counts` distinguishes inserted / updated / unchanged / skipped / rejected. Never auto-delete (L15).
@@ -1743,6 +2196,7 @@ Binary and observable; all must pass before Phase 1 starts.
 - [ ] **Unattended honesty.** After a week of 2-hourly runs, every gap in the data is explained by an `events` row. A miss with no event is an observability defect, not an operations anecdote (L6).
 - [ ] **Every failure has an operator action.** Expire the calendar token deliberately, then confirm: the run reports `auth_expired`, `status` names `hiqs auth calendar` as the remedy, and running it restores the source. A failure whose only remedy is improvisation is not specced — an unattended runner that cannot open a browser needs an interactive path to exist before it is needed, not after (Decision 4).
 - [ ] **Path portability (L11).** Zero absolute user paths in `HiQS/**` or in the installed job; the plist/crontab is rendered per-machine from a template. The DB path is verified to sit outside any TCC-protected folder on the actual device.
+- [ ] **Coexistence with the running incumbent (blocking).** HiQS is built and run on the same machine that already runs rebalance-OS — **7 live launchd jobs**, including `vault-sync` and `github-sync`, both of which embed. HiQS embeds every 2 h. **This is GH-172 exactly**: three concurrent embedding runs stacked to ~90 GB on a 68.7 GB machine and the kernel panicked. That fix was a `flock` + memory ceiling applied at the *incumbent's* library leaves, and a separate HiQS process knows nothing about it — two systems each correctly guarding themselves is not a guard. Required: HiQS's embed path takes the **same machine-scoped lock** (read the incumbent's path, do not invent a parallel one), keeps its own memory ceiling regardless, offsets its schedule, and the installer **probes and refuses** on a bound port (`:8790` vs the incumbent's `:8767`) or an already-loaded `com.hiqs.*` label.
 - [ ] **Job hygiene (L12).** Exactly one scheduled job. If a second is ever proposed, it goes through §14 with a stated trigger — the fleet is the failure mode, not the solution.
 - [ ] **Secrets at rest.** Keyring is confirmed *live* (write, then read back in a fresh process) rather than assumed — a keyring write that silently no-ops and still prints success is a known real failure mode in this repo's history.
 - [ ] **Local-only exposure.** The server binds `127.0.0.1` and refuses a non-loopback origin; verified by an actual request from a second host failing.
@@ -1783,11 +2237,20 @@ Not gated on Phase 5, which is on-demand-only and may never run.
 - [ ] File/transfer the tracking issue to `HiQS-Suite/HiQS`; the archived repo's issues freeze
 - [ ] Move `PROJECT/2-WORKING/HIQS-PROJECT.md` → `PROJECT/3-COMPLETED/` with `## Lessons Learned (For Future Agents)` appended, **before** the archive
 - [ ] Update `ROADMAP.md` to point at the new repo rather than the working doc
+- [ ] **Decommission the incumbent's scheduled jobs — operator action, and only here.** After §13's
+      done-criterion is met, unload the 7 `com.rebalance-os.*` launchd jobs so two systems stop
+      contending for the same machine, API budget, and embedding memory. This belongs at cutover
+      and nowhere earlier: the incumbent is the **fallback** until HiQS is proven (Decision 7), and
+      disabling it sooner removes the safety net before the replacement has earned its place —
+      exactly backwards, and worse now that the archive makes the fallback unmaintained (§19.4).
+      Never performed by a build turn: unloading 7 jobs on the operator's machine is a destructive,
+      hard-to-reverse act that must not happen unattended. Keep the plists; unload is reversible,
+      deletion is not.
 
 ### QA gate — Phase 6
 
 - [ ] **It stands alone, proven by doing it.** Clone `HiQS-Suite/HiQS` to a fresh directory on a machine that has never held rebalance-OS: `pip install -e .`, run the suite, run `hiqs status`. All three succeed with no reference back. A "should work" here is worth nothing — the failure mode of an extraction is a dependency nobody noticed, and the only detector is a clean clone.
-- [ ] **Nothing private in the history (blocking).** The scan above is clean across every commit `subtree split` carried, not just the tip. History is the part that cannot be fixed with a follow-up commit — and this repo's own L11 is what a leaked absolute path costs.
+- [ ] **Nothing private in the history (blocking).** The scan above is clean across every commit `subtree split` carried, not just the tip. **Known instances to expect (three, 2026-08-03):** a client project name committed inline in M3 p3's disclosure test, and the same name in this plan doc four times including inside the §19.2 warning about it. All fixed at the tip only, so history still carries them — and the scan must cover `PROJECT/**`, not only `HiQS/**`, since this doc is extracted too — remedy is a rewrite of the extracted subtree before the first public push, not a follow-up commit (§19.2). History is the part that cannot be fixed with a follow-up commit — and this repo's own L11 is what a leaked absolute path costs.
 - [ ] **The frozen sets are still frozen.** Post-extraction, `eval_retrieval.py` and `eval_ranking.py` reproduce the same figures from the opaque ids plus the local sidecar. If the anonymization changed a score, the anonymization is wrong; a frozen answer key that moves is not frozen.
 - [ ] **History preserved.** `git log` in the new repo shows the real commit history for `HiQS/**`, not one squashed import. The provenance is the point — this plan's whole method is traceability.
 - [ ] **No orphaned pointer.** `ROADMAP.md` and this doc's `3-COMPLETED` copy both point at the new repo; the new repo points back at the archived original. Neither side is a dead end.
@@ -1808,7 +2271,17 @@ Not gated on Phase 5, which is on-demand-only and may never run.
 
 ---
 
-*Plan owner: the operator. Next step: open the GitHub issue on
+*Plan owner: the operator. **Phases 0 and 1 are built, reviewed and green** —
+1,499 LOC core, 107 tests passing, via marathons M1 and M2 (2026-08-03).*
+
+*Next step: **operator checkpoint A**, amended — write the queries, judge the
+paired disagreement set blind, and let the answer key accumulate from what you
+recognise (§6.3, amended 2026-08-03). The vector-leg gate there can remove torch
+from the plan and reshape Phases 3–4, so M3 does not fire before it. §6.4 records
+three retrieval-path gaps the operator's own seed questions exposed — project
+affinity, time-window retrieval, and cross-source reference linking — two of which
+land in Phase 2 and must be specified before it is built.*
+
+*Still open: the GitHub issue belongs on
 [`HiQS-Suite/HiQS`](https://github.com/HiQS-Suite/HiQS) (issue-first SOP; not this
-repo — it is being archived), then Phase 0 skeleton in `HiQS/` — `plugins.py`,
-`events.py`, `db.py`, the contract test, and the clean-room import pin.*
+repo — it is being archived).*

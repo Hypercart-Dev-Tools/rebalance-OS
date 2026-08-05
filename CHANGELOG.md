@@ -6,6 +6,108 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.5] - 2026-08-04
+
+### Fixed
+- **HiQS: hybrid search was not hybrid — the lexical leg had never returned a usable
+  result.** FTS5's implicit operator is AND, and `_fts_search` joined query terms with a
+  space, so a question demanded that one chunk contain *every* word in it. Across the 22
+  Checkpoint A queries the leg returned 35 hits and **all 35 were the operator's own prompt
+  log**, since the only text holding a question verbatim is the record of it being asked;
+  excluding that log left the leg returning nothing at all. Every result Checkpoint A offered
+  for judging came from the vector leg alone. Terms are now ORed and ranked by bm25 so rare
+  terms dominate without requiring all of them, and explicit FTS5 syntax from a caller is
+  honoured rather than rewritten. Usable FTS hits across the eval went 0 → 697, queries with
+  no lexical hit went 22/22 → 0/22, and MiniLM/Qwen3 top-5 agreement rose from 0.77/5 to
+  2.18/5. A regression test in `test_eval_retrieval.py` had been green *because* of this
+  defect — its three models disagreed only because the lexical leg matched nothing — so its
+  fixture now shares no term with its queries and isolates the vector leg deliberately.
+- **HiQS Checkpoint A resolved to `unknown`.** MiniLM ships because §6.3 sends ties and
+  unknowns to the incumbent, not because it measured better; the 22 pairs remain unjudged and
+  both models' vectors coexist in `docs_vec`, so reopening it costs a config change and one
+  6-minute re-embed.
+
+## [0.68.4] - 2026-08-04
+
+### Fixed
+- **HiQS: the §6.3 truncation gate was run for the first time and failed at 64.0%
+  against a ≥95% bar — MiniLM had been silently discarding the tail of a third of
+  every indexed document for the entire life of the index, with 139 tests green and
+  `docs_vec` full.** The same unbounded chunk is why Qwen3-Embedding-0.6B OOM'd twice
+  (14.32 GiB, 16.61 GiB): its context is 32768, so it truncated nothing and ran
+  attention over a 6893-token sequence. The two models were never seeing the same
+  input, so the Checkpoint A comparison was invalid before it was run. A shared chunk
+  cap now lives in `HiQS/hiqs/chunking.py` — at the seam every source shares, not in
+  `vault.py` as the plan's remedy said, because measured per source vault was 77.5%
+  and **github 11.7%** (it emitted whole issue bodies as one document), so a
+  vault-only cap would have left the corpus at ~78% while looking fixed. The 600-char
+  value was chosen by running the real gate over the real corpus for each candidate
+  (700 → 93.2% FAIL, 600 → 98.2% PASS, 500 → 99.8%), not derived — the measured
+  chars/token ratio spans 1.69–4.06. Corpus re-indexed: **6,044 chunks, 98.2% fit,
+  max 350 tokens**, and Qwen3 peak RSS fell from >14 GiB to 2.16 GiB. The gate is now
+  executable (`tests/judge_pairwise.truncation_gate`) and runs before scoring; an
+  unmeasurable gate or an empty corpus raises rather than passing.
+- **HiQS: `hiqs refresh` exited 0 while every configured GitHub repo failed to
+  fetch.** `github.fetch` collects per-repo failures into `SyncReport.errors` instead
+  of raising, so the walk's exception handler never saw them and the summary printed
+  `errors: {}` — a launchd job could not have distinguished that run from a clean
+  one. `refresh` now reports `source_errors` and exits non-zero on them. The §5 rule 2
+  reconciliation was correct throughout: with no repo attested it pruned nothing and
+  330 stale rows survived by design, which is how the exit-code bug became visible.
+
+## [0.68.3] - 2026-08-03
+
+### Added
+- **HiQS Phase 0 and Phase 1 are built, reviewed, and green — the first HiQS code
+  in the repo.** Two XYZ marathons (M1 skeleton, 6 phases; M2 vault + search, 4
+  phases) ran builder↔reviewer relays with the pair alternated per marathon, and
+  every phase is `STATUS: Approved` with its pre-advance gate passing. The result
+  is 1,499 LOC of core across `plugins.py`, `db.py`, `config.py`, `events.py`,
+  `__main__.py`, `sources/vault.py`, `docs_index.py` and `search.py`, against 12
+  test modules — **107 passed, 1 xfailed** (the remaining xfail is the M4 ranking
+  seam, correctly still forward-declared). Well inside the §11 ≤3,000 LOC budget.
+- **`HiQS/GUIDING-PRINCIPLES.md` — the tie-breaker doc.** The four tenets, the four
+  counterpart invariants (PORTABLE/BOUNDED/LOUD/SMALL), an *ordered* precedence for
+  when they collide, nine standing decisions with their reasoning, the six inherited
+  anti-pattern clusters distilled from this repo's 68-release scar record, and four
+  working rules. Self-contained so it survives extraction to HiQS-Suite/HiQS. Its
+  governing lesson is L23: a principle that lives in a changelog protects exactly one
+  code path, so lessons are pinned at the seam, not in the module.
+
+### Changed
+- **§5 rule 2 gained the attestation channel it was missing — `SyncReport.units_ok`
+  and `Doc.unit`.** The rule mandated reconciling within successfully fetched units,
+  but nothing in the contract could say which units a run fetched: `docs()` takes only
+  a connection and cannot know what `fetch()` attempted, so *fetched fine, now empty*
+  and *could not read* were the same observation. The build stalled twice at the round
+  cap proving it, while the builder accumulated four workarounds in `docs_index.py` —
+  a parameter with no production caller, duck-typed methods a frozen dataclass cannot
+  expose, a probe for a table nothing creates, and inference from raw tracking rows
+  that carry no run identity. A cross-model consult (codex + agy, independently) found
+  no fix existed below the contract. All four workarounds are now deleted.
+  `Doc.unit` came with it: unit membership was being recovered by splitting ids on
+  `:`, which silently returns the wrong unit for any path containing a colon and then
+  prunes the wrong rows. A richer design (per-unit state enum, run ids, a fifth
+  callable) was considered and rejected as too much machinery for three sources.
+- **Rule 2 now states that a deletion is a successful fetch.** A path absent from a
+  clean walk is attested and prunes; absent from an errored walk it is unknown and
+  prunes nothing. This resolved a standing contradiction where the brief forbade
+  cross-unit deletion yet deleting a note had to remove it from search.
+- **`numpy` is a declared dependency**, not a transitive one. `search.py` imports it
+  directly; leaning on its arrival via `sentence-transformers` is what let the staged
+  install (torch deferred until the Checkpoint A vector gate) omit it and fail an
+  otherwise-approved phase's gate.
+
+### Fixed
+- **The Phase 6 clean-room gate passed vacuously on a missing root.** `rglob` over a
+  path that does not exist yields nothing and `assert [] == []` passes while scanning
+  zero files — and §19 archives this repo and moves HiQS out, deleting that root out
+  from under the gate that authorises the extraction. Verified by pointing it at a
+  missing path: silently green. It now asserts coverage first and fails loud.
+- **The same gate walked `HiQS/.venv`** — 847 of 862 files, 78% of suite runtime.
+  Measured against the incumbent's ML venv (what this plan installs next): 10,460
+  files, 17.8s per run, before torch. Now first-party only.
+
 ## [0.68.2] - 2026-08-03
 
 ### Added

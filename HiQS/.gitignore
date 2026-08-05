@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.egg-info/
+.pytest_cache/
+
+# §19.2 — private name list for the disclosure guard; never committed, never extracted
+tests/private_names.txt
+# §19.2 — query text and note titles; real content, never committed, never extracted
+tests/eval_queries_sidecar.json
+tests/mined_questions_raw.md
+tests/checkpoint_a_pairs.md

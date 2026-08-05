@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hiqs"
+version = "0.1.0"
+description = "High-integrity query system"
+requires-python = ">=3.11"
+dependencies = [
+    "mcp",
+    # Direct, not transitive. search.py imports numpy for the cosine leg; it happens to arrive with
+    # sentence-transformers, but a module that imports a package declares it — otherwise the staged
+    # install (torch deferred until the vector-leg gate) silently omits it, which is how the p3 gate
+    # failed with ModuleNotFoundError on an otherwise-approved phase.
+    "numpy",
+    "sentence-transformers",
+    "google-auth-oauthlib",
+    "keyring",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.entry-points."hiqs.sources"]
+vault = "hiqs.sources.vault:SOURCE"
+github = "hiqs.sources.github:SOURCE"
+
+[tool.setuptools.packages.find]
+include = ["hiqs*"]

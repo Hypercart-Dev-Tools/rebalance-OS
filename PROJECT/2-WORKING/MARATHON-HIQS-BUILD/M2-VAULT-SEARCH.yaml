@@ -1,0 +1,84 @@
+# M2-VAULT-SEARCH.yaml — HiQS Phase 1, CODE ONLY. Fires after M1 is fully approved.
+#
+# SCOPE BOUNDARY, read this before firing: this marathon builds the vault plugin, the projection,
+# the hybrid search path, and the eval RUNNER. It does NOT and CANNOT produce eval_queries.json —
+# that answer key must be authored by the operator from memory and resolved by grep, never by
+# running search() (HIQS-PROJECT.md §6.3). An agent-authored query set invalidates Decision 8 by
+# construction. Operator checkpoint A follows this marathon; M3 must not fire before it.
+#
+# Run:
+#   .xyz/relay-automation/marathon.sh \
+#     --plan PROJECT/2-WORKING/MARATHON-HIQS-BUILD/M2-VAULT-SEARCH.yaml \
+#     --pre-advance-cmd 'HiQS/.venv/bin/python -m pytest HiQS/tests -q' --builder agy \
+#     --dry-run
+#
+# WRITE-SETS (disjoint, except HiQS/pyproject.toml — see below):
+#   p1  HiQS/hiqs/sources/vault.py, HiQS/tests/test_vault.py, HiQS/pyproject.toml
+#
+# pyproject.toml IS ON THE ALLOWLIST DELIBERATELY — do not "tidy" it back off. The first run of
+# this plan deadlocked at the round cap for exactly that omission: the brief requires a SOURCE
+# "registered by entry point", registration is only possible in [project.entry-points."hiqs.sources"],
+# and that file was off-lane. The reviewer correctly blocked an unregistered source; the builder
+# correctly refused to edit outside its allowlist. Neither could yield, so 7 rounds burned. A phase
+# whose deliverable names an artifact it may not write is an unsatisfiable phase.
+# Sequential execution (GH-241) makes sharing this one file across phases safe.
+#   p2  HiQS/hiqs/docs_index.py, HiQS/tests/test_docs_index.py, HiQS/tests/test_contract.py
+#
+# test_contract.py IS ON p2's ALLOWLIST DELIBERATELY. M1 p6 forward-declared the sole-writer
+# contract as xfail(strict=True). Strict is the right call — it makes the marker self-retiring, so
+# the contract going live cannot be ignored. But it also means that the moment p2 builds the
+# projection, the test XPASSes and the whole suite goes RED until someone removes the marker. Only
+# p2 knows it went live, so only p2 can retire it. Without this path p2 is unsatisfiable: it cannot
+# pass its own pre-advance gate no matter what it writes. (Same shape as p1/pyproject.toml.)
+#   p3  HiQS/hiqs/search.py, HiQS/tests/test_search.py
+#   p4  HiQS/tests/eval_retrieval.py, HiQS/tests/test_eval_retrieval.py
+#
+# BUILDER / REVIEWER PAIRING — preflight caught this, do not "simplify" it away:
+# marathon-drive REFUSES a phase whose reviewer id equals the builder id (exit 2). This plan is
+# pinned reviewer=codex, so it MUST run with --builder agy. Alternating the pair across the five
+# marathons is deliberate: r1 and r2 of the plan-doc relay found different defect classes, and a
+# different reviewer model is the cheapest way to keep that going.
+#
+# PHASE IDS are prefixed (hiqs-m2-pN) because the tick token is MARATHON-<ID>-TURN and a token,
+# once claimed, is permanently spent. Bare `p1` ids would collide across all five plans — every
+# prior marathon in this repo prefixes for exactly this reason.
+
+name: hiqs-m2-vault-search
+phases:
+  - id: hiqs-m2-p1
+    name: "vault.py — walk, hash delta, chunk by heading with scoped ids"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p1-vault.md
+    artifact: HiQS/hiqs/sources/vault.py,HiQS/hiqs/sources/__init__.py,HiQS/tests/test_vault.py,HiQS/pyproject.toml
+    turn_timeout_s: 1500
+    max_review_rounds: 3
+
+  - id: hiqs-m2-p2
+    name: "docs_index.py — projection, within-unit reconciliation, delta embed"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p2-docs-index.md
+    artifact: HiQS/hiqs/docs_index.py,HiQS/tests/test_docs_index.py,HiQS/tests/test_contract.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m2-p1
+    # 5, not 3: the first run's rounds 2/4/6 each surfaced DIFFERENT real defects and round 7
+    # delivered the fixes with no reviewer turn left to approve them. The cap clipped a
+    # converging review, it did not contain a runaway one.
+    max_review_rounds: 5
+
+  - id: hiqs-m2-p3
+    name: "search.py — FTS5 + model-filtered cosine + RRF + per-doc cap"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p3-search.md
+    artifact: HiQS/hiqs/search.py,HiQS/tests/test_search.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m2-p2
+    max_review_rounds: 3
+
+  - id: hiqs-m2-p4
+    name: "eval_retrieval.py — the runner (NOT the answer key)"
+    reviewer: codex
+    brief: PROJECT/2-WORKING/MARATHON-HIQS-BUILD/briefs/m2-p4-eval-runner.md
+    artifact: HiQS/tests/eval_retrieval.py,HiQS/tests/test_eval_retrieval.py
+    turn_timeout_s: 1800
+    depends_on: hiqs-m2-p3
+    max_review_rounds: 3
