@@ -555,6 +555,148 @@ class SignalHealthQuietFilterTests(unittest.TestCase):
         self.assertIsNone(_quiet_filter_description({"quiet_filter": "no_such_formatter"}))
 
 
+class VaultIngestLagTests(unittest.TestCase):
+    """GH-166: signal_health.vault must degrade on a meaningful ingest lag,
+    not just a 7-day freshness window. last_ingested_at can be recent while
+    the vault writer has moved further ahead than the ingester has caught
+    up to — that gap is what these tests pin."""
+
+    def _vault_health_and_lag(self, db_path, *, ingested_minutes_ago: int, modified_minutes_ago: int):
+        from rebalance.ingest.db import db_connection, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with db_connection(db_path) as conn:
+            run_migrations(conn)
+            conn.execute(
+                "INSERT INTO vault_files (rel_path, content_hash, ingested_at, last_modified) "
+                "VALUES ('drift.md', 'hash1', "
+                f"datetime('now', '-{ingested_minutes_ago} minutes'), "
+                f"datetime('now', '-{modified_minutes_ago} minutes'))"
+            )
+            conn.commit()
+
+        status = get_index_status(db_path)
+        vault_source = status["sources"]["vault"]
+        health = status["freshness"]["signal_health"]["vault"]
+        return vault_source, health
+
+    def test_lag_within_threshold_stays_ok(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            vault_source, health = self._vault_health_and_lag(
+                db_path, ingested_minutes_ago=15, modified_minutes_ago=5,
+            )
+
+        self.assertAlmostEqual(vault_source["ingest_lag_minutes"], 10.0, delta=1.0)
+        self.assertEqual(health["status"], "ok")
+        self.assertNotIn("reason", health)
+
+    def test_lag_past_warn_threshold_warns(self) -> None:
+        """The #166 shape: a ~130 minute drift the old 7-day window ignored."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            vault_source, health = self._vault_health_and_lag(
+                db_path, ingested_minutes_ago=130, modified_minutes_ago=0,
+            )
+
+        self.assertGreater(vault_source["ingest_lag_minutes"], 120)
+        self.assertEqual(health["status"], "warn")
+        self.assertIn("behind the vault writer", health["reason"])
+
+    def test_lag_past_degraded_threshold_degrades(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            vault_source, health = self._vault_health_and_lag(
+                db_path, ingested_minutes_ago=200, modified_minutes_ago=0,
+            )
+
+        self.assertGreater(vault_source["ingest_lag_minutes"], 180)
+        self.assertEqual(health["status"], "degraded")
+        self.assertIn("behind the vault writer", health["reason"])
+
+    def test_ingest_after_modification_clamps_lag_to_zero(self) -> None:
+        """Normal ordering (ingest runs after the edit) must never report a
+        negative lag — clamp to 0, same as the pre-existing healthy-source
+        fixture (ingested now, modified 2 days ago)."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            vault_source, health = self._vault_health_and_lag(
+                db_path, ingested_minutes_ago=0, modified_minutes_ago=2880,
+            )
+
+        self.assertEqual(vault_source["ingest_lag_minutes"], 0.0)
+        self.assertEqual(health["status"], "ok")
+
+
+class PendingEmbedStuckTests(unittest.TestCase):
+    """GH-166: a semantic_documents row pending embed must be distinguished
+    as "stuck" (sat unembedded past a reasonable threshold) vs. an in-flight
+    run's normal tail (embed_chunks() runs synchronously right after ingest,
+    so a fresh pending row is expected and not a problem)."""
+
+    def _insert_pending_doc(self, conn, *, source_pk: str, updated_minutes_ago: int) -> None:
+        conn.execute(
+            "INSERT INTO semantic_documents "
+            "(source_type, source_table, source_pk, doc_kind, title, body, "
+            " content_hash, embedded_hash, embedded_model_version, embedded_at, "
+            " created_at, updated_at) "
+            "VALUES ('vault', 'chunks', ?, 'chunk', 'Title', 'body text', "
+            " 'hash-current', NULL, NULL, NULL, "
+            f" datetime('now', '-{updated_minutes_ago} minutes'), "
+            f" datetime('now', '-{updated_minutes_ago} minutes'))",
+            (source_pk,),
+        )
+
+    def test_freshly_pending_row_is_not_flagged_stuck(self) -> None:
+        from rebalance.ingest.db import db_connection, ensure_semantic_schema, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path, ensure_semantic_schema) as conn:
+                run_migrations(conn)
+                self._insert_pending_doc(conn, source_pk="1", updated_minutes_ago=2)
+                conn.commit()
+
+            drift = get_index_status(db_path)["freshness"]
+            self.assertEqual(drift["semantic_documents_pending_embed"], 1)
+            self.assertEqual(drift["semantic_documents_pending_embed_stuck"], 0)
+            self.assertNotIn("semantic_documents_pending_embed_reason", drift)
+
+    def test_long_pending_row_is_flagged_stuck_with_a_reason(self) -> None:
+        from rebalance.ingest.db import db_connection, ensure_semantic_schema, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path, ensure_semantic_schema) as conn:
+                run_migrations(conn)
+                self._insert_pending_doc(conn, source_pk="1", updated_minutes_ago=45)
+                conn.commit()
+
+            drift = get_index_status(db_path)["freshness"]
+            self.assertEqual(drift["semantic_documents_pending_embed"], 1)
+            self.assertEqual(drift["semantic_documents_pending_embed_stuck"], 1)
+            self.assertGreaterEqual(drift["semantic_documents_pending_embed_oldest_minutes"], 45)
+            self.assertIn("stuck/failed embed run", drift["semantic_documents_pending_embed_reason"])
+
+    def test_mixed_pending_rows_only_flag_the_stuck_one(self) -> None:
+        from rebalance.ingest.db import db_connection, ensure_semantic_schema, run_migrations
+        from rebalance.ingest.index_ops import get_index_status
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            db_path = Path(tmpdir) / "rebalance.db"
+            with db_connection(db_path, ensure_semantic_schema) as conn:
+                run_migrations(conn)
+                self._insert_pending_doc(conn, source_pk="1", updated_minutes_ago=2)
+                self._insert_pending_doc(conn, source_pk="2", updated_minutes_ago=60)
+                conn.commit()
+
+            drift = get_index_status(db_path)["freshness"]
+            self.assertEqual(drift["semantic_documents_pending_embed"], 2)
+            self.assertEqual(drift["semantic_documents_pending_embed_stuck"], 1)
+
+
 class SignalHealthAgreesWithDoctorTests(unittest.TestCase):
     """GH-145 anti-drift: the two surfaces must not contradict each other."""
 

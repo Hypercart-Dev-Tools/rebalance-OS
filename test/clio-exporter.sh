@@ -317,6 +317,38 @@ local_time_display_keeps_utc_ids() {
   cmp -s "$out" "$case_dir/before.md" || fail "cursor reset duplicated a localized note"
 }
 
+malformed_source_row_is_dropped() {
+  shell=$1
+  case_dir="$TMP/malformed-$2"
+  home="$case_dir/home"
+  out="$case_dir/note.md"
+  mkdir -p "$home/.claude"
+  {
+    json_line '2026-07-20T07:59:00Z' before before 'row before malformed'
+    # Truncated JSON: unterminated string, no closing brace. jq's `fromjson?`
+    # turns this into an error, which `// empty` swallows — the documented
+    # "malformed lines ... are dropped without aborting the run" behaviour.
+    printf '%s\n' '{"timestamp":"2026-07-20T08:00:00Z","repo":"broken","branch":"main","machine":"fixture","session_id":"broken","prompt":"truncated row'
+    json_line '2026-07-20T08:01:00Z' after after 'row after malformed'
+  } > "$home/.claude/prompt-log.jsonl"
+
+  run_exporter "$shell" "$home" "$out" > "$case_dir/first.out"
+  assert_contains "$out" 'row before malformed'
+  assert_contains "$out" 'row after malformed'
+  assert_not_contains "$out" 'truncated row'
+  assert_not_contains "$out" 'broken'
+  assert_count "$out" 'clio:id:before:2026-07-20T07:59:00Z' 1
+  assert_count "$out" 'clio:id:after:2026-07-20T08:01:00Z' 1
+
+  # The cursor must still advance past the malformed line (it's consumed, not
+  # retried forever), and re-running must stay a clean no-op — no crash, no
+  # duplicate entries, no attempt to re-parse the dropped row.
+  cp "$out" "$case_dir/before.md"
+  run_exporter "$shell" "$home" "$out" > "$case_dir/second.out"
+  cmp -s "$out" "$case_dir/before.md" || fail "second run changed output after a malformed row"
+  assert_contains "$case_dir/second.out" 'Synced 0 new prompt(s)'
+}
+
 run_suite() {
   shell=$1
   key=$2
@@ -330,6 +362,7 @@ run_suite() {
   conflict_sibling "$shell" "$key"
   manifest_failure_is_nonfatal "$shell" "$key"
   backfill_then_targeted_repair "$shell" "$key"
+  malformed_source_row_is_dropped "$shell" "$key"
   echo "PASS: $shell"
 }
 

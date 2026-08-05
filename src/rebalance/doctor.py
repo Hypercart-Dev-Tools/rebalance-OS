@@ -11,6 +11,7 @@ projects, GitHub data freshness, the credentials for each external integration
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import subprocess
@@ -19,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
-from rebalance.tz_utils import local_tz
+from rebalance.tz_utils import format_timestamp, local_tz
 
 OK = "ok"
 WARN = "warn"
@@ -734,6 +735,37 @@ def _daily_sync_launchd_check(
     )
 
 
+# A single `launchctl list` snapshot only ever shows the *current* PID and the
+# *last* exit status — it cannot tell a one-off crash from a KeepAlive job that
+# launchd is repeatedly respawning (GH-160). Detecting a loop needs memory
+# across polls, so recent crash-relaunch events are persisted to disk here and
+# consulted on the next `doctor` run.
+_LAUNCHD_CRASH_LOOP_LOOKBACK_S = 15 * 60  # 15 minutes
+_LAUNCHD_CRASH_LOOP_THRESHOLD = 2  # >=2 crash-relaunches in the window == looping
+
+
+def _launchd_crash_state_path(log_dir: Path) -> Path:
+    return log_dir / "launchd_crash_state.json"
+
+
+def _load_launchd_crash_state(path: Path) -> dict:
+    """Load persisted per-label crash-relaunch history; missing/corrupt -> empty."""
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _save_launchd_crash_state(path: Path, state: dict) -> None:
+    """Best-effort persist; a write failure must never break `doctor`."""
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(state), encoding="utf-8")
+    except OSError:
+        pass
+
+
 def _check_launchd(
     launchctl_output: str | None = None,
     *,
@@ -744,7 +776,10 @@ def _check_launchd(
 
     ``daily-sync`` has a richer, recent JSON outcome which supersedes its sticky
     launchctl exit status. Other jobs have no comparable result contract and keep
-    the historical launchctl-only assessment.
+    the historical launchctl-only assessment, with one addition (GH-160): a job
+    whose live PID keeps changing identity across polls while each exit is a
+    genuine crash (positive, non-signal) is a KeepAlive crash loop and WARNs
+    even though its current PID is live.
     """
     if launchctl_output is None:
         launchctl_output = _launchctl_list()
@@ -759,6 +794,10 @@ def _check_launchd(
         except RuntimeError:
             log_dir = Path("temp/logs")
     now = now or datetime.now(timezone.utc)
+
+    crash_state_path = _launchd_crash_state_path(log_dir)
+    crash_state = _load_launchd_crash_state(crash_state_path)
+    state_dirty = False
 
     checks: list[Check] = []
     for line in launchctl_output.splitlines():
@@ -789,8 +828,45 @@ def _check_launchd(
             pass
 
         is_ok_status = status_val in ("0", "-") or is_negative_signal
+        # A genuine crash exit: live now, but the exit that produced this
+        # snapshot was neither clean (0) nor a signal (GH-146 Root cause B).
+        is_crash_exit = has_live_pid and not is_ok_status
 
-        if has_live_pid or is_ok_status:
+        label_key = label.strip()
+        entry = crash_state.get(label_key, {})
+        prior_pid = entry.get("last_pid")
+        crash_events = [
+            t
+            for t in entry.get("crash_events", ())
+            if isinstance(t, (int, float))
+            and now.timestamp() - t <= _LAUNCHD_CRASH_LOOP_LOOKBACK_S
+        ]
+
+        # A crash-relaunch happened between the last poll and this one when the
+        # live PID's identity changed (launchd respawned it) and this exit was
+        # a genuine crash. The very first observation of a label has no prior
+        # PID to compare against, so a single positive exit next to a live PID
+        # never counts on its own (GH-146: not every non-zero exit is a crash
+        # loop) — only a *repeated* crash-relaunch pattern does (GH-160).
+        if is_crash_exit and prior_pid is not None and prior_pid != pid_val:
+            crash_events.append(now.timestamp())
+
+        crash_state[label_key] = {"last_pid": pid_val, "crash_events": crash_events}
+        state_dirty = True
+
+        is_crash_looping = len(crash_events) >= _LAUNCHD_CRASH_LOOP_THRESHOLD
+
+        if is_crash_looping:
+            checks.append(
+                Check(
+                    f"launchd:{short}", WARN,
+                    f"crash-looping: {len(crash_events)} crash-relaunches in the "
+                    f"last {_LAUNCHD_CRASH_LOOP_LOOKBACK_S // 60}m despite a live PID",
+                    "inspect temp/logs/ for this job's error output — it is being "
+                    "relaunched immediately after each crash",
+                )
+            )
+        elif has_live_pid or is_ok_status:
             running = "running" if has_live_pid else "idle, last run ok"
             checks.append(
                 Check(f"launchd:{short}", OK, running, severity=NOTICE)
@@ -803,6 +879,10 @@ def _check_launchd(
                     "inspect temp/logs/ for this job's error output",
                 )
             )
+
+    if state_dirty:
+        _save_launchd_crash_state(crash_state_path, crash_state)
+
     return checks
 
 
@@ -1190,10 +1270,8 @@ def _check_pulse_collectors(*, current_device_id: str | None = None) -> list[Che
 
         if health.age_hours is None:
             age = "never pushed"
-        elif health.age_hours >= 24:
-            age = f"last scan {health.age_hours / 24:.1f}d ago"
         else:
-            age = f"last scan {health.age_hours:.1f}h ago"
+            age = f"last scan {format_timestamp(health.last_scan_utc, relative=True)}"
         healthy = health.healthy
         state = health.state
         # A laptop's upstream classifier intentionally uses the fleet's 3h

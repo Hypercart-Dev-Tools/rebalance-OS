@@ -110,6 +110,132 @@ class TestOccurrenceCounter(unittest.TestCase):
 
 
 # ===========================================================================
+# 1b. Detail block refresh (GH-139) — a repeat sighting must update Detail,
+#     not just the Seen counter.
+# ===========================================================================
+
+class TestDetailRefresh(unittest.TestCase):
+
+    def test_set_detail_replaces_detail_block(self) -> None:
+        body = hr._issue_body("db", "fail", "original detail", "", "rebalance-doctor")
+        updated = hr.set_detail(body, "new root-cause detail")
+        self.assertIn("new root-cause detail", updated)
+        self.assertNotIn("original detail", updated)
+
+    def test_set_detail_preserves_rest_of_body(self) -> None:
+        body = hr._issue_body("db", "fail", "original detail", "a hint", "rebalance-doctor")
+        updated = hr.set_detail(body, "new detail")
+        self.assertIn("## Rebalance health: `db`", updated)
+        self.assertIn("**Status:** `FAIL`", updated)
+        self.assertIn("a hint", updated)
+        self.assertTrue(updated.startswith("> **Seen:** 1×"))
+
+    def test_set_detail_noop_when_no_detail_block(self) -> None:
+        body = "no detail block here"
+        self.assertEqual(hr.set_detail(body, "whatever"), body)
+
+    def test_set_detail_does_not_touch_seen_counter(self) -> None:
+        body = hr._issue_body("db", "fail", "detail v1", "", "rebalance-doctor")
+        body = hr.set_occurrence_count(body, 3, _now_str(), device="host-a")
+        updated = hr.set_detail(body, "detail v2")
+        self.assertIn("> **Seen:** 3×", updated)
+        self.assertIn("detail v2", updated)
+        self.assertNotIn("detail v1", updated)
+
+    def test_repeat_sighting_refreshes_detail_and_counter(self) -> None:
+        """End-to-end: a second sighting with a changed detail must update both."""
+        body = hr._issue_body("db", "fail", "disk full", "", "rebalance-doctor")
+        refreshed = hr.set_detail(body, "disk full — now 99% (was 92%)")
+        new_body = hr.set_occurrence_count(refreshed, 2, _now_str(), device="host-a")
+        self.assertIn("disk full — now 99% (was 92%)", new_body)
+        self.assertNotIn("```\ndisk full\n```", new_body)
+        self.assertIn("> **Seen:** 2×", new_body)
+
+
+# ===========================================================================
+# 1c. Stable check-id dedup (GH-139) — a renamed/retitled issue must still
+#     match its existing open issue instead of orphaning it.
+# ===========================================================================
+
+class TestStableCheckIdDedup(unittest.TestCase):
+
+    def test_issue_body_embeds_check_id_marker(self) -> None:
+        body = hr._issue_body("sleuth", "fail", "detail", "", "rebalance-doctor")
+        self.assertEqual(hr.parse_check_id(body), "sleuth")
+
+    def test_parse_check_id_missing_marker_returns_none(self) -> None:
+        self.assertIsNone(hr.parse_check_id("no marker here"))
+        self.assertIsNone(hr.parse_check_id(""))
+
+    def test_dedup_key_prefers_body_marker_over_title(self) -> None:
+        """A human-retitled GitHub issue must still match its stable id."""
+        body = hr._issue_body("sleuth", "fail", "detail", "", "rebalance-doctor")
+        issue = {"title": "health: sleuth credentials (renamed by operator)", "body": body}
+        self.assertEqual(hr.dedup_key_for_issue(issue), "sleuth")
+
+    def test_dedup_key_falls_back_to_title_for_legacy_issues(self) -> None:
+        """Pre-GH-139 issues (e.g. the #46-48 / #83-85 pulse-collector dupes)
+        have no marker; matching must still work off the title so this fix
+        does not misbehave against them or file new duplicates."""
+        issue = {"title": "health: pulse collector:noels-mbp-16-m1-pro", "body": ""}
+        self.assertEqual(
+            hr.dedup_key_for_issue(issue), "pulse collector:noels-mbp-16-m1-pro"
+        )
+
+    def test_dedup_key_legacy_issue_with_no_body_at_all(self) -> None:
+        issue = {"title": "health: vault", "body": None}
+        self.assertEqual(hr.dedup_key_for_issue(issue), "vault")
+
+    def test_list_health_issues_keys_by_check_id_not_title(self) -> None:
+        """Two issues whose titles differ from ``health: <name>`` — one via
+        the marker (post-fix), one via legacy title parsing (pre-fix) — must
+        both be reachable by their check name, proving the title text no
+        longer gates dedup."""
+        marker_body = hr._issue_body("gmail", "fail", "detail", "", "rebalance-doctor")
+        renamed_issue = {
+            "title": "health: gmail integration (renamed)",
+            "number": 200,
+            "body": marker_body,
+            "state": "open",
+        }
+        legacy_issue = {
+            "title": "health: pulse collector:device-a",
+            "number": 46,
+            "body": "",
+            "state": "open",
+        }
+
+        with patch.object(hr, "_request", side_effect=[[renamed_issue, legacy_issue], []]):
+            issues = hr.list_health_issues("tok", "org/repo", state="open")
+
+        self.assertIn("gmail", issues)
+        self.assertEqual(issues["gmail"]["number"], 200)
+        self.assertIn("pulse collector:device-a", issues)
+        self.assertEqual(issues["pulse collector:device-a"]["number"], 46)
+
+    def test_renamed_check_does_not_orphan_or_duplicate(self) -> None:
+        """Simulates main()'s matching logic: a check whose GitHub issue was
+        retitled (title no longer equals ``health: <name>``) must still be
+        found as 'already open' via the stable check id, not re-filed."""
+        body = hr._issue_body("figma", "fail", "token missing", "", "rebalance-doctor")
+        open_issues = {
+            hr.dedup_key_for_issue({"title": "health: figma token (renamed)", "body": body}):
+                {"title": "health: figma token (renamed)", "number": 77, "body": body}
+        }
+
+        check = _make_check("figma")
+        check_id = check["name"]
+        already_open = open_issues.get(check_id)
+
+        self.assertIsNotNone(
+            already_open,
+            "renamed issue must still be found by its stable check id — "
+            "the old title-only lookup would have missed this and filed a duplicate.",
+        )
+        self.assertEqual(already_open["number"], 77)
+
+
+# ===========================================================================
 # 2. Quota management
 # ===========================================================================
 

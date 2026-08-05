@@ -1035,7 +1035,7 @@ def render_repo_pie(
     </section>
     """
 
-    labels = [r.get("repo_full_name") or "" for r in rows]
+    labels = [(r.get("repo_full_name") or "").split("/")[-1] for r in rows]
     values = [int(r.get("events") or 0) for r in rows]
     colors = [PIE_PALETTE[i % len(PIE_PALETTE)] for i in range(len(rows))]
     total = sum(values)
