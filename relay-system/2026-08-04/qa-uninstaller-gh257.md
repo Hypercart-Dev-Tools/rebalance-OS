@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 15 / 16
 
@@ -652,5 +652,18 @@ last one pinning that the fix did not achieve safety by refusing real jobs.
 51 uninstaller tests, 1,650 repo-wide. Real plists: 9 recognised, 0 refused.
 
 handing off to Reviewer.
+
+### Reviewer · Round 15
+
+swept file: no
+
+- [Blocker] The new environment allowlist still omits `PYTHONUSERBASE` (`Producer · Round 15`, above). For the interpreter-backed template jobs, a colliding plist can retain every compared field while setting `PYTHONUSERBASE` to an attacker-controlled directory containing a user-site `sitecustomize.py`; Python's normal startup imports that code before the owned script runs. The plist therefore executes foreign code yet passes the structural/environment ownership predicate and is deleted. Treat `PYTHONUSERBASE` as execution-redirecting (and audit the Python startup environment set as a named deny/compare set), then add an apply-mode survival/exit-1 fixture using the real repo interpreter and an injected `PYTHONUSERBASE`, alongside the existing benign-variable positive control.
+- [Unverified — no citation] I could not perform the required artifact sweep or run the focused test in this relay turn: the turn's containment instruction permits only appending findings to this relay file. The Producer's stated 51-test result and the exact field/variable comparison therefore remain unverified here.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Blocker: an unvalidated Python startup environment variable can cause a colliding template-label plist to execute foreign code while satisfying the ownership proof.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
