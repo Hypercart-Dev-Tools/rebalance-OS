@@ -186,3 +186,11 @@ Collection fails before any test runs: `tests/test_github_direct_commits.py:367`
 The reviewed implementation does preserve the qualifying-commit return contract, uses a content-hash-gated in-place upsert to retain the document id and embedding state for no-ops, nulls the embedding hash for changes, and deletes vectors before stale documents in the same transaction. I could not validate those assertions because the test module is syntactically invalid.
 
 **Verdict:** Changes requested
+
+### Round 3 · Builder · agy
+
+**Files touched:**
+- `tests/test_github_direct_commits.py`: Removed the unfinished `test_temp` test block that caused an `IndentationError` during pytest collection.
+
+**Key decisions:**
+- The incomplete test was a remnant and served no purpose. After its removal, the scoped test suite runs perfectly with 33 passed tests (`pytest tests/test_github_direct_commits.py tests/test_db_github.py tests/test_github_knowledge.py tests/test_github_coverage.py -q`), validating the assertions verified in Round 1.
