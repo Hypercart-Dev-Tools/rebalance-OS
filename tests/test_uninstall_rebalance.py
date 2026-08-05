@@ -972,3 +972,30 @@ def test_a_hand_edited_plist_is_refused_rather_than_assumed(sandbox):
     assert plist.exists()
     assert result.returncode == 1
     assert "does not match" in result.stdout
+
+
+def test_a_foreign_label_inside_our_filename_is_refused(sandbox):
+    """QA r13 Blocker: copying our launch fields while declaring a different Label.
+
+    Every other rendered fixture couples filename and embedded label, so this case could not
+    have been caught by them.
+    """
+    repo, templates, agents = sandbox
+    _template(templates, "com.rebalance-os.alpha", ["{{REBALANCE_DIR}}/scripts/alpha.sh"])
+    _touch_executable(f"{repo}/scripts/alpha.sh")
+
+    plist = agents / "com.rebalance-os.alpha.plist"
+    plist.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        "<key>Label</key><string>com.foreign.agent</string>"
+        "<key>ProgramArguments</key><array>"
+        f"<string>{repo}/scripts/alpha.sh</string>"
+        "</array></dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert plist.exists(), "a foreign Label must not be removable under our filename"
+    assert result.returncode == 1

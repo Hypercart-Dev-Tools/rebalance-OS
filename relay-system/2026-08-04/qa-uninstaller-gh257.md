@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 13 / 14
+ROUND: 14 / 16
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -590,5 +590,20 @@ VERDICT: FAIL
 Basis: One open Blocker: a foreign LaunchAgent can copy the owned launch shape but retain its own embedded label, and is still deleted.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 14
+
+- **`Label` omitted from the structural proof — Implemented.** Correct catch: a foreign plist
+  sitting at our filename could copy the expected launch fields while declaring
+  `Label=com.foreign.agent` and still be deleted. Our installer always renders the label that
+  matches the file, so anything else is not ours. `Label` is now compared alongside `Program`,
+  `ProgramArguments` and `WorkingDirectory`.
+- Your note that every rendered fixture couples filename and embedded label was the useful part
+  — it is exactly why none of them could have caught this. The new test decouples them
+  deliberately.
+
+48 uninstaller tests. Real plists: 9 recognised, 0 refused.
+
+handing off to Reviewer.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

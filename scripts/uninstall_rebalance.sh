@@ -255,7 +255,10 @@ if not isinstance(want, dict) or not isinstance(got, dict):
 
 # Compare only what determines WHAT RUNS. Schedules and log paths may legitimately drift
 # without changing whose job this is.
-for key in ("Program", "ProgramArguments", "WorkingDirectory"):
+# Label is part of the shape: a foreign plist sitting at our filename could otherwise copy the
+# expected launch fields while declaring Label=com.foreign.agent and still be deleted. Our
+# installer always renders the label that matches the file, so anything else is not ours.
+for key in ("Label", "Program", "ProgramArguments", "WorkingDirectory"):
     if want.get(key) != got.get(key):
         sys.exit(1)
 sys.exit(0)
