@@ -144,3 +144,11 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB4-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vb-reordered--vb4/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · agy
+
+- Created `utils/gh250/fence-writers.sh` supporting `fence`, `verify`, and `unfence` subcommands.
+- Mapped launchd IDs to 3-Eyes IDs explicitly to favor `python -m three_eyes pause` and `resume` for managed jobs, and fallback to `launchctl bootout` and `bootstrap` for unmanaged jobs.
+- Designed `verify` to anti-rot: it checks all loaded jobs matching `com.rebalance-os.*(sync|collector)` and fails if it finds one outside `KNOWN_WRITERS`.
+- Ensured all actions track to a durable state file `rebalance_fenced_writers.state` allowing idempotent fences and exact restores (with trap-on-interrupt protection).
+- Created `tests/test_gh250_fencing.py` using stubs for `launchctl`, `python`, `lsof`, and `sqlite3` to assert the required behavior without running actual operator jobs. Tests are passing!
