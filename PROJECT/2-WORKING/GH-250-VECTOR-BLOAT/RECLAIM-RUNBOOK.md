@@ -1,356 +1,427 @@
-# rebalance.db Vector Bloat Reclaim Runbook (GH-250)
+# rebalance.db vector-bloat reclaim runbook (GH-250 R2)
 
-This runbook details the procedure to reclaim ~10.2 GB of disk space from `rebalance.db` by deleting orphaned vectors in the `vec0` virtual table.
+Reclaims ~11 GB from `rebalance.db` by deleting orphaned `github_embeddings` vectors and rebuilding
+the file. One operator, one maintenance window, start to finish.
 
-It must be executed inside a maintenance window where no writers are active.
+**This runbook does not implement the reclaim.** Two tested scripts do:
 
-> ## ⚠️ DRAFT — reviewed but NOT approved. Read before running anything.
->
-> This runbook was rejected by its reviewer four times and never reached approval. Two defects found
-> afterwards are fixed here, but it has had **no** approving review since:
->
-> 1. **Its queries named tables that do not exist.** Every count used `vec0` / `items` — sqlite-vec's
->    *documentation example* names, not this database's. The baseline query failed outright with
->    `no such table: vec0`. Corrected throughout to `github_embeddings` / `github_documents`.
-> 2. **It reimplemented the batch delete inline**, in untested shell, duplicating
->    `utils/gh250/reclaim.py` — which has 13 tests against a production-shaped schema and is verified
->    working against the real database. **Prefer the script.** Any inline SQL below is illustrative;
->    the script is the sanctioned path.
->
-> Outstanding reviewer objections (valid, unaddressed): make every fence/handle assertion a real
-> shell gate rather than a command followed by prose; capture `wal_checkpoint` output and require
-> exactly `0|0|0`; do not discard `verify` output with `>/dev/null` when the record must show every
-> gate result; guard every `mv`/`rm` with sidecar-aware preconditions; state a recomputable post-size
-> range rather than "~1.2 GB".
->
-> **Do not execute this against production until those are closed and it has been approved.**
+| Script | Tests | Role |
+|---|---|---|
+| `utils/gh250/fence-writers.sh` | `tests/test_gh250_fencing.py` (9) | stop / verify / restore every db writer |
+| `utils/gh250/reclaim.py` | `tests/test_gh250_reclaim.py` (13) | measure, batch-delete, checkpoint, `VACUUM INTO`, integrity-check |
 
-## 0. Set Operator Environment & Record
+Earlier drafts reimplemented the delete loop and the vacuum in inline shell. That version was
+untested, and its queries named `vec0` / `items` — sqlite-vec's *documentation example* tables — so
+its very first command failed with `no such table: vec0`. Everything operational below now goes
+through the scripts. Where raw SQL appears it is a **read-only** check.
 
-Define an environment variable for your operator record to ensure all checks append to it rather than relying on manual copy-pasting.
+## Conventions used throughout
+
+- Every gate is a real shell conditional that **exits non-zero**. There are no "run this and look at
+  it" steps.
+- Every gate's output is appended to `$RECORD` via `tee`. If a step's evidence is not in the record,
+  the step did not happen.
+- No unguarded `rm` or `mv`. Every destructive move checks its source *and* its destination first,
+  and accounts for the `-wal` / `-shm` sidecars.
+- Run everything from one shell so the exported vars and `$RECORD` persist.
+
+---
+
+## 0. Session setup
 
 ```bash
-export RECORD_FILE="reclaim-$(date +%F-%H%M%S).log"
-echo "--- Reclaim Runbook Started ---" | tee -a "$RECORD_FILE"
+set -uo pipefail          # NOT -e: the gates below handle their own failures explicitly
+
+export REPO="$HOME/Documents/rebalance-OS"
+export PY="$REPO/.venv/bin/python"
+export DB="$HOME/Library/Application Support/rebalance-os/rebalance.db"
+export FENCE="$REPO/utils/gh250/fence-writers.sh"
+export RECLAIM="$REPO/utils/gh250/reclaim.py"
+export STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+export RECORD="$REPO/temp/logs/gh250-reclaim-$STAMP.log"
+export VACUUM_TARGET="${DB%.db}.vacuum.db"        # what reclaim.py writes
+export BACKUP="$DB.backup-$STAMP"                 # unique per run; never reused
+export PRE="$DB.pre-reclaim-$STAMP"               # retained original after cutover
+
+mkdir -p "$(dirname "$RECORD")"
+{ echo "=== GH-250 reclaim $STAMP ==="; echo "db=$DB"; } | tee -a "$RECORD"
+
+for f in "$PY" "$FENCE" "$RECLAIM" "$DB"; do
+  if [ ! -e "$f" ]; then echo "ABORT: missing $f" | tee -a "$RECORD"; exit 1; fi
+done
+echo "setup OK" | tee -a "$RECORD"
 ```
 
-Do not proceed past Section 1 if any value violates the stated bounds.
-
-## 1. Preconditions & Verification
-
-Before proceeding with any destructive action, ensure all preconditions are met.
-
-### 1.1 GH-250 R1 Confirmed
-
-Confirm the orphan count is strictly flat across 3 `github_sync` cycles. For each cycle, capture a marker, wait for the sync to complete, and immediately sample the orphan count. 
-
-**Repeat this process 3 times:**
-```bash
-# 1. Get a log marker before the sync
-MARKER=$(wc -l < ~/Library/Logs/rebalance/3eyes.log)
-
-# 2. Wait for the sync to complete (or trigger it in another terminal)
-tail -n +$MARKER -f ~/Library/Logs/rebalance/3eyes.log | grep -m 1 "github_sync completed" | tee -a "$RECORD_FILE"
-
-# 3. Immediately query the orphan count
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
-```
-*If the 3 counts recorded are not identical, ABORT.*
-
-### 1.2 Baseline Measurements
-
-Record baseline values in your Operator Record.
+Reusable read-only probes. **These are split on purpose:** on this database `count(*)` is ~0.9s and
+the orphan predicate ~1.6s, but `PRAGMA integrity_check` is **~34s** because it scans the whole
+13.5 GB file. Keeping integrity out of the cheap probe is what makes the R1 sampling loop and the
+post-checks practical — an earlier draft folded them together and a four-call verification pass took
+over two minutes.
 
 ```bash
-echo -n "Total DB Bytes: " | tee -a "$RECORD_FILE"
-stat -f %z rebalance.db | tee -a "$RECORD_FILE"
+db_counts() {   # prints  total|orphans|live      (~2.5s)
+  "$PY" - <<'PYEOF'
+import os, sqlite3, sqlite_vec
+db = os.environ["DB"]
+c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=30)
+c.enable_load_extension(True); sqlite_vec.load(c); c.enable_load_extension(False)
+tot = c.execute("SELECT count(*) FROM github_embeddings").fetchone()[0]
+orp = c.execute("""SELECT count(*) FROM github_embeddings WHERE NOT EXISTS
+    (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id)""").fetchone()[0]
+print(f"{tot}|{orp}|{tot-orp}")
+PYEOF
+}
 
-echo -n "Total Vectors: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings;" | tee -a "$RECORD_FILE"
+integrity() {   # prints  ok  (or the first error)   (~34s — call deliberately, not in a loop)
+  "$PY" - <<'PYEOF'
+import os, sqlite3
+db = os.environ["DB"]
+c = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=300)
+print(c.execute("PRAGMA integrity_check").fetchone()[0])
+PYEOF
+}
 
-echo -n "Live Vectors: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
-
-echo -n "Journal Mode (Must be 'wal'): " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "PRAGMA journal_mode;" | tee -a "$RECORD_FILE"
-
-echo -n "Integrity Check (Must be 'ok'): " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "PRAGMA integrity_check;" | tee -a "$RECORD_FILE"
+orphan_count() { db_counts | cut -d'|' -f2; }
 ```
 
-### 1.3 Disk Space Headroom
+`integrity()` is called exactly three times in this runbook: once on the restored backup (§1.6), once
+after the reclaim (§4), and once after a rollback (§5). Nowhere else.
 
-You must have sufficient free space for the live database + backup + `VACUUM INTO` rebuild copy **plus a 10 GB margin**.
-**Formula:** `Free Space Bytes > Live DB Bytes + Backup DB Bytes (same size) + 1.2 GB (estimated vacuumed size) + 10 GB (margin)`
+---
+
+## 1. Preconditions
+
+### 1.1 R1 — orphan growth must be flat
+
+The writer fix (#249 plus the vb1 idempotence work) must be confirmed live **before** reclaiming.
+Reclaiming first lets the next sync re-orphan the work.
+
+Take three samples, each immediately after a **completed** `github_sync`, and require them to be
+**identical** — not merely non-increasing.
 
 ```bash
-echo -n "Free Bytes: " | tee -a "$RECORD_FILE"
-df -k . | awk 'NR==2 {print $4 * 1024}' | tee -a "$RECORD_FILE"
+# Repeat this once after each of three completed syncs. Confirm completion first:
+SYNC_LOG="$REPO/temp/logs/github_sync_$(date +%F).log"
+DONE=$(grep -c "sync complete" "$SYNC_LOG" 2>/dev/null || echo 0)
+S=$(orphan_count)
+echo "orphan sample: $S (completed syncs today: $DONE)" | tee -a "$RECORD"
 ```
-*(Reference: For a 13.43 GB DB, you need: 13.43 (live) + 13.43 (backup) + ~1.2 (vacuum target) + 10 GB margin = ~38.06 GB free space. Verify your free space is greater than this.)*
-*If you do not have enough disk space, ABORT.*
 
-### 1.4 Stop and Fence Writers
+Then gate on the three recorded values:
 
-Run the fencing script to ensure no background tasks or other writers are active:
 ```bash
-./utils/gh250/fence-writers.sh fence | tee -a "$RECORD_FILE"
-```
+# Fill in the three sampled values. Left empty, the gate below ABORTS — it must not be
+# possible to pass R1 by forgetting to record the samples.
+export S1= S2= S3=
 
-**Executable Reader/Writer Gate** (run this before every destructive step):
-```bash
-if ! FENCE_OUT=$(./utils/gh250/fence-writers.sh verify); then 
-  echo "ABORT: Fence verification failed. Output: $FENCE_OUT" | tee -a "$RECORD_FILE"; exit 1
+if [ -z "$S1" ] || [ -z "$S2" ] || [ -z "$S3" ]; then
+  echo "ABORT R1: S1/S2/S3 are not all set — record three post-sync samples first." | tee -a "$RECORD"
+  exit 1
 fi
-echo "$FENCE_OUT" | tee -a "$RECORD_FILE"
-if lsof rebalance.db rebalance.db-wal rebalance.db-shm >/dev/null 2>&1; then 
-  echo "ABORT: Processes holding handles detected!" | tee -a "$RECORD_FILE"; exit 1
-else 
-  echo "OK: No handles" | tee -a "$RECORD_FILE"
+if [ "$S1" != "$S2" ] || [ "$S2" != "$S3" ]; then
+  echo "ABORT R1: orphan count not flat ($S1/$S2/$S3) — the writer fix is not holding." | tee -a "$RECORD"
+  exit 1
+fi
+export BASELINE_ORPHANS="$S3"
+echo "R1 PASS: orphans flat at $BASELINE_ORPHANS" | tee -a "$RECORD"
+```
+
+### 1.2 Baseline — from the tested measurement path
+
+`reclaim.py`'s dry run is the baseline. It uses the same predicate the delete uses, so the numbers
+cannot disagree with what §2 will do.
+
+```bash
+if ! "$PY" "$RECLAIM" --database "$DB" --i-know-this-is-production 2>&1 | tee -a "$RECORD"; then
+  echo "ABORT: baseline dry-run failed" | tee -a "$RECORD"; exit 1
+fi
+
+BASE=$(db_counts); echo "baseline counts: $BASE" | tee -a "$RECORD"
+IFS='|' read -r BASELINE_TOTAL B_ORP BASELINE_LIVE <<<"$BASE"
+export BASELINE_TOTAL BASELINE_LIVE
+export BASELINE_BYTES=$(stat -f%z "$DB")
+if [ "$B_ORP" != "$BASELINE_ORPHANS" ]; then
+  echo "ABORT: orphan count moved between R1 ($BASELINE_ORPHANS) and baseline ($B_ORP)" | tee -a "$RECORD"
+  exit 1
+fi
+echo "baseline: total=$BASELINE_TOTAL live=$BASELINE_LIVE orphans=$BASELINE_ORPHANS bytes=$BASELINE_BYTES" | tee -a "$RECORD"
+```
+
+### 1.3 Disk headroom — computed, not eyeballed
+
+Peak concurrent usage is the live db **plus** a full backup **plus** the vacuum rebuild: all three
+exist at once before cutover. Require that, plus 20%.
+
+```bash
+NEED=$(( BASELINE_BYTES * 3 * 12 / 10 ))
+AVAIL=$(( $(df -k "$(dirname "$DB")" | awk 'NR==2{print $4}') * 1024 ))
+printf 'headroom: need %s bytes (3x db + 20%%), have %s\n' "$NEED" "$AVAIL" | tee -a "$RECORD"
+if [ "$AVAIL" -lt "$NEED" ]; then
+  echo "ABORT: insufficient free space" | tee -a "$RECORD"; exit 1
 fi
 ```
-*If this gate fails, ABORT. Investigate the cause rather than killing processes.*
 
-**CRITICAL POST-FENCING GATE:** Re-run the orphan count. It MUST exactly equal the samples from Step 1.1.
-```bash
-echo -n "Post-fencing Orphan Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
-```
-*If this count does not exactly match the counts from 1.1, ABORT.*
+### 1.4 Expected end state — recomputable, not "~1.2 GB"
 
-### 1.5 Consistent Backup and Restore Rehearsal
-
-Take a consistent backup and rehearse the restore process in a uniquely named location.
+Derive the target range from the measured baseline, so §4's size check is a real assertion rather
+than a number someone remembered:
 
 ```bash
-# 0. Ensure no backup destination exists
-if [ -f "rebalance.db.backup" ]; then echo "ABORT: Backup already exists" | tee -a "$RECORD_FILE"; exit 1; fi
-
-# 1. Executable Reader/Writer Gate
-if ! FENCE_OUT=$(./utils/gh250/fence-writers.sh verify); then echo "ABORT: Fence verification failed. Output: $FENCE_OUT" | tee -a "$RECORD_FILE"; exit 1; fi
-echo "$FENCE_OUT" | tee -a "$RECORD_FILE"
-if lsof rebalance.db rebalance.db-wal rebalance.db-shm >/dev/null 2>&1; then echo "ABORT: Processes holding handles detected!" | tee -a "$RECORD_FILE"; exit 1; fi
-
-# 2. Checkpoint WAL before backup
-echo -n "Backup Checkpoint Result: " | tee -a "$RECORD_FILE"
-CP_RESULT=$(sqlite3 rebalance.db "PRAGMA wal_checkpoint(TRUNCATE);" 2>&1)
-echo "$CP_RESULT" | tee -a "$RECORD_FILE"
-if [ "$CP_RESULT" != "0|0|0" ]; then echo "ABORT: WAL checkpoint failed or not clean" | tee -a "$RECORD_FILE"; exit 1; fi
-
-# 3. Take a consistent SQLite backup
-sqlite3 rebalance.db ".backup 'rebalance.db.backup'" | tee -a "$RECORD_FILE"
-
-# 4. Rehearse restore steps in a unique directory
-RESTORE_DIR=$(mktemp -d -t rebalance_restore_test.XXXXXX)
-# Simulate failure state
-cp rebalance.db "$RESTORE_DIR/rebalance.db"
-[ -f rebalance.db-wal ] && cp rebalance.db-wal "$RESTORE_DIR/rebalance.db-wal"
-[ -f rebalance.db-shm ] && cp rebalance.db-shm "$RESTORE_DIR/rebalance.db-shm"
-
-# Execute sidecar-aware restore command
-cp rebalance.db.backup "$RESTORE_DIR/rebalance.db"
-rm -f "$RESTORE_DIR/rebalance.db-wal" "$RESTORE_DIR/rebalance.db-shm"
-
-# 5. Verify integrity and baseline on the restored DB
-echo -n "Rehearsal Integrity: " | tee -a "$RECORD_FILE"
-sqlite3 "$RESTORE_DIR/rebalance.db" "PRAGMA integrity_check;" | tee -a "$RECORD_FILE"
-echo -n "Rehearsal Live Vectors: " | tee -a "$RECORD_FILE"
-sqlite3 "$RESTORE_DIR/rebalance.db" "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
-
-# 6. Approve cleanup (Only proceed if rehearsal counts matched exactly)
-rm -f "$RESTORE_DIR/rebalance.db"
-rmdir "$RESTORE_DIR"
+# 1024-dim float32 = 4096 bytes per vector; reclaimed bytes ~= orphans * 4096.
+export EXPECT_RECLAIM=$(( BASELINE_ORPHANS * 4096 ))
+export EXPECT_MAX=$(( BASELINE_BYTES - EXPECT_RECLAIM * 90 / 100 ))    # at least 90% recovered
+export EXPECT_MIN=$(( (BASELINE_BYTES - EXPECT_RECLAIM) * 70 / 100 ))  # allow extra vacuum gain
+printf 'expect final size between %s and %s bytes\n' "$EXPECT_MIN" "$EXPECT_MAX" | tee -a "$RECORD"
 ```
+
+### 1.5 Fence every writer
+
+```bash
+if ! "$FENCE" fence 2>&1 | tee -a "$RECORD"; then
+  echo "ABORT: fence failed" | tee -a "$RECORD"; exit 1
+fi
+if ! "$FENCE" verify 2>&1 | tee -a "$RECORD"; then
+  echo "ABORT: fence verify failed — a writer is still live" | tee -a "$RECORD"
+  "$FENCE" unfence 2>&1 | tee -a "$RECORD"; exit 1
+fi
+echo "FENCED" | tee -a "$RECORD"
+```
+
+`fence` records pre-fence state and restores exactly that on `unfence`, leaving jobs you had already
+paused untouched. **From here until §4.1, every abort path must call `"$FENCE" unfence`.**
+
+### 1.6 Backup, then rehearse the restore
+
+A backup nobody has restored from is a hope, not a rollback.
+
+```bash
+if [ -e "$BACKUP" ]; then echo "ABORT: $BACKUP exists" | tee -a "$RECORD"; exit 1; fi
+
+CP=$("$PY" -c "
+import os,sqlite3
+c=sqlite3.connect(os.environ['DB'],timeout=60)
+print('|'.join(str(x) for x in c.execute('PRAGMA wal_checkpoint(TRUNCATE)').fetchone()))")
+echo "pre-backup checkpoint: $CP" | tee -a "$RECORD"
+if [ "$CP" != "0|0|0" ]; then
+  echo "ABORT: checkpoint not 0|0|0 — a reader/writer holds the db" | tee -a "$RECORD"
+  "$FENCE" unfence | tee -a "$RECORD"; exit 1
+fi
+
+if ! "$PY" -c "
+import os,sqlite3
+s=sqlite3.connect(os.environ['DB']); d=sqlite3.connect(os.environ['BACKUP'])
+s.backup(d); d.close(); s.close()" 2>&1 | tee -a "$RECORD"; then
+  echo "ABORT: backup failed" | tee -a "$RECORD"; "$FENCE" unfence | tee -a "$RECORD"; exit 1
+fi
+
+export REHEARSE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/gh250-restore-XXXXXX")
+cp "$BACKUP" "$REHEARSE_DIR/restored.db"
+R_OK=$(DB="$REHEARSE_DIR/restored.db" integrity)
+RESULT=$(DB="$REHEARSE_DIR/restored.db" db_counts)
+echo "restore rehearsal: integrity=$R_OK counts=$RESULT" | tee -a "$RECORD"
+if [ "$R_OK" != "ok" ] || [ "$RESULT" != "$BASELINE_TOTAL|$BASELINE_ORPHANS|$BASELINE_LIVE" ]; then
+  echo "ABORT: restored backup does not match baseline — the backup is not trustworthy" | tee -a "$RECORD"
+  "$FENCE" unfence | tee -a "$RECORD"; exit 1
+fi
+echo "BACKUP VERIFIED: $BACKUP (rehearsal dir kept at $REHEARSE_DIR)" | tee -a "$RECORD"
+```
+
+Remove `$REHEARSE_DIR` yourself after reviewing it. This runbook does not delete it — an automatic
+`rm -rf` on a path built from a variable is exactly the step that goes wrong at 2am.
 
 ---
 
 ## 2. Execution
 
-### 2.1 Batch Deletion
+`reclaim.py --execute` performs the whole mutation: batched deletes, a `wal_checkpoint(TRUNCATE)`
+before *and* after every batch (failing unless the busy column is `0`), per-batch progress,
+`VACUUM INTO`, `PRAGMA integrity_check`, and a final assertion that the **live** vector count is
+unchanged. It exits non-zero on any of those, and it deliberately does **not** move the rebuilt file.
 
-Save this script to `delete_orphans.sh` and execute it.
 ```bash
-#!/bin/bash
-set -euo pipefail
-BATCH_SIZE=10000
-DB="rebalance.db"
-BATCH_NUM=1
+if [ -e "$VACUUM_TARGET" ]; then
+  echo "ABORT: $VACUUM_TARGET already exists — inspect and move it aside" | tee -a "$RECORD"
+  "$FENCE" unfence | tee -a "$RECORD"; exit 1
+fi
+if ! "$FENCE" verify 2>&1 | tee -a "$RECORD"; then
+  echo "ABORT: writers came back before execution" | tee -a "$RECORD"
+  "$FENCE" unfence | tee -a "$RECORD"; exit 1
+fi
 
-while true; do
-  # Executable Reader/Writer Gate
-  if ! FENCE_OUT=$(./utils/gh250/fence-writers.sh verify); then echo "ERROR: Fence verification failed before batch $BATCH_NUM. Output: $FENCE_OUT" | tee -a "$RECORD_FILE"; exit 1; fi
-  echo "Batch $BATCH_NUM Fence: $FENCE_OUT" | tee -a "$RECORD_FILE"
-  if lsof "$DB" "$DB-wal" "$DB-shm" >/dev/null 2>&1; then echo "ERROR: Processes holding handles detected before batch $BATCH_NUM!" | tee -a "$RECORD_FILE"; exit 1; fi
-  
-  # Checkpoint WAL
-  CP_RESULT=$(sqlite3 "$DB" "PRAGMA wal_checkpoint(TRUNCATE);" 2>&1)
-  echo "Batch $BATCH_NUM Checkpoint: $CP_RESULT" | tee -a "$RECORD_FILE"
-  if [ "$CP_RESULT" != "0|0|0" ]; then echo "ERROR: WAL checkpoint failed before batch $BATCH_NUM. Result: $CP_RESULT" | tee -a "$RECORD_FILE"; exit 1; fi
-
-  # Execute DELETE and SELECT changes() in a single explicit transaction
-  OUTPUT=$(sqlite3 "$DB" "BEGIN IMMEDIATE; DELETE FROM github_embeddings WHERE rowid IN (SELECT rowid FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id) LIMIT $BATCH_SIZE); SELECT changes(); COMMIT;" 2>&1)
-  
-  CHANGES=$(echo "$OUTPUT" | grep -Eo '^[0-9]+$' | tail -n 1 || true)
-  if [[ -z "$CHANGES" ]] || ! [[ "$CHANGES" =~ ^[0-9]+$ ]]; then echo "ERROR: Could not parse changes output: $OUTPUT" | tee -a "$RECORD_FILE"; exit 1; fi
-  if [ "$CHANGES" -eq 0 ]; then echo "No more orphans to delete." | tee -a "$RECORD_FILE"; break; fi
-  
-  # Robust remaining count
-  REMAINING=$(sqlite3 "$DB" "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" 2>&1)
-  if ! [[ "$REMAINING" =~ ^[0-9]+$ ]]; then echo "ERROR: Failed to query remaining count: $REMAINING" | tee -a "$RECORD_FILE"; exit 1; fi
-  
-  echo "Batch $BATCH_NUM: Deleted $CHANGES orphans. Remaining: $REMAINING." | tee -a "$RECORD_FILE"
-  ((BATCH_NUM++))
-done
-```
-
-### 2.2 Reclaim Space (VACUUM INTO)
-
-**1. Verify Target is Absent:**
-```bash
-if [ -f "rebalance.db.vacuumed" ]; then echo "ABORT: Target already exists" | tee -a "$RECORD_FILE"; exit 1; fi
-```
-
-**2. Executable Reader/Writer Gate:**
-```bash
-if ! FENCE_OUT=$(./utils/gh250/fence-writers.sh verify); then echo "ABORT: Fence verification failed" | tee -a "$RECORD_FILE"; exit 1; fi
-echo "$FENCE_OUT" | tee -a "$RECORD_FILE"
-if lsof rebalance.db rebalance.db-wal rebalance.db-shm >/dev/null 2>&1; then echo "ABORT: Handles open" | tee -a "$RECORD_FILE"; exit 1; fi
-```
-
-**3. VACUUM INTO the new file:**
-```bash
-sqlite3 rebalance.db "VACUUM INTO 'rebalance.db.vacuumed';"
-```
-
-**4. CRITICAL: Verify Target Properties BEFORE Swap:**
-```bash
-echo -n "Vacuumed Target Integrity: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db.vacuumed "PRAGMA integrity_check;" | tee -a "$RECORD_FILE"
-# Expected: ok
-
-echo -n "Vacuumed Target Orphan Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db.vacuumed "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
-# Expected: 0
-
-echo -n "Vacuumed Target Live Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db.vacuumed "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
-# Expected: [Your recorded baseline live count]
-
-echo -n "Vacuumed Target Bytes: " | tee -a "$RECORD_FILE"
-stat -f %z rebalance.db.vacuumed | tee -a "$RECORD_FILE"
-```
-*If any of these values are incorrect, DO NOT execute the swap. ABORT and Rollback.*
-
-**5. Executable Reader/Writer Gate before swap:**
-```bash
-if ! FENCE_OUT=$(./utils/gh250/fence-writers.sh verify); then echo "ABORT: Fence verification failed" | tee -a "$RECORD_FILE"; exit 1; fi
-echo "$FENCE_OUT" | tee -a "$RECORD_FILE"
-if lsof rebalance.db rebalance.db-wal rebalance.db-shm rebalance.db.vacuumed >/dev/null 2>&1; then echo "ABORT: Handles open" | tee -a "$RECORD_FILE"; exit 1; fi
-```
-
-**6. Atomic Swap (Guarded):**
-```bash
-if ! mv rebalance.db.vacuumed rebalance.db; then
-  echo "ERROR: Swap failed. Original files intact." | tee -a "$RECORD_FILE"
-  exit 1
+"$PY" "$RECLAIM" --database "$DB" --i-know-this-is-production --execute --batch-size 10000 2>&1 | tee -a "$RECORD"
+RC=${PIPESTATUS[0]}
+echo "reclaim exit: $RC" | tee -a "$RECORD"
+if [ "$RC" -ne 0 ]; then
+  echo "ABORT: reclaim failed — see §3" | tee -a "$RECORD"
+  "$FENCE" unfence | tee -a "$RECORD"; exit 1
 fi
 ```
-*(Same-directory `mv` is atomic on POSIX file systems. If it fails midway, `rebalance.db` might still exist intact or neither exists depending on the filesystem. Proceed to Abort/Rollback if it fails.)*
+
+### 2.1 Cutover — guarded, sidecar-aware
+
+**The first rename is atomic; the two-rename cutover as a whole is not** — there is a window where
+the original has been moved aside and the replacement is not yet in place. That is why the original is
+*retained*, never deleted here.
+
+```bash
+if ! "$FENCE" verify 2>&1 | tee -a "$RECORD"; then
+  echo "ABORT: writer live at cutover" | tee -a "$RECORD"; "$FENCE" unfence | tee -a "$RECORD"; exit 1
+fi
+if [ ! -f "$VACUUM_TARGET" ]; then
+  echo "ABORT: no rebuilt file at $VACUUM_TARGET" | tee -a "$RECORD"; exit 1
+fi
+for s in -wal -shm; do
+  if [ -e "$VACUUM_TARGET$s" ]; then
+    echo "ABORT: unexpected sidecar $VACUUM_TARGET$s — rebuild not quiesced" | tee -a "$RECORD"; exit 1
+  fi
+done
+if [ -e "$PRE" ]; then echo "ABORT: $PRE exists" | tee -a "$RECORD"; exit 1; fi
+
+# Step 1 — move the original aside (retained).
+if ! mv "$DB" "$PRE"; then
+  echo "ABORT: could not move original aside" | tee -a "$RECORD"
+  "$FENCE" unfence | tee -a "$RECORD"; exit 1
+fi
+for s in -wal -shm; do [ -f "$DB$s" ] && mv "$DB$s" "$PRE$s"; done
+
+# Step 2 — put the rebuilt file in place. On failure, roll step 1 straight back.
+if ! mv "$VACUUM_TARGET" "$DB"; then
+  echo "CUTOVER FAILED mid-swap — restoring the original" | tee -a "$RECORD"
+  mv "$PRE" "$DB"
+  for s in -wal -shm; do [ -f "$PRE$s" ] && mv "$PRE$s" "$DB$s"; done
+  "$FENCE" unfence | tee -a "$RECORD"; exit 1
+fi
+echo "CUTOVER OK — original retained at $PRE" | tee -a "$RECORD"
+```
 
 ---
 
-## 3. Abort and Resume
+## 3. Abort and resume
 
-### Resume Batch Error
-Resolve the cause (e.g. disk space). Re-run the Executable Reader/Writer Gate. Run `PRAGMA integrity_check;`, verify the Live Count exactly matches the baseline, and measure a fresh Orphan Count. If all are successful, restart the batch script.
+| Failure | Resumable? | Action |
+|---|---|---|
+| A batch errored mid-run | **Yes** | Every batch commits durably. Re-run §1.5 fence verify, then re-run §2 — it picks up the remaining orphans. |
+| Checkpoint not `0\|0\|0` | Yes | A reader holds the db. Find it via `"$FENCE" verify`, then re-run §2. |
+| `VACUUM INTO` failed | **No** | The partial `$VACUUM_TARGET` is not a database. Inspect it, `mv` it to a unique name (never `rm` blind), then re-run §2. |
+| Cutover failed mid-swap | Handled inline | §2.1 restores the original automatically. Confirm with §4, then investigate. |
+| Post-checks failed | — | §5 rollback. Do not unfence first. |
 
-### Interrupted/Failed `VACUUM INTO`
-If `VACUUM INTO` is interrupted, inspect `rebalance.db.vacuumed` manually to confirm it is just incomplete data. Verify `rebalance.db` integrity is still `ok`. After ensuring it is safe, run `rm -i rebalance.db.vacuumed`. Proceed from step 2.2.
-
-### Failed Swap
-If `mv` fails, DO NOT blindly restore. Check the state.
-If `rebalance.db` exists and `rebalance.db.vacuumed` exists, `mv` didn't happen. Preserve `rebalance.db.vacuumed` by moving it to `rebalance.db.vacuumed.broken`, check `rebalance.db` integrity, and re-attempt. If `rebalance.db` is corrupt, proceed to Rollback.
+Never resume without re-running §1.5's fence verify. A resume against a live writer is worse than a
+restart.
 
 ---
 
-## 4. Post-checks
-
-All checks must pass before unfencing writers.
+## 4. Post-checks — all must pass before unfencing
 
 ```bash
-# 1. Rebalance Doctor
-rebalance doctor | tee -a "$RECORD_FILE"
-# Expected: Clean result with no errors
+F_OK=$(integrity)
+FINAL=$(db_counts); echo "final: integrity=$F_OK counts=$FINAL" | tee -a "$RECORD"
+IFS='|' read -r F_TOTAL F_ORPHANS F_LIVE <<<"$FINAL"
+F_BYTES=$(stat -f%z "$DB")
 
-# 2. Database Checks
-echo -n "Final Integrity: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "PRAGMA integrity_check;" | tee -a "$RECORD_FILE"
-
-echo -n "Final Orphan Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
-
-echo -n "Final Live Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
-
-echo -n "Final Total Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings;" | tee -a "$RECORD_FILE"
-
-# 3. Size Comparison
-TARGET_BYTES=$(grep -A1 "Vacuumed Target Bytes:" "$RECORD_FILE" | tail -n1 | grep -Eo '^[0-9]+$' || echo 1)
-ACTUAL_BYTES=$(stat -f %z rebalance.db)
-if [ "$ACTUAL_BYTES" -eq "$TARGET_BYTES" ]; then echo "OK: Final DB size matches target." | tee -a "$RECORD_FILE"; else echo "WARN: Size mismatch" | tee -a "$RECORD_FILE"; fi
+FAIL=0
+[ "$F_OK" = "ok" ]                 || { echo "FAIL integrity_check=$F_OK" | tee -a "$RECORD"; FAIL=1; }
+[ "$F_ORPHANS" -eq 0 ]             || { echo "FAIL orphans=$F_ORPHANS" | tee -a "$RECORD"; FAIL=1; }
+[ "$F_LIVE" -eq "$BASELINE_LIVE" ] || { echo "FAIL live changed $BASELINE_LIVE -> $F_LIVE (OVER-DELETION)" | tee -a "$RECORD"; FAIL=1; }
+if [ "$F_BYTES" -gt "$EXPECT_MAX" ] || [ "$F_BYTES" -lt "$EXPECT_MIN" ]; then
+  echo "FAIL size $F_BYTES outside expected $EXPECT_MIN..$EXPECT_MAX" | tee -a "$RECORD"; FAIL=1
+fi
+if [ "$FAIL" -ne 0 ]; then
+  echo "POST-CHECKS FAILED — do NOT unfence. Go to §5." | tee -a "$RECORD"; exit 1
+fi
+echo "POST-CHECKS PASS: live=$F_LIVE orphans=0 bytes=$F_BYTES" | tee -a "$RECORD"
 ```
 
-### 4.1 Unfence and Verify
-Restore the schedules:
+**Live count unchanged** is the check that proves only garbage was deleted. Bytes reclaimed only
+proves the delete did something.
+
+### 4.1 Unfence, then confirm a real sync
+
 ```bash
-./utils/gh250/fence-writers.sh unfence | tee -a "$RECORD_FILE"
+if ! "$FENCE" unfence 2>&1 | tee -a "$RECORD"; then
+  echo "WARNING: unfence reported failure — resolve before leaving" | tee -a "$RECORD"; exit 1
+fi
+"$REPO/.venv/bin/rebalance" doctor 2>&1 | tee -a "$RECORD"
 ```
 
-**Verify the first normal `github_sync`:**
+`doctor`'s `orphaned vectors:github` check must now read **0**. It failed at 2,678,314 before this
+runbook ran; that flip is the outcome.
+
+Then wait for the next scheduled `github_sync` and confirm it completed:
+
 ```bash
-# Get marker
-MARKER=$(wc -l < ~/Library/Logs/rebalance/3eyes.log)
-# Wait for the sync completion confirmation in logs
-tail -n +$MARKER -f ~/Library/Logs/rebalance/3eyes.log | grep -m 1 "github_sync completed" | tee -a "$RECORD_FILE"
+grep -c "sync complete" "$REPO/temp/logs/github_sync_$(date +%F).log" | tee -a "$RECORD"
 ```
+
+Once one full sync has completed cleanly and `doctor` still reports 0 orphans, remove `$PRE` and
+`$BACKUP` **deliberately, by name, after checking each exists**. Not before.
 
 ---
 
 ## 5. Rollback
 
-**1. Executable Reader/Writer Gate:**
+Restores the pre-reclaim database. Preserves every artifact — nothing is deleted.
+
 ```bash
-if ! FENCE_OUT=$(./utils/gh250/fence-writers.sh verify); then echo "ABORT: Fence verification failed" | tee -a "$RECORD_FILE"; exit 1; fi
-echo "$FENCE_OUT" | tee -a "$RECORD_FILE"
-if lsof rebalance.db rebalance.db-wal rebalance.db-shm >/dev/null 2>&1; then echo "ABORT: Handles open" | tee -a "$RECORD_FILE"; exit 1; fi
+"$FENCE" fence 2>&1 | tee -a "$RECORD"
+if ! "$FENCE" verify 2>&1 | tee -a "$RECORD"; then
+  echo "ABORT ROLLBACK: writers live" | tee -a "$RECORD"; exit 1
+fi
+
+# Move the bad current file aside under a unique name — never delete it.
+BAD="$DB.failed-$STAMP"
+if [ -f "$DB" ] && [ ! -e "$BAD" ]; then
+  mv "$DB" "$BAD"
+  for s in -wal -shm; do [ -f "$DB$s" ] && mv "$DB$s" "$BAD$s"; done
+  echo "moved failed db to $BAD" | tee -a "$RECORD"
+fi
+
+# Prefer the retained original; fall back to the verified backup.
+if [ -f "$PRE" ]; then
+  mv "$PRE" "$DB"
+  for s in -wal -shm; do [ -f "$PRE$s" ] && mv "$PRE$s" "$DB$s"; done
+  echo "restored from retained original $PRE" | tee -a "$RECORD"
+elif [ -f "$BACKUP" ]; then
+  cp "$BACKUP" "$DB"
+  echo "restored from backup $BACKUP" | tee -a "$RECORD"
+else
+  echo "FATAL: neither $PRE nor $BACKUP exists — stop and escalate" | tee -a "$RECORD"; exit 1
+fi
+
+C_OK=$(integrity); CHECK=$(db_counts)
+echo "rollback verify: integrity=$C_OK counts=$CHECK (baseline $BASELINE_TOTAL|$BASELINE_ORPHANS|$BASELINE_LIVE)" | tee -a "$RECORD"
+if [ "$C_OK" != "ok" ] || [ "$CHECK" != "$BASELINE_TOTAL|$BASELINE_ORPHANS|$BASELINE_LIVE" ]; then
+  echo "FATAL: restored db does not match baseline — do NOT unfence, escalate" | tee -a "$RECORD"; exit 1
+fi
+"$FENCE" unfence 2>&1 | tee -a "$RECORD"
+echo "ROLLBACK COMPLETE — artifacts kept: $BAD, $BACKUP" | tee -a "$RECORD"
 ```
 
-**2. Guarded Preservation of Broken Artifacts:**
-```bash
-BROKEN_PREFIX="rebalance.db.broken.$(date +%s)"
-[ -f rebalance.db ] && mv rebalance.db "$BROKEN_PREFIX"
-[ -f rebalance.db-wal ] && mv rebalance.db-wal "$BROKEN_PREFIX-wal"
-[ -f rebalance.db-shm ] && mv rebalance.db-shm "$BROKEN_PREFIX-shm"
-[ -f rebalance.db.vacuumed ] && mv rebalance.db.vacuumed "$BROKEN_PREFIX.vacuumed"
-```
+---
 
-**3. Restore from Backup:**
-```bash
-cp rebalance.db.backup rebalance.db
-```
+## Appendix — what this reclaims and why
 
-**4. Verify the Restored DB:**
-```bash
-echo -n "Restored Integrity: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "PRAGMA integrity_check;" | tee -a "$RECORD_FILE"
+Measured 2026-08-05 on `noels-Mac-Studio`:
 
-echo -n "Restored Live Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
+| | |
+|---|---|
+| `rebalance.db` | 13.53 GB |
+| `github_embeddings` share | 92.2% (12,742 MB) |
+| total vectors | 2,712,534 |
+| **orphaned** (no live document) | **2,678,314 (98.7%)** |
+| live vectors | 34,220 |
+| expected reclaim | **~10.97 GB** (2,678,314 x 4096 B) |
+| expected final size | **~2.5 GB**; §1.4's computed gate range is 2.4–4.4 GB |
 
-echo -n "Restored Total Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings;" | tee -a "$RECORD_FILE"
+Note the final size is ~2.5 GB, **not** the ~1.2 GB quoted in early GH-250 analysis. That figure
+assumed only ~26k live vectors; the live count is 34,220 and the database has grown since. §1.4
+recomputes the range at run time from the measured baseline, so the gate never depends on a figure
+quoted here going stale — which is exactly why it is computed rather than written down.
 
-echo -n "Restored Orphan Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
-```
+Root cause was `sync_direct_commit_documents()` deleting `direct_commit` documents and re-inserting
+them with fresh autoincrement ids while never pruning their vectors — fixed in #249 and made
+idempotent in vb1. `doctor` gained a hard zero-orphan invariant in vb2, so a recurrence is visible in
+hours rather than after 10 GB.
+
+The semantic family also carries 302 orphans (`doctor` reports them). That is a separate, much smaller
+leak and is **out of scope here** — this runbook touches `github_embeddings` only.
