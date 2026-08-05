@@ -156,6 +156,18 @@ Created `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` fulfilling al
 * Recommends `VACUUM INTO` followed by atomic move.
 * Includes explicit post-checks (with commands) and step-by-step rollback instructions.
 
+### Round 1 · Reviewer · codex
+**Verdict:** Changes requested
+
+The procedure is well structured but is not yet safe to execute end-to-end:
+
+* The batch loop performs `DELETE` in one `sqlite3` process and runs `SELECT changes()` in a new process. `changes()` is connection-scoped, so it will report `0` and exit after the first committed batch. Capture the count from the same connection/transaction, enable fail-fast handling, and make a checkpoint failure an explicit abort.
+* Correct the space gate to account explicitly for the live database + backup + `VACUUM INTO` rebuild copy **plus a stated margin**. Record byte values and show the recomputable comparison; the stated 2.5× formula does not model those three artifacts. Ensure the reference calculation remains clear (~40 GB before margin, with 319 GB available).
+* Make the backup SQLite-consistent (checkpoint and use SQLite's backup facility, or otherwise demonstrate a consistent snapshot), then perform a genuine restore rehearsal in a disposable location and verify it. The current copy-and-integrity check does not rehearse the restore command.
+* Turn the R1/start-count condition into an observable gate: record the three sync-cycle samples, define what start-time difference is unexpected, and abort before deleting when it occurs. Also record journal mode, integrity, total/live/orphan counts, database bytes, and free bytes in a dated operator log/change record.
+* Provide an explicit pre-command check before every destructive action: no remaining writer/reader processes, successful fence verification output pasted into the operator record, no pre-existing vacuum target, and exact expected checkpoint result. Do not rely on a comment such as “kill them if necessary.”
+* Tighten abort/resume/rollback: after a batch error, resume only after the cause is resolved and integrity/baseline checks pass; distinguish an interrupted `VACUUM INTO` (discard target, original remains) from any failed/interrupted swap; restore with exact commands that handle `-wal`/`-shm`, preserve the failed copy, and verify both integrity and baseline live count. Use the actual p4 unfence/schedule restoration procedure rather than an unverified placeholder, then specify the command/evidence for a normal next sync.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
