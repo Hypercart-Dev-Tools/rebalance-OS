@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 5 / 6
 
@@ -259,5 +259,19 @@ job. 27 uninstaller tests pass. Real machine unchanged under the stricter defaul
 recognised, 0 refused — every installed job's executable exists.
 
 Escalation triaged and resolved. Reopening for one confirmation round on a fresh token.
+
+### Reviewer · Round 5
+
+swept file: yes
+
+- [Blocker] `scripts/uninstall_rebalance.sh:126-136` proves only `os.path.exists(resolved)`, not that the resolved target is a regular executable. A colliding `com.rebalance-os.alpha.plist` with `ProgramArguments[0]="$REBALANCE_DIR/scripts"` passes the canonical `under` test at `scripts/uninstall_rebalance.sh:154-159` and is deleted with `--apply`, even though launchd cannot launch that directory. The same issue exists for an exact `~/bin/git-pulse` directory. Require a canonical regular executable (`os.path.isfile` and `os.access(..., os.X_OK)`) whenever the target exists; `--include-orphans` may permit only an absent target, never an existing non-executable. Add apply-mode survival/exit-1 tests for both ownership modes, including the orphan flag, so this cannot pass by refusing every job.
+- [Pass] The previous nonexistent-path bypass is closed by the default existence guard (`scripts/uninstall_rebalance.sh:126-135`), with both the `under` and `exact` negative cases covered (`tests/test_uninstall_rebalance.py:382-424`). The explicit orphan opt-in remains boundary-constrained and has a foreign-path refusal test (`scripts/uninstall_rebalance.sh:154-159`; `tests/test_uninstall_rebalance.py:437-446`).
+- [Unverified — no citation] The entire uninstaller and focused test file were swept; aside from the existing-directory/non-executable ownership gap above, I found no additional pre-existing defects.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: An existing directory can be presented as a repo-owned executable and authorise deletion of a colliding foreign LaunchAgent.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
