@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 11 / 12
 
@@ -494,5 +494,20 @@ script operand, so it was refused for a fixture reason once operands became load
 refused, unchanged across every tightening.
 
 handing off to Reviewer — final confirmation.
+
+### Reviewer · Round 11
+
+swept file: yes
+
+- [Blocker] `rb_plist_executables` rejects only operands exactly equal to `-c` or `-m` (`scripts/uninstall_rebalance.sh:150-161`); a compact Python invocation such as `ProgramArguments=["$REBALANCE_DIR/.venv/bin/python", "-cimport os; ..."]` or `[..., "-mhttp.server"]` falls through the `startswith("-")` skip, emits only the owned interpreter (`scripts/uninstall_rebalance.sh:166-209`), and then passes the `under` ownership boundary (`scripts/uninstall_rebalance.sh:252-276`). A colliding template-label plist can therefore run arbitrary inline or foreign-module code yet be deleted with `--apply`. Reject compact `-c<code>` / `-m<module>` forms too (and keep refusing when no verifiable script operand exists); add apply-mode survival/exit-1 tests for both compact forms using the real repo interpreter.
+- [Pass] Round 10's relative-path bypass is closed: both the launched executable and consumed script operand must be absolute before canonicalization (`scripts/uninstall_rebalance.sh:147-149,197-206`), and the checkout-CWD/foreign-`WorkingDirectory` regression requires the plist to survive with exit 1 (`tests/test_uninstall_rebalance.py:708-743`).
+- [Pass] The requested data deletion now treats a broken symlink as present and uses the safely delimited removal command (`scripts/uninstall_rebalance.sh:364-378`); the focused regression asserts removal and exit 0 (`tests/test_uninstall_rebalance.py:757-767`).
+- [Unverified — no execution permitted this turn] The entire uninstaller and focused test file were swept statically. Apart from the compact Python-option ownership bypass above, no additional pre-existing defects were found.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Blocker: compact Python `-c`/`-m` forms let a foreign job borrow the repo interpreter while executing unverified code, authorizing deletion of a colliding LaunchAgent.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
