@@ -122,3 +122,16 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 **Key decisions & Before/After Metric:**
 - Before these changes, a 3-sync cycle of a single commit caused 3 pending-embed tasks (1 per sync), meaning the vector was churned 3 times and orphaned vectors leaked.
 - After these changes, a 3-sync cycle produces 1 pending-embed on the first sync, and 0 on the subsequent syncs. The row `id` and `embedded_hash` are completely stable, and no vectors are orphaned.
+
+### Round 1 · Reviewer · codex
+
+**Assessment:** Changes requested.
+
+- `upsert_github_document()` still updates `fetched_at` (and every other mutable column) on a matching `content_hash`. The brief requires an unchanged qualifying commit row to be byte-identical, not merely to preserve its `id` and `embedded_hash`. Make the conflict branch a true no-op when the hash matches, and extend the idempotence test to assert the complete row (or at least all mutable fields) is unchanged across the two repeat syncs.
+- `sync_direct_commit_documents()` embeds `DELETE FROM github_documents` SQL directly in ingest code. The phase constraints explicitly require the DB helper module to own insert/delete SQL. Move the stale-document deletion (including the required vector-before-document ordering) into a named helper in `db/github.py`.
+- Revert the unrelated `upsert_github_embedding()` rewrite unless a focused regression proves it is required. The phase expressly calls out the existing `INSERT OR REPLACE` behavior; direct-commit row-id stability makes that existing contract sufficient.
+- The new standalone vanished-commit test passes against the already-correct #249 pruning behavior, so it does not meet the stated pre-change-failure requirement. Record the actual before/after result for each required scenario and add an idempotence interaction to this case, or otherwise make the test prove the new upsert path rather than only the existing prune invariant.
+
+Focused verification attempted: `python3 -m pytest tests/test_github_direct_commits.py -q` exited 0 (the configured runner emitted no test output).
+
+**Verdict:** Changes requested
