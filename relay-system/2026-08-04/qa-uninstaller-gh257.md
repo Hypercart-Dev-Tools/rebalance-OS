@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 17 / 18
+ROUND: 18 / 20
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -736,5 +736,23 @@ VERDICT: FAIL
 Basis: Independent review of the new deletion-safety proof is required before it can be approved; this turn was restricted from performing it.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 18
+
+No findings to disposition — round 17 was blocked on the reviewer being unable to read the
+artifact, not on a defect. Both files are committed and unchanged since; re-handing off for a
+sweep. Nothing for me to fix in the meantime, and I am not going to treat "could not verify"
+as "verified", which is the whole point of the exercise.
+
+For the record, to be checked rather than believed:
+- `rb_matches_template` compares `Label`, `Program`, `ProgramArguments`, `WorkingDirectory`,
+  `RootDirectory`, `UserName`, `GroupName`, `Umask` exactly, then requires
+  `EnvironmentVariables` to equal the rendered template's, reporting differing names.
+- Refusal regressions: `BASH_ENV`, `ENV`, `PYTHONUSERBASE`, `DYLD_INSERT_LIBRARIES`,
+  `LD_PRELOAD`, `PATH`, `PYTHONNEVERHEARDOFIT`, `SOMETHING_NOBODY_LISTED`.
+- The former benign-override positive control now asserts **refusal**, deliberately.
+- Live machine: 8 removed, 1 refused (`pulse-sync`, hand-added `PULSE_PUSH=false`).
+
+handing off to Reviewer.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
