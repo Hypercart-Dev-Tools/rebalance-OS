@@ -121,6 +121,11 @@ that records calls.
   the runbook's precondition checklist asks the operator to paste in.
 
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+Last recorded reason (/Users/noelsaw/Documents/rebalance-OS/phases/gh250-vb-reordered--vb4/ESCALATION.md): `cap-or-close-mismatch`. Read it before re-guessing.
+
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)
@@ -144,78 +149,3 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB4-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vb-reordered--vb4/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
-
-### Round 1 · Builder · agy
-
-- Created `utils/gh250/fence-writers.sh` supporting `fence`, `verify`, and `unfence` subcommands.
-- Mapped launchd IDs to 3-Eyes IDs explicitly to favor `python -m three_eyes pause` and `resume` for managed jobs, and fallback to `launchctl bootout` and `bootstrap` for unmanaged jobs.
-- Designed `verify` to anti-rot: it checks all loaded jobs matching `com.rebalance-os.*(sync|collector)` and fails if it finds one outside `KNOWN_WRITERS`.
-- Ensured all actions track to a durable state file `rebalance_fenced_writers.state` allowing idempotent fences and exact restores (with trap-on-interrupt protection).
-- Created `tests/test_gh250_fencing.py` using stubs for `launchctl`, `python`, `lsof`, and `sqlite3` to assert the required behavior without running actual operator jobs. Tests are passing!
-
-### Round 1 · Reviewer · codex
-
-**Verdict:** Changes requested
-
-The dedicated test passes (`6 passed`), but the implementation does not yet meet the safety contract:
-
-- Install and exercise a guarded cleanup trap for `EXIT`, `INT`, and `TERM`. The current trap covers only `INT`/`TERM`, is removed on normal completion, and `cmd_unfence` can abort on its first failed resume under `set -e`, leaving later writers fenced. Cleanup must attempt every recorded restore, preserve the state file when any restore/confirmation fails, and return non-zero only after all attempts.
-- Make a second `fence` a true no-op when its state file already exists. It currently can pause newly loaded writers without recording them, so a later `unfence` cannot restore the exact set it changed.
-- Do not ignore `bootout`/`bootstrap` failures, and do not remove state after warnings. `unfence` must confirm every recorded job is loaded again (including 3-Eyes-managed jobs' launchd state), otherwise retain the record and fail clearly.
-- Point `lsof` and the exclusive-lock check at the real resolved database (`REBALANCE_DB`, defaulting to the repo-root `rebalance.db`), not `src/rebalance.db`. The current path can make `sqlite3` create/check an unrelated empty database, defeating `verify`.
-- Use a durable non-temporary default state location; `$TMPDIR`/`/tmp` does not satisfy recovery after reboot.
-- Strengthen the fake-driven tests to prove record-before-first-action ordering, no extra action on a second `fence`, failed restore still attempts all remaining jobs and retains state, and the resolved DB path is passed to `lsof`/`sqlite3`.
-
-### Round 2 · Builder · agy
-
-- Added an `EXIT/INT/TERM` trap that gracefully resumes all writers if interrupted during `fence`. The `cmd_unfence` function temporarily suppresses error exits (`set +e`) to ensure it attempts every job restore and only returns non-zero at the end if any failed.
-- Guarded `cmd_fence` against redundant invocations: if the state file already exists, it skips execution entirely.
-- Removed `$TMPDIR` fallback for `STATE_FILE`, defaulting to a durable `$REPO_ROOT/rebalance_fenced_writers.state`.
-- Passed the correct `REBALANCE_DB` path to `lsof` and `sqlite3`, defaulting to `$REPO_ROOT/rebalance.db` instead of `src/rebalance.db`.
-- Strengthened `tests/test_gh250_fencing.py` to assert the trap logic, proper path arguments, and unfence failure continuation logic. Tests pass fully.
-
-### Round 2 · Reviewer · codex
-
-**Verdict:** Changes requested
-
-`PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_gh250_fencing.py -q` passes (`7 passed`), but two safety behaviors still need coverage and implementation:
-
-- The state file records every initially-loaded writer before any action. On a mid-fence failure, the EXIT trap calls `unfence` over that whole record, including jobs not yet paused/booted out. In particular, it can `bootstrap` a still-loaded unmanaged job, report a failure, and retain the state even though the cleanup should have restored the partial fence. Track which entries have actually changed (or make restoration first test the current loaded/paused state) so cleanup is idempotent and reliably restores only the interrupted work. Add a mixed 3-Eyes/unmanaged failure-on-Nth-action test proving it.
-- The tests do not prove record-before-action ordering: they inspect separate logs, and all normal fence fixtures classify every writer as 3-Eyes-managed, so no `bootout` path is exercised. Add one ordered shared event log assertion (state write before first pause/bootout), and tests for successful/failing `bootout` and no-extra/no-duplicate restore actions. This is essential to the trap guarantee.
-- `verify` only treats labels matching `com.rebalance-os.*(sync|collector)` as possible unknown writers. That can silently miss a writer with a different registry label. Derive/validate the candidate writer inventory from the declared 3-Eyes/launchd source, or tighten the documented named-constant fallback so every configured database writer outside `KNOWN_WRITERS` is detected; add a fixture for an unknown writer label that would evade the current regex.
-
-### Round 3 · Builder · agy
-
-- Added explicit test of state file writing before the first mutating action in `tests/test_gh250_fencing.py` via an `events.log` shared by the mock stubs.
-- Ensured idempotency in `unfence` by explicitly checking if a job is already in the expected state (resumed or loaded) before acting. If already restored or skipped due to a mid-fence failure, it correctly logs and skips to the next job. This makes Trap cleanup truly idempotent and fail-safe.
-- Removed `daily-sync` from the managed stubs in tests to actually exercise and prove the unmanaged `bootout`/`bootstrap` failure and idempotency cases.
-- Tightened `verify` check pattern from `.*(sync|collector)` to `^com\.rebalance-os\.` enforcing that *any* loaded Rebalance job must either be a KNOWN_WRITER or cause a verification failure. Added a test (`test_verify_fails_on_unknown_rebalance_job`) demonstrating an unknown writer failing `verify`.
-- Added tests for `launchctl bootout` failing mid-fence, demonstrating that an interrupted operation handles partial cleanup cleanly via the trap.
-
-### Round 3 · Reviewer · codex
-
-**Verdict:** Changes requested
-
-The dedicated check passes (`8 passed`), and the improved ordered-event and partial-failure
-coverage is useful. One release-blocking production mismatch remains:
-
-- `is_3eyes_managed` is backed by the registry as intended, but the script determines whether a
-  job was already operator-paused by running `three_eyes why ... | grep
-  "OPEN/quarantined.*paused by operator"`. The actual `three_eyes why` command reports the
-  breaker as `OPEN/quarantined` and prints an optional `reason:` line; the phrase `paused by
-  operator` is only emitted by `three_eyes status`, not `why`. Consequently, a writer paused
-  before fencing is recorded as if it were changed by this invocation and `unfence` resumes it,
-  violating the restore-exactly/pre-fence-state contract. Use a status signal that really
-  distinguishes an operator pause (or expose a machine-readable breaker status), preserve such
-  entries as untouched, and add a fake-driven test proving an already-paused managed writer gets
-  neither `pause` nor `resume` across `fence`/`unfence`.
-
-- Add a test that uses the actual `why` output shape (including `reason: paused via CLI`) so this
-  command-output contract cannot drift unnoticed. The current fake incorrectly supplies the
-  status-only phrase to `why`, which hides the bug.
-
-### Round 4 · Builder · agy
-
-- Updated `cmd_fence` and `cmd_verify` to parse the actual multi-line output of `three_eyes why`. It correctly expects `OPEN/quarantined` and `reason: paused via CLI` instead of searching for the `paused by operator` string that is emitted by `status`, fixing the issue where already-paused jobs were resumed incorrectly.
-- Updated the fake `three_eyes why` script in `tests/test_gh250_fencing.py` to echo the correct multi-line `reason: paused via CLI` output, ensuring the output shape remains enforced.
-- Added `test_already_paused_writer_gets_neither_pause_nor_resume` to `test_gh250_fencing.py` to verify that when a writer is already paused before fencing, it does not get recorded in the state file and neither gets paused during `fence` nor resumed during `unfence`.
