@@ -1,5 +1,29 @@
 # p4 — R3: writer-fencing script with guaranteed restore
 
+> ## ⚠️ Sandbox constraint — do NOT run the full test suite in your turn
+>
+> Verified 2026-08-04: MLX cannot enumerate a Metal device inside the codex/agy turn sandbox
+> (`-s workspace-write`). Any test that performs an MLX device operation **hard-crashes the whole
+> Python process with SIGABRT** — `mlx::core::metal::Device::Device()` indexes an empty device
+> array, throws an ObjC exception, and aborts. This is NOT catchable: `tests/conftest.py` guards
+> only `ImportError`, and an abort bypasses `try/except` entirely. Three crashes in ~4 minutes were
+> traced to exactly this (parent process `codex`).
+>
+> MLX works fine outside the sandbox on this machine (M1 Max, Metal 3), so this is a turn-sandbox
+> limitation, not a broken repo.
+>
+> **Run only this:**
+> ```
+> python -m pytest tests/test_github_direct_commits.py tests/test_db_github.py \
+>   tests/test_github_knowledge.py tests/test_github_coverage.py -q
+> ```
+> Verified clean (33 passed, no MLX device use). Add the specific new test file for your phase.
+> Never `pytest tests/` — it collects `test_mlx_instrumentation.py` / `test_mlx_cache_cap.py` /
+> `test_job_guard_wiring.py`, which is what aborts. None of this phase's work touches MLX, so there
+> is no reason to reach for the full suite.
+
+
+
 ## Why this is a phase and not a runbook paragraph
 
 `VACUUM` needs exclusive access, and this box runs `github_sync` 18x/day, `daily_sync` daily,
