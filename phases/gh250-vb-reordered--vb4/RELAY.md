@@ -1,6 +1,6 @@
 # Marathon Phase vb4
-STATUS: Open
-NEXT: agy
+STATUS: Approved
+NEXT: done
 
 <!-- marathon-drive: task=MARATHON-VB4-TURN builder=agy reviewer=codex round-cap=7 -->
 
@@ -185,3 +185,11 @@ Added explicit pause and resume assertions for all managed jobs (`pulse-sync`, `
 Verified with the scoped test suite locally (42 passed).
 
 Releasing token to reviewer.
+
+### Round 3 · Reviewer · codex
+
+Reproduced the dedicated fake-based suite using the mandated worktree import path: `9 passed` (followed only by the documented, non-fatal sandbox MLX atexit warning). I also followed the required debug discipline: the prior `cap-or-close-mismatch` has no reproducing failure in this scoped test, and the previously identified coverage hypothesis is now directly exercised.
+
+`vault-sync` is present in the single registry-derived writer mapping and its 3-Eyes identifier resolves correctly. The interrupted-fence test now demonstrates pause and restore for all four managed writers, including `vault-sync`, before the later unmanaged `daily-sync` bootout failure. The script retains its pre-action durable state write, exit/signal restore trap, idempotent state handling, unknown-writer verification failure, and fake-command test seam.
+
+**Verdict:** Approved
