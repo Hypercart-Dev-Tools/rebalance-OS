@@ -244,21 +244,6 @@ def sync_direct_commit_documents(database_path: Path) -> int:
     """Materialize non-PR-overlapping direct commits into the GitHub document corpus."""
     now = _now()
     with db_connection(database_path, ensure_github_schema) as conn:
-        # GH-248: drop the vectors in the same transaction as the documents.
-        # The re-insert below takes fresh autoincrement ids, so any embedding
-        # left keyed to an old id is unreachable forever -- and vec0 never
-        # reclaims the slot. Churning ~15.5k documents per run this way
-        # orphaned 2.65M vectors (10.8 GB, 99% of the vector table) in ~9 days.
-        # delete_item_children() already gets this ordering right; match it.
-        stale_doc_ids = [
-            row["id"]
-            for row in conn.execute(
-                "SELECT id FROM github_documents WHERE doc_type = 'direct_commit'"
-            ).fetchall()
-        ]
-        if stale_doc_ids:
-            gh.delete_github_embeddings_for_docs(conn, stale_doc_ids)
-        conn.execute("DELETE FROM github_documents WHERE doc_type = 'direct_commit'")
         rows = conn.execute(
             """
             SELECT d.repo_full_name, d.sha, d.ref, d.message, d.committed_at, d.html_url,
@@ -271,7 +256,12 @@ def sync_direct_commit_documents(database_path: Path) -> int:
             ORDER BY d.committed_at DESC
             """
         ).fetchall()
+
+        valid_source_keys = set()
+
         for row in rows:
+            source_key = f"{row['repo_full_name']}:direct_commit:{row['sha']}"
+            valid_source_keys.add(source_key)
             paths = [
                 file_row["path"] for file_row in conn.execute(
                     "SELECT path FROM github_direct_commit_files WHERE repo_full_name = ? AND sha = ? "
@@ -285,19 +275,30 @@ def sync_direct_commit_documents(database_path: Path) -> int:
                 f"Committed: {row['committed_at'] or ''}\nCoverage: {row['path_coverage']}\n"
                 f"Message: {row['message'] or ''}\nChanged paths:\n{path_text}"
             )
-            gh.insert_github_document(
+            gh.upsert_github_document(
                 conn,
                 repo_full_name=row["repo_full_name"],
                 source_type="direct_commit",
                 source_number=0,
                 doc_type="direct_commit",
-                source_key=f"{row['repo_full_name']}:direct_commit:{row['sha']}",
+                source_key=source_key,
                 title=(row["message"] or "direct commit").splitlines()[0][:200],
                 body=body,
                 content_hash=hashlib.sha256(body.encode("utf-8")).hexdigest(),
                 updated_at=row["committed_at"] or now,
                 fetched_at=now,
             )
+
+        # Prune vanished documents (e.g. vanished or PR-overlapping commits).
+        existing_docs = conn.execute(
+            "SELECT id, source_key FROM github_documents WHERE doc_type = 'direct_commit'"
+        ).fetchall()
+        stale_doc_ids = [
+            doc["id"] for doc in existing_docs if doc["source_key"] not in valid_source_keys
+        ]
+        if stale_doc_ids:
+            gh.delete_github_documents(conn, stale_doc_ids)
+
         conn.commit()
     return len(rows)
 

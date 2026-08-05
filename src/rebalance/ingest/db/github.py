@@ -456,6 +456,66 @@ def insert_github_document(
     return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
 
+def upsert_github_document(
+    conn: sqlite3.Connection,
+    *,
+    repo_full_name: str,
+    source_type: str,
+    source_number: int,
+    doc_type: str,
+    source_key: str,
+    title: str,
+    body: str,
+    content_hash: str,
+    updated_at: str,
+    fetched_at: str,
+) -> int:
+    """Insert or update a ``github_documents`` row, preserving ``embedded_hash`` if unchanged.
+
+    Returns the new or existing row id.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO github_documents
+            (repo_full_name, source_type, source_number, doc_type, source_key,
+             title, body, content_hash, embedded_hash, updated_at, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        ON CONFLICT(source_key) DO UPDATE SET
+            repo_full_name=excluded.repo_full_name,
+            source_type=excluded.source_type,
+            source_number=excluded.source_number,
+            doc_type=excluded.doc_type,
+            title=excluded.title,
+            body=excluded.body,
+            embedded_hash=NULL,
+            content_hash=excluded.content_hash,
+            updated_at=excluded.updated_at,
+            fetched_at=excluded.fetched_at
+        WHERE github_documents.content_hash != excluded.content_hash
+        RETURNING id
+        """,
+        (
+            repo_full_name,
+            source_type,
+            source_number,
+            doc_type,
+            source_key,
+            title,
+            body,
+            content_hash,
+            updated_at,
+            fetched_at,
+        ),
+    )
+    row = cursor.fetchone()
+    if row is not None:
+        return int(row[0])
+    return int(conn.execute(
+        "SELECT id FROM github_documents WHERE source_key = ?",
+        (source_key,)
+    ).fetchone()[0])
+
+
 def delete_item_children(
     conn: sqlite3.Connection,
     repo_full_name: str,
@@ -610,8 +670,9 @@ def upsert_github_embedding(
     conn: sqlite3.Connection, doc_id: int, embedding: bytes
 ) -> None:
     """Insert-or-replace one ``github_embeddings`` vector row."""
+    conn.execute("DELETE FROM github_embeddings WHERE doc_id = ?", (doc_id,))
     conn.execute(
-        "INSERT OR REPLACE INTO github_embeddings (doc_id, embedding) VALUES (?, ?)",
+        "INSERT INTO github_embeddings (doc_id, embedding) VALUES (?, ?)",
         (doc_id, embedding),
     )
 
@@ -632,6 +693,54 @@ def set_github_embedding_meta(
         "INSERT OR REPLACE INTO github_embedding_meta (key, value) VALUES (?, ?)",
         (key, value),
     )
+
+
+def count_orphaned_embeddings(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Count orphaned github_embeddings and estimate their wasted bytes.
+
+    Returns (orphan_count, estimated_wasted_bytes).
+    """
+    count = conn.execute(
+        """
+        SELECT COUNT(*) FROM github_embeddings e
+        WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = e.doc_id)
+        """
+    ).fetchone()[0]
+    wasted = 0
+    if count > 0:
+        row = conn.execute(
+            """
+            SELECT LENGTH(embedding) FROM github_embeddings e
+            WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = e.doc_id)
+            LIMIT 1
+            """
+        ).fetchone()
+        if row and row[0]:
+            wasted = count * row[0]
+    return count, wasted
+
+
+def count_unembedded_documents(conn: sqlite3.Connection, min_chars: int) -> int:
+    """Count github_documents needing (re-)embedding."""
+    return conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM github_documents
+        WHERE LENGTH(body) >= ?
+          AND (embedded_hash IS NULL OR embedded_hash != content_hash)
+        """,
+        (min_chars,),
+    ).fetchone()[0]
+
+
+def table_byte_size(conn: sqlite3.Connection, table_name: str) -> int:
+    """Return the total byte size of a table using dbstat."""
+    try:
+        return conn.execute(
+            "SELECT SUM(pgsize) FROM dbstat WHERE name LIKE ?", (f"{table_name}%",)
+        ).fetchone()[0] or 0
+    except sqlite3.OperationalError:
+        return 0
 
 
 # ---------------------------------------------------------------------------
@@ -721,3 +830,16 @@ def delete_github_embeddings_for_docs(
         "DELETE FROM github_embeddings WHERE doc_id = ?",
         [(doc_id,) for doc_id in doc_ids],
     )
+
+
+def delete_github_documents(conn: sqlite3.Connection, doc_ids: list[int]) -> None:
+    """Delete vectors and then documents for the given document ids."""
+    if not doc_ids:
+        return
+    delete_github_embeddings_for_docs(conn, doc_ids)
+    for i in range(0, len(doc_ids), 900):
+        chunk = doc_ids[i:i + 900]
+        conn.executemany(
+            "DELETE FROM github_documents WHERE id = ?",
+            [(doc_id,) for doc_id in chunk],
+        )

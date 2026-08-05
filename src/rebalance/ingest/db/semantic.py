@@ -424,6 +424,75 @@ def set_semantic_embedding_meta(
     )
 
 
+def count_orphaned_embeddings(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Count orphaned semantic_embeddings and estimate their wasted bytes.
+
+    Returns (orphan_count, estimated_wasted_bytes).
+    """
+    try:
+        count = conn.execute(
+            """
+            SELECT COUNT(*) FROM semantic_embeddings e
+            WHERE NOT EXISTS (SELECT 1 FROM semantic_documents d WHERE d.id = e.rowid)
+            """
+        ).fetchone()[0]
+        wasted = 0
+        if count > 0:
+            row = conn.execute(
+                """
+                SELECT LENGTH(embedding) FROM semantic_embeddings e
+                WHERE NOT EXISTS (SELECT 1 FROM semantic_documents d WHERE d.id = e.rowid)
+                LIMIT 1
+                """
+            ).fetchone()
+            if row and row[0]:
+                wasted = count * row[0]
+        return count, wasted
+    except sqlite3.OperationalError:
+        return 0, 0
+
+
+def count_unembedded_documents(
+    conn: sqlite3.Connection,
+    source_types: Sequence[str] | None,
+    min_chars: int,
+    model_version: str,
+) -> int:
+    """Count semantic_documents needing (re-)embedding."""
+    if source_types is None:
+        return conn.execute(
+            """
+            SELECT COUNT(*)
+            FROM semantic_documents
+            WHERE LENGTH(body) >= ?
+              AND (
+                    embedded_hash IS NULL
+                 OR embedded_hash != content_hash
+                 OR embedded_model_version IS NULL
+                 OR embedded_model_version != ?
+              )
+            """,
+            [min_chars, model_version],
+        ).fetchone()[0]
+
+    placeholders = ", ".join("?" for _ in source_types)
+    return conn.execute(
+        f"""
+        SELECT COUNT(*)
+        FROM semantic_documents
+        WHERE source_type IN ({placeholders})
+          AND LENGTH(body) >= ?
+          AND (
+                embedded_hash IS NULL
+             OR embedded_hash != content_hash
+             OR embedded_model_version IS NULL
+             OR embedded_model_version != ?
+          )
+        """,
+        [*source_types, min_chars, model_version],
+    ).fetchone()[0]
+
+
 # ---------------------------------------------------------------------------
 # Query
 # ---------------------------------------------------------------------------
