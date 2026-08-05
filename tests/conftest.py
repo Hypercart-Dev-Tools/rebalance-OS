@@ -1,6 +1,8 @@
 """Shared pytest fixtures for the rebalance-OS test suite."""
 
+import functools
 import os
+import subprocess
 import sys
 import types
 
@@ -64,13 +66,76 @@ KNOWN_FAILING_GH178 = {
 }
 
 
+# ---------------------------------------------------------------------------
+# GH-250: probe for a usable Metal device OUT OF PROCESS.
+#
+# When no Metal device is reachable, MLX does not raise — it ABORTS. The device
+# constructor indexes an empty device array, ObjC throws, and the exception is
+# uncaught in a C++ constructor:
+#
+#     mlx::core::metal::MetalAllocator::MetalAllocator()
+#     mlx::core::metal::Device::Device()
+#     -[__NSArray0 objectAtIndex:]  ->  objc_exception_throw
+#     std::__terminate  ->  abort            (SIGABRT, "Abort trap: 6")
+#
+# SIGABRT is a signal, so `try/except RuntimeError` cannot see it. That is why
+# the in-test guard in test_mlx_cache_cap.py ("if 'No Metal device available' in
+# str(e): pytest.skip(...)") never fires: the interpreter is already gone. The
+# whole pytest run dies with it, losing every other test's result.
+#
+# This is not hypothetical. It happened four times across two runs on
+# 2026-08-04 inside the codex/agy relay-turn sandbox (`-s workspace-write`),
+# which cannot reach the GPU even though the host can (M1 Max, Metal 3).
+#
+# A subprocess is the only safe probe: a crash there is an exit code, not our
+# death. Cached, so the cost is one subprocess per session.
+# ---------------------------------------------------------------------------
+_METAL_PROBE = "import mlx.core as mx; mx.array([1.0, 2.0]).sum().item()"
+
+
+@functools.lru_cache(maxsize=1)
+def metal_available() -> bool:
+    """True when MLX can actually create a Metal device and run an op.
+
+    Never raises and never aborts the caller — failure of any kind (missing
+    module, empty device list, abort, timeout) reports False.
+
+    Set ``REBALANCE_ASSUME_NO_METAL=1`` to force False without probing. That is
+    the belt-and-braces switch for an environment we already know is GPU-less
+    (an automated relay/marathon turn), and it is what makes the skip path
+    testable on a machine that *does* have Metal.
+    """
+    if os.environ.get("REBALANCE_ASSUME_NO_METAL") == "1":
+        return False
+    try:
+        proc = subprocess.run(
+            [sys.executable, "-c", _METAL_PROBE],
+            capture_output=True,
+            timeout=120,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return proc.returncode == 0
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers",
+        "requires_metal: needs a real Metal device. Skipped when MLX cannot "
+        "create one — probed out-of-process because MLX aborts rather than "
+        "raising, which no in-test guard can catch (GH-250).",
+    )
+
+
 def pytest_collection_modifyitems(config, items):
-    """Mark the GH-178 quarantine xfail, non-strict.
+    """Mark the GH-178 quarantine xfail, non-strict; skip Metal-only tests.
 
     Non-strict on purpose: if one starts passing the run stays green (XPASS) and
     the entry is simply stale. Strict would turn someone else's unrelated fix
     into a red build, which is the opposite of the point.
     """
+    # Probe lazily: only pay for the subprocess if something actually asks.
+    metal_skip = None
     for item in items:
         if item.nodeid in KNOWN_FAILING_GH178:
             item.add_marker(
@@ -79,6 +144,14 @@ def pytest_collection_modifyitems(config, items):
                     strict=False,
                 )
             )
+        if item.get_closest_marker("requires_metal") is not None:
+            if metal_skip is None:
+                metal_skip = pytest.mark.skip(
+                    reason="no usable Metal device (probed out-of-process; "
+                    "MLX would abort this run rather than raise) — GH-250"
+                ) if not metal_available() else False
+            if metal_skip is not False:
+                item.add_marker(metal_skip)
 
 
 @pytest.fixture(autouse=True)

@@ -109,22 +109,27 @@ def reset_instrumentation_state():
     yield
 
 
+@pytest.mark.requires_metal
 def test_cache_bounded_variable_lengths():
     """Cache stays bounded across many VARIABLE-length batches."""
     # This must use the real MLX to prove the cache bound works with variable lengths.
+    #
+    # GH-250: the `requires_metal` marker is what actually protects this test.
+    # The previous inline guard caught RuntimeError("No Metal device available"),
+    # but with no reachable device MLX ABORTS (SIGABRT) inside load() rather than
+    # raising — so the except never ran and the whole pytest process died,
+    # discarding every other test's result. Observed 4x on 2026-08-04 inside the
+    # codex/agy relay-turn sandbox. A signal cannot be caught in-process; the
+    # marker probes out-of-process (see tests/conftest.py) and skips before any
+    # MLX call happens here.
     try:
         import mlx.core as mx
-        try:
-            from mlx_embeddings import load
-            # Check if Metal device is available, if not skip
-            load(embedder.DEFAULT_MODEL)
-        except RuntimeError as e:
-            if "No Metal device available" in str(e):
-                pytest.skip("No Metal device available")
-            raise
+        from mlx_embeddings import load
+
+        load(embedder.DEFAULT_MODEL)
     except ImportError:
-        pytest.skip("mlx not installed")
-        
+        pytest.skip("mlx / mlx_embeddings not installed")
+
     embedder._cached_model = None
     embedder._cached_tokenizer = None
     embedder._cached_model_name = None
