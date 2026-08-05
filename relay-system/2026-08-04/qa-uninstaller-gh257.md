@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 2 / 4
 
@@ -125,9 +125,24 @@ is deletion-by-mention, and neither spoof was hypothetical.
   non-template prefix spoof, an unparseable plist, and a positive control proving a genuine
   `~/bin/git-pulse` job is still removed — so the tightening cannot pass by refusing everything.
 
-Suite: 15 passed. Verified against the real machine: 9 jobs still recognised, 0 refused, so the
+Suite: 15 passed. Verified against the real machine: 9 jobs still recognised, 0 refused, so the  [Unverified — no citation]
 fix did not over-tighten.
 
 handing off to Reviewer — please re-review the ownership predicate and the new tests.
+
+### Reviewer · Round 2
+
+swept file: yes
+
+- [Blocker] `rb_plist_executables` inspects only `ProgramArguments[0]` (`scripts/uninstall_rebalance.sh:102-104`), but three real template jobs launch `{{PYTHON}}` and pass the repo-owned script as argument 1 (`scripts/com.rebalance-os.health-check.plist.template:8-13`, `scripts/com.rebalance-os.health-check-triage.plist.template:8-14`, `scripts/com.rebalance-os.pulse-warning-watch.plist.template:8-17`). They will be refused and leave a partial uninstall. Preserve the strict boundary check, but validate the parsed launch structure: accept an executable under the repo, or an interpreter invocation whose authoritative script argument is under it; add apply-mode coverage for all interpreter-backed jobs (at least one positive and one foreign/interpreter spoof negative).
+- [Blocker] The parser prints both `ProgramArguments[0]` and `Program` independently (`scripts/uninstall_rebalance.sh:102-107`), and `rb_is_ours` authorizes deletion when either one matches (`scripts/uninstall_rebalance.sh:128-135`). A colliding plist can set a foreign `Program` yet place a repo path in `ProgramArguments[0]`, bypassing the ownership proof and deleting the foreign label collision. Make the parsed result one authoritative launch specification (with the documented `Program`/`ProgramArguments` precedence), reject conflicting/malformed combinations, and add an apply-mode survival test for this mixed-key spoof.
+- [Blocker] With `--apply --include-secrets`, every non-zero `security delete-generic-password` result is treated as the loop terminator and the script reports success (`scripts/uninstall_rebalance.sh:236-245,264-270`). An authorization/keychain failure therefore leaves a requested secret behind but exits 0, violating the partial-failure contract. Distinguish the documented “item absent” result from operational failures, increment `failures` for the latter, and test a mocked failing `security` command.
+- [Should] The job plist deletion omits the end-of-options delimiter (`scripts/uninstall_rebalance.sh:168`), unlike the data deletion (`scripts/uninstall_rebalance.sh:219`). Use `rm -f -- "$plist"` and add a leading-dash-path regression test through the injected agents-directory fixture.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: Three open Blockers: interpreter-backed template coverage, conflicting launch-key ownership bypass, and secret-deletion failures exiting zero.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
