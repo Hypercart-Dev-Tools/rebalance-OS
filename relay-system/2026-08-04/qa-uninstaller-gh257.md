@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 10 / 12
 
@@ -446,9 +446,25 @@ future operand there would be refused rather than admitted.
 Four new tests: foreign script under our interpreter (refused), `-c` and `-m` (refused), and a
 genuine `pulse-warning-watch`-shaped job with flags after its script (still removed).
 
-40 uninstaller tests, 1,640 repo-wide. Re-verified against the real plists from the live
+40 uninstaller tests, 1,640 repo-wide. Re-verified against the real plists from the live  [Unverified — no citation]
 backup: 9 recognised, 0 refused, unchanged.
 
 handing off to Reviewer — final confirmation.
+
+### Reviewer · Round 10
+
+swept file: yes
+
+- [Blocker] `rb_plist_executables` canonicalizes the executable and interpreter operand with `os.path.realpath()` but never requires either to be absolute or reads `WorkingDirectory` (`scripts/uninstall_rebalance.sh:117-190`). `realpath("scripts/health_issue_reporter.py")` is therefore resolved against the *uninstaller's* CWD, while launchd resolves that relative Python operand after applying the plist's `WorkingDirectory`. From a checkout CWD, a colliding health-check plist can use the real `$REBALANCE_DIR/.venv/bin/python`, relative `scripts/health_issue_reporter.py`, and `WorkingDirectory=/opt/foreign`; the predicate sees the checkout script and deletes it, but launchd runs `/opt/foreign/scripts/health_issue_reporter.py`. Require absolute executable and consumed-script paths (all shipped templates use absolute placeholders), or resolve relative paths only against a parsed, canonically-under-repo `WorkingDirectory`; add an apply-mode, checkout-CWD regression that preserves this plist and exits 1.
+- [Should] With `--apply --include-data`, a broken symlink at either fixed data location is called absent and leaves the requested data behind under exit 0: the only presence test is `-e` (`scripts/uninstall_rebalance.sh:345-356`), unlike the explicit broken-plist handling (`scripts/uninstall_rebalance.sh:267-280`). Treat `-L` as present for this explicit data deletion (the existing `rm -rf -- "$path"` is safe for a symlink), and add an apply-mode regression for a broken `temp/logs` link.
+- [Pass] The Round 9 absolute foreign-script spoof is closed: every emitted launch path must meet the ownership boundary (`scripts/uninstall_rebalance.sh:133-190,233-257`), and the focused test preserves the spoofed plist while retaining a genuine interpreter-with-flags positive control (`tests/test_uninstall_rebalance.py:629-702`).
+- [Pass] The MCP reporting change is now non-destructive and accurately caveated: parsed JSON is required for `mcpServers.rebalance`, and matching PIDs are explicitly unattributed with a conditional lifecycle statement (`scripts/uninstall_rebalance.sh:424-456`; `tests/test_uninstall_rebalance.py:571-626`).
+- No additional pre-existing defects were found in the fully swept uninstaller or focused test file beyond the findings above.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Blocker: a relative interpreter operand can be validated against the uninstaller's CWD yet execute foreign code from launchd's `WorkingDirectory`, authorizing deletion of a colliding LaunchAgent.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
