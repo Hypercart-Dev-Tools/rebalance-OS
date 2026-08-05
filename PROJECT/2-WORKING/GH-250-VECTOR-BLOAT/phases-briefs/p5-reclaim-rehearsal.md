@@ -1,5 +1,17 @@
 # p5 — Rehearse the reclaim against a throwaway COPY
 
+> ## ⚠️ NEVER write the absolute repo path in your transcript
+>
+> The turn shim scans your transcript for the real repo root and fails the turn as an "isolation
+> breach" if it appears (`agy-turn.sh` does a literal `grep -qF "$ROOT"`). This already failed two
+> turns. So refer to the interpreter ONLY through the exported variable **`$GH250_PY`** — never
+> spell out the path, not in a command, not in prose, not in a quoted log line.
+>
+> ```
+> PYTHONPATH="$PWD/src" "$GH250_PY" -m pytest <your test files> -q
+> ```
+
+
 > ## ⚠️ Sandbox constraint — do NOT run the full test suite in your turn
 >
 > Verified 2026-08-04: MLX cannot enumerate a Metal device inside the codex/agy turn sandbox
@@ -14,7 +26,7 @@
 >
 > **Run only this** (the interpreter matters — see below):
 > ```
-> PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest \\
+> PYTHONPATH="$PWD/src" "$GH250_PY" -m pytest \\
 >   tests/test_github_direct_commits.py tests/test_db_github.py \\
 >   tests/test_github_knowledge.py tests/test_github_coverage.py -q
 > ```
@@ -47,6 +59,24 @@
 
 
 
+
+## SCOPE NARROWED — do not rehearse against the real 13 GB database in your turn
+
+Originally this phase asked for a full rehearsal against a copy of the live database. That was a
+bad ask for an autonomous turn: it means copying ~13.4 GB and running a VACUUM, which is slow,
+needs ~27 GB of headroom, and is exactly the kind of heavyweight operation a contained turn should
+not be doing.
+
+**Your deliverable is the CODE, proven on synthetic databases:**
+- `utils/gh250/reclaim.py` and `utils/gh250/rehearse.sh` — complete and correct.
+- `tests/test_gh250_reclaim.py` — full coverage using pytest `tmp_path` fixtures with SMALL
+  synthetic databases (a few live + a few orphaned vectors is enough to prove the predicate,
+  batching, resume, and the production-path guard).
+- `rehearse.sh` must be *runnable* and correct, but you do NOT execute it against the real
+  database. An operator does that later, in the maintenance window, alongside R4.
+
+Everything else in this brief still applies — especially the production-path guard, which must be
+proven by a test rather than asserted by a comment, and the live-vector-count-unchanged assertion.
 
 ## The one rule
 
