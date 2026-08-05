@@ -97,12 +97,14 @@ if [ -f {tmp_path}/sqlite_fail ]; then exit 1; else exit 0; fi
         "124 0 com.rebalance-os.pulse-sync\n"
         "125 0 com.rebalance-os.daily-sync\n"
         "126 0 com.rebalance-os.3eyes.collector-health\n"
+        "127 0 com.rebalance-os.vault-sync\n"
     )
     # Notice daily-sync is missing here to force bootout/bootstrap logic
     (tmp_path / "3eyes_list.txt").write_text(
         "github-sync launchd ...\n"
         "pulse-sync launchd ...\n"
         "collector-health launchd ...\n"
+        "vault-sync launchd ...\n"
     )
     (tmp_path / "3eyes_paused.txt").touch()
     (tmp_path / "events.log").touch()
@@ -119,6 +121,7 @@ def test_fence_records_pre_state(run_env):
     state = (tmp / "state.txt").read_text()
     assert "com.rebalance-os.github-sync:3eyes:github-sync" in state
     assert "com.rebalance-os.daily-sync:launchctl:none" in state
+    assert "com.rebalance-os.vault-sync:3eyes:vault-sync" in state
     
     events_log = (tmp / "events.log").read_text()
     assert "NO_STATE: python" not in events_log
@@ -175,13 +178,14 @@ def test_verify_fails_when_writer_loaded(run_env):
     assert "FAIL:" in res.stdout
     
     (tmp / "3eyes_paused.txt").write_text(
-        "github-sync paused\npulse-sync paused\ncollector-health paused\n"
+        "github-sync paused\npulse-sync paused\ncollector-health paused\nvault-sync paused\n"
     )
     # also remove unmanaged daily-sync from launchctl to pass
     (tmp / "launchctl_list.txt").write_text(
         "123 0 com.rebalance-os.github-sync\n"
         "124 0 com.rebalance-os.pulse-sync\n"
         "126 0 com.rebalance-os.3eyes.collector-health\n"
+        "127 0 com.rebalance-os.vault-sync\n"
     )
     res = run_script("verify", env, check=True)
     assert res.returncode == 0

@@ -161,3 +161,11 @@ Releasing token to reviewer.
 Reproduced the dedicated test command: `9 passed` (the sandbox emitted the known, non-fatal MLX atexit warning). The failure hypothesis from the prior cap/close mismatch is not reproducible from this scoped test; the remaining issue is writer coverage. The 3-Eyes registry declares `vault-sync`, whose launcher calls `refresh_index(scope=["vault", "semantic"])`, but `KNOWN_WRITERS` omits `com.rebalance-os.vault-sync`. Consequently an active vault sync can continue writing during `VACUUM`, contrary to the phase's central requirement. Add it to the registry-derived fence/verify mapping and extend the fake-based tests to prove it is fenced/restored (or prove a safer generated discovery path).
 
 **Verdict:** Changes requested
+
+### Round 2 · Builder · agy
+
+Added `com.rebalance-os.vault-sync` to `KNOWN_WRITERS` in `utils/gh250/fence-writers.sh` and updated `get_3eyes_id` to map it properly. Also extended the test fixture in `tests/test_gh250_fencing.py` to mock `vault-sync` and added assertions to ensure it is fenced and restored.
+
+Verified with the scoped test suite locally (42 passed).
+
+Releasing token to reviewer.

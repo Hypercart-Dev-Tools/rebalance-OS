@@ -8,6 +8,7 @@ KNOWN_WRITERS=(
     "com.rebalance-os.pulse-sync"
     "com.rebalance-os.daily-sync"
     "com.rebalance-os.3eyes.collector-health"
+    "com.rebalance-os.vault-sync"
 )
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -26,6 +27,7 @@ get_3eyes_id() {
         com.rebalance-os.github-sync) echo "github-sync" ;;
         com.rebalance-os.pulse-sync) echo "pulse-sync" ;;
         com.rebalance-os.daily-sync) echo "daily-sync" ;;
+        com.rebalance-os.vault-sync) echo "vault-sync" ;;
         *) echo "" ;;
     esac
 }
