@@ -1,0 +1,107 @@
+# RELAY · QA the rebalance-OS uninstaller (GH-257)
+<!--
+  Single source of truth for this two-agent relay. Read the ENTIRE file before acting.
+  Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
+-->
+
+NEXT: Producer
+STATUS: Open
+ROUND: 1 / 4
+
+## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
+1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
+2. **Check it's your turn:** `NEXT` (top) names the role to act. Confirm you are bound to it and the
+   last Log block isn't already yours. If not → STOP and reply "wrong window — nudge the <other> window."
+3. **Do your role's work** on the artifact named in Setup:
+   - **Reviewer:** review vs the Definition of Done → graded findings
+     (`[Blocker]`/`[Should]`/`[Nit]`/`[Pass]`), each with a concrete fix → set a **Verdict**
+     (Approved | Changes requested | Blocked). **Review the whole file, not just the diff** (GH-268):
+     a beta test had this loop reach `Approved` in two rounds while an independent audit of the same
+     branch found 20 issues (1 critical, 4 high) — every one of them in the pre-existing code the
+     change sat on, which nobody had read. Pre-existing defects in a file you are touching are IN
+     SCOPE; if you find none, say so explicitly rather than leaving it unstated.
+     **Declare it: every review block must contain a literal `swept file: yes` or `swept file: no`
+     line.** Without it a reviewer that skipped the sweep is indistinguishable in the transcript from
+     one that did it and found nothing — which is how the original 20 issues stayed invisible.
+     Any `[Pass]` or "verified"/"confirmed" finding MUST
+     carry a quoted span or a `file:line` citation — an uncited one is mechanically downgraded to
+     `[Unverified — no citation]` (GH-173 B3). Do **not** edit the artifact; only append findings here.
+   - **Producer:** log a disposition for every open finding (Implemented / Modified / Declined + why),
+     make the change, then add new work.
+4. **Append ONE block** at the very bottom, directly **above** the marker line. Never edit earlier turns.
+5. **Update the header:** flip `NEXT`; set `STATUS` (`Approved` closes — Reviewer only; else `Open`);
+   the Producer bumps `ROUND` when opening a new cycle. If the max `ROUND` ends without `Approved`,
+   set `STATUS: Escalated`.
+6. **Commit only the relay file** (`relay(qa-uninstaller-gh257): <role> r<N>`); no push. **Stop** and report one line.
+7. **Hand off explicitly — EVERY turn, not just the first** (GH-268). End your turn by naming who acts
+   next and what they should do: *"handing off to <other role> — go to the <other> window and say
+   'take your turn'"*, or *"relay closed (Approved), no further turn needed"*. The beta report singled
+   this out: the Reviewer turn never told the user to return to the Producer window, so a relay that
+   was merely waiting looked stalled. A turn that ends without this line is not finished.
+
+## Setup
+- Artifact under review: `scripts/uninstall_rebalance.sh` (and its tests, `tests/test_uninstall_rebalance.py`)
+- Context: implements [GH-257](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/257). It reverses what the repo's 13 `scripts/install_*.sh` put on a macOS device.
+- Install contract it mirrors: `scripts/lib/install_common.sh` renders `scripts/<label>.plist.template` into `~/Library/LaunchAgents/<label>.plist`.
+- Reviewer: codex   ·   Producer: claude-a
+- Started: 2026-08-04
+- Definition of Done — grade against these, and weight them by blast radius:
+
+  **This is a deletion tool that runs against a real user's `~/Library/LaunchAgents`, which also
+  holds Google, Setapp, and Homebrew agents. A false positive destroys unrelated software. Treat
+  any path where the wrong file could be deleted as a Blocker, not a Should.**
+
+  1. **Derived inventory.** Job labels come from globbing `scripts/*.plist.template`, never a
+     hardcoded list, so a job added later is covered with no edit. Verify there is no label list
+     in the script body.
+  2. **Proven ownership before deletion.** Every plist is read and must reference its owning path
+     before removal. A label collision with unrelated software must not be removable. Look hard for
+     ways this check can be bypassed, spoofed, or skipped — e.g. symlinks, a plist that merely
+     *mentions* the path in a comment or log path, a path that is a prefix of another, an empty or
+     unset marker matching everything.
+  3. **Non-template jobs.** `com.user.git-pulse{,-health}` are named explicitly with their own
+     markers (they live in `~/bin`, so their plists never mention the repo). Confirm no `com.user.*`
+     glob exists anywhere.
+  4. **Dry-run by default.** `--apply` is required to change anything. A dry run must not report
+     the past tense ("removed") for work it did not do.
+  5. **Data and secrets are separately opt-in** (`--include-data`, `--include-secrets`) and never
+     ride along with a default run.
+  6. **Idempotent** — a second run is a clean no-op.
+  7. **Honest exit codes.** Non-zero on partial failure; a partial uninstall must never exit 0.
+     Note `set -euo pipefail` is on: check whether any arithmetic like `count=$((count + 1))`
+     evaluating to 0 can abort the script under `set -e`.
+  8. **Out of scope, must stay untouched:** the git checkout, `.venv`, and HiQS (independent
+     install: own keyring service `hiqs`, own config, own DB).
+  9. **Quoting and injection.** Paths contain spaces on this machine. Check every expansion,
+     `rm -rf` target, and `grep` argument for word-splitting, glob expansion, or a leading-dash
+     filename being read as an option.
+  10. **Test honesty.** Do the tests in `tests/test_uninstall_rebalance.py` actually prove the
+      claims, or can they pass vacuously? Specifically: could the foreign-plist test pass because
+      nothing was attempted at all?
+
+## Ground rules
+1. This file is the single source of truth. The agents never share memory — read the whole file.
+2. Take a turn only if `NEXT` names your role — otherwise reply "not my turn" and stop.
+3. One turn = one block appended at the very bottom, above the marker. Never edit earlier turns.
+4. Stay tight — findings are bullets, not essays. Grade every finding.
+5. **The Reviewer never edits the artifact.** It proposes graded findings; the Producer implements.
+6. The relay ends on **Approved** (Reviewer only). End each turn by committing just this file; no push.
+
+## Log
+
+### Reviewer · Round 1
+
+swept file: yes
+
+- [Blocker] `scripts/uninstall_rebalance.sh:87-91` treats a raw fixed-string match anywhere in the plist as proof of ownership. A colliding foreign plist that places the checkout path in an XML comment, a log path, or an unrelated string is deleted; `"$REBALANCE_DIR-archive/tool"` also passes by prefix. This violates the false-positive safety requirement. Parse the plist and require a ProgramArguments executable entry to equal a known owned path or be contained under `"$REBALANCE_DIR/"` with a path-boundary check; add apply-mode rejection tests for a comment/log-only marker and a prefix-only marker.
+- [Blocker] The explicit git-pulse markers use the same unsafe substring predicate (`scripts/uninstall_rebalance.sh:40-43,87-91`). Thus a foreign `com.user.git-pulse` plist whose executable is `$HOME/bin/git-pulse-evil` (or whose comment merely contains `$HOME/bin/git-pulse`) is removable. Validate the relevant ProgramArguments entry against the exact expected executable for each non-template job, and cover both spoof forms in tests.
+- [Should] The existing foreign-plist test proves only the trivial no-marker case (`tests/test_uninstall_rebalance.py:83-93`); it does attempt the removal path, so it is not vacuous, but it cannot catch either demonstrated spoof. Add the negative cases above and assert the file survives and the process exits non-zero.
+- [Pass] Template inventory is derived by globbing rather than listing labels (`scripts/uninstall_rebalance.sh:140-147`), and the added-template test exercises that contract (`tests/test_uninstall_rebalance.py:169-179`).
+- [Pass] Destructive paths remain gated by `--apply` (`scripts/uninstall_rebalance.sh:114-125,163-170,185-191`), while the dry-run summary uses future tense (`scripts/uninstall_rebalance.sh:207-209`).
+- [Pass] Quoted expansions and `rm -rf --` protect deletion targets (`scripts/uninstall_rebalance.sh:118-120,165-170`); no additional pre-existing defects were found in the swept uninstaller or its tests beyond the findings above.
+
+Verdict: Changes requested
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
+
+<!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
