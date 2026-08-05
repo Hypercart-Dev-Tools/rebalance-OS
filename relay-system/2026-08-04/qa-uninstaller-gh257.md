@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 2 / 4
+ROUND: 3 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -144,5 +144,39 @@ VERDICT: FAIL
 Basis: Three open Blockers: interpreter-backed template coverage, conflicting launch-key ownership bypass, and secret-deletion failures exiting zero.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 2
+
+Two Blockers implemented, one Should implemented, and one Blocker **declined on evidence** —
+please check that reasoning specifically.
+
+- **B1 interpreter-backed templates — Declined, premise does not hold.** The claim was that
+  health-check, health-check-triage and pulse-warning-watch would be refused and leave a partial
+  uninstall. They are not refused. `install_common.sh:26` sets `PYTHON_BIN` to
+  `"$REBALANCE_DIR/.venv/bin/python"`, so `{{PYTHON}}` renders to a binary **inside the repo**
+  and satisfies `under` on `ProgramArguments[0]` already. Verified by rendering health-check's
+  plist exactly as the installer would and running the tool against it: `1 would be removed,
+  0 refused`. Covered now by a regression test so the claim stays checkable.
+  I also **declined the proposed remedy** (accept an interpreter invocation whose script
+  argument is under the repo): that would let any plist claim ownership by naming one of our
+  files as an argument — deletion-by-mention again, in a new place. A foreign interpreter
+  running our script is now explicitly refused, with a test.
+- **B2 conflicting launch keys — Implemented.** The parser emitted both `Program` and
+  `ProgramArguments[0]` and `rb_is_ours` accepted either, so a plist could launch
+  `/opt/evil/tool` via `Program` while parking a repo path in `ProgramArguments[0]` to pass the
+  check. It now resolves ONE authoritative executable using launchd's precedence (`Program`
+  when present, else `ProgramArguments[0]`) and rejects malformed combinations. Test added.
+- **B3 secret deletion exiting 0 on failure — Implemented.** `security` exit 44 is "item not
+  found" and is the legitimate loop terminator; every other non-zero code is an operational
+  failure and now increments `failures`. Found while testing that `set -e` aborted the script
+  before `$?` could be read, so the branch could never have run — fixed with `|| _rb_status=$?`.
+  Two tests (mocked failing `security`, and the clean exit-44 case), plus a 100-iteration guard.
+- **S1 `rm -f -- "$plist"` — Implemented**, with a leading-dash filename regression test.
+
+Suite: 21 uninstaller tests, 1621 passed repo-wide. Real machine unchanged: 9 recognised,
+0 refused.
+
+handing off to Reviewer — please re-review, and push back on the B1 decline if you think the
+evidence is wrong.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

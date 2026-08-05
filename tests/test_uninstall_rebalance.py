@@ -184,6 +184,143 @@ def test_a_genuine_non_template_job_is_still_removed(sandbox, tmp_path):
     assert result.returncode == 0
 
 
+def test_a_foreign_Program_cannot_be_laundered_by_a_repo_path_in_ProgramArguments(sandbox):
+    """QA r2 Blocker 2: launchd runs `Program` when it is set; ProgramArguments[0] is argv[0].
+
+    Accepting whichever key happened to match let a plist park one of our paths in
+    ProgramArguments purely to satisfy the check while actually launching something else.
+    """
+    repo, _templates, agents = sandbox
+    spoof = agents / "com.rebalance-os.alpha.plist"
+    spoof.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        "<key>Program</key><string>/opt/evil/tool</string>"
+        f"<key>ProgramArguments</key><array><string>{repo}/scripts/alpha.sh</string></array>"
+        "</dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert spoof.exists()
+    assert result.returncode == 1
+
+
+def test_an_interpreter_backed_job_inside_the_repo_is_recognised(sandbox):
+    """health-check et al. launch {{PYTHON}} = <repo>/.venv/bin/python with a script argument.
+
+    The strict executable check must not refuse these — that would leave a partial uninstall.
+    """
+    repo, templates, agents = sandbox
+    (templates / "com.rebalance-os.health-check.plist.template").write_text("x", encoding="utf-8")
+    plist = agents / "com.rebalance-os.health-check.plist"
+    plist.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        "<key>ProgramArguments</key><array>"
+        f"<string>{repo}/.venv/bin/python</string>"
+        f"<string>{repo}/scripts/health_issue_reporter.py</string>"
+        "<string>--close</string>"
+        "</array></dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert not plist.exists()
+    assert result.returncode == 0
+
+
+def test_a_foreign_interpreter_running_our_script_is_refused(sandbox):
+    """A system python invoking one of our files does not make the JOB ours.
+
+    Accepting it would restore deletion-by-mention: any plist could claim ownership by naming
+    a file of ours as an argument.
+    """
+    repo, _templates, agents = sandbox
+    plist = agents / "com.rebalance-os.alpha.plist"
+    plist.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        "<key>ProgramArguments</key><array>"
+        "<string>/usr/bin/python3</string>"
+        f"<string>{repo}/scripts/alpha.py</string>"
+        "</array></dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert plist.exists()
+    assert result.returncode == 1
+
+
+def test_a_failing_security_command_is_not_reported_as_success(sandbox, tmp_path):
+    """QA r2 Blocker 3: a locked keychain left the secret in place and still exited 0."""
+    repo, templates, agents = sandbox
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    # Exit 1 = an operational failure (authorisation denied), NOT 44 ("item not found").
+    security = fake_bin / "security"
+    security.write_text("#!/bin/sh\nexit 1\n", encoding="utf-8")
+    security.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--apply", "--include-secrets"],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "RB_UNINSTALL_REPO_DIR": str(repo),
+            "RB_UNINSTALL_TEMPLATE_DIR": str(templates),
+            "RB_UNINSTALL_AGENTS_DIR": str(agents),
+        },
+    )
+
+    assert result.returncode == 1
+    assert "may still be present" in result.stdout
+
+
+def test_no_secrets_left_behind_exits_clean(sandbox, tmp_path):
+    """Exit 44 is 'item not found', which is how a successful sweep legitimately ends."""
+    repo, templates, agents = sandbox
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    security = fake_bin / "security"
+    security.write_text("#!/bin/sh\nexit 44\n", encoding="utf-8")
+    security.chmod(0o755)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--apply", "--include-secrets"],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "RB_UNINSTALL_REPO_DIR": str(repo),
+            "RB_UNINSTALL_TEMPLATE_DIR": str(templates),
+            "RB_UNINSTALL_AGENTS_DIR": str(agents),
+        },
+    )
+
+    assert result.returncode == 0
+
+
+def test_a_plist_whose_name_begins_with_a_dash_is_still_deleted(sandbox):
+    """Without `--`, rm reads a leading-dash filename as options."""
+    repo, templates, agents = sandbox
+    (templates / "-dashy.plist.template").write_text("x", encoding="utf-8")
+    plist = agents / "-dashy.plist"
+    _plist(plist, f"{repo}/scripts/dashy.sh")
+
+    result = _run(sandbox, "--apply")
+
+    assert not plist.exists()
+    assert result.returncode == 0
+
+
 def test_an_unparseable_plist_fails_closed(sandbox):
     """A file we cannot read is a file we cannot prove is ours."""
     _repo, _templates, agents = sandbox

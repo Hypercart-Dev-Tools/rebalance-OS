@@ -16,9 +16,10 @@
 #
 # 2. OWNERSHIP IS PROVEN BEFORE ANYTHING IS DELETED. ~/Library/LaunchAgents also holds
 #    com.google.keystone.agent, com.setapp.*, homebrew.mxcl.mysql and others. Matching a label
-#    is not enough: this reads each plist and requires it to reference THIS repository's path
-#    before removing it. A label collision with unrelated software is therefore not removable,
-#    which is what makes the tool safe to hand to someone else.
+#    is not enough, and neither is finding our path somewhere in the file: this parses each
+#    plist and requires the executable it actually LAUNCHES to be ours. A label collision with
+#    unrelated software is therefore not removable, which is what makes the tool safe to hand
+#    to someone else.
 #
 # Out of scope by design: the git checkout, .venv, and HiQS. HiQS is independently installed
 # (its own keyring service, config, and database) and must keep working after a full uninstall.
@@ -82,16 +83,15 @@ done
 say() { printf '%s\n' "$*"; }
 act() { if [ "$APPLY" -eq 1 ]; then printf '  %s\n' "$*"; else printf '  [dry-run] %s\n' "$*"; fi; }
 
-# Prove a plist belongs to this repository before it can be deleted. Reads the file rather
-# than trusting the label, so unrelated software that happens to collide on a name survives.
-# Print the executable(s) a plist actually launches, one per line. Empty output means the file
-# could not be parsed or launches nothing, and callers must treat that as "not ours".
+# Print the single executable a plist actually launches. No output means the file could not be
+# parsed or launches nothing, and callers must treat that as "not ours" (fail closed).
 #
 # plistlib rather than plutil because plutil is macOS-only and CI runs ubuntu-latest; a check
 # that cannot run in CI is a check nobody is testing.
 rb_plist_executables() {
     python3 - "$1" <<'PY' 2>/dev/null
 import plistlib, sys
+
 try:
     with open(sys.argv[1], "rb") as handle:
         data = plistlib.load(handle)
@@ -99,12 +99,28 @@ except Exception:
     sys.exit(1)
 if not isinstance(data, dict):
     sys.exit(1)
-arguments = data.get("ProgramArguments")
-if isinstance(arguments, list) and arguments and isinstance(arguments[0], str):
-    print(arguments[0])
+
+# ONE authoritative executable, following launchd's own precedence (QA r2 Blocker 2).
+# Printing both Program and ProgramArguments[0] and accepting whichever matched was an
+# ownership bypass: a foreign plist could set Program=/opt/evil/tool — the binary launchd
+# actually runs — while parking a repo path in ProgramArguments[0] purely to satisfy the
+# check. launchd uses Program as the executable when present, and treats ProgramArguments[0]
+# as argv[0] rather than the binary, so that is the only entry ownership may rest on.
 program = data.get("Program")
-if isinstance(program, str):
-    print(program)
+arguments = data.get("ProgramArguments")
+
+if program is not None:
+    if not isinstance(program, str):
+        sys.exit(1)
+    executable = program
+elif isinstance(arguments, list) and arguments:
+    if not isinstance(arguments[0], str):
+        sys.exit(1)
+    executable = arguments[0]
+else:
+    sys.exit(1)
+
+print(executable)
 PY
 }
 
@@ -119,6 +135,16 @@ PY
 #   exact  — the launched binary must EQUAL the marker (non-template jobs in ~/bin)
 #   under  — the launched binary must live beneath "$marker/" (jobs run from this repo); the
 #            trailing slash is the path boundary that kills the prefix attack
+#
+# Deliberately NOT accepted: a foreign interpreter running a script of ours (Program=/usr/bin/
+# python3 with "$REBALANCE_DIR/x.py" as an argument). QA r2 proposed allowing it, but it would
+# let any plist claim ownership by naming one of our files as an argument, which is the same
+# deletion-by-mention hole in a new place. It is also not a live case: install_common.sh
+# renders {{PYTHON}} to "$REBALANCE_DIR/.venv/bin/python", so the interpreter-backed jobs
+# (health-check, health-check-triage, pulse-warning-watch) launch a binary INSIDE the repo and
+# pass `under` already — verified by rendering one and running the tool against it. If a future
+# template ever used a system interpreter, this refuses it loudly rather than deleting on a
+# weaker proof, which is the correct direction to fail.
 rb_is_ours() {
     local plist="$1"
     local marker="$2"
@@ -165,7 +191,7 @@ rb_remove_job() {
         # the job may simply not be loaded — but the plist removal below must succeed.
         launchctl bootout "gui/$(id -u)/$label" 2>/dev/null || true
         launchctl unload "$plist" 2>/dev/null || true
-        if ! rm -f "$plist"; then
+        if ! rm -f -- "$plist"; then
             say "  ! $label: could not delete $plist"
             return 1
         fi
@@ -238,7 +264,33 @@ if [ "$INCLUDE_SECRETS" -eq 1 ]; then
     if command -v security > /dev/null 2>&1; then
         act "delete generic password service=$KEYRING_SERVICE"
         if [ "$APPLY" -eq 1 ]; then
-            while security delete-generic-password -s "$KEYRING_SERVICE" > /dev/null 2>&1; do :; done
+            # `security` exits 44 for "item not found", which is how the loop legitimately
+            # ends. Every OTHER non-zero code is an operational failure — a locked keychain, a
+            # denied authorisation — and the old `while ...; do :; done` swallowed all of them
+            # identically, leaving the secret in place and still exiting 0 (QA r2 Blocker 3).
+            _rb_secret_guard=0
+            while :; do
+                # `|| _rb_status=$?` is load-bearing under `set -e`: a bare failing command
+                # aborts the script before the next line can read $?, so the whole
+                # distinguish-44-from-real-failure logic below would never run.
+                _rb_status=0
+                security delete-generic-password -s "$KEYRING_SERVICE" > /dev/null 2>&1 \
+                    || _rb_status=$?
+                if [ "$_rb_status" -eq 0 ]; then
+                    _rb_secret_guard=$((_rb_secret_guard + 1))
+                    if [ "$_rb_secret_guard" -gt 100 ]; then
+                        say "  ! stopped after 100 deletions — refusing to loop forever"
+                        failures=$((failures + 1))
+                        break
+                    fi
+                    continue
+                fi
+                if [ "$_rb_status" -ne 44 ]; then
+                    say "  ! 'security' exited $_rb_status — the entry may still be present"
+                    failures=$((failures + 1))
+                fi
+                break
+            done
         fi
     else
         say "  ! 'security' not available — cannot remove keyring entries"
