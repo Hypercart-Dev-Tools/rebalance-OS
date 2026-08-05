@@ -238,6 +238,9 @@ def test_an_interpreter_backed_job_inside_the_repo_is_recognised(sandbox):
     repo, templates, agents = sandbox
     (templates / "com.rebalance-os.health-check.plist.template").write_text("x", encoding="utf-8")
     _touch_executable(f"{repo}/.venv/bin/python")
+    # The script operand must exist too — ownership covers the code, not just the interpreter.
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    (repo / "scripts" / "health_issue_reporter.py").write_text("#\n", encoding="utf-8")
     plist = agents / "com.rebalance-os.health-check.plist"
     plist.write_text(
         "<?xml version='1.0' encoding='UTF-8'?>\n"
@@ -699,6 +702,68 @@ def test_a_genuine_interpreter_job_with_flags_is_still_removed(sandbox):
     result = _run(sandbox, "--apply")
 
     assert not plist.exists()
+    assert result.returncode == 0
+
+
+def test_a_relative_script_operand_is_refused(sandbox):
+    """QA r10 Blocker: realpath() resolves relative paths against OUR cwd, launchd against
+    the plist's WorkingDirectory — so a relative operand can look owned and run elsewhere.
+    """
+    repo, _templates, agents = sandbox
+    _touch_executable(f"{repo}/.venv/bin/python")
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    (repo / "scripts" / "health_issue_reporter.py").write_text("#\n", encoding="utf-8")
+
+    plist = agents / "com.rebalance-os.alpha.plist"
+    plist.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        "<plist version='1.0'><dict>"
+        "<key>ProgramArguments</key><array>"
+        f"<string>{repo}/.venv/bin/python</string>"
+        "<string>scripts/health_issue_reporter.py</string>"
+        "</array>"
+        "<key>WorkingDirectory</key><string>/opt/foreign</string>"
+        "</dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    # Run from inside the checkout, the CWD that makes the relative path look owned.
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--apply"],
+        capture_output=True, text=True, cwd=str(repo),
+        env={
+            **os.environ,
+            "RB_UNINSTALL_REPO_DIR": str(repo),
+            "RB_UNINSTALL_TEMPLATE_DIR": str(sandbox[1]),
+            "RB_UNINSTALL_AGENTS_DIR": str(agents),
+        },
+    )
+
+    assert plist.exists()
+    assert result.returncode == 1
+
+
+def test_a_relative_executable_is_refused(sandbox):
+    repo, _templates, agents = sandbox
+    plist = agents / "com.rebalance-os.alpha.plist"
+    _plist(plist, "scripts/alpha.sh", create=False)
+
+    result = _run(sandbox, "--apply")
+
+    assert plist.exists()
+    assert result.returncode == 1
+
+
+def test_a_broken_data_symlink_is_not_called_absent(sandbox, tmp_path):
+    """QA r10 Should: same gone-vs-unreadable collapse as the plist case, in --include-data."""
+    repo, _templates, _agents = sandbox
+    (repo / "temp").mkdir(parents=True, exist_ok=True)
+    link = repo / "temp" / "logs"
+    link.symlink_to(tmp_path / "vanished")
+
+    result = _run(sandbox, "--apply", "--include-data")
+
+    assert not link.is_symlink(), "the stale link must be removed, not reported absent"
     assert result.returncode == 0
 
 

@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 10 / 12
+ROUND: 11 / 12
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -466,5 +466,33 @@ VERDICT: FAIL
 Basis: One open Blocker: a relative interpreter operand can be validated against the uninstaller's CWD yet execute foreign code from launchd's `WorkingDirectory`, authorizing deletion of a colliding LaunchAgent.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 11
+
+- **Relative path / `WorkingDirectory` — Implemented.** Accepted. `realpath()` resolved a
+  relative operand against the *uninstaller's* CWD while launchd resolves it against the
+  plist's `WorkingDirectory`, so from a checkout CWD a colliding job could pair our real
+  interpreter with relative `scripts/health_issue_reporter.py` and `WorkingDirectory=/opt/
+  foreign`, look owned, and execute foreign code. Both the executable and the script operand
+  must now be **absolute**; all twelve templates render absolute placeholders, so this costs
+  nothing real and removes the ambiguity rather than trying to model launchd's resolution.
+- **Broken data symlink — Implemented.** `-L` is now treated as present, same gone-vs-
+  unreadable fix as round 6's plist case. Regression test on a broken `temp/logs` link.
+
+**A second self-inflicted bug, again caught by the new test.** The parser printed the
+executable *before* validating the operand, and command substitution keeps stdout it has
+already captured while discarding the exit status — so a job with a valid interpreter and an
+invalid operand reached the caller looking like a clean single-path success, and the relative-
+operand test deleted the very plist it was written to preserve. Nothing is printed now until
+every path has been validated. Worth recording: two of the last three rounds found bugs in my
+*fixes*, not in the original code.
+
+One more incomplete fixture surfaced: the interpreter positive control never created its
+script operand, so it was refused for a fixture reason once operands became load-bearing.
+
+44 uninstaller tests, 1,642 repo-wide. Real plists from the live backup: 9 recognised, 0
+refused, unchanged across every tightening.
+
+handing off to Reviewer — final confirmation.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

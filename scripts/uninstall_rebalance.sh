@@ -137,6 +137,16 @@ else:
 #
 # Round 2 guarded the mirror image (a FOREIGN interpreter running our script, refused). Both
 # halves are needed: ownership means we control the binary AND the code it executes.
+# A relative path is unresolvable here (QA r10 Blocker). os.path.realpath() would resolve it
+# against the UNINSTALLER's working directory, while launchd resolves it against the plist's
+# own WorkingDirectory — so a colliding job could pair our real interpreter with a relative
+# "scripts/health_issue_reporter.py" and WorkingDirectory=/opt/foreign, look owned from a
+# checkout CWD, and actually execute /opt/foreign/scripts/health_issue_reporter.py.
+# Every shipped template renders absolute paths ({{REBALANCE_DIR}}/..., {{PYTHON}}), so
+# refusing relative ones costs nothing real and removes the ambiguity entirely.
+if not os.path.isabs(executable):
+    sys.exit(1)
+
 script_operand = None
 for candidate in operands:
     if not isinstance(candidate, str):
@@ -174,20 +184,29 @@ if os.path.exists(resolved):
 elif sys.argv[2] == "1":
     sys.exit(1)
 
-print(resolved)
+# NOTHING is printed until EVERY path has been validated. Printing the executable first and
+# exiting non-zero later leaked a partial result: command substitution keeps the stdout it
+# already captured and discards the exit status, so a job with a valid interpreter and an
+# invalid script operand arrived at the caller looking like a clean single-path success.
+# Caught by the relative-operand test, which deleted the plist it was written to preserve.
+lines = [resolved]
 
 # The script operand is checked the same way minus the executable bit — a .py passed to an
-# interpreter is read, not executed. Printed as a second line: the caller requires EVERY line
-# to satisfy the ownership boundary, so a foreign script fails the job even though the
-# interpreter passed.
+# interpreter is read, not executed. The caller requires EVERY line to satisfy the ownership
+# boundary, so a foreign script fails the job even though the interpreter passed.
 if script_operand is not None:
+    if not os.path.isabs(script_operand):
+        sys.exit(1)  # same WorkingDirectory ambiguity as the executable above
     resolved_operand = os.path.realpath(script_operand)
     if os.path.exists(resolved_operand):
         if not os.path.isfile(resolved_operand):
             sys.exit(1)
     elif sys.argv[2] == "1":
         sys.exit(1)
-    print(resolved_operand)
+    lines.append(resolved_operand)
+
+for line in lines:
+    print(line)
 PY
 }
 
@@ -345,7 +364,10 @@ say ""
 if [ "$INCLUDE_DATA" -eq 1 ]; then
     say "generated data:"
     for path in "${DATA_PATHS[@]}"; do
-        if [ -e "$path" ]; then
+        # -L as well as -e: a broken symlink here was called "absent" and the requested data
+        # was left behind under exit 0 — the same collapse of "gone" and "unreadable" fixed
+        # for plists in round 6. `rm -rf --` removes the link itself safely.
+        if [ -e "$path" ] || [ -L "$path" ]; then
             act "delete $path"
             if [ "$APPLY" -eq 1 ] && ! rm -rf -- "$path"; then
                 say "  ! could not delete $path"
