@@ -539,6 +539,35 @@ def test_a_broken_plist_symlink_is_not_reported_as_absent(sandbox, tmp_path):
     assert "not installed" not in result.stdout.split("com.rebalance-os.alpha")[1][:40]
 
 
+def test_an_mcp_registration_is_reported_even_though_it_is_not_removed(sandbox):
+    """Found by running --apply on a live machine.
+
+    Every launchd job was removed and the tool said "9 removed" — while two
+    rebalance.mcp_server processes were still running, one of them for five days. They come
+    from the checkout's own .mcp.json, not from launchd. Not removing it is correct (it is
+    part of the git checkout). Not MENTIONING it would let the summary read as "rebalance is
+    gone from this machine" when it is still running.
+    """
+    repo, _templates, _agents = sandbox
+    (repo / ".mcp.json").write_text(
+        '{"mcpServers": {"rebalance": {"command": ".venv/bin/python",'
+        ' "args": ["-m", "rebalance.mcp_server"]}}}',
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert "other entry points" in result.stdout
+    assert ".mcp.json" in result.stdout
+    assert result.returncode == 0  # reported, not treated as a failure — it is out of scope
+
+
+def test_no_mcp_section_when_the_repo_does_not_register_one(sandbox):
+    result = _run(sandbox, "--apply")
+
+    assert "other entry points" not in result.stdout
+
+
 def test_an_unparseable_plist_fails_closed(sandbox):
     """A file we cannot read is a file we cannot prove is ours."""
     _repo, _templates, agents = sandbox

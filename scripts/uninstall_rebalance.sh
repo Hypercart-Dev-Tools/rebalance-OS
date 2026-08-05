@@ -355,6 +355,29 @@ else
     say "  · service '$KEYRING_SERVICE' — HiQS uses service 'hiqs' and is unaffected either way"
 fi
 
+# --- other entry points ----------------------------------------------------------------------
+# Found by running this tool for real on a live machine: every launchd job was removed and
+# reported "9 removed", yet TWO `rebalance.mcp_server` processes were still running — one of
+# them for five days. They are not launchd jobs at all; the checkout's own `.mcp.json`
+# registers rebalance as an MCP server and the editor launches it.
+#
+# Nothing here is removed: `.mcp.json` is checked into the repository, so it is part of the
+# git checkout this tool leaves alone by design, and killing a server the operator's editor
+# owns is not ours to do. But staying silent would let "9 removed" read as "rebalance is off
+# this machine" while it is very much still running — the completeness lie this whole tool is
+# built to avoid.
+if [ -f "$REBALANCE_DIR/.mcp.json" ] && grep -q "rebalance" "$REBALANCE_DIR/.mcp.json" 2>/dev/null; then
+    say ""
+    say "other entry points — NOT launchd, NOT removed:"
+    say "  · $REBALANCE_DIR/.mcp.json registers rebalance as an MCP server"
+    say "    It is checked into the repo, so it goes when the checkout goes."
+    _rb_mcp_pids="$(pgrep -f 'rebalance\.mcp_server' 2>/dev/null | tr '\n' ' ' || true)"
+    if [ -n "${_rb_mcp_pids// /}" ]; then
+        say "  · running now: pid(s) ${_rb_mcp_pids% }"
+        say "    These survive this uninstall. They exit when the MCP host (your editor) restarts."
+    fi
+fi
+
 # --- report ----------------------------------------------------------------------------------
 say ""
 # "removed" in a run that removed nothing is precisely the report this repo keeps getting
@@ -365,7 +388,7 @@ else
     say "summary: $removed would be removed, $skipped_absent already absent, $skipped_foreign refused"
     say "         DRY RUN — nothing was changed. Re-run with --apply."
 fi
-say "left alone by design: the git checkout, .venv, and HiQS (separate install)"
+say "left alone by design: the git checkout (incl. .mcp.json), .venv, and HiQS (separate install)"
 
 if [ "$failures" -gt 0 ]; then
     # A partial uninstall that exits 0 is indistinguishable from a complete one to any caller,

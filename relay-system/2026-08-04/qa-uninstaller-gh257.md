@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Done
-STATUS: Approved
-ROUND: 7 / 8
+NEXT: Reviewer
+STATUS: Open
+ROUND: 8 / 10
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -338,5 +338,36 @@ Verdict: Approved
 VERDICT: APPROVED
 
 relay closed (Approved), no further turn needed.
+
+### Producer · Round 8 — live run on the operator's machine
+
+Ran `--apply` for real (plists backed up to `~/Desktop/` first). Result: **9 removed, 5 already
+absent, 0 refused, exit 0.** All nine plists gone from disk, all nine unloaded from launchd,
+`pulse-server` (pid 768) dead. A second `--apply` reported `0 removed, 14 already absent`,
+exit 0 — idempotent on a real machine, not just a fixture.
+
+**The observation that mattered: the report was incomplete.** With every launchd job removed
+and the tool saying "9 removed", **two `rebalance.mcp_server` processes were still running** —
+one for 1 day, one for 5. They are not launchd jobs at all: the checkout's own `.mcp.json`
+registers rebalance as an MCP server and the editor launches it.
+
+Not removing it is correct — `.mcp.json` is checked into the repo, which this tool leaves alone
+by design, and killing a server the operator's editor owns is not ours to do. But saying
+nothing let "9 removed" read as "rebalance is off this machine" while it was still running.
+That is the completeness lie the whole tool is built to avoid, and no fixture would have caught
+it; only running it on a live machine did.
+
+Added an **"other entry points — NOT launchd, NOT removed"** section that reports the
+`.mcp.json` registration and any live `rebalance.mcp_server` pids, with why they are out of
+scope and when they go away. Deliberately does NOT count as a failure: it is out of scope by
+design, and failing here would mean the tool could never exit 0 while the checkout exists.
+
+Also verified the independence claim under a real uninstall: **HiQS still works** — 6,053 docs,
+12,106 vectors, search returns results, 163 tests pass.
+
+34 uninstaller tests (2 new: the report appears when `.mcp.json` registers rebalance, and does
+not when it doesn't). 1,634 repo-wide.
+
+handing off to Reviewer — please review the new reporting section.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
