@@ -178,12 +178,16 @@ class DirectCommitCaptureTests(unittest.TestCase):
 class DirectCommitEmbeddingPruningTests(unittest.TestCase):
     """GH-248: re-syncing direct commits must not orphan their vectors.
 
-    ``sync_direct_commit_documents`` deletes every ``direct_commit`` document and
-    re-inserts it with a fresh autoincrement id. Before GH-248 it left the old
-    ``github_embeddings`` rows behind, keyed to ids that no longer existed. vec0
-    never reclaims those slots, so the vector table grew without bound (2.65M
-    orphans / 10.8 GB observed in production, 99% of the table).
+    Before this phase, ``sync_direct_commit_documents`` deleted every 
+    ``direct_commit`` document and re-inserted it with a fresh autoincrement 
+    id, leaving old ``github_embeddings`` rows behind (keyed to ids that no 
+    longer existed). vec0 never reclaims those slots, so the vector table grew 
+    without bound.
 
+    Now, unchanged direct commits are idempotent (keeping their row id and 
+    existing vector), changed commits re-embed but keep their id, and vanished 
+    commits cleanly delete their vectors before deleting the document.
+    
     The invariant these tests pin is the one the reclaim plan needs: after any
     number of syncs, every vector's ``doc_id`` resolves to a live document.
     """
