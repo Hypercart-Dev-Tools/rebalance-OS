@@ -8,6 +8,30 @@ NEXT: agy
 
 # p1 — R7: make the direct-commit writer idempotent
 
+> ## ⚠️ Sandbox constraint — do NOT run the full test suite in your turn
+>
+> Verified 2026-08-04: MLX cannot enumerate a Metal device inside the codex/agy turn sandbox
+> (`-s workspace-write`). Any test that performs an MLX device operation **hard-crashes the whole
+> Python process with SIGABRT** — `mlx::core::metal::Device::Device()` indexes an empty device
+> array, throws an ObjC exception, and aborts. This is NOT catchable: `tests/conftest.py` guards
+> only `ImportError`, and an abort bypasses `try/except` entirely. Three crashes in ~4 minutes were
+> traced to exactly this (parent process `codex`).
+>
+> MLX works fine outside the sandbox on this machine (M1 Max, Metal 3), so this is a turn-sandbox
+> limitation, not a broken repo.
+>
+> **Run only this:**
+> ```
+> python -m pytest tests/test_github_direct_commits.py tests/test_db_github.py \
+>   tests/test_github_knowledge.py tests/test_github_coverage.py -q
+> ```
+> Verified clean (33 passed, no MLX device use). Add the specific new test file for your phase.
+> Never `pytest tests/` — it collects `test_mlx_instrumentation.py` / `test_mlx_cache_cap.py` /
+> `test_job_guard_wiring.py`, which is what aborts. None of this phase's work touches MLX, so there
+> is no reason to reach for the full suite.
+
+
+
 ## Context
 
 `sync_direct_commit_documents()` in `src/rebalance/ingest/github_direct_commits.py` used to strand
@@ -88,6 +112,10 @@ passes both before and after proves nothing — that check is the whole point of
   number this phase exists to drive to zero.
 
 
+## Debug mantra (auto-triggered — 1 prior attempt(s) on this phase did not reach Approved)
+
+Before trying again, read /Users/noelsaw/Documents/rebalance-OS/.xyz/relay-automation/DEBUG-MANTRA.md and follow its four-step discipline: reproduce reliably, know the fail path, question the hypothesis, treat this round as a breadcrumb for the next one.
+
 ---
 
 ▶ TAKE YOUR TURN (agy — BUILDER role)
@@ -111,55 +139,3 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB1-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vector-bloat--vb1/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
-
-### Round 1 · Builder · agy
-
-**Files touched:**
-- `src/rebalance/ingest/db/github.py`: Added `upsert_github_document` using `INSERT ON CONFLICT(source_key) DO UPDATE` to preserve `embedded_hash` and `id` when `content_hash` matches. Modified `upsert_github_embedding` to `DELETE` then `INSERT` to handle `vec0` unique constraint failures.
-- `src/rebalance/ingest/github_direct_commits.py`: Changed `sync_direct_commit_documents` to use `upsert_github_document`. Extracted vanished document pruning into a trailing step that computes which `source_key`s are no longer valid and deletes their vectors before their documents.
-- `tests/test_github_direct_commits.py`: Rewrote `DirectCommitEmbeddingPruningTests` suite to test the 5 required invariants explicitly (idempotence, vector stability, mutated content, vanished commits, and 5-commit scale). Fixed `_embed_all_pending` to only embed documents that are actually pending.
-
-**Key decisions & Before/After Metric:**
-- Before these changes, a 3-sync cycle of a single commit caused 3 pending-embed tasks (1 per sync), meaning the vector was churned 3 times and orphaned vectors leaked.
-- After these changes, a 3-sync cycle produces 1 pending-embed on the first sync, and 0 on the subsequent syncs. The row `id` and `embedded_hash` are completely stable, and no vectors are orphaned.
-
-### Round 1 · Reviewer · codex
-
-**Assessment:** Changes requested.
-
-- `upsert_github_document()` still updates `fetched_at` (and every other mutable column) on a matching `content_hash`. The brief requires an unchanged qualifying commit row to be byte-identical, not merely to preserve its `id` and `embedded_hash`. Make the conflict branch a true no-op when the hash matches, and extend the idempotence test to assert the complete row (or at least all mutable fields) is unchanged across the two repeat syncs.
-- `sync_direct_commit_documents()` embeds `DELETE FROM github_documents` SQL directly in ingest code. The phase constraints explicitly require the DB helper module to own insert/delete SQL. Move the stale-document deletion (including the required vector-before-document ordering) into a named helper in `db/github.py`.
-- Revert the unrelated `upsert_github_embedding()` rewrite unless a focused regression proves it is required. The phase expressly calls out the existing `INSERT OR REPLACE` behavior; direct-commit row-id stability makes that existing contract sufficient.
-- The new standalone vanished-commit test passes against the already-correct #249 pruning behavior, so it does not meet the stated pre-change-failure requirement. Record the actual before/after result for each required scenario and add an idempotence interaction to this case, or otherwise make the test prove the new upsert path rather than only the existing prune invariant.
-
-Focused verification attempted: `python3 -m pytest tests/test_github_direct_commits.py -q` exited 0 (the configured runner emitted no test output).
-
-**Verdict:** Changes requested
-
-### Round 2 · Builder · agy
-
-**Files touched:**
-- `src/rebalance/ingest/db/github.py`: 
-  - Modified `upsert_github_document` to use a true `WHERE github_documents.content_hash != excluded.content_hash` clause in its `ON CONFLICT DO UPDATE SET` statement. This ensures the row is left completely byte-identical when the content matches. Also falls back to a `SELECT id` query to ensure the document ID is still returned when the update is a no-op.
-  - Added the helper `delete_github_documents(conn, doc_ids)` to move the `DELETE` logic out of the ingest module.
-  - Kept `upsert_github_embedding` as a `DELETE`/`INSERT` pair instead of reverting to `INSERT OR REPLACE`. A focused regression proved this is required: attempting to revert to `INSERT OR REPLACE` causes `sqlite3.OperationalError: UNIQUE constraint failed on github_embeddings primary key` because `github_embeddings` is a `vec0` virtual table that does not support `ON CONFLICT REPLACE`.
-- `src/rebalance/ingest/github_direct_commits.py`: 
-  - Called the new `gh.delete_github_documents` helper instead of embedding raw `DELETE` SQL.
-- `tests/test_github_direct_commits.py`:
-  - Updated `_get_doc` to select the entire row, and extended the idempotence check in `test_idempotence_and_vector_stability` to assert that `doc == first_doc`, proving that all mutable fields (including `fetched_at`) remain byte-identical.
-  - Updated `test_vanished_commit_prunes_both` to include an idempotence interaction (`sync_direct_commit_documents` -> pending=0) before forcing the PR overlap to prove the new upsert path is exercised.
-
-**Key decisions & Before/After Metric:**
-- Met the true no-op requirement for `upsert_github_document` by leveraging SQLite's `WHERE` filter on conflict resolution.
-- Proved with `test_changed_content_does_reembed` that the `vec0` limitation requires `DELETE`/`INSERT` in `upsert_github_embedding`.
-- The scoped pre-advance suite fully passes. Before the change, a 3-sync cycle scheduled 3 re-embeds; now it schedules exactly 1 embed and leaves the rows completely untouched.
-
-### Round 2 · Reviewer · codex
-
-**Assessment:** Changes requested.
-
-- The implementation satisfies the functional path I checked: unchanged rows take the conflict no-op, changed rows retain their id and clear `embedded_hash`, and stale rows delete vectors before documents through the DB helper. The focused suite passed with `python3 -m unittest tests.test_github_direct_commits -v` (8 tests).
-- The phase explicitly requires relay evidence for *each* required test failing on the prior writer. The current aggregate “3-sync cycle” metric is useful but does not record the concrete pre-change failure for idempotence/vector stability, changed content, PR-overlap after idempotence, and the five-commit scale case. Add those results (and their post-change values) to the builder block.
-- Update `DirectCommitEmbeddingPruningTests`’ class docstring: it still says the synchronizer deletes every direct-commit document and reinserts it with a fresh id, which is now intentionally false and will mislead the next maintainer.
-
-**Verdict:** Changes requested
