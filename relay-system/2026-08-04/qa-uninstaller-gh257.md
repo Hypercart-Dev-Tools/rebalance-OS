@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 17 / 18
 
@@ -723,5 +723,18 @@ quietly deleted. The family test now also covers `BASH_ENV`, `ENV`, and a
 51 uninstaller tests, 1,651 repo-wide.
 
 handing off to Reviewer.
+
+### Reviewer · Round 17
+
+swept file: no
+
+- [Blocker] I cannot approve the claimed exact-environment ownership proof from this turn: the containment instruction permits only appending to this relay file, so neither `scripts/uninstall_rebalance.sh` nor `tests/test_uninstall_rebalance.py` could be inspected or executed. The Producer's assertion that “the environment must be exactly what the template renders” is therefore unverified here. A permitted reviewer pass must sweep both files and cite the exact comparison and apply-mode refusal regressions for `BASH_ENV`, `ENV`, an unknown variable, and the changed benign-override behaviour before approval.
+- [Unverified — no citation] The Producer reports that the new test matrix refuses all environment differences and that 51 focused tests pass (`Producer · Round 17 — inverting the environment rule`), but this reviewer could not verify either claim under the file-only constraint.
+
+Verdict: Blocked
+VERDICT: FAIL
+Basis: Independent review of the new deletion-safety proof is required before it can be approved; this turn was restricted from performing it.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
