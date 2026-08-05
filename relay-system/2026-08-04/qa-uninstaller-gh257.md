@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 6 / 6
 
@@ -295,5 +295,20 @@ handing off to Producer — go to the Producer window and say 'take your turn'.
 launches a real executable file.
 
 handing off to Reviewer — confirmation round.
+
+### Reviewer · Round 6
+
+swept file: yes
+
+- [Should] `scripts/uninstall_rebalance.sh:216-219` uses `-f` to classify a template-label plist as absent. A broken `com.rebalance-os.<label>.plist` symlink in `LaunchAgents` fails `-f`, remains on disk, is reported as “not installed,” and the run exits 0—despite `rm -f -- "$plist"` being able to remove that stale entry. This violates the honest partial-failure contract (`scripts/uninstall_rebalance.sh:360-365`). Detect a `-L` broken-link case before the absent branch and refuse it loudly/non-zero (or, only if ownership can be proven safely, remove it); add an apply-mode regression that asserts the link survives and exit status is 1.
+- [Pass] Existing targets now require both a regular file and execute permission before ownership is accepted (`scripts/uninstall_rebalance.sh:149-153`); the under-repo directory, exact-marker directory, non-executable regular file, and orphan-mode directory cases all assert refusal (`tests/test_uninstall_rebalance.py:456-522`).
+- [Pass] The default path remains existence-gated while `--include-orphans` is explicitly scoped to absent targets (`scripts/uninstall_rebalance.sh:136-153,194-205`), with an orphan cleanup positive control and a foreign-boundary rejection (`tests/test_uninstall_rebalance.py:432-453`).
+- Aside from the broken-symlink exit-status gap, no additional pre-existing defects were found in the fully swept uninstaller or focused test file.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Should: a stale broken LaunchAgent symlink is silently left behind while `--apply` exits 0.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
