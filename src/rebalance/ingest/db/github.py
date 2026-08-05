@@ -456,6 +456,62 @@ def insert_github_document(
     return int(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
 
 
+def upsert_github_document(
+    conn: sqlite3.Connection,
+    *,
+    repo_full_name: str,
+    source_type: str,
+    source_number: int,
+    doc_type: str,
+    source_key: str,
+    title: str,
+    body: str,
+    content_hash: str,
+    updated_at: str,
+    fetched_at: str,
+) -> int:
+    """Insert or update a ``github_documents`` row, preserving ``embedded_hash`` if unchanged.
+
+    Returns the new or existing row id.
+    """
+    cursor = conn.execute(
+        """
+        INSERT INTO github_documents
+            (repo_full_name, source_type, source_number, doc_type, source_key,
+             title, body, content_hash, embedded_hash, updated_at, fetched_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?, ?)
+        ON CONFLICT(source_key) DO UPDATE SET
+            repo_full_name=excluded.repo_full_name,
+            source_type=excluded.source_type,
+            source_number=excluded.source_number,
+            doc_type=excluded.doc_type,
+            title=excluded.title,
+            body=excluded.body,
+            embedded_hash=CASE
+                WHEN github_documents.content_hash = excluded.content_hash THEN github_documents.embedded_hash
+                ELSE NULL
+            END,
+            content_hash=excluded.content_hash,
+            updated_at=excluded.updated_at,
+            fetched_at=excluded.fetched_at
+        RETURNING id
+        """,
+        (
+            repo_full_name,
+            source_type,
+            source_number,
+            doc_type,
+            source_key,
+            title,
+            body,
+            content_hash,
+            updated_at,
+            fetched_at,
+        ),
+    )
+    return int(cursor.fetchone()[0])
+
+
 def delete_item_children(
     conn: sqlite3.Connection,
     repo_full_name: str,
@@ -610,8 +666,9 @@ def upsert_github_embedding(
     conn: sqlite3.Connection, doc_id: int, embedding: bytes
 ) -> None:
     """Insert-or-replace one ``github_embeddings`` vector row."""
+    conn.execute("DELETE FROM github_embeddings WHERE doc_id = ?", (doc_id,))
     conn.execute(
-        "INSERT OR REPLACE INTO github_embeddings (doc_id, embedding) VALUES (?, ?)",
+        "INSERT INTO github_embeddings (doc_id, embedding) VALUES (?, ?)",
         (doc_id, embedding),
     )
 

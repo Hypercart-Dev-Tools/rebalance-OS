@@ -111,3 +111,14 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB1-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vector-bloat--vb1/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · agy
+
+**Files touched:**
+- `src/rebalance/ingest/db/github.py`: Added `upsert_github_document` using `INSERT ON CONFLICT(source_key) DO UPDATE` to preserve `embedded_hash` and `id` when `content_hash` matches. Modified `upsert_github_embedding` to `DELETE` then `INSERT` to handle `vec0` unique constraint failures.
+- `src/rebalance/ingest/github_direct_commits.py`: Changed `sync_direct_commit_documents` to use `upsert_github_document`. Extracted vanished document pruning into a trailing step that computes which `source_key`s are no longer valid and deletes their vectors before their documents.
+- `tests/test_github_direct_commits.py`: Rewrote `DirectCommitEmbeddingPruningTests` suite to test the 5 required invariants explicitly (idempotence, vector stability, mutated content, vanished commits, and 5-commit scale). Fixed `_embed_all_pending` to only embed documents that are actually pending.
+
+**Key decisions & Before/After Metric:**
+- Before these changes, a 3-sync cycle of a single commit caused 3 pending-embed tasks (1 per sync), meaning the vector was churned 3 times and orphaned vectors leaked.
+- After these changes, a 3-sync cycle produces 1 pending-embed on the first sync, and 0 on the subsequent syncs. The row `id` and `embedded_hash` are completely stable, and no vectors are orphaned.
