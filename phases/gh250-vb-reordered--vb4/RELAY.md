@@ -173,3 +173,13 @@ The dedicated test passes (`6 passed`), but the implementation does not yet meet
 - Removed `$TMPDIR` fallback for `STATE_FILE`, defaulting to a durable `$REPO_ROOT/rebalance_fenced_writers.state`.
 - Passed the correct `REBALANCE_DB` path to `lsof` and `sqlite3`, defaulting to `$REPO_ROOT/rebalance.db` instead of `src/rebalance.db`.
 - Strengthened `tests/test_gh250_fencing.py` to assert the trap logic, proper path arguments, and unfence failure continuation logic. Tests pass fully.
+
+### Round 2 · Reviewer · codex
+
+**Verdict:** Changes requested
+
+`PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest tests/test_gh250_fencing.py -q` passes (`7 passed`), but two safety behaviors still need coverage and implementation:
+
+- The state file records every initially-loaded writer before any action. On a mid-fence failure, the EXIT trap calls `unfence` over that whole record, including jobs not yet paused/booted out. In particular, it can `bootstrap` a still-loaded unmanaged job, report a failure, and retain the state even though the cleanup should have restored the partial fence. Track which entries have actually changed (or make restoration first test the current loaded/paused state) so cleanup is idempotent and reliably restores only the interrupted work. Add a mixed 3-Eyes/unmanaged failure-on-Nth-action test proving it.
+- The tests do not prove record-before-action ordering: they inspect separate logs, and all normal fence fixtures classify every writer as 3-Eyes-managed, so no `bootout` path is exercised. Add one ordered shared event log assertion (state write before first pause/bootout), and tests for successful/failing `bootout` and no-extra/no-duplicate restore actions. This is essential to the trap guarantee.
+- `verify` only treats labels matching `com.rebalance-os.*(sync|collector)` as possible unknown writers. That can silently miss a writer with a different registry label. Derive/validate the candidate writer inventory from the declared 3-Eyes/launchd source, or tighten the documented named-constant fallback so every configured database writer outside `KNOWN_WRITERS` is detected; add a fixture for an unknown writer label that would evade the current regex.
