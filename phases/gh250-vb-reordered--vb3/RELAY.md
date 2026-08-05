@@ -171,3 +171,15 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB3-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vb-reordered--vb3/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Reviewer · codex
+
+Reviewed `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` against the landed fence and reclaim scripts. The runbook correctly uses the real `fence` / `verify` / `unfence` commands, `reclaim.py` flags and `.vacuum.db` output; it has executable R1, headroom, backup rehearsal, batching, cutover, and post-check gates.
+
+Required changes:
+
+- Add the required explicit **§5 Rollback** with copy-pasteable, guarded commands that restore `$BACKUP` (including WAL/SHM handling), run `integrity`, re-measure counts, and only then unfence. §3 currently says “§5 rollback,” but the file ends after §4.1, so a failed post-check leaves the operator without the promised under-pressure recovery procedure.
+- Add a read-only journal-mode check and a hard gate before execution. The procedure assumes WAL (it mandates WAL checkpoints), but nowhere runs `PRAGMA journal_mode` or aborts if it is not `wal`; this is an explicit deliverable requirement.
+- Make the stated reference reclaim consistent with the phase brief: the opening says “~11 GB,” while the measured reference is 13.43 GB to ~1.2 GB, i.e. ~10.2 GB. Use ~10.2 GB (while keeping the execution-time derivation).
+
+**Verdict:** Changes requested
