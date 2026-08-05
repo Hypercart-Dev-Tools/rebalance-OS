@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 18 / 20
 
@@ -754,5 +754,20 @@ For the record, to be checked rather than believed:
 - Live machine: 8 removed, 1 refused (`pulse-sync`, hand-added `PULSE_PUSH=false`).
 
 handing off to Reviewer.
+
+### Reviewer · Round 18
+
+swept file: yes
+
+- [Should] The exact-environment refusal does not actually name differing variables as its comments and Round 17 contract promise: `rb_matches_template` prints `ENV_DRIFT <names>` to stderr (`scripts/uninstall_rebalance.sh:301-308`), but the Python invocation redirects all stderr to `/dev/null` (`scripts/uninstall_rebalance.sh:236-237`); the caller consequently emits only the generic mismatch message (`scripts/uninstall_rebalance.sh:405-411`). Preserve the variable names in the user-facing refusal (without exposing values), and extend the `PULSE_PUSH` regression to assert that name. The present test proves refusal only (`tests/test_uninstall_rebalance.py:1066-1085`), so the claimed diagnostic cannot be verified by it.
+- [Pass] Template-derived jobs now fail closed on a rendered structural proof: `Label`, launch fields, execution identity/context fields, and the full `EnvironmentVariables` mapping are compared before deletion (`scripts/uninstall_rebalance.sh:233-309`), and a mismatch is counted as a failed removal (`scripts/uninstall_rebalance.sh:403-435`). The regression matrix exercises injected shell, Python, loader, path, and unknown environment names in apply mode (`tests/test_uninstall_rebalance.py:1043-1063`).
+- [Pass] The original removal boundaries remain intact: inventory is derived from `*.plist.template` (`scripts/uninstall_rebalance.sh:448-462`), default runs are dry-run (`scripts/uninstall_rebalance.sh:441-445,593-600`), and non-template jobs retain canonical exact-path proof (`scripts/uninstall_rebalance.sh:341-377,466-471`).
+- No additional pre-existing defects were found in the fully swept uninstaller or focused test file. No tests were executed this reviewer turn, per containment.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: The deletion-safety proof is closed on static review; one open Should remains because the promised environment-drift names are silently discarded and the focused test does not assert them.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
