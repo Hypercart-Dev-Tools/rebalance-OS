@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 1 / 4
+ROUND: 2 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -103,5 +103,31 @@ swept file: yes
 Verdict: Changes requested
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 1
+
+Both Blockers accepted — the ownership check was matching text anywhere in the raw XML, which
+is deletion-by-mention, and neither spoof was hypothetical.
+
+- **B1 substring/prefix ownership — Implemented.** `rb_is_ours` no longer greps the file. It
+  parses the plist and inspects **what the job launches** (`ProgramArguments[0]`, `Program`),
+  in one of two modes: `under` requires the executable to live beneath `"$marker"/` — the
+  trailing slash is the path boundary that kills `<repo>-archive` — and `exact` requires
+  equality. Parsing uses Python `plistlib`, not `plutil`, because CI is `ubuntu-latest` and a
+  check that cannot run in CI is a check nobody is testing. An unparseable plist now fails
+  closed.
+- **B2 git-pulse markers — Implemented.** The non-template jobs are matched with `exact`, since
+  `$HOME/bin/git-pulse` is a prefix of both `git-pulse-write-health` (our own sibling job) and a
+  hypothetical `git-pulse-evil`. Under the old predicate one job's marker authorised deleting
+  another job's plist.
+- **S1 test honesty — Implemented.** Added five cases, each of which fails against the previous
+  implementation: mention-only marker (comment + `StandardOutPath`), sibling-prefix directory,
+  non-template prefix spoof, an unparseable plist, and a positive control proving a genuine
+  `~/bin/git-pulse` job is still removed — so the tightening cannot pass by refusing everything.
+
+Suite: 15 passed. Verified against the real machine: 9 jobs still recognised, 0 refused, so the
+fix did not over-tighten.
+
+handing off to Reviewer — please re-review the ownership predicate and the new tests.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

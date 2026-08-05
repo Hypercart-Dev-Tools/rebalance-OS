@@ -84,16 +84,64 @@ act() { if [ "$APPLY" -eq 1 ]; then printf '  %s\n' "$*"; else printf '  [dry-ru
 
 # Prove a plist belongs to this repository before it can be deleted. Reads the file rather
 # than trusting the label, so unrelated software that happens to collide on a name survives.
+# Print the executable(s) a plist actually launches, one per line. Empty output means the file
+# could not be parsed or launches nothing, and callers must treat that as "not ours".
+#
+# plistlib rather than plutil because plutil is macOS-only and CI runs ubuntu-latest; a check
+# that cannot run in CI is a check nobody is testing.
+rb_plist_executables() {
+    python3 - "$1" <<'PY' 2>/dev/null
+import plistlib, sys
+try:
+    with open(sys.argv[1], "rb") as handle:
+        data = plistlib.load(handle)
+except Exception:
+    sys.exit(1)
+if not isinstance(data, dict):
+    sys.exit(1)
+arguments = data.get("ProgramArguments")
+if isinstance(arguments, list) and arguments and isinstance(arguments[0], str):
+    print(arguments[0])
+program = data.get("Program")
+if isinstance(program, str):
+    print(program)
+PY
+}
+
+# Prove a plist belongs to us by inspecting WHAT IT LAUNCHES, not by matching text anywhere in
+# the file (QA r1, two Blockers). A substring match over the raw XML was deletion-by-mention:
+#
+#   * a foreign plist naming our path in a comment or a StandardOutPath passed the check
+#   * "$REBALANCE_DIR-archive/tool" passed on a bare prefix, with no path boundary
+#   * "$HOME/bin/git-pulse" is itself a prefix of "$HOME/bin/git-pulse-evil"
+#
+# Two modes, both anchored on the executable:
+#   exact  — the launched binary must EQUAL the marker (non-template jobs in ~/bin)
+#   under  — the launched binary must live beneath "$marker/" (jobs run from this repo); the
+#            trailing slash is the path boundary that kills the prefix attack
 rb_is_ours() {
     local plist="$1"
     local marker="$2"
-    grep -Fq -- "$marker" "$plist" 2>/dev/null
+    local mode="$3"
+    local executable
+
+    while IFS= read -r executable; do
+        [ -n "$executable" ] || continue
+        case "$mode" in
+            exact) [ "$executable" = "$marker" ] && return 0 ;;
+            under) case "$executable" in "$marker"/*) return 0 ;; esac ;;
+        esac
+    done <<EOF
+$(rb_plist_executables "$plist")
+EOF
+    return 1
 }
 
-# rb_remove_job <label> [ownership-marker]
+# rb_remove_job <label> [ownership-marker] [exact|under]
 rb_remove_job() {
     local label="$1"
     local marker="${2:-$REBALANCE_DIR}"
+    local mode="${3:-under}"
     local plist="$LAUNCH_AGENTS_DIR/$label.plist"
 
     if [ ! -f "$plist" ]; then
@@ -102,10 +150,10 @@ rb_remove_job() {
         return 0
     fi
 
-    if ! rb_is_ours "$plist" "$marker"; then
+    if ! rb_is_ours "$plist" "$marker" "$mode"; then
         # Reported loudly and counted as a failure: the operator asked for this job to be gone
         # and it is still here. Silently skipping would let a partial uninstall exit 0.
-        say "  ! $label: EXISTS but does not reference $marker — refusing to remove"
+        say "  ! $label: EXISTS but does not launch $marker ($mode) — refusing to remove"
         say "      $plist"
         skipped_foreign=$((skipped_foreign + 1))
         return 1
@@ -155,7 +203,10 @@ fi
 say ""
 say "launchd jobs installed outside the template convention:"
 for entry in "${NON_TEMPLATE_JOBS[@]}"; do
-    rb_remove_job "${entry%%|*}" "${entry##*|}" || failures=$((failures + 1))
+    # `exact`: these launch a single known binary in ~/bin, and "$HOME/bin/git-pulse" is a
+    # prefix of "$HOME/bin/git-pulse-write-health" AND of a hypothetical "…-evil", so prefix
+    # matching here would let one job authorise deleting another's plist.
+    rb_remove_job "${entry%%|*}" "${entry##*|}" exact || failures=$((failures + 1))
 done
 
 # --- generated data ------------------------------------------------------------------------

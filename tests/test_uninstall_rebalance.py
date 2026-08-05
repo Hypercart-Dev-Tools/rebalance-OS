@@ -93,6 +93,109 @@ def test_a_plist_belonging_to_other_software_is_refused(sandbox):
     assert result.returncode == 1  # and it must not be reported as a clean uninstall
 
 
+def test_a_plist_that_only_MENTIONS_our_path_is_refused(sandbox):
+    """QA r1 Blocker 1: a substring match over the raw XML is deletion-by-mention.
+
+    A foreign job that writes its logs into our tree, or names us in a comment, is not ours.
+    Ownership has to be about what the job LAUNCHES.
+    """
+    repo, _templates, agents = sandbox
+    foreign = agents / "com.rebalance-os.alpha.plist"
+    foreign.write_text(
+        "<?xml version='1.0' encoding='UTF-8'?>\n"
+        f"<!-- integrates with {repo} -->\n"
+        "<plist version='1.0'><dict>"
+        "<key>ProgramArguments</key><array><string>/opt/other/tool</string></array>"
+        f"<key>StandardOutPath</key><string>{repo}/temp/logs/other.log</string>"
+        "</dict></plist>\n",
+        encoding="utf-8",
+    )
+
+    result = _run(sandbox, "--apply")
+
+    assert foreign.exists()
+    assert result.returncode == 1
+    assert "refusing to remove" in result.stdout
+
+
+def test_a_sibling_directory_sharing_our_prefix_is_refused(sandbox):
+    """QA r1 Blocker 1: `<repo>-archive/tool` must not pass as `<repo>`.
+
+    Without a trailing-slash path boundary, any sibling directory whose name merely starts
+    with ours is treated as inside ours.
+    """
+    repo, _templates, agents = sandbox
+    foreign = agents / "com.rebalance-os.alpha.plist"
+    _plist(foreign, f"{repo}-archive/scripts/alpha.sh")
+
+    result = _run(sandbox, "--apply")
+
+    assert foreign.exists()
+    assert result.returncode == 1
+
+
+def test_a_non_template_job_is_matched_exactly_not_by_prefix(sandbox, tmp_path, monkeypatch):
+    """QA r1 Blocker 2: `~/bin/git-pulse` is a prefix of `~/bin/git-pulse-evil`."""
+    repo, templates, agents = sandbox
+    home = tmp_path / "home"
+    (home / "bin").mkdir(parents=True)
+    evil = agents / "com.user.git-pulse.plist"
+    _plist(evil, f"{home}/bin/git-pulse-evil")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--apply"],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "RB_UNINSTALL_REPO_DIR": str(repo),
+            "RB_UNINSTALL_TEMPLATE_DIR": str(templates),
+            "RB_UNINSTALL_AGENTS_DIR": str(agents),
+        },
+    )
+
+    assert evil.exists(), "a prefix match must not authorise deleting a different binary's job"
+    assert result.returncode == 1
+
+
+def test_a_genuine_non_template_job_is_still_removed(sandbox, tmp_path):
+    """The exact-match tightening must not refuse the jobs that really are ours."""
+    repo, templates, agents = sandbox
+    home = tmp_path / "home"
+    (home / "bin").mkdir(parents=True)
+    ours = agents / "com.user.git-pulse.plist"
+    _plist(ours, f"{home}/bin/git-pulse")
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--apply"],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "RB_UNINSTALL_REPO_DIR": str(repo),
+            "RB_UNINSTALL_TEMPLATE_DIR": str(templates),
+            "RB_UNINSTALL_AGENTS_DIR": str(agents),
+        },
+    )
+
+    assert not ours.exists()
+    assert result.returncode == 0
+
+
+def test_an_unparseable_plist_fails_closed(sandbox):
+    """A file we cannot read is a file we cannot prove is ours."""
+    _repo, _templates, agents = sandbox
+    junk = agents / "com.rebalance-os.alpha.plist"
+    junk.write_text("this is not a plist at all", encoding="utf-8")
+
+    result = _run(sandbox, "--apply")
+
+    assert junk.exists()
+    assert result.returncode == 1
+
+
 def test_a_job_that_was_never_installed_is_reported_absent_not_removed(sandbox):
     result = _run(sandbox, "--apply")
 
