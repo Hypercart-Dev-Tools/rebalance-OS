@@ -1,6 +1,6 @@
 # rebalance.db vector-bloat reclaim runbook (GH-250 R2)
 
-Reclaims ~11 GB from `rebalance.db` by deleting orphaned `github_embeddings` vectors and rebuilding
+Reclaims ~10.2 GB from `rebalance.db` by deleting orphaned `github_embeddings` vectors and rebuilding
 the file. One operator, one maintenance window, start to finish.
 
 **This runbook does not implement the reclaim.** Two tested scripts do:
@@ -173,6 +173,26 @@ export EXPECT_MAX=$(( BASELINE_BYTES - EXPECT_RECLAIM * 90 / 100 ))    # at leas
 export EXPECT_MIN=$(( (BASELINE_BYTES - EXPECT_RECLAIM) * 70 / 100 ))  # allow extra vacuum gain
 printf 'expect final size between %s and %s bytes\n' "$EXPECT_MIN" "$EXPECT_MAX" | tee -a "$RECORD"
 ```
+
+### 1.4a Journal mode must be WAL
+
+Everything below assumes WAL: the checkpoint gates in §1.6 and inside `reclaim.py` are meaningless in
+`delete` or `truncate` mode, and would pass vacuously. Verify, do not assume.
+
+```bash
+JM=$("$PY" -c "
+import os,sqlite3
+db=os.environ['DB']
+c=sqlite3.connect(f'file:{db}?mode=ro',uri=True)
+print(c.execute('PRAGMA journal_mode').fetchone()[0])")
+echo "journal_mode: $JM" | tee -a "$RECORD"
+if [ "$JM" != "wal" ]; then
+  echo "ABORT: journal_mode is '$JM', not 'wal' — the checkpoint gates below would pass vacuously." | tee -a "$RECORD"
+  exit 1
+fi
+```
+
+Measured on this database 2026-08-05: `wal`.
 
 ### 1.5 Fence every writer
 
@@ -410,13 +430,17 @@ Measured 2026-08-05 on `noels-Mac-Studio`:
 | total vectors | 2,712,534 |
 | **orphaned** (no live document) | **2,678,314 (98.7%)** |
 | live vectors | 34,220 |
-| expected reclaim | **~10.97 GB** (2,678,314 x 4096 B) |
-| expected final size | **~2.5 GB**; §1.4's computed gate range is 2.4–4.4 GB |
+| expected reclaim | **~10.2 GB** = 10,970,374,144 B (2,678,314 x 4096) |
+| expected final size | **~3.3 GB** (13.54 − 10.22); §1.4's computed gate range is 2.4–4.4 GB |
 
-Note the final size is ~2.5 GB, **not** the ~1.2 GB quoted in early GH-250 analysis. That figure
-assumed only ~26k live vectors; the live count is 34,220 and the database has grown since. §1.4
-recomputes the range at run time from the measured baseline, so the gate never depends on a figure
-quoted here going stale — which is exactly why it is computed rather than written down.
+All sizes here are **GiB**, matching what `stat` and `df` report. 2,678,314 x 4096 B is
+10,970,374,144 B — 10.22 GiB, or 10.97 GB decimal. An earlier revision of this appendix quoted the
+decimal figure while every other number was binary; they are the same bytes.
+
+The expected final size is **~3.3 GiB**, not the ~1.2 GB quoted in early GH-250 analysis (which
+assumed only ~26k live vectors; the live count is 34,220 and the file has grown) and not the ~2.5 GB
+an intermediate revision claimed. §1.4 recomputes the range at run time from the measured baseline,
+so the gate never depends on any figure written here staying true.
 
 Root cause was `sync_direct_commit_documents()` deleting `direct_commit` documents and re-inserting
 them with fresh autoincrement ids while never pruning their vectors — fixed in #249 and made
