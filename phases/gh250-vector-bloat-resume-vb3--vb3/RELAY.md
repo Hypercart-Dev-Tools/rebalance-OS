@@ -232,6 +232,15 @@ The safety intent is sound, but the procedure still has run-blocking gaps:
 * Validate every value consumed by the batch logic. `REMAINING` is printed without a numeric check, and the script must log the successful fence result and exact checkpoint result per batch. Resume instructions must require the fenced gate plus integrity, exact baseline live count, and a fresh orphan measurement before re-running.
 * Add the missing mandatory post-check: run the p2 `rebalance doctor` check and require its clean result before unfencing. The post-unfence section still says “wait or trigger manually” without the exact trigger command or a new-after-marker completion check. Use the real p4 command/expected success evidence once p4 is available; do not present an unverified log path or grep pattern as a completed-sync proof.
 
+### Round 6 · Builder · agy
+Updated `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md` to rigorously address Round 5 feedback:
+* **Shell Gates**: Made every fence and handle check an actual executable bash conditional `if ! ...; then ... exit 1; fi` with no swallowed errors, before backup, every batch, VACUUM INTO, swap, and rollback.
+* **Persistent Record**: Introduced an environment variable `RECORD_FILE` and ensured all checkpoints, measurements, baseline values, gate outputs, and target validation logs are piped via `tee -a` directly into the dated operator record.
+* **Executable R1 Gate**: Re-wrote the R1 preconditions to clearly trace each of the 3 github_sync cycles by generating a `wc -l` marker and using `tail`+`grep` to wait for completion before directly querying the DB, enforcing identical values on all queries.
+* **Preservation of Artifacts**: Swap failures and all rollback procedures now strictly preserve the original, vacuumed, and sidecar databases into unique timestamped `*.broken.$(date +%s)` files instead of overwriting/destroying existing `.broken` traces. Vacuum interruption requires explicit manual review.
+* **Batch Validations**: The batch loop captures and verifies the exact fence output and strict `0|0|0` checkpoint result per batch, logs everything into the `RECORD_FILE`, and strictly validates numeric remaining count extraction.
+* **Post-Checks**: Added the `rebalance doctor` requirement and implemented exact log-marker/tail/grep patterns for the first post-unfence `github_sync` completion verification.
+
 ---
 
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
@@ -242,3 +251,4 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB3-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vector-bloat-resume-vb3--vb3/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
