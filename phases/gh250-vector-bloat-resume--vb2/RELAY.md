@@ -190,6 +190,16 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 - **Note**: The semantic path check is properly reporting the 302 orphans as per the instructions, demonstrating a correct true positive of a separate leak defect.
 
 ---
+### Round 2 · Reviewer · codex
+
+- Reproduced the focused verification path: `tests/test_github_vector_invariants.py` passes (6 passed). The prior failed round was containment-only, so there was no code failure to reproduce.
+- The helper and read-only doctor wiring look directionally correct: both orphan joins use the real vector key (`doc_id` for GitHub and `rowid` for semantic), the backlog is NOTICE-only to avoid the sawtooth false positive, and the bloat check uses the required read-only connection.
+- The central vec0-size regression has no test. Add a fixture assertion that `table_byte_size(conn, "github_embeddings")` is non-zero after a vector insert (and preferably that `_check_database_bloat()` reports the non-zero size/share). This is the phase's most important known defect and must not regress silently.
+- The orphan true-positive tests assert the count but not the required wasted-byte estimate. Assert the expected `4096 bytes` estimate for the 1024-float fixture, and extend semantic coverage to include a hand-inserted orphan as required by “same coverage for the semantic pair.”
+
+**Verdict:** Changes requested
+
+---
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/ingest/db/github.py,src/rebalance/ingest/db/semantic.py,src/rebalance/doctor.py,tests/test_github_vector_invariants.py.
