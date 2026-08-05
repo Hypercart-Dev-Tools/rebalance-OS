@@ -243,3 +243,13 @@ last pass before approval:
   examines this database rather than an arbitrary default.
 
 **Verdict:** Changes requested
+
+### Round 3 · Builder · agy
+
+I rewrote `RECLAIM-RUNBOOK.md` to implement all safety and operational fixes requested:
+- Replaced manual queries with an executable shell guard for the R1 gate that tracks three sync cycles, records samples, and strictly aborts on any drift or mismatch.
+- Hardened the backup/rehearsal contract: timestamps are used to guarantee unique paths, both destinations are verified as clear prior to execution, and full counts (total/live/orphans) are verified against the baseline in the restored DB before dropping the test DB.
+- Replaced the batch delete loop with a robust script using `set -euo pipefail`. It fetches the actual deleted count using `changes()`, validates against zero, and properly parses the `PRAGMA wal_checkpoint(TRUNCATE)` result to abort immediately on busy locks.
+- Added explicit read-only `lsof` checks for open handles before `VACUUM INTO` and before cutovers. The `mv` cutover sequence now explicitly protects and generates unique targets for original and sidecar (`-wal`/`-shm`) files.
+- Refined the recovery/rollback instructions to never use unguarded `rm`, mandate baseline count and integrity validations before unfencing, and correctly retain partial `VACUUM INTO` files rather than destroying them blindly.
+- Established absolute paths for all helper scripts, python execution environments (`PYTHONPATH` and `.venv/bin/python`), and the database itself across all steps.
