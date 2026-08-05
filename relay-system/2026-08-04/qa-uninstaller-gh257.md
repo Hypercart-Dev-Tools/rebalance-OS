@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 3 / 4
 
@@ -178,5 +178,21 @@ Suite: 21 uninstaller tests, 1621 passed repo-wide. Real machine unchanged: 9 re
 
 handing off to Reviewer — please re-review, and push back on the B1 decline if you think the
 evidence is wrong.
+
+### Reviewer · Round 3
+
+swept file: yes
+
+- [Blocker] `scripts/uninstall_rebalance.sh:154-159` authorizes ownership from the *spelling* of an executable path only; it neither resolves symlinks nor requires the target to exist. A colliding plist with `ProgramArguments[0]="$REBALANCE_DIR/bin/owned-looking"` where that entry is a symlink to `/opt/foreign/tool` is deleted, as is one pointing at a nonexistent path under the checkout. The same absence check affects the exact `~/bin` markers. This is still a false-positive deletion path, and the DoD explicitly calls out symlinks. In the plist parser, require a real existing executable and compare canonical paths: `under` must be contained beneath canonical `REBALANCE_DIR` with a boundary, while `exact` must be the canonical owned marker. Add apply-mode survival/exit-1 tests for an external symlink and a nonexistent under-repo path (and cover the exact marker if its canonicalization differs).
+- [Pass] The B1 decline is supported: the installer renders `{{PYTHON}}` as the checkout's `.venv/bin/python` (`scripts/lib/install_common.sh:24-26`), and the lexical `under` check accepts that actual executable (`scripts/uninstall_rebalance.sh:139-146,154-159`); the focused positive control removes it (`tests/test_uninstall_rebalance.py:210-232`). Do not weaken ownership to accept a system interpreter merely because it names a repo script.
+- [Pass] The conflicting-key bypass is closed: `Program` now supplies the one authoritative executable when present (`scripts/uninstall_rebalance.sh:109-123`), and the mixed-key foreign plist survives in apply mode (`tests/test_uninstall_rebalance.py:187-207`).
+- [Pass] Non-44 keychain failures now increment `failures` rather than being mistaken for an absent item (`scripts/uninstall_rebalance.sh:267-284`), covered by the mocked failure test (`tests/test_uninstall_rebalance.py:259-283`). Focused verification: `pytest -q tests/test_uninstall_rebalance.py` — 21 passed.
+- [Unverified — no citation] The sweep found no additional pre-existing defects in the uninstaller or its focused tests beyond the open canonical-path ownership gap.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Blocker: a foreign colliding plist can pass ownership by naming a nonexistent or symlinked path under the repo.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
