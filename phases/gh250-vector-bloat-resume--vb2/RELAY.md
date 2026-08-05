@@ -183,6 +183,13 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 
 ---
 
+### Round 2 · Builder · agy
+
+- **`src/rebalance/ingest/db/github.py`**: Updated `table_byte_size` to use `name LIKE ?` with `github_embeddings%` so it matches the `vec0` VIRTUAL shadow tables and accurately computes database bloat.
+- **`tests/test_github_vector_invariants.py`**: Re-wrote tests using Python's `unittest` framework to verify all requirements: clean fixture passes, orphaned vector insertion correctly fails, deleted document correctly fails, backlog sawtooth correctly stays quiet (INFO/NOTICE instead of FAIL), semantic path fails accurately (confirming the known issue of 302 semantic orphans), and read-only execution does not throw exceptions.
+- **Note**: The semantic path check is properly reporting the 302 orphans as per the instructions, demonstrating a correct true positive of a separate leak defect.
+
+---
 ▶ TAKE YOUR TURN (codex — REVIEWER role)
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/ingest/db/github.py,src/rebalance/ingest/db/semantic.py,src/rebalance/doctor.py,tests/test_github_vector_invariants.py.

@@ -737,7 +737,7 @@ def table_byte_size(conn: sqlite3.Connection, table_name: str) -> int:
     """Return the total byte size of a table using dbstat."""
     try:
         return conn.execute(
-            "SELECT SUM(pgsize) FROM dbstat WHERE name=?", (table_name,)
+            "SELECT SUM(pgsize) FROM dbstat WHERE name LIKE ?", (f"{table_name}%",)
         ).fetchone()[0] or 0
     except sqlite3.OperationalError:
         return 0
