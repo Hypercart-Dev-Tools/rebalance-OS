@@ -159,3 +159,16 @@ You are the REVIEWER for this phase. Read the latest builder block above AND rev
 3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB3-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
    Edit ONLY phases/gh250-vector-bloat-resume--vb3/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+
+### Round 1 · Builder · agy
+I authored the `RECLAIM-RUNBOOK.md` as requested in the brief.
+
+**Files touched:**
+- `PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/RECLAIM-RUNBOOK.md`
+- `phases/gh250-vector-bloat-resume--vb3/RELAY.md`
+
+**Key Decisions:**
+- Started the runbook with a "Pre-Flight Measurements" section so the execution captures actual metrics (since orphan count drifts before R1 landing).
+- Created a batched delete script loop utilizing `NOT EXISTS` rather than `NOT IN` in a chunked size of `50000`, issuing `PRAGMA wal_checkpoint(TRUNCATE)` and committing between batches.
+- Selected `VACUUM INTO` and an atomic swap (`mv`) over in-place `VACUUM` for better safety, so the original DB stays untouched until compacting finishes.
+- Ensured all specified abort conditions and recovery actions are thoroughly spelled out. No live database writes/deletes happen without first gating on integrity, flat orphan count, and fenced writers.
