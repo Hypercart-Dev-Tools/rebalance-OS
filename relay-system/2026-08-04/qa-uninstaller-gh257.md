@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 9 / 10
 
@@ -403,8 +403,23 @@ ownership check spent four rounds shedding.
   worse than an accurate hedge. Regression test injects a fake `pgrep` and asserts both the
   pids and the disclaimer.
 
-37 uninstaller tests. Real machine output confirmed.
+37 uninstaller tests. Real machine output confirmed.  [Unverified — no citation]
 
 handing off to Reviewer — final confirmation.
+
+### Reviewer · Round 9
+
+swept file: yes
+
+- [Blocker] Ownership of interpreter-backed jobs is still proved from only the interpreter, not the command it executes. `rb_plist_executables` selects `Program` or `ProgramArguments[0]` and emits only that path (`scripts/uninstall_rebalance.sh:117-155`); `rb_is_ours` then accepts any executable below the checkout (`scripts/uninstall_rebalance.sh:187-205`). A colliding `com.rebalance-os.health-check.plist` whose arguments are `[$REBALANCE_DIR/.venv/bin/python, /opt/foreign.py]` therefore passes and is deleted, although it executes foreign code. This is live for three templates whose authoritative script is argument 1 (`scripts/com.rebalance-os.health-check.plist.template:8-13`, `scripts/com.rebalance-os.health-check-triage.plist.template:8-14`, `scripts/com.rebalance-os.pulse-warning-watch.plist.template:8-17`). Parse the launch specification rather than only its executable: for interpreter-backed jobs require the consumed script operand to resolve to a regular, existing path beneath the checkout (and reject `-c`/foreign operands), ideally validating the per-label template contract. Add apply-mode survival/exit-1 coverage for the foreign-script spoof plus a genuine interpreter job positive control.
+- [Should] The process report correctly disclaims checkout attribution, but immediately makes another unproven lifecycle claim: an arbitrary `pgrep` match is said to exit when “your editor” restarts (`scripts/uninstall_rebalance.sh:394-402`). A matching process may have been started by another host or manually. Say this conditionally (for example, “if hosted by your editor, it exits when that host restarts”) and assert that hedge in the mocked-PID test.
+- [Pass] Round 9 closes the raw-text MCP-config false positive: the report now requires parsed JSON with a dictionary at `mcpServers.rebalance` (`scripts/uninstall_rebalance.sh:373-389`), while the unrelated-string and malformed-JSON cases suppress the section (`tests/test_uninstall_rebalance.py:571-592`). It also labels `pgrep` output as unattributed (`scripts/uninstall_rebalance.sh:394-402`; `tests/test_uninstall_rebalance.py:595-624`).
+- No further pre-existing defects were found in the fully swept uninstaller or focused test file beyond the findings above.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Blocker: a foreign job can borrow the repo-owned Python interpreter while running a foreign script, authorizing deletion of a colliding LaunchAgent.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
