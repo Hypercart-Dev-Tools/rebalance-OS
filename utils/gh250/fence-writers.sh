@@ -99,7 +99,7 @@ cmd_verify() {
     local failed=0
     
     local all_loaded
-    all_loaded=$("$LAUNCHCTL_CMD" list | awk '{print $3}' | grep -E '^com\.rebalance-os\..*(sync|collector)' || true)
+    all_loaded=$("$LAUNCHCTL_CMD" list | awk '{print $3}' | grep '^com\.rebalance-os\.' || true)
     
     for loaded in $all_loaded; do
         local known=0
@@ -179,8 +179,12 @@ cmd_unfence() {
         fi
         
         if [ "$method" = "3eyes" ]; then
-            echo "Resuming $w via 3-Eyes ($t_id)..."
-            (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes resume "$t_id" >/dev/null)
+            if (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes why "$t_id" 2>/dev/null | grep -q "closed"); then
+                echo "$w ($t_id) is already resumed (or was never paused)."
+            else
+                echo "Resuming $w via 3-Eyes ($t_id)..."
+                (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes resume "$t_id" >/dev/null)
+            fi
             
             if (cd "$REPO_ROOT/utils/3-eyes" && "$PYTHON_CMD" -m three_eyes why "$t_id" 2>/dev/null | grep -q "closed") && "$LAUNCHCTL_CMD" list | awk '{print $3}' | grep -q "^${w}$"; then
                 echo "  -> Confirmed $t_id is resumed and loaded."
@@ -189,8 +193,12 @@ cmd_unfence() {
                 any_failed=1
             fi
         elif [ "$method" = "launchctl" ]; then
-            echo "Bootstrapping $w via launchctl..."
-            "$LAUNCHCTL_CMD" bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/${w}.plist" >/dev/null 2>&1
+            if "$LAUNCHCTL_CMD" list | awk '{print $3}' | grep -q "^${w}$"; then
+                echo "$w is already loaded."
+            else
+                echo "Bootstrapping $w via launchctl..."
+                "$LAUNCHCTL_CMD" bootstrap "gui/$(id -u)" "$HOME/Library/LaunchAgents/${w}.plist" >/dev/null 2>&1
+            fi
             
             if "$LAUNCHCTL_CMD" list | awk '{print $3}' | grep -q "^${w}$"; then
                 echo "  -> Confirmed $w is loaded."
