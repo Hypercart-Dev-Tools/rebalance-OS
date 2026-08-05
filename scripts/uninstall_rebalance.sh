@@ -139,7 +139,17 @@ resolved = os.path.realpath(executable)
 # be evidence that the job belongs to this installation. Orphan cleanup — a half-removed
 # checkout leaving jobs whose files are already gone — is a real need, but it is a DIFFERENT
 # operation and gets its own opt-in flag rather than weakening the default proof.
-if sys.argv[2] == "1" and not os.path.exists(resolved):
+# Existence alone is not enough (QA r5 Blocker): "$REBALANCE_DIR/scripts" exists and sits
+# under the checkout, so a foreign plist naming a DIRECTORY passed the ownership test even
+# though launchd could never launch it. What proves ownership is a real, executable file.
+#
+# --include-orphans relaxes ONLY the absent case — a half-removed checkout whose files are
+# gone. An existing-but-not-executable target is never accepted under either mode, because
+# that is not an orphan, it is a thing that was never launchable.
+if os.path.exists(resolved):
+    if not (os.path.isfile(resolved) and os.access(resolved, os.X_OK)):
+        sys.exit(1)
+elif sys.argv[2] == "1":
     sys.exit(1)
 
 print(resolved)

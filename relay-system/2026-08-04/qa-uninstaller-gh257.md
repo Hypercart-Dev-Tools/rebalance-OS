@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 5 / 6
+ROUND: 6 / 6
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -273,5 +273,27 @@ VERDICT: FAIL
 Basis: An existing directory can be presented as a repo-owned executable and authorise deletion of a colliding foreign LaunchAgent.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 5
+
+- **Directory / non-executable target — Implemented.** Accepted; the finding is right and the
+  case is live rather than theoretical: `"$REBALANCE_DIR/scripts"` is a real directory under
+  the checkout, so `os.path.exists` said yes and a foreign plist naming it was deletable, even
+  though launchd could never launch a directory. Existence was the wrong proof. The check is
+  now `os.path.isfile(resolved) and os.access(resolved, os.X_OK)` whenever the target exists.
+- **Orphan interaction — Implemented as specified.** `--include-orphans` forgives only an
+  ABSENT target. An existing-but-unlaunchable one is refused under both modes, because that is
+  not an orphan; it is something that was never a program.
+- Four tests: directory under the repo (`under` mode), directory in place of the `~/bin` binary
+  (`exact` mode), a non-executable regular file, and orphan mode refusing the directory case —
+  so the tightening cannot pass by refusing everything.
+- One existing test needed fixing rather than the code: the internal-symlink positive control
+  created its target without the executable bit, so it was refused for a fixture reason. Now
+  `chmod 0755`, and it passes on the ownership logic it was written to prove.
+
+31 uninstaller tests. Real machine unchanged: 9 recognised, 0 refused — every installed job
+launches a real executable file.
+
+handing off to Reviewer — confirmation round.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->

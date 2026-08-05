@@ -372,6 +372,7 @@ def test_a_symlink_that_stays_inside_the_repo_still_confers_ownership(sandbox):
     (repo / "scripts").mkdir(parents=True, exist_ok=True)
     real = repo / "scripts" / "alpha.sh"
     real.write_text("#!/bin/sh\n", encoding="utf-8")
+    real.chmod(0o755)  # ownership now requires a genuinely launchable file
     link = repo / "bin"
     link.mkdir(exist_ok=True)
     alias = link / "alpha"
@@ -447,6 +448,75 @@ def test_include_orphans_still_refuses_a_foreign_job(sandbox):
     _plist(foreign, f"{repo}-archive/scripts/alpha.sh", create=False)
 
     result = _run(sandbox, "--apply", "--include-orphans")
+
+    assert foreign.exists()
+    assert result.returncode == 1
+
+
+def test_a_directory_under_the_repo_is_not_an_executable(sandbox):
+    """QA r5 Blocker: `$REBALANCE_DIR/scripts` exists and is under the repo, but launchd
+
+    could never launch it. Existence is not the proof — a real executable file is.
+    """
+    repo, _templates, agents = sandbox
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    foreign = agents / "com.rebalance-os.alpha.plist"
+    _plist(foreign, f"{repo}/scripts", create=False)
+
+    result = _run(sandbox, "--apply")
+
+    assert foreign.exists()
+    assert result.returncode == 1
+
+
+def test_a_directory_is_refused_for_the_exact_marker_too(sandbox, tmp_path):
+    repo, templates, agents = sandbox
+    home = tmp_path / "home"
+    (home / "bin" / "git-pulse").mkdir(parents=True)  # a directory where a binary belongs
+    plist = agents / "com.user.git-pulse.plist"
+    _plist(plist, f"{home}/bin/git-pulse", create=False)
+
+    result = subprocess.run(
+        ["bash", str(SCRIPT), "--apply"],
+        capture_output=True,
+        text=True,
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "RB_UNINSTALL_REPO_DIR": str(repo),
+            "RB_UNINSTALL_TEMPLATE_DIR": str(templates),
+            "RB_UNINSTALL_AGENTS_DIR": str(agents),
+        },
+    )
+
+    assert plist.exists()
+    assert result.returncode == 1
+
+
+def test_include_orphans_does_not_excuse_an_existing_non_executable(sandbox):
+    """The orphan flag forgives an ABSENT file, never a present unlaunchable one."""
+    repo, _templates, agents = sandbox
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    foreign = agents / "com.rebalance-os.alpha.plist"
+    _plist(foreign, f"{repo}/scripts", create=False)
+
+    result = _run(sandbox, "--apply", "--include-orphans")
+
+    assert foreign.exists()
+    assert result.returncode == 1
+
+
+def test_a_non_executable_regular_file_is_also_refused(sandbox):
+    """A data file under the repo is not something launchd runs."""
+    repo, _templates, agents = sandbox
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    data = repo / "scripts" / "notes.txt"
+    data.write_text("not a program", encoding="utf-8")
+    data.chmod(0o644)
+    foreign = agents / "com.rebalance-os.alpha.plist"
+    _plist(foreign, str(data), create=False)
+
+    result = _run(sandbox, "--apply")
 
     assert foreign.exists()
     assert result.returncode == 1
