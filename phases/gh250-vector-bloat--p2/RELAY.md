@@ -1,49 +1,12 @@
-# Marathon Phase vb2
+# Marathon Phase p2
 STATUS: Open
 NEXT: agy
 
-<!-- marathon-drive: task=MARATHON-VB2-TURN builder=agy reviewer=codex round-cap=7 -->
+<!-- marathon-drive: task=MARATHON-P2-TURN builder=agy reviewer=codex round-cap=7 -->
 
 ## Phase Brief
 
 # p2 — R6: zero-orphan invariant in doctor, sawtooth-aware
-
-> ## ⚠️ Sandbox constraint — do NOT run the full test suite in your turn
->
-> Verified 2026-08-04: MLX cannot enumerate a Metal device inside the codex/agy turn sandbox
-> (`-s workspace-write`). Any test that performs an MLX device operation **hard-crashes the whole
-> Python process with SIGABRT** — `mlx::core::metal::Device::Device()` indexes an empty device
-> array, throws an ObjC exception, and aborts. This is NOT catchable: `tests/conftest.py` guards
-> only `ImportError`, and an abort bypasses `try/except` entirely. Three crashes in ~4 minutes were
-> traced to exactly this (parent process `codex`).
->
-> MLX works fine outside the sandbox on this machine (M1 Max, Metal 3), so this is a turn-sandbox
-> limitation, not a broken repo.
->
-> **Run only this** (the interpreter matters — see below):
-> ```
-> PYTHONPATH="$PWD/src" /Users/noelsaw/Documents/rebalance-OS/.venv/bin/python -m pytest \\
->   tests/test_github_direct_commits.py tests/test_db_github.py \\
->   tests/test_github_knowledge.py tests/test_github_coverage.py -q
-> ```
-> Verified clean (33 passed). Add the specific new test file for your phase.
->
-> **Why not plain `python`:** your isolated worktree has NO virtualenv — `.venv/` is gitignored,
-> so it does not exist there and bare `python` either is not found or cannot import `rebalance`.
-> Use the absolute interpreter above. **Do not go looking for a working environment in the real
-> repo root** — that is an isolation breach and the shim will fail your turn (it already did once).
->
-> **Why `PYTHONPATH="$PWD/src"`:** that venv has rebalance installed *editable*, pointing at the
-> MAIN repo's `src/`. Without PYTHONPATH your edits in the worktree are not what gets imported, so
-> you would be testing the wrong code and a green run would mean nothing.
->
-> Never `pytest tests/` — it collects the MLX suite. As of GH-250 those tests skip cleanly via the
-> `requires_metal` marker rather than aborting, but the full suite is still slow and carries
-> unrelated pre-existing failures (5 order-dependent in test_hiqs_pipeline.py, 1 in
-> test_scheduler_liveness.py). Stick to the scoped command.
-
-
-
 
 ## Why this phase exists
 
@@ -136,19 +99,10 @@ You are the BUILDER for this phase. Read the phase brief above and implement it.
 1. Implement the brief by creating/editing the artifact file(s): src/rebalance/ingest/db/github.py,src/rebalance/cli/doctor.py,tests/test_github_vector_invariants.py
 2. Append a build block to this relay file: `### Round N · Builder · agy` summarizing what you did (files touched, key decisions).
 3. Use this exact tick binary (run it from any directory): /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-VB2-TURN --agent agy --paths "phases/gh250-vector-bloat--vb2/RELAY.md,src/rebalance/ingest/db/github.py,src/rebalance/cli/doctor.py,tests/test_github_vector_invariants.py"
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-VB2-TURN --agent agy
-   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-VB2-TURN --agent agy --to codex
-4. Edit ONLY these paths: phases/gh250-vector-bloat--vb2/RELAY.md and src/rebalance/ingest/db/github.py,src/rebalance/cli/doctor.py,tests/test_github_vector_invariants.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
-
----
-
-### Round 1 · Builder · agy
-
-Added vector-bloat invariants and wired them into `rebalance doctor`.
-- **`src/rebalance/ingest/db/github.py` and `src/rebalance/ingest/db/semantic.py`**: Added helper functions to count orphaned vectors (`count_orphaned_*_vectors`), measure embedding backlog (`count_unembedded_*_documents`), and gather database storage stats (`github_vector_storage_stats`, `semantic_vector_storage_stats`).
-- **`src/rebalance/doctor.py`**: Added `_check_vector_health` which opens a read-only database connection and evaluates the invariants. Vector orphans raise a hard `FAIL` due to being corrupted state, while unembedded documents raise a sawtooth-aware `INFO` (`NOTICE`) level log with the raw count to prevent crying wolf on fresh-syncs. Storage statistics are also surfaced as `INFO`.
-- **`tests/test_github_vector_invariants.py`**: Added unit tests to assert that `doctor` correctly fails on hand-inserted orphans, correctly fails on document deletion under a vector, passes (does not WARN/FAIL) during backlog situations, and correctly operates using a read-only connection without exceptions.
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick claim MARATHON-P2-TURN --agent agy --paths "phases/gh250-vector-bloat--p2/RELAY.md,src/rebalance/ingest/db/github.py,src/rebalance/cli/doctor.py,tests/test_github_vector_invariants.py"
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick ping MARATHON-P2-TURN --agent agy
+   - /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P2-TURN --agent agy --to codex
+4. Edit ONLY these paths: phases/gh250-vector-bloat--p2/RELAY.md and src/rebalance/ingest/db/github.py,src/rebalance/cli/doctor.py,tests/test_github_vector_invariants.py. Do NOT run git. Do NOT touch any other file — the harness commits for you.
 
 ---
 
@@ -156,7 +110,7 @@ Added vector-bloat invariants and wired them into `rebalance doctor`.
 
 You are the REVIEWER for this phase. Read the latest builder block above AND review the artifact file(s) on disk: src/rebalance/ingest/db/github.py,src/rebalance/cli/doctor.py,tests/test_github_vector_invariants.py.
 1. Append a review block: `### Round N · Reviewer · codex` followed by your assessment.
-2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-VB2-TURN --agent codex --to agy
-3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-VB2-TURN --agent codex
+2. If changes needed: add `**Verdict:** Changes requested` then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick release MARATHON-P2-TURN --agent codex --to agy
+3. If satisfied: add `**Verdict:** Approved`, set `STATUS: Approved`, then: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick done MARATHON-P2-TURN --agent codex
 4. Use this exact tick binary (run it from any directory) for all token operations: /Users/noelsaw/Documents/rebalance-OS/.xyz/bin/tick
-   Edit ONLY phases/gh250-vector-bloat--vb2/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.
+   Edit ONLY phases/gh250-vector-bloat--p2/RELAY.md (your review block + STATUS). Do NOT edit the artifact yourself — request changes instead. Do NOT run git.

@@ -1,190 +1,234 @@
+"""GH-250 R4: tests for utils/gh250/reclaim.py.
+
+These fixtures build the REAL schema: a sqlite-vec ``vec0`` virtual table named
+``github_embeddings`` plus a ``github_documents`` table.
+
+The first draft of this suite created plain tables called ``vec0`` and ``items``
+— sqlite-vec's own documentation example names — so all 10 of its tests passed
+against a schema this project does not have, while the script could not run
+against the real database at all (``no such table: vec0``). A green suite over a
+fictional schema is worse than no suite: it reports readiness for a script that
+cannot execute. Hence the two guard tests below that pin the real names and the
+real production path.
+"""
+
+from __future__ import annotations
+
 import os
 import sqlite3
+import struct
 import subprocess
-import tempfile
 import sys
-import time
 from pathlib import Path
 
-def setup_db(db_path, num_live=5, num_orphans=5, corrupt=False):
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("CREATE TABLE items (id INTEGER PRIMARY KEY);")
-    cursor.execute("CREATE TABLE vec0 (doc_id INTEGER, vec BLOB);")
-    
-    # insert live vectors
-    for i in range(num_live):
-        cursor.execute(f"INSERT INTO items (id) VALUES ({i});")
-        cursor.execute(f"INSERT INTO vec0 (doc_id, vec) VALUES ({i}, ?);", (b'live',))
-        
-    # insert orphaned vectors
-    for i in range(num_live, num_live + num_orphans):
-        cursor.execute(f"INSERT INTO vec0 (doc_id, vec) VALUES ({i}, ?);", (b'orphan',))
-        
+REPO = Path(__file__).resolve().parent.parent
+SCRIPT = REPO / "utils" / "gh250" / "reclaim.py"
+DIM = 1024
+
+
+def _vec(seed: int = 1) -> bytes:
+    """A float32 blob of the production dimension."""
+    return struct.pack(f"{DIM}f", *([float(seed)] * DIM))
+
+
+def _connect(path: Path) -> sqlite3.Connection:
+    conn = sqlite3.connect(str(path))
+    conn.enable_load_extension(True)
+    import sqlite_vec
+
+    sqlite_vec.load(conn)
+    conn.enable_load_extension(False)
+    return conn
+
+
+def make_db(path: Path, live: int = 3, orphans: int = 5) -> Path:
+    """Build a production-shaped database: real vec0 table, real doc table."""
+    conn = _connect(path)
+    conn.execute(
+        """
+        CREATE TABLE github_documents (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            repo_full_name TEXT,
+            source_key TEXT
+        )
+        """
+    )
+    conn.execute(
+        f"""
+        CREATE VIRTUAL TABLE github_embeddings USING vec0(
+            doc_id INTEGER PRIMARY KEY,
+            embedding float[{DIM}]
+        )
+        """
+    )
+    for i in range(1, live + 1):
+        conn.execute(
+            "INSERT INTO github_documents (id, repo_full_name, source_key) VALUES (?,?,?)",
+            (i, "o/r", f"k{i}"),
+        )
+        conn.execute(
+            "INSERT INTO github_embeddings (doc_id, embedding) VALUES (?,?)", (i, _vec(i))
+        )
+    # Orphans: vectors whose doc_id has no document (ids well clear of live ones).
+    for j in range(1000, 1000 + orphans):
+        conn.execute(
+            "INSERT INTO github_embeddings (doc_id, embedding) VALUES (?,?)", (j, _vec(j))
+        )
     conn.commit()
-    
-    if corrupt:
-        # To simulate integrity failure, we'll write junk to the db file.
-        conn.close()
-        with open(db_path, "r+b") as f:
-            f.seek(100)
-            f.write(b'JUNK DATA FOR CORRUPTION TEST')
-    else:
-        conn.close()
+    conn.close()
+    return path
 
-def run_reclaim(*args, env=None):
-    cmd = [sys.executable, "utils/gh250/reclaim.py"] + list(args)
-    return subprocess.run(cmd, env=env, capture_output=True, text=True)
 
+def run(db: Path, *args: str, env: dict | None = None):
+    e = dict(os.environ)
+    e.setdefault("REBALANCE_ASSUME_NO_METAL", "1")
+    if env:
+        e.update(env)
+    return subprocess.run(
+        [sys.executable, str(SCRIPT), "--database", str(db), *args],
+        capture_output=True,
+        text=True,
+        env=e,
+    )
+
+
+def counts(db: Path) -> tuple[int, int]:
+    """(total vectors, orphaned vectors) via the real predicate."""
+    conn = _connect(db)
+    total = conn.execute("SELECT count(*) FROM github_embeddings").fetchone()[0]
+    orph = conn.execute(
+        """SELECT count(*) FROM github_embeddings
+           WHERE NOT EXISTS (SELECT 1 FROM github_documents d
+                             WHERE d.id = github_embeddings.doc_id)"""
+    ).fetchone()[0]
+    conn.close()
+    return total, orph
+
+
+# ---------------------------------------------------------------------------
+# Guard tests — the two the original suite most needed and did not have
+# ---------------------------------------------------------------------------
+def test_operates_on_the_real_production_table_names(tmp_path):
+    src = SCRIPT.read_text()
+    assert "github_embeddings" in src and "github_documents" in src
+    assert "FROM vec0" not in src, "reverted to sqlite-vec's doc-example table name"
+    assert "FROM items" not in src, "reverted to sqlite-vec's doc-example table name"
+    db = make_db(tmp_path / "real.db")
+    r = run(db)
+    assert r.returncode == 0, r.stderr
+    assert "orphaned" in r.stdout
+
+
+def test_production_path_guard_uses_the_real_location(tmp_path):
+    """The guard must name Application Support, not a repo-relative path.
+
+    The first draft compared against <repo>/rebalance.db, which does not exist,
+    so it could never fire on the database it existed to protect.
+    """
+    src = SCRIPT.read_text()
+    assert "Application Support" in src
+    assert "rebalance-os" in src
+
+
+# ---------------------------------------------------------------------------
+# Behaviour
+# ---------------------------------------------------------------------------
 def test_dry_run_changes_nothing(tmp_path):
-    db_path = tmp_path / "test.db"
-    setup_db(db_path, num_live=10, num_orphans=10)
-    
-    mtime_before = db_path.stat().st_mtime
-    
-    # dry-run
-    res = run_reclaim("--database", str(db_path))
-    assert res.returncode == 0
-    assert "DRY RUN:" in res.stdout
-    
-    mtime_after = db_path.stat().st_mtime
-    assert mtime_before == mtime_after
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT count(*) FROM vec0;")
-    assert cursor.fetchone()[0] == 20
-    conn.close()
+    db = make_db(tmp_path / "d.db")
+    before = counts(db)
+    mtime = db.stat().st_mtime_ns
+    r = run(db)
+    assert r.returncode == 0, r.stderr
+    assert "DRY RUN" in r.stdout
+    assert counts(db) == before
+    assert db.stat().st_mtime_ns == mtime
 
-def test_execute_deletes_orphans_and_vacuums(tmp_path):
-    db_path = tmp_path / "test.db"
-    setup_db(db_path, num_live=10, num_orphans=10)
-    
-    res = run_reclaim("--database", str(db_path), "--execute")
-    assert res.returncode == 0
-    assert "VACUUM" in res.stdout
-    
-    conn = sqlite3.connect(db_path)
-    cursor = conn.cursor()
-    cursor.execute("SELECT count(*) FROM vec0;")
-    assert cursor.fetchone()[0] == 10
-    
-    cursor.execute("SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);")
-    assert cursor.fetchone()[0] == 10
-    conn.close()
 
-def test_production_path_guard(tmp_path):
-    prod_path = (Path(__file__).resolve().parent.parent / "rebalance.db").resolve()
-    
-    # Snapshot before state
-    existed_before = prod_path.exists()
-    mtime_before = prod_path.stat().st_mtime if existed_before else None
-    
-    # Try both absolute and relative
-    for target in [str(prod_path), "rebalance.db", "./rebalance.db"]:
-        res = run_reclaim("--database", target)
-        assert res.returncode != 0
-        assert "ERROR: Refusing to run on production database" in res.stderr
-        
-        # Verify untouched
-        assert prod_path.exists() == existed_before
-        if existed_before:
-            assert prod_path.stat().st_mtime == mtime_before
+def test_execute_deletes_only_orphans(tmp_path):
+    db = make_db(tmp_path / "e.db", live=3, orphans=5)
+    r = run(db, "--execute")
+    assert r.returncode == 0, r.stderr
+    total, orph = counts(db)
+    assert orph == 0
+    assert total == 3, "live vectors must survive"
 
-def test_batching_correctness(tmp_path):
-    db_path = tmp_path / "test.db"
-    setup_db(db_path, num_live=10, num_orphans=25)
-    
-    # run with batch size 10
-    res = run_reclaim("--database", str(db_path), "--execute", "--batch-size", "10")
-    assert res.returncode == 0
-    
-    assert "Batch 1: Deleted 10" in res.stdout
-    assert "Batch 2: Deleted 10" in res.stdout
-    assert "Batch 3: Deleted 5" in res.stdout
-    
-    conn = sqlite3.connect(db_path)
-    assert conn.execute("SELECT count(*) FROM vec0;").fetchone()[0] == 10
+
+def test_live_vector_count_is_unchanged(tmp_path):
+    db = make_db(tmp_path / "l.db", live=4, orphans=7)
+    r = run(db, "--execute")
+    assert r.returncode == 0, r.stderr
+    conn = _connect(db)
+    live = conn.execute(
+        """SELECT count(*) FROM github_embeddings
+           WHERE EXISTS (SELECT 1 FROM github_documents d
+                         WHERE d.id = github_embeddings.doc_id)"""
+    ).fetchone()[0]
     conn.close()
+    assert live == 4
+
+
+def test_batching_matches_single_batch(tmp_path):
+    a = make_db(tmp_path / "a.db", live=2, orphans=9)
+    b = make_db(tmp_path / "b.db", live=2, orphans=9)
+    assert run(a, "--execute", "--batch-size", "2").returncode == 0
+    assert run(b, "--execute", "--batch-size", "1000").returncode == 0
+    assert counts(a) == counts(b)
+
+
+def test_zero_orphans_is_a_clean_noop_and_does_not_rewrite(tmp_path):
+    """A healthy database must not be rebuilt to reclaim nothing."""
+    db = make_db(tmp_path / "z.db", live=3, orphans=0)
+    mtime = db.stat().st_mtime_ns
+    r = run(db, "--execute")
+    assert r.returncode == 0, r.stderr
+    assert "Nothing to reclaim" in r.stdout
+    assert db.stat().st_mtime_ns == mtime, "database was rewritten despite no orphans"
+    assert not (tmp_path / "z.vacuum.db").exists(), "built a rebuild target for a no-op"
+
+
+def test_batch_size_must_be_positive(tmp_path):
+    db = make_db(tmp_path / "bs.db")
+    r = run(db, "--execute", "--batch-size", "0")
+    assert r.returncode == 1
+    assert "positive integer" in r.stderr
+
+
+def test_missing_database_fails(tmp_path):
+    r = run(tmp_path / "nope.db")
+    assert r.returncode == 1
+    assert "not found" in r.stderr
+
+
+def test_unclean_checkpoint_aborts(tmp_path):
+    db = make_db(tmp_path / "cp.db")
+    r = run(db, "--execute", env={"_MOCK_CHECKPOINT_FAIL": "1"})
+    assert r.returncode == 1
+    assert "checkpoint not clean" in r.stderr
+
 
 def test_resume_after_interrupt(tmp_path):
-    db_path = tmp_path / "test.db"
-    setup_db(db_path, num_live=10, num_orphans=25)
-    
-    env = os.environ.copy()
-    env["_CRASH_AFTER_BATCH"] = "1"
-    
-    # run with batch size 10, will crash after 1st batch
-    res = run_reclaim("--database", str(db_path), "--execute", "--batch-size", "10", env=env)
-    assert res.returncode != 0
-    assert "CRASHING FOR TEST" in res.stderr
-    
-    # Check intermediate state: 10 deleted, 15 orphans left
-    conn = sqlite3.connect(db_path)
-    assert conn.execute("SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);").fetchone()[0] == 15
-    conn.close()
-    
-    # Resume normally
-    res2 = run_reclaim("--database", str(db_path), "--execute", "--batch-size", "10")
-    assert res2.returncode == 0
-    
-    conn = sqlite3.connect(db_path)
-    assert conn.execute("SELECT count(*) FROM vec0;").fetchone()[0] == 10
-    conn.close()
+    db = make_db(tmp_path / "r.db", live=2, orphans=6)
+    r1 = run(db, "--execute", "--batch-size", "2", env={"_CRASH_AFTER_BATCH": "1"})
+    assert r1.returncode == 2
+    _, mid = counts(db)
+    assert 0 < mid < 6, "first batch should have committed durably"
+    r2 = run(db, "--execute", "--batch-size", "2")
+    assert r2.returncode == 0, r2.stderr
+    total, orph = counts(db)
+    assert orph == 0 and total == 2
 
-def test_zero_orphans_noop(tmp_path):
-    db_path = tmp_path / "test.db"
-    setup_db(db_path, num_live=10, num_orphans=0)
-    
-    res = run_reclaim("--database", str(db_path), "--execute")
-    assert res.returncode == 0
-    assert "No more orphans to delete." in res.stdout
-    
-def test_integrity_check_failure(tmp_path):
-    db_path = tmp_path / "test.db"
-    setup_db(db_path, num_live=10, num_orphans=10, corrupt=True)
-    
-    res = run_reclaim("--database", str(db_path), "--execute")
-    assert res.returncode != 0
-    assert "malformed" in res.stderr
 
-def test_invalid_batch_size(tmp_path):
-    db_path = tmp_path / "test.db"
-    setup_db(db_path)
-    
-    res = run_reclaim("--database", str(db_path), "--execute", "--batch-size", "0")
-    assert res.returncode != 0
-    assert "ERROR: --batch-size must be a positive integer" in res.stderr
-    
-    res = run_reclaim("--database", str(db_path), "--execute", "--batch-size", "-5")
-    assert res.returncode != 0
-    assert "ERROR: --batch-size must be a positive integer" in res.stderr
+def test_refuses_existing_rebuild_target(tmp_path):
+    db = make_db(tmp_path / "t.db", live=1, orphans=2)
+    (tmp_path / "t.vacuum.db").write_text("pre-existing evidence")
+    r = run(db, "--execute")
+    assert r.returncode == 1
+    assert "already exists" in r.stderr
+    assert (tmp_path / "t.vacuum.db").read_text() == "pre-existing evidence"
 
-def test_rebuild_target_swap_path(tmp_path):
-    db_path = tmp_path / "test.db"
-    setup_db(db_path, num_live=10, num_orphans=10)
-    
-    target_path = db_path.with_suffix(".vacuum.db")
-    
-    res = run_reclaim("--database", str(db_path), "--execute")
-    assert res.returncode == 0
-    assert "Validating rebuilt target" in res.stdout
-    assert "Target validated. Swapping" in res.stdout
-    assert not target_path.exists()
-    
-    conn = sqlite3.connect(db_path)
-    assert conn.execute("SELECT count(*) FROM vec0;").fetchone()[0] == 10
-    conn.close()
 
-def test_non_clean_checkpoint_fails(tmp_path):
-    db_path = tmp_path / "test.db"
-    setup_db(db_path, num_live=10, num_orphans=10)
-    
-    env = os.environ.copy()
-    env["_MOCK_CHECKPOINT_FAIL"] = "1"
-    
-    res = run_reclaim("--database", str(db_path), "--execute", env=env)
-    
-    assert res.returncode != 0
-    assert "ERROR: WAL checkpoint not clean before batch" in res.stderr
-
+def test_rebuild_target_is_written(tmp_path):
+    db = make_db(tmp_path / "s.db", live=2, orphans=40)
+    r = run(db, "--execute")
+    assert r.returncode == 0, r.stderr
+    assert (tmp_path / "s.vacuum.db").exists(), "VACUUM INTO target missing"

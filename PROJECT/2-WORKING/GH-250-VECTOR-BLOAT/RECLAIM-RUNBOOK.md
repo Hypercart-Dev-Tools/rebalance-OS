@@ -4,6 +4,27 @@ This runbook details the procedure to reclaim ~10.2 GB of disk space from `rebal
 
 It must be executed inside a maintenance window where no writers are active.
 
+> ## ⚠️ DRAFT — reviewed but NOT approved. Read before running anything.
+>
+> This runbook was rejected by its reviewer four times and never reached approval. Two defects found
+> afterwards are fixed here, but it has had **no** approving review since:
+>
+> 1. **Its queries named tables that do not exist.** Every count used `vec0` / `items` — sqlite-vec's
+>    *documentation example* names, not this database's. The baseline query failed outright with
+>    `no such table: vec0`. Corrected throughout to `github_embeddings` / `github_documents`.
+> 2. **It reimplemented the batch delete inline**, in untested shell, duplicating
+>    `utils/gh250/reclaim.py` — which has 13 tests against a production-shaped schema and is verified
+>    working against the real database. **Prefer the script.** Any inline SQL below is illustrative;
+>    the script is the sanctioned path.
+>
+> Outstanding reviewer objections (valid, unaddressed): make every fence/handle assertion a real
+> shell gate rather than a command followed by prose; capture `wal_checkpoint` output and require
+> exactly `0|0|0`; do not discard `verify` output with `>/dev/null` when the record must show every
+> gate result; guard every `mv`/`rm` with sidecar-aware preconditions; state a recomputable post-size
+> range rather than "~1.2 GB".
+>
+> **Do not execute this against production until those are closed and it has been approved.**
+
 ## 0. Set Operator Environment & Record
 
 Define an environment variable for your operator record to ensure all checks append to it rather than relying on manual copy-pasting.
@@ -32,7 +53,7 @@ MARKER=$(wc -l < ~/Library/Logs/rebalance/3eyes.log)
 tail -n +$MARKER -f ~/Library/Logs/rebalance/3eyes.log | grep -m 1 "github_sync completed" | tee -a "$RECORD_FILE"
 
 # 3. Immediately query the orphan count
-sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 ```
 *If the 3 counts recorded are not identical, ABORT.*
 
@@ -45,10 +66,10 @@ echo -n "Total DB Bytes: " | tee -a "$RECORD_FILE"
 stat -f %z rebalance.db | tee -a "$RECORD_FILE"
 
 echo -n "Total Vectors: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM vec0;" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings;" | tee -a "$RECORD_FILE"
 
 echo -n "Live Vectors: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 
 echo -n "Journal Mode (Must be 'wal'): " | tee -a "$RECORD_FILE"
 sqlite3 rebalance.db "PRAGMA journal_mode;" | tee -a "$RECORD_FILE"
@@ -93,7 +114,7 @@ fi
 **CRITICAL POST-FENCING GATE:** Re-run the orphan count. It MUST exactly equal the samples from Step 1.1.
 ```bash
 echo -n "Post-fencing Orphan Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 ```
 *If this count does not exactly match the counts from 1.1, ABORT.*
 
@@ -134,7 +155,7 @@ rm -f "$RESTORE_DIR/rebalance.db-wal" "$RESTORE_DIR/rebalance.db-shm"
 echo -n "Rehearsal Integrity: " | tee -a "$RECORD_FILE"
 sqlite3 "$RESTORE_DIR/rebalance.db" "PRAGMA integrity_check;" | tee -a "$RECORD_FILE"
 echo -n "Rehearsal Live Vectors: " | tee -a "$RECORD_FILE"
-sqlite3 "$RESTORE_DIR/rebalance.db" "SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 "$RESTORE_DIR/rebalance.db" "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 
 # 6. Approve cleanup (Only proceed if rehearsal counts matched exactly)
 rm -f "$RESTORE_DIR/rebalance.db"
@@ -167,14 +188,14 @@ while true; do
   if [ "$CP_RESULT" != "0|0|0" ]; then echo "ERROR: WAL checkpoint failed before batch $BATCH_NUM. Result: $CP_RESULT" | tee -a "$RECORD_FILE"; exit 1; fi
 
   # Execute DELETE and SELECT changes() in a single explicit transaction
-  OUTPUT=$(sqlite3 "$DB" "BEGIN IMMEDIATE; DELETE FROM vec0 WHERE rowid IN (SELECT rowid FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id) LIMIT $BATCH_SIZE); SELECT changes(); COMMIT;" 2>&1)
+  OUTPUT=$(sqlite3 "$DB" "BEGIN IMMEDIATE; DELETE FROM github_embeddings WHERE rowid IN (SELECT rowid FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id) LIMIT $BATCH_SIZE); SELECT changes(); COMMIT;" 2>&1)
   
   CHANGES=$(echo "$OUTPUT" | grep -Eo '^[0-9]+$' | tail -n 1 || true)
   if [[ -z "$CHANGES" ]] || ! [[ "$CHANGES" =~ ^[0-9]+$ ]]; then echo "ERROR: Could not parse changes output: $OUTPUT" | tee -a "$RECORD_FILE"; exit 1; fi
   if [ "$CHANGES" -eq 0 ]; then echo "No more orphans to delete." | tee -a "$RECORD_FILE"; break; fi
   
   # Robust remaining count
-  REMAINING=$(sqlite3 "$DB" "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" 2>&1)
+  REMAINING=$(sqlite3 "$DB" "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" 2>&1)
   if ! [[ "$REMAINING" =~ ^[0-9]+$ ]]; then echo "ERROR: Failed to query remaining count: $REMAINING" | tee -a "$RECORD_FILE"; exit 1; fi
   
   echo "Batch $BATCH_NUM: Deleted $CHANGES orphans. Remaining: $REMAINING." | tee -a "$RECORD_FILE"
@@ -208,11 +229,11 @@ sqlite3 rebalance.db.vacuumed "PRAGMA integrity_check;" | tee -a "$RECORD_FILE"
 # Expected: ok
 
 echo -n "Vacuumed Target Orphan Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db.vacuumed "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db.vacuumed "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 # Expected: 0
 
 echo -n "Vacuumed Target Live Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db.vacuumed "SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db.vacuumed "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 # Expected: [Your recorded baseline live count]
 
 echo -n "Vacuumed Target Bytes: " | tee -a "$RECORD_FILE"
@@ -266,13 +287,13 @@ echo -n "Final Integrity: " | tee -a "$RECORD_FILE"
 sqlite3 rebalance.db "PRAGMA integrity_check;" | tee -a "$RECORD_FILE"
 
 echo -n "Final Orphan Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 
 echo -n "Final Live Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 
 echo -n "Final Total Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM vec0;" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings;" | tee -a "$RECORD_FILE"
 
 # 3. Size Comparison
 TARGET_BYTES=$(grep -A1 "Vacuumed Target Bytes:" "$RECORD_FILE" | tail -n1 | grep -Eo '^[0-9]+$' || echo 1)
@@ -325,11 +346,11 @@ echo -n "Restored Integrity: " | tee -a "$RECORD_FILE"
 sqlite3 rebalance.db "PRAGMA integrity_check;" | tee -a "$RECORD_FILE"
 
 echo -n "Restored Live Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 
 echo -n "Restored Total Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM vec0;" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings;" | tee -a "$RECORD_FILE"
 
 echo -n "Restored Orphan Count: " | tee -a "$RECORD_FILE"
-sqlite3 rebalance.db "SELECT count(*) FROM vec0 WHERE NOT EXISTS (SELECT 1 FROM items WHERE items.id = vec0.doc_id);" | tee -a "$RECORD_FILE"
+sqlite3 rebalance.db "SELECT count(*) FROM github_embeddings WHERE NOT EXISTS (SELECT 1 FROM github_documents d WHERE d.id = github_embeddings.doc_id);" | tee -a "$RECORD_FILE"
 ```

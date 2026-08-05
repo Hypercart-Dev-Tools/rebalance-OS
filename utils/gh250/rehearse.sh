@@ -48,7 +48,7 @@ START_TIME=$(date +%s)
 # Note: we need to run reclaim in a way that we can observe peak WAL size.
 # We'll run reclaim in background and monitor WAL size.
 
-PYTHONPATH="$PWD/src" "$PWD/.venv/bin/python" utils/gh250/reclaim.py --database "$COPY_FILE" --execute &
+PYTHONPATH="$PWD/src" "${GH250_PY:-python3}" utils/gh250/reclaim.py --database "$COPY_FILE" --execute &
 RECLAIM_PID=$!
 
 PEAK_WAL=0
