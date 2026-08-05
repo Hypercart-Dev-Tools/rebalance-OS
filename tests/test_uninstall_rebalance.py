@@ -321,6 +321,47 @@ def test_a_plist_whose_name_begins_with_a_dash_is_still_deleted(sandbox):
     assert result.returncode == 0
 
 
+def test_a_symlink_out_of_the_repo_does_not_confer_ownership(sandbox, tmp_path):
+    """QA r3 Blocker: the spelling of a path is not what runs.
+
+    A symlink parked inside the checkout can look owned and execute something else entirely.
+    """
+    repo, _templates, agents = sandbox
+    foreign_tool = tmp_path / "foreign-tool"
+    foreign_tool.write_text("#!/bin/sh\n", encoding="utf-8")
+    (repo / "bin").mkdir(parents=True, exist_ok=True)
+    decoy = repo / "bin" / "owned-looking"
+    decoy.symlink_to(foreign_tool)
+
+    plist = agents / "com.rebalance-os.alpha.plist"
+    _plist(plist, str(decoy))
+
+    result = _run(sandbox, "--apply")
+
+    assert plist.exists(), "a symlink escaping the repo must not confer ownership"
+    assert result.returncode == 1
+
+
+def test_a_symlink_that_stays_inside_the_repo_still_confers_ownership(sandbox):
+    """Resolving symlinks must not break a checkout that legitimately uses one internally."""
+    repo, _templates, agents = sandbox
+    (repo / "scripts").mkdir(parents=True, exist_ok=True)
+    real = repo / "scripts" / "alpha.sh"
+    real.write_text("#!/bin/sh\n", encoding="utf-8")
+    link = repo / "bin"
+    link.mkdir(exist_ok=True)
+    alias = link / "alpha"
+    alias.symlink_to(real)
+
+    plist = agents / "com.rebalance-os.alpha.plist"
+    _plist(plist, str(alias))
+
+    result = _run(sandbox, "--apply")
+
+    assert not plist.exists()
+    assert result.returncode == 0
+
+
 def test_an_unparseable_plist_fails_closed(sandbox):
     """A file we cannot read is a file we cannot prove is ours."""
     _repo, _templates, agents = sandbox

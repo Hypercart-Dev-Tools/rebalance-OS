@@ -90,6 +90,7 @@ act() { if [ "$APPLY" -eq 1 ]; then printf '  %s\n' "$*"; else printf '  [dry-ru
 # that cannot run in CI is a check nobody is testing.
 rb_plist_executables() {
     python3 - "$1" <<'PY' 2>/dev/null
+import os
 import plistlib, sys
 
 try:
@@ -120,8 +121,18 @@ elif isinstance(arguments, list) and arguments:
 else:
     sys.exit(1)
 
-print(executable)
+# Resolve symlinks before ownership is judged (QA r3 Blocker). Comparing the SPELLING of a
+# path is not the same as knowing what runs: a symlink at "$REBALANCE_DIR/bin/owned-looking"
+# pointing to /opt/foreign/tool reads as ours and executes something else entirely.
+print(os.path.realpath(executable))
 PY
+}
+
+# Canonical form of a path, for comparing like with like. The executable side is resolved in
+# the parser, so the marker side has to be resolved too or a symlinked checkout would stop
+# matching its own jobs.
+rb_realpath() {
+    python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "$1" 2>/dev/null || printf '%s\n' "$1"
 }
 
 # Prove a plist belongs to us by inspecting WHAT IT LAUNCHES, not by matching text anywhere in
@@ -150,6 +161,7 @@ rb_is_ours() {
     local marker="$2"
     local mode="$3"
     local executable
+    marker="$(rb_realpath "$marker")"
 
     while IFS= read -r executable; do
         [ -n "$executable" ] || continue

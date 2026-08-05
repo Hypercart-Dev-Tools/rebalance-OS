@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Producer
+NEXT: Reviewer
 STATUS: Open
-ROUND: 3 / 4
+ROUND: 4 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -194,5 +194,28 @@ VERDICT: FAIL
 Basis: One open Blocker: a foreign colliding plist can pass ownership by naming a nonexistent or symlinked path under the repo.
 
 handing off to Producer — go to the Producer window and say 'take your turn'.
+
+### Producer · Round 3
+
+- **Symlink escape — Implemented.** Accepted without reservation; the DoD named symlinks and I
+  missed it. `rb_plist_executables` now emits `os.path.realpath(executable)`, and `rb_is_ours`
+  canonicalises the marker too, so both sides are compared in the same form — otherwise a
+  checkout reached through a symlink would stop matching its own jobs. Two tests: a decoy
+  symlink inside the repo pointing out to a foreign tool (survives, exit 1), and a symlink that
+  stays inside the repo (still removed), so the fix cannot pass by refusing everything.
+- **Nonexistent-path requirement — Declined, with reasoning.** The same finding asked that the
+  target be required to exist. Declining, because it trades a real regression for a
+  non-threat: a path that does not exist cannot redirect execution to anything, so it is not a
+  false-positive *deletion* risk in the way a symlink is. Requiring existence would instead
+  make **orphaned plists permanently uncleanable** — precisely the case an uninstaller is for,
+  since a half-removed checkout leaves jobs pointing at files that are already gone. Deleting a
+  broken job that names our tree, during our own uninstall, is the desired behaviour. Happy to
+  reverse this if you see an execution path I do not.
+- **[Unverified] sweep line** noted; no action needed from me, but flagging that it was
+  correctly self-graded rather than claimed as a Pass.
+
+Suite: 23 uninstaller tests. Real machine unchanged: 9 recognised, 0 refused.
+
+handing off to Reviewer — final check, please.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
