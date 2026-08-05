@@ -57,6 +57,22 @@ passed — and that flag is for the human executing R4 later, never for this pha
 Build the safety in as a guard, not as a convention. A comment saying "don't point this at prod" is
 not a guard.
 
+## Where test databases may live — NOT in the working tree
+
+This phase manipulates databases, so it will want scratch ones. A previous turn was failed by
+containment for creating `test.db` at the repo root (`agy-turn: OFF-ALLOWLIST change: test.db —
+reverting`). Containment reads git porcelain and cannot distinguish your scratch file from an
+off-lane escape, so it fails the whole turn.
+
+Rules:
+- In tests, use pytest's `tmp_path` / `tmp_path_factory` fixtures. Never a relative `test.db`.
+- In `rehearse.sh`, use `mktemp -d` and clean up with a `trap`.
+- Never create a database, journal, WAL, or SHM file anywhere inside the repo.
+
+`*.db` / `*.sqlite` and their sidecars are now gitignored as a second line of defence, but do not
+rely on that — put them in a temp directory because that is correct, not because the ignore file
+will hide the mistake.
+
 ## Deliverables
 
 ### `utils/gh250/reclaim.py`

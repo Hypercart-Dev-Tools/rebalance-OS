@@ -92,3 +92,13 @@ REPO_MAP.md
 .pytest_cache/
 .coverage
 .coverage.*
+
+# Scratch/test databases — never commit these. Also: an untracked test.db in the
+# working tree trips marathon containment, which reads git porcelain and cannot
+# tell a builder's scratch file from an off-lane escape (GH-250, vb5).
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
