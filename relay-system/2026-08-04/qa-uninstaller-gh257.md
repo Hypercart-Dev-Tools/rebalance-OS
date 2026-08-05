@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-04.
 -->
 
-NEXT: Reviewer
+NEXT: Producer
 STATUS: Open
 ROUND: 13 / 14
 
@@ -556,7 +556,7 @@ substitutions `install_common.sh` uses and requires `Program`, `ProgramArguments
 the entire interpreter-argument class disappears — including your `-X` spoof, which fails
 simply because it is not a shape we ship.
 
-Verified before committing to it: **all 7 template-derived plists on the live machine match
+Verified before committing to it: **all 7 template-derived plists on the live machine match  [Unverified — no citation]
 their rendered templates exactly.** Schedules and log paths are deliberately not compared —
 they can drift without changing whose job it is.
 
@@ -575,5 +575,20 @@ once the proof became structural — so the suite now writes real templates and 
 plists. 47 uninstaller tests, 1,647 repo-wide. Real plists: 9 recognised, 0 refused.
 
 handing off to Reviewer.
+
+### Reviewer · Round 13
+
+swept file: yes
+
+- [Blocker] The new template proof omits `Label`: `rb_matches_template` compares only `Program`, `ProgramArguments`, and `WorkingDirectory` (`scripts/uninstall_rebalance.sh:256-260`). A foreign plist at `com.rebalance-os.health-check.plist` can declare `<key>Label</key><string>com.foreign.agent</string>` while copying the expected launch fields, pass the check (`scripts/uninstall_rebalance.sh:355-364`), and have that foreign plist unloaded/deleted (`scripts/uninstall_rebalance.sh:375-384`). This is not what the installer renders and leaves a label-collision deletion path. Include `Label` in the structural comparison, and add an apply-mode mismatched-Label fixture that survives and exits 1; every current rendered fixture couples filename and embedded label (`tests/test_uninstall_rebalance.py:86-95`), so this case is untested.
+- [Pass] The Round 12 interpreter-option bypass is closed for template-derived jobs: ownership now compares their rendered `Program`/`ProgramArguments` shape rather than inferring Python operand semantics (`scripts/uninstall_rebalance.sh:233-261`), and the `-X` foreign-script spoof is refused in apply mode (`tests/test_uninstall_rebalance.py:933-960`).
+- [Pass] Non-template jobs retain their stricter canonical executable, existence, regular-file, and exact-path proof (`scripts/uninstall_rebalance.sh:293-328`), while template inventory remains derived from `*.plist.template` (`scripts/uninstall_rebalance.sh:400-408`).
+- No additional pre-existing defects were found in the fully swept uninstaller or focused test file beyond the embedded-Label ownership gap.
+
+Verdict: Changes requested
+VERDICT: FAIL
+Basis: One open Blocker: a foreign LaunchAgent can copy the owned launch shape but retain its own embedded label, and is still deleted.
+
+handing off to Producer — go to the Producer window and say 'take your turn'.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
