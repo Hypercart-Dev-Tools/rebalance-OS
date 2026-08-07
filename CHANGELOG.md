@@ -6,6 +6,49 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.68.7] - 2026-08-06
+
+### Fixed
+- **The direct-commit sync was destroying its own embeddings on every run, and had
+  quietly grown the database to 13.5 GiB — 92% of it garbage.** Each sync deleted every
+  direct-commit document and re-inserted it with a fresh identifier, so the vectors keyed
+  to the old identifiers were orphaned rather than removed. Eighteen runs a day, ~15.5k
+  orphans each, accumulating unbounded: 2.68 million dead vectors holding 10.2 GiB.
+  The same pass then re-embedded ~15.5k byte-identical documents it had just recreated,
+  which is roughly 280k needless embedding operations a day and the main reason the
+  embedding stage stayed hot enough to keep tripping the memory guard.
+
+  The writer now updates in place, keyed on a stable source identifier, and preserves
+  both the identifier and the content hash when the content has not changed — so an
+  unchanged commit keeps its vector and is never re-embedded. Orphan growth has been
+  confirmed flat across fourteen sync cycles since. Reclaiming the space that already
+  accumulated is a separate, operator-run maintenance step, deliberately not automated.
+
+### Added
+- **A hard zero-orphan invariant in the health check, for both embedding families.**
+  Twelve gigabytes accumulated over roughly nine days with nothing raising an alarm,
+  which was a detection gap as much as a writer bug. The check now fails outright on any
+  orphaned vector and reports real table sizes and their share of the database.
+
+  Two deliberate choices: the companion backlog check counts absolute unembedded
+  documents rather than a coverage ratio, because coverage oscillates widely within a
+  single sync cycle (measured 9.7% missing and 67.9% missing on the same day, both
+  healthy) and a ratio would page during normal operation; and table sizes are measured
+  without relying on page-level statistics, which report zero bytes for a virtual table.
+- **A tested toolchain for the reclaim itself** — writer fencing with verification and
+  restore, and a batched, resumable, checkpointing delete-and-rebuild that refuses to run
+  against the real database without an explicit acknowledgement, refuses to overwrite an
+  existing rebuild target, and aborts rather than reporting success if a checkpoint comes
+  back blocked or if the live vector count changes. Nothing has been run against
+  production data.
+
+### Changed
+- The test suite now probes for a usable GPU device out of process and skips the tests
+  that need one when it is absent. Previously those tests called the framework directly,
+  which aborts the whole process rather than raising when no device is reachable — so a
+  single unreachable-GPU environment destroyed every other test's result in the same run.
+  An in-test guard could not catch it, because a process abort is not an exception.
+
 ## [0.68.6] - 2026-08-05
 
 ### Added
