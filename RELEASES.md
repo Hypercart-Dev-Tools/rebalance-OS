@@ -16,7 +16,7 @@ Description: The store tells the truth about its own size — finish GH-250 end 
 GH_URL:
 Front-door reviewed:
 Shakedown reviewed:
-License file: No
+License file: Yes
 
 Release: 0.70.0
 Iterations: 0.70.0-0.70.9
@@ -28,4 +28,4 @@ Description: A red build means new breakage — empty the GH-178 quarantine (10 
 GH_URL:
 Front-door reviewed:
 Shakedown reviewed:
-License file: No
+License file: Yes
