@@ -6,7 +6,7 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
-## [0.68.7] - 2026-08-06
+## [0.68.7] - 2026-08-07
 
 ### Fixed
 - **The direct-commit sync was destroying its own embeddings on every run, and had
