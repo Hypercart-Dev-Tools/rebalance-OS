@@ -33,6 +33,7 @@ from rebalance.ingest.embedder import (
     _vec_to_bytes,
 )
 from rebalance.ingest.semantic_index import sync_github_documents
+from rebalance.lib.json_ops import _json_dumps
 DEFAULT_SYNC_DAYS = 90
 MIN_EMBED_CHARS = 40
 # GH-171: release the single SQLite writer periodically during a long persist
@@ -143,10 +144,6 @@ def _paginate_list(
 def _cutoff_iso(since_days: int) -> str:
     cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
     return cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
-
-
-def _json_dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
 
 
 def _content_hash(text: str) -> str:

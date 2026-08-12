@@ -25,6 +25,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from rebalance.lib.git_ops import _git
 
 GITHUB_REMOTE_MARKERS = ("github.com:", "github.com/")
 
@@ -42,15 +43,6 @@ class LocalRepo:
     # Commits on HEAD not on its upstream. None = no upstream configured
     # (which is itself unpushed work — nothing on the remote tracks it).
     unpushed_commits: int | None
-
-
-def _git(repo_path: Path, *args: str) -> str | None:
-    result = subprocess.run(
-        ["git", "-C", str(repo_path), *args],
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip() if result.returncode == 0 else None
 
 
 def parse_github_full_name(origin_url: str) -> str | None:

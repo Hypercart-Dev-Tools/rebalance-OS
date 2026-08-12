@@ -34,6 +34,7 @@ from pathlib import Path
 
 from rebalance.ingest.db import db_connection, ensure_github_schema
 from rebalance.ingest.github_commit_backfill import _git, resolve_clone
+from rebalance.lib.time_ops import _now
 
 _LS_REMOTE_TIMEOUT_S = 30
 
@@ -90,10 +91,6 @@ class CoverageReport:
 
     def problems(self) -> list[RepoCoverage]:
         return [r for r in self.repos if not r.is_clean]
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _fetch_age_hours(repo_path: Path) -> float | None:

@@ -45,6 +45,7 @@ from rebalance.ingest.sync_snapshot import get_device_id
 # Reuse the prune discipline and the (already tested) remote-URL → owner/repo
 # parser rather than duplicating them; both are low-churn and shared by intent.
 from rebalance.ingest.ask_self_scan import _PRUNE_DIRS, derive_repo_full_name
+from rebalance.lib.git_ops import _git
 
 logger = logging.getLogger(__name__)
 
@@ -473,20 +474,6 @@ def iter_git_repos(
 # ---------------------------------------------------------------------------
 # Signal probing — read-only git plumbing per repo
 # ---------------------------------------------------------------------------
-
-def _git(repo: Path, *args: str, timeout: int = GIT_TIMEOUT) -> str | None:
-    """Run a read-only git command in *repo*; return stdout or None on any failure."""
-    try:
-        proc = subprocess.run(
-            ["git", "-C", str(repo), *args],
-            capture_output=True, text=True, check=False, timeout=timeout,
-        )
-    except Exception:  # noqa: BLE001 — git missing / hung / unreadable repo
-        return None
-    if proc.returncode != 0:
-        return None
-    return proc.stdout
-
 
 def _parse_status(out: str) -> dict[str, Any]:
     """Parse ``git status --porcelain=v2 --branch`` into health fields."""

@@ -14,6 +14,7 @@ from rebalance.ingest._http import GITHUB_API, GitHubClient
 from rebalance.ingest.config import normalize_github_repo_name
 from rebalance.ingest.db import db_connection, ensure_github_schema
 from rebalance.ingest.db import github as gh
+from rebalance.lib.time_ops import _now
 
 MAX_PUSH_COMPARES_PER_REFRESH = 5
 MAX_COMMIT_DETAILS_PER_REFRESH = 20
@@ -35,10 +36,6 @@ class DirectCommitCaptureResult:
 
     def as_dict(self) -> dict[str, int]:
         return asdict(self)
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _event_id(event: dict[str, Any]) -> str:
