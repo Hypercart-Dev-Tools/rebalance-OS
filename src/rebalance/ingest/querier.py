@@ -54,18 +54,6 @@ class QueryResult:
 # ---------------------------------------------------------------------------
 
 
-def _gather_vault_context(
-    database_path: Path,
-    query: str,
-    top_k: int = 8,
-) -> list[dict[str, Any]]:
-    """Semantic search over embedded vault chunks."""
-    try:
-        return query_similar(database_path=database_path, query_text=query, top_k=top_k)
-    except Exception as e:
-        logger.warning("vault context unavailable: %s", e)
-        return []
-
 
 def _local_now() -> datetime:
     """Return current time in the user's local timezone (not UTC)."""
@@ -217,20 +205,6 @@ def _gather_github_context(
         logger.warning("github context unavailable: %s", e)
         return []
 
-
-def _gather_github_semantic_context(
-    database_path: Path,
-    query: str,
-    top_k: int = 6,
-) -> list[dict[str, Any]]:
-    """Semantic search over synced GitHub issues, PRs, comments, and commits."""
-    try:
-        from rebalance.ingest.github_knowledge import query_github_documents
-
-        return query_github_documents(database_path=database_path, query_text=query, top_k=top_k)
-    except Exception as e:
-        logger.warning("github semantic context unavailable: %s", e)
-        return []
 
 
 def _gather_project_context(database_path: Path) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
@@ -570,8 +544,17 @@ def ask(
     # Gather all context
     project_context, repos_map = _gather_project_context(database_path)
     github_context = _gather_github_context(database_path, repos_map, since_days)
-    github_semantic_context = _gather_github_semantic_context(database_path, query, top_k=min(top_k, 6))
-    vault_context = _gather_vault_context(database_path, query, top_k)
+    try:
+        from rebalance.ingest.semantic_index import query as semantic_query
+        unified_semantic = semantic_query(
+            database_path, query, top_k=top_k * 2, source_filter=["vault", "github"]
+        )
+        vault_context = [r for r in unified_semantic if r["source_type"] == "vault"][:top_k]
+        github_semantic_context = [r for r in unified_semantic if r["source_type"] != "vault"][:top_k]
+    except Exception as e:
+        logger.warning("semantic context unavailable: %s", e)
+        vault_context = []
+        github_semantic_context = []
     vault_activity = _gather_vault_activity(database_path, since_days)
     calendar_context = _gather_calendar_context(database_path, days_forward=2, days_back=since_days)
     # HiQS ranked verdict — cheap cached read, never a recompute (D3).

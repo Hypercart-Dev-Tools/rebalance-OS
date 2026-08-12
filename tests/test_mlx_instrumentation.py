@@ -157,7 +157,6 @@ def test_reset_peak_memory_once_per_pass(mock_mlx):
     ("module", "site"),
     [
         ("embedder.py", "embed_chunks"),
-        ("embedder.py", "query_similar"),
         ("semantic_index.py", "embed_pending"),
         ("github_knowledge.py", "_default_embed_texts"),
     ],

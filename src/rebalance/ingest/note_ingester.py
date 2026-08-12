@@ -313,51 +313,66 @@ def _tokenize(text: str) -> list[str]:
 
 def _compute_tfidf_keywords(conn: Any, top_k: int = 10) -> int:
     """Compute TF-IDF scores across all chunks, insert top-K keywords per chunk."""
-    # Clear existing keywords
+    # Clear existing keywords and commit immediately to release the write lock
     conn.execute("DELETE FROM keywords")
+    conn.commit()
 
-    # Load all chunks
-    rows = conn.execute("SELECT id, body FROM chunks").fetchall()
-    if not rows:
-        conn.commit()
+    doc_count = conn.execute("SELECT COUNT(*) FROM chunks").fetchone()[0]
+    if doc_count == 0:
         return 0
 
-    # Build document frequency
-    doc_count = len(rows)
+    BATCH_SIZE = 1000
     doc_freq: Counter[str] = Counter()
-    chunk_tokens: dict[int, list[str]] = {}
 
-    for row in rows:
-        tokens = _tokenize(row["body"])
-        chunk_tokens[row["id"]] = tokens
-        unique_in_doc = set(tokens)
-        for token in unique_in_doc:
-            doc_freq[token] += 1
+    # Pass 1: Build document frequency in batches
+    offset = 0
+    while True:
+        rows = conn.execute("SELECT body FROM chunks LIMIT ? OFFSET ?", (BATCH_SIZE, offset)).fetchall()
+        if not rows:
+            break
+        for row in rows:
+            unique_in_doc = set(_tokenize(row["body"]))
+            for token in unique_in_doc:
+                doc_freq[token] += 1
+        offset += BATCH_SIZE
 
-    # Compute TF-IDF and insert top-K per chunk
+    # Pass 2: Compute TF-IDF and insert in batches
     total_inserted = 0
-    for chunk_id, tokens in chunk_tokens.items():
-        if not tokens:
-            continue
-        tf = Counter(tokens)
-        max_tf = max(tf.values())
-        scores: dict[str, float] = {}
-        for word, count in tf.items():
-            # Augmented TF * IDF
-            tf_score = 0.5 + 0.5 * (count / max_tf)
-            idf = math.log(doc_count / (1 + doc_freq.get(word, 0)))
-            scores[word] = tf_score * idf
+    offset = 0
+    while True:
+        # Re-fetch chunks in batches
+        rows = conn.execute("SELECT id, body FROM chunks LIMIT ? OFFSET ?", (BATCH_SIZE, offset)).fetchall()
+        if not rows:
+            break
+        
+        for row in rows:
+            chunk_id = row["id"]
+            tokens = _tokenize(row["body"])
+            if not tokens:
+                continue
+            
+            tf = Counter(tokens)
+            max_tf = max(tf.values())
+            scores: dict[str, float] = {}
+            for word, count in tf.items():
+                # Augmented TF * IDF
+                tf_score = 0.5 + 0.5 * (count / max_tf)
+                idf = math.log(doc_count / (1 + doc_freq.get(word, 0)))
+                scores[word] = tf_score * idf
 
-        # Top-K by score
-        top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
-        for keyword, score in top:
-            conn.execute(
-                "INSERT OR IGNORE INTO keywords (chunk_id, keyword, tf_idf_score) VALUES (?, ?, ?)",
-                (chunk_id, keyword, round(score, 4)),
-            )
-            total_inserted += 1
+            # Top-K by score
+            top = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:top_k]
+            for keyword, score in top:
+                conn.execute(
+                    "INSERT OR IGNORE INTO keywords (chunk_id, keyword, tf_idf_score) VALUES (?, ?, ?)",
+                    (chunk_id, keyword, round(score, 4)),
+                )
+                total_inserted += 1
+        
+        # Commit after each batch to keep transaction sizes small and release locks (Fixing #222)
+        conn.commit()
+        offset += BATCH_SIZE
 
-    conn.commit()
     return total_inserted
 
 

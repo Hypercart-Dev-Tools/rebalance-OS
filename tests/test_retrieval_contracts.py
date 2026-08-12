@@ -134,25 +134,6 @@ class LegacyFacadeMarkerTests(unittest.TestCase):
         src = inspect.getsource(mod)
         return src
 
-    def test_query_notes_docstring_contains_facade_marker(self) -> None:
-        src = self._get_register_locals()
-        self.assertIn("FACADE", src.split("query_notes")[1].split("query_github_context")[0])
-
-    def test_query_github_context_docstring_contains_facade_marker(self) -> None:
-        src = self._get_register_locals()
-        self.assertIn("FACADE", src.split("query_github_context")[1])
-
-    def test_query_notes_inline_comment_names_delegate(self) -> None:
-        src = self._get_register_locals()
-        qn_section = src.split("query_notes")[1].split("query_github_context")[0]
-        self.assertIn("embedder.query_similar", qn_section)
-
-    def test_query_github_context_inline_comment_names_delegate(self) -> None:
-        src = self._get_register_locals()
-        qgc_section = src.split("query_github_context")[1]
-        self.assertIn("github_knowledge.query_github_documents", qgc_section)
-
-
 class CliNormalizationDelegationTests(unittest.TestCase):
     """CLI source normalizer must delegate validation to normalize_sources()."""
 

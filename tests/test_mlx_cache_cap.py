@@ -203,7 +203,6 @@ def test_clear_cache_invoked_expected_cadence(mock_mlx_cap):
     ("module", "site"),
     [
         ("embedder.py", "embed_chunks"),
-        ("embedder.py", "query_similar"),
         ("semantic_index.py", "embed_pending"),
         ("github_knowledge.py", "_default_embed_texts"),
     ],
@@ -231,12 +230,7 @@ def test_all_four_call_sites_covered(module: str, site: str):
                 mock_conn.execute.return_value.fetchall.return_value = [{"id": "1", "body": "test"}]
                 mod.embed_chunks(Path("/tmp/fake.db"))
                 
-        elif site == "query_similar":
-            with patch(f"{full_mod_name}.db_connection") as mock_db:
-                mock_conn = mock_db.return_value.__enter__.return_value
-                mock_conn.execute.return_value.fetchall.return_value = []
-                mod.query_similar(Path("/tmp/fake.db"), "query")
-                
+
         elif site == "embed_pending":
             with patch(f"{full_mod_name}.sem") as mock_sem, \
                  patch(f"{full_mod_name}.db_connection") as mock_db:

@@ -21,16 +21,18 @@ def query_cmd(
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
 ) -> None:
     """Semantic search over vault notes."""
-    from rebalance.ingest.embedder import query_similar
+    from rebalance.ingest.semantic_index import query as semantic_query
 
     try:
         db_path = resolve_database_path(database)
     except DatabaseNotFoundError as exc:
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
-    results = query_similar(database_path=db_path, query_text=text, model_name=model, top_k=top_k)
+    results = semantic_query(
+        database_path=db_path, query_text=text, model_name=model, top_k=top_k, source_filter=["vault"]
+    )
     if not results:
-        typer.echo("No results found. Run `rebalance ingest notes` and `rebalance ingest embed` first.")
+        typer.echo("No results found. Run `rebalance ingest notes` and `rebalance refresh` first.")
         return
     for i, r in enumerate(results, 1):
         heading = f" > {r['heading']}" if r["heading"] else ""

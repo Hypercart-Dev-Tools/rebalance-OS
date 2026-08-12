@@ -177,24 +177,24 @@ def github_query_cmd(
     model: str = typer.Option("Qwen/Qwen3-Embedding-0.6B", help="Embedding model for query"),
 ) -> None:
     """Semantic search over the local GitHub issue/PR/comment corpus."""
-    from rebalance.ingest.github_knowledge import query_github_documents
+    from rebalance.ingest.semantic_index import query as semantic_query
 
     try:
         db_path = resolve_database_path(database)
     except DatabaseNotFoundError as exc:
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
-    results = query_github_documents(
+    results = semantic_query(
         database_path=db_path,
         query_text=text,
-        repo_full_name=repo,
+        repo=repo if repo else None,
         top_k=top_k,
         model_name=model,
+        source_filter=["github"],
     )
     if not results:
         typer.echo(
-            "No GitHub results found. Run `rebalance github-sync-artifacts` and "
-            "`rebalance github-embed` first."
+            "No GitHub results found. Run `rebalance refresh` first."
         )
         return
     for i, result in enumerate(results, 1):
