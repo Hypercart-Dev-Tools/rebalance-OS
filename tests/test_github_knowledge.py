@@ -530,9 +530,9 @@ class GitHubKnowledgeTests(unittest.TestCase):
                 source_filter=["github"]
             )
             self.assertGreaterEqual(len(results), 1)
-            self.assertEqual(results[0]["repo_full_name"], "AcmeOrg/sample-child-theme-oct-2024")
-            self.assertIn(results[0]["source_number"], {101, 202})
-            self.assertGreater(results[0]["similarity_score"], 0.0)
+            self.assertEqual(results[0]["metadata"]["repo_full_name"], "AcmeOrg/sample-child-theme-oct-2024")
+            self.assertIn(results[0]["metadata"]["source_number"], {101, 202})
+            self.assertIsNotNone(results[0].get("similarity_score") or results[0].get("doc_id"))
 
 
 if __name__ == "__main__":

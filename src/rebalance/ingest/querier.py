@@ -21,7 +21,6 @@ from typing import Any
 
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.db import db_connection, ensure_schema, ensure_calendar_schema
-from rebalance.ingest.embedder import query_similar
 
 logger = logging.getLogger(__name__)
 
