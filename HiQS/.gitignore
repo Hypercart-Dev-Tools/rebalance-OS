@@ -9,3 +9,5 @@ tests/private_names.txt
 tests/eval_queries_sidecar.json
 tests/mined_questions_raw.md
 tests/checkpoint_a_pairs.md
+# Checkpoint A blind-judging reveal key (qid → model); keep local
+tests/checkpoint_a_reveal.json

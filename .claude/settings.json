@@ -1,4 +1,7 @@
 {
+  "env": {
+    "PDDA_STALE_DAYS": "14"
+  },
   "permissions": {
     "allow": [
       "mcp__rebalance__onboarding_status",
@@ -108,11 +111,9 @@
       "mcp__rebalance__list_watched_repos",
       "Bash(utils/pdda.sh status-table *)",
       "Bash(utils/pdda.sh roadmap-coverage *)",
-      "Bash(utils/pdda.sh frontmatter *)"
+      "Bash(utils/pdda.sh frontmatter *)",
+      "Bash(HiQS/.venv/bin/python3 -c \"import hiqs; print\\('hiqs', getattr\\(hiqs,'__version__','0.1.0'\\), 'import OK'\\)\")"
     ]
-  },
-  "env": {
-    "PDDA_STALE_DAYS": "14"
   },
   "hooks": {
     "PreToolUse": [

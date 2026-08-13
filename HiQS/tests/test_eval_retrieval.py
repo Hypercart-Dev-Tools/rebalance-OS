@@ -480,13 +480,16 @@ def test_load_query_set_canonical_shape(tmp_path):
     assert queries[0]["target_doc_ids"] == ["doc-canon-001"]
     assert queries[0]["shape_tags"] == ["asymmetric"]
 
-    # Rejection 1: missing target doc_id (§19.2)
-    invalid_doc_file = tmp_path / "eval_no_doc.json"
-    invalid_doc_file.write_text(json.dumps([{"id": "q-canon-001", "shape": "asymmetric"}]), encoding="utf-8")
-    with pytest.raises(ValueError, match=r"canonical target doc_id"):
-        load_query_set(invalid_doc_file, sidecar_file)
+    # rev-5 §6.3: a missing target doc_id is ALLOWED, not rejected — the operator
+    # does not pre-author an answer key. The query loads with empty target_doc_ids
+    # (unscored; still in the disagreement set). The shape tag stays mandatory.
+    no_doc_file = tmp_path / "eval_no_doc.json"
+    no_doc_file.write_text(json.dumps([{"id": "q-canon-001", "shape": "asymmetric"}]), encoding="utf-8")
+    no_doc_queries, _ = load_query_set(no_doc_file, sidecar_file)
+    assert len(no_doc_queries) == 1
+    assert no_doc_queries[0]["target_doc_ids"] == []
 
-    # Rejection 2: missing or empty shape tag (§19.2)
+    # Rejection: missing or empty shape tag (§19.2) still hard-fails
     invalid_shape_file = tmp_path / "eval_no_shape.json"
     invalid_shape_file.write_text(json.dumps([{"id": "q-canon-001", "doc_id": "doc-canon-001", "shape": ""}]), encoding="utf-8")
     with pytest.raises(ValueError, match=r"canonical shape tag"):
@@ -585,3 +588,8 @@ def test_score_single_query_unit():
     recall, mrr = score_single_query(target_ids, hits)
     assert recall == 1.0
     assert mrr == 0.5
+
+    # rev-5 §6.3: no answer key → unscored (None, None), not scored-zero.
+    no_key_recall, no_key_mrr = score_single_query([], hits)
+    assert no_key_recall is None
+    assert no_key_mrr is None

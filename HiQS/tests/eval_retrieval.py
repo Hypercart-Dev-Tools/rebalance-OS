@@ -123,10 +123,12 @@ def load_query_set(
         else:
             target_doc_ids = []
 
-        if not target_doc_ids:
-            raise ValueError(
-                f"Query item '{q_id}' missing canonical target doc_id (§19.2)."
-            )
+        # rev-5 §6.3 amendment (2026-08-03): the operator does NOT pre-author an
+        # answer key. An empty target_doc_ids is valid — the query is unscored
+        # (recall/MRR report `unknown`, never scored-zero) but still participates
+        # in the paired disagreement set, which is Checkpoint A's primary artifact
+        # and needs no ground truth. A key accumulates later as a by-product of
+        # blind judging, and recall@10 becomes computable from that point.
 
         raw_shape = item.get(
             "shape", item.get("shape_tags", item.get("tags", []))
@@ -157,8 +159,14 @@ def load_query_set(
 
 def score_single_query(
     target_doc_ids: list[str], hits: list[Doc]
-) -> tuple[float, float]:
-    """Score recall@10 and MRR@10 for a single query."""
+) -> tuple[float | None, float | None]:
+    """Score recall@10 and MRR@10 for a single query.
+
+    Returns ``(None, None)`` when the query has no answer key (rev-5 §6.3):
+    the query is *unscored*, not scored-zero. Returning 0.0 would drag the mean
+    down and read as a retrieval failure; None means "no ground truth yet" and is
+    excluded from aggregation, so recall stays `unknown` rather than falsely low.
+    """
     top10 = hits[:10]
     matched_ranks: list[int] = []
     found_targets: set[str] = set()
@@ -174,7 +182,7 @@ def score_single_query(
                 matched_ranks.append(rank)
 
     if not target_doc_ids:
-        return 0.0, 0.0
+        return None, None
 
     recall = len(found_targets) / len(set(target_doc_ids))
     mrr = (1.0 / matched_ranks[0]) if matched_ranks else 0.0
@@ -256,11 +264,20 @@ def evaluate_retrieval(
             fused_top_hits[q_id] = fused_hits[0].id
 
     n = len(queries)
-    mean = lambda arr: sum(arr) / n if n > 0 else 0.0
+    n_scored = sum(1 for q in queries if q["target_doc_ids"])
+
+    # Mean over scored queries only; None-valued (keyless) entries are excluded,
+    # and a leg with zero scored queries reports None → surfaced as `unknown`,
+    # never as 0.0 (rev-5 §6.3, §8). top_hits below are recorded for every query
+    # regardless of key, because the disagreement set needs no ground truth.
+    def mean(arr):
+        vals = [x for x in arr if x is not None]
+        return (sum(vals) / len(vals)) if vals else None
 
     return {
         "model": model_name,
         "n_queries": n,
+        "n_scored": n_scored,
         "fused": {"recall_at_10": mean(fused_recalls), "mrr_at_10": mean(fused_mrrs)},
         "fts_only": {"recall_at_10": mean(fts_recalls), "mrr_at_10": mean(fts_mrrs)},
         "vector_only": {"recall_at_10": mean(vec_recalls), "mrr_at_10": mean(vec_mrrs)},
@@ -365,16 +382,32 @@ def evaluate_gates(
     challenger_scores: dict[str, float] | None = None,
     incumbent_scores: dict[str, float] | None = None,
 ) -> dict[str, Any]:
-    """Evaluate falsifiable quality gates (floor, vector justification, §3.2 selection rule)."""
+    """Evaluate falsifiable quality gates (floor, vector justification, §3.2 selection rule).
+
+    With no accumulated answer key (rev-5 §6.3) recall@10 is None: the absolute
+    gates and the recall-based selection cannot be computed and report `unknown`
+    rather than a default that reads as pass/fail. Checkpoint A then rests on the
+    paired disagreement set the operator judges blind (§3.2).
+    """
+    if fused_recall_at_10 is None or fts_recall_at_10 is None:
+        return {"floor_passed": None, "vector_justified": None, "winner": "unknown"}
+
     floor_passed = fused_recall_at_10 >= 0.60
     vector_justified = (fused_recall_at_10 - fts_recall_at_10) >= 0.10
 
     winner = "incumbent"
     if challenger_scores and incumbent_scores:
-        c_rec = challenger_scores.get("recall_at_10", 0.0)
-        c_mrr = challenger_scores.get("mrr_at_10", 0.0)
-        i_rec = incumbent_scores.get("recall_at_10", 0.0)
-        i_mrr = incumbent_scores.get("mrr_at_10", 0.0)
+        c_rec = challenger_scores.get("recall_at_10")
+        c_mrr = challenger_scores.get("mrr_at_10")
+        i_rec = incumbent_scores.get("recall_at_10")
+        i_mrr = incumbent_scores.get("mrr_at_10")
+
+        if None in (c_rec, c_mrr, i_rec, i_mrr):
+            return {
+                "floor_passed": floor_passed,
+                "vector_justified": vector_justified,
+                "winner": "unknown",
+            }
 
         rec_diff = c_rec - i_rec
         mrr_diff = c_mrr - i_mrr
@@ -469,10 +502,13 @@ def run_eval_and_log(
         fused_mrr = res["fused"]["mrr_at_10"]
         git_sha = get_git_sha(git_sha_override)
 
+        # None-safe: an unscored leg (no answer key) serializes as null, not 0.0.
+        _r4 = lambda x: float(round(x, 4)) if x is not None else None
+
         payload_single = {
             "model": m,
-            "recall_at_10": float(round(fused_recall, 4)),
-            "mrr_at_10": float(round(fused_mrr, 4)),
+            "recall_at_10": _r4(fused_recall),
+            "mrr_at_10": _r4(fused_mrr),
             "n_queries": len(queries),
             "queryset_sha": queryset_sha,
             "embed_ms": float(round(costs["embed_ms"], 2)),
@@ -508,17 +544,23 @@ def run_eval_and_log(
         challenger_scores=winning_res["fused"] if winning_idx != 0 else None,
         incumbent_scores=eval_results[0]["fused"] if winning_idx != 0 else None,
     )
-    if winning_idx != 0:
+    # Honesty gate: with no answer key the comparison is undecided — winner is
+    # `unknown`, resolved later by the operator's blind judging, never defaulted
+    # to "incumbent" as if it had won (rev-5 §6.3).
+    if final_gates.get("winner") == "unknown" or winning_res["fused"]["recall_at_10"] is None:
+        final_gates["winner"] = "unknown"
+    elif winning_idx != 0:
         final_gates["winner"] = winning_res["model"]
     else:
         final_gates["winner"] = "incumbent"
 
     git_sha = get_git_sha(git_sha_override)
+    _r4 = lambda x: float(round(x, 4)) if x is not None else None
 
     return {
         "model": winning_res["model"],
-        "recall_at_10": float(round(winning_res["fused"]["recall_at_10"], 4)),
-        "mrr_at_10": float(round(winning_res["fused"]["mrr_at_10"], 4)),
+        "recall_at_10": _r4(winning_res["fused"]["recall_at_10"]),
+        "mrr_at_10": _r4(winning_res["fused"]["mrr_at_10"]),
         "n_queries": len(queries),
         "queryset_sha": queryset_sha,
         "embed_ms": float(round(winning_costs["embed_ms"], 2)),
