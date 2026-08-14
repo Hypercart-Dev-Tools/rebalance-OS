@@ -21,7 +21,6 @@ from typing import Any
 
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.db import db_connection, ensure_schema, ensure_calendar_schema
-from rebalance.ingest.embedder import query_similar
 
 logger = logging.getLogger(__name__)
 
@@ -53,18 +52,6 @@ class QueryResult:
 # Context gathering
 # ---------------------------------------------------------------------------
 
-
-def _gather_vault_context(
-    database_path: Path,
-    query: str,
-    top_k: int = 8,
-) -> list[dict[str, Any]]:
-    """Semantic search over embedded vault chunks."""
-    try:
-        return query_similar(database_path=database_path, query_text=query, top_k=top_k)
-    except Exception as e:
-        logger.warning("vault context unavailable: %s", e)
-        return []
 
 
 def _local_now() -> datetime:
@@ -218,20 +205,6 @@ def _gather_github_context(
         return []
 
 
-def _gather_github_semantic_context(
-    database_path: Path,
-    query: str,
-    top_k: int = 6,
-) -> list[dict[str, Any]]:
-    """Semantic search over synced GitHub issues, PRs, comments, and commits."""
-    try:
-        from rebalance.ingest.github_knowledge import query_github_documents
-
-        return query_github_documents(database_path=database_path, query_text=query, top_k=top_k)
-    except Exception as e:
-        logger.warning("github semantic context unavailable: %s", e)
-        return []
-
 
 def _gather_project_context(database_path: Path) -> tuple[list[dict[str, Any]], dict[str, list[str]]]:
     """Project registry entries + repos map."""
@@ -318,11 +291,15 @@ def _build_prompt(
     if github_semantic_context:
         lines = ["## Relevant GitHub Artifacts"]
         for item in github_semantic_context[:5]:
-            meta = f"{item['repo_full_name']} {item['source_type']} #{item['source_number']}"
-            if item.get("state"):
-                meta += f" ({item['state']})"
-            if item.get("milestone_title"):
-                meta += f" milestone={item['milestone_title']}"
+            md = item.get("metadata") or {}
+            meta = (
+                f"{md.get('repo_full_name', '')} {md.get('item_type', '')} "
+                f"#{md.get('source_number', '')}"
+            )
+            if md.get("state"):
+                meta += f" ({md['state']})"
+            if md.get("milestone_title"):
+                meta += f" milestone={md['milestone_title']}"
             lines.append(f"### {meta}")
             lines.append(item.get("title", ""))
             lines.append(item.get("body_preview", "")[:320])
@@ -358,7 +335,8 @@ def _build_prompt(
     if vault_context:
         lines = ["## Relevant Vault Notes"]
         for r in vault_context[:5]:  # top 5 to keep prompt manageable
-            heading = f" > {r['heading']}" if r.get("heading") else ""
+            md = r.get("metadata") or {}
+            heading = f" > {md['heading']}" if md.get("heading") else ""
             lines.append(f"### {r['title']}{heading}")
             lines.append(r.get("body_preview", "")[:300])
             lines.append("")
@@ -570,8 +548,17 @@ def ask(
     # Gather all context
     project_context, repos_map = _gather_project_context(database_path)
     github_context = _gather_github_context(database_path, repos_map, since_days)
-    github_semantic_context = _gather_github_semantic_context(database_path, query, top_k=min(top_k, 6))
-    vault_context = _gather_vault_context(database_path, query, top_k)
+    try:
+        from rebalance.ingest.semantic_index import query as semantic_query
+        unified_semantic = semantic_query(
+            database_path, query, top_k=top_k * 2, source_filter=["vault", "github"]
+        )
+        vault_context = [r for r in unified_semantic if r["source_type"] == "vault"][:top_k]
+        github_semantic_context = [r for r in unified_semantic if r["source_type"] != "vault"][:top_k]
+    except Exception as e:
+        logger.warning("semantic context unavailable: %s", e)
+        vault_context = []
+        github_semantic_context = []
     vault_activity = _gather_vault_activity(database_path, since_days)
     calendar_context = _gather_calendar_context(database_path, days_forward=2, days_back=since_days)
     # HiQS ranked verdict — cheap cached read, never a recompute (D3).

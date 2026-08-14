@@ -1,0 +1,93 @@
+# Question: is this DRY-governance refactor sound, or should it be reworked before commit?
+
+Repo: rebalance-OS (Python). Branch `feature/gh-266-phase3`. There are ~64 files of
+**uncommitted** work in the tree right now. I want an independent read on whether it
+should be committed as-is, reworked, or abandoned.
+
+## Background — what problem was being solved
+
+GitHub issue #266 was an architectural audit. It found genuine duplication, e.g.
+`_parse_iso` defined 3×, `_now_iso` 3×, `_json_dumps` 3×, `_git` 4×, `as_dict` 19×.
+
+The plan (`PROJECT/2-WORKING/GH-266-ARCHITECTURAL-AUDIT.md`) had 3 phases:
+
+- Phase 1: extract the duplicated helpers into `src/rebalance/lib/{time_ops,json_ops,git_ops}.py`
+- Phase 2: **governance** — "enforce importing `datetime`, `json` and `subprocess`
+  exclusively from `rebalance.lib.*`", and "implement an import linter to physically
+  fail the build on restricted imports"
+- Phase 3: delete redundant query layers
+
+Phase 2's stated intent (from the plan's "Quad Concepts" section) was:
+> "Agents hallucinating duplicate checks via grep_search → Ban raw `datetime`/`subprocess`
+> imports outside `lib/` and enforce via CI import-linter."
+
+## What is actually in the working tree now
+
+`utils/pdda/check_banned_imports.py` is an AST linter that walks `src/rebalance/` and
+fails the build on any `import datetime` / `import subprocess` / `from datetime import ...`
+/ `from subprocess import ...` outside a path containing `lib`. It is now wired into
+`.github/workflows/ci.yml`.
+
+To satisfy that linter, ~64 files were rewritten to import through new shim modules.
+The **entire** content of `src/rebalance/lib/subprocess_ops.py` is:
+
+```python
+from subprocess import run, Popen, PIPE, TimeoutExpired, CalledProcessError, check_output, check_call, DEVNULL, SubprocessError
+
+# Re-exported for use across the project to comply with banned imports.
+```
+
+`src/rebalance/lib/time_ops.py` begins:
+
+```python
+from datetime import datetime, timezone, timedelta, date, time
+```
+
+...and then defines some genuinely shared helpers (`_parse_iso`, `_now_iso`, `_now`).
+
+Call sites were rewritten mechanically, e.g. in `src/rebalance/doctor.py`:
+
+```python
+-import subprocess
++import rebalance.lib.subprocess_ops as subprocess
+-from datetime import datetime, timezone
++from rebalance.lib.time_ops import datetime, timezone
+```
+
+An untracked script `fix_imports.py` at the repo root appears to be what performed this
+rewrite. (Please read these files directly — they are all in the worktree you have.)
+
+## The specific worry I want pressure-tested
+
+The original duplication was of **behavior** (four different hand-rolled `_git`
+wrappers, three `_parse_iso`s that disagreed on edge cases). Consolidating *those* is
+clearly correct and is what Phase 1 did.
+
+But `datetime` and `subprocess` are not duplicated behavior — they are the stdlib. My
+concern is that re-exporting stdlib names through a shim and rewriting 64 files to
+import `datetime` from `rebalance.lib.time_ops` satisfies the linter **mechanically**
+while delivering none of the intent: every call site still gets raw stdlib semantics,
+just laundered through a module the linter can't see into. It arguably makes things
+worse — `import rebalance.lib.subprocess_ops as subprocess` is actively deceptive to a
+reader, since the name `subprocess` now refers to something that is not the stdlib
+module (and is missing most of its surface).
+
+## What I want from you
+
+1. **Is my read correct**, or am I missing a real benefit of the shim approach
+   (e.g. a genuine future seam for injecting timeouts / freezing time / mocking)?
+2. **Should this be committed, reworked, or dropped?** Be decisive.
+3. If reworked: **what is the smallest change** that keeps the legitimate Phase 1 win
+   (the real deduplicated helpers) and gets a governance rule that is *enforceable
+   without being theatre*? Consider specifically:
+   - narrowing the ban to the actual duplicated helpers rather than to stdlib modules
+   - whether a lint rule can even express "don't hand-roll a fifth `_parse_iso`"
+   - whether existing tooling (ruff, flake8-tidy-imports banned-api, pylint) already
+     does this, so no bespoke AST linter is needed at all
+4. Is there a **cheaper enforcement** that gets the real goal (stop agents re-inventing
+   helpers) without a 64-file diff? Note the repo already has a working precedent: a CI
+   grep that bans raw `.replace('Z', ...)` outside a canonical `parse_calendar_dt()`
+   and requires a `# raw-ok` marker to opt out.
+
+Be blunt. If the whole Phase 2 premise is wrong, say so. If the 64-file diff is
+recoverable with a small change, say exactly what. Advisory only — do not edit files.

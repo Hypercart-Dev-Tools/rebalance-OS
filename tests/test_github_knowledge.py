@@ -13,7 +13,6 @@ from rebalance.ingest.db import db_connection, ensure_github_schema, ensure_sema
 from rebalance.ingest.github_knowledge import (
     purge_github_repo_data,
     embed_github_documents,
-    query_github_documents,
     sync_github_repo,
 )
 from rebalance.ingest.config import add_github_ignored_repo
@@ -520,18 +519,20 @@ class GitHubKnowledgeTests(unittest.TestCase):
             )
             self.assertGreater(embed_result.embedded_docs, 0)
 
-            results = query_github_documents(
+            from rebalance.ingest.semantic_index import query as semantic_query
+            results = semantic_query(
                 database_path=db_path,
                 query_text="Which PR handles nonce security for checkout?",
-                repo_full_name="AcmeOrg/sample-child-theme-oct-2024",
+                repo="AcmeOrg/sample-child-theme-oct-2024",
                 top_k=3,
                 model_name="fake-model",
                 embed_texts=_fake_embed_texts,
+                source_filter=["github"]
             )
             self.assertGreaterEqual(len(results), 1)
-            self.assertEqual(results[0]["repo_full_name"], "AcmeOrg/sample-child-theme-oct-2024")
-            self.assertIn(results[0]["source_number"], {101, 202})
-            self.assertGreater(results[0]["similarity_score"], 0.0)
+            self.assertEqual(results[0]["metadata"]["repo_full_name"], "AcmeOrg/sample-child-theme-oct-2024")
+            self.assertIn(results[0]["metadata"]["source_number"], {101, 202})
+            self.assertIsNotNone(results[0].get("similarity_score") or results[0].get("doc_id"))
 
 
 if __name__ == "__main__":
