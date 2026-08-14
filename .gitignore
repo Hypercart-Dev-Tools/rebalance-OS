@@ -102,3 +102,6 @@ REPO_MAP.md
 *.sqlite
 *.sqlite-wal
 *.sqlite-shm
+
+# AI agent scratch workspaces — never repo content (GH-266)
+.gemini/
