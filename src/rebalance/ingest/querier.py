@@ -291,11 +291,15 @@ def _build_prompt(
     if github_semantic_context:
         lines = ["## Relevant GitHub Artifacts"]
         for item in github_semantic_context[:5]:
-            meta = f"{item['repo_full_name']} {item['source_type']} #{item['source_number']}"
-            if item.get("state"):
-                meta += f" ({item['state']})"
-            if item.get("milestone_title"):
-                meta += f" milestone={item['milestone_title']}"
+            md = item.get("metadata") or {}
+            meta = (
+                f"{md.get('repo_full_name', '')} {md.get('item_type', '')} "
+                f"#{md.get('source_number', '')}"
+            )
+            if md.get("state"):
+                meta += f" ({md['state']})"
+            if md.get("milestone_title"):
+                meta += f" milestone={md['milestone_title']}"
             lines.append(f"### {meta}")
             lines.append(item.get("title", ""))
             lines.append(item.get("body_preview", "")[:320])
@@ -331,7 +335,8 @@ def _build_prompt(
     if vault_context:
         lines = ["## Relevant Vault Notes"]
         for r in vault_context[:5]:  # top 5 to keep prompt manageable
-            heading = f" > {r['heading']}" if r.get("heading") else ""
+            md = r.get("metadata") or {}
+            heading = f" > {md['heading']}" if md.get("heading") else ""
             lines.append(f"### {r['title']}{heading}")
             lines.append(r.get("body_preview", "")[:300])
             lines.append("")

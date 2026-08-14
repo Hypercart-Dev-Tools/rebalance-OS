@@ -35,9 +35,10 @@ def query_cmd(
         typer.echo("No results found. Run `rebalance ingest notes` and `rebalance refresh` first.")
         return
     for i, r in enumerate(results, 1):
-        heading = f" > {r['heading']}" if r["heading"] else ""
+        metadata = r["metadata"]
+        heading = f" > {metadata['heading']}" if metadata.get("heading") else ""
         typer.echo(f"{i}. [{r['similarity_score']:.3f}] {r['title']}{heading}")
-        typer.echo(f"   {r['file_path']}")
+        typer.echo(f"   {metadata.get('file_path', '')}")
         typer.echo(f"   {r['body_preview'][:120]}...")
         typer.echo()
 

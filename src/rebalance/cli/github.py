@@ -198,16 +198,22 @@ def github_query_cmd(
         )
         return
     for i, result in enumerate(results, 1):
-        labels = f" [{', '.join(result['labels'])}]" if result["labels"] else ""
-        milestone = f" milestone={result['milestone_title']}" if result["milestone_title"] else ""
-        state = f" state={result['state']}" if result["state"] else ""
+        metadata = result["metadata"]
+        labels = f" [{', '.join(metadata['labels'])}]" if metadata.get("labels") else ""
+        milestone = (
+            f" milestone={metadata['milestone_title']}" if metadata.get("milestone_title") else ""
+        )
+        state = f" state={metadata['state']}" if metadata.get("state") else ""
+        # source_type is "github" for every row here; the issue/pr/commit
+        # distinction lives in metadata.item_type, and doc_type is now doc_kind.
+        item_type = metadata.get("item_type", "")
         typer.echo(
-            f"{i}. [{result['similarity_score']:.3f}] {result['repo_full_name']} "
-            f"{result['source_type']} #{result['source_number']} {result['doc_type']}{labels}{state}{milestone}"
+            f"{i}. [{result['similarity_score']:.3f}] {metadata.get('repo_full_name', '')} "
+            f"{item_type} #{metadata.get('source_number', '')} {result['doc_kind']}{labels}{state}{milestone}"
         )
         typer.echo(f"   {result['title']}")
-        if result["html_url"]:
-            typer.echo(f"   {result['html_url']}")
+        if metadata.get("html_url"):
+            typer.echo(f"   {metadata['html_url']}")
         typer.echo(f"   {result['body_preview'][:180]}...")
         typer.echo()
 
