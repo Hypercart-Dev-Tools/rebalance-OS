@@ -47,16 +47,8 @@ AUTH_RECOVERY: dict[str, tuple[str, int]] = {
 
 
 def _parse_iso(raw: Any) -> datetime | None:
-    if not raw or not isinstance(raw, str):
-        return None
-    s = raw.strip()
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    try:
-        dt = datetime.fromisoformat(s)
-    except ValueError:
-        return None
-    return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+    from rebalance.lib.time_ops import _parse_iso as common_parse_iso
+    return common_parse_iso(raw, force_utc=True)
 
 
 def status_timestamp(status: dict[str, Any], key: str) -> str | None:

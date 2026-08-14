@@ -33,7 +33,11 @@ def parse_calendar_dt(raw: str) -> datetime:
     used by the Google Calendar API. Returns a timezone-aware datetime
     when possible; date-only strings (all-day events) return naive.
     """
-    return datetime.fromisoformat(raw.replace("Z", "+00:00"))  # raw-ok: canonical location
+    from rebalance.lib.time_ops import _parse_iso
+    parsed = _parse_iso(raw, force_utc=False)  # raw-ok: canonical location
+    if parsed is None:
+        raise ValueError(f"Invalid isoformat string: '{raw}'")
+    return parsed
 
 
 def calendar_dt_utc(raw: str | None) -> datetime | None:

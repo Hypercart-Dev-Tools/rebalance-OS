@@ -366,7 +366,7 @@ def _query_day_activity(
                 "source_tag": tag,
             })
 
-    if slack_user_id:
+    if slack_user_id and _table_exists(conn, "sleuth_reminders"):
         rows = conn.execute(
             """
             SELECT reminder_id, state, is_active, reminder_message_text,
