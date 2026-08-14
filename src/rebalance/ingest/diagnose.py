@@ -24,24 +24,11 @@ from rebalance.ingest.config import (
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.index_ops import _activity_repos, _project_repos
 from rebalance.ingest.registry import get_projects
+from rebalance.lib.time_ops import _parse_iso, _now, _now_utc
 
 
 # Mirrors github_knowledge.sync_github_repo's default lookback for issues/PRs.
 DEFAULT_SYNC_WINDOW_DAYS = 90
-
-
-def _now_utc() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _parse_iso(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        # GitHub returns "2024-01-02T03:04:05Z"; sqlite often stores the same.
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except ValueError:
-        return None
 
 
 def _days_since(iso: str | None) -> float | None:

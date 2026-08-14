@@ -31,6 +31,7 @@ from pathlib import Path
 from rebalance.ingest.db import db_connection, ensure_github_schema
 from rebalance.ingest.db import github as gh
 from rebalance.ingest.local_repos import scan_local_repos
+from rebalance.lib.time_ops import _now
 
 # One ASCII unit separator between fields and a record separator between commits:
 # commit messages are multi-line and contain almost any printable character, so
@@ -71,10 +72,6 @@ class BackfillResult:
 
     def as_dict(self) -> dict:
         return asdict(self)
-
-
-def _now() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _git(repo_path: Path, *args: str) -> tuple[int, str, str]:

@@ -34,6 +34,7 @@ This file is the first entry point for an AI agent working in this repo: it tell
 - Every active doc in `PROJECT/2-WORKING/` must be reflected by a one-line pointer in `ROADMAP.md` — or opt out with `roadmap_exempt: true` in its frontmatter. Enforced by `utils/pdda/pdda.sh roadmap-coverage`; governance lives in `PROJECT/PDDA.md`.
 - Every captured GitHub issue doc in `PROJECT/1-INBOX/GH-*.md` is first-class intake and must also be parked in `ROADMAP.md` as a one-line queue entry immediately at capture, then promoted or removed later. Enforced by `utils/pdda/pdda.sh roadmap-coverage`; governance lives in `PROJECT/PDDA.md`.
 - Do not create a second competing plan when a canonical `PROJECT/**` doc already exists.
+- Do not build a redundant solution when extending an existing one is viable (enforced by PDDA Phase 0 review). If >50% of the new solution overlaps with an existing one, the plan MUST include deprecating/deleting the old one.
 - Do not override deterministic PDDA findings with prose.
 - Do not report a win you did not verify with `rebalance doctor`, `pytest tests/`, or the relevant PDDA check.
 
@@ -86,6 +87,7 @@ utils/pdda/pdda.sh gh-refresh        # refresh the cached GitHub issue-state fil
 utils/pdda/pdda.sh releases    # validate RELEASES.md, the release-planning ledger (warn-only nudge)
 utils/pdda/pdda.sh releases-current  # read-only roll-up: RELEASES.md entries whose Status isn't "Shipped"
 utils/pdda/pdda.sh governance  # governance-doc cross-reference + doc/code drift (this file, AGENTS.md, CLAUDE.md, ...)
+utils/pdda/pdda.sh banned-imports # AST-level import linter flagging banned modules outside rebalance.lib
 utils/pdda/pdda.sh doc-ready   # LLM readiness review — set PDDA_LLM_BIN (codex/claude/agy) for recommendations, else it self-skips
 utils/pdda/pdda.sh catchup     # LLM repo triage and ROUTER.md recommendations — opt-in like doc-ready
 utils/pdda/pdda.sh help

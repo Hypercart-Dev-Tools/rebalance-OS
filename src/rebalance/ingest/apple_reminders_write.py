@@ -47,6 +47,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from rebalance.ingest.apple_reminders import AppleRemindersError
+from rebalance.lib.time_ops import _now_iso, _now
 
 logger = logging.getLogger(__name__)
 
@@ -188,10 +189,6 @@ class WriteResult:
 # dict (or raises AppleRemindersHelperError). The default impl `open`s the signed
 # bundle; tests inject a fake.
 Invoker = Callable[[dict[str, Any]], dict[str, Any]]
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).isoformat()
 
 
 def _new_request_id() -> str:

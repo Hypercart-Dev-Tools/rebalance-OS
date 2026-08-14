@@ -83,9 +83,7 @@ def _content_hash(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-def _json_dumps(value: Any) -> str:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True)
-
+from rebalance.lib.json_ops import _json_dumps
 
 # ---------------------------------------------------------------------------
 # Shared retrieval contracts — exported so callers never re-derive them.

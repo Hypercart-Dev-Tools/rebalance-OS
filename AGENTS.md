@@ -96,6 +96,8 @@ This repo **is** an MCP server. Every refresh and query path is exposed through 
 > For the *why* behind these rules, see [GUIDING-PRINCIPLES.md](./GUIDING-PRINCIPLES.md).
 
 - Code: DRY, SOLID; balance maintainability, performance, secure. Comply with framework security best practices.
+- **Pre-flight Search Rule**: Before writing any new utility function or system layer, you MUST use `grep_search` or MCP `search_graph` to check if a similar function exists (e.g., date parsing, JSON handling). If it exists, import it. Do not duplicate it.
+- **Centralization Rule**: All standard data formatting and OS-level operations (like datetime parsing, json dumping, git calls) must use `src/rebalance/lib/*` modules instead of creating local helper methods in the collector.
 - **State Management**: Introduce FSM (Finite State Machine) if state transitions exceed 4 distinct states or more than one conditional branch per state. Document the state diagram in code comments, or in the owning `PROJECT/**` doc.
 - **Contracts**: Designate single writer per contract/schema (API response shape, DB record structure, queue message format). Changes require review from contract owner; broadcast breaking changes immediately.
 - **Pipelines**: One logical pipeline per data flow whenever possible. Avoid forking/rejoining; use filters, transforms, and side effects in sequence. If pipeline needs multiple paths, use conditional routing within single pipeline, not separate pipelines.

@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.db import db_connection, ensure_github_schema
+from rebalance.lib.time_ops import _now_iso, _now
 
 _REF_RE = re.compile(r"(?<![/\w])#(\d+)\b")
 _WORD_RE = re.compile(r"[a-z0-9]+")
@@ -97,10 +98,6 @@ class GitHubIssuePRReport:
             "medium_confidence": [item.as_dict() for item in self.medium_confidence],
             "unmatched_open_issues": self.unmatched_open_issues,
         }
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _extract_refs(text: str) -> set[int]:

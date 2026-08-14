@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.db import db_connection, ensure_github_schema
+from rebalance.lib.time_ops import _now_iso, _now
 
 _RELEASE_BRANCH_RE = re.compile(r"\brelease/[A-Za-z0-9._-]+\b")
 
@@ -62,10 +63,6 @@ def _parse_json_list(value: str | None) -> list[str]:
         return parsed if isinstance(parsed, list) else []
     except json.JSONDecodeError:
         return []
-
-
-def _now_iso() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def _days_until(iso_date: str) -> int | None:
