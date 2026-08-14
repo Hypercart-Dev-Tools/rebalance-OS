@@ -52,21 +52,13 @@ def to_local(dt: datetime, tz: ZoneInfo | None = None) -> datetime:
 
 
 def parse_utc_iso(value: str | None) -> datetime | None:
-    """Parse an ISO 8601 string; assumes UTC if tzinfo is absent.
-
-    Handles both trailing-Z (GitHub/Sleuth APIs) and +HH:MM offset forms.
+    """Parse an ISO 8601 string and ensure it is timezone-aware in UTC.
+    
+    If the string specifies no timezone, it is assumed to be UTC.
     Returns None on empty input or parse failure.
     """
-    if not value:
-        return None
-    text = value.strip().replace("Z", "+00:00")
-    try:
-        parsed = datetime.fromisoformat(text)
-    except ValueError:
-        return None
-    if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed
+    from rebalance.lib.time_ops import _parse_iso
+    return _parse_iso(value, force_utc=True)
 
 
 def format_local(value: str | datetime | None, fmt: str, *, tz: ZoneInfo | None = None) -> str:

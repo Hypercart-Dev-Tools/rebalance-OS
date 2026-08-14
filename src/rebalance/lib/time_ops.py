@@ -1,11 +1,28 @@
 from datetime import datetime, timezone
 
-def _parse_iso(value: str | None) -> datetime | None:
-    if not value: return None
-    try:
-        return datetime.fromisoformat(value.replace('Z', '+00:00'))
-    except ValueError:
+from typing import Any
+
+def _parse_iso(raw: Any, force_utc: bool = True) -> datetime | None:
+    if not raw or not isinstance(raw, str):
         return None
+    text = raw.strip().replace("Z", "+00:00")
+    
+    parsed = None
+    for candidate in (text, text.replace(" ", "T")):
+        try:
+            parsed = datetime.fromisoformat(candidate)
+            break
+        except ValueError:
+            continue
+            
+    if not parsed:
+        return None
+        
+    if force_utc:
+        if parsed.tzinfo is None:
+            return parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    return parsed
 
 def _now_iso() -> str:
     """Returns the current UTC time as an ISO format string."""

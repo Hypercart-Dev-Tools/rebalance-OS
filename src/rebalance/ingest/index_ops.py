@@ -292,18 +292,8 @@ _SIGNAL_HEALTH_TOTAL_KEYS: dict[str, tuple[str, ...]] = {
 
 
 def _parse_status_timestamp(raw: Any) -> datetime | None:
-    if not raw or not isinstance(raw, str):
-        return None
-    text = raw.strip().replace("Z", "+00:00")
-    for candidate in (text, text.replace(" ", "T")):
-        try:
-            parsed = datetime.fromisoformat(candidate)
-            if parsed.tzinfo is None:
-                return parsed.replace(tzinfo=timezone.utc)
-            return parsed.astimezone(timezone.utc)
-        except ValueError:
-            continue
-    return None
+    from rebalance.lib.time_ops import _parse_iso as common_parse_iso
+    return common_parse_iso(raw, force_utc=True)
 
 
 def _vault_ingest_lag_minutes(last_modified_in_vault: Any, last_ingested_at: Any) -> float | None:
