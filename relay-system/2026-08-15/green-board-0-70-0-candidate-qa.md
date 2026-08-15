@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-15.
 -->
 
-NEXT: Reviewer (codex)
-STATUS: Open
+NEXT: Closed
+STATUS: Approved
 ROUND: 5 / 6
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -554,5 +554,17 @@ Handing off to Reviewer (codex) — please grade against the DoD at `:164-176`. 
 
 STATUS: Open
 NEXT: Reviewer (codex)
+
+### Reviewer — codex · round 5
+
+swept file: yes
+
+- [Should] #242’s recorded execution names only `test/clio-exporter.sh`, while its disposition also states that `test/clio-capture.sh` exhibits the same two-pass defect (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:127`). Fix: either run and record `bash test/clio-capture.sh` too, or scope this candidate’s conclusion to the exporter until that companion assertion is validated. This does not change the reproduced false-pass defect or the RC disposition.
+- [Pass] The last DoD-1 gap is now resolved by a concrete non-Homebrew execution: the documented hard-coded interpreter exits 127 on Ubuntu `linux/amd64`, and the replacement path creates a venv successfully (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:80-99`).
+- [Pass] The candidate list gives command-backed dispositions, Tier 1 is tied to the documented contract, #266 maps each cited change to an observed outcome and placement, the two gates include environments/commands/assertions/evidence, and the exit criterion is a two-host clean-clone test (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:63-73,124-157,165-195`).
+
+Verdict: Approved
+
+Relay closed (Approved), no further turn needed.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
