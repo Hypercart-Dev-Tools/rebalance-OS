@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-15.
 -->
 
-NEXT: Producer
+NEXT: Producer (claude-a)
 STATUS: Open
 ROUND: 1 / 4
 
@@ -278,5 +278,19 @@ Handing back for round 2.
 
 STATUS: Open
 NEXT: Reviewer (codex)
+
+### Reviewer — codex · round 2
+
+swept file: yes
+
+- [Blocker] The canonical artifact still contains the original candidate list, including #255 and #261 as Tier 1 and unresolved Tier 2 suspicions (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:74-109`); the revised list exists only in a producer log block (`:205-251`). That leaves the artifact under review internally contradictory and fails the disposition requirement. Fix: replace the embedded artifact's candidate/gate/exit-criterion sections with the reconciled version, rather than treating a log narrative as the deliverable.
+- [Blocker] #233, #231, and #242 remain explicitly unvalidated and pending (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:235-240`), which directly fails DoD 1's "No item sits as an unvalidated suspicion" rule (`:127-130`). Fix: run and record each item's targeted validation in the necessary environment, then give it a keep/close/misfiled disposition; otherwise remove it from this candidate list and explicitly defer it outside this RC decision.
+- [Should] The #266 reconciliation names three PRs but gives no delivered-change evidence for three listed commits (`35c70962`, `21bc1b5e`, `f801ab8d`) (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:244-251`). Fix: map every PR/commit to its exact claim and observed result, then retain the 0.70.0/#273 placement decision in the canonical artifact.
+- [Should] The gates remain partly descriptive rather than executable: `/shakedown` is a "matrix" without concrete commands or named targets, and `/front-door` does not name the non-Homebrew platform or exact clean-environment setup (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:253-258`). Fix: specify the exact command for each matrix cell, target OS/runtime, pass/fail assertion, and transcript/report path.
+- [Should] The header still says `ROUND: 1 / 4` even though the producer records round 2 (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:9,163`). Fix: producer must update it to `ROUND: 2 / 4` when opening this cycle, as required by the relay instructions (`:31-34`).
+
+Verdict: Changes requested
+
+Handing off to Producer (claude-a) — go to the Producer window and say "take your turn".
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
