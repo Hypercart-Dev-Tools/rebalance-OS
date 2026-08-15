@@ -14,6 +14,12 @@ goal: >
 
 # p4 — R3: writer-fencing script with guaranteed restore
 
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase complete, merged 2026-08-04 in PR #253 — but the script it produced failed in three ways when first run against the live fleet on 2026-08-14: it locked a stale repo-root database instead of the real one, its roster covered 5 of 11 loaded jobs, and its pause assertion greps for a string a paused job never prints. The first two are fixed; the restore path did work as designed. | The pause assertion cannot be fixed until pause state is readable at all — see [3EYES-PAUSE-DOES-NOT-STOP-LAUNCHD.md](../../../1-INBOX/3EYES-PAUSE-DOES-NOT-STOP-LAUNCHD.md). Until then, treat `launchctl bootout` as the only real fence. |
+
 > ## ⚠️ NEVER write the absolute repo path in your transcript
 >
 > The turn shim scans your transcript for the real repo root and fails the turn as an "isolation

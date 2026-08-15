@@ -14,6 +14,12 @@ goal: >
 
 # p1 — R7: make the direct-commit writer idempotent
 
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase complete, merged 2026-08-04 in PR #253. Confirmed holding in production on 2026-08-14: the orphan count sat at 2,678,350 across four measurements spanning 1h40m and two completed syncs, against a pre-fix rate of ~15,500 per sync. | Nothing. The phase is closed; this brief archives with GH-250. |
+
 > ## ⚠️ NEVER write the absolute repo path in your transcript
 >
 > The turn shim scans your transcript for the real repo root and fails the turn as an "isolation

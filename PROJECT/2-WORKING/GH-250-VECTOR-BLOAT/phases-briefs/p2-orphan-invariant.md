@@ -14,6 +14,12 @@ goal: >
 
 # p2 — R6: zero-orphan invariant in doctor, sawtooth-aware
 
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase complete, merged 2026-08-04 in PR #253. The invariant did its job on 2026-08-14: it is what reported the 2,678,350 github and 304 semantic orphans as FAIL, and what confirmed both at 0 after the reclaim. | Nothing. The phase is closed; this brief archives with GH-250. The invariant stays live and is now the standing detector for any recurrence. |
+
 > ## ⚠️ NEVER write the absolute repo path in your transcript
 >
 > The turn shim scans your transcript for the real repo root and fails the turn as an "isolation

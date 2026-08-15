@@ -14,6 +14,12 @@ goal: >
 
 # p3 — R2: author the reclaim runbook
 
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase complete, merged 2026-08-04 in PR #253. The runbook it produced was executed on 2026-08-14 and delivered the reclaim — but running it for real exposed four broken safety mechanisms it had declared verified, three of them in gates this phase wrote or relied on. | Nothing in this brief. The lesson belongs upstream: rehearsals here ran against fixtures and the happy path, which is precisely why the defects survived review. |
+
 > ## ⚠️ NEVER write the absolute repo path in your transcript
 >
 > The turn shim scans your transcript for the real repo root and fails the turn as an "isolation

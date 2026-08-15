@@ -14,6 +14,12 @@ goal: >
 
 # p5 — Rehearse the reclaim against a throwaway COPY
 
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase complete, merged 2026-08-04 in PR #253. The rehearsal correctly proved the reclaim math, `integrity_check`, and before/after counts, all of which held exactly on the real run of 2026-08-14. | The gap worth naming: rehearsing against a throwaway copy validated the *mutation* and nothing about the *environment*. Every defect that actually bit — a fence pointed at the wrong file, a roster missing six jobs, a pause that does not pause — was invisible to a copy-based rehearsal by construction. A future rehearsal should exercise the fence against the live fleet, which is read-only and cheap. |
+
 > ## ⚠️ NEVER write the absolute repo path in your transcript
 >
 > The turn shim scans your transcript for the real repo root and fails the turn as an "isolation

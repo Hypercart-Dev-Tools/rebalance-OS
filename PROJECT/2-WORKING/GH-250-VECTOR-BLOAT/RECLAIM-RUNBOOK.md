@@ -1,4 +1,23 @@
+---
+title: "rebalance.db vector-bloat reclaim runbook (GH-250 R2)"
+status: "EXECUTED 2026-08-14 — 14.62 GB to 3.81 GB, both orphan invariants OK"
+created: 2026-08-04
+updated: 2026-08-14
+owner: noel
+gh_issue: 250
+doc_type: project
+goal: >
+  Reclaim the orphaned github_embeddings vectors from the production store in one attended
+  maintenance window, with every gate a real conditional and every abort path reversible.
+---
+
 # rebalance.db vector-bloat reclaim runbook (GH-250 R2)
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| **Executed 2026-08-14.** 2,678,350 orphaned vectors deleted, database 14.62 GB → 3.81 GB, `integrity_check=ok`, live vectors 32,908 before and after. Both `doctor` orphan invariants flipped FAIL → OK. Four broken safety mechanisms were found and three fixed in the process; the fourth (`three_eyes pause` not stopping launchd) is captured separately and is the reason the first attempt aborted at batch 94 of 268. | Delete the retained `rebalance.db.pre-reclaim-*` and `rebalance.db.backup-*` (~29 GB) deliberately, by name, once a full sync has completed cleanly and `doctor` still reports 0 orphans. Then this doc archives with GH-250. Anyone reusing it must read the resume caveat below before re-running after an abort. |
 
 Reclaims ~10.2 GB from `rebalance.db` by deleting orphaned `github_embeddings` vectors and rebuilding
 the file. One operator, one maintenance window, start to finish.

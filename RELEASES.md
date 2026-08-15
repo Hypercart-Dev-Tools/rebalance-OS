@@ -6,14 +6,19 @@ target release names/dates; it is not a history of what shipped (that's CHANGELO
 learned belong there at ship time, not duplicated here). Contract lives in PROJECT/PDDA.md ->
 "RELEASES.md — release ledger". Add new fields only when a real need shows up.
 
+`Description:` is a manifest of the GH issues the release closes — issue numbers, not prose.
+`Exit:` is the one observable that decides whether it shipped. Both stay on a single line.
+Issue state verified 2026-08-14.
+
 Release: 0.69.0
 Iterations: 0.69.0-0.69.9
-Status: Draft
+Status: Shipped 2026-08-14
 Target Date: 2026-08-15
 Codename: Reclaim
 Milestone:
-Description: The store tells the truth about its own size — finish GH-250 end to end: observe the writer fix holding across three sync cycles (R1), execute the ~10.2 GiB reclaim behind the runbook (R4), backfill and re-embed what the leak destroyed (R5), and land with doctor's two orphan invariants reporting OK against real data instead of FAIL.
-GH_URL:
+Description: #250 vector bloat — reclaim + backfill + re-embed. Root cause already fixed in PR #249.
+Exit: MET 2026-08-14 — doctor reports OK on both orphan-vector invariants (0 github, 0 semantic); store 14.62 GB -> 3.81 GB, live vectors 32,908 unchanged. R1 waived by the operator for wall clock, recorded in the runbook. #250 stays open pending issue closure (api.github.com was unreachable).
+GH_URL: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/250
 Front-door reviewed:
 Shakedown reviewed:
 License file: Yes
@@ -24,8 +29,9 @@ Status: Draft
 Target Date: 2026-09-15
 Codename: Green Board
 Milestone:
-Description: A red build means new breakage — empty the GH-178 quarantine (10 real commit-threshold auto-promotion defects, not flakes), fix the working-directory dependence in GH-255, repair the 5 utils/3-eyes CI failures, and end on a development branch whose green run is worth believing.
-GH_URL:
+Description: #178 red development branch (10 auto-promotion defects + 6 state-sensitive tests), #255 working-directory-dependent tests.
+Exit: `pytest tests/ utils/3-eyes/tests` green on development, from any working directory.
+GH_URL: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/178
 Front-door reviewed:
 Shakedown reviewed:
 License file: Yes
@@ -34,10 +40,11 @@ Release: 0.71.0
 Iterations: 0.71.0-0.71.9
 Status: Draft
 Target Date: 2026-10-15
-Codename: Daily Driver
+Codename: Subtraction
 Milestone:
-Description: The consolidation stops being an argument about code shape and becomes an observed footprint — run rebalance as the daily driver on the 64 GB Mac Studio for one 7-day window. Four exit criteria, each measurable by a named instrument: (1) MLX allocation stays under the GH-217 cap (0.35 x installed RAM, ~22 GB), read from the per-batch active/cache/peak instrumentation GH-216 adds — GH-216 is therefore a hard prerequisite, since that number is unobserved today; (2) no rebalance process — collector or embedder — exceeds 32 GB `phys_footprint`, i.e. half installed RAM, the same constant GH-213 already uses for its swap threshold; this is the regression gate on the ~46 GB spikes in GH-209 (daily-sync/github-sync) and 46.9 GB in GH-215 (rebalance-embed), read from `ps`/`footprint`, needing no new tooling. Note these are two different quantities: GH-217 caps what MLX may allocate, not total process footprint, and conflating them would fail the gate spuriously; (3) zero `database is locked` (GH-222) across the window; (4) `rebalance doctor` reports OK on every day of it. Reset rule: only an in-scope rebalance defect restarts the clock — an unrelated environmental flake does not, or the gate measures luck instead of stability. "The code looks smaller" never substitutes. This is where GH-266 gets to be finished instead of merely tidier.
-GH_URL: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/266
+Description: #271 subtraction pass (C1-C8) — absorbs the open GH-266 Phase 4 remnants (stale MCP docs, weakened assertion, TF-IDF keyset pagination). Run as a marathon; plan and per-lane contracts in PROJECT/2-WORKING/GH-271-SUBTRACTION/.
+Exit: net LOC <= -2,000 measured; zero local generation models in the ask path; renderers <= 2; launchd jobs <= 9; search surfaces = 2; tests/test_surface_budgets.py green and pinning the post-subtraction counts.
+GH_URL: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/271
 Front-door reviewed:
 Shakedown reviewed:
 License file: Yes
@@ -46,10 +53,11 @@ Release: 0.72.0
 Iterations: 0.72.0-0.72.9
 Status: Draft
 Target Date: 2026-11-15
-Codename: Punch List
+Codename: Daily Driver
 Milestone:
-Description: Refinement bounded by what dogfooding actually found, and by nothing else. The defect list is whatever the 0.71.0 window produced, frozen the day that window closes; anything opened after the freeze goes to ROADMAP.md, not here. Exit: every frozen item closed or explicitly deferred with a written reason, then a second 7-day window on the same device with no new defect of a class already fixed. If the frozen list comes back empty, this release is skipped rather than filled — an empty punch list is the success case, not a gap to backfill.
-GH_URL:
+Description: Proof, not new work — consolidates the former 0.71.0 Daily Driver and 0.72.0 Punch List into one milestone. Prerequisites: #216 MLX instrumentation, #217 MLX memory cap. Regression gates only: #209, #210, #213, #215, #222 (closed).
+Exit: one 7-day daily-driver window on the 64 GB Mac Studio — MLX allocation under the #217 cap (0.35 x RAM, ~22 GB) read from #216 instrumentation; no rebalance process over 32 GB phys_footprint; zero `database is locked`; doctor OK daily. In-scope defects reset the clock, environmental flakes do not. Defects the window finds are fixed here, scope frozen the day it closes; anything later goes to ROADMAP.md.
+GH_URL: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/266
 Front-door reviewed:
 Shakedown reviewed:
 License file: Yes

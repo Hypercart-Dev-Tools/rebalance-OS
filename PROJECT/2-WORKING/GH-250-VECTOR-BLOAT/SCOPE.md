@@ -1,4 +1,23 @@
+---
+title: "GH-250 marathon scope — why R1, R4 and R5 are not in the plan"
+status: "R1 waived, R4 and R5 executed 2026-08-14; exclusions held up in practice"
+created: 2026-08-04
+updated: 2026-08-14
+owner: noel
+gh_issue: 250
+doc_type: project
+goal: >
+  Record why three of GH-250's seven items were kept out of the unattended marathon, so the
+  exclusion stays a documented decision rather than an omission someone later "fixes".
+---
+
 # GH-250 marathon scope — why R1, R4 and R5 are not in the plan
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| All three exclusions were vindicated in practice on 2026-08-14. R4 needed a human window and got one; the run aborted mid-way on a live writer and required judgement to resume, exactly what an unattended agent could not have supplied. R5 shrank from a predicted multi-hour pass to 6,757 documents, as this doc predicted once the writer fix landed. R1 was time-gated as described and was ultimately waived by the operator for wall clock rather than satisfied. | Nothing in this doc. It is a record of a scoping decision, and the decision is closed. It archives with the rest of GH-250 once the issue is closed. |
 
 The request was a marathon that runs **R1 through R7 non-stop**. Three of those seven cannot
 honestly live in an unattended chain. This file records why, so the exclusion is a documented
