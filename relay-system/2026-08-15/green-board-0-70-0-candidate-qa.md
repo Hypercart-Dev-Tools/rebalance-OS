@@ -124,7 +124,7 @@ inspection got the defect right and the remedy incomplete.
 | # | Command | Result | Disposition |
 |---|---|---|---|
 | **#255** | `cd /tmp && pytest <abs>/tests/` | 10 failed / 1,713 passed | **Keep, demoted.** The contract says `cd rebalance-OS`; from root the suite is green. CI-trust and developer experience, not stranger-facing. "Any working directory" was an invented bar. |
-| **#242** | `bash test/clio-exporter.sh` → prints `PASS: bash` then `PASS: /bin/bash`; `readlink -f "$(command -v bash)"` and `readlink -f /bin/bash` → both `/bin/bash` | **two reported passes from one binary — observed, not inferred** | **CONFIRMED reproducing.** `test/clio-exporter.sh` and `test/clio-capture.sh` run the same interpreter twice and report two passes. **Include in Green Board:** a false-pass in the test layer inflates confidence in exactly the suite an RC leans on. |
+| **#242** | `bash test/clio-exporter.sh` **and** `bash test/clio-capture.sh` → each prints `PASS: bash` then `PASS: /bin/bash`; `readlink -f "$(command -v bash)"` and `readlink -f /bin/bash` → both `/bin/bash` | **two reported passes from one binary — observed, not inferred** | **CONFIRMED reproducing.** `test/clio-exporter.sh` and `test/clio-capture.sh` run the same interpreter twice and report two passes. **Include in Green Board:** a false-pass in the test layer inflates confidence in exactly the suite an RC leans on. |
 | **#273** | `pdda.sh banned-imports`; parser census | 55 warns / 0 errors; 13 of 109 `src/` files call `fromisoformat` directly; 3 import a canonical helper *and* bypass it | **Green Board.** Two canonical hubs (`tz_utils`, `lib/time_ops`). |
 
 ## Closeable — validated as already fixed or not reproducing
