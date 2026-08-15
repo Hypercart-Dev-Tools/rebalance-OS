@@ -1546,15 +1546,16 @@ def _check_embedding_backlog(db_path: Path) -> Check:
     # An INFO line that never lies is worth more than a WARN that cries wolf.
     try:
         with _ro_connection(db_path) as conn:
-            # We hardcode the model version to the current one for semantic since
-            # we just want a rough count for info purposes.
-            # But wait, we can just look up the default one or hardcode a fallback.
-            try:
-                from rebalance.ingest.config import get_embedding_model_version
-                model_version = get_embedding_model_version()
-            except Exception:
-                model_version = "v1"
-                
+            # Build the version string the same way the embedder stamps it
+            # (semantic_index.py: f"{model_name}|{EMBEDDING_DIM}"). This used to
+            # import a get_embedding_model_version() that does not exist, so it
+            # silently fell back to "v1" and every correctly-embedded document
+            # compared unequal: the backlog read 47,914 when it was ~1,762.
+            # A rough count is fine; a count that is wrong by 25x is not.
+            from rebalance.ingest.embedder import DEFAULT_MODEL, EMBEDDING_DIM
+            model_version = f"{DEFAULT_MODEL}|{EMBEDDING_DIM}"
+
+
             gh_unembedded = count_gh(conn, min_chars=10)
             sem_unembedded = count_sem(conn, source_types=None, min_chars=10, model_version=model_version)
             

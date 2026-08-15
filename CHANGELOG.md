@@ -6,6 +6,22 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.69.0] - 2026-08-14
+
+### Fixed
+- **The embedding backlog was reported 25x too large.** The health check compared every
+  document's stored embedding-model version against a fallback string, because the accessor it
+  imported to get the real one no longer exists and the failure was swallowed. Every correctly
+  embedded document therefore compared unequal and counted as pending: the backlog read 47,914
+  when the true figure was ~1,762. The check now builds the version string the same way the
+  embedder stamps it, so the number means what it says.
+- **A safety gate stood between a multi-million-row delete and a live writer, and it was
+  checking the wrong file.** The writer-fencing script defaults its database path to the
+  repository root, and the reclaim procedure never overrode it — so a stale copy left in the
+  working tree from June would have absorbed the lock check and reported the store safely fenced
+  while the real one still had writers attached. The procedure now pins both the database path
+  and the interpreter, with the reason recorded where the next operator will read it.
+
 ## [0.68.7] - 2026-08-07
 
 ### Fixed
