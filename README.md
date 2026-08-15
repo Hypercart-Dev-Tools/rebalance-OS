@@ -224,10 +224,20 @@ download is the only large transfer and happens once.
 
 ### Step 1 — Clone and install
 
+**Before you start, check your Python.** rebalance needs **3.12 or newer**:
+
+```bash
+python3 --version
+```
+
+If that prints 3.11 or lower — or `command not found` — install a newer Python first and
+use it below in place of `python3`. Ubuntu 22.04 ships 3.10, so `apt install python3.12`
+(or a `deadsnakes` PPA) is required there; on macOS, `brew install python@3.13`.
+
 ```bash
 git clone https://github.com/Hypercart-Dev-Tools/rebalance-OS.git
 cd rebalance-OS
-/opt/homebrew/bin/python3.13 -m venv .venv
+python3 -m venv .venv
 .venv/bin/pip install -e ".[embeddings,calendar]"
 ```
 
