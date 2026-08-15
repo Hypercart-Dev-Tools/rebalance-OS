@@ -1,3 +1,17 @@
+---
+title: "p4 — R3: writer-fencing script with guaranteed restore"
+status: "Phase complete (merged 2026-08-04, PR #253)"
+created: 2026-08-04
+updated: 2026-08-14
+owner: noel
+gh_issue: 250
+roadmap_exempt: true
+doc_type: project
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). The tracked effort is GH-250,
+  parked in ROADMAP.md via PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/SCOPE.md.
+---
+
 # p4 — R3: writer-fencing script with guaranteed restore
 
 > ## ⚠️ NEVER write the absolute repo path in your transcript

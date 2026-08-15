@@ -58,6 +58,14 @@ export VACUUM_TARGET="${DB%.db}.vacuum.db"        # what reclaim.py writes
 export BACKUP="$DB.backup-$STAMP"                 # unique per run; never reused
 export PRE="$DB.pre-reclaim-$STAMP"               # retained original after cutover
 
+# fence-writers.sh defaults REBALANCE_DB to "$REPO_ROOT/rebalance.db" and PYTHON_CMD to bare
+# `python`. Both defaults are wrong here and the first one is DANGEROUS: a stale 491 KB
+# rebalance.db from 2026-06-26 is sitting at the repo root, so an un-exported `verify` would run
+# its lsof and BEGIN EXCLUSIVE gates against THAT file and pass while the real 15.7 GiB database
+# still had live writers. Export both, and treat these as part of the fence contract.
+export REBALANCE_DB="$DB"
+export PYTHON_CMD="$PY"
+
 mkdir -p "$(dirname "$RECORD")"
 { echo "=== GH-250 reclaim $STAMP ==="; echo "db=$DB"; } | tee -a "$RECORD"
 
