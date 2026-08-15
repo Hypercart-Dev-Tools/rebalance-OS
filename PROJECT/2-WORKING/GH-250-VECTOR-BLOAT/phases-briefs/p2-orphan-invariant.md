@@ -1,4 +1,24 @@
+---
+title: "p2 — R6: zero-orphan invariant in doctor, sawtooth-aware"
+status: "Phase complete (merged 2026-08-04, PR #253)"
+created: 2026-08-04
+updated: 2026-08-14
+owner: noel
+gh_issue: 250
+roadmap_exempt: true
+doc_type: project
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). The tracked effort is GH-250,
+  parked in ROADMAP.md via PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/SCOPE.md.
+---
+
 # p2 — R6: zero-orphan invariant in doctor, sawtooth-aware
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase complete, merged 2026-08-04 in PR #253. The invariant did its job on 2026-08-14: it is what reported the 2,678,350 github and 304 semantic orphans as FAIL, and what confirmed both at 0 after the reclaim. | Nothing. The phase is closed; this brief archives with GH-250. The invariant stays live and is now the standing detector for any recurrence. |
 
 > ## ⚠️ NEVER write the absolute repo path in your transcript
 >

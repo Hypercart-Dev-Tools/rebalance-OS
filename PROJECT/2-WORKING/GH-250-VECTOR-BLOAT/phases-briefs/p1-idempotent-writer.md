@@ -1,4 +1,24 @@
+---
+title: "p1 — R7: make the direct-commit writer idempotent"
+status: "Phase complete (merged 2026-08-04, PR #253)"
+created: 2026-08-04
+updated: 2026-08-14
+owner: noel
+gh_issue: 250
+roadmap_exempt: true
+doc_type: project
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). The tracked effort is GH-250,
+  parked in ROADMAP.md via PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/SCOPE.md.
+---
+
 # p1 — R7: make the direct-commit writer idempotent
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase complete, merged 2026-08-04 in PR #253. Confirmed holding in production on 2026-08-14: the orphan count sat at 2,678,350 across four measurements spanning 1h40m and two completed syncs, against a pre-fix rate of ~15,500 per sync. | Nothing. The phase is closed; this brief archives with GH-250. |
 
 > ## ⚠️ NEVER write the absolute repo path in your transcript
 >

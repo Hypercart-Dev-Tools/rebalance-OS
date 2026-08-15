@@ -1,4 +1,24 @@
+---
+title: "p3 — R2: author the reclaim runbook"
+status: "Phase complete (merged 2026-08-04, PR #253)"
+created: 2026-08-04
+updated: 2026-08-14
+owner: noel
+gh_issue: 250
+roadmap_exempt: true
+doc_type: project
+goal: >
+  Marathon phase brief (harness input, not a tracked effort). The tracked effort is GH-250,
+  parked in ROADMAP.md via PROJECT/2-WORKING/GH-250-VECTOR-BLOAT/SCOPE.md.
+---
+
 # p3 — R2: author the reclaim runbook
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| Phase complete, merged 2026-08-04 in PR #253. The runbook it produced was executed on 2026-08-14 and delivered the reclaim — but running it for real exposed four broken safety mechanisms it had declared verified, three of them in gates this phase wrote or relied on. | Nothing in this brief. The lesson belongs upstream: rehearsals here ran against fixtures and the happy path, which is precisely why the defects survived review. |
 
 > ## ⚠️ NEVER write the absolute repo path in your transcript
 >

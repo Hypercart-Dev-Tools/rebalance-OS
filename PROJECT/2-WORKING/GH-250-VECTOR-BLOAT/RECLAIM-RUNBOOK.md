@@ -1,22 +1,67 @@
+---
+title: "rebalance.db vector-bloat reclaim runbook (GH-250 R2)"
+status: "EXECUTED 2026-08-14 — 14.62 GB to 3.81 GB, both orphan invariants OK"
+created: 2026-08-04
+updated: 2026-08-14
+owner: noel
+gh_issue: 250
+doc_type: project
+goal: >
+  Reclaim the orphaned github_embeddings vectors from the production store in one attended
+  maintenance window, with every gate a real conditional and every abort path reversible.
+---
+
 # rebalance.db vector-bloat reclaim runbook (GH-250 R2)
+
+## Status
+
+| What was just completed | What's next |
+|---|---|
+| **Executed 2026-08-14.** 2,678,350 orphaned vectors deleted, database 14.62 GB → 3.81 GB, `integrity_check=ok`, live vectors 32,908 before and after. Both `doctor` orphan invariants flipped FAIL → OK. Four broken safety mechanisms were found and three fixed in the process; the fourth (`three_eyes pause` not stopping launchd) is captured separately and is the reason the first attempt aborted at batch 94 of 268. | Delete the retained `rebalance.db.pre-reclaim-*` and `rebalance.db.backup-*` (~29 GB) deliberately, by name, once a full sync has completed cleanly and `doctor` still reports 0 orphans. Then this doc archives with GH-250. Anyone reusing it must read the resume caveat below before re-running after an abort. |
 
 Reclaims ~10.2 GB from `rebalance.db` by deleting orphaned `github_embeddings` vectors and rebuilding
 the file. One operator, one maintenance window, start to finish.
 
-> ## Status — complete and verified; one precondition is still outstanding
+> ## Status — EXECUTED 2026-08-14. Reclaim complete; read the lessons before reusing this.
 >
-> **The document is done.** Two review rounds; every valid objection closed. All 16 bash blocks pass
-> `bash -n`, and every read-only gate has been executed against the real 13.5 GB database (§1.1–§1.4a,
-> 4 seconds total). One reviewer objection was **declined**: it asserted the file "ends after §4.1"
-> with no §5 Rollback, which is incorrect — §5 is present and does everything that objection asked
-> for. Recorded in commit `d7fe69bf` rather than silently ignored.
+> **Result:** 2,678,350 orphaned vectors deleted, database 14.62 GB → 3.81 GB (~10.8 GB reclaimed),
+> `integrity_check=ok`, live vectors **32,908 before and after** — the assertion that proves only
+> garbage was deleted. `doctor` now reports OK on both orphan invariants (github and semantic).
+> Record: `temp/logs/gh250-reclaim-20260815T050240Z.log`.
 >
-> **What is NOT done is GH-250 R1**, and that is a fact about the world, not this document: the
-> writer fix must be observed holding across three completed `github_sync` cycles before anything is
-> reclaimed. §1.1 gates on it and aborts if the samples are not identical. Until R1 passes, do not
-> proceed past §1.
+> **R1 was WAIVED by the operator**, not passed: one post-sync sample rather than three, for wall
+> clock. The supporting evidence was that the orphan count read 2,678,350 on four measurements
+> spanning 1h40m and two completed syncs, sat at +36 over 9 days against a pre-fix rate of
+> ~15,500/sync, and no orphan existed in the top ~145,000 document ids where a live fresh-id leak
+> would necessarily deposit them. The waiver is recorded in the run log, not silent.
 >
-> Nothing in this runbook has been executed against production. Only the read-only gates have run.
+> **Four safety mechanisms in this procedure were found broken when it was finally run for real.**
+> Each passed every prior review and rehearsal, because rehearsals exercised the happy path against
+> fixtures rather than the live fleet:
+>
+> 1. **§1.5's fence checked the wrong file.** `fence-writers.sh` defaults `REBALANCE_DB` to the repo
+>    root and this runbook never exported it; a stale 491 KB `rebalance.db` from June sat there, so
+>    `verify` locked *that* and reported the store fenced while the real one had live writers.
+>    Fixed: §0 now exports `REBALANCE_DB` and `PYTHON_CMD`.
+> 2. **The fence roster covered 5 of 11 loaded jobs.** It fails closed, so this did not leak writers
+>    through — it made the fence unsatisfiable. Fixed in `fence-writers.sh`.
+> 3. **`verify`'s pause assertion is wrong.** It requires `three_eyes why` to print
+>    "OPEN/quarantined"; a paused job prints "breaker: closed" plus "reason: paused via CLI", so
+>    every correctly-paused job reads as NOT paused.
+> 4. **`three_eyes pause` does not stop launchd firing the job.** This is the one that cost a run:
+>    ten jobs were paused at 21:08, and `pulse-web-sync` fired anyway at ~21:45 and attached to the
+>    database, failing the post-batch checkpoint at batch 94 of 268 (`(1, 10086, 10086)`). **Only
+>    `launchctl bootout` genuinely quiesces a job.** Do not trust pause for a destructive window.
+>
+> **Resuming is not the same run.** The abort left ~940k vectors already deleted, whose pages sit in
+> the freelist and are also released by `VACUUM`. §1.4's formula counts only *remaining* orphans, so
+> on a resume it understates the reclaim and puts the true final size BELOW `EXPECT_MIN` — §4 then
+> fails a perfectly good rebuild and sends the operator to roll it back. A resume must add
+> `freelist_count * page_size` to `EXPECT_RECLAIM`.
+>
+> Retained artifacts: `rebalance.db.pre-reclaim-20260815T050240Z` and the verified
+> `rebalance.db.backup-20260815T050240Z`. Remove them deliberately, by name, once a full sync has
+> completed cleanly and `doctor` still reports 0 orphans.
 
 **This runbook does not implement the reclaim.** Two tested scripts do:
 
@@ -57,6 +102,14 @@ export RECORD="$REPO/temp/logs/gh250-reclaim-$STAMP.log"
 export VACUUM_TARGET="${DB%.db}.vacuum.db"        # what reclaim.py writes
 export BACKUP="$DB.backup-$STAMP"                 # unique per run; never reused
 export PRE="$DB.pre-reclaim-$STAMP"               # retained original after cutover
+
+# fence-writers.sh defaults REBALANCE_DB to "$REPO_ROOT/rebalance.db" and PYTHON_CMD to bare
+# `python`. Both defaults are wrong here and the first one is DANGEROUS: a stale 491 KB
+# rebalance.db from 2026-06-26 is sitting at the repo root, so an un-exported `verify` would run
+# its lsof and BEGIN EXCLUSIVE gates against THAT file and pass while the real 15.7 GiB database
+# still had live writers. Export both, and treat these as part of the fence contract.
+export REBALANCE_DB="$DB"
+export PYTHON_CMD="$PY"
 
 mkdir -p "$(dirname "$RECORD")"
 { echo "=== GH-250 reclaim $STAMP ==="; echo "db=$DB"; } | tee -a "$RECORD"

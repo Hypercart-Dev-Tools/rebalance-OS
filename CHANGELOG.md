@@ -6,6 +6,39 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.69.0] - 2026-08-14
+
+### Changed
+- **The store now tells the truth about its own size: 14.6 GB down to 3.8 GB.** 2,678,350 orphaned
+  vectors — 98.7% of the vector table, left behind by a writer that deleted and re-inserted
+  documents under fresh ids without pruning what pointed at them — were deleted and the file
+  rebuilt. The live vector count was identical before and after, which is the assertion that
+  proves only garbage went. Both orphan health checks now report zero where they had been failing.
+  The pre-reclaim database and a verified backup are retained until a full sync cycle confirms the
+  result.
+
+### Fixed
+- **The embedding backlog was reported 25x too large.** The health check compared every
+  document's stored embedding-model version against a fallback string, because the accessor it
+  imported to get the real one no longer exists and the failure was swallowed. Every correctly
+  embedded document therefore compared unequal and counted as pending: the backlog read 47,914
+  when the true figure was ~1,762. The check now builds the version string the same way the
+  embedder stamps it, so the number means what it says.
+- **The writer fence knew about five scheduled jobs out of eleven.** Verification fails closed on
+  any loaded job it does not recognise, so the six it had never heard of did not slip through the
+  fence — they made the fence impossible to satisfy, and the maintenance window could not have
+  started at all. The roster now covers every job that gets loaded, and the reader/writer
+  distinction is deliberately not drawn: a reader holds an open connection, and an open
+  connection defeats both the checkpoint and the exclusive lock the rebuild depends on. One of
+  the six looks like a static page generator and turns out to open the database through a health
+  check.
+- **A safety gate stood between a multi-million-row delete and a live writer, and it was
+  checking the wrong file.** The writer-fencing script defaults its database path to the
+  repository root, and the reclaim procedure never overrode it — so a stale copy left in the
+  working tree from June would have absorbed the lock check and reported the store safely fenced
+  while the real one still had writers attached. The procedure now pins both the database path
+  and the interpreter, with the reason recorded where the next operator will read it.
+
 ## [0.68.7] - 2026-08-07
 
 ### Fixed
