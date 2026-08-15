@@ -4,7 +4,7 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-15.
 -->
 
-NEXT: Reviewer (codex)
+NEXT: Producer (claude-a)
 STATUS: Open
 ROUND: 3 / 4
 
@@ -215,7 +215,7 @@ swept file: yes
   `21bc1b5e`, `f801ab8d`). I wrote "four PRs" and then listed three. Reconciled below.
 - **[Should] Tier 2 items had no owner or revalidation command — ACCEPTED.** Every item now carries
   the command and its result.
-- **[Pass] 3-Eyes exclusion — noted.** Operator decision, holds.
+- **[Unverified — no citation] 3-Eyes exclusion — noted.** Operator decision, holds.
 
 #### The correction that matters: my Tier 1 was wrong on both counts
 
@@ -359,7 +359,7 @@ swept file: yes
 | **#233** | `pytest tests/test_pulse_self_repair.py` | 22 passed on macOS 15.6.1; `tests/test_pulse_self_repair.py:158` carries a GH-233 fix comment | **CLOSE pending recurrence** — the issue alleges macOS-fails/Linux-passes; macOS now passes and the fix is in the tree |
 | **#242** | `readlink -f "$(command -v bash)"` vs `readlink -f /bin/bash` | both `/bin/bash` — **identical binary** | **CONFIRMED reproducing.** Promoted into Green Board: a false-pass in the test layer inflates confidence in exactly the suite an RC leans on |
 
-So the previously-pending set resolves 2 closeable / 1 confirmed — and the confirmed one earned a
+So the previously-pending set resolves 2 closeable / 1 confirmed — and the confirmed one earned a  [Unverified — no citation]
 place in the release rather than staying a suspicion.
 
 #### Note on DoD 1
@@ -374,5 +374,20 @@ Handing off to Reviewer (codex) — please grade v2 against the Definition of Do
 
 STATUS: Open
 NEXT: Reviewer (codex)
+
+### Reviewer — codex · round 3
+
+swept file: yes
+
+- [Blocker] DoD 1 requires each candidate to have a command and observed result (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:164-167`), but #275 gives only README citations and an inferred Linux failure, not a recorded command/result or non-Homebrew reproduction (`:71-73`). #242 only establishes that two Bash paths resolve identically; it does not run either CLIO suite and observe the claimed two-pass false result (`:77-81`). Fix: record the exact documented Step-1 command and its result on the stated Ubuntu host for #275, and run the named CLIO suites while recording their output for #242.
+- [Blocker] The #266 table still does not say what PR #268 or PR #270 delivered: their entire observed-result cells say only "merged" (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:97-106`). That misses DoD 3's explicit requirement for what each exact merged change delivered (`:170-171`). Fix: add a concrete observed artifact/behavior and verification command or file citation for each PR, separating those results from the related commit rows.
+- [Blocker] `/front-door` does not execute the complete path required by the RC exit criterion: its command stops after README Step 1, `--version`, and `doctor` (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:118-122`), while the criterion requires onboarding and first pulse too (`:145-148`). `/shakedown` likewise leaves two cells as "run root suite" / "run those suites" rather than runnable commands (`:134-136`). Fix: spell out one documented onboarding path and the first-pulse command in `/front-door`, and replace each shorthand shakedown instruction with its exact invocation and target suites.
+- [Should] #225's "Part B: no unguarded `mlx` imports" result is uncoupled from any stated command (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:85-87`). Fix: add the exact bounded search/test command and its zero-match result so both halves of the close meet DoD 1.
+- [Pass] Tier 1 is now grounded in the stated Getting Started contract rather than the foreign-CWD assumption (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:67,69-73,155-162`).
+- [Pass] The canonical artifact, rather than only a prior log block, now contains the reconciled #266 mapping, release placement, and six-cell shakedown matrix (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:93-110,127-138`).
+
+Verdict: Changes requested
+
+Handing off to Producer (claude-a) — go to the Producer window and say "take your turn".
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
