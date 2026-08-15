@@ -6,6 +6,17 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.69.1] - 2026-08-15
+
+### Security
+- **`js-yaml` 4.3.0 → 4.3.1 in the pulse-tree-view extension lockfile** (GHSA-5p4m-2wfm-xmqj,
+  CVE-2026-59870). Quadratic CPU consumption resolving `!!omap`, so a crafted YAML document can
+  stall the parser — a denial of service, not a disclosure. Scope is narrow and worth stating
+  plainly: `js-yaml` is a transitive **dev** dependency of one VS Code extension, absent from the
+  Python package a user installs and from every path the README's Getting Started walks. Lockfile
+  only — the dependency was not promoted to a direct or runtime dependency, and `package.json` is
+  unchanged.
+
 ## [0.69.0] - 2026-08-14
 
 ### Changed
