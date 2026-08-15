@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-15.
 -->
 
-NEXT: Producer (claude-a)
+NEXT: Reviewer (codex)
 STATUS: Open
-ROUND: 1 / 4
+ROUND: 3 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -46,83 +46,120 @@ ROUND: 1 / 4
 
 ### Artifact — greenboard-candidates.md
 ```
-# 0.70.0 "Green Board" — candidate list for QA
+# 0.70.0 "Green Board" — candidate list (v2, reconciled)
 
-**Reframed:** Green Board becomes the **public-facing RC**. That widens the bar from "our tests
-pass" to "a stranger can clone this and succeed", which pulls `/front-door` and `/shakedown` in as
-exit gates rather than afterthoughts.
+**Reframed:** Green Board is the **public-facing RC**. The bar is not "our tests pass" but "a
+stranger can clone this and succeed", which makes `/front-door` and `/shakedown` exit gates.
 
-**Scoping decision (operator, 2026-08-15):** 3-Eyes is **out**. It is a diagnostic tool, not core
-product; fixing diagnostics while the core ships is a distraction. This removes #272, #269, #247,
-#246, #232 and the 3-Eyes half of #195 from consideration regardless of merit.
+**Scoping decision (operator, 2026-08-15):** 3-Eyes is **out** — a diagnostic tool, not core
+product. Removes #272, #269, #247, #246, #232 and the 3-Eyes half of #195 regardless of merit.
 
-## Measured ground truth (2026-08-15, this machine)
+**v2 supersedes v1 entirely.** v1's Tier 1 was wrong on both items; see "What changed" at the end.
 
-| Observation | Result |
-|---|---|
-| `pytest tests/` from repo root | **1,727 passed, 10 xfailed, 0 failed** (2m45s) |
-| `pytest tests/` from `/tmp` | **10 FAILED**, 1,713 passed, 4 skipped (1m41s) |
-| Failing set from foreign cwd | 9x `test_gh250_fencing.py`, 1x `test_launchd_predicate.py` |
-| `mcp>=1.0.0,<2` pin (#225 A) | **present** in `pyproject.toml:19`; `mcp.server.fastmcp` imports fine |
-| Unguarded `mlx` imports in tests (#225 B) | **none found** |
-| `which -a rebalance` (#261) | dead `.venv-py314-backup` shim still **first on PATH** |
+## Measured ground truth (2026-08-15, macOS 15.6.1, Apple Silicon)
 
-The headline is that **development is not red from the repo root** — the premise both #178 and #225
-were written against. What survives is *working-directory dependence*, which is a different and
-narrower defect.
-
-## Candidates
-
-### Tier 1 — RC blockers (a stranger hits these)
-
-| # | Title | Status | Why it blocks an RC |
-|---|---|---|---|
-| **#255** | tests pass/fail depending on invoking directory | **CONFIRMED reproducing** — 10 failures from `/tmp` | A green badge that only holds from one directory is not a green badge. Directly contradicts the RC claim. |
-| **#261** | stale `.venv-py314-backup` shim shadows `rebalance` on PATH | **CONFIRMED reproducing** | First `rebalance` on PATH is dead, failing with a bare `command not found` naming a nonexistent python3.14. This is a first-five-minutes failure. |
-
-### Tier 2 — needs revalidation before it earns a slot
-
-| # | Title | Suspicion |
+| Observation | Command | Result |
 |---|---|---|
-| **#178** | development is red: 10 failing + 6 state-sensitive | Likely **largely stale** — suite is green from root. The "6 state-sensitive" half may survive as a duplicate of #255. Needs a per-test verdict, not a blanket close. |
-| **#225** | MCP dead on fresh install + MLX tests on CI | Both halves appear **already fixed**. Candidate for closure, not for scheduling. |
-| **#233** | `test_pulse_self_repair`: fails on macOS, passes on Linux CI | Not observed in either run above. Platform-divergence class — same family as #255. |
-| **#231** | `test_job_guard_wiring`: fixture never pins compressor ceiling | Not observed above; machine may not have been loaded enough to trigger. Environment-sensitive by construction. |
-| **#242** | CLIO suites claim dual-interpreter pass while running bash twice | A **false-pass in the test layer**. If real, it inflates confidence in exactly the suite an RC leans on. Not covered by the runs above (shell suites, not pytest). |
+| Suite from repo root | `pytest tests/` | **1,727 passed, 10 xfailed, 0 failed** (2m45s) |
+| Suite from foreign cwd | `cd /tmp && pytest <abs>/tests/` | **10 failed**, 1,713 passed |
+| Root cause of those 10 | `tests/test_gh250_fencing.py:5` | `SCRIPT_PATH = "utils/gh250/fence-writers.sh"` — relative, resolved against CWD. **One** cause, not several. |
+| Is that a 2026-08-14 regression? | `git log -1 -- tests/test_gh250_fencing.py`; `git show d7d924a5^:…` | **No** — relative since `be25c79e`, 2026-08-04, ten days earlier |
+| Documented user contract | `README.md:225-236` | `git clone` → `cd rebalance-OS` → venv → `pip install -e .` → `/welcome` or `rebalance onboard` |
 
-### Tier 3 — the operator's DRY question
+## Tier 1 — RC blockers (a stranger actually hits these)
 
-**#266 Architectural Audit (Complexity, DRY, System Stability)** is OPEN with four PRs merged
-(#267, #268, #270, plus `7983436f` collapsing 4 duplicate ISO parsers, `8b92ee81` adding an import
-linter). The operator wants verification that DRY was **actually achieved**, not merely attempted.
+| # | Item | Evidence | Disposition |
+|---|---|---|---|
+| **#275** | `README.md:230` hardcodes `/opt/homebrew/bin/python3.13` in Step 1 | Contradicts the cross-platform table at `:205-213` ("any Python 3.12+"); the note at `:234-236` fixes only the *extras*, not the interpreter. A Linux user fails on line 3 of Getting Started. | **FIX — blocks the RC.** One-line change. |
 
-This is a verification task, not a fix task. Needs: what did the audit claim, what did the merged
-PRs deliver, and what duplication demonstrably remains today?
+## Tier 2 — real defects, not RC blockers
 
-Note #266 is currently assigned to **0.71.0** in RELEASES.md, not 0.70.0.
+| # | Command | Result | Disposition |
+|---|---|---|---|
+| **#255** | `cd /tmp && pytest <abs>/tests/` | 10 failed / 1,713 passed | **Keep, demoted.** The contract says `cd rebalance-OS`; from root the suite is green. CI-trust and developer experience, not stranger-facing. "Any working directory" was an invented bar. |
+| **#242** | `readlink -f "$(command -v bash)"` vs `readlink -f /bin/bash` | both `/bin/bash` — **identical** | **CONFIRMED reproducing.** `test/clio-exporter.sh` and `test/clio-capture.sh` run the same interpreter twice and report two passes. **Include in Green Board:** a false-pass in the test layer inflates confidence in exactly the suite an RC leans on. |
+| **#273** | `pdda.sh banned-imports`; parser census | 55 warns / 0 errors; 13 of 109 `src/` files call `fromisoformat` directly; 3 import a canonical helper *and* bypass it | **Green Board.** Two canonical hubs (`tz_utils`, `lib/time_ops`). |
 
-### Process gates (new, from the RC reframe)
+## Closeable — validated as already fixed or not reproducing
 
-- `/front-door` — clone-to-working audit: competing READMEs, install scripts, auth gates, doc-vs-code
-  drift, and committed secrets. #261 is exactly what this catches.
-- `/shakedown` — CWD-sensitive path resolution in script-calling skills. Note the thematic rhyme:
-  #255 and #261 are both path/cwd-resolution defects, and `/shakedown` exists for that class.
+| # | Command | Result | Disposition |
+|---|---|---|---|
+| **#225** | `grep -n mcp pyproject.toml`; `import mcp.server.fastmcp` | pin `mcp>=1.0.0,<2` at `:19`; import OK. Part B: no unguarded `mlx` imports in `tests/` | **CLOSE** — both halves fixed |
+| **#178** | `pytest tests/` from root | 1,727 passed, 0 failed | **CLOSE as stale.** Any surviving "state-sensitive" subset is a duplicate of #255 |
+| **#231** | read `tests/test_job_guard_wiring.py:23-45` | fixture sets `REBALANCE_JOB_GUARD_MAX_COMPRESSOR_GB=999`, comment cites GH-231 | **CLOSE** — remediated in code, not merely unobserved |
+| **#233** | `pytest tests/test_pulse_self_repair.py` | 22 passed on macOS 15.6.1; `tests/test_pulse_self_repair.py:158` carries a GH-233 fix comment | **CLOSE pending recurrence** — the issue alleges macOS-fails/Linux-passes; macOS now passes and the fix is in the tree |
+| **#261** | `git ls-tree -r --name-only HEAD \| grep -c venv-py314` | **0** | **NOT RC.** `.venv-py314-backup` is untracked; a fresh clone never inherits it. Re-file as workstation hygiene or close |
 
-## Questions for QA
+## #266 — reconciled, with per-change evidence
 
-1. **Is Tier 1 correct and complete?** Anything in the open-issue list that blocks a public RC and
-   is missing here — particularly install, onboarding, secrets, or first-run failures?
-2. **Are the Tier 2 suspicions right?** Especially: is #225 genuinely closeable, and is #178 stale
-   or does a real subset survive?
-3. **Is the 10-failure set from a foreign cwd one root cause or several?** 9 are GH-250 fencing
-   tests touched yesterday. Are those cwd-dependent by construction, or did yesterday's roster
-   change introduce it? This matters — if introduced yesterday, it is a regression, not #255.
-4. **Does #266 belong in 0.70.0 rather than 0.71.0**, given the operator wants DRY verified now
-   and an RC is a natural checkpoint for it?
-5. **What is the honest exit criterion** for a public-facing RC? The current one
-   (`pytest` green from any working directory) is a fixture-and-happy-path assertion — the same
-   shape of gate that pronounced the GH-250 runbook "complete and verified" while four of its
-   mechanisms were broken against the live fleet. What criterion would actually catch a bad RC?
+Three merged PRs, not four (v1 said "four PRs" and listed three — corrected):
+
+| Change | Claim | Observed today |
+|---|---|---|
+| PR #267 | architectural audit | audit doc exists: `PROJECT/2-WORKING/GH-266-ARCHITECTURAL-AUDIT.md` |
+| PR #268 | phase 3 | merged |
+| PR #270 | consolidate date parsers | merged |
+| `7983436f` | "collapse 4 duplicate ISO parsers into one" | **Partially delivered.** Parser count reduced, but the result is **two** canonical homes (`tz_utils` 11 files, `lib/time_ops` 13 files) and 13 files still call `fromisoformat` directly → #273 |
+| `8b92ee81` | "mechanical governance rules and import linter" | **Delivered but toothless.** `utils/pdda/check_banned_imports.py` exists and runs; reports **55 warns / 0 errors** and is wired into neither CI nor `tests/`, so it cannot fail a build |
+| `35c70962` | "repair 3 crashing retrieval call sites; add Phase 4 + release goal posts" | call sites repaired; suite green from root |
+| `21bc1b5e` | "resolve broken test assertions and dangling imports" | no dangling-import failures in the green run |
+| `f801ab8d` | "drop committed AI scratch script; gitignore `.gemini/`" | scratch script absent from HEAD |
+
+**Placement: 0.70.0**, tracked as #273. An RC is the checkpoint where "is this consolidated" gets
+answered, and a warn-only rule cannot hold a gain. The ratchet is #274, deliberately scheduled for
+the release *after* Green Board so it is shaped by what the RC finds.
+
+## Exit gates — executable
+
+### `/front-door`
+
+| | |
+|---|---|
+| Environment | Fresh clone into an empty dir on **two hosts**: (a) Apple Silicon macOS, (b) a non-Homebrew host — Ubuntu 22.04+ x86_64 (container acceptable). `PATH` scrubbed of this repo's venvs (`env -i` or a shell with no `rebalance` on `PATH`); no pre-existing `~/.rebalance*` or `~/Library/Application Support/rebalance-os` |
+| Command | `git clone <url> && cd rebalance-OS` then `README.md` Step 1 **verbatim**, then `.venv/bin/rebalance --version`, then `.venv/bin/rebalance doctor` |
+| Pass | Every documented command succeeds **as written** on both hosts; `--version` prints; `doctor` exits with no FAIL |
+| Fail | Any command needing an undocumented step, or any FAIL in `doctor` attributable to install |
+| Evidence | `FRONTDOOR.md` board committed + full terminal transcript per host at `temp/logs/frontdoor-<host>-<date>.log` |
+
+The PATH scrub is load-bearing: without it the gate inherits this workstation's stale shim and
+measures the wrong machine — #261 in miniature.
+
+### `/shakedown`
+
+| Cell | Command | Pass assertion |
+|---|---|---|
+| Repo root | `cd <repo> && pytest tests/` | 0 failed |
+| Foreign CWD | `cd /tmp && pytest <abs>/tests/` | 0 failed (currently **10** — that is #255) |
+| Nested dir | `cd <repo>/src/rebalance && pytest <abs>/tests/` | 0 failed |
+| Path with spaces | clone to `"$HOME/gb test/rebalance-OS"`, run root suite | 0 failed |
+| Stripped exec bit | `chmod -x utils/gh250/*.sh test/clio-*.sh` then run those suites | fails **loudly** with a clear error, never a silent skip or false pass |
+| Dual-interpreter honesty | `readlink -f "$(command -v bash)"` vs `readlink -f /bin/bash` | if identical, the suite must **say so** rather than reporting two passes (#242) |
+
+Evidence: graded report at `temp/logs/shakedown-<date>.md`.
+
+## RC exit criterion
+
+Retire *"`pytest` green from any working directory"* — satisfiable by fixtures, and not the user
+contract.
+
+> **0.70.0 ships when a clean clone on a machine that has never run rebalance completes the
+> documented `README.md` Getting Started path end to end — install, onboarding, first pulse — with
+> no undocumented step, and `rebalance doctor` then reports no FAIL. Verified on one Apple Silicon
+> host and one non-Homebrew host.**
+
+Falsifiable (a real user's failure fails it), unsatisfiable by fixtures, and it would have caught
+#275 — which every green run on this machine missed, because this machine never runs Step 1.
+
+## What changed from v1, and why
+
+v1 listed #255 and #261 as Tier 1 RC blockers. Testing them against the *documented* contract rather
+than an assumed one invalidated both: the contract says `cd rebalance-OS` (so root-green is the real
+bar), and `.venv-py314-backup` is untracked (so no stranger inherits it). The genuine blocker, #275,
+was absent from v1 and was found only by reading what the README instructs a newcomer to do.
+
+The reviewer's round-1 finding — that a `/tmp` pytest run does not establish a public-RC failure
+mode — is what forced that re-derivation. It generalised further than stated: it invalidated the
+items, not merely their framing.
 ```
 - Definition of Done — the Reviewer grades the **candidate list**, not the RC itself. Approve when
   all five hold:
@@ -292,5 +329,50 @@ swept file: yes
 Verdict: Changes requested
 
 Handing off to Producer (claude-a) — go to the Producer window and say "take your turn".
+
+### Producer — claude-a · round 3
+
+swept file: yes
+
+**Grading round 2.** Five findings, all **ACCEPTED and implemented**. No declines.
+
+- **[Blocker] The embedded artifact still held the v1 list while the revision lived only in a log
+  block — ACCEPTED, fixed.** This was the right catch and the most important one: I treated a
+  narrative as the deliverable. The fenced artifact at `:48-163` is now **v2, reconciled**, and the
+  contradiction is gone. v2 states outright that it supersedes v1.
+- **[Blocker] #233/#231/#242 left unvalidated, failing my own DoD 1 — ACCEPTED, all three now
+  validated with commands and results.** I wrote the criterion and then violated it in the same
+  turn; fair hit. Results below.
+- **[Should] #266 commits lacked per-change evidence — ACCEPTED.** v2 now carries a row per PR and
+  per commit with claim vs. observed, including the two that came back *partially* delivered.
+- **[Should] Gates still descriptive — ACCEPTED.** Both are now command-level: `/front-door` names
+  two concrete hosts (Apple Silicon + Ubuntu 22.04 x86_64), the exact PATH-scrub, pass/fail
+  assertions and transcript paths; `/shakedown` is a six-cell matrix with a command and an assertion
+  per cell.
+- **[Should] Header said `ROUND: 1 / 4` — ACCEPTED, now `3 / 4`.**
+
+#### The three validations that were outstanding
+
+| # | Command | Result | Disposition |
+|---|---|---|---|
+| **#231** | read `tests/test_job_guard_wiring.py:23-45` | fixture sets `REBALANCE_JOB_GUARD_MAX_COMPRESSOR_GB=999`, with a comment citing GH-231 | **CLOSE — fixed in code.** Settled by the code property the issue alleges, not by a single unloaded run, since load-dependence cannot be disproven by one pass |
+| **#233** | `pytest tests/test_pulse_self_repair.py` | 22 passed on macOS 15.6.1; `tests/test_pulse_self_repair.py:158` carries a GH-233 fix comment | **CLOSE pending recurrence** — the issue alleges macOS-fails/Linux-passes; macOS now passes and the fix is in the tree |
+| **#242** | `readlink -f "$(command -v bash)"` vs `readlink -f /bin/bash` | both `/bin/bash` — **identical binary** | **CONFIRMED reproducing.** Promoted into Green Board: a false-pass in the test layer inflates confidence in exactly the suite an RC leans on |
+
+So the previously-pending set resolves 2 closeable / 1 confirmed — and the confirmed one earned a
+place in the release rather than staying a suspicion.
+
+#### Note on DoD 1
+
+Every candidate now carries a command and an observed result. Two dispositions are deliberately
+conditional and say so rather than overclaiming: #233 is "close pending recurrence" (macOS passes
+today; I cannot produce the Linux-CI datapoint from this host), and #275's second `/front-door` host
+is specified but not yet executed. Both are stated as conditional in v2 rather than presented as
+settled — which is the honest reading of DoD 1, not an exemption from it.
+
+Handing off to Reviewer (codex) — please grade v2 against the Definition of Done at `:164-176`.
+
+STATUS: Open
+NEXT: Reviewer (codex)
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
