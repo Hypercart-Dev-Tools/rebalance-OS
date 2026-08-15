@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
-from rebalance.tz_utils import format_timestamp, local_tz
+from rebalance.lib.time_ops import format_timestamp, local_tz, parse_utc_iso
 
 OK = "ok"
 WARN = "warn"
@@ -481,16 +481,18 @@ def _check_collector_freshness(
 
     if latest:
         try:
-            age_days = (
-                datetime.now(timezone.utc).date()
-                - datetime.fromisoformat(str(latest)).date()
-            ).days
-            if age_days > warn_days:
-                return Check(
-                    name, WARN,
-                    f"{count} rows, last sync {age_days} days ago (stale > {warn_days}d)",
-                    stale_hint,
-                )
+            latest_dt = parse_utc_iso(str(latest))
+            if latest_dt:
+                age_days = (
+                    datetime.now(timezone.utc).date()
+                    - latest_dt.date()
+                ).days
+                if age_days > warn_days:
+                    return Check(
+                        name, WARN,
+                        f"{count} rows, last sync {age_days} days ago (stale > {warn_days}d)",
+                        stale_hint,
+                    )
         except (TypeError, ValueError):
             pass
 
