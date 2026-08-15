@@ -8,6 +8,15 @@
 
 ## [0.69.0] - 2026-08-14
 
+### Changed
+- **The store now tells the truth about its own size: 14.6 GB down to 3.8 GB.** 2,678,350 orphaned
+  vectors — 98.7% of the vector table, left behind by a writer that deleted and re-inserted
+  documents under fresh ids without pruning what pointed at them — were deleted and the file
+  rebuilt. The live vector count was identical before and after, which is the assertion that
+  proves only garbage went. Both orphan health checks now report zero where they had been failing.
+  The pre-reclaim database and a verified backup are retained until a full sync cycle confirms the
+  result.
+
 ### Fixed
 - **The embedding backlog was reported 25x too large.** The health check compared every
   document's stored embedding-model version against a fallback string, because the accessor it
