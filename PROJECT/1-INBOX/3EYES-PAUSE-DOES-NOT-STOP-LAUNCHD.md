@@ -1,10 +1,10 @@
 ---
 title: "three_eyes pause does not prevent launchd from firing the job"
-status: "Captured 2026-08-14; GitHub issue NOT yet filed (api.github.com unreachable)"
+status: "Captured 2026-08-14; filed as #272 on 2026-08-15 once api.github.com was reachable"
 created: 2026-08-14
-updated: 2026-08-14
+updated: 2026-08-15
 owner: noel
-gh_issue: TBA
+gh_issue: 272
 roadmap_exempt: false
 doc_type: project
 goal: >
@@ -14,9 +14,9 @@ goal: >
 
 # `three_eyes pause` does not prevent launchd from firing the job
 
-> **File this as a GitHub issue when connectivity returns.** It was captured here because
-> `gh` could not reach api.github.com on 2026-08-14 ("Timeout trying to log in to github.com
-> account noelsaw1 (keyring)").
+> **Filed as [#272](https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/272)** on
+> 2026-08-15. It was captured here first because `gh` could not reach api.github.com on the night
+> of 2026-08-14 — DNS resolved, every connection timed out, while github.com itself returned 200.
 
 ## What
 
