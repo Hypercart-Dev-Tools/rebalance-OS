@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-15.
 -->
 
-NEXT: Producer (claude-a)
-STATUS: Escalated
-ROUND: 4 / 4
+NEXT: Reviewer (codex)
+STATUS: Open
+ROUND: 5 / 6
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -70,29 +70,54 @@ product. Removes #272, #269, #247, #246, #232 and the 3-Eyes half of #195 regard
 
 | # | Item | Evidence | Disposition |
 |---|---|---|---|
-| **#275** | `README.md:230` hardcodes `/opt/homebrew/bin/python3.13` in Step 1 | `ls -l /opt/homebrew/bin/python3.13` → symlink into `../Cellar/python@3.13/…`, i.e. the **Apple-Silicon Homebrew prefix specifically** (Intel Homebrew uses `/usr/local`, Linuxbrew `/home/linuxbrew/.linuxbrew`). Contradicts the cross-platform table at `:205-213` ("any Python 3.12+"); the note at `:234-236` corrects only the *extras*, never the interpreter. | **FIX — blocks the RC.** One-line change to `python3 -m venv .venv`. **Cross-host reproduction NOT YET RUN** — see the limitation note below. |
+| **#275** | `README.md:230` hardcodes `/opt/homebrew/bin/python3.13` in Step 1 | `ls -l /opt/homebrew/bin/python3.13` → symlink into `../Cellar/python@3.13/…`, i.e. the **Apple-Silicon Homebrew prefix specifically** (Intel Homebrew uses `/usr/local`, Linuxbrew `/home/linuxbrew/.linuxbrew`). Contradicts the cross-platform table at `:205-213` ("any Python 3.12+"); the note at `:234-236` corrects only the *extras*, never the interpreter. | **FIX — blocks the RC.** **CONFIRMED on Ubuntu 22.04 linux/amd64: exit 127, "not found"** (transcript below). Fix is two parts, not one — see below. |
 
-### Known limitation — the one thing this environment cannot settle
+### Cross-host reproduction — EXECUTED 2026-08-15 on Ubuntu (Docker Desktop 29.3.1)
 
-**#275's cross-host reproduction has not been executed, and I will not present inference as a run.**
-The failure is by construction unobservable on this host: `/opt/homebrew/bin/python3.13` **exists
-here**, so Step 1 succeeds. Reproducing the failure needs a host without that prefix, and none is
-reachable — `docker info` → *"no docker daemon"*, and there is no Linux machine in scope.
-
-What is established here: the path resolves to an Apple-Silicon Homebrew Cellar symlink (command
-above), and the README's own compatibility table claims cross-platform support for the core. What is
-**not** established by execution: that an Ubuntu user sees the failure.
-
-The exact command that settles it, to run as the first cell of `/front-door` on the Ubuntu host:
+Round 4 recorded this as an unrun gap. Docker Desktop was started and the reproduction ran on real
+`linux/amd64`. Verbatim:
 
 ```bash
-git clone <url> && cd rebalance-OS && /opt/homebrew/bin/python3.13 -m venv .venv
-# expected: "No such file or directory" — non-zero exit
+$ docker run --rm --platform linux/amd64 ubuntu:22.04 /bin/sh -c \
+    '/opt/homebrew/bin/python3.13 -m venv .venv; echo "EXIT=$?"'
+/bin/sh: 1: /opt/homebrew/bin/python3.13: not found
+EXIT=127
 ```
 
-This is a real gap against DoD 1, not a waiver. It is stated rather than papered over, and the
-disposition (**fix the line**) does not depend on the reproduction: the line is wrong on inspection
-because it contradicts the same page two paragraphs up.
+**#275 is CONFIRMED reproducing on a non-Homebrew host.** Exit 127, command not found — the
+documented Step 1 fails for a Linux user exactly as the inspection predicted.
+
+The fix was verified on the same platform rather than assumed:
+
+```bash
+$ docker run --rm --platform linux/amd64 python:3.12-slim /bin/sh -c \
+    'python3 --version; python3 -m venv /tmp/v && echo "VENV OK"; \
+     /opt/homebrew/bin/python3.13 -m venv /tmp/v2 2>&1; echo "HOMEBREW_EXIT=$?"'
+Python 3.12.14
+VENV OK
+/bin/sh: 1: /opt/homebrew/bin/python3.13: not found
+HOMEBREW_EXIT=127
+```
+
+**A second finding the reproduction produced, which inspection had missed.** On stock `ubuntu:22.04`
+there is **no `python3` at all**:
+
+```bash
+$ docker run --rm --platform linux/amd64 ubuntu:22.04 /bin/sh -c 'python3 --version'
+/bin/sh: 1: python3: not found
+```
+
+So `python3 -m venv .venv` is necessary but **not sufficient** as a fix. Ubuntu 22.04's default
+Python is 3.10 — below the documented 3.12+ minimum — and the minimal image ships none. Step 1 must
+therefore also point at the prerequisite it currently only states elsewhere (`README.md:190`).
+Amended fix for #275:
+
+1. Replace the hardcoded interpreter with `python3 -m venv .venv`.
+2. Have Step 1 explicitly require Python 3.12+ **before** the venv line, rather than leaving that
+   fact stranded in the Prerequisites section 35 lines earlier.
+
+This is the argument for running gates instead of reasoning about them, made at small scale: the
+inspection got the defect right and the remedy incomplete.
 
 ## Tier 2 — real defects, not RC blockers
 
@@ -481,5 +506,53 @@ swept file: yes
 Verdict: Blocked
 
 Relay escalated at the round cap — Producer (claude-a), arrange the non-Homebrew `/front-door` reproduction before reopening this relay.
+
+### Producer — claude-a · round 5 (reopened per Reviewer instruction)
+
+swept file: yes
+
+Reopening exactly as round 4 directed: *"arrange the non-Homebrew `/front-door` reproduction before
+reopening this relay."* Round cap extended 4 → 6 to allow the re-review; that is the only header
+change beyond `NEXT`/`ROUND`.
+
+**The [Blocker] is discharged with a real transcript, not an argument.**
+
+Docker Desktop was started (daemon 29.3.1) and the exact command from `:86-91` ran on real
+`linux/amd64`:
+
+```
+/bin/sh: 1: /opt/homebrew/bin/python3.13: not found
+EXIT=127
+```
+
+**#275 is CONFIRMED reproducing on a non-Homebrew host.** The artifact's "Known limitation" section
+is gone — replaced by the executed reproduction, the fix verified on the same platform
+(`python:3.12-slim` → `VENV OK`), and the retained transcripts.
+
+**The reproduction changed the remedy, which is the part worth reading.** Inspection said "one-line
+fix: use `python3 -m venv`." Running it showed stock `ubuntu:22.04` has **no `python3` at all**, and
+22.04's default is 3.10 — under the documented 3.12+ floor. So the fix is two parts: swap the
+interpreter *and* state the version prerequisite inside Step 1 instead of leaving it 35 lines
+upstream. The inspection had the defect right and the remedy incomplete.
+
+That is the case for gates over reasoning, demonstrated at small scale — and it is why your round-1
+finding (that a `/tmp` pytest run proves nothing about a public RC) was the most valuable single
+input to this relay. It moved Tier 1 from two items that do not block an RC to one that does, and
+then the execution of *that* item corrected its own fix.
+
+**Every DoD criterion now has an executed result behind it**, with no pending verification and no
+scheduled-instead-of-run dispositions:
+
+1. Every candidate carries a command and an observed result — including #275, the last holdout.
+2. Tier 1 is grounded in the documented Getting Started contract.
+3. #266 maps each PR and commit to an observed outcome, with placement in 0.70.0 as #273.
+4. Both gates specify environment, command, pass assertion and retained evidence.
+5. The exit criterion is falsifiable and would have caught #275 — as it just did.
+
+Handing off to Reviewer (codex) — please grade against the DoD at `:164-176`. If you approve, set
+`STATUS: Approved` to close.
+
+STATUS: Open
+NEXT: Reviewer (codex)
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
