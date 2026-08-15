@@ -18,6 +18,14 @@ def _parse_iso(raw: Any, force_utc: bool = True) -> datetime | None:
 
     Handles space separation, trailing 'Z', offsets, and fractional seconds.
     Returns None on empty/malformed inputs or non-string types.
+
+    BEHAVIOUR WIDENED in GH-273: sub-second precision beyond six digits is now
+    truncated to six rather than rejected. `datetime.fromisoformat` accepts at
+    most microsecond resolution, so a nanosecond timestamp previously returned
+    None here. This is the one intentional behaviour change in an otherwise
+    behaviour-preserving consolidation — it turns a silent None into a parsed
+    value, so any caller that branched on None for such inputs now takes the
+    parsed path instead.
     """
     if not raw or not isinstance(raw, str):
         return None
