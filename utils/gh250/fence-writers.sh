@@ -2,13 +2,30 @@
 set -euo pipefail
 
 # Source of truth: GH-250 / 3-Eyes registry / launchd inventory
-# These jobs write to rebalance.db
+#
+# Every com.rebalance-os.* job that is LOADED must appear here, not merely the ones that write.
+# cmd_verify fails closed on any loaded label it does not recognise, so an unlisted job does not
+# quietly slip through the fence — it makes the fence unsatisfiable, and the reclaim can never
+# start. Six jobs were missing when this was first run for real against the fleet.
+#
+# The distinction between "writer" and "reader" is deliberately not drawn: a reader breaks this
+# window just as effectively, because the reclaim needs wal_checkpoint(TRUNCATE) to return 0|0|0
+# and an EXCLUSIVE lock, and any open connection defeats both. pulse-web-sync is the worked
+# example — it looks like a static page generator, and it imports run_doctor, which opens the
+# database. Quiescing the whole fleet for one maintenance window is the cheap, obviously-correct
+# reading; unfence restores exactly the pre-fence state.
 KNOWN_WRITERS=(
     "com.rebalance-os.github-sync"
     "com.rebalance-os.pulse-sync"
     "com.rebalance-os.daily-sync"
     "com.rebalance-os.3eyes.collector-health"
     "com.rebalance-os.vault-sync"
+    "com.rebalance-os.pulse-web-sync"
+    "com.rebalance-os.obsidian-daily-sync"
+    "com.rebalance-os.obsidian-rollover"
+    "com.rebalance-os.3eyes.selfcheck"
+    "com.rebalance-os.3eyes.skill-sync"
+    "com.rebalance-os.pulse-server"
 )
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
@@ -28,6 +45,13 @@ get_3eyes_id() {
         com.rebalance-os.pulse-sync) echo "pulse-sync" ;;
         com.rebalance-os.daily-sync) echo "daily-sync" ;;
         com.rebalance-os.vault-sync) echo "vault-sync" ;;
+        com.rebalance-os.pulse-web-sync) echo "pulse-web-sync" ;;
+        com.rebalance-os.obsidian-daily-sync) echo "obsidian-daily-sync" ;;
+        com.rebalance-os.obsidian-rollover) echo "obsidian-rollover" ;;
+        com.rebalance-os.3eyes.selfcheck) echo "selfcheck" ;;
+        com.rebalance-os.3eyes.skill-sync) echo "skill-sync" ;;
+        # pulse-server is deliberately absent: it is a long-running server, not a
+        # 3-Eyes scheduled job, so it takes the launchctl bootout/bootstrap path.
         *) echo "" ;;
     esac
 }

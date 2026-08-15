@@ -15,6 +15,14 @@
   embedded document therefore compared unequal and counted as pending: the backlog read 47,914
   when the true figure was ~1,762. The check now builds the version string the same way the
   embedder stamps it, so the number means what it says.
+- **The writer fence knew about five scheduled jobs out of eleven.** Verification fails closed on
+  any loaded job it does not recognise, so the six it had never heard of did not slip through the
+  fence — they made the fence impossible to satisfy, and the maintenance window could not have
+  started at all. The roster now covers every job that gets loaded, and the reader/writer
+  distinction is deliberately not drawn: a reader holds an open connection, and an open
+  connection defeats both the checkpoint and the exclusive lock the rebuild depends on. One of
+  the six looks like a static page generator and turns out to open the database through a health
+  check.
 - **A safety gate stood between a multi-million-row delete and a live writer, and it was
   checking the wrong file.** The writer-fencing script defaults its database path to the
   repository root, and the reclaim procedure never overrode it — so a stale copy left in the
