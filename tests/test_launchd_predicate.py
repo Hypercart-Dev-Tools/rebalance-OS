@@ -1,4 +1,4 @@
-"""Regression coverage for the launchd health predicate (GH-146, GH-160).
+"""Regression coverage for the launchd health predicate (GH-146, GH-160, GH-278).
 
 `_check_launchd` must not flag a running or just-restarted daemon as broken.
 It reads a stubbed `launchctl list` snapshot (`pid \t status \t label`), never
@@ -11,62 +11,63 @@ crash loop (a live PID is always live at poll time either way), so
 `_check_launchd` persists recent crash-relaunch events across polls under
 `log_dir`. The crash-loop tests below drive it across several polls with an
 isolated `tmp_path`-backed `log_dir` so that history never leaks between
-tests or real `doctor` runs.
+tests or real `doctor` runs (GH-278).
 """
 
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from rebalance.doctor import NOTICE, OK, WARN, WARNING, _check_launchd
 
 
-def _one(snapshot: str):
-    checks = _check_launchd(snapshot)
+def _one(snapshot: str, log_dir: Path | None = None):
+    checks = _check_launchd(snapshot, log_dir=log_dir)
     assert len(checks) == 1, f"expected exactly one check, got {checks}"
     return checks[0]
 
 
-def test_running_daemon_with_sigterm_last_exit_is_ok() -> None:
+def test_running_daemon_with_sigterm_last_exit_is_ok(tmp_path) -> None:
     """The GH-146 case: live PID + last exit -15 (SIGTERM from kickstart -k)."""
-    check = _one("41142\t-15\tcom.rebalance-os.pulse-server\n")
+    check = _one("41142\t-15\tcom.rebalance-os.pulse-server\n", log_dir=tmp_path / "logs")
     assert check.name == "launchd:pulse-server"
     assert check.status == OK
     assert check.detail == "running"
     assert check.severity == NOTICE
 
 
-def test_negative_signal_without_live_pid_is_ok() -> None:
+def test_negative_signal_without_live_pid_is_ok(tmp_path) -> None:
     """A negative (signal) status is a clean stop, not a crash — OK even idle.
 
     Uses a non-``daily-sync`` job: ``daily-sync`` has its own JSON-outcome check
     (GH-146 Root cause A) and does not go through this general predicate.
     """
-    check = _one("-\t-15\tcom.rebalance-os.vault-sync\n")
+    check = _one("-\t-15\tcom.rebalance-os.vault-sync\n", log_dir=tmp_path / "logs")
     assert check.status == OK
     assert check.detail == "idle, last run ok"
 
 
-def test_running_daemon_with_positive_last_exit_is_ok() -> None:
+def test_running_daemon_with_positive_last_exit_is_ok(tmp_path) -> None:
     """A live PID means it is up now, regardless of the prior instance's code."""
-    check = _one("50001\t1\tcom.rebalance-os.pulse-web-sync\n")
+    check = _one("50001\t1\tcom.rebalance-os.pulse-web-sync\n", log_dir=tmp_path / "logs")
     assert check.status == OK
     assert check.detail == "running"
 
 
-def test_crashed_job_positive_exit_no_pid_still_warns() -> None:
+def test_crashed_job_positive_exit_no_pid_still_warns(tmp_path) -> None:
     """The genuine failure: no live PID and a positive non-zero exit (non-daily-sync)."""
-    check = _one("-\t7\tcom.rebalance-os.vault-sync\n")
+    check = _one("-\t7\tcom.rebalance-os.vault-sync\n", log_dir=tmp_path / "logs")
     assert check.status == WARN
     assert check.severity == WARNING
     assert check.detail == "last run exited with status 7"
 
 
-def test_clean_states_are_ok() -> None:
+def test_clean_states_are_ok(tmp_path) -> None:
     for snapshot, detail in (
         ("-\t0\tcom.rebalance-os.vault-sync\n", "idle, last run ok"),
         ("-\t-\tcom.rebalance-os.github-sync\n", "idle, last run ok"),
         ("60002\t0\tcom.rebalance-os.pulse-server\n", "running"),
     ):
-        check = _one(snapshot)
+        check = _one(snapshot, log_dir=tmp_path / "logs")
         assert check.status == OK, snapshot
         assert check.detail == detail, snapshot
 
