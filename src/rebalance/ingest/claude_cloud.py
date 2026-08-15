@@ -31,6 +31,8 @@ import urllib.parse
 import urllib.request
 from typing import Any
 
+from rebalance.lib.time_ops import parse_date, parse_utc_iso
+
 logger = logging.getLogger(__name__)
 
 BASE = "https://api.anthropic.com"
@@ -88,15 +90,7 @@ def _fetch_raw(token: str, hard_cap: int = 300, timeout: float = 8.0) -> list[di
 
 
 def _parse_ts(ts: str | None) -> dt.datetime | None:
-    if not ts:
-        return None
-    try:
-        return dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-    except Exception:
-        try:
-            return dt.datetime.fromisoformat(ts.split(".")[0] + "+00:00")
-        except Exception:
-            return None
+    return parse_utc_iso(ts)
 
 
 def normalize(s: dict) -> dict[str, Any]:
@@ -298,8 +292,8 @@ def claude_cloud_candidates(bundle: Any) -> list[dict[str, Any]]:
     if not _signal_enabled():
         return []
     try:
-        rows = sessions_for_day(getattr(bundle, "local_day", None) and
-                                dt.date.fromisoformat(bundle.local_day))
+        day = parse_date(bundle.local_day) if getattr(bundle, "local_day", None) else None
+        rows = sessions_for_day(day)
     except Exception as e:  # noqa: BLE001 — provider must never break the ranker
         logger.warning("claude_cloud_candidates: %s", e)
         return []

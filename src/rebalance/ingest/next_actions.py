@@ -58,6 +58,7 @@ from rebalance.ingest.calendar_helpers import (
     parse_calendar_dt,
 )
 from rebalance.ingest.config import get_pulse_config, get_vault_path
+from rebalance.lib.time_ops import parse_date, parse_iso
 from rebalance.ingest.db import db_connection, run_migrations
 from rebalance.ingest.pulse import _query_day_activity, collect_pulse_snapshot
 from rebalance.tz_utils import format_local, local_tz
@@ -1000,10 +1001,15 @@ def _resolve_signal_day(today: date | datetime | str, *, tz: Any) -> date:
     raw = (today or "").strip()
     if not raw:
         raise ValueError("today must not be empty")
-    try:
-        return datetime.fromisoformat(raw).astimezone(tz).date()
-    except ValueError:
-        return date.fromisoformat(raw)
+    parsed = parse_iso(raw, force_utc=False)
+    if parsed is not None:
+        if parsed.tzinfo is not None:
+            return parsed.astimezone(tz).date()
+        return parsed.date()
+    d = parse_date(raw)
+    if d is not None:
+        return d
+    raise ValueError(f"Invalid date string: {raw}")
 
 
 def _project_activity_rows_for_day(
@@ -1389,8 +1395,11 @@ def _operator_blocks_over_horizon(
     operator's own future block. Same-local-day comparison is preserved (each block
     keeps its ``local_day``); this only widens which operator days are visible.
     """
+    start_d = parse_date(local_day)
+    if start_d is None:
+        start_d = datetime.now(tz).date() if hasattr(tz, "utcoffset") else datetime.now(timezone.utc).date()
     horizon_days = {
-        (datetime.fromisoformat(local_day).date() + timedelta(days=i)).isoformat()
+        (start_d + timedelta(days=i)).isoformat()
         for i in range(days_forward + 1)
     }
     rows = conn.execute(

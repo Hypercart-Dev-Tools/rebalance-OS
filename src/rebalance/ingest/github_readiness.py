@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.db import db_connection, ensure_github_schema
-from rebalance.lib.time_ops import _now_iso, _now
+from rebalance.lib.time_ops import _now, _now_iso, parse_utc_iso
 
 _RELEASE_BRANCH_RE = re.compile(r"\brelease/[A-Za-z0-9._-]+\b")
 
@@ -68,9 +68,8 @@ def _parse_json_list(value: str | None) -> list[str]:
 def _days_until(iso_date: str) -> int | None:
     if not iso_date:
         return None
-    try:
-        target = datetime.fromisoformat(iso_date.replace("Z", "+00:00"))
-    except ValueError:
+    target = parse_utc_iso(iso_date)
+    if not target:
         return None
     now = datetime.now(timezone.utc)
     return (target.date() - now.date()).days

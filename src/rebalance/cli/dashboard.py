@@ -35,6 +35,7 @@ def dashboard_render_cmd(
     from datetime import date
     from rebalance.ingest.note_builder import build_dashboard_note_content, write_dashboard_note
     from rebalance.ingest.calendar_config import CalendarConfig
+    from rebalance.lib.time_ops import parse_date
 
     try:
         db_path = resolve_database_path(database)
@@ -44,7 +45,7 @@ def dashboard_render_cmd(
     config = CalendarConfig.load()
 
     if date_str:
-        target_date = date.fromisoformat(date_str)
+        target_date = parse_date(date_str) or date.today()
     else:
         target_date = date.today()
 

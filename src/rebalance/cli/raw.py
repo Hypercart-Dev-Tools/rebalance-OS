@@ -13,6 +13,7 @@ import typer
 
 from rebalance.cli._core import app
 from rebalance.ingest.config import get_github_ignored_repos
+from rebalance.lib.time_ops import format_local, parse_utc_iso
 from rebalance.paths import DatabaseNotFoundError, DBOption, resolve_database_path
 
 
@@ -94,19 +95,17 @@ def _raw_gather_team_activity(
         with db_connection(db_path) as conn:
             last_active_raw = repo_last_active(conn, top_repos)
         for repo, ts in last_active_raw.items():
-            try:
-                last_active_map[repo] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-            except (AttributeError, ValueError):
-                continue
+            parsed_ts = parse_utc_iso(ts)
+            if parsed_ts:
+                last_active_map[repo] = parsed_ts
 
     items: list[dict[str, Any]] = []
     counts = {"captured": 0, "pending": 0}
 
     for repo in top_repos:
         for event in _raw_fetch_repo_events(repo, token):
-            try:
-                event_time = datetime.fromisoformat((event.get("created_at") or "").replace("Z", "+00:00"))
-            except ValueError:
+            event_time = parse_utc_iso(event.get("created_at"))
+            if not event_time:
                 continue
             if event_time < cutoff:
                 continue
@@ -180,11 +179,8 @@ def _raw_gather_unwatched_active_repos(
             continue
         if rec.archived or rec.disabled:
             continue
-        try:
-            pushed = datetime.fromisoformat(rec.pushed_at.replace("Z", "+00:00"))
-        except ValueError:
-            continue
-        if pushed < cutoff:
+        pushed = parse_utc_iso(rec.pushed_at)
+        if not pushed or pushed < cutoff:
             continue
         repos.append({
             "full_name": rec.repo_full_name,
@@ -210,9 +206,8 @@ def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, to
 
     recent = []
     for e in events:
-        try:
-            t = datetime.fromisoformat((e.get("created_at") or "").replace("Z", "+00:00"))
-        except ValueError:
+        t = parse_utc_iso(e.get("created_at"))
+        if not t:
             continue
         if t >= cutoff:
             recent.append((t, e))
@@ -224,10 +219,9 @@ def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, to
         last_active_raw = repo_last_active(conn)
     last_active_map: dict[str, datetime] = {}
     for repo, ts in last_active_raw.items():
-        try:
-            last_active_map[repo] = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        except (AttributeError, ValueError):
-            continue
+        parsed_ts = parse_utc_iso(ts)
+        if parsed_ts:
+            last_active_map[repo] = parsed_ts
 
     items: list[dict[str, Any]] = []
     counts = {"captured": 0, "pending": 0, "unwatched": 0}
@@ -305,7 +299,7 @@ def _raw_render_text(snapshot: dict[str, Any]) -> None:
     glyphs = {"captured": ("✓", "green"), "pending": ("⏳", "yellow"), "unwatched": ("✗", "red")}
     for ev in snapshot["events"]:
         glyph, color = glyphs.get(ev["status"], ("?", "white"))
-        local_time = datetime.fromisoformat(ev["time"]).astimezone().strftime("%H:%M:%S")
+        local_time = format_local(ev["time"], "%H:%M:%S")
         table.add_row(local_time, f"[{color}]{glyph}[/{color}]", ev["type"], ev["repo"], ev["summary"])
     console.print(table)
 
@@ -338,7 +332,7 @@ def _raw_render_text(snapshot: dict[str, Any]) -> None:
             team_table.add_column("summary", overflow="fold", ratio=2)
             for ev in team["events"]:
                 glyph, color = glyphs.get(ev["status"], ("?", "white"))
-                local_time = datetime.fromisoformat(ev["time"]).astimezone().strftime("%H:%M:%S")
+                local_time = format_local(ev["time"], "%H:%M:%S")
                 team_table.add_row(
                     local_time,
                     f"[{color}]{glyph}[/{color}]",
@@ -363,7 +357,9 @@ def _raw_render_text(snapshot: dict[str, Any]) -> None:
         )
         now_utc = datetime.now(timezone.utc)
         for r in unwatched["repos"]:
-            pushed = datetime.fromisoformat(r["pushed_at"])
+            pushed = parse_utc_iso(r["pushed_at"])
+            if not pushed:
+                continue
             delta = now_utc - pushed
             if delta.days > 0:
                 ago = f"{delta.days}d ago"

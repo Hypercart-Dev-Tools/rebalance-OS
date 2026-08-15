@@ -37,8 +37,8 @@ from pydantic import BaseModel
 from rebalance.ingest.auth_log import read_log, _log_path
 from rebalance.ingest import zapier_calendar, zapier_email
 from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
+from rebalance.lib.time_ops import format_relative, parse_utc_iso
 from rebalance.paths import resolve_db, resolve_secret_path
-from rebalance.tz_utils import format_relative
 from rebalance.web_components import badge_html, button_link, render_shell
 logger = logging.getLogger(__name__)
 
@@ -763,9 +763,8 @@ def _roster_stale(computed_at: str | None) -> bool:
     """True if the roster snapshot is missing or older than the TTL."""
     if not computed_at:
         return True
-    try:
-        ts = datetime.fromisoformat(computed_at.replace("Z", "+00:00"))
-    except ValueError:
+    ts = parse_utc_iso(computed_at)
+    if ts is None:
         return True
     return (datetime.now(timezone.utc) - ts).total_seconds() > FOCUS5_ROSTER_TTL_SECONDS
 

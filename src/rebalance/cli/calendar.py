@@ -26,6 +26,8 @@ from rebalance.paths import (
     resolve_secret_path,
 )
 
+from rebalance.lib.time_ops import parse_date, parse_iso
+
 CALENDAR_EVENT_LOG_PATH = Path("temp/logs/calendar-event-create.jsonl")
 
 # Module-level path for the operator-owned Google Calendar env file. Resolved at
@@ -99,7 +101,9 @@ def _resolve_calendar_event_window(
         raise typer.BadParameter("Use either --date or --start/--end, not both.")
 
     if date_str:
-        target_date = date_cls.fromisoformat(date_str)
+        target_date = parse_date(date_str)
+        if target_date is None:
+            raise typer.BadParameter(f"Invalid date: {date_str}")
         tz = ZoneInfo(timezone_name)
         start_dt = datetime.combine(target_date, time_cls.min, tzinfo=tz)
         end_dt = datetime.combine(target_date + timedelta(days=1), time_cls.min, tzinfo=tz)
@@ -110,11 +114,10 @@ def _resolve_calendar_event_window(
     if not start_time or not end_time:
         raise typer.BadParameter("Provide either --date or both --start and --end.")
 
-    try:
-        start_dt = datetime.fromisoformat(start_time)
-        end_dt = datetime.fromisoformat(end_time)
-    except ValueError as exc:
-        raise typer.BadParameter(f"Invalid datetime: {exc}") from exc
+    start_dt = parse_iso(start_time, force_utc=False)
+    end_dt = parse_iso(end_time, force_utc=False)
+    if start_dt is None or end_dt is None:
+        raise typer.BadParameter("Invalid datetime format for --start or --end.")
 
     if start_dt.tzinfo is None or end_dt.tzinfo is None:
         raise typer.BadParameter("--start and --end must include timezone offsets.")
@@ -473,7 +476,7 @@ def calendar_snap_edges_cmd(
     resolved_timezone = timezone_name.strip() or config.timezone
 
     if date_str:
-        start_date = date_cls.fromisoformat(date_str)
+        start_date = parse_date(date_str) or datetime.now(ZoneInfo(resolved_timezone)).date()
     else:
         # Use the calendar timezone for "today", not the machine's local date
         start_date = datetime.now(ZoneInfo(resolved_timezone)).date()
@@ -541,7 +544,7 @@ def calendar_daily_report_cmd(
     config = CalendarConfig.load()
 
     if date_str:
-        target_date = date.fromisoformat(date_str)
+        target_date = parse_date(date_str) or date.today()
     else:
         target_date = date.today()
 
@@ -578,7 +581,7 @@ def calendar_weekly_report_cmd(
     config = CalendarConfig.load()
 
     if date_str:
-        target_date = date.fromisoformat(date_str)
+        target_date = parse_date(date_str) or date.today()
     else:
         target_date = date.today()
 

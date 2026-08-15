@@ -83,9 +83,10 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         from rebalance.ingest.calendar_helpers import event_duration_minutes
         from rebalance.ingest.daily_report import get_day_data
         from rebalance.ingest.project_classifier import load_project_matchers
+        from rebalance.lib.time_ops import parse_date
 
         config = CalendarConfig.load()
-        target = date_cls.fromisoformat(date_str) if date_str else date_cls.today()
+        target = parse_date(date_str) or date_cls.today()
         matchers = load_project_matchers(database_path, config=config)
         day = get_day_data(database_path, target, config, project_matchers=matchers)
 
@@ -170,6 +171,7 @@ def register(mcp: FastMCP, database_path: Path) -> None:
 
         from rebalance.ingest.calendar_config import CalendarConfig
         from rebalance.ingest.calendar_snap import snap_edges
+        from rebalance.lib.time_ops import parse_date
 
         if not (1 <= days <= 7):
             return {"error": f"days must be between 1 and 7, got {days}", "status": "error"}
@@ -178,7 +180,7 @@ def register(mcp: FastMCP, database_path: Path) -> None:
         resolved_calendar_id = calendar_id.strip() or config.calendar_id
         resolved_timezone = timezone_name.strip() or config.timezone
         if date_str.strip():
-            start_date = date_cls.fromisoformat(date_str)
+            start_date = parse_date(date_str) or datetime.now(ZoneInfo(resolved_timezone)).date()
         else:
             start_date = datetime.now(ZoneInfo(resolved_timezone)).date()
 

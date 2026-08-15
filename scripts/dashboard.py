@@ -53,7 +53,7 @@ from rebalance.ingest.config import (  # noqa: E402
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID  # noqa: E402
 from rebalance.ingest.calendar_helpers import upcoming_calendar_rows  # noqa: E402
 from rebalance.ingest.db import db_connection  # noqa: E402
-from rebalance.tz_utils import local_tz, parse_utc_iso  # noqa: E402
+from rebalance.lib.time_ops import local_tz, parse_utc_iso  # noqa: E402
 from rebalance.ingest.index_ops import (  # noqa: E402
     get_index_status,
     get_watched_repos,
