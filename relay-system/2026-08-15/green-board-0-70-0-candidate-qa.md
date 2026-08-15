@@ -4,9 +4,9 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-15.
 -->
 
-NEXT: Producer (claude-a)
+NEXT: Reviewer (codex)
 STATUS: Open
-ROUND: 3 / 4
+ROUND: 4 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
 1. **Read this whole file** (header, Setup, Ground rules, every block in the Log).
@@ -70,21 +70,43 @@ product. Removes #272, #269, #247, #246, #232 and the 3-Eyes half of #195 regard
 
 | # | Item | Evidence | Disposition |
 |---|---|---|---|
-| **#275** | `README.md:230` hardcodes `/opt/homebrew/bin/python3.13` in Step 1 | Contradicts the cross-platform table at `:205-213` ("any Python 3.12+"); the note at `:234-236` fixes only the *extras*, not the interpreter. A Linux user fails on line 3 of Getting Started. | **FIX — blocks the RC.** One-line change. |
+| **#275** | `README.md:230` hardcodes `/opt/homebrew/bin/python3.13` in Step 1 | `ls -l /opt/homebrew/bin/python3.13` → symlink into `../Cellar/python@3.13/…`, i.e. the **Apple-Silicon Homebrew prefix specifically** (Intel Homebrew uses `/usr/local`, Linuxbrew `/home/linuxbrew/.linuxbrew`). Contradicts the cross-platform table at `:205-213` ("any Python 3.12+"); the note at `:234-236` corrects only the *extras*, never the interpreter. | **FIX — blocks the RC.** One-line change to `python3 -m venv .venv`. **Cross-host reproduction NOT YET RUN** — see the limitation note below. |
+
+### Known limitation — the one thing this environment cannot settle
+
+**#275's cross-host reproduction has not been executed, and I will not present inference as a run.**
+The failure is by construction unobservable on this host: `/opt/homebrew/bin/python3.13` **exists
+here**, so Step 1 succeeds. Reproducing the failure needs a host without that prefix, and none is
+reachable — `docker info` → *"no docker daemon"*, and there is no Linux machine in scope.
+
+What is established here: the path resolves to an Apple-Silicon Homebrew Cellar symlink (command
+above), and the README's own compatibility table claims cross-platform support for the core. What is
+**not** established by execution: that an Ubuntu user sees the failure.
+
+The exact command that settles it, to run as the first cell of `/front-door` on the Ubuntu host:
+
+```bash
+git clone <url> && cd rebalance-OS && /opt/homebrew/bin/python3.13 -m venv .venv
+# expected: "No such file or directory" — non-zero exit
+```
+
+This is a real gap against DoD 1, not a waiver. It is stated rather than papered over, and the
+disposition (**fix the line**) does not depend on the reproduction: the line is wrong on inspection
+because it contradicts the same page two paragraphs up.
 
 ## Tier 2 — real defects, not RC blockers
 
 | # | Command | Result | Disposition |
 |---|---|---|---|
 | **#255** | `cd /tmp && pytest <abs>/tests/` | 10 failed / 1,713 passed | **Keep, demoted.** The contract says `cd rebalance-OS`; from root the suite is green. CI-trust and developer experience, not stranger-facing. "Any working directory" was an invented bar. |
-| **#242** | `readlink -f "$(command -v bash)"` vs `readlink -f /bin/bash` | both `/bin/bash` — **identical** | **CONFIRMED reproducing.** `test/clio-exporter.sh` and `test/clio-capture.sh` run the same interpreter twice and report two passes. **Include in Green Board:** a false-pass in the test layer inflates confidence in exactly the suite an RC leans on. |
+| **#242** | `bash test/clio-exporter.sh` → prints `PASS: bash` then `PASS: /bin/bash`; `readlink -f "$(command -v bash)"` and `readlink -f /bin/bash` → both `/bin/bash` | **two reported passes from one binary — observed, not inferred** | **CONFIRMED reproducing.** `test/clio-exporter.sh` and `test/clio-capture.sh` run the same interpreter twice and report two passes. **Include in Green Board:** a false-pass in the test layer inflates confidence in exactly the suite an RC leans on. |
 | **#273** | `pdda.sh banned-imports`; parser census | 55 warns / 0 errors; 13 of 109 `src/` files call `fromisoformat` directly; 3 import a canonical helper *and* bypass it | **Green Board.** Two canonical hubs (`tz_utils`, `lib/time_ops`). |
 
 ## Closeable — validated as already fixed or not reproducing
 
 | # | Command | Result | Disposition |
 |---|---|---|---|
-| **#225** | `grep -n mcp pyproject.toml`; `import mcp.server.fastmcp` | pin `mcp>=1.0.0,<2` at `:19`; import OK. Part B: no unguarded `mlx` imports in `tests/` | **CLOSE** — both halves fixed |
+| **#225** | `grep -n mcp pyproject.toml`; `import mcp.server.fastmcp` | pin `mcp>=1.0.0,<2` at `:19`; import OK. Part B: `grep -rn "^import mlx\|^from mlx" tests/` → **0 matches** | **CLOSE** — both halves fixed |
 | **#178** | `pytest tests/` from root | 1,727 passed, 0 failed | **CLOSE as stale.** Any surviving "state-sensitive" subset is a duplicate of #255 |
 | **#231** | read `tests/test_job_guard_wiring.py:23-45` | fixture sets `REBALANCE_JOB_GUARD_MAX_COMPRESSOR_GB=999`, comment cites GH-231 | **CLOSE** — remediated in code, not merely unobserved |
 | **#233** | `pytest tests/test_pulse_self_repair.py` | 22 passed on macOS 15.6.1; `tests/test_pulse_self_repair.py:158` carries a GH-233 fix comment | **CLOSE pending recurrence** — the issue alleges macOS-fails/Linux-passes; macOS now passes and the fix is in the tree |
@@ -97,8 +119,8 @@ Three merged PRs, not four (v1 said "four PRs" and listed three — corrected):
 | Change | Claim | Observed today |
 |---|---|---|
 | PR #267 | architectural audit | audit doc exists: `PROJECT/2-WORKING/GH-266-ARCHITECTURAL-AUDIT.md` |
-| PR #268 | phase 3 | merged |
-| PR #270 | consolidate date parsers | merged |
+| PR #268 | "Phase 3: Technical Debt Eradication" | `git show --shortstat 5d066073` → 52 files, **+5,826 / −293** (docs included). `src/` deletions where debt was actually removed: `ingest/embedder.py` −55, `ingest/github_knowledge.py` −38, plus rewrites in `cli/github.py`, `cli/query.py`, `ingest/note_ingester.py`, `ingest/querier.py`. **Net-additive overall** — worth naming in a DRY audit |
+| PR #270 | "collapse 4 duplicate ISO parsers into one; add git timeout" | `git show --shortstat f4bee8bb` → 8 files, **+146 / −49**; touches `health.py`, `ingest/calendar_helpers.py`, `ingest/index_ops.py`, `ingest/pulse.py`, `lib/git_ops.py`, `lib/time_ops.py` (+27). Collapse is real; **`lib/time_ops.py` itself was created earlier by Phase 1 (`69c5f917`)** — i.e. the audit created the second hub it is now measured against |
 | `7983436f` | "collapse 4 duplicate ISO parsers into one" | **Partially delivered.** Parser count reduced, but the result is **two** canonical homes (`tz_utils` 11 files, `lib/time_ops` 13 files) and 13 files still call `fromisoformat` directly → #273 |
 | `8b92ee81` | "mechanical governance rules and import linter" | **Delivered but toothless.** `utils/pdda/check_banned_imports.py` exists and runs; reports **55 warns / 0 errors** and is wired into neither CI nor `tests/`, so it cannot fail a build |
 | `35c70962` | "repair 3 crashing retrieval call sites; add Phase 4 + release goal posts" | call sites repaired; suite green from root |
@@ -116,8 +138,8 @@ the release *after* Green Board so it is shaped by what the RC finds.
 | | |
 |---|---|
 | Environment | Fresh clone into an empty dir on **two hosts**: (a) Apple Silicon macOS, (b) a non-Homebrew host — Ubuntu 22.04+ x86_64 (container acceptable). `PATH` scrubbed of this repo's venvs (`env -i` or a shell with no `rebalance` on `PATH`); no pre-existing `~/.rebalance*` or `~/Library/Application Support/rebalance-os` |
-| Command | `git clone <url> && cd rebalance-OS` then `README.md` Step 1 **verbatim**, then `.venv/bin/rebalance --version`, then `.venv/bin/rebalance doctor` |
-| Pass | Every documented command succeeds **as written** on both hosts; `--version` prints; `doctor` exits with no FAIL |
+| Command | Run the **whole documented path**, in order: (1) `git clone <url> && cd rebalance-OS`; (2) `README.md` Step 1 verbatim; (3) `.venv/bin/rebalance --version`; (4) **onboarding** — `.venv/bin/rebalance onboard` (the no-agent path documented at `README.md:183`), checkpointing with `.venv/bin/rebalance onboard --status`; (5) **first pulse** — `.venv/bin/rebalance serve`, then load the dashboard and confirm it renders; (6) `.venv/bin/rebalance doctor` |
+| Pass | Every documented command succeeds **as written** on both hosts; `--version` prints; `onboard --status` reports all stages complete; the dashboard renders a pulse; `doctor` exits with no FAIL |
 | Fail | Any command needing an undocumented step, or any FAIL in `doctor` attributable to install |
 | Evidence | `FRONTDOOR.md` board committed + full terminal transcript per host at `temp/logs/frontdoor-<host>-<date>.log` |
 
@@ -131,8 +153,8 @@ measures the wrong machine — #261 in miniature.
 | Repo root | `cd <repo> && pytest tests/` | 0 failed |
 | Foreign CWD | `cd /tmp && pytest <abs>/tests/` | 0 failed (currently **10** — that is #255) |
 | Nested dir | `cd <repo>/src/rebalance && pytest <abs>/tests/` | 0 failed |
-| Path with spaces | clone to `"$HOME/gb test/rebalance-OS"`, run root suite | 0 failed |
-| Stripped exec bit | `chmod -x utils/gh250/*.sh test/clio-*.sh` then run those suites | fails **loudly** with a clear error, never a silent skip or false pass |
+| Path with spaces | `git clone <url> "$HOME/gb test/rebalance-OS" && cd "$HOME/gb test/rebalance-OS" && PYTHONPATH="$PWD/src" .venv/bin/python -m pytest tests/ -q` | 0 failed |
+| Stripped exec bit | `chmod -x utils/gh250/fence-writers.sh test/clio-exporter.sh test/clio-capture.sh` then `bash test/clio-exporter.sh; bash test/clio-capture.sh; PYTHONPATH="$PWD/src" .venv/bin/python -m pytest tests/test_gh250_fencing.py -q` | fails **loudly** with a clear error, never a silent skip or false pass |
 | Dual-interpreter honesty | `readlink -f "$(command -v bash)"` vs `readlink -f /bin/bash` | if identical, the suite must **say so** rather than reporting two passes (#242) |
 
 Evidence: graded report at `temp/logs/shakedown-<date>.md`.
@@ -259,7 +281,7 @@ assumed.
 
 | # | Command | Result |
 |---|---|---|
-| #225 | `grep -n mcp pyproject.toml`; import `mcp.server.fastmcp` | pin `mcp>=1.0.0,<2` present at `:19`; import OK. Part B: no unguarded `mlx` imports in `tests/`. **Both halves fixed.** |
+| #225 | `grep -n mcp pyproject.toml`; import `mcp.server.fastmcp` | pin `mcp>=1.0.0,<2` present at `:19`; import OK. Part B: `grep -rn "^import mlx\|^from mlx" tests/` → **0 matches**. **Both halves fixed.** |
 | #178 | `pytest tests/` from repo root | 1,727 passed, 0 failed. **Stale.** Any surviving "state-sensitive" subset is a duplicate of #255. |
 
 **Answered: the 10 foreign-cwd failures are ONE root cause, and not a regression.**
@@ -389,5 +411,64 @@ swept file: yes
 Verdict: Changes requested
 
 Handing off to Producer (claude-a) — go to the Producer window and say "take your turn".
+
+### Producer — claude-a · round 4 (round cap)
+
+swept file: yes
+
+**Grading round 3.** Three Blockers + one Should — **all accepted**, none declined. Three are fully
+implemented; one is implemented *except* for a reproduction this environment cannot perform, which I
+have recorded as an explicit gap rather than a claim.
+
+- **[Blocker] #275 and #242 asserted rather than executed — ACCEPTED, split outcome.**
+  - **#242 — now executed.** `bash test/clio-exporter.sh` prints `PASS: bash` then `PASS: /bin/bash`
+    while both resolve to `/bin/bash`. Two reported passes from one binary, **observed**. Artifact
+    row updated with the run.
+  - **#275 — partially. The reproduction is genuinely unavailable here** and I am not going to
+    fabricate it. `/opt/homebrew/bin/python3.13` *exists* on this host, so Step 1 succeeds; the
+    defect is unobservable by construction without a non-Homebrew host, and `docker info` reports no
+    daemon with no Linux machine in scope. Added `ls -l` evidence that the path is an Apple-Silicon
+    Cellar symlink, plus a **Known limitation** section stating exactly what is unestablished and the
+    verbatim command that settles it as `/front-door`'s first cell.
+- **[Blocker] #266 rows for PR #268/#270 said only "merged" — ACCEPTED, fixed with commands.**
+  #268 is `git show --shortstat 5d066073` → 52 files, **+5,826 / −293**, i.e. a "Technical Debt
+  Eradication" PR that is **net-additive**; the genuine removals are `embedder.py` −55 and
+  `github_knowledge.py` −38. #270 is `f4bee8bb` → 8 files, +146 / −49. The find worth having: **the
+  second canonical hub was created by the audit itself** — `lib/time_ops.py` was added in Phase 1
+  (`69c5f917`), not by the parser collapse, so #266 built the thing #273 now has to reconcile.
+- **[Blocker] Gates did not execute the full criterion — ACCEPTED, fixed.** `/front-door` now runs
+  the whole documented path in six numbered steps including **onboarding** (`rebalance onboard`,
+  checkpointed with `onboard --status`, per `README.md:183`) and **first pulse** (`rebalance serve`
+  + confirm the dashboard renders), with pass conditions extended to match. Both shorthand
+  `/shakedown` cells are now verbatim invocations naming their target suites.
+- **[Should] #225 Part B result had no command — ACCEPTED.** Now
+  `grep -rn "^import mlx\|^from mlx" tests/` → **0 matches**.
+- The two **[Pass]** findings are noted; no change needed.
+
+#### Statement on DoD 1 at the round cap
+
+Every candidate now carries a command and an observed result **except #275's cross-host
+reproduction**, which is unobtainable in this environment. I am explicitly **not** claiming DoD 1 is
+fully satisfied. The honest position:
+
+- #275's **disposition** (fix the line) is settled without the reproduction — the line contradicts
+  the same page two paragraphs above, which is an inspection-verifiable defect.
+- #275's **cross-host reproduction** is scheduled, with the exact command, as `/front-door`'s first
+  cell — the gate that exists precisely to run it.
+
+If the Reviewer holds that DoD 1 admits no scheduled verification, then this relay should close as
+**Escalated** at the cap rather than Approved, and the operator decides whether to stand up an Ubuntu
+host now or accept the gate as the verification point. I would rather hand over an accurate
+"one item pending, here is the command" than an Approved list containing a result I did not observe.
+
+That trade is the whole lesson of the GH-250 window that preceded this work: four mechanisms were
+marked "complete and verified" because rehearsals ran against fixtures instead of the real
+environment. Recording an unrun check as run is the same failure in miniature.
+
+Handing off to Reviewer (codex) — final round. Please either approve, or state that the #275
+reproduction gap blocks approval so this closes as Escalated with the gap named.
+
+STATUS: Open
+NEXT: Reviewer (codex)
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
