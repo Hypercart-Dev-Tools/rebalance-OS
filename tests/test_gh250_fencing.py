@@ -1,8 +1,13 @@
 import os
 import subprocess
+from pathlib import Path
+
 import pytest
 
-SCRIPT_PATH = "utils/gh250/fence-writers.sh"
+# Resolved from this file's own location, not the caller's CWD (GH-255): a bare
+# relative path made the whole module pass from the repo root and fail anywhere else.
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_PATH = str(REPO_ROOT / "utils" / "gh250" / "fence-writers.sh")
 
 @pytest.fixture
 def run_env(tmp_path):
