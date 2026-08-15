@@ -367,5 +367,22 @@ run_suite() {
 }
 
 [ -x "$EXPORTER" ] || fail "exporter is not executable: $EXPORTER"
+
+# GH-242: the second cell is only meaningful when the two interpreters are actually
+# different binaries. On a host where `bash` on PATH resolves to /bin/bash they are the
+# same file, and running the suite twice produced two PASS lines that together proved
+# nothing more than one. Report the truth instead of the reassuring number.
+run_second_cell() {
+  local first_resolved second_resolved
+  first_resolved="$(readlink -f "$(command -v bash)" 2>/dev/null || command -v bash)"
+  second_resolved="$(readlink -f /bin/bash 2>/dev/null || echo /bin/bash)"
+  if [ "$first_resolved" = "$second_resolved" ]; then
+    echo "SKIP: /bin/bash — same interpreter as \`bash\` on this host ($first_resolved);"
+    echo "      a second run would repeat the first, not widen coverage."
+    return 0
+  fi
+  run_suite /bin/bash system-bash
+}
+
 run_suite bash default-bash
-run_suite /bin/bash system-bash
+run_second_cell
