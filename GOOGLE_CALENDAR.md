@@ -70,13 +70,36 @@ rebalance --help
 
 Run this once to connect your Google account. It opens a browser window where you log in and click **Allow**.
 
-The required Google OAuth Desktop app credentials are already bundled in this repo for setup. Your developer does **not** need to:
+**First, supply your own OAuth client.** rebalance does **not** bundle one. Your
+organization creates the Google Cloud project, so your organization owns the consent
+screen, the scopes, the quota, the audit trail and revocation — and no Google data
+routes through anyone else's project.
 
-- create a Google Cloud project
-- download a separate `client_secret.json`
-- edit OAuth client credentials by hand
+One-time setup:
 
-Each developer authorizes their **own** Google account locally. The repo only provides the Desktop app client configuration needed to start the browser consent flow.
+1. [Google Cloud Console](https://console.cloud.google.com/) → create or pick a project.
+2. **APIs & Services → Library** → enable **Google Calendar API** (and **Gmail API** if
+   you want [GMAIL.md](./GMAIL.md) too).
+3. **APIs & Services → OAuth consent screen** → choose the audience:
+   **Internal** if every user is in your own Google Workspace domain, **External**
+   otherwise. Add the scopes for the APIs you enabled.
+4. **APIs & Services → Credentials → Create credentials → OAuth client ID** →
+   application type **Desktop app**. Download the JSON.
+5. Put it where rebalance looks:
+
+   ```bash
+   mkdir -p ~/secrets
+   mv ~/Downloads/client_secret_*.json ~/secrets/google_oauth_client.json
+   # or, to keep it anywhere else:
+   export GOOGLE_OAUTH_CLIENT_FILE=/path/to/client_secret.json
+   ```
+
+[`google_oauth_client.example.json`](./google_oauth_client.example.json) shows the
+expected shape. If the file is missing, setup fails with an error naming every path it
+tried — it does not fall back to anything.
+
+After that, each person authorizes their **own** Google account locally against your
+client.
 
 ```bash
 python scripts/setup_calendar_oauth.py --test
@@ -93,7 +116,7 @@ After clicking Allow, the script prints a list of your Google Calendars and thei
 > Your login token is saved to the OS **keyring** (primary) and a JSON fallback in
 > the out-of-repo secret store (`~/.config/rebalance-os/secrets/google-calendar-oauth`,
 > `0600`). It is never stored in the repo. The OAuth token belongs to the
-> authorizing user account on that machine, separate from the bundled Desktop app client.
+> authorizing user account on that machine, separate from your Desktop app client.
 >
 > **Both stores are written in one pass** — `setup_calendar_oauth.py` populates
 > keyring **and** the JSON fallback after consent, so no follow-up
@@ -191,7 +214,7 @@ rebalance calendar-daily-report
 
 You're done. The config already has the shared `calendar_id`, projects, and timezone — you only authorize once so the app can read your calendar on your behalf.
 
-> **Why does each person need to authorize?** The repo includes the shared OAuth Desktop app credentials, but each person must grant consent for their own Google account. Your token is saved to the keyring + a JSON fallback in the secret store (`~/.config/rebalance-os/secrets/google-calendar-oauth`) and never stored in the repo.
+> **Why does each person need to authorize?** Your organization supplies one OAuth client, but each person must grant consent for their own Google account. Your token is saved to the keyring + a JSON fallback in the secret store (`~/.config/rebalance-os/secrets/google-calendar-oauth`) and never stored in the repo.
 
 ---
 
@@ -540,9 +563,8 @@ To automate it on macOS or Linux, add it to your crontab (`crontab -e`):
 
 ### Durable tokens — stop the weekly re-auth
 
-If you keep having to re-authorize, the OAuth consent screen for the bundled
-client is in **"Testing"** publishing status, which expires refresh tokens after
-7 days.
+If you keep having to re-authorize, your OAuth consent screen is in **"Testing"**
+publishing status, which expires refresh tokens after 7 days.
 
 - **Google Workspace accounts:** set the consent screen **User Type → Internal**
   in the Cloud Console
@@ -560,7 +582,11 @@ the keyring + JSON fallback in one pass). The same client backs Gmail — see
 **Common questions**
 
 - **Is my calendar data stored anywhere online?** No — events are pulled to your local machine only and never uploaded.
-- **Do I need my own Google Cloud app or `client_secret.json`?** No — this repo already includes the Desktop app OAuth client configuration needed to start authorization on your machine.
+- **Do I need my own Google Cloud app or `client_secret.json`?** Yes. rebalance ships a
+  template, not a credential — see the setup steps above. This is deliberate: a bundled
+  client's consent screen, verification status and quota belong to whoever published it,
+  and its audience setting decides who is allowed to sign in at all. Owning the client
+  means owning those decisions.
 - **Can I change which calendar I use?** Yes — update `calendar_id` in your config and run `calendar-sync` again.
 - **An event I want to hide keeps showing up** — add a word from its title to `exclude_keywords` in your config.
 - **How do I force canonical project labels in the aggregator?** Add `custom_fields.calendar_aliases` in `Projects/00-project-registry.md`, then run `rebalance ingest sync --mode pull` into the same SQLite database used by calendar reports.

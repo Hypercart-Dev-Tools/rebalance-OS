@@ -6,6 +6,37 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.69.2] - 2026-08-15
+
+### Changed
+- **Google OAuth is now bring-your-own-client.** rebalance no longer ships a Google OAuth
+  Desktop client. You create one in your own Google Cloud project and point rebalance at it via
+  `GOOGLE_OAUTH_CLIENT_FILE` or `~/secrets/google_oauth_client.json`; a template with the expected
+  shape and the five Cloud Console steps ships as `google_oauth_client.example.json`. Your
+  organization now owns the consent screen, scopes, quota, audit trail and revocation.
+  This also removes a hard blocker for public use: a bundled client's consent-screen *audience*
+  decides who may authenticate at all, and an "Internal" audience silently locks out everyone
+  outside the publisher's Workspace domain. A missing file now raises an error naming every path
+  tried, and choosing a "Web application" client instead of "Desktop app" is rejected by name
+  rather than failing later with an opaque redirect-URI mismatch.
+  **Action required:** download your own client JSON and save it to one of the paths above.
+  Existing tokens keep working until they expire; re-minting needs the file. The previously
+  embedded client should be revoked in the Cloud Console — it is recoverable from git history.
+- **3-Eyes is labelled alpha at both entry points.** A banner in `utils/3-eyes/README.md` and the
+  `three_eyes --help` description now name it a diagnostic tool outside the supported core, and
+  name the known defect: `pause` does not stop a launchd-managed job, so a "paused" writer can
+  still be running — use `launchctl bootout` and verify.
+
+### Security
+- **Removed the embedded Google OAuth client credentials.** The client id and secret were stored
+  base64-encoded with the stated intent of avoiding secret scanners, which meant a scan of this
+  repository would report clean while shipping a live credential. A regression test now fails if
+  any credential — or the base64 indirection itself — reappears in that module.
+- **Operator PII removed from tracked files** ahead of publication: three home-directory paths in
+  this changelog (including a `~/secrets/*.env` path), a `file:///Users/...` URL emitted into
+  generated `CATALOG.md` output by `three_eyes/catalog.py`, and a hardcoded vault path in
+  `utils/obsidian_daily_rollover.py` that contained an operator's full name (now `OBSIDIAN_VAULT`).
+
 ## [0.69.1] - 2026-08-15
 
 ### Security
@@ -1836,14 +1867,14 @@ P2 Phase 1 — team-calendar signal — plus a max-effort code-review hardening 
 
 ### Changed
 
-- **Operator-breaking**: the ask-self wrappers ([scripts/ask-self-ingest.sh](scripts/ask-self-ingest.sh), [scripts/ask-self-query.sh](scripts/ask-self-query.sh)) now require `ASK_SELF_PATH` to be set in the environment and fail with an actionable error message when it isn't. Previously they fell back to a hardcoded `/Users/noelsaw/...` path that didn't exist on any other operator's machine — a missing env var manifested as a confusing "ask-self repo not found at <someone-else's-path>". Add `export ASK_SELF_PATH="$HOME/Documents/GitHub/ask-self"` (adjust to your checkout) to your shell rc to keep using these wrappers.
+- **Operator-breaking**: the ask-self wrappers ([scripts/ask-self-ingest.sh](scripts/ask-self-ingest.sh), [scripts/ask-self-query.sh](scripts/ask-self-query.sh)) now require `ASK_SELF_PATH` to be set in the environment and fail with an actionable error message when it isn't. Previously they fell back to a hardcoded absolute path from the original author's machine that didn't exist on any other operator's machine — a missing env var manifested as a confusing "ask-self repo not found at <someone-else's-path>". Add `export ASK_SELF_PATH="$HOME/Documents/GitHub/ask-self"` (adjust to your checkout) to your shell rc to keep using these wrappers.
 
 ### Fixed
 
 - The launchd installers no longer ship with one developer's home directory baked in. All five sync shell scripts (`daily_sync.sh`, `vault_sync.sh`, `pulse_sync.sh`, `pulse_web_sync.sh`, `github_sync.sh`) now derive `REBALANCE_DIR` from their own location, and their five plists became `.plist.template` files with a `{{REBALANCE_DIR}}` placeholder that each `install_*_scheduler.sh` substitutes with the local checkout path before writing into `~/Library/LaunchAgents/`. The rendered plists are gitignored, so a fresh clone on any machine installs cleanly with no per-user editing.
 - The author-fallback in `PROJECT/cleanup.sh` no longer hardcodes a single operator's username — it falls back to `os.environ.get('USER', 'unknown')` when neither the existing frontmatter nor git provides an author.
 - The `Degraded Mac` test fixture in [tests/test_git_pulse_health_check.py](tests/test_git_pulse_health_check.py) no longer embeds a real operator path in its `scan_failure_examples` example; it uses a generic `/Users/operator/...` placeholder instead.
-- The project's `.claude/settings.json` permission allowlist had a few stale `Bash(...)` entries pointing at paths from another machine (`/Users/noelsaw/Documents/GitHub-Repos/...` and `/Users/noelsaw/Documents/rebalance-OS/...`) along with a corresponding `additionalDirectories` entry — all removed since they were dead-ends on this checkout.
+- The project's `.claude/settings.json` permission allowlist had a few stale `Bash(...)` entries pointing at paths from another machine (two absolute checkout paths under a different operator's home directory) along with a corresponding `additionalDirectories` entry — all removed since they were dead-ends on this checkout.
 
 ### Action required on existing machines
 
@@ -1964,7 +1995,7 @@ No DB or vault migration is required — only the install paths above change beh
 
 ### Added
 
-- Centralized path resolution via new module `src/rebalance/paths.py`. Single source of truth for "where is the database?" and "where are the secrets?". Layered resolver chain: (1) explicit `--database` flag, (2) `REBALANCE_DB` env var, (3) walk up from cwd for a project marker (`.git` / `pyproject.toml`) and look for `rebalance.db` next to it, (4) `database_path` field in `~/.config/rebalance-os/config.json`. When no layer resolves, raises `DatabaseNotFoundError` whose message names every candidate it tried and the four routes to fix it. Same chain for secrets: `REBALANCE_SECRETS_DIR` env var → `secrets_dir` user-config field → `~/secrets/` legacy default. Migrates the previously-hardcoded operator paths (`/Users/noelsaw/secrets/google-calendar.env`, `/Users/noelsaw/secrets/sleuth-web-api-development.env`) onto the resolver, closing the AGENTS.md portability TODO. All 24 `Path("rebalance.db"), envvar="REBALANCE_DB"` defaults across the CLI plus the MCP server's `main()` now route through the resolver. New CLI subcommands `rebalance config set-default-database <path>`, `rebalance config set-secrets-dir <path>`, and `rebalance config show-defaults` (debug helper that prints what every layer of the resolver currently sees).
+- Centralized path resolution via new module `src/rebalance/paths.py`. Single source of truth for "where is the database?" and "where are the secrets?". Layered resolver chain: (1) explicit `--database` flag, (2) `REBALANCE_DB` env var, (3) walk up from cwd for a project marker (`.git` / `pyproject.toml`) and look for `rebalance.db` next to it, (4) `database_path` field in `~/.config/rebalance-os/config.json`. When no layer resolves, raises `DatabaseNotFoundError` whose message names every candidate it tried and the four routes to fix it. Same chain for secrets: `REBALANCE_SECRETS_DIR` env var → `secrets_dir` user-config field → `~/secrets/` legacy default. Migrates the previously-hardcoded operator paths (`~/secrets/google-calendar.env`, `~/secrets/sleuth-web-api-development.env`, formerly absolute paths under a specific operator's home directory) onto the resolver, closing the AGENTS.md portability TODO. All 24 `Path("rebalance.db"), envvar="REBALANCE_DB"` defaults across the CLI plus the MCP server's `main()` now route through the resolver. New CLI subcommands `rebalance config set-default-database <path>`, `rebalance config set-secrets-dir <path>`, and `rebalance config show-defaults` (debug helper that prints what every layer of the resolver currently sees).
 - 30-minute web pulse refresh. New launchd job `com.rebalance-os.pulse-web-sync` runs `scripts/pulse_web_sync.sh` every 30 minutes from 06:00 to 23:30, regenerating `web/pulse.html` from the same SQLite the TUI reads. The page itself uses `<meta refresh content="30">` so any browser tab pointed at `file://` reloads on a cadence; pair the two and the local mirror stays within ~30 min of the SQLite truth. Atomic via tmp+replace (a crashed run leaves the previous HTML intact). No network, no git push — separate from the hourly markdown→private-repo pulse-sync job. Install with `bash scripts/install_pulse_web_scheduler.sh`.
 - Repository hygiene audit (`scripts/audit_modules.py`). Verifies that ingest collectors and render modules are documented in ARCHITECTURE.md + CHANGELOG.md, and that recent commits' file changes appear in the latest CHANGELOG version section. Three checks: ARCHITECTURE.md mention, CHANGELOG.md historical mention, and recent-commit coverage (last N commits since the live version's date, default 20). A baseline lockfile (`scripts/audit_modules.lock`) silences pre-existing gaps so the audit fails only on NEW drift; `--init` re-snapshots the baseline after a deliberate doc backfill. `--include-uncommitted` adds a pre-commit preview that flags working-tree changes (modified/untracked audit-worthy `.py`/`.sh`/`.plist` files) not yet in the latest CHANGELOG section. `--json` emits a stable schema (`audit_version: 1`) with `passed`, `summary`, structured `checks`, and an actionable `next_steps` array suitable for orchestrating agents.
 - `audit_modules` MCP tool (registered in `src/rebalance/mcp_server.py`). Wraps `scripts/audit_modules.py --json` for host agents (Claude Code / Claude Desktop). Parameters mirror the CLI: `init`, `commits_window`, `include_uncommitted`. Returns the same stable JSON schema as the CLI, with subprocess-launch errors surfaced as `passed: False, exit_code: 2` and diagnostic fields rather than raised exceptions.

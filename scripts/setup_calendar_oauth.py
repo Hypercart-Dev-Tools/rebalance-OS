@@ -23,7 +23,10 @@ from rebalance.ingest.auth_log import (
     log_flow_succeeded,
     log_flow_failed,
 )
-from rebalance.ingest.google_oauth_client import build_google_oauth_client_config
+from rebalance.ingest.google_oauth_client import (
+    GoogleOAuthClientNotConfigured,
+    build_google_oauth_client_config,
+)
 from rebalance.paths import resolve_oauth_token_path
 
 READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
@@ -113,6 +116,12 @@ if __name__ == "__main__":
         print("  4. rebalance calendar-daily-report\n")
         if args.write_access:
             print("Write access is now enabled for calendar event creation.\n")
+
+    except GoogleOAuthClientNotConfigured as e:
+        # A missing client file is a setup step the operator has not done yet, not a
+        # crash. A traceback here buries the instructions that actually fix it.
+        print(f"\n❌ {e}\n")
+        exit(2)
 
     except Exception as e:
         print(f"\n❌ Error: {e}")

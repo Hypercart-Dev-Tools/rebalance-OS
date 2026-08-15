@@ -213,7 +213,15 @@ def _cmd_uninstall(args) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="three_eyes", description="3-Eyes job supervisor (GH-195)")
+    parser = argparse.ArgumentParser(
+        prog="three_eyes",
+        description=(
+            "3-Eyes job supervisor (GH-195) — ALPHA, not fully working. "
+            "Diagnostic tool, not part of the supported core. Known defect: `pause` does "
+            "not stop a launchd-managed job, so a paused writer may still be running — use "
+            "`launchctl bootout` and verify. Treat its output as a hint, never as proof."
+        ),
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     def _job_cmd(name, func, help_):

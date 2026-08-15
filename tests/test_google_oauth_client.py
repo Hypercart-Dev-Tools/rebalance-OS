@@ -1,56 +1,126 @@
-"""Contract tests for the shared Google OAuth client credentials module.
+"""Contract tests for the operator-supplied Google OAuth client module.
 
-Written BEFORE the credential extraction (Phase 1 QA: contract tests land
-before module movement). Verifies the shared module produces the same decoded
-values that the original per-script constants produced.
+Rewritten for GH-276: rebalance no longer ships a Google OAuth client. The
+credentials are read from a file the operator downloads from their own Google
+Cloud project, so the contract under test changed from "reproduces the embedded
+constants" to "resolves the operator's file, or fails loudly naming every path
+it tried".
+
+The old golden-constant assertions were deleted rather than adapted — they
+pinned a bundled secret whose whole point was that it no longer exists.
 """
 
 from __future__ import annotations
 
-import base64
+import json
+import os
+import tempfile
 import unittest
-
-# The values the two scripts embedded before extraction — golden reference.
-_GOLDEN_CID_B64 = "NDA5Mjk4MzQxOTg1LTFrdWI0dTFiMWJkMGxlZWEzYjc0ZDR2bW81Y3F2NzV0LmFwcHMuZ29vZ2xldXNlcmNvbnRlbnQuY29t"
-_GOLDEN_CS_B64  = "R09DU1BYLWNxWTA3a0VBZDJTTHM5RWg2MDRqV2NYRGxpQXo="
-_GOLDEN_CID     = base64.b64decode(_GOLDEN_CID_B64).decode()
-_GOLDEN_CS      = base64.b64decode(_GOLDEN_CS_B64).decode()
+from pathlib import Path
+from unittest import mock
 
 
-class GoogleOAuthCredentialsContractTests(unittest.TestCase):
-    """build_google_oauth_client_config() must reproduce the original constants."""
+def _write_client(directory: Path, *, key: str = "installed", **overrides) -> Path:
+    payload = {
+        key: {
+            "client_id": "test-client.apps.googleusercontent.com",
+            "client_secret": "test-secret",
+            **overrides,
+        }
+    }
+    path = directory / "google_oauth_client.json"
+    path.write_text(json.dumps(payload), encoding="utf-8")
+    return path
 
-    def _config(self) -> dict:
+
+class OperatorSuppliedClientTests(unittest.TestCase):
+    """build_google_oauth_client_config() reads the operator's own file."""
+
+    def _build(self):
         from rebalance.ingest.google_oauth_client import build_google_oauth_client_config
         return build_google_oauth_client_config()
 
-    def test_returns_installed_key(self) -> None:
-        cfg = self._config()
-        self.assertIn("installed", cfg)
+    def test_reads_client_from_env_pointed_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_client(Path(tmp))
+            with mock.patch.dict(os.environ, {"GOOGLE_OAUTH_CLIENT_FILE": str(path)}):
+                cfg = self._build()
+        self.assertEqual(cfg["installed"]["client_id"], "test-client.apps.googleusercontent.com")
+        self.assertEqual(cfg["installed"]["client_secret"], "test-secret")
 
-    def test_client_id_matches_golden(self) -> None:
-        cfg = self._config()
-        self.assertEqual(cfg["installed"]["client_id"], _GOLDEN_CID)
-
-    def test_client_secret_matches_golden(self) -> None:
-        cfg = self._config()
-        self.assertEqual(cfg["installed"]["client_secret"], _GOLDEN_CS)
-
-    def test_auth_uri(self) -> None:
-        cfg = self._config()
+    def test_defaults_are_filled_in(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_client(Path(tmp))
+            with mock.patch.dict(os.environ, {"GOOGLE_OAUTH_CLIENT_FILE": str(path)}):
+                cfg = self._build()
         self.assertEqual(cfg["installed"]["auth_uri"], "https://accounts.google.com/o/oauth2/auth")
-
-    def test_token_uri(self) -> None:
-        cfg = self._config()
         self.assertEqual(cfg["installed"]["token_uri"], "https://oauth2.googleapis.com/token")
-
-    def test_redirect_uris_contains_localhost(self) -> None:
-        cfg = self._config()
         self.assertIn("http://localhost", cfg["installed"]["redirect_uris"])
 
-    def test_idempotent_calls_return_equal_dicts(self) -> None:
-        from rebalance.ingest.google_oauth_client import build_google_oauth_client_config
-        self.assertEqual(build_google_oauth_client_config(), build_google_oauth_client_config())
+    def test_missing_file_raises_naming_every_candidate(self) -> None:
+        """The error has to be actionable: silence here is a support ticket."""
+        from rebalance.ingest.google_oauth_client import (
+            GoogleOAuthClientNotConfigured,
+            client_file_candidates,
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {
+                "GOOGLE_OAUTH_CLIENT_FILE": str(Path(tmp) / "absent.json"),
+                "REBALANCE_SECRETS_DIR": str(Path(tmp) / "secrets"),
+            }
+            with mock.patch.dict(os.environ, env):
+                candidates = client_file_candidates()
+                with self.assertRaises(GoogleOAuthClientNotConfigured) as ctx:
+                    self._build()
+        message = str(ctx.exception)
+        for candidate in candidates:
+            self.assertIn(str(candidate), message)
+
+    def test_web_client_is_rejected_by_name(self) -> None:
+        """A Web client fails later with an opaque redirect_uri mismatch — say it now."""
+        from rebalance.ingest.google_oauth_client import GoogleOAuthClientNotConfigured
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_client(Path(tmp), key="web")
+            with mock.patch.dict(os.environ, {"GOOGLE_OAUTH_CLIENT_FILE": str(path)}):
+                with self.assertRaises(GoogleOAuthClientNotConfigured) as ctx:
+                    self._build()
+        self.assertIn("Desktop app", str(ctx.exception))
+
+    def test_malformed_json_raises_configured_error_not_json_error(self) -> None:
+        from rebalance.ingest.google_oauth_client import GoogleOAuthClientNotConfigured
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "google_oauth_client.json"
+            path.write_text("{ not json", encoding="utf-8")
+            with mock.patch.dict(os.environ, {"GOOGLE_OAUTH_CLIENT_FILE": str(path)}):
+                with self.assertRaises(GoogleOAuthClientNotConfigured):
+                    self._build()
+
+    def test_no_credential_is_embedded_in_the_module(self) -> None:
+        """The regression that matters: a real client must never come back."""
+        import rebalance.ingest.google_oauth_client as mod
+        source = Path(mod.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("apps.googleusercontent.com\"", source)
+        self.assertNotIn("GOCSPX-", source)
+        self.assertNotIn("base64", source)
+
+
+class ShippedTemplateTests(unittest.TestCase):
+    """The committed template must stay a template."""
+
+    def _template(self) -> Path:
+        from rebalance.paths import find_project_root
+        root = find_project_root(Path(__file__))
+        assert root is not None
+        return root / "google_oauth_client.example.json"
+
+    def test_template_exists_and_parses(self) -> None:
+        data = json.loads(self._template().read_text(encoding="utf-8"))
+        self.assertIn("installed", data)
+
+    def test_template_holds_no_real_credential(self) -> None:
+        data = json.loads(self._template().read_text(encoding="utf-8"))
+        self.assertIn("REPLACE-ME", data["installed"]["client_id"])
+        self.assertEqual(data["installed"]["client_secret"], "REPLACE-ME")
 
 
 class AuthLogFlowSourceTests(unittest.TestCase):

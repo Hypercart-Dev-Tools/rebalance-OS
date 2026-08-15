@@ -1,0 +1,30 @@
+{
+  "_comment": [
+    "TEMPLATE — not a working credential. rebalance does not ship a Google OAuth client;",
+    "you create one in your own Google Cloud project so your organization owns consent,",
+    "scopes, quota, audit trail and revocation.",
+    "",
+    "How to get the real file:",
+    "  1. Google Cloud Console -> create or pick a project.",
+    "  2. APIs & Services -> Library -> enable Google Calendar API and/or Gmail API.",
+    "  3. APIs & Services -> OAuth consent screen -> choose the audience:",
+    "       Internal  = only accounts in your own Google Workspace domain",
+    "       External  = anyone with a Google account (needs verification for wide use)",
+    "     Add the scopes for the APIs you enabled.",
+    "  4. APIs & Services -> Credentials -> Create credentials -> OAuth client ID",
+    "     -> Application type: Desktop app. Download the JSON.",
+    "  5. Save it as ~/secrets/google_oauth_client.json, or set",
+    "     GOOGLE_OAUTH_CLIENT_FILE=/path/to/your/client_secret.json",
+    "",
+    "Delete this _comment key in your real file, or leave it — it is ignored.",
+    "Never commit the real file. client_secret for a Desktop app is not a password,",
+    "but it identifies your project and belongs in your secrets dir, not in git."
+  ],
+  "installed": {
+    "client_id": "REPLACE-ME.apps.googleusercontent.com",
+    "client_secret": "REPLACE-ME",
+    "auth_uri": "https://accounts.google.com/o/oauth2/auth",
+    "token_uri": "https://oauth2.googleapis.com/token",
+    "redirect_uris": ["http://localhost"]
+  }
+}
