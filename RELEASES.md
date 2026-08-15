@@ -29,9 +29,9 @@ Status: Draft
 Target Date: 2026-09-15
 Codename: Green Board
 Milestone:
-Description: #178 red development branch (10 auto-promotion defects + 6 state-sensitive tests), #255 working-directory-dependent tests.
-Exit: `pytest tests/ utils/3-eyes/tests` green on development, from any working directory.
-GH_URL: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/178
+Description: Public-facing RC. #275 README Step 1 hardcodes a Homebrew interpreter (RC blocker), #273 date parsing has two canonical hubs, #242 CLIO suites report a vacuous dual-interpreter pass, #255 working-directory-dependent tests. Scope QA'd by cross-model relay 2026-08-15 (Approved r5); #178 and #225 verified stale and closeable, 3-Eyes excluded by operator decision as diagnostics rather than core.
+Exit: A clean clone on a machine that has never run rebalance completes the documented README Getting Started path end to end — install, onboarding, first pulse — with no undocumented step, and `rebalance doctor` then reports no FAIL. Verified on one Apple Silicon host and one non-Homebrew host. `/front-door` and `/shakedown` are gates, evidence retained.
+GH_URL: https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/275
 Front-door reviewed:
 Shakedown reviewed:
 License file: Yes
