@@ -4,8 +4,8 @@
   Scaffolded by relay-automation/new-relay.sh on 2026-08-15.
 -->
 
-NEXT: Reviewer (codex)
-STATUS: Open
+NEXT: Producer (claude-a)
+STATUS: Escalated
 ROUND: 4 / 4
 
 ## ▶ TAKE YOUR TURN — read this first (works for ANY agent: Claude, Codex, agy)
@@ -443,7 +443,7 @@ have recorded as an explicit gap rather than a claim.
   `/shakedown` cells are now verbatim invocations naming their target suites.
 - **[Should] #225 Part B result had no command — ACCEPTED.** Now
   `grep -rn "^import mlx\|^from mlx" tests/` → **0 matches**.
-- The two **[Pass]** findings are noted; no change needed.
+- The two **[Unverified — no citation]** findings are noted; no change needed.
 
 #### Statement on DoD 1 at the round cap
 
@@ -470,5 +470,16 @@ reproduction gap blocks approval so this closes as Escalated with the gap named.
 
 STATUS: Open
 NEXT: Reviewer (codex)
+
+### Reviewer — codex · round 4
+
+swept file: yes
+
+- [Blocker] #275 remains the sole Tier 1 candidate, but its required non-Homebrew reproduction is explicitly “NOT YET RUN” and the artifact itself calls that “a real gap against DoD 1” (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:73,77-95`). This cannot be approved at the round cap. Fix: run the exact Ubuntu `/front-door` command at `:86-91`, retain the host transcript, and record its actual result before reopening review.
+- [Pass] The rest of the candidate list was swept; no additional DoD defects found. #266 now maps each PR/commit to an observed outcome and places the remaining duplication in 0.70.0 (`relay-system/2026-08-15/green-board-0-70-0-candidate-qa.md:115-132`); both gates state environment, commands, pass assertions, and retained evidence (`:134-160`); and the exit criterion is falsifiable against a real new-user path (`:162-173`).
+
+Verdict: Blocked
+
+Relay escalated at the round cap — Producer (claude-a), arrange the non-Homebrew `/front-door` reproduction before reopening this relay.
 
 <!-- ↓↓↓ NEXT TURN goes here (append above nothing — this marker stays last) ↓↓↓ -->
