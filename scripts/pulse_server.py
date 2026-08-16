@@ -32,6 +32,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, Response
 from pydantic import BaseModel
 import uvicorn
+from rebalance.lib.time_ops import now_utc
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 PULSE_HTML = PROJECT_ROOT / "web" / "pulse.html"
@@ -299,7 +300,7 @@ def health():
     if not PULSE_HTML.exists():
         return JSONResponse({"ok": False, "reason": "pulse.html missing"}, status_code=503)
     mtime = datetime.fromtimestamp(PULSE_HTML.stat().st_mtime, tz=timezone.utc)
-    age_s = (datetime.now(timezone.utc) - mtime).total_seconds()
+    age_s = (now_utc() - mtime).total_seconds()
     return {
         "ok": True,
         "generated_at": mtime.isoformat(),
@@ -451,7 +452,7 @@ class GoalUndoRequest(BaseModel):
 
 def _history_payload(goals_path: Path) -> list[dict[str, str]]:
     items = load_goal_history(goals_path=goals_path)
-    now = datetime.now(timezone.utc)
+    now = now_utc()
     out: list[dict[str, str]] = []
     for item in items:
         completed_at = item.get("completed_at")

@@ -17,11 +17,12 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from rebalance.tz_utils import parse_utc_iso
+from rebalance.lib.time_ops import now_iso, now_utc
 
 
 def _meta_path() -> Path:
@@ -79,7 +80,7 @@ def record_token_set(
     data = _load()
     svc = data.setdefault(service, {"current": None, "tokens": {}})
     fp = fingerprint(token)
-    now = datetime.now(timezone.utc).isoformat()
+    now = now_iso()
     rec = svc["tokens"].get(fp)
     if rec is None:
         rec = {
@@ -113,6 +114,6 @@ def age_text(iso_ts: str | None, *, now: datetime | None = None) -> str:
     dt = parse_utc_iso(iso_ts)  # handles trailing-Z + naive→UTC; None on bad/empty
     if dt is None:
         return ""
-    now = now or datetime.now(timezone.utc)
+    now = now or now_utc()
     secs = max((now - dt).total_seconds(), 0.0)
     return f"{secs / 86400:.0f}d" if secs >= 86400 else f"{secs / 3600:.1f}h"

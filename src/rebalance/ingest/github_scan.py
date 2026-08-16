@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.config import normalize_github_repo_name
 from rebalance.ingest._http import GITHUB_API, GitHubClient, _is_rate_limit
+from rebalance.lib.time_ops import now_iso, now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -117,7 +118,7 @@ def _get(url: str, token: str) -> tuple[int, Any]:
 
 def _cutoff_key(days: int) -> str:
     """Return YYYY-MM-DD threshold for event filtering (local timezone)."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = now_utc() - timedelta(days=days)
     return cutoff.strftime("%Y-%m-%d")
 
 
@@ -467,14 +468,14 @@ def scan_github(token: str, days: int = 30) -> GitHubScanResult:
         GitHubScanResult with per-repo activity breakdown.
     """
     login = _get_login(token)
-    now = datetime.now(timezone.utc)
+    now = now_utc()
     cutoff_7d, cutoff_14d, _ = _compute_band_cutoffs(now)
     events = _fetch_events(login, token, days=days)
     repo_activity = _summarize_by_repo(events, cutoff_7d=cutoff_7d, cutoff_14d=cutoff_14d)
 
     return GitHubScanResult(
         login=login,
-        scanned_at=datetime.now(timezone.utc).isoformat(),
+        scanned_at=now_iso(),
         days_fetched=days,
         total_events=len(events),
         repo_activity=repo_activity,
@@ -613,7 +614,7 @@ def sync_pushed_repos(
         return result
 
     result.fetched = len(records)
-    now = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    now = now_utc().isoformat(timespec="seconds")
 
     with db_connection(database_path, ensure_github_schema) as conn:
         for rec in records:
@@ -720,7 +721,7 @@ def get_github_balance(
 
     from rebalance.ingest.db import db_connection, ensure_github_schema
 
-    since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
+    since_date = (now_utc() - timedelta(days=since_days)).strftime("%Y-%m-%d")
 
     with db_connection(database_path, ensure_github_schema) as conn:
         rows = conn.execute(

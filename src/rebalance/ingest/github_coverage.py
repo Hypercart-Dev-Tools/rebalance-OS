@@ -29,12 +29,11 @@ from __future__ import annotations
 
 import subprocess
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 from rebalance.ingest.db import db_connection, ensure_github_schema
 from rebalance.ingest.github_commit_backfill import _git, resolve_clone
-from rebalance.lib.time_ops import _now
+from rebalance.lib.time_ops import now_utc, _now
 
 _LS_REMOTE_TIMEOUT_S = 30
 
@@ -110,7 +109,7 @@ def _fetch_age_hours(repo_path: Path) -> float | None:
         mtime = fetch_head.stat().st_mtime
     except OSError:
         return None
-    return (datetime.now(timezone.utc).timestamp() - mtime) / 3600.0
+    return (now_utc().timestamp() - mtime) / 3600.0
 
 
 def remote_tip(repo_full_name: str, branch: str = "HEAD") -> str:

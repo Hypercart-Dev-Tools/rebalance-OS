@@ -17,13 +17,13 @@ from __future__ import annotations
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
 
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
-from rebalance.lib.time_ops import parse_date
+from rebalance.lib.time_ops import now_iso, now_utc, parse_date
 from rebalance.paths import resolve_oauth_token_path
 TOKEN_PATH = resolve_oauth_token_path("calendar")
 CALENDAR_READONLY_SCOPE = "https://www.googleapis.com/auth/calendar.readonly"
@@ -199,7 +199,7 @@ def sync_calendar(
     start = time.monotonic()
     service = _build_service(required_scopes=[CALENDAR_READONLY_SCOPE])
 
-    now = datetime.now(timezone.utc)
+    now = now_utc()
     time_min = (now - timedelta(days=days_back)).isoformat()
     time_max = (now + timedelta(days=days_forward)).isoformat()
     fetched_at = now.isoformat()
@@ -446,8 +446,8 @@ def get_upcoming_events(
     Defaults to the operator's own ``OPERATOR_CALENDAR_ID`` calendar; pass
     ``calendar_id=None`` to include all calendars (team views).
     """
-    now = datetime.now(timezone.utc).isoformat()
-    cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
+    now = now_iso()
+    cutoff = (now_utc() + timedelta(days=days_forward)).isoformat()
 
     cal_clause, cal_params = _calendar_id_filter(calendar_id)
     where = (
@@ -483,8 +483,8 @@ def get_team_upcoming_by_person(
     if not persons:
         return []
 
-    now = datetime.now(timezone.utc).isoformat()
-    cutoff = (datetime.now(timezone.utc) + timedelta(days=days_forward)).isoformat()
+    now = now_iso()
+    cutoff = (now_utc() + timedelta(days=days_forward)).isoformat()
 
     person_clause, person_params = _person_filter(persons)
     where = (
@@ -514,8 +514,8 @@ def get_recent_events(
     """
     from rebalance.ingest.calendar_helpers import calendar_connection
 
-    now = datetime.now(timezone.utc).isoformat()
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=days_back)).isoformat()
+    now = now_iso()
+    cutoff = (now_utc() - timedelta(days=days_back)).isoformat()
 
     cal_clause, cal_params = _calendar_id_filter(calendar_id)
     with calendar_connection(database_path) as conn:
@@ -583,7 +583,7 @@ def get_daily_totals(
         parse_calendar_dt,
     )
 
-    now = datetime.now(timezone.utc)
+    now = now_utc()
     start_date = (now - timedelta(days=days_back)).date()
     end_date = (now + timedelta(days=days_forward)).date()
 

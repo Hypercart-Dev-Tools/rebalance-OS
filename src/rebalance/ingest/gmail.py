@@ -29,6 +29,7 @@ from datetime import datetime, timezone
 from email.utils import parseaddr, parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+from rebalance.lib.time_ops import now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -248,7 +249,7 @@ def sync_gmail(
         raise
     message_refs = list_response.get("messages", []) or []
 
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = now_iso()
     metadata_headers = ["From", "To", "Subject", "Date"]
 
     inserted = 0
@@ -361,7 +362,7 @@ def ingest_email_messages(
     from rebalance.ingest.db import db_connection, ensure_email_schema
 
     start = time.monotonic()
-    synced_at = datetime.now(timezone.utc).isoformat()
+    synced_at = now_iso()
     inserted = updated = stored = skipped = 0
 
     with db_connection(database_path, ensure_email_schema) as conn:

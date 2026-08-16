@@ -14,7 +14,7 @@ import hashlib
 import json
 import time
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Callable
 from urllib.parse import urlencode
@@ -34,6 +34,7 @@ from rebalance.ingest.embedder import (
 )
 from rebalance.ingest.semantic_index import sync_github_documents
 from rebalance.lib.json_ops import _json_dumps
+from rebalance.lib.time_ops import _now_iso, _now_utc
 DEFAULT_SYNC_DAYS = 90
 MIN_EMBED_CHARS = 40
 # GH-171: release the single SQLite writer periodically during a long persist
@@ -142,7 +143,7 @@ def _paginate_list(
 
 
 def _cutoff_iso(since_days: int) -> str:
-    cutoff = datetime.now(timezone.utc) - timedelta(days=since_days)
+    cutoff = _now_utc() - timedelta(days=since_days)
     return cutoff.strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
@@ -363,7 +364,7 @@ def sync_github_repo(
         raise ValueError(f"GitHub repo is ignored: {normalized_repo}")
 
     start = time.monotonic()
-    fetched_at = datetime.now(timezone.utc).isoformat()
+    fetched_at = _now_iso()
     cutoff = _cutoff_iso(since_days)
     api_get = api_get_json or (lambda url: _http_get_json(url, token))
     repo_base = f"{GITHUB_API}/repos/{repo_full_name}"
@@ -973,7 +974,7 @@ def embed_github_documents(
                 embedded += 1
             conn.commit()
 
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = _now_iso()
         for key, value in [
             ("model_name", model_name),
             ("embedding_dim", str(EMBEDDING_DIM)),

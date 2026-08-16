@@ -31,12 +31,12 @@ import os
 import re
 import sqlite3
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterator
 
 from rebalance.ingest.db import db_connection, run_migrations
 from rebalance.ingest.sync_snapshot import get_device_id
+from rebalance.lib.time_ops import now_iso
 
 HARNESS_RELPATH = ("ask_self", "ask_self_harness.json")
 DEFAULT_MAX_DEPTH = 6
@@ -308,7 +308,7 @@ def sync_ask_self_indexes(
     if roots is None:
         from rebalance.ingest.config import get_repo_scan_roots
         roots = get_repo_scan_roots()
-    scanned_at = datetime.now(timezone.utc).isoformat()
+    scanned_at = now_iso()
     found = scan_ask_self_repos(roots, max_depth=max_depth, device_id=dev)
 
     inserted = updated = unchanged = 0

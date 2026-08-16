@@ -13,7 +13,7 @@ import logging
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -26,6 +26,7 @@ from rebalance.ingest.config import (
 from rebalance.ingest.db import db_connection, ensure_semantic_schema, run_migrations
 from rebalance.ingest.registry import get_projects
 from rebalance.ingest.semantic_index import SemanticDoc
+from rebalance.lib.time_ops import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -353,7 +354,7 @@ def _quiet_filter_description(rule: dict[str, Any]) -> str | None:
 
 
 def _derive_signal_health(sources: dict[str, dict[str, Any]]) -> dict[str, dict[str, str]]:
-    now = datetime.now(timezone.utc)
+    now = now_utc()
     signal_health: dict[str, dict[str, str]] = {}
 
     for source_name, rule in _SIGNAL_HEALTH_RULES.items():
@@ -741,7 +742,7 @@ def get_index_status(database_path: Path) -> dict[str, Any]:
                 """
             ).fetchall()
             pending_total = len(pending_rows)
-            now = datetime.now(timezone.utc)
+            now = now_utc()
             oldest_minutes: float | None = None
             stuck_count = 0
             for row in pending_rows:
@@ -913,12 +914,12 @@ def _pushed_repos(database_path: Path, *, since_days: int = 14) -> list[str]:
     force-push edge cases. The events feed and this signal are
     complementary; the union goes into the watched set.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
 
     repos: list[str] = []
     try:
         cutoff = (
-            datetime.now(timezone.utc) - timedelta(days=int(since_days))
+            now_utc() - timedelta(days=int(since_days))
         ).isoformat()
         with db_connection(database_path) as conn:
             rows = conn.execute(

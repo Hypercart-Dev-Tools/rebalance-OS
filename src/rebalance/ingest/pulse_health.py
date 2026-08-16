@@ -25,10 +25,10 @@ from __future__ import annotations
 import os
 import re
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
-from rebalance.lib.time_ops import parse_utc_iso
+from rebalance.lib.time_ops import now_utc, parse_utc_iso
 
 # Mirror experimental/git-pulse/health-check.py defaults.
 WARN_HOURS = 3.0
@@ -178,7 +178,7 @@ def read_collector_health(
     Returns ``[]`` when git-pulse is not configured or has no device YAMLs —
     callers treat that as "nothing to report". Sorted worst-first.
     """
-    now = now or datetime.now(timezone.utc)
+    now = now or now_utc()
     sync_repo_dir = sync_repo_dir or resolve_sync_repo_dir()
     if sync_repo_dir is None:
         return []

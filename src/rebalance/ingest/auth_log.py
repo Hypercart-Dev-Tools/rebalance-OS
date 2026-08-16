@@ -56,9 +56,9 @@ from __future__ import annotations
 import json
 import os
 import socket
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from rebalance.lib.time_ops import now_iso
 
 # Events that mean a collector lost or lacked access. Used by readers (the web
 # dashboard, doctor) to surface the most recent failure per source.
@@ -113,7 +113,7 @@ def _legacy_calendar_path() -> Path:
 
 def _append(source: str, event: str, detail: dict[str, Any] | None = None) -> None:
     entry = {
-        "ts": datetime.now(timezone.utc).isoformat(),
+        "ts": now_iso(),
         "device": socket.gethostname(),
         "source": source,
         "event": event,

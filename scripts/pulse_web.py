@@ -31,6 +31,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
+from rebalance.lib.time_ops import now_utc
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 # Canonical path shared with pulse_server.py — must stay in sync
@@ -61,20 +62,19 @@ from dashboard import (  # type: ignore  # noqa: E402
 )
 from rebalance.doctor import FAIL, WARN, Check, run_doctor  # noqa: E402
 from rebalance.health import HealthStatus, compute_health_status  # noqa: E402
-from rebalance.ingest.apple_reminders import list_apple_reminders  # noqa: E402
 from rebalance.ingest.config import get_figma_file_keys  # noqa: E402
 from rebalance.ingest.goals_file import (  # noqa: E402
-    CHECKBOX_RE,
-    complete_goal_in_file,
+    # Re-exported for the pulse server's goal routes (pulse_server imports
+    # these from here, not from goals_file).
+    complete_goal_in_file,  # noqa: F401
+    undo_goal_completion_in_file,  # noqa: F401
     goal_completion_still_applied as _goal_completion_still_applied,
     parse_goals,
-    undo_goal_completion_in_file,
 )
 from rebalance.ingest.index_ops import COLLECTORS, get_index_status  # noqa: E402
 from rebalance.ingest import next_actions  # noqa: E402
 from rebalance.ingest.slack_users import compact_sleuth_reminder  # noqa: E402
 from rebalance.web_components import (  # noqa: E402
-    RB_BUTTON_CSS,
     RB_CHROME_CSS,
     RB_TOKENS_CSS,
     badge_html,
@@ -282,7 +282,7 @@ def fetch_health_filed_count(days: int = 30) -> int:
     from datetime import timedelta  # noqa: PLC0415
     if not HEALTH_LOG_PATH.exists():
         return 0
-    cutoff = datetime.now(timezone.utc) - timedelta(days=days)
+    cutoff = now_utc() - timedelta(days=days)
     seen: set[str] = set()
     try:
         for raw in HEALTH_LOG_PATH.read_text(encoding="utf-8").splitlines():
@@ -2981,7 +2981,7 @@ def _resolve_tz_source() -> tuple[str, bool]:
 
 
 def build_page(*, goals_path: Path, vault_path: Path | None, refresh_seconds: int) -> str:
-    now = datetime.now(timezone.utc)
+    now = now_utc()
     local_now = now.astimezone(TZ)
 
     all_goals = parse_goals(goals_path, limit=PRIMARY_GOAL_LIMIT + SECONDARY_TODO_LIMIT)

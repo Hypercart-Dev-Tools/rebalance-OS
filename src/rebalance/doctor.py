@@ -20,7 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal
 
-from rebalance.lib.time_ops import format_timestamp, local_tz, parse_utc_iso
+from rebalance.lib.time_ops import format_timestamp, local_tz, now_utc, parse_utc_iso
 
 OK = "ok"
 WARN = "warn"
@@ -484,7 +484,7 @@ def _check_collector_freshness(
             latest_dt = parse_utc_iso(str(latest))
             if latest_dt:
                 age_days = (
-                    datetime.now(timezone.utc).date()
+                    now_utc().date()
                     - latest_dt.date()
                 ).days
                 if age_days > warn_days:
@@ -795,7 +795,7 @@ def _check_launchd(
             log_dir = resolve_project_root(Path(__file__)) / "temp" / "logs"
         except RuntimeError:
             log_dir = Path("temp/logs")
-    now = now or datetime.now(timezone.utc)
+    now = now or now_utc()
 
     crash_state_path = _launchd_crash_state_path(log_dir)
     crash_state = _load_launchd_crash_state(crash_state_path)
@@ -936,7 +936,6 @@ def _check_sleuth(db_path: Path | None = None) -> Check:
     # reread even when the upstream export is dead — against now.
     if db_path is not None:
         try:
-            from datetime import datetime, timezone
 
             from rebalance.ingest.sleuth_reminders import get_export_generated_at
 
@@ -944,7 +943,7 @@ def _check_sleuth(db_path: Path | None = None) -> Check:
         except Exception:  # noqa: BLE001 — never let the freshness probe crash doctor
             beat = None
         if beat is not None:
-            age_h = (datetime.now(timezone.utc) - beat).total_seconds() / 3600
+            age_h = (now_utc() - beat).total_seconds() / 3600
             stamp = beat.isoformat()
             if age_h > _SLEUTH_HEARTBEAT_STALE_HOURS:
                 sync_repo = get_sleuth_sync_repo_path() or "~/git-pulse-sync"

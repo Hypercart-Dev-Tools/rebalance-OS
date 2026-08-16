@@ -27,9 +27,10 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from rebalance.lib.time_ops import now_utc
 
 # --- repo imports (canonical read paths, same as MCP server / querier) --------
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
@@ -50,7 +51,7 @@ def _resolve_db_path() -> Path:
 
 
 def _now_local() -> datetime:
-    return datetime.now(timezone.utc).astimezone()
+    return now_utc().astimezone()
 
 
 def _parse_iso(value: str | None) -> datetime | None:

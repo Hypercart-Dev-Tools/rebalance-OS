@@ -50,6 +50,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from rebalance.lib.time_ops import _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -719,7 +720,7 @@ def upsert_apple_reminders(
     as the Sleuth source. Idempotent: re-running an unchanged batch only bumps
     last_seen/last_synced. ``meta`` key/value pairs (schema fingerprint, drift
     signal) are persisted in the same transaction. Returns counts."""
-    now = now_iso or datetime.now(timezone.utc).isoformat()
+    now = now_iso or _now_iso()
     inserted = updated = unchanged = 0
 
     from rebalance.ingest.db import db_connection
@@ -887,7 +888,7 @@ def sync_apple_reminders(
     # Persist hardening signals (fingerprint + drift) in the sync transaction so
     # doctor / status can warn on schema drift without touching the live store.
     drift = _drift_fallbacks(extract_result.mapping_fallbacks)
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = _now_iso()
     meta = {
         "last_sync_at": now_iso,
         "schema_fingerprint": json.dumps(extract_result.schema_fingerprint),

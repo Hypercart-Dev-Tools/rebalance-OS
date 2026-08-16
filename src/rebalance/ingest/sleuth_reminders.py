@@ -30,11 +30,12 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from rebalance.tz_utils import parse_utc_iso
+from rebalance.lib.time_ops import _now_iso
 
 HTTP_TIMEOUT_SECONDS = 30
 USER_AGENT = "rebalance-os/0.1"
@@ -551,7 +552,7 @@ def sync_sleuth_reminders(
         data, workspace_name=workspace_name, is_file_source=is_file_source
     )
 
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = _now_iso()
     inserted = updated = unchanged = 0
 
     with db_connection(database_path, ensure_sleuth_schema) as conn:

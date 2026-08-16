@@ -42,7 +42,7 @@ import logging
 import re
 import time
 from dataclasses import asdict, dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -58,7 +58,7 @@ from rebalance.ingest.calendar_helpers import (
     parse_calendar_dt,
 )
 from rebalance.ingest.config import get_pulse_config, get_vault_path
-from rebalance.lib.time_ops import parse_date, parse_iso
+from rebalance.lib.time_ops import _now_iso, _now_utc, parse_date, parse_iso
 from rebalance.ingest.db import db_connection, run_migrations
 from rebalance.ingest.pulse import _query_day_activity, collect_pulse_snapshot
 from rebalance.tz_utils import format_local, local_tz
@@ -1273,7 +1273,7 @@ def rank_next_actions(
             weights_used=_weights_summary(weights),
             note=f"assembly failed: {exc}",
             elapsed_seconds=round(time.monotonic() - started, 2),
-            computed_at=datetime.now(timezone.utc).isoformat(),
+            computed_at=_now_iso(),
         )
 
     # Client + priority lookups (computed once; used for both the deterministic
@@ -1374,7 +1374,7 @@ def rank_next_actions(
         weights_used=_weights_summary(weights),
         note=note,
         elapsed_seconds=round(time.monotonic() - started, 2),
-        computed_at=datetime.now(timezone.utc).isoformat(),
+        computed_at=_now_iso(),
     )
 
 
@@ -1397,7 +1397,7 @@ def _operator_blocks_over_horizon(
     """
     start_d = parse_date(local_day)
     if start_d is None:
-        start_d = datetime.now(tz).date() if hasattr(tz, "utcoffset") else datetime.now(timezone.utc).date()
+        start_d = datetime.now(tz).date() if hasattr(tz, "utcoffset") else _now_utc().date()
     horizon_days = {
         (start_d + timedelta(days=i)).isoformat()
         for i in range(days_forward + 1)
@@ -1446,9 +1446,9 @@ def _gather_teammate_delta(
     # their calendar, NOT how much future scheduling they happen to have. (An
     # unbounded future bound would let a single heavily-scheduled week pass a
     # teammate who never logs history.)
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = _now_iso()
     history_floor = (
-        datetime.now(timezone.utc) - timedelta(days=_ADDITIVITY_HISTORY_DAYS)
+        _now_utc() - timedelta(days=_ADDITIVITY_HISTORY_DAYS)
     ).isoformat()
     placeholders = ",".join("?" for _ in roster)
     rows = conn.execute(
@@ -1537,7 +1537,7 @@ def persist_ranked_next_actions(database_path: Path, result: RankedNextActions) 
             "(computed_at, blended, model_used, payload_json, weights_json) "
             "VALUES (?,?,?,?,?)",
             (
-                result.computed_at or datetime.now(timezone.utc).isoformat(),
+                result.computed_at or _now_iso(),
                 1 if result.blended else 0,
                 result.model_used,
                 json.dumps(result.as_dict(), ensure_ascii=False),

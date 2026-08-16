@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -23,6 +23,7 @@ from rebalance.ingest.db import (
 )
 from rebalance.ingest.project_classifier import normalize_match_text
 from rebalance.ingest.registry import sync_db
+from rebalance.lib.time_ops import now_utc
 
 _GENERIC_ALIAS_TOKENS = {
     "app",
@@ -236,7 +237,7 @@ def _load_calendar_events(
     days_back: int,
     days_forward: int,
 ) -> list[dict[str, Any]]:
-    today = datetime.now(timezone.utc).date()
+    today = now_utc().date()
     min_date = (today - timedelta(days=days_back)).isoformat()
     max_date = (today + timedelta(days=days_forward)).isoformat()
     with db_connection(database_path, ensure_calendar_schema) as conn:
@@ -450,7 +451,7 @@ def _seed_status(seed: _ProjectSeed) -> str:
         latest_dt = parse_calendar_dt(latest).astimezone(timezone.utc)
     except Exception:
         return "potential"
-    age_days = (datetime.now(timezone.utc) - latest_dt).days
+    age_days = (now_utc() - latest_dt).days
     if age_days <= 30:
         return "active"
     if age_days <= 90:
@@ -814,7 +815,7 @@ def _count_operator_commits(conn: Any, repo_full_name: str, github_login: str) -
     in ARCHITECTURE.md), so summing across all of them is a genuine cumulative
     count since Rebalance started watching the repo, not a rolling window.
     """
-    from rebalance.ingest.pulse import CLOUD_AGENT_AUTHORS, _author_filter_sql
+    from rebalance.ingest.pulse import CLOUD_AGENT_AUTHORS
 
     activity_row = conn.execute(
         "SELECT COALESCE(SUM(commits), 0) AS n FROM github_activity "
@@ -887,7 +888,7 @@ def _repo_to_promoted_row(
                 "repo_full_name": repo_full_name,
                 "commit_count": commit_count,
                 "threshold": threshold,
-                "promoted_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "promoted_at": now_utc().isoformat(timespec="seconds"),
             },
         },
     }

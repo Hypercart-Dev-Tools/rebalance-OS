@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from datetime import datetime, timezone
+from datetime import timezone
 from typing import Any
 
 import questionary
@@ -16,12 +16,12 @@ from rebalance.ingest.registry import (
     sync_registry,
 )
 from rebalance.ingest.github_scan import (
-    BAND_A_DAYS,
     BAND_B_DAYS,
     BAND_C_DAYS,
     discover_repos_from_activity,
 )
 from rebalance.ingest.local_repos import scan_local_repos
+from rebalance.lib.time_ops import now_utc
 
 
 # ---------------------------------------------------------------------------
@@ -107,7 +107,7 @@ def _calculate_days_since_activity(last_activity_at: str | None) -> int:
     try:
         from rebalance.ingest.calendar_helpers import parse_calendar_dt
         activity_dt = parse_calendar_dt(last_activity_at)
-        now = datetime.now(timezone.utc)
+        now = now_utc()
         if activity_dt.tzinfo is None:
             activity_dt = activity_dt.replace(tzinfo=timezone.utc)
         delta = now - activity_dt

@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
+from rebalance.lib.time_ops import now_iso
 
 CHECKBOX_RE = re.compile(r"^\s*-\s*\[(?P<mark>[ xX])\]\s*(?P<title>.*)$")
 
@@ -105,7 +105,7 @@ def complete_goal_in_file(
             "line_index": index,
             "before_line": raw,
             "after_line": updated,
-            "completed_at": datetime.now(timezone.utc).isoformat(),
+            "completed_at": now_iso(),
         }
         break
     if record is None:

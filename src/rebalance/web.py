@@ -37,7 +37,7 @@ from pydantic import BaseModel
 from rebalance.ingest.auth_log import read_log, _log_path
 from rebalance.ingest import zapier_calendar, zapier_email
 from rebalance.ingest.sleuth_grouping import grouped_reminders_from_db
-from rebalance.lib.time_ops import format_relative, parse_utc_iso
+from rebalance.lib.time_ops import format_relative, _now_iso, _now_utc, parse_utc_iso
 from rebalance.paths import resolve_db, resolve_secret_path
 from rebalance.web_components import badge_html, button_link, render_shell
 logger = logging.getLogger(__name__)
@@ -520,7 +520,7 @@ def _f5_warning_strip(data: dict[str, Any]) -> str:
     from rebalance.ingest.focus5_scan import explain_recency
     explain_on = data.get("ranking_mode") == "recent_activity"
     cutoff = (data.get("summary") or {}).get("rank_cutoff_ts")
-    now_ts = int(datetime.now(timezone.utc).timestamp())
+    now_ts = int(_now_utc().timestamp())
     shown, items = warns[:8], []
     for w in shown:
         reason = w.get("warning_reason")
@@ -766,7 +766,7 @@ def _roster_stale(computed_at: str | None) -> bool:
     ts = parse_utc_iso(computed_at)
     if ts is None:
         return True
-    return (datetime.now(timezone.utc) - ts).total_seconds() > FOCUS5_ROSTER_TTL_SECONDS
+    return (_now_utc() - ts).total_seconds() > FOCUS5_ROSTER_TTL_SECONDS
 
 
 @app.get("/focus-5")
@@ -883,7 +883,7 @@ def _build_three_eyes_card(report: dict) -> dict:
     else:
         title = "3-Eyes — all jobs OK"
         reason = f"3-Eyes fleet job health — {verdict}. All catalogued jobs healthy."
-    now_iso = datetime.now(timezone.utc).isoformat()
+    now_iso = _now_iso()
     path = str(_THREE_EYES_DIR)
     return {
         "position": 0,                      # re-stamped by the caller
@@ -1667,7 +1667,6 @@ _AUTH_LOG_FILTER_JS = """
 
 @app.get("/auth-log", response_class=HTMLResponse)
 def auth_log_page() -> HTMLResponse:
-    import json
     entries = read_log(limit=500)
 
     raw_link = '<a class="raw-link" href="/auth-log/raw">⬇ raw JSONL</a>'

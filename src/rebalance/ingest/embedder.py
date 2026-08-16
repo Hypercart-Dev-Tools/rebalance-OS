@@ -8,7 +8,6 @@ mlx-embeddings is imported lazily so the rest of the package works without it.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import struct
@@ -16,9 +15,9 @@ import sys
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from rebalance.lib.time_ops import _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -276,7 +275,7 @@ def embed_chunks(
             conn.commit()
 
         # Update embedding_meta
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = _now_iso()
         for key, value in [
             ("model_name", model_name),
             ("embedding_dim", str(EMBEDDING_DIM)),

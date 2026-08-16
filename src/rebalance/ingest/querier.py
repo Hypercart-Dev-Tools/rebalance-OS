@@ -15,12 +15,13 @@ from __future__ import annotations
 import logging
 import time
 from dataclasses import dataclass, field
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.db import db_connection, ensure_schema, ensure_calendar_schema
+from rebalance.lib.time_ops import now_utc
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +148,7 @@ def _gather_vault_activity(
     """Recently modified vault files as a project activity signal."""
     import json
 
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).isoformat()
+    cutoff = (now_utc() - timedelta(days=since_days)).isoformat()
     with db_connection(database_path, ensure_schema) as conn:
         rows = conn.execute(
             """

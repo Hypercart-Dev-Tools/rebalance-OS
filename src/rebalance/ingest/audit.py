@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import getpass
 import json
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from rebalance.lib.time_ops import now_iso
 
 
 AUDIT_LOG_PATH = Path(__file__).parent.parent.parent.parent / "logs" / "agent-audit.json"
@@ -25,7 +25,7 @@ def _load_entries(path: Path) -> list[dict[str, Any]]:
 def append_audit_entry(action: str, target: str, **details: Any) -> dict[str, Any]:
     """Append one JSON audit record to the local audit log."""
     entry = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": now_iso(),
         "user": getpass.getuser(),
         "action": action,
         "target": target,

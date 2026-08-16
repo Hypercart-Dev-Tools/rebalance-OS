@@ -23,8 +23,9 @@ from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.db import db_connection, ensure_schema, ensure_semantic_schema
-from rebalance.ingest.md_parser import parse_note, ParsedNote
+from rebalance.ingest.md_parser import parse_note
 from rebalance.ingest.semantic_index import sync_vault_documents
+from rebalance.lib.time_ops import _now_iso
 
 
 def _json_default(obj: Any) -> Any:
@@ -201,7 +202,7 @@ def ingest_vault(
 
             # Insert file
             stat = file_path.stat()
-            now_iso = datetime.now(timezone.utc).isoformat()
+            now_iso = _now_iso()
             mtime_iso = datetime.fromtimestamp(stat.st_mtime, tz=timezone.utc).isoformat()
 
             conn.execute(

@@ -13,7 +13,7 @@ import typer
 
 from rebalance.cli._core import app
 from rebalance.ingest.config import get_github_ignored_repos
-from rebalance.lib.time_ops import format_local, parse_utc_iso
+from rebalance.lib.time_ops import format_local, _now_utc, parse_utc_iso
 from rebalance.paths import DatabaseNotFoundError, DBOption, resolve_database_path
 
 
@@ -84,9 +84,9 @@ def _raw_gather_team_activity(
     N minutes and excluding the current user (those are already in the user-activity
     section).
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    cutoff = _now_utc() - timedelta(minutes=minutes)
     top_repos = _raw_get_top_active_repos(db_path, top_n)
 
     last_active_map: dict[str, datetime] = {}
@@ -149,7 +149,7 @@ def _raw_gather_unwatched_active_repos(
 
     Cost: 1 GH API request per probe.
     """
-    from datetime import datetime, timedelta, timezone
+    from datetime import timedelta
 
     from rebalance.ingest.github_scan import fetch_pushed_repos
     from rebalance.ingest.index_ops import get_watched_repos
@@ -172,7 +172,7 @@ def _raw_gather_unwatched_active_repos(
     # for the same pattern (config stores lowercase, GitHub returns original casing).
     ignored_lower = {r.lower() for r in get_github_ignored_repos()}
 
-    cutoff = datetime.now(timezone.utc) - timedelta(days=fresh_threshold_days)
+    cutoff = _now_utc() - timedelta(days=fresh_threshold_days)
     repos: list[dict[str, Any]] = []
     for rec in records:
         if rec.repo_full_name in watched or rec.repo_full_name.lower() in ignored_lower:
@@ -195,11 +195,11 @@ def _raw_gather_unwatched_active_repos(
 
 def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, top_n: int) -> dict[str, Any]:
     """Fetch recent GH events and classify each against local pipeline state."""
-    from datetime import datetime, timedelta, timezone
+    from datetime import datetime, timedelta
 
     from rebalance.ingest.github_scan import _fetch_events
 
-    cutoff = datetime.now(timezone.utc) - timedelta(minutes=minutes)
+    cutoff = _now_utc() - timedelta(minutes=minutes)
 
     # 1 API request: events API caps recent activity at ~30 days; we just need the latest page.
     events = _fetch_events(login, token, days=1)
@@ -252,7 +252,7 @@ def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, to
 
     return {
         "raw_version": 1,
-        "scanned_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "scanned_at": _now_utc().isoformat(timespec="seconds"),
         "login": login,
         "window_minutes": minutes,
         "events": items,
@@ -268,7 +268,6 @@ def _raw_gather_snapshot(login: str, token: str, db_path: Path, minutes: int, to
 
 def _raw_render_text(snapshot: dict[str, Any]) -> None:
     """Render snapshot as a Rich table for terminal use."""
-    from datetime import datetime
     from rich.console import Console
     from rich.table import Table
 
@@ -349,13 +348,12 @@ def _raw_render_text(snapshot: dict[str, Any]) -> None:
         console.print()
         console.print(f"[yellow]Unwatched-repos check skipped: {unwatched['error']}[/yellow]")
     elif unwatched.get("repos"):
-        from datetime import datetime, timezone
         console.print()
         console.print(
             f"[red]Unwatched repos with recent pushes "
             f"(last {unwatched['fresh_threshold_days']}d, not in github_repo_meta or ignored list):[/red]"
         )
-        now_utc = datetime.now(timezone.utc)
+        now_utc = _now_utc()
         for r in unwatched["repos"]:
             pushed = parse_utc_iso(r["pushed_at"])
             if not pushed:

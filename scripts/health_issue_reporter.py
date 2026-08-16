@@ -68,10 +68,10 @@ import socket
 import sys
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 
 import _bootstrap  # noqa: F401  — puts src/ on sys.path for rebalance.* imports
+from rebalance.lib.time_ops import now_utc
 
 DEVICE_NAME: str = socket.gethostname()
 
@@ -145,7 +145,7 @@ class RunLog:
 # ---------------------------------------------------------------------------
 
 def _today_utc() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return now_utc().strftime("%Y-%m-%d")
 
 
 def load_quota() -> dict:
@@ -226,7 +226,7 @@ def list_health_issues(token: str, repo: str, state: str = "open",
     issues: dict[str, dict] = {}
     since_param = ""
     if state == "closed":
-        cutoff = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime(
+        cutoff = (now_utc() - timedelta(days=since_days)).strftime(
             "%Y-%m-%dT%H:%M:%SZ")
         since_param = f"&since={cutoff}"
     page = 1
@@ -384,7 +384,7 @@ def update_issue_body(
 # ---------------------------------------------------------------------------
 
 def _issue_body(check_name: str, status: str, detail: str, hint: str, source: str) -> str:
-    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
     parts = [
         f"> **Seen:** 1× · Last: {now} · Device: {DEVICE_NAME}\n",
         check_id_marker(check_name),
@@ -625,7 +625,7 @@ def main() -> int:
     parser.add_argument("--repo", default=REPO, metavar="OWNER/REPO")
     args = parser.parse_args()
 
-    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    now_str = now_utc().strftime("%Y-%m-%dT%H:%M:%SZ")
     run_log = RunLog(now_str, {
         "repo": args.repo, "warn": args.warn, "close": args.close,
         "llm_triage": args.llm_triage, "llm_provider": args.llm_provider,

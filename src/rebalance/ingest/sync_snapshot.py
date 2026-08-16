@@ -37,7 +37,7 @@ from __future__ import annotations
 import json
 import socket
 import subprocess
-from datetime import datetime, timedelta, timezone
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +45,7 @@ from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.db.schema import ensure_calendar_schema, ensure_email_schema
 from rebalance.repair import RepairFSM, RepairResult, RepairStatus
+from rebalance.lib.time_ops import now_iso, now_utc
 
 SCHEMA_VERSION = 1
 DEFAULT_CALENDAR_WINDOW_DAYS = 90
@@ -97,8 +98,8 @@ def export_calendar_snapshot(
         raise FileNotFoundError(f"Database not found: {database_path}")
 
     dev_id = device_id or get_device_id()
-    generated_at = datetime.now(timezone.utc).isoformat()
-    since = (datetime.now(timezone.utc) - timedelta(days=window_days)).isoformat()
+    generated_at = now_iso()
+    since = (now_utc() - timedelta(days=window_days)).isoformat()
 
     with db_connection(database_path, ensure_calendar_schema) as conn:
         # Default deny (P2 decision #3): only the operator's own calendar
@@ -162,7 +163,7 @@ def export_email_snapshot(
         raise FileNotFoundError(f"Database not found: {database_path}")
 
     dev_id = device_id or get_device_id()
-    generated_at = datetime.now(timezone.utc).isoformat()
+    generated_at = now_iso()
 
     with db_connection(database_path, ensure_email_schema) as conn:
         rows = conn.execute(

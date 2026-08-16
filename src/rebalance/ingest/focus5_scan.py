@@ -33,15 +33,14 @@ from __future__ import annotations
 
 import logging
 import os
-import subprocess
 from dataclasses import asdict, dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from time import perf_counter
 from typing import Any, Callable, Iterable, Iterator
 
 from rebalance.ingest.db import db_connection, run_migrations
 from rebalance.ingest.sync_snapshot import get_device_id
+from rebalance.lib.time_ops import now_iso, now_utc
 # Reuse the prune discipline and the (already tested) remote-URL → owner/repo
 # parser rather than duplicating them; both are low-churn and shared by intent.
 from rebalance.ingest.ask_self_scan import _PRUNE_DIRS, derive_repo_full_name
@@ -703,7 +702,7 @@ def sync_focus5(
     from rebalance.ingest.config import get_focus5_hidden_repos
     hidden = get_focus5_hidden_repos()
 
-    now = datetime.now(timezone.utc)
+    now = now_utc()
     now_ts = int(now.timestamp())
     computed_at = now.isoformat()
 
@@ -794,7 +793,7 @@ def rerank_focus5_from_cache(
     from rebalance.ingest.config import get_focus5_hidden_repos
     hidden = get_focus5_hidden_repos()
 
-    now = datetime.now(timezone.utc)
+    now = now_utc()
     now_ts = int(now.timestamp())
     computed_at = now.isoformat()
 
@@ -871,7 +870,7 @@ def live_health(local_path: str) -> dict[str, Any]:
     current state. Returns the health fields plus ``health_probed_at``; a repo
     that can't be read yields ``health_available=False`` (never raises).
     """
-    probed_at = datetime.now(timezone.utc).isoformat()
+    probed_at = now_iso()
     out = _git(Path(local_path), "status", "--porcelain=v2", "--branch")
     if out is None:
         return {"health_available": False, "health_probed_at": probed_at}
@@ -1042,7 +1041,7 @@ def summarize_focus5(
                         "SELECT * FROM focus5_repo_signals WHERE device_id=?", (dev,)
                     ).fetchall()
                 ]
-                now_ts = int(datetime.now(timezone.utc).timestamp())
+                now_ts = int(now_utc().timestamp())
                 ranked = rank_repos(signals, mode=mode, now_ts=now_ts,
                                     hidden=get_focus5_hidden_repos())
                 computed_at = signals[0].probed_at if signals else None

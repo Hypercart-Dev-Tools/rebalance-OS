@@ -58,8 +58,8 @@ import json
 import re
 import subprocess
 import sys
-from datetime import datetime, timezone
 from pathlib import Path
+from rebalance.lib.time_ops import now_utc
 
 # Schema version for machine consumers. Bump when the JSON shape changes
 # in a non-additive way.
@@ -178,7 +178,7 @@ def write_lockfile(arch_missing, changelog_missing):
             "are silenced from the audit until removed. Re-generate after a "
             "deliberate doc backfill via: python scripts/audit_modules.py --init"
         ),
-        "generated_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "generated_at": now_utc().isoformat(timespec="seconds"),
         "missing_from_architecture": sorted(arch_missing),
         "missing_from_changelog": sorted(changelog_missing),
     }
@@ -376,7 +376,7 @@ def run_audit(commits_window, include_uncommitted=False):
     """Run all checks and return the structured result dict."""
     result = {
         "audit_version": AUDIT_VERSION,
-        "ran_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        "ran_at": now_utc().isoformat(timespec="seconds"),
         "candidate_modules_count": 0,
         "checks": {},
         "passed": True,

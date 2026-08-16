@@ -10,6 +10,17 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.69.4] - 2026-08-15
+
+### Changed
+- **Every "what time is now" read now goes through the shared time library.** All ~90 direct
+  clock calls across the ingest collectors, CLI, and render surfaces were consolidated onto the
+  canonical helpers, which route through the freeze-clock test seam — previously a direct call
+  silently bypassed it, so time-sensitive code could not be deterministically tested. Output
+  formats are byte-identical to before, including the second-precision variants used in scan
+  stamps. A handful of modules that inject the timestamp as a parameter keep that seam; the
+  shared functions are aliased there so both can coexist.
+
 ## [0.69.2] - 2026-08-15
 
 ### Changed

@@ -7,7 +7,6 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -28,6 +27,7 @@ from rebalance.ingest.embedder import (
     _load_model,
     _vec_to_bytes,
 )
+from rebalance.lib.time_ops import _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -689,7 +689,7 @@ def embed_pending(
             batch = rows[i:i + batch_size]
             texts = [row["body"][:4000] for row in batch]
             vectors = embed_fn(texts, model_name)
-            now_iso = datetime.now(timezone.utc).isoformat()
+            now_iso = _now_iso()
             for row, vec in zip(batch, vectors):
                 sem.delete_semantic_embedding(conn, row["id"])
                 sem.insert_semantic_embedding(conn, row["id"], _vec_to_bytes(vec))
@@ -699,7 +699,7 @@ def embed_pending(
                 embedded += 1
             conn.commit()
 
-        now_iso = datetime.now(timezone.utc).isoformat()
+        now_iso = _now_iso()
         for key, value in [
             ("model_name", model_name),
             ("embedding_dim", str(EMBEDDING_DIM)),

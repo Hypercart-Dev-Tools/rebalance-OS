@@ -6,7 +6,7 @@ import json
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +23,7 @@ from rebalance.tz_utils import format_local, local_tz
 from rebalance.ingest.project_priority import apply_project_priorities
 from rebalance.ingest.project_classifier import annotate_events_with_projects, load_project_matchers
 from rebalance.ingest.registry import get_projects
+from rebalance.lib.time_ops import now_iso, now_utc
 
 
 REPO_ROOT = Path(__file__).parent.parent.parent.parent
@@ -46,7 +47,7 @@ def get_all_repo_activity_by_org(
     from rebalance.ingest.config import get_github_ignored_repos
     from rebalance.ingest.db import db_connection, ensure_github_schema
 
-    since_date = (datetime.now(timezone.utc) - timedelta(days=since_days)).strftime("%Y-%m-%d")
+    since_date = (now_utc() - timedelta(days=since_days)).strftime("%Y-%m-%d")
 
     ignored = get_github_ignored_repos()
     params: list[Any] = [since_date]
@@ -303,7 +304,7 @@ def build_dashboard_payload(
     return DashboardPayload(
         target_date=target_date,
         since_days=since_days,
-        generated_at=datetime.now(timezone.utc).isoformat(),
+        generated_at=now_iso(),
         highlights=read_recent_changelog_highlights(changelog_path),
         current_goals=read_current_goals(goals_path),
         projects=project_rows,
