@@ -1,4 +1,55 @@
-> Your workday "OS"
+# rebalance
+
+> **Turn workplace noise into high-quality signal.**
+> Your workday "OS" — local-first, and part of the [HiQS](https://beta.hiqs.ai) suite.
+
+**Status: Beta.** Shipping weekly. We tell you what's real, and what isn't yet — see
+[Maturity](#maturity) below for the parts that aren't.
+
+---
+
+## HiQS — the system this belongs to
+
+**HiQS** captures the firehose from Slack, GitHub, email and calendars, computes attested, ranked,
+structured signals, and coordinates action across humans and AI agents — without forcing migration
+or overpromising.
+
+It targets four failure modes of modern work, all of which come from the same root: work bounces
+between tools while context evaporates.
+
+| | |
+|---|---|
+| **Missed priorities** | The important thing was in a channel you had muted |
+| **Coordination friction** | Everyone re-derives the same state from scratch |
+| **Slow decisions** | The evidence exists, in six places, in six formats |
+| **Agent starvation** | Your AI agents cannot see the work, so they cannot help with it |
+
+### Three products, one pipeline
+
+| Product | Stage | What it does |
+|---|---|---|
+| **Sleuth** | Live | The gateway for Slack signal. Reaction-based reminders with bi-directional sync to Slack's native Lists. |
+| **Rebalance** | **Beta — this repo** | The intake and signal-compute engine. Aggregates every source into one local store and ranks what matters. |
+| **Forge** | Early | Multi-agent coordination: Claude, Codex and Gemini working as a team — build in parallel, review in a loop. |
+
+**rebalance is the intake and compute layer.** Everything it ingests stays on your machine, in one
+SQLite database you own. Nothing is uploaded, and nothing requires you to migrate off the tools you
+already use.
+
+---
+
+## Maturity
+
+Honesty about state is a feature, not a disclaimer. What is real today:
+
+| Component | State | Notes |
+|---|---|---|
+| Vault, GitHub, git-history, calendar and email ingest | **Beta** | Daily-driven; this is the core |
+| MCP server and the `ask` / semantic surfaces | **Beta** | Semantic search needs Apple Silicon; everything else is cross-platform |
+| Local dashboards and reports | **Beta** | |
+| Signal-agnostic prioritization | **In progress** | Aggregates per-project counts; not yet the ranked view described above |
+| `utils/3-eyes/` job supervisor | **Alpha — not fully working** | Diagnostic tool, outside the supported core. Known defect: `pause` does not stop a launchd-managed job. Use `launchctl bootout` and verify. |
+| `experimental/` | **Experimental** | Exactly what it says |
 
 ---
 
@@ -235,8 +286,8 @@ use it below in place of `python3`. Ubuntu 22.04 ships 3.10, so `apt install pyt
 (or a `deadsnakes` PPA) is required there; on macOS, `brew install python@3.13`.
 
 ```bash
-git clone https://github.com/Hypercart-Dev-Tools/rebalance-OS.git
-cd rebalance-OS
+git clone https://github.com/HiQS-Suite/rebalanceOS.git
+cd rebalanceOS
 python3 -m venv .venv
 .venv/bin/pip install -e ".[embeddings,calendar]"
 ```
