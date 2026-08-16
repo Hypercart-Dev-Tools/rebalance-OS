@@ -105,3 +105,8 @@ REPO_MAP.md
 
 # AI agent scratch workspaces — never repo content (GH-266)
 .gemini/
+
+# Operator-supplied Google OAuth client (never commit the real one; the
+# *.example.json template is committed deliberately and stays tracked).
+google_oauth_client.json
+client_secret*.json

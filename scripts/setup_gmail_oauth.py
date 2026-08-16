@@ -33,7 +33,10 @@ from rebalance.ingest.auth_log import (
     log_flow_succeeded,
     log_flow_failed,
 )
-from rebalance.ingest.google_oauth_client import build_google_oauth_client_config
+from rebalance.ingest.google_oauth_client import (
+    GoogleOAuthClientNotConfigured,
+    build_google_oauth_client_config,
+)
 from rebalance.paths import resolve_oauth_token_path
 
 GMAIL_READONLY_SCOPE = "https://www.googleapis.com/auth/gmail.readonly"
@@ -113,6 +116,12 @@ if __name__ == "__main__":
         print("Next steps:")
         print("  1. rebalance config set-gmail-method oauth   # if currently on mcp")
         print("  2. rebalance doctor                          # verify gmail is green\n")
+
+    except GoogleOAuthClientNotConfigured as e:
+        # A missing client file is a setup step the operator has not done yet, not a
+        # crash. A traceback here buries the instructions that actually fix it.
+        print(f"\n❌ {e}\n")
+        exit(2)
 
     except Exception as e:
         print(f"\n❌ Error: {e}")

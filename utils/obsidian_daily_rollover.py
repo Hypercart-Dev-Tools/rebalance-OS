@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -53,7 +54,9 @@ def _log_job(event: str, elapsed: float | None = None, exit_code: int | None = N
         log_job_failed("obsidian-rollover", exit_code or 1, elapsed)
 
 # --- Configuration -----------------------------------------------------------
-VAULT = Path("/Users/noelsaw/Documents/Noel Saw")
+# Operator-specific. Set OBSIDIAN_VAULT to your own vault; the former hardcoded
+# default named one operator's home directory and could not work anywhere else.
+VAULT = Path(os.environ.get("OBSIDIAN_VAULT", str(Path.home() / "Documents" / "Obsidian Vault")))
 TODAY_FILE = VAULT / "0. Today's Notes.md"
 YESTERDAY_FILE = VAULT / "0. Yesterday.md"
 

@@ -1,5 +1,17 @@
 # 3-Eyes — optional, experimental, always-safe local job supervisor
 
+> ## ⚠️ ALPHA — not fully working
+>
+> 3-Eyes ships in **alpha** and is **not** part of the supported core. It is a
+> diagnostic tool, and it has known open defects — including that `three_eyes pause`
+> does **not** stop a launchd-managed job, so a "paused" writer can still be running.
+> If you need a job genuinely stopped, use `launchctl bootout` and verify it.
+>
+> Treat 3-Eyes output as a hint, never as proof. Nothing in the core `rebalance`
+> product depends on it, and you can ignore this directory entirely.
+>
+> We tell you what's real, and what isn't yet — this one isn't yet.
+
 GH-195. One system unifying the three sentinels we run today — the XYZ debug
 flywheel, the Cactus Needle PDDA sentinel, and the Rebalance collector-health
 sentinel — under **one TOML registry, one set of circuit breakers + relief valves,

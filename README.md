@@ -324,7 +324,13 @@ You can still use the source-specific commands:
 
 ### Step 4 — Connect Google Calendar (optional)
 
-OAuth Desktop app credentials are already bundled in the repo. You do **not** need to create a Google Cloud project or download a `client_secret.json`.
+You supply your own OAuth client — rebalance does not bundle one, so your organization
+owns the consent screen, scopes, quota and revocation. It is a five-minute, one-time
+setup in the Google Cloud Console: enable the Calendar API, create a **Desktop app**
+OAuth client, and save the downloaded JSON as `~/secrets/google_oauth_client.json` (or
+point `GOOGLE_OAUTH_CLIENT_FILE` at it). Full walkthrough in
+[GOOGLE_CALENDAR.md](./GOOGLE_CALENDAR.md); expected file shape in
+[`google_oauth_client.example.json`](./google_oauth_client.example.json).
 
 **4a. Install with calendar support**
 

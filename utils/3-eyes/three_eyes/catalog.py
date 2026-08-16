@@ -99,7 +99,7 @@ def render(notes: dict | None = None) -> str:
         "> (committed curation) ⋈ live `three_eyes observe`. Refresh: `python -m three_eyes catalog --write`.",
         ">",
         "> Companion to [`DASHBOARD.md`](DASHBOARD.md) (what 3-Eyes *manages*) and",
-        "> [`~/bin/servers.md`](file:///Users/noelsaw/bin/servers.md) (ports/long-running servers).",
+        "> `~/bin/servers.md` (ports/long-running servers).",
         "",
         f"**Inventory:** {len([a for a in agents if not a.get('unreadable')])} launchd agents "
         f"({managed} 🟢 managed · {to_adopt} 🎯 to-adopt · {vendor} vendor/OS ignored"
