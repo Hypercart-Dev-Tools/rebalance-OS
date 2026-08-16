@@ -324,6 +324,11 @@ python3 -m venv .venv
 > On Linux / Windows / Intel Mac, drop the `embeddings` extra:
 > `pip install -e ".[calendar]"` (semantic search will be unavailable; everything else works).
 
+> **To run the test suite**, add the `dev` extra — it is not included above:
+> `.venv/bin/pip install -e ".[dev]"`, then `.venv/bin/pytest tests/` from the repo root.
+> Run it from the repo root; `pytest` invoked from inside `src/rebalance/` puts that
+> directory on `sys.path`, where the local `mcp/` package shadows the installed MCP SDK.
+
 ### Step 2 — Ingest your vault
 
 ```bash
