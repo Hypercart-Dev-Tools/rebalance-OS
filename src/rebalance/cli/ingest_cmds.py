@@ -36,8 +36,8 @@ def ingest_preflight(
         github_token = get_github_token()
         if not github_token:
             typer.echo(
-                f"⚠ GitHub PAT not configured. Set it with:\n"
-                f"  rebalance config set-github-token <PAT>"
+                "⚠ GitHub PAT not configured. Set it with:\n"
+                "  rebalance config set-github-token <PAT>"
             )
             raise typer.Exit(code=1)
 

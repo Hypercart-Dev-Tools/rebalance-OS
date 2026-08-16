@@ -6,7 +6,6 @@ import hashlib
 from pathlib import Path
 import sqlite3
 
-import pytest
 
 from hiqs.db import db_connection
 from hiqs.sources.vault import SOURCE, is_generated_file

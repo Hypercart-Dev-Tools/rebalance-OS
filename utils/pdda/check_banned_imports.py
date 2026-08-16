@@ -1,6 +1,5 @@
 import os
 import ast
-import sys
 from pathlib import Path
 
 def check_file(path: Path) -> list[str]:
@@ -8,7 +7,7 @@ def check_file(path: Path) -> list[str]:
     try:
         content = path.read_text(encoding="utf-8")
         tree = ast.parse(content, filename=str(path))
-    except Exception as e:
+    except Exception:
         return []
 
     for node in ast.walk(tree):

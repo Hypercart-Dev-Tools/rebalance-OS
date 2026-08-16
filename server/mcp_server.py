@@ -7,7 +7,6 @@ launches the extension, it runs this file directly. The build script
 alongside this file, so we add that to sys.path before importing.
 """
 
-import os
 import sys
 from pathlib import Path
 

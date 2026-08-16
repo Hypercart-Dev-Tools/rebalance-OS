@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 import subprocess
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
@@ -1502,7 +1503,6 @@ _COLLECTOR_FRESHNESS: list[dict] = [
 
 
 def _ro_connection(db_path: Path) -> sqlite3.Connection:
-    import sqlite3
     conn = sqlite3.connect(f"file:{db_path.absolute().as_posix()}?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     try:
@@ -1519,7 +1519,7 @@ def _ro_connection(db_path: Path) -> sqlite3.Connection:
 def _check_orphaned_vectors(db_path: Path) -> list[Check]:
     from rebalance.ingest.db.github import count_orphaned_embeddings as count_gh
     from rebalance.ingest.db.semantic import count_orphaned_embeddings as count_sem
-    
+
     checks = []
     try:
         with _ro_connection(db_path) as conn:
@@ -1528,7 +1528,7 @@ def _check_orphaned_vectors(db_path: Path) -> list[Check]:
                 checks.append(Check("orphaned vectors:github", FAIL, f"{gh_count} orphaned vectors (est. {gh_wasted} bytes wasted)", "Run full re-embed or database cleanup"))
             else:
                 checks.append(Check("orphaned vectors:github", OK, "0 orphaned vectors", severity=NOTICE))
-                
+
             sem_count, sem_wasted = count_sem(conn)
             if sem_count > 0:
                 checks.append(Check("orphaned vectors:semantic", FAIL, f"{sem_count} orphaned vectors (est. {sem_wasted} bytes wasted)", "Run full re-embed or database cleanup"))
@@ -1536,14 +1536,14 @@ def _check_orphaned_vectors(db_path: Path) -> list[Check]:
                 checks.append(Check("orphaned vectors:semantic", OK, "0 orphaned vectors", severity=NOTICE))
     except Exception as exc:
         checks.append(Check("orphaned vectors", WARN, f"could not read vector tables: {exc}"))
-        
+
     return checks
 
 
 def _check_embedding_backlog(db_path: Path) -> Check:
     from rebalance.ingest.db.github import count_unembedded_documents as count_gh
     from rebalance.ingest.db.semantic import count_unembedded_documents as count_sem
-    
+
     # We do not alarm on the instantaneous backlog as it naturally sawteeths during sync.
     # An INFO line that never lies is worth more than a WARN that cries wolf.
     try:
@@ -1560,7 +1560,7 @@ def _check_embedding_backlog(db_path: Path) -> Check:
 
             gh_unembedded = count_gh(conn, min_chars=10)
             sem_unembedded = count_sem(conn, source_types=None, min_chars=10, model_version=model_version)
-            
+
             total = gh_unembedded + sem_unembedded
             detail = f"{total} unembedded documents pending"
             return Check("embedding backlog", OK, detail, severity=NOTICE)
@@ -1570,24 +1570,24 @@ def _check_embedding_backlog(db_path: Path) -> Check:
 
 def _check_database_bloat(db_path: Path) -> Check:
     from rebalance.ingest.db.github import table_byte_size as gh_table_byte_size
-    
+
     try:
         with _ro_connection(db_path) as conn:
             page_size = conn.execute("PRAGMA page_size").fetchone()[0]
             page_count = conn.execute("PRAGMA page_count").fetchone()[0]
             freelist_count = conn.execute("PRAGMA freelist_count").fetchone()[0]
-            
+
             total_db_bytes = page_count * page_size
             freelist_bytes = freelist_count * page_size
-            
+
             gh_size = gh_table_byte_size(conn, "github_embeddings")
-            
+
             gh_share = (gh_size / total_db_bytes * 100) if total_db_bytes > 0 else 0
-            
+
             freelist_mb = freelist_bytes / (1024 * 1024)
             gh_mb = gh_size / (1024 * 1024)
             total_mb = total_db_bytes / (1024 * 1024)
-            
+
             detail = (
                 f"total {total_mb:.1f} MB, freelist {freelist_mb:.1f} MB ({freelist_count} pages); "
                 f"github_embeddings {gh_mb:.1f} MB ({gh_share:.1f}% share)"
@@ -1619,7 +1619,7 @@ def run_doctor(database_path: Path | None = None) -> DoctorReport:
         for collector in _COLLECTOR_FRESHNESS:
             report.checks.append(_check_collector_freshness(db_path, **collector))
         report.checks.append(_check_deep_work_stalls(db_path))
-        
+
         # Phase vb2: zero-orphan invariant, backlog sawtooth, database bloat
         report.checks.extend(_check_orphaned_vectors(db_path))
         report.checks.append(_check_embedding_backlog(db_path))

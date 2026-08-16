@@ -42,12 +42,11 @@ import subprocess
 import time
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
 from rebalance.ingest.apple_reminders import AppleRemindersError
-from rebalance.lib.time_ops import _now_iso, _now
+from rebalance.lib.time_ops import _now_iso
 
 logger = logging.getLogger(__name__)
 
@@ -431,7 +430,6 @@ def apply_reminder_writes(
 
     request_id = request["request_id"]
     mode = request["mode"]
-    started = _now_iso()
 
     with db_connection(database_path, ensure_apple_reminders_write_schema) as conn:
         # Idempotency: a replay of an already-applied request returns the

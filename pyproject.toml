@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "rebalance-os"
-version = "0.69.2"
+version = "0.69.3"
 description = "Local-first workday operating system with MCP tools and Obsidian ingest"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -39,6 +39,7 @@ gcp = [
 ]
 dev = [
   "pytest>=8.0.0",
+  "ruff>=0.6",
 ]
 
 [project.scripts]
@@ -53,3 +54,42 @@ where = ["src"]
 [tool.setuptools.package-data]
 # Ship SQL migration files inside the wheel so run_migrations() can find them.
 "rebalance.ingest.db" = ["migrations/*.sql"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+# Lint scope is the product trees; everything else at the repo root is
+# vendored, generated, or process artifacts.
+extend-exclude = [
+  "macOS",
+  "vscode-extensions",
+  "temp",
+  "relay-system",
+  "ask_self",
+  "git-pulse-sync",
+  "graphify-out",
+  "experimental",
+  ".swe-diagram",
+  "phases",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "B"]
+ignore = [
+  # Long-line backlog: ~170 lines exceed 120 today. Burn down and re-enable (GH-298).
+  "E501",
+  # typer.Option(...) defaults are the CLI framework's idiom, not a bug.
+  "B008",
+  # Optional heavy deps are deliberately lazy-imported after capability checks.
+  "E402",
+  # Legacy raise-without-from and unbounded zip() sites; tighten in a follow-up.
+  "B904",
+  "B905",
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Broad assertRaises(Exception) is acceptable in tests for now.
+"tests/**" = ["B017"]
+"utils/3-eyes/tests/**" = ["B017"]
+# Legacy re-export shim: domain names stay importable from the old paths.
+"src/rebalance/cli/__init__.py" = ["F401"]

@@ -68,8 +68,6 @@ def copy_source() -> None:
 
 def install_deps() -> None:
     """Install pip dependencies into server/lib/ (no scripts, no metadata bloat)."""
-    # Read dependencies from pyproject.toml
-    pyproject = ROOT / "pyproject.toml"
     # Use pip to install into target dir
     # We install the core deps (not optional embeddings — those are large and
     # need Apple Silicon wheels, so we install them separately)

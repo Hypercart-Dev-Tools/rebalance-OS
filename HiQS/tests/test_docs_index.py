@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import ast
-import inspect
 from pathlib import Path
 import re
 from unittest.mock import MagicMock
@@ -318,7 +317,8 @@ def test_embedder_without_encode_method_raises_type_error(tmp_path):
     doc1 = Doc(source="mock", id="mock:1", title="Title", body="Body")
     source = MockSource("mock", [doc1])
 
-    plain_callable = lambda texts: [[0.1] * 384]
+    def plain_callable(texts):
+        return [[0.1] * 384]
 
     with pytest.raises(TypeError, match="Embedder must have an encode method"):
         project_docs(conn, sources=[source], embedder=plain_callable)

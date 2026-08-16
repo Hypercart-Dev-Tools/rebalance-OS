@@ -53,11 +53,13 @@ class FtsSearchTests(unittest.TestCase):
         c = _conn()
         _add(c, 1, "vault", "t", "alpha auth_log beta")
         self.assertEqual(len(sem.search_semantic_documents_fts(c, "auth_log", 5, ["vault"])), 1)
-        c.execute("DELETE FROM semantic_documents WHERE id=1"); c.commit()
+        c.execute("DELETE FROM semantic_documents WHERE id=1")
+        c.commit()
         self.assertEqual(sem.search_semantic_documents_fts(c, "auth_log", 5, ["vault"]), [])
         # update re-indexes
         _add(c, 2, "vault", "t2", "nothing relevant")
-        c.execute("UPDATE semantic_documents SET body='now mentions widget' WHERE id=2"); c.commit()
+        c.execute("UPDATE semantic_documents SET body='now mentions widget' WHERE id=2")
+        c.commit()
         self.assertEqual(len(sem.search_semantic_documents_fts(c, "widget", 5, ["vault"])), 1)
 
     def test_backfill_rebuilds_for_preexisting_docs(self) -> None:

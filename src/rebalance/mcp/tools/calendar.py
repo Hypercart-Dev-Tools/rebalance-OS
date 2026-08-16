@@ -166,7 +166,7 @@ def register(mcp: FastMCP, database_path: Path) -> None:
             timezone_name: IANA timezone. Defaults to config timezone.
         """
         import dataclasses
-        from datetime import date as date_cls, datetime
+        from datetime import datetime
         from zoneinfo import ZoneInfo
 
         from rebalance.ingest.calendar_config import CalendarConfig

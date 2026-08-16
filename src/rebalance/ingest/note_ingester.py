@@ -23,7 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.db import db_connection, ensure_schema, ensure_semantic_schema
-from rebalance.ingest.md_parser import parse_note, ParsedNote
+from rebalance.ingest.md_parser import parse_note
 from rebalance.ingest.semantic_index import sync_vault_documents
 
 
@@ -344,13 +344,13 @@ def _compute_tfidf_keywords(conn: Any, top_k: int = 10) -> int:
         rows = conn.execute("SELECT id, body FROM chunks LIMIT ? OFFSET ?", (BATCH_SIZE, offset)).fetchall()
         if not rows:
             break
-        
+
         for row in rows:
             chunk_id = row["id"]
             tokens = _tokenize(row["body"])
             if not tokens:
                 continue
-            
+
             tf = Counter(tokens)
             max_tf = max(tf.values())
             scores: dict[str, float] = {}
@@ -368,7 +368,7 @@ def _compute_tfidf_keywords(conn: Any, top_k: int = 10) -> int:
                     (chunk_id, keyword, round(score, 4)),
                 )
                 total_inserted += 1
-        
+
         # Commit after each batch to keep transaction sizes small and release locks (Fixing #222)
         conn.commit()
         offset += BATCH_SIZE

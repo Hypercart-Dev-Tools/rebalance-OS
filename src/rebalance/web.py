@@ -1667,7 +1667,6 @@ _AUTH_LOG_FILTER_JS = """
 
 @app.get("/auth-log", response_class=HTMLResponse)
 def auth_log_page() -> HTMLResponse:
-    import json
     entries = read_log(limit=500)
 
     raw_link = '<a class="raw-link" href="/auth-log/raw">⬇ raw JSONL</a>'
@@ -1831,7 +1830,6 @@ def sleuth_graph_page() -> HTMLResponse:
         error_msg = html.escape(str(exc))
 
     elements_json = _json.dumps(elements, ensure_ascii=False)
-    group_count = len([g for g in groups if g.kind != "other"])
 
     _legend_entries = [("client", "Client"), ("github", "GitHub issue/PR"),
                         ("channel", "Channel"), ("other", "Other")]
@@ -2053,29 +2051,29 @@ def settings_page() -> HTMLResponse:
       <h2>Color theme</h2>
       <div style="color: var(--muted); font-size: 13px; margin-top: 3px;">Applies to all Pulse dashboard pages and modules.</div>
     </div>
-    
+
     <div class="settings-presets" id="presetsGrid"></div>
-    
+
     <div class="fine-tune-header">Fine-tune colors</div>
     <div class="fine-tune-grid" id="fineTuneGrid"></div>
-    
+
     <div style="display: flex; gap: 10px; align-items: center; margin-top: 4px;">
       <button id="btnSave" class="btn-primary">Save</button>
       <button id="btnReset" class="btn-secondary">Reset</button>
       <span style="font-size: 11.5px; color: var(--muted);">Reset returns to the selected theme's defaults.</span>
     </div>
   </section>
-  
+
   <section class="settings-section">
     <div style="display: flex; align-items: baseline; gap: 12px;">
       <h2>Preview</h2>
       <span style="font-family: 'SF Mono', Menlo, monospace; font-size: 11px; color: var(--muted);" id="lblThemeName">theme: default</span>
     </div>
-    
+
     <ul class="rb-data-list" style="border: 1px solid var(--border); border-radius: 8px; overflow: hidden; margin-top: -4px;">
       {sample_rows}
     </ul>
-    
+
     <div class="cal-preview">
       <span class="cal-preview-time1">1 PM</span>
       <span class="cal-preview-line1"></span>
@@ -2096,42 +2094,42 @@ def settings_page() -> HTMLResponse:
     grey:     {{ name: 'Grey mode',       page: '#ececec', card: '#ffffff', ink: '#1e1e1e', accent: '#444444', border: '#dcdcdc', nowline: '#d43d2a', timestamp: '#8a8a8a' }},
     lightblue:{{ name: 'Light blue',      page: '#e9f0f7', card: '#ffffff', ink: '#16283c', accent: '#1d6fd1', border: '#d3e0ee', nowline: '#d43d2a', timestamp: '#7d90a5' }},
   }};
-  
+
   const FIELD_LABELS = {{ page: 'Page background', card: 'Card background', ink: 'Text', accent: 'Accent', border: 'Borders', nowline: 'Calendar time line', timestamp: 'Date + time text' }};
   const FIELDS = window.__pulseTheme.FIELDS;
-  
+
   let currentTheme = 'default';
   let currentColors = null; // null means using preset unmodified
   let lastPreset = 'default';
-  
+
   function extractFields(obj) {{
     const res = {{}};
     FIELDS.forEach(f => res[f] = obj[f]);
     return res;
   }}
-  
+
   function getWorkingColors() {{
     return currentColors || extractFields(PRESETS[currentTheme === 'custom' ? 'default' : currentTheme]);
   }}
-  
+
   function setColors(newColors) {{
     window.__pulseTheme.apply(newColors);
   }}
-  
+
   function renderUI() {{
     const working = getWorkingColors();
     const presetsGrid = document.getElementById('presetsGrid');
     presetsGrid.innerHTML = '';
-    
+
     ['default', 'dark', 'grey', 'lightblue'].forEach(k => {{
       const p = PRESETS[k];
       const mix = window.__pulseTheme.mix;
       const pMuted = mix(p.ink, p.page, 0.45);
-      
+
       const el = document.createElement('div');
       el.className = 'preset-card' + (currentTheme === k ? ' active' : '');
       el.onclick = () => {{ currentTheme = k; lastPreset = k; currentColors = null; setColors(getWorkingColors()); renderUI(); }};
-      
+
       el.innerHTML = `
         <div class="preset-preview" style="background: ${{p.page}}; border: 1px solid ${{p.border}};">
           <div style="display: flex; gap: 4px; align-items: center;">
@@ -2151,14 +2149,14 @@ def settings_page() -> HTMLResponse:
       `;
       presetsGrid.appendChild(el);
     }});
-    
+
     const fineTuneGrid = document.getElementById('fineTuneGrid');
     fineTuneGrid.innerHTML = '';
-    
+
     FIELDS.forEach(f => {{
       const el = document.createElement('label');
       el.className = 'color-field';
-      
+
       const inp = document.createElement('input');
       inp.type = 'color';
       inp.value = working[f];
@@ -2172,22 +2170,22 @@ def settings_page() -> HTMLResponse:
         setColors(currentColors);
         renderUI();
       }};
-      
+
       const textWrap = document.createElement('span');
       textWrap.className = 'color-field-label';
       textWrap.innerHTML = `<span class="color-field-name">${{FIELD_LABELS[f]}}</span><span class="color-field-val">${{working[f]}}</span>`;
-      
+
       el.appendChild(inp);
       el.appendChild(textWrap);
       fineTuneGrid.appendChild(el);
     }});
-    
+
     let displayName = currentTheme === 'custom' ? 'Custom' : PRESETS[currentTheme].name;
     if (currentTheme !== 'custom' && JSON.stringify(working) !== JSON.stringify(extractFields(PRESETS[currentTheme]))) {{
       displayName += ' (modified)';
     }}
     document.getElementById('lblThemeName').textContent = 'theme: ' + displayName;
-    
+
     let saved = null;
     try {{
       const raw = localStorage.getItem(window.__pulseTheme.KEY);
@@ -2195,33 +2193,33 @@ def settings_page() -> HTMLResponse:
         saved = JSON.parse(raw);
       }}
     }} catch(e) {{}}
-    
+
     let isDirty = true;
     if (saved) {{
       isDirty = (saved.preset !== currentTheme) || (JSON.stringify(saved.inputs) !== JSON.stringify(working));
     }} else {{
       isDirty = (currentTheme !== 'default') || (JSON.stringify(working) !== JSON.stringify(extractFields(PRESETS.default)));
     }}
-    
+
     const btnSave = document.getElementById('btnSave');
     btnSave.style.opacity = isDirty ? '1' : '0.5';
     btnSave.style.cursor = isDirty ? 'pointer' : 'default';
   }}
-  
+
   document.getElementById('btnReset').onclick = () => {{
     if (currentTheme === 'custom') currentTheme = lastPreset;
     currentColors = null;
     setColors(getWorkingColors());
     renderUI();
   }};
-  
+
   document.getElementById('btnSave').onclick = () => {{
     const working = getWorkingColors();
     const payload = window.__pulseTheme.record(currentTheme, extractFields(working));
     localStorage.setItem(window.__pulseTheme.KEY, JSON.stringify(payload));
     renderUI();
   }};
-  
+
   try {{
     const raw = localStorage.getItem(window.__pulseTheme.KEY);
     const parsed = window.__pulseTheme.parse(raw);
@@ -2237,7 +2235,7 @@ def settings_page() -> HTMLResponse:
       }}
     }}
   }} catch(e) {{}}
-  
+
   setColors(getWorkingColors());
   renderUI();
 }})();

@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import urllib.error
 import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -24,7 +23,7 @@ from rebalance.ingest.config import (
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.index_ops import _activity_repos, _project_repos
 from rebalance.ingest.registry import get_projects
-from rebalance.lib.time_ops import _parse_iso, _now, _now_utc
+from rebalance.lib.time_ops import _parse_iso, _now_utc
 
 
 # Mirrors github_knowledge.sync_github_repo's default lookback for issues/PRs.

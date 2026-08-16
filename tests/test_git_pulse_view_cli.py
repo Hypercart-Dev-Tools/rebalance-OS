@@ -8,7 +8,7 @@ import subprocess
 import tempfile
 import textwrap
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime
 from pathlib import Path
 
 

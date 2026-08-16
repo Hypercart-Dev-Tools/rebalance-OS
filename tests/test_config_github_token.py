@@ -1,6 +1,5 @@
 """Tests for GitHub token resolution: config first, gh CLI fallback."""
 
-import json
 import os
 import subprocess
 import tempfile

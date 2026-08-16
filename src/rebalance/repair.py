@@ -134,7 +134,7 @@ class RepairFSM:
         # Circuit breaker: unrecoverable error class — skip immediately to DEAD
         if is_unrecoverable(initial_error):
             state.log.append(
-                f"circuit-breaker: unrecoverable error class — no repair attempted"
+                "circuit-breaker: unrecoverable error class — no repair attempted"
             )
             state.status = RepairStatus.DEAD
             return state

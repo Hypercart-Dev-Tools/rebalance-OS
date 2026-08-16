@@ -12,7 +12,6 @@ import json
 import pathlib
 import tempfile
 import unittest
-from unittest.mock import patch, MagicMock
 
 
 # ---------------------------------------------------------------------------
@@ -69,7 +68,7 @@ class FailingInvokerTests(unittest.TestCase):
         Simulate the /api/refresh handler with a failing invoker.
         Returns the response dict that the endpoint would return.
         """
-        import sys, os
+        import sys
         sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent.parent / "scripts"))
 
         helper_error = None

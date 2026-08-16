@@ -8,15 +8,13 @@ inferred links and returns confidence, evidence, and recommended actions.
 
 from __future__ import annotations
 
-import json
 import re
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.db import db_connection, ensure_github_schema
-from rebalance.lib.time_ops import _now_iso, _now
+from rebalance.lib.time_ops import _now_iso
 
 _REF_RE = re.compile(r"(?<![/\w])#(\d+)\b")
 _WORD_RE = re.compile(r"[a-z0-9]+")

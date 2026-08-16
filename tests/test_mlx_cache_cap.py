@@ -133,21 +133,21 @@ def test_cache_bounded_variable_lengths():
     embedder._cached_model = None
     embedder._cached_tokenizer = None
     embedder._cached_model_name = None
-    
+
     # Run _load_model to set the limit
     model, tokenizer = _load_model(embedder.DEFAULT_MODEL)
-    
+
     # 20 batches of variable lengths
     for i in range(20):
         # variable length between 10 and 100 words
         texts = ["word " * (10 + (i * 13) % 90) for _ in range(5)]
         _embed_batch(model, tokenizer, texts)
-        
+
     final_cache = mx.get_cache_memory()
-    
+
     # If the bug was present, final_cache would grow unbounded with each variable length batch.
     # We assert that the final cache is safely bounded (way less than gigabytes of unbounded growth).
-    # Specifically, it shouldn't be much higher than the cache limit we set (3 GB), 
+    # Specifically, it shouldn't be much higher than the cache limit we set (3 GB),
     # and since we are clearing it on every batch, it should actually be extremely small.
     # We use a generous 200MB threshold to avoid flakiness while clearly catching gigabytes of growth.
     assert final_cache < 200 * 1024 * 1024, f"Cache grew unbounded to {final_cache / 1024 / 1024:.2f} MB"
@@ -157,13 +157,13 @@ def test_mocked_cache_bounded_variable_lengths(mock_mlx_cap):
     """Proves clear_cache() bounds cache growth deterministically without real MLX."""
     # Run _load_model to set the limit
     model, tokenizer = _load_model("test_model")
-    
+
     # 20 batches of variable lengths
     for i in range(20):
         # variable length between 10 and 100 words
         texts = ["word " * (10 + (i * 13) % 90) for _ in range(5)]
         _embed_batch(model, tokenizer, texts)
-        
+
     # We should have cleared cache exactly 20 times (once per batch)
     assert mock_mlx_cap.clear_cache_count == 20
     # Cache should be bounded (cleared after last batch)
@@ -174,7 +174,7 @@ def test_mocked_cache_bounded_variable_lengths(mock_mlx_cap):
         for i in range(20):
             texts = ["word " * (10 + (i * 13) % 90) for _ in range(5)]
             _embed_batch(model, tokenizer, texts)
-        
+
         # Cache should have grown significantly due to variable shapes
         assert mock_mlx_cap.get_cache_memory() > 0
 
@@ -184,7 +184,7 @@ def test_set_cache_limit_applied_once(mock_mlx_cap):
     _load_model("test_model")
     assert mock_mlx_cap.set_cache_limit_count == 1
     assert mock_mlx_cap.cache_limit_val == int(3.0 * 1024 * 1024 * 1024)
-    
+
     # Second call with distinct model name uses cache limit previously set, does not set limit again
     _load_model("test_model_2")
     assert mock_mlx_cap.set_cache_limit_count == 1
@@ -194,7 +194,7 @@ def test_clear_cache_invoked_expected_cadence(mock_mlx_cap):
     """clear_cache is invoked at the end of each batch."""
     _embed_batch("model", "tokenizer", ["text1"])
     assert mock_mlx_cap.clear_cache_count == 1
-    
+
     _embed_batch("model", "tokenizer", ["text2"])
     assert mock_mlx_cap.clear_cache_count == 2
 
@@ -216,10 +216,10 @@ def test_all_four_call_sites_covered(module: str, site: str):
     mod_name = module.replace(".py", "")
     full_mod_name = f"rebalance.ingest.{mod_name}"
     mod = importlib.import_module(full_mod_name)
-    
+
     with patch(f"{full_mod_name}._load_model") as mock_load, \
          patch(f"{full_mod_name}._embed_batch") as mock_embed:
-         
+
         mock_load.return_value = ("mock_model", "mock_tokenizer")
         mock_embed.return_value = [[0.1] * 1024]
 
@@ -229,7 +229,7 @@ def test_all_four_call_sites_covered(module: str, site: str):
                 mock_conn.execute.return_value.fetchone.return_value = [1]
                 mock_conn.execute.return_value.fetchall.return_value = [{"id": "1", "body": "test"}]
                 mod.embed_chunks(Path("/tmp/fake.db"))
-                
+
 
         elif site == "embed_pending":
             with patch(f"{full_mod_name}.sem") as mock_sem, \
@@ -237,11 +237,11 @@ def test_all_four_call_sites_covered(module: str, site: str):
                 mock_sem.semantic_documents_pending_embed.return_value = [{"id": 1, "body": "test"}]
                 mock_sem.count_embeddable_semantic_documents.return_value = 1
                 mod.embed_pending(Path("/tmp/fake.db"))
-                
+
         elif site == "_default_embed_texts":
             func = getattr(mod, site)
             func(["text"], "test_model")
-            
+
         mock_load.assert_called_once()
         mock_embed.assert_called_once()
 
@@ -254,7 +254,7 @@ def test_telemetry_emitted_at_warning(mock_mlx_cap, caplog, propagating_logs):
 
     for _ in range(10):
         embedder._embed_batch(None, None, ["text"])
-        
+
     records = [r for r in caplog.records if "MLX telemetry" in r.message]
     assert len(records) == 1
     assert records[0].levelno == logging.WARNING
@@ -264,7 +264,7 @@ def test_degrades_safely_when_mlx_unavailable(caplog, propagating_logs):
     """Behaviour degrades safely when new cache methods fail."""
     import mlx
     import mlx.core  # noqa: F401
-    
+
     broken = MagicMock()
     broken.set_cache_limit.side_effect = RuntimeError("no Metal device")
     broken.clear_cache.side_effect = RuntimeError("no Metal device")
@@ -272,21 +272,21 @@ def test_degrades_safely_when_mlx_unavailable(caplog, propagating_logs):
     broken.get_cache_memory.side_effect = RuntimeError("no Metal device")
     broken.get_peak_memory.side_effect = RuntimeError("no Metal device")
     broken.eval = MagicMock()
-    
+
     mock_embeddings = MagicMock()
     mock_embeddings.generate = mock_generate
     mock_embeddings.load = MagicMock(return_value=("mock_model", "mock_tokenizer"))
-    
+
     with patch.object(mlx, "core", broken), patch.dict(
         sys.modules, {"mlx.core": broken, "mlx_embeddings": mock_embeddings}
     ):
         embedder._cache_limit_set = False
         embedder._cached_model = None
-        
+
         # Should return models successfully despite set_cache_limit failing
         model, tokenizer = embedder._load_model("test_model")
         assert model == "mock_model"
-        
+
         # Should return embeddings successfully despite clear_cache failing
         vectors = embedder._embed_batch(model, tokenizer, ["text"])
         assert len(vectors) == 1

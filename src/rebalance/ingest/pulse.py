@@ -558,7 +558,7 @@ def fetch_assigned_issues(
             "html_url": item.get("html_url") or "",
             "created_at": item.get("created_at"),
             "updated_at": item.get("updated_at"),
-            "labels": [l.get("name") for l in item.get("labels") or [] if l.get("name")],
+            "labels": [label.get("name") for label in item.get("labels") or [] if label.get("name")],
         })
     return out
 
@@ -923,7 +923,7 @@ def _render_section_assigned_issues(
             is_new = created >= today_start
         prefix = "**NEW** " if is_new else ""
         labels = (
-            " " + " ".join(f"`{l}`" for l in it.get("labels") or [])
+            " " + " ".join(f"`{label}`" for label in it.get("labels") or [])
         ) if it.get("labels") else ""
         updated = _fmt_local(it.get("updated_at"), tz)
         lines.append(

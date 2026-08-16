@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import argparse
 import statistics
-import sys
-from pathlib import Path
 
 import _bootstrap  # noqa: E402, F401  — puts src/ on sys.path
 
@@ -53,8 +51,8 @@ def main() -> int:
 
     db = resolve_database_path()
     print(f"scope={args.scope}  top_k={args.top_k}  ask_self_available={ask_self_available()}\n")
-    print(f"| # | question | hit | ms | used | top source |")
-    print(f"|---|---|:--:|--:|---|---|")
+    print("| # | question | hit | ms | used | top source |")
+    print("|---|---|:--:|--:|---|---|")
 
     hits = 0
     latencies: list[int] = []

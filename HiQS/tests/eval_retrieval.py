@@ -21,7 +21,6 @@ from unittest.mock import patch
 
 from hiqs.db import db_connection
 from hiqs.docs_index import get_embed_text
-from hiqs.events import log_event
 from hiqs.plugins import Doc
 from hiqs.search import _fts_search, _vec_search, cap_per_document, rrf_fuse
 
@@ -256,7 +255,8 @@ def evaluate_retrieval(
             fused_top_hits[q_id] = fused_hits[0].id
 
     n = len(queries)
-    mean = lambda arr: sum(arr) / n if n > 0 else 0.0
+    def mean(arr):
+        return sum(arr) / n if n > 0 else 0.0
 
     return {
         "model": model_name,

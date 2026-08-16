@@ -153,7 +153,9 @@ class AuthLogFlowSourceTests(unittest.TestCase):
 
     def test_gmail_setup_emits_gmail_source(self) -> None:
         """setup_gmail_oauth passes source='gmail' — verify the call signature accepts it."""
-        import os, tempfile, json
+        import os
+        import tempfile
+        import json
         from rebalance.ingest.auth_log import log_flow_started
         with tempfile.TemporaryDirectory() as tmp:
             old = os.environ.get("REBALANCE_AUTH_LOG_DIR")

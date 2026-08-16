@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import sqlite3
-from typing import Any
 
 import numpy as np
 import pytest
@@ -95,7 +94,6 @@ def test_model_filter_with_coexisting_vectors(memory_db):
     # Demonstrate that removing model filter causes failure on inhomogeneous shapes
     raw_unfiltered_rows = memory_db.execute("SELECT doc_id, dim, vec FROM docs_vec").fetchall()
 
-    vec_list = [serialize_vector(deserialize_vector(r[2]))[1] for r in raw_unfiltered_rows]
     # Check that extracting vectors without model filter yields different dimensions
     dims = [r[1] for r in raw_unfiltered_rows]
     assert 384 in dims and 1024 in dims

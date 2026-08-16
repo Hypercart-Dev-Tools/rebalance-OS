@@ -11,9 +11,7 @@ from rebalance.ingest.calendar import ensure_calendar_schema
 from rebalance.ingest.calendar_config import CalendarConfig, CalendarProject
 from rebalance.ingest.daily_report import (
     _format_duration,
-    format_daily_markdown,
     generate_daily_report,
-    get_day_data,
 )
 from rebalance.ingest.db import get_connection
 from rebalance.ingest.weekly_report import (

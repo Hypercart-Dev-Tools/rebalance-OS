@@ -178,16 +178,16 @@ class DirectCommitCaptureTests(unittest.TestCase):
 class DirectCommitEmbeddingPruningTests(unittest.TestCase):
     """GH-248: re-syncing direct commits must not orphan their vectors.
 
-    Before this phase, ``sync_direct_commit_documents`` deleted every 
-    ``direct_commit`` document and re-inserted it with a fresh autoincrement 
-    id, leaving old ``github_embeddings`` rows behind (keyed to ids that no 
-    longer existed). vec0 never reclaims those slots, so the vector table grew 
+    Before this phase, ``sync_direct_commit_documents`` deleted every
+    ``direct_commit`` document and re-inserted it with a fresh autoincrement
+    id, leaving old ``github_embeddings`` rows behind (keyed to ids that no
+    longer existed). vec0 never reclaims those slots, so the vector table grew
     without bound.
 
-    Now, unchanged direct commits are idempotent (keeping their row id and 
-    existing vector), changed commits re-embed but keep their id, and vanished 
+    Now, unchanged direct commits are idempotent (keeping their row id and
+    existing vector), changed commits re-embed but keep their id, and vanished
     commits cleanly delete their vectors before deleting the document.
-    
+
     The invariant these tests pin is the one the reclaim plan needs: after any
     number of syncs, every vector's ``doc_id`` resolves to a live document.
     """
@@ -263,22 +263,22 @@ class DirectCommitEmbeddingPruningTests(unittest.TestCase):
         self._seed_direct_commit(SHA)
         self.assertEqual(sync_direct_commit_documents(self.db_path), 1)
         self.assertEqual(self._embed_all_pending(), 1)
-        
+
         first_doc = self._get_doc(SHA)
         self.assertIsNotNone(first_doc)
         self.assertIsNotNone(first_doc["embedded_hash"])
 
         # Sync twice more
-        for round_number in range(1, 3):
+        for _round_number in range(1, 3):
             self.assertEqual(sync_direct_commit_documents(self.db_path), 1)
             # Pending embed count must be 0
             with db_connection(self.db_path, ensure_github_schema) as conn:
                 pending = len(gh.github_documents_pending_embed(conn, min_chars=0))
                 self.assertEqual(pending, 0, "No re-embedding should be scheduled")
-            
+
             doc = self._get_doc(SHA)
             self.assertEqual(doc, first_doc, "Complete row must not churn across repeat syncs")
-            
+
             docs, vectors, orphans = self._counts()
             self.assertEqual(vectors, 1)
             self.assertEqual(orphans, 0)
@@ -288,26 +288,26 @@ class DirectCommitEmbeddingPruningTests(unittest.TestCase):
         self._seed_direct_commit(SHA)
         self.assertEqual(sync_direct_commit_documents(self.db_path), 1)
         self.assertEqual(self._embed_all_pending(), 1)
-        
+
         first_doc = self._get_doc(SHA)
-        
+
         # Mutate commit message
         with db_connection(self.db_path, ensure_github_schema) as conn:
             conn.execute(
-                "UPDATE github_direct_commits SET message = 'mutated message' WHERE sha = ?", 
+                "UPDATE github_direct_commits SET message = 'mutated message' WHERE sha = ?",
                 (SHA,)
             )
             conn.commit()
-            
+
         self.assertEqual(sync_direct_commit_documents(self.db_path), 1)
-        
+
         doc = self._get_doc(SHA)
         self.assertEqual(doc["id"], first_doc["id"], "Document id must stay the same to replace vector")
         self.assertIsNone(doc["embedded_hash"], "embedded_hash must be NULL to trigger re-embed")
-        
+
         # Re-embed exactly 1
         self.assertEqual(self._embed_all_pending(), 1)
-        
+
         docs, vectors, orphans = self._counts()
         self.assertEqual(vectors, 1)
         self.assertEqual(orphans, 0)
@@ -317,26 +317,26 @@ class DirectCommitEmbeddingPruningTests(unittest.TestCase):
         self._seed_direct_commit(SHA)
         self.assertEqual(sync_direct_commit_documents(self.db_path), 1)
         self.assertEqual(self._embed_all_pending(), 1)
-        
+
         # Add idempotence interaction to prove the new upsert path is exercised
         self.assertEqual(sync_direct_commit_documents(self.db_path), 1)
         with db_connection(self.db_path, ensure_github_schema) as conn:
             pending = len(gh.github_documents_pending_embed(conn, min_chars=0))
             self.assertEqual(pending, 0)
-        
+
         # Make PR-overlapping
         with db_connection(self.db_path, ensure_github_schema) as conn:
             gh.upsert_commit(
-                conn, 
+                conn,
                 (REPO, "pull_request", 999, SHA, "noelsaw1", "msg", "2026-07-18T03:06:18Z", "", "now")
             )
             conn.commit()
-            
+
         self.assertEqual(sync_direct_commit_documents(self.db_path), 0)
-        
+
         doc = self._get_doc(SHA)
         self.assertIsNone(doc)
-        
+
         docs, vectors, orphans = self._counts()
         self.assertEqual(docs, 0)
         self.assertEqual(vectors, 0)
@@ -359,7 +359,7 @@ class DirectCommitEmbeddingPruningTests(unittest.TestCase):
             with db_connection(self.db_path, ensure_github_schema) as conn:
                 pending = len(gh.github_documents_pending_embed(conn, min_chars=0))
                 self.assertEqual(pending, 0)
-            
+
             docs, vectors, orphans = self._counts()
             self.assertEqual(orphans, 0)
             self.assertEqual(vectors, 5)

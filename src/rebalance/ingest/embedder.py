@@ -8,7 +8,6 @@ mlx-embeddings is imported lazily so the rest of the package works without it.
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import struct
@@ -42,20 +41,20 @@ def _get_caller_identity() -> str:
 def instrument_embedding_pass(site_name: str) -> None:
     """Produce the run-ID + entry-point + PID record for an embedding pass."""
     global _current_run_id, _current_entry_point, _batch_count, _last_activity_time
-    
+
     now = time.monotonic()
     if _current_entry_point == site_name and (now - _last_activity_time) < 30.0:
         return
-        
+
     _current_run_id = str(uuid.uuid4())
     _current_entry_point = site_name
     _batch_count = 0
-    
+
     caller = _get_caller_identity()
     logger.warning(
         f"Embedding pass started: run_id={_current_run_id} entry_point={site_name} pid={os.getpid()} caller={caller}"
     )
-    
+
     try:
         import mlx.core as mx
         if hasattr(mx, 'reset_peak_memory'):
@@ -135,10 +134,10 @@ def _embed_batch(model: Any, tokenizer: Any, texts: list[str]) -> list[list[floa
     embeddings = output.text_embeds
     # Materialize and free the MLX computation graph
     mx.eval(embeddings)
-    
+
     _batch_count += 1
     _last_activity_time = time.monotonic()
-    
+
     if _batch_count % 10 == 0:
         try:
             active = mx.get_active_memory()

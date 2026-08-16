@@ -368,7 +368,7 @@ def compressor_bytes() -> int:
 
 def tree_footprint_bytes(pid: int) -> tuple[int, bool, int]:
     """Resident memory (or phys_footprint on macOS) of ``pid`` plus every descendant.
-    
+
     Returns: (total_bytes, is_fallback, unreadable_count)
     """
     try:
@@ -417,7 +417,7 @@ def tree_footprint_bytes(pid: int) -> tuple[int, bool, int]:
             is_fallback = False
         except Exception:
             pass
-            
+
         if not is_fallback:
             for p in tree_pids:
                 buf = _RusageInfoV2()
@@ -427,7 +427,7 @@ def tree_footprint_bytes(pid: int) -> tuple[int, bool, int]:
                 else:
                     unreadable_count += 1
             return total, False, unreadable_count
-    
+
     for p in tree_pids:
         total += rss.get(p, 0)
     return total, True, unreadable_count
@@ -659,7 +659,7 @@ class MemoryCeiling:
         total = total_memory_bytes()
         self.pid = pid or os.getpid()
         self.total = total
-        
+
         ceiling = max_footprint_bytes or max_rss_bytes
         self.max_footprint = ceiling or int(total * DEFAULT_MAX_FOOTPRINT_FRACTION) or None
         self.min_available = min_available_bytes or max(

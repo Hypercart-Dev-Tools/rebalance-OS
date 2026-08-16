@@ -64,7 +64,8 @@ class SyncCodeTests(unittest.TestCase):
     def test_sync_upserts_and_fts_finds_code(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._repo(tmp)
-            c = sqlite3.connect(":memory:"); c.row_factory = sqlite3.Row
+            c = sqlite3.connect(":memory:")
+            c.row_factory = sqlite3.Row
             ensure_semantic_schema(c)
             res = sync_code_documents(c, root)
             self.assertGreaterEqual(res["inserted"], 3)  # fn + class + module
@@ -76,7 +77,8 @@ class SyncCodeTests(unittest.TestCase):
     def test_rerun_is_unchanged(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._repo(tmp)
-            c = sqlite3.connect(":memory:"); c.row_factory = sqlite3.Row
+            c = sqlite3.connect(":memory:")
+            c.row_factory = sqlite3.Row
             ensure_semantic_schema(c)
             sync_code_documents(c, root)
             res2 = sync_code_documents(c, root)
@@ -87,7 +89,8 @@ class SyncCodeTests(unittest.TestCase):
     def test_deleted_symbol_is_removed(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = self._repo(tmp)
-            c = sqlite3.connect(":memory:"); c.row_factory = sqlite3.Row
+            c = sqlite3.connect(":memory:")
+            c.row_factory = sqlite3.Row
             ensure_semantic_schema(c)
             sync_code_documents(c, root)
             (root / "src" / "auth_log.py").write_text('def kept():\n    return 1\n')

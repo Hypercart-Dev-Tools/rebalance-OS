@@ -8,8 +8,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from rebalance.ingest.sync_snapshot import (
-    DEFAULT_CALENDAR_WINDOW_DAYS,
-    DEFAULT_EMAIL_LIMIT,
     SCHEMA_VERSION,
     export_calendar_snapshot,
     export_email_snapshot,

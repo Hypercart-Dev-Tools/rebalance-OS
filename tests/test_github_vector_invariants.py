@@ -1,7 +1,6 @@
 """Tests for vector database invariants (orphans and backlog)."""
 
 import os
-import sqlite3
 import struct
 import tempfile
 import unittest
@@ -14,7 +13,7 @@ from rebalance.ingest.db import (
 )
 from rebalance.ingest.db import github as gh
 from rebalance.ingest.db import semantic as sem
-from rebalance.doctor import _check_orphaned_vectors, _check_embedding_backlog, _check_database_bloat, OK, WARN, FAIL
+from rebalance.doctor import _check_orphaned_vectors, _check_embedding_backlog, _check_database_bloat, OK, FAIL
 
 
 class VectorInvariantsTests(unittest.TestCase):
@@ -38,13 +37,13 @@ class VectorInvariantsTests(unittest.TestCase):
             # 1. Insert an orphaned vector into github_embeddings
             gh.upsert_github_embedding(conn, 999, struct.pack("1024f", *([0.0]*1024)))
             conn.commit()
-        
+
         checks = _check_orphaned_vectors(self.db_path)
         gh_check = next(c for c in checks if c.name == "orphaned vectors:github")
         self.assertEqual(gh_check.status, FAIL)
         self.assertIn("1 orphaned vectors", gh_check.detail)
         self.assertIn("4096 bytes", gh_check.detail)
-        
+
     def test_deleted_document_fails_orphan_check(self):
         with db_connection(self.db_path) as conn:
             # Insert a doc and its vector
@@ -55,11 +54,11 @@ class VectorInvariantsTests(unittest.TestCase):
                 fetched_at="2026-05-20",
             )
             gh.upsert_github_embedding(conn, doc_id, struct.pack("1024f", *([0.0]*1024)))
-            
+
             # Now delete the document
             conn.execute("DELETE FROM github_documents WHERE id = ?", (doc_id,))
             conn.commit()
-            
+
         checks = _check_orphaned_vectors(self.db_path)
         gh_check = next(c for c in checks if c.name == "orphaned vectors:github")
         self.assertEqual(gh_check.status, FAIL)
@@ -77,7 +76,7 @@ class VectorInvariantsTests(unittest.TestCase):
             )
             conn.commit()
             # Freshly synced but unembedded
-            
+
         check = _check_embedding_backlog(self.db_path)
         # Should be INFO/NOTICE (which is OK status), not WARN/FAIL
         self.assertEqual(check.status, OK)
@@ -95,7 +94,7 @@ class VectorInvariantsTests(unittest.TestCase):
             # Delete the doc
             conn.execute("DELETE FROM semantic_documents WHERE id = ?", (doc_id,))
             conn.commit()
-            
+
         checks = _check_orphaned_vectors(self.db_path)
         sem_check = next(c for c in checks if c.name == "orphaned vectors:semantic")
         self.assertEqual(sem_check.status, FAIL)
@@ -106,7 +105,7 @@ class VectorInvariantsTests(unittest.TestCase):
         with db_connection(self.db_path) as conn:
             sem.insert_semantic_embedding(conn, 999, struct.pack("1024f", *([0.0]*1024)))
             conn.commit()
-            
+
         checks = _check_orphaned_vectors(self.db_path)
         sem_check = next(c for c in checks if c.name == "orphaned vectors:semantic")
         self.assertEqual(sem_check.status, FAIL)
@@ -119,7 +118,7 @@ class VectorInvariantsTests(unittest.TestCase):
             conn.commit()
             size = gh.table_byte_size(conn, "github_embeddings")
             self.assertGreater(size, 0)
-            
+
         check = _check_database_bloat(self.db_path)
         self.assertEqual(check.status, OK)
         self.assertNotIn("github_embeddings 0.0 MB (0.0% share)", check.detail)
@@ -127,12 +126,12 @@ class VectorInvariantsTests(unittest.TestCase):
     def test_readonly_connection(self):
         # Assert the checks perform no writes and succeed on a read-only connection
         os.chmod(self.db_path, 0o444)
-        
+
         # The doctor queries shouldn't raise any sqlite readonly errors
         checks = _check_orphaned_vectors(self.db_path)
         for check in checks:
             self.assertEqual(check.status, OK)
-            
+
         check = _check_embedding_backlog(self.db_path)
         self.assertEqual(check.status, OK)
 

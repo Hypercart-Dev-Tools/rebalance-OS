@@ -279,7 +279,7 @@ class GitHubHelperTests(unittest.TestCase):
                 body="x" * 60, content_hash="hash-1", updated_at="2026-05-20",
                 fetched_at="2026-05-20",
             )
-            short_id = gh.insert_github_document(
+            gh.insert_github_document(
                 conn, repo_full_name=R, source_type="issue", source_number=2,
                 doc_type="item_body", source_key=f"{R}:i:2", title="t",
                 body="tiny", content_hash="hash-2", updated_at="2026-05-20",

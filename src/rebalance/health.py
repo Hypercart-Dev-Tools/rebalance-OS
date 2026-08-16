@@ -24,7 +24,7 @@ update both together.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from rebalance.doctor import ERROR, FAIL, NOTICE, OK, WARN, WARNING, Check

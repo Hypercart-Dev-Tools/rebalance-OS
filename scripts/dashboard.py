@@ -33,7 +33,6 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from rich.align import Align
 from rich.box import ROUNDED
 from rich.console import Console, Group
 from rich.layout import Layout
@@ -1032,7 +1031,7 @@ def render_vault_calendar(
             Text("—", style=PALETTE["fg_dim"]),
             Text("no recent vault edits", style=f"italic {PALETTE['fg_dim']}"),
         )
-    sections.append(Text(f"vault edits", style=f"bold {PALETTE['accent']}"))
+    sections.append(Text("vault edits", style=f"bold {PALETTE['accent']}"))
     sections.append(vault_table)
 
     # Calendar

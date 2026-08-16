@@ -417,7 +417,7 @@ class OffRosterReasonTests(unittest.TestCase):
         # even if it has ahead commits as well.
         w = _sig("wip", is_dirty=True, ahead=3)
         self.assertEqual(off_roster_reason(w), "uncommitted changes")
-        
+
         wd = {"is_dirty": True, "ahead": 3}
         self.assertEqual(off_roster_reason(wd), "uncommitted changes")
 
@@ -425,7 +425,7 @@ class OffRosterReasonTests(unittest.TestCase):
         # If the repo is not dirty but has ahead commits, it shows "N ahead of origin"
         w = _sig("clean-ahead", is_dirty=False, ahead=3)
         self.assertEqual(off_roster_reason(w), "3 ahead of origin")
-        
+
         wd = {"is_dirty": False, "ahead": 5}
         self.assertEqual(off_roster_reason(wd), "5 ahead of origin")
 
@@ -433,7 +433,7 @@ class OffRosterReasonTests(unittest.TestCase):
         # If not dirty and not ahead, returns fallback "needs attention"
         w = _sig("clean-no-ahead", is_dirty=False, ahead=0)
         self.assertEqual(off_roster_reason(w), "needs attention")
-        
+
         wd = {"is_dirty": False, "ahead": 0}
         self.assertEqual(off_roster_reason(wd), "needs attention")
 
@@ -1218,7 +1218,8 @@ class WebRouteTests(unittest.TestCase):
             old = (datetime.now(timezone.utc) - timedelta(days=2)).isoformat()
             conn = sqlite3.connect(str(db))
             conn.execute("UPDATE focus5_roster SET computed_at=? WHERE device_id=?", (old, dev))
-            conn.commit(); conn.close()
+            conn.commit()
+            conn.close()
             with mock.patch("rebalance.ingest.focus5_scan.sync_focus5") as m:
                 resp = self._get(db)
             self.assertEqual(resp.status_code, 200)

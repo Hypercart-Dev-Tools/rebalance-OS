@@ -96,7 +96,7 @@ def _resolve_vault_path(config: Any = None) -> Path | None:
         if isinstance(vault_conf, Mapping) and "path" in vault_conf:
             return Path(vault_conf["path"])
         if hasattr(vault_conf, "path"):
-            return Path(getattr(vault_conf, "path"))
+            return Path(vault_conf.path)
     return None
 
 

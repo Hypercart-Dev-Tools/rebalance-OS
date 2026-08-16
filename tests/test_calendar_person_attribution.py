@@ -5,7 +5,6 @@
 - Both can coexist with distinct composite PKs (id, calendar_id).
 """
 
-import json
 import sqlite3
 import tempfile
 import unittest

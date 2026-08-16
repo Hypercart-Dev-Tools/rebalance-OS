@@ -169,7 +169,7 @@ def generate_weekly_report(
         days.append(get_day_data(database_path, day_date, config, project_matchers=project_matchers))
 
     # ── Header ──
-    md = f"# Weekly Calendar Report\n\n"
+    md = "# Weekly Calendar Report\n\n"
     md += (
         f"**Week of {week_start.strftime('%B %d')} – "
         f"{week_end.strftime('%B %d, %Y')}**  \n"

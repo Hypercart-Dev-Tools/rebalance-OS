@@ -129,7 +129,6 @@ class LegacyFacadeMarkerTests(unittest.TestCase):
     """
 
     def _get_register_locals(self) -> dict:
-        import inspect
         import rebalance.mcp.tools.retrieval as mod
         src = inspect.getsource(mod)
         return src

@@ -256,7 +256,7 @@ def _build_prompt(
     if temporal_context:
         today = temporal_context.get("today", {})
         tomorrow = temporal_context.get("tomorrow", {})
-        lines = [f"## Schedule Context"]
+        lines = ["## Schedule Context"]
         lines.append(f"- **Today:** {today.get('day_name', '')} ({today.get('date', '')}) — {today.get('day_type', 'workday')}")
         if today.get("is_vacation"):
             lines.append(f"  Vacation: {today.get('vacation_event', '')}")

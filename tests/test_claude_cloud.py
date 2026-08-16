@@ -4,7 +4,6 @@ Covers normalization, data-quality grading, and the dormant/enabled behavior of 
 HiQS candidates provider. No network: the session fetch is monkeypatched.
 """
 
-import datetime as dt
 
 import pytest
 

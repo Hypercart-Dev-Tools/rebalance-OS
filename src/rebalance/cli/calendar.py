@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import json
 import pickle
-from datetime import date as date_cls, datetime, time as time_cls, timedelta
+from datetime import datetime, time as time_cls, timedelta
 from pathlib import Path
 from uuid import uuid4
 from zoneinfo import ZoneInfo
@@ -434,7 +434,7 @@ def calendar_daily_totals_cmd(
     avg_events_per_day = total_events / len(days) if days else 0
     avg_hours = _format_duration(int(total_minutes / len(days)), fmt) if days else _format_duration(0, fmt)
 
-    typer.echo(f"\n📊 Summary:")
+    typer.echo("\n📊 Summary:")
     typer.echo(f"  Days analyzed: {len(days)}")
     typer.echo(f"  Total events: {total_events}")
     typer.echo(f"  Total hours: {_format_duration(total_minutes, fmt)}")

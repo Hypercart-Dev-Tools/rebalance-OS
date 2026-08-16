@@ -274,7 +274,7 @@ def render_profile_sync(
     out.print()
     out.print(
         Text.assemble(
-            (f"●", _PALETTE["accent"]),
+            ("●", _PALETTE["accent"]),
             (" github sync timings", f"bold {_PALETTE['fg']}"),
             ("  ·  ", _PALETTE["fg_dim"]),
             (log_path.name, _PALETTE["fg_muted"]),

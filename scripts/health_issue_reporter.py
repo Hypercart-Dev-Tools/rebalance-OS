@@ -482,42 +482,42 @@ def _strip_code_fence(text: str) -> str:
 def _triage_gemini(user_msg: str, model: str, api_key: str | None) -> dict:
     import json as _json
     import urllib.request
-    
+
     if not api_key:
         print("  [llm-triage] GEMINI_API_KEY is not set", file=sys.stderr)
         return {}
-        
+
     model = model or "gemini-3.5-flash"
     url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-    
+
     body = _json.dumps({
         "systemInstruction": {"parts": [{"text": _TRIAGE_SYSTEM}]},
         "contents": [{"role": "user", "parts": [{"text": user_msg}]}],
         "generationConfig": {"maxOutputTokens": 256, "responseMimeType": "application/json"}
     }).encode()
-    
+
     req = urllib.request.Request(
         url, data=body,
         headers={"content-type": "application/json"},
         method="POST",
     )
-    
+
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
             payload = _json.loads(resp.read().decode())
     except Exception as exc:
         print(f"  [llm-triage] gemini api error: {exc}", file=sys.stderr)
         return {}
-        
+
     candidates = payload.get("candidates") or []
     if not candidates:
         return {}
-        
+
     content = candidates[0].get("content") or {}
     parts = content.get("parts") or []
     if not parts:
         return {}
-        
+
     raw = parts[0].get("text", "").strip()
     try:
         return json.loads(raw)

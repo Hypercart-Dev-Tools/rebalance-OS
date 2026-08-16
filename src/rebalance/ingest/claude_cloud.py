@@ -210,7 +210,7 @@ _LETTER = [(0.90, "A"), (0.80, "B"), (0.70, "C"), (0.60, "D"), (0.0, "F")]
 
 
 def _letter(score: float) -> str:
-    return next(l for cut, l in _LETTER if score >= cut)
+    return next(grade for cut, grade in _LETTER if score >= cut)
 
 
 def grade(rows: list[dict]) -> dict[str, Any]:

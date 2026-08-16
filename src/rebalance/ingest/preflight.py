@@ -16,7 +16,6 @@ from rebalance.ingest.registry import (
     sync_registry,
 )
 from rebalance.ingest.github_scan import (
-    BAND_A_DAYS,
     BAND_B_DAYS,
     BAND_C_DAYS,
     discover_repos_from_activity,

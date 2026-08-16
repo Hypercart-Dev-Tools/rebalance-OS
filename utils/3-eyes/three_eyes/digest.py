@@ -181,7 +181,7 @@ def render_corpus(data: dict[str, Any]) -> str:
         for row in data["failing"]:
             lines.append(f"- {row['label']}: {row['health']} (last exit {row.get('last_exit')})")
             if row.get("log_tail"):
-                lines += ["  log tail:", *(f"    {l}" for l in row["log_tail"].splitlines()[-40:])]
+                lines += ["  log tail:", *(f"    {ln}" for ln in row["log_tail"].splitlines()[-40:])]
         lines.append("")
     else:
         lines += ["No jobs are currently failing.", ""]

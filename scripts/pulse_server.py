@@ -46,14 +46,16 @@ import _bootstrap  # noqa: E402, F401  — puts src/ and scripts/ on sys.path
 # Promote to a public name in apple_reminders_write.py when the module API stabilises.
 from rebalance.ingest.apple_reminders_write import _open_bundle_invoker  # noqa: PLC2701
 from rebalance.ingest.config import get_apple_reminders_list_name
-from pulse_web import (  # noqa: E402
+from rebalance.ingest.goals_file import (  # noqa: E402
     complete_goal_in_file,
+    undo_goal_completion_in_file,
+)
+from pulse_web import (  # noqa: E402
     forget_goal_completion,
     _goal_completion_still_applied,
     remember_goal_completion,
     resolve_goals_path,
     load_goal_history,
-    undo_goal_completion_in_file,
 )
 from rebalance.ingest.apple_reminders_write import (  # noqa: E402
     AppleRemindersWriteError,

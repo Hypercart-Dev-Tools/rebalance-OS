@@ -15,10 +15,8 @@ Row references are to DASHBOARD.md's compliance matrix.
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC = REPO_ROOT / "src" / "rebalance"

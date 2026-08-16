@@ -130,7 +130,7 @@ def _vec_search(
     limit: int = 50,
 ) -> list[Doc]:
     """Execute numpy cosine vector search filtered BY model_name."""
-    raw_vecs = getattr(embedder, "encode")([query])
+    raw_vecs = embedder.encode([query])
     if raw_vecs is None or len(raw_vecs) == 0:
         return []
     query_vec = np.array(raw_vecs[0], dtype=np.float32)

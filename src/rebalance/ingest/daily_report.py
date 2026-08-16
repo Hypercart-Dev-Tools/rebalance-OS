@@ -81,7 +81,7 @@ class ProjectGroup:
     count: int
     total_minutes: int
     events: list[str]  # Original event summaries
-    
+
     @property
     def total_hours(self) -> float:
         return self.total_minutes / 60.0

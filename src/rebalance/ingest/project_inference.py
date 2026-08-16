@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import re
-from collections import Counter, defaultdict
+from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -814,7 +814,7 @@ def _count_operator_commits(conn: Any, repo_full_name: str, github_login: str) -
     in ARCHITECTURE.md), so summing across all of them is a genuine cumulative
     count since Rebalance started watching the repo, not a rolling window.
     """
-    from rebalance.ingest.pulse import CLOUD_AGENT_AUTHORS, _author_filter_sql
+    from rebalance.ingest.pulse import CLOUD_AGENT_AUTHORS
 
     activity_row = conn.execute(
         "SELECT COALESCE(SUM(commits), 0) AS n FROM github_activity "

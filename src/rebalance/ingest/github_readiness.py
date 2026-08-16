@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from rebalance.ingest.db import db_connection, ensure_github_schema
-from rebalance.lib.time_ops import _now, _now_iso, parse_utc_iso
+from rebalance.lib.time_ops import parse_utc_iso
 
 _RELEASE_BRANCH_RE = re.compile(r"\brelease/[A-Za-z0-9._-]+\b")
 

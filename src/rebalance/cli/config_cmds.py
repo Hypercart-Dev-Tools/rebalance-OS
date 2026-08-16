@@ -26,7 +26,6 @@ from rebalance.ingest.config import (
     get_github_ignored_repos,
     get_github_related_repos,
     get_github_token_with_source,
-    get_gmail_ingest_method,
     get_health_notice_patterns,
     get_project_priority_rules,
     get_sleuth_credentials,
@@ -349,7 +348,7 @@ def config_doctor() -> None:
             line += f"  ({detail})"
         typer.echo(line)
 
-    from rebalance.ingest.config import KEYRING_SERVICE, _keyring_get
+    from rebalance.ingest.config import KEYRING_SERVICE
 
     typer.echo("\n── Config file ─────────────────────────────")
     cfg_path = get_config_path()

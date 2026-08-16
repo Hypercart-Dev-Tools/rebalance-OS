@@ -25,9 +25,11 @@ SCOPES = ("all", "work", "code")
 
 from rebalance.paths import resolve_project_root
 from rebalance.ingest.semantic_index import (  # noqa: E402
-    WORK_SOURCES,
     scope_to_sources as _semantic_sources_for_scope,
 )
+# Re-export: the read-side ownership contract pins chat_with_data to
+# semantic_index's scope-vocabulary object (test_retrieval_contracts).
+from rebalance.ingest.semantic_index import WORK_SOURCES  # noqa: E402,F401
 _REPO_ROOT = resolve_project_root(Path(__file__))
 ASK_SELF_TIMEOUT_SECONDS = 60
 

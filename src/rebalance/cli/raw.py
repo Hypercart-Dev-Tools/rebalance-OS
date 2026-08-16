@@ -368,8 +368,10 @@ def _raw_render_text(snapshot: dict[str, Any]) -> None:
             else:
                 ago = f"{max(1, delta.seconds // 60)}m ago"
             flags = []
-            if r.get("private"): flags.append("private")
-            if r.get("fork"): flags.append("fork")
+            if r.get("private"):
+                flags.append("private")
+            if r.get("fork"):
+                flags.append("fork")
             flag_str = f"  [dim]({', '.join(flags)})[/dim]" if flags else ""
             console.print(f"  - {r['full_name']}  [dim]pushed {ago}[/dim]{flag_str}")
     elif unwatched.get("checked_count"):

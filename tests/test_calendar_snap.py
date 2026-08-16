@@ -5,9 +5,6 @@ from datetime import date
 from unittest.mock import MagicMock
 
 from rebalance.ingest.calendar_snap import (
-    OverlapPair,
-    SkippedCluster,
-    SnapDayResult,
     _detect_overlaps,
     _is_allday_event,
     snap_day_edges,

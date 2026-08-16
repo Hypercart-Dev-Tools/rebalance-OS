@@ -23,7 +23,7 @@ from unittest.mock import patch
 
 import _bootstrap  # noqa: F401
 
-from rebalance.ingest.lifecycle import SETUP_STAGES, evaluate_setup
+from rebalance.ingest.lifecycle import evaluate_setup
 
 CONFIG = "rebalance.ingest.config"
 GLYPHS = {"done": "[x]", "now": "->", "next": "( )", "blocked": "!!", "skipped": "(s)"}

@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
-import sqlite3
 from unittest.mock import MagicMock, patch
 import pytest
 
@@ -17,7 +15,6 @@ from tests.eval_retrieval import (
     compute_queryset_sha,
     compute_paired_disagreement_set,
     evaluate_gates,
-    evaluate_retrieval,
     get_git_sha,
     get_offline_embedder,
     load_query_set,

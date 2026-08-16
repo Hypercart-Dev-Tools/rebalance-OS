@@ -35,7 +35,8 @@ def _make_repo(root: Path, name: str, *, origin: str | None, commits_after_push:
     repo.mkdir(parents=True)
     _git(repo, "init", "-q", "-b", "main")
     (repo / "f.txt").write_text("1")
-    _git(repo, "add", "."); _git(repo, "commit", "-q", "-m", "c1")
+    _git(repo, "add", ".")
+    _git(repo, "commit", "-q", "-m", "c1")
     if origin:
         bare = root / f"{name}-remote.git"
         subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True, capture_output=True)
@@ -47,7 +48,8 @@ def _make_repo(root: Path, name: str, *, origin: str | None, commits_after_push:
         _git(repo, "config", "remote.origin.fetch", "+refs/heads/*:refs/remotes/origin/*")
     for i in range(commits_after_push):
         (repo / "f.txt").write_text(f"x{i}")
-        _git(repo, "add", "."); _git(repo, "commit", "-q", "-m", f"local-{i}")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-q", "-m", f"local-{i}")
     return repo
 
 

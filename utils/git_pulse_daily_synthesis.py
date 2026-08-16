@@ -96,7 +96,7 @@ def upsert_block(content: str, summary: str, generated_at: datetime) -> str:
         before = content.split(MARKER_START, 1)[0]
         tail = content.rsplit(MARKER_END, 1)[1].lstrip("\n")
         return before + block + (f"\n{tail}" if tail else "")
-    
+
     body = content if content.endswith("\n") else content + "\n"
     if not body.endswith("\n\n"):
         body += "\n"
@@ -193,13 +193,13 @@ def collect_today_activity(dry_run: bool = False, force: bool = False) -> tuple[
     """Shells out to view.sh --today and returns the TSV stdout string and exit code."""
     repo_root = Path(__file__).resolve().parent.parent
     view_script = repo_root / "experimental" / "git-pulse" / "view.sh"
-    
+
     if not view_script.exists():
         log(f"SKIP: view.sh not found at {view_script}")
         return None, 1
-        
+
     cmd = [str(view_script), "--today"]
-    
+
     try:
         env = os.environ.copy()
         result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
@@ -217,17 +217,17 @@ def collect_today_activity(dry_run: bool = False, force: bool = False) -> tuple[
 def synthesize(activity_tsv: str) -> str | None:
     from rebalance.ingest.config import get_gemini_api_key
     from rebalance.ingest.querier import _synthesize_gemini
-    
+
     lines = activity_tsv.splitlines()
     if len(lines) <= 1:
         # Zero-row case (only headers or empty)
         return FALLBACK_SUMMARY
-        
+
     key = get_gemini_api_key()
     if not key:
         log("SKIP: no Gemini API key available — refusing to write a fallback summary.")
         return None
-        
+
     prompt = PROMPT_TEMPLATE.format(data=activity_tsv)
     try:
         return _synthesize_gemini(prompt, api_key=key, thinking_budget=0, max_tokens=2048)

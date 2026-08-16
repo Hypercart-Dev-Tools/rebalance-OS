@@ -84,7 +84,7 @@ def ask_cmd(
     except DatabaseNotFoundError as exc:
         typer.echo(str(exc))
         raise typer.Exit(2) from exc
-    typer.echo(f"Gathering context...")
+    typer.echo("Gathering context...")
     result = querier_ask(
         query=text,
         database_path=db_path,
@@ -96,7 +96,7 @@ def ask_cmd(
     if result.temporal_context:
         today = result.temporal_context.get("today", {})
         tomorrow = result.temporal_context.get("tomorrow", {})
-        typer.echo(f"\n--- Schedule ---")
+        typer.echo("\n--- Schedule ---")
         typer.echo(f"  Today:    {today.get('day_name', '')} — {today.get('day_type', '')}")
         typer.echo(f"  Tomorrow: {tomorrow.get('day_name', '')} — {tomorrow.get('day_type', '')}")
 

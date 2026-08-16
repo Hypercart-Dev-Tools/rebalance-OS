@@ -7,7 +7,7 @@ import os
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from rebalance.doctor import OK, WARN, _check_launchd, _check_scheduler_liveness, _launchctl_list
+from rebalance.doctor import OK, WARN, _check_launchd, _check_scheduler_liveness
 from unittest.mock import patch, Mock
 
 
@@ -85,23 +85,23 @@ def test_unrecognised_daily_log_keeps_legacy_launchctl_behavior(tmp_path: Path) 
 def test_scheduler_liveness_available_and_loaded(tmp_path: Path) -> None:
     policy = tmp_path / "SCHEDULER.md"
     policy.write_text("| Job (label suffix) |\n|---|---|\n| `foo-job` |\n| `bar-job` |\n", encoding="utf-8")
-    
+
     launchctl_output = "-\t0\tcom.rebalance-os.foo-job\n-\t0\tcom.rebalance-os.bar-job\n"
-    
+
     checks = _check_scheduler_liveness(policy_path=policy, launchctl_output=launchctl_output)
-    
+
     assert len(checks) == 0
 
 
 def test_scheduler_liveness_available_and_missing(tmp_path: Path) -> None:
     policy = tmp_path / "SCHEDULER.md"
     policy.write_text("| Job (label suffix) |\n|---|---|\n| `foo-job` |\n| `bar-job` |\n", encoding="utf-8")
-    
+
     # foo-job loaded, bar-job missing
     launchctl_output = "-\t0\tcom.rebalance-os.foo-job\n"
-    
+
     checks = _check_scheduler_liveness(policy_path=policy, launchctl_output=launchctl_output)
-    
+
     assert len(checks) == 1
     assert checks[0].name == "scheduler:bar-job"
     assert checks[0].status == WARN
@@ -111,7 +111,7 @@ def test_scheduler_liveness_available_and_missing(tmp_path: Path) -> None:
 def test_scheduler_liveness_unavailable(mock_run: Mock, tmp_path: Path) -> None:
     policy = tmp_path / "SCHEDULER.md"
     policy.write_text("| Job (label suffix) |\n|---|---|\n| `foo-job` |\n", encoding="utf-8")
-    
+
     # 1. non-zero returncode
     mock_run.return_value = Mock(returncode=1, stdout="some error")
     checks = _check_scheduler_liveness(policy_path=policy)
@@ -119,21 +119,21 @@ def test_scheduler_liveness_unavailable(mock_run: Mock, tmp_path: Path) -> None:
     assert checks[0].name == "scheduler state"
     assert checks[0].status == WARN
     assert checks[0].detail == "undetermined"
-    
+
     # 2. empty stdout
     mock_run.return_value = Mock(returncode=0, stdout="")
     checks = _check_scheduler_liveness(policy_path=policy)
     assert len(checks) == 1
     assert checks[0].name == "scheduler state"
     assert checks[0].status == WARN
-    
+
     # 3. whitespace-only stdout
     mock_run.return_value = Mock(returncode=0, stdout="   \n  \t ")
     checks = _check_scheduler_liveness(policy_path=policy)
     assert len(checks) == 1
     assert checks[0].name == "scheduler state"
     assert checks[0].status == WARN
-    
+
     # 4. FileNotFoundError
     mock_run.side_effect = FileNotFoundError("no launchctl")
     checks = _check_scheduler_liveness(policy_path=policy)

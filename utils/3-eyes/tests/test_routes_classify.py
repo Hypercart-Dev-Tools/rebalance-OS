@@ -7,7 +7,6 @@ Exercises the observe -> classify -> route path offline: the classifier stub
 from __future__ import annotations
 
 import json
-import re
 
 import pytest
 

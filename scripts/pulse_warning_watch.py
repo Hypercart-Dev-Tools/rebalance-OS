@@ -29,7 +29,6 @@ import html
 import json
 import re
 import subprocess
-import sys
 import time
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
@@ -464,7 +463,7 @@ def main(argv: list[str] | None = None) -> int:
         return run_once(args)
 
     while True:
-        exit_code = run_once(args)
+        run_once(args)
         time.sleep(max(1, int(args.interval_seconds)))
 
 

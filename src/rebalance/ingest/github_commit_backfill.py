@@ -25,7 +25,6 @@ from __future__ import annotations
 import subprocess
 from functools import lru_cache
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
 
 from rebalance.ingest.db import db_connection, ensure_github_schema
@@ -301,7 +300,7 @@ def backfill_commits(
     code, raw, err = _git(path, *log_args)
     if code != 0:
         result.state = "uncoverable"
-        result.reason = f"git log failed on {ref}: {err or 'unknown error'}"
+        result.reason = f"git log failed on {' '.join(ref_args)}: {err or 'unknown error'}"
         with db_connection(database_path, ensure_github_schema) as conn:
             conn.execute(f"PRAGMA busy_timeout = {_BUSY_TIMEOUT_MS}")
             _record_coverage(conn, repo_full_name, result, now)

@@ -10,6 +10,26 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.69.3] - 2026-08-15
+
+### Added
+- **Python linting is now enforced in CI.** A ruff pass (pycodestyle E/W, pyflakes F,
+  flake8-bugbear B, with a documented ignore list for legacy patterns) runs on every push
+  and pull request, so unused imports, dead locals, and undefined names fail the build
+  instead of accreting silently. The rule set starts conservative; the long-line and
+  exception-chaining backlogs are tracked for later tightening.
+
+### Fixed
+- **A crash in the commit-backfill error path.** When enumerating a repository's commits
+  failed, the failure report itself raised an undefined-name error and masked the real
+  git failure; the report now names the refs that were actually walked.
+- **A latent undefined reference in the health-check database helper** (benign at runtime
+  because annotations are lazy, but now imports correctly).
+- Roughly 350 lint findings resolved across the tree: unused imports and variables
+  removed, ambiguous loop-variable names renamed, one-line statement chains split, and a
+  per-row column accessor now binds its row explicitly instead of relying on closure
+  late-binding.
+
 ## [0.69.2] - 2026-08-15
 
 ### Changed

@@ -312,7 +312,6 @@ class TestCircuitBreakers(unittest.TestCase):
             call_tracker.append(1)
             return {"decision": "file", "reason": "should not reach here"}
 
-        check = _make_check("db")
         # The CB-1 guard lives in main() — test it at the call site level
         # by simulating what main() does before calling llm_triage().
         cb1_triggered = bool(os.environ.get("HEALTH_LLM_DISABLE"))

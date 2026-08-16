@@ -120,7 +120,7 @@ class AppleRemindersWriteCliTests(unittest.TestCase):
     def test_delete_without_yes_leaves_confirm_false(self):
         patcher, captured = self._patch()
         with patcher:
-            result = self.runner.invoke(
+            self.runner.invoke(
                 app, ["apple-reminders", "delete", "RID-2", "--apply",
                       "--database", str(self.db)],
             )
