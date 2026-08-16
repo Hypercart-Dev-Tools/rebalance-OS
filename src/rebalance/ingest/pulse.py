@@ -22,9 +22,7 @@ import hashlib
 import json
 import subprocess
 import time
-import urllib.error
 import urllib.parse
-import urllib.request
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -35,6 +33,7 @@ from rebalance.repair import RepairFSM, RepairResult, RepairStatus
 from rebalance.ingest.agent_tags import classify as classify_source
 from rebalance.ingest.calendar_config import OPERATOR_CALENDAR_ID
 from rebalance.ingest.calendar_helpers import calendar_dt_utc, normalize_aware_utc
+from rebalance.ingest._http import GitHubClient, GitHubHTTPError
 from rebalance.ingest.config import get_github_token, get_pulse_config
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.slack_users import compact_sleuth_reminder
@@ -530,19 +529,15 @@ def fetch_assigned_issues(
     since_str = since_date.date().isoformat()
     query = f"assignee:{github_login} is:issue is:open updated:>={since_str}"
     params = {"q": query, "per_page": 100, "sort": "updated", "order": "desc"}
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/vnd.github+json",
-        "X-GitHub-Api-Version": "2022-11-28",
-    }
     url = f"{GITHUB_API_ROOT}/search/issues?{urllib.parse.urlencode(params)}"
-    req = urllib.request.Request(url, headers=headers)
+    # Shared client: retries 429/5xx with backoff and detects rate limits from
+    # response headers (x-ratelimit-remaining / retry-after) rather than
+    # string-matching the error body.
+    client = GitHubClient(token, timeout=timeout_seconds, job_label="pulse")
     try:
-        with urllib.request.urlopen(req, timeout=timeout_seconds) as resp:
-            payload = json.loads(resp.read().decode())
-    except urllib.error.HTTPError as exc:
-        body = exc.read().decode("utf-8", errors="replace")
-        if exc.code == 403 and "rate limit" in body.lower():
+        payload = client.get_json(url)
+    except GitHubHTTPError as exc:
+        if exc.is_rate_limit:
             raise RuntimeError("GitHub search rate limit hit") from exc
         raise
     items = payload.get("items") or []

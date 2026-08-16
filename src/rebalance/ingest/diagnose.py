@@ -9,13 +9,11 @@ never synced" from "PAT can't see it".
 
 from __future__ import annotations
 
-import json
 import urllib.error
-import urllib.request
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from rebalance.ingest._http import GitHubClient, GitHubHTTPError
 from rebalance.ingest.config import (
     get_github_ignored_repos,
     get_github_token,
@@ -24,7 +22,7 @@ from rebalance.ingest.config import (
 from rebalance.ingest.db import db_connection
 from rebalance.ingest.index_ops import _activity_repos, _project_repos
 from rebalance.ingest.registry import get_projects
-from rebalance.lib.time_ops import _parse_iso, _now, _now_utc
+from rebalance.lib.time_ops import now_utc, parse_utc_iso
 
 
 # Mirrors github_knowledge.sync_github_repo's default lookback for issues/PRs.
@@ -32,93 +30,73 @@ DEFAULT_SYNC_WINDOW_DAYS = 90
 
 
 def _days_since(iso: str | None) -> float | None:
-    parsed = _parse_iso(iso)
+    parsed = parse_utc_iso(iso)
     if parsed is None:
         return None
-    delta = _now_utc() - parsed
+    delta = now_utc() - parsed
     return round(delta.total_seconds() / 86400.0, 2)
+
+
+def _probe_get_json(client: GitHubClient, path: str) -> Any:
+    """One shared-client GET for a live probe.
+
+    The shared client retries 429/5xx with backoff and detects rate limits
+    from response headers — a bare copy of the auth headers here previously
+    turned one transient failure into a false "PAT cannot see this repo"
+    verdict (the reason these probes no longer build their own requests).
+    """
+    return client.get_json(path)
+
+
+def _probe_failure(key: str, exc: Exception) -> dict[str, Any]:
+    """Map a probe exception to the backwards-stable error envelope."""
+    if isinstance(exc, GitHubHTTPError):
+        return {key: False, "status": exc.status, "error": str(exc)}
+    reason = getattr(exc, "reason", None)
+    return {key: False, "status": None, "error": str(reason if reason is not None else exc)}
 
 
 def _live_probe_repo(repo: str, token: str) -> dict[str, Any]:
     """GET /repos/{owner}/{repo}; return {can_see, status, error}."""
-    url = f"https://api.github.com/repos/{repo}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "rebalance-os/diagnose",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
-            return {
-                "can_see": True,
-                "status": resp.status,
-                "default_branch": data.get("default_branch"),
-                "private": bool(data.get("private")),
-            }
-    except urllib.error.HTTPError as exc:
-        return {"can_see": False, "status": exc.code, "error": exc.reason}
-    except urllib.error.URLError as exc:
-        return {"can_see": False, "status": None, "error": str(exc.reason)}
+        data = _probe_get_json(GitHubClient(token, job_label="diagnose"), f"/repos/{repo}")
+    except (GitHubHTTPError, urllib.error.URLError, OSError) as exc:
+        return _probe_failure("can_see", exc)
+    return {
+        "can_see": True,
+        "status": 200,
+        "default_branch": data.get("default_branch"),
+        "private": bool(data.get("private")),
+    }
 
 
 def _live_probe_commit(repo: str, sha: str, token: str) -> dict[str, Any]:
-    url = f"https://api.github.com/repos/{repo}/commits/{sha}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "rebalance-os/diagnose",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
-            commit = data.get("commit") or {}
-            committer = commit.get("committer") or {}
-            return {
-                "exists": True,
-                "sha": data.get("sha"),
-                "committed_at": committer.get("date"),
-                "message_first_line": (commit.get("message") or "").splitlines()[0][:200],
-            }
-    except urllib.error.HTTPError as exc:
-        return {"exists": False, "status": exc.code, "error": exc.reason}
-    except urllib.error.URLError as exc:
-        return {"exists": False, "status": None, "error": str(exc.reason)}
+        data = _probe_get_json(GitHubClient(token, job_label="diagnose"), f"/repos/{repo}/commits/{sha}")
+    except (GitHubHTTPError, urllib.error.URLError, OSError) as exc:
+        return _probe_failure("exists", exc)
+    commit = data.get("commit") or {}
+    committer = commit.get("committer") or {}
+    return {
+        "exists": True,
+        "sha": data.get("sha"),
+        "committed_at": committer.get("date"),
+        "message_first_line": (commit.get("message") or "").splitlines()[0][:200],
+    }
 
 
 def _live_probe_pr(repo: str, pr: int, token: str) -> dict[str, Any]:
-    url = f"https://api.github.com/repos/{repo}/pulls/{pr}"
-    req = urllib.request.Request(
-        url,
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Accept": "application/vnd.github+json",
-            "User-Agent": "rebalance-os/diagnose",
-            "X-GitHub-Api-Version": "2022-11-28",
-        },
-    )
     try:
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
-            return {
-                "exists": True,
-                "state": data.get("state"),
-                "merged": bool(data.get("merged")),
-                "updated_at": data.get("updated_at"),
-                "title": data.get("title"),
-            }
-    except urllib.error.HTTPError as exc:
-        return {"exists": False, "status": exc.code, "error": exc.reason}
-    except urllib.error.URLError as exc:
-        return {"exists": False, "status": None, "error": str(exc.reason)}
+        data = _probe_get_json(GitHubClient(token, job_label="diagnose"), f"/repos/{repo}/pulls/{pr}")
+    except (GitHubHTTPError, urllib.error.URLError, OSError) as exc:
+        return _probe_failure("exists", exc)
+    return {
+        "exists": True,
+        "state": data.get("state"),
+        "merged": bool(data.get("merged")),
+        "updated_at": data.get("updated_at"),
+        "title": data.get("title"),
+    }
 
 
 def diagnose_repo(

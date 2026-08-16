@@ -10,6 +10,19 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.69.5] - 2026-08-15
+
+### Fixed
+- **Live repo diagnostics no longer report false negatives on transient GitHub failures.** The
+  optional live PAT-visibility probes rebuilt the API request by hand with no retry logic, so a
+  single rate-limit or server-error response produced a confident "your token cannot see this
+  repository" verdict. They now route through the shared API client, which retries with backoff
+  and detects rate limits from response headers. The same shared-client migration applies to the
+  assigned-issues search used by the activity pulse, replacing a body-text heuristic for rate
+  limits with header-based detection; its error contract is unchanged.
+- **First test coverage for the diagnostics module** — probe envelopes, offline funnel verdicts,
+  and the rate-limit error contract are now pinned.
+
 ## [0.69.2] - 2026-08-15
 
 ### Changed
