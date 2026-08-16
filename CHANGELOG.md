@@ -1,5 +1,9 @@
 # Changelog
 
+> **`#nnn` and `GH-nnn` refer to this project's internal issue tracker.** They are retained as
+> historical labels, not links — in the public repository they do not resolve to anything, and that
+> is expected. Entries are written to stand on their own without them.
+
 > **Maintainers — there is no `[Unreleased]` section in this project.** Every fix
 > or feature takes a version bump at commit/merge time (semver: MAJOR = breaking ·
 > MINOR = feature · PATCH = fix) under a `## [x.y.z] - YYYY-MM-DD` heading. Do
