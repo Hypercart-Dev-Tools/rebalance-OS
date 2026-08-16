@@ -53,6 +53,31 @@ Honesty about state is a feature, not a disclaimer. What is real today:
 
 ---
 
+## Platform support
+
+| Platform | State |
+|---|---|
+| **Apple Silicon macOS** | **Supported.** Developed and tested here daily. Everything works, including semantic search. |
+| Intel macOS | Expected to work except `[embeddings]` (MLX is Apple-Silicon-only). Not routinely tested. |
+| **Linux** | **Work in progress — do not expect a clean install yet.** |
+| Windows | Untested. |
+
+**On Linux specifically**, so you can judge the gap rather than discover it:
+
+- Stock `ubuntu:22.04` and `ubuntu:24.04` container images have **no `python3` on `PATH` at
+  all** — the version check above fails with `command not found` before anything else runs.
+- Ubuntu 24.04 provides Python **3.12.3**, which clears the floor; `apt install python3-venv`
+  is enough to get `python3` and `venv`.
+- Ubuntu 22.04 ships Python 3.10, **below the floor**, and `python3.12` is not in its
+  archive — a third-party source such as the deadsnakes PPA is required. Untested by us.
+- `[embeddings]` is unavailable on any non-Apple-Silicon platform, so semantic search and
+  `ask` retrieval are out; the rest of the product is not.
+
+None of this is a promise that the remainder installs cleanly on Linux. It is what we
+measured, and we would rather say so than let you find out at step three.
+
+---
+
 ## Who this is for
 
 - **Dev and design agency owners** juggling 5+ client repos, scattered notes, and back-to-back meetings with no time to connect the dots
@@ -275,15 +300,19 @@ download is the only large transfer and happens once.
 
 ### Step 1 — Clone and install
 
-**Before you start, check your Python.** rebalance needs **3.12 or newer**:
+> **macOS is the supported platform today.** rebalance is developed and tested on Apple
+> Silicon macOS. The core is pure Python and there is nothing macOS-specific about most of
+> it, but **Linux and Windows support is work in progress and unverified** — see
+> [Platform support](#platform-support) below before you start.
+
+**Check your Python first.** rebalance needs **3.12 or newer**:
 
 ```bash
 python3 --version
 ```
 
-If that prints 3.11 or lower — or `command not found` — install a newer Python first and
-use it below in place of `python3`. Ubuntu 22.04 ships 3.10, so `apt install python3.12`
-(or a `deadsnakes` PPA) is required there; on macOS, `brew install python@3.13`.
+If that prints 3.11 or lower, or `command not found`, install a newer Python and use it
+below in place of `python3`. On macOS: `brew install python@3.13`.
 
 ```bash
 git clone https://github.com/HiQS-Suite/rebalanceOS.git
