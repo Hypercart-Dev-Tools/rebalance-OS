@@ -1,5 +1,9 @@
 # rebalance
 
+## MOVED
+We've moved to a new repo:
+[We're now a part of the HiQS Suite](https://github.com/HiQS-Suite/rebalanceOS).
+
 > **Turn workplace noise into high-quality signal.**
 > Your workday "OS" — local-first, and part of the [HiQS](https://beta.hiqs.ai) suite.
 
