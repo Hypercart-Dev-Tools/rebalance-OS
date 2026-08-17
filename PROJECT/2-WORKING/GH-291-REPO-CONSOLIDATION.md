@@ -210,11 +210,15 @@ names back → bootstrap jobs. Total exposure ~5 minutes.
       the old repo has 99 open issues:
       - Bulk-close the ephemeral auto-filed health reports (label
         `rebalance-health`) with a comment pointing at the new repo.
-      - Transfer every live, curated issue:
-        `gh issue transfer <n> HiQS-Suite/rebalanceOS` (native GitHub transfer —
-        preserves body, comments, and links; only works *before* archiving).
-        Must include the release tracker (#276) and the 2026-08-15 code-review
-        set (#292–#301).
+      - Move every live, curated issue to the new repo. **Cross-org issue
+        transfer is not supported by GitHub** (these repos sit in different
+        orgs — `gh issue transfer` refuses), so the move is **mirror + close**:
+        create the issue on `HiQS-Suite/rebalanceOS` carrying the body plus
+        current status, then close the old one with a pointer; history stays
+        readable in the archive. *Executed 2026-08-17 for the 2026-08-15
+        code-review set (#292–#301 → new-repo #25–#33; #298 was already
+        complete and closed without a mirror).* Still needs it: the release
+        tracker (#276) and any other curated issue open at archive time.
       - Open PRs cannot be transferred — for each (#302, #304, and any later):
         push the branch to the new remote, open the PR there, close the old one
         with a pointer comment.
