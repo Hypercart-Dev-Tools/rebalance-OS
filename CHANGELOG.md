@@ -10,6 +10,14 @@
 > **not** reintroduce an `[Unreleased]` block — add to (or roll work into) the
 > current dated version instead. See AGENTS.md → "Versioning & Changelog".
 
+## [0.69.3] - 2026-08-17
+
+### Security
+- **Bumped the vulnerable YAML parser in an editor extension's development
+  lockfile to the patched release**, closing the remaining high-severity
+  dependency alert (development-scope only; the other extension lockfile was
+  already patched).
+
 ## [0.69.2] - 2026-08-15
 
 ### Changed
