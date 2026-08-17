@@ -3,6 +3,9 @@
 **Issue:** https://github.com/Hypercart-Dev-Tools/rebalance-OS/issues/291
 **Created:** 2026-08-15
 **Buffer window:** 7 days (cutover day + 7 before anything is deleted or archived)
+**Live copy:** this runbook is mirrored into `HiQS-Suite/rebalanceOS` at the same path —
+the surviving repo must carry its own consolidation plan, since `PROJECT/` is tracked and
+the folder swap replaces the old tree wholesale. Edit the new repo's copy from Phase 2 on.
 
 ## Why
 
@@ -48,30 +51,37 @@ repos exist remotely. No snapshot/mirror pipeline between them is being maintain
 
 ---
 
-## Phase 0 — Freeze & final push (Day 0, ~20 min)
+## Phase 0 — Freeze & final push (Day 0, ~20 min) — ✅ DONE 2026-08-17
 
 > The old remote is **public too** — the final push meets the same leakage bar as the
-> new repo. Default for the 6 untracked items is *don't commit*; they survive via the
+> new repo. Default for the untracked items is *don't commit*; they survive via the
 > Phase 2 carry-over regardless.
 
-- [ ] Classify the 6 untracked items (commit-allowlist, not blanket-commit):
-      - `PROJECT/1-INBOX/3EYES-*.md` (2 files) → **commit** (standard tracked intake
-        pattern) *after* reading each for embedded paths/tokens.
+- [x] Classify the untracked items (commit-allowlist, not blanket-commit):
+      - `PROJECT/1-INBOX/3EYES-*.md` (2 files) → **committed** (standard tracked intake
+        pattern), read first for embedded paths/tokens — only benign local log paths.
+      - `PROJECT/1-INBOX/GH-306-SUSTAINED-ACTIVITY-AUTO-PROMOTE.md` (appeared after this
+        plan was written) → **committed**; already carried into the new repo as
+        `PROJECT/1-INBOX/GH-1-SUSTAINED-ACTIVITY-AUTO-PROMOTE.md`.
+      - `MEMORY.md` (tracked, modified — not in the original 6) → **committed**; already
+        public in this repo's history, added line carries no secrets.
       - `PROJECT/2-WORKING/GH-271-SUBTRACTION/`, two `relay-system/2026-08-14/*` dirs,
-        `relay-system/2026-08-15/issue-284-transfer-qa.md` → **do not commit**. Relay
-        transcripts and working dirs stay local-only; they ride into the surviving
-        folder via Phase 2's carry-over list.
-- [ ] Secret scan the final commit before pushing: review `git diff --cached` and
-      `git grep -nE '(api[_-]?key|token|secret|BEGIN [A-Z]+ PRIVATE KEY)' -- $(git diff --cached --name-only)`
-      → must be clean.
-- [ ] Final commit: `git commit -m "final private-history commit before consolidation (GH-291)"`
-- [ ] Tag: `git tag final-private-state && git push origin development --tags`
+        `relay-system/2026-08-15/issue-284-transfer-qa.md`, `relay-system/2026-08-16/`
+        → **not committed**. Relay transcripts and working dirs stay local-only; they
+        ride into the surviving folder via Phase 2's carry-over list.
+- [x] Secret scan the final commit before pushing → clean (no key/token/secret/private-key
+      hits in the staged diff; 4 files, 307 insertions).
+- [x] `rebalance doctor` → passed with warnings (pre-existing: Mac Studio pulse collector
+      stale 16h, scheduler state undetermined, figma signal stale — none swap-related).
+- [x] Final commit: `8446add2 chore(GH-291): final private-history commit before consolidation`
+- [x] Tag + push: `final-private-state` → pushed with `git push origin development --follow-tags`.
       *(The default branch is `development`; `main` is admin-protected and stale —
       a push there is refused or lands on a dead branch. Measured 2026-08-16,
       not assumed.)*
-- [ ] Verify push landed: `git status` clean, `git log origin/development -1` matches local.
+- [x] Verify push landed: `HEAD == origin/development == 8446add2`; `git status --porcelain`
+      shows only the five deliberately-local-only entries above.
 
-**Gate:** old remote holds everything; local old clone is now expendable-after-buffer.
+**Gate:** ✅ old remote holds everything; local old clone is now expendable-after-buffer.
 
 ## Phase 1 — Prepare the new clone (Day 0, ~30 min)
 
@@ -206,18 +216,24 @@ names back → bootstrap jobs. Total exposure ~5 minutes.
       and history here remain readable."* This is the final commit.
 - [ ] Close this issue (#291) with a link to the completed checklist.
 - [ ] **Triage the open issues BEFORE archiving** — archiving makes the repo
-      read-only, so anything still open freezes open forever. As of 2026-08-16
-      the old repo has 99 open issues:
-      - Bulk-close the ephemeral auto-filed health reports (label
-        `rebalance-health`) with a comment pointing at the new repo.
-      - Transfer every live, curated issue:
-        `gh issue transfer <n> HiQS-Suite/rebalanceOS` (native GitHub transfer —
-        preserves body, comments, and links; only works *before* archiving).
-        Must include the release tracker (#276) and the 2026-08-15 code-review
-        set (#292–#301).
-      - Open PRs cannot be transferred — for each (#302, #304, and any later):
-        push the branch to the new remote, open the PR there, close the old one
-        with a pointer comment.
+      read-only, so anything still open freezes open forever. 99 open at plan
+      time; **88 open as of 2026-08-17** (66 unlabelled, 10 `rebalance-health`,
+      7 `bug`, 4 `enhancement`, 1 `radar`).
+      - ⚠️ **Correction (measured, not assumed): `gh issue transfer` does NOT work
+        here.** GitHub only transfers issues between repos owned by the *same*
+        account; `Hypercart-Dev-Tools` → `HiQS-Suite` is cross-org. The working
+        pattern is **mirror + close**: recreate the issue on the new repo, then
+        close the old one with a pointer comment.
+      - ✅ Already mirrored: the 2026-08-15 code-review set → `HiQS-Suite/rebalanceOS`
+        #25–#33; GH-306 sustained-activity → #1.
+      - [ ] Bulk-close the 10 ephemeral `rebalance-health` auto-reports with a
+        comment pointing at the new repo.
+      - [ ] Mirror + close the release tracker (#276).
+      - [ ] Sweep the remaining ~66 unlabelled open issues: mirror the live ones,
+        close the rest with a pointer comment. Nothing may be left open.
+      - Open PRs cannot be transferred either — none are open on the old repo as
+        of 2026-08-17 (#302/#304 already resolved). If a new one appears: push the
+        branch to the new remote, open the PR there, close the old with a pointer.
 - [ ] Rotate the embedded Google OAuth client in the Google Cloud Console.
       Its id/secret live permanently in soon-to-be-archived public history; a
       Desktop-app client grants nothing unattended (every access needs a human
